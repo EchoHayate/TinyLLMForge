@@ -7,15 +7,15 @@ from tinyvllm.engine.sequence import Sequence
 class Block:
     def __init__(self, block_id):           # 单个block块的属性
         self.block_id = block_id            # 块id
-        self.ref_count = 0                  # 引用数量
-        self.hash = -1                      # hash值
+        self.ref_count = 0                  # 引用数量 主要涉及相同前缀的引用
+        self.hash = -1                      # hash值 用于比较block大小
         self.token_ids = []                 # 包含的 token_id
     
     def update(self, hash: int, token_ids: list[int]):      # 更换该 block 的哈希值和所有 block_id
         self.hash = hash
         self.token_ids = token_ids
 
-    def reset(self):                       # 重置 block状态，注意 ref_count 初始化为 1
+    def reset(self):                       # 重置 block状态，注意 ref_count 初始化为 1  为下一次BlockManager.allocate()做准备
         self.ref_count = 1
         self.hash = -1
         self.token_ids = []
@@ -25,11 +25,12 @@ class BlockManager:
     def __init__(self, num_blocks: int, block_size: int):
         assert num_blocks > 0
         self.block_size = block_size
-        self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
-        self.hash_to_block_id: dict[int, int] = dict()
-        self.free_block_ids: deque[int] = deque(range(num_blocks))
-        self.used_block_ids: set[int] = set()
+        self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]   
+        self.hash_to_block_id: dict[int, int] = dict()              #键代表某个block的token序列的哈希值 值代表这个哈希值对应的kv缓存块的id（block_id） 用于快速查找和复用内容相同的 KV 缓存块
+        self.free_block_ids: deque[int] = deque(range(num_blocks))  #双向队列分配和回收元素
+        self.used_block_ids: set[int] = set()                       #跟踪所有正在被使用的block_id 查找的时间复杂度O（1） 如果使用deque 查找的时间复杂度为O（n） 
 
+#block只有占满的时候 才会计算hash
     # 以整数形式，返回计算出的哈希值
     @classmethod                           # 对标c++中的static, 第一个参数为类本身，cls, class self
     def compute_hash(cls, token_ids: list[int], prefix: int = -1):
