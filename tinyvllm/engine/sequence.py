@@ -18,7 +18,7 @@ class Sequence:
         self.token_ids = copy(token_ids)                # 记录每次生成+prompt的所有token id
         self.last_token = token_ids[-1]                 # 记录每次生成后的最后一个token id
         self.num_tokens = len(self.token_ids)           # 记录每次生成+prompt的所有token 数量
-        self.num_prompt_tokens = len(token_ids)         # 记录prompt的token数量
+        self.num_prompt_tokens = len(token_ids)         # 记录prompt的token数量 传入时就确定了
         self.num_cached_tokens = 0                      # 记录prefix cache的 token数量
         self.block_table = []                           # 记录当前语句用到的 块id
         self.temperature = sampling_params.temperature  # 记录该语句的采样温度
