@@ -16,14 +16,14 @@ class LLMEngine:
     
     def __init__(self, model, **kwargs):
         config_fields = {field.name for field in fields(Config)}
-        config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
-        config  = Config(model, **config_kwargs)
+        config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}    #过滤掉和config无关的参数
+        config  = Config(model, **config_kwargs)       
         self.ps = []
         self.events = []
         ctx = mp.get_context("spawn")                       # 生成全新解释器，继承基本资源，全局变量，打开的文件，线程不会被继承
         for i in range(1, config.tensor_parallel_size):     # 生成所有的子进程
-            event = ctx.Event()
-            process = ctx.Process(target=ModelRunner, args = {config, i, event})
+            event = ctx.Event()                             #进程间同步的“信号量”，用于进程间通信
+            process = ctx.Process(target=ModelRunner, args = {config, i, event}) #创建子进程对象 modelrunner是子进程要执行的目标函数
             process.start()
             self.ps.append(process)
             self.events.append(event)
@@ -48,7 +48,7 @@ class LLMEngine:
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
         seq = Sequence(prompt, sampling_params)
-        self.scheduler.add(seq)
+        self.scheduler.add(seq)           #直接加到waiting
 
     def step(self):
         seqs, is_prefill = self.scheduler.schedule()
@@ -63,21 +63,21 @@ class LLMEngine:
 
     def generate(
         self, 
-        prompts: list[str] | list[list[int]], 
+        prompts: list[str] | list[list[int]],               #输入提示：可以是字符串列表（未分词）也可以是token id列表（已分词）
         sampling_params: SamplingParams | list[SamplingParams], 
         use_tqdm: bool = True, 
     ) -> list[int]:
         if use_tqdm: 
             pbar = tqdm(total = len(prompts), desc = "Generating", dynamic_ncols = True)
         if not isinstance(sampling_params, list):
-            sampling_params = [sampling_params] * len(prompts)
+            sampling_params = [sampling_params] * len(prompts)    #保证每个prompt都有一组sampling_params
         for prompt, sp in zip(prompts, sampling_params):
             self.add_request(prompt, sp)
         
         outputs = {}
         prefill_throughput = decode_throughput = 0.0
-        while not self.is_finished():
-            t = perf_counter()
+        while not self.is_finished():           #根据waiting和running队列是否为空判断
+            t = perf_counter()                  #纳秒级别的高精度时间（自计算机启动经过的时间）
             output, num_tokens = self.step()
             if use_tqdm:
                 # prefill
@@ -85,7 +85,7 @@ class LLMEngine:
                     prefill_throughput = num_tokens / (perf_counter() - t)
                 # decode
                 else:
-                    decode_throughput = -num_tokens / (perf_counter() - t)
+                    decode_throughput = -num_tokens / (perf_counter() - t)  #为了区分decode和prefill 规定decode阶段的num_tokens都是-1 （decode每个step阶段都是生成1个token）
                 pbar.set_postfix({
                     "prefill": f"{int(prefill_throughput)} tok/s", 
                     "Decode": f"{int(decode_throughput)} tok/s"

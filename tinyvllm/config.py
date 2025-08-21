@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from transformers import AutoConfig
 
-@dataclass
+@dataclass   #自动配置__init__方法
 class Config:
     model: str                                          # sequence includes multi-tokens   batch includes multi-sequences
     max_num_batched_tokens: int = 16384                 # 2^14 = [batch_size * seq_len]  单个批次（batch）中，所有 sequence 包含的 token 总数的最大限制 

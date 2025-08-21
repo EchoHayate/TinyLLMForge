@@ -33,15 +33,15 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
-        self.model = Qwen3ForCausalLM(hf_config)
-        load_model(self.model, config.model)
+        self.model = Qwen3ForCausalLM(hf_config)        #暂时跳过
+        load_model(self.model, config.model)            #暂时跳过
         self.sampler =  Sampler()
         
-        self.warmup_model()
+        self.warmup_model()                             #暂时跳过
 
-        self.allocate_kv_cache()
+        self.allocate_kv_cache()                        #暂时跳过
         if not self.enforce_eager:
-            self.capture_cudagraph()
+            self.capture_cudagraph()                    #暂时跳过
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
 
