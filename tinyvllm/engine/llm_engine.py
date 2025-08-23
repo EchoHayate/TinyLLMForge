@@ -50,13 +50,13 @@ class LLMEngine:
         seq = Sequence(prompt, sampling_params)
         self.scheduler.add(seq)           #直接加到waiting
 
-    def step(self):
+    def step(self):     #decode阶段：每次step生成新的token加到seq后面
         seqs, is_prefill = self.scheduler.schedule()
-        token_ids = self.model_runner.call("run", seqs, is_prefill)
+        token_ids = self.model_runner.call("run", seqs, is_prefill)     #暂时跳过
         self.scheduler.postprocess(seqs, token_ids)
-        outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
-        num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -(len(seqs))              
-        return outputs, num_tokens
+        outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
+        num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
+        return outputs, num_tokens      #计算的是每个step的单次增量
 
     def is_finished(self):
         return self.scheduler.is_finished()
@@ -87,7 +87,7 @@ class LLMEngine:
                 else:
                     decode_throughput = -num_tokens / (perf_counter() - t)  #为了区分decode和prefill 规定decode阶段的num_tokens都是-1 （decode每个step阶段都是生成1个token）
                 pbar.set_postfix({
-                    "prefill": f"{int(prefill_throughput)} tok/s", 
+                    "prefill": f"{int(prefill_throughput)} tok/s",     #一次step的吞吐
                     "Decode": f"{int(decode_throughput)} tok/s"
                 })
             for seq_id, token_ids in output:

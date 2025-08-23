@@ -11,8 +11,8 @@ class Scheduler:
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
-        self.waiting: deque[Sequence] = deque()
-        self.running: deque[Sequence] = deque()
+        self.waiting: deque[Sequence] = deque()     #未分配 KV 缓存块
+        self.running: deque[Sequence] = deque()     #已分配 KV 缓存块  参与decode阶段生成
     def is_finished(self):
         return not self.waiting and not self.running
 
@@ -21,11 +21,11 @@ class Scheduler:
 
     def schedule(self) -> tuple[list[Sequence], bool]:
         # prefill, 从 waiting 队列中取出 seq   prefill阶段：处理输入 prompt 的所有 token（批量计算，生成初始 KV 缓存）。
-        scheduled_seqs = [] #scheduled_seqs和waiting队列的区别：
+        scheduled_seqs = [] #scheduled_seqs和waiting队列的区别：scheduled_seqs 是从 waiting 队列中筛选出来的、满足调度条件的序列集合
         num_seqs = 0        #number of sequence in the current batch
         num_batched_tokens = 0
         while self.waiting and num_seqs < self.max_num_seqs:
-            seq = self.waiting[0]                   # 这里不使用 popleft的原因是 waiting 队列不一定调度成功 如果调度不成功 这个token就不在waiting队列里了
+            seq = self.waiting[0]                   # 这里不使用 popleft的原因是 waiting 队列不一定调度成功（如下if判断） 如果调度不成功 这个token就不在waiting队列里了
             if num_batched_tokens + len(seq) > self.max_num_batched_tokens or not self.block_manager.can_allocate(seq):
                 break
             num_seqs += 1
@@ -39,8 +39,9 @@ class Scheduler:
             return scheduled_seqs, True
 
         # decode，从 running 队列中取出 seq   Decode 阶段：逐 token 生成（利用已有 KV 缓存，每次生成一个新 token）。
-        while self.running and num_seqs < self.max_num_seqs:
-            seq = self.running.popleft();          # 这里是算法保证 running队列一定调度成功
+        while self.running and num_seqs < self.max_num_seqs:        
+            seq = self.running.popleft();          # 这里是preempt抢占资源保证 running队列一定调度成功
+            #[thinking] 这里可能有一个能够优化的点 就是在抢占资源的时候默认是t出running的第一个 但是第一个腾出来的空间未必够新的seq使用 所以可以考虑合理规划选一个大小相近的seq去剔除
             while not self.block_manager.can_append(seq):
                 if self.running:
                     self.preempt(self.running.pop())
@@ -55,7 +56,7 @@ class Scheduler:
         self.running.extendleft(reversed(scheduled_seqs))
         return scheduled_seqs, False    
 
-    def preempt(self, seq: Sequence):
+    def preempt(self, seq: Sequence):       #将正在running队列中的seq给“踢”出去 
         seq.status = SequenceStatus.WAITING
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
