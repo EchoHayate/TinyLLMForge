@@ -129,8 +129,8 @@ class BlockManager:
         # 最后一个块在分配的时候，h是-1，没有计算哈希值写入字典用于缓存
         # 因此当最后一个块空间用光时，需要计算哈希值，用于前缀缓存
         elif len(seq) % self.block_size == 0:   #最后一个块刚被填满
-            assert last_block.hash == -1
-            token_ids = seq.block(seq.num_blocks - 1)       #倒数第二个seq列表
+            assert last_block.hash == -1 
+            token_ids = seq.block(seq.num_blocks - 1)       #最后一个seq列表 因为从0开始计数
             prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1  #这个边界条件很重要
             h = self.compute_hash(token_ids, prefix)
             last_block.update(h, token_ids)

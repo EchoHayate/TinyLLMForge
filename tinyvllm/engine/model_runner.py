@@ -90,10 +90,10 @@ class ModelRunner:
 
     # 主进程    
     def write_shm(self, method_name, *args):
-        assert self.world_size > 1 and not self.rank
+        assert self.world_size > 1 and not self.rank        #not self.rank表示self.rank == 0
         data = pickle.dumps([method_name, *args])
         n = len(data)
-        self.shm.buf[0:4] = n.to_bytes(4, "little")
+        self.shm.buf[0:4] = n.to_bytes(4, "little")     #把数据长度写入共享内存的前4字节（用小端序存储）
         self.shm.buf[4:n+4] = data
         for event in self.event:
             event.set()
@@ -142,7 +142,7 @@ class ModelRunner:
         block_tables = torch.tensor(block_tables, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         return block_tables
 
-    def prepare_prefill(self, seqs: list[Sequence]):
+    def prepare_prefill(self, seqs: list[Sequence]):        #暂时跳过
         input_ids = []          # 记录每个 seq 的 所有输入token id，一维[] 
         positions = []          # 记录每个 seq中 输入的 token的位置，一维[]
         cu_seqlens_q = [0]       # 以前缀和的形式，记录每个seq的长度，如 [0, 3, 5] 表示有两个seq, 一个长度为 3 = 3 - 0， 另一个长度为 2 = 5-3
@@ -187,7 +187,7 @@ class ModelRunner:
 
 
     # decode阶段单token输出
-    def prepare_decode(self, seqs: list[Sequence]):
+    def prepare_decode(self, seqs: list[Sequence]):         #暂时跳过
         input_ids = []
         positions = []
         slot_mapping = []

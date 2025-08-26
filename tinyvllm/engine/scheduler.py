@@ -53,7 +53,7 @@ class Scheduler:
                 self.block_manager.may_append(seq)
                 scheduled_seqs.append(seq)
         assert scheduled_seqs
-        self.running.extendleft(reversed(scheduled_seqs))
+        self.running.extendleft(reversed(scheduled_seqs))       #当前step结束 但未到达终止条件 所以需要在返回running队列
         return scheduled_seqs, False    
 
     def preempt(self, seq: Sequence):       #将正在running队列中的seq给“踢”出去 

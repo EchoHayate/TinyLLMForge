@@ -52,7 +52,7 @@ class LLMEngine:
 
     def step(self):     #decode阶段：每次step生成新的token加到seq后面
         seqs, is_prefill = self.scheduler.schedule()
-        token_ids = self.model_runner.call("run", seqs, is_prefill)     #暂时跳过
+        token_ids = self.model_runner.call("run", seqs, is_prefill)     
         self.scheduler.postprocess(seqs, token_ids)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
         num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
