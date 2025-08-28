@@ -204,11 +204,14 @@ class Qwen3ForCausalLM(nn.Module):
         config: Qwen3Config, 
     ):
         super().__init__()
-        self.model = Qwen3Model(config)
+        self.model = Qwen3Model(config) 
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         if config.tie_word_embeddings:              # 和最初的embedding层共用同一权重
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
-        
+    
+    #这里是在Module里面默认要求重写的 module里面很多函数都是以hook实现 
+    # _call_impl 是核心调用方式 主要流程：
+    # 前向预处理钩子（forward_pre_hooks）→ 执行 forward → 前向钩子（forward_hooks）[对 forward 的输出（result）做后处理]→ 反向传播钩子准备
     def forward(
         self, 
         input_ids: torch.Tensor, 

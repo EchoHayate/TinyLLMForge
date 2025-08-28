@@ -33,7 +33,7 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
-        self.model = Qwen3ForCausalLM(hf_config)        #暂时跳过
+        self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
         load_model(self.model, config.model)            #暂时跳过
         self.sampler =  Sampler()
         
@@ -53,7 +53,7 @@ class ModelRunner:
                     create=True,                # 连接已有的块名还是重新创建
                     size=2**20                  # 大小
                 )
-                dist.barrier()
+                dist.barrier()                  #多进程同步屏障 让所有参与分布式训练的进程（通过 world_size 定义）都在这个代码位置等待，直到所有进程都执行到此处，才会继续往下运行。
             else:
                 dist.barrier()
                 self.shm = SharedMemory(name="tinyvllm")
@@ -70,7 +70,7 @@ class ModelRunner:
         torch.cuda.synchronize()
         dist.destroy_process_group()
 
-    def loop(self):
+    def loop(self):         #在收到exit命令之前 子进程持续执行method_name方法
         while True:
             method_name, args = self.read_shm()
             self.call(method_name, *args)
@@ -78,9 +78,9 @@ class ModelRunner:
                 break
 
     def read_shm(self):
-        # 从进程
-        assert self.world_size > 1 and self.rank
-        self.event.wait()                               # 一直等待，直到 event被设置后才会往下执行
+        # 多进程环境下 避免主进程调用
+        assert self.world_size > 1 and self.rank        
+        self.event.wait()                               # 等待主进程信号 一直等待，直到 event被set()后才会往下执行
         n = int.from_bytes(
             self.shm.buf[0:4],                          # 这里的单位是 byte，一个字节，或者说一个char
             "little")
@@ -212,14 +212,19 @@ class ModelRunner:
         temperatures = []
         for seq in seqs:
             temperatures.append(seq.temperature)
-        temperatures = torch.tensor(data=temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
+        temperatures = torch.tensor(data=temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)    #pin_memory=True将张量存储在锁定内存（page-locked memory）中，而非普通的可分页内存
         return temperatures
+        #普通可分页内存（Pageable Memory）  |	锁定内存（Page-locked Memory / Pinned Memory）
+        #操作系统可将其 “分页” 到磁盘       |     被 “锁定” 在物理内存中，不允许换出到磁盘,
+        # （swap） ，释放物理内存给其他进程 |     
 
     @torch.inference_mode()
+    #只需要前向传播 禁用梯度计算（无需反向传播），节省内存；
+    # 加速推理过程（跳过与训练相关的检查和操作）。
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
+        if is_prefill or self.enforce_eager or input_ids.size(0) > 512:     #动态执行 eager mode    input_ids.size(0) > 512：大批量输入的形状不固定，预编译静态图的收益有限，动态执行更灵活。
             return self.model.compute_logits(self.model(input_ids, positions))
-        else:
+        else:           #静态执行  graph replay
             bs = input_ids.size(0)
             context = get_context()
             graph = self.graphs[next (x for x in self.graph_bs if x >= bs)]
@@ -238,7 +243,7 @@ class ModelRunner:
 
     def run(self, seqs:list[Sequence], is_prefill: bool) -> list[int]:
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
-        temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
+        temperatures = self.prepare_sample(seqs) if self.rank == 0 else None    #只有主进程做采样
         logits = self.run_model(input_ids, positions, is_prefill)
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
         reset_context()
