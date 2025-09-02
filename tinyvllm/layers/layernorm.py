@@ -14,7 +14,7 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(hidden_size))
     
-    @torch.compile
+    @torch.compile                          #暂时跳过
     def rms_forward(
         self, 
         x: torch.Tensor                     # [batch_size, seq_len, hidden_size]
@@ -26,7 +26,7 @@ class RMSNorm(nn.Module):
         x = x.to(origin_dtype).mul_(self.weight)
         return x
 
-    @torch.compile
+    @torch.compile                          #展示跳过
     def add_rms_forward(
         self,
         x: torch.Tensor,

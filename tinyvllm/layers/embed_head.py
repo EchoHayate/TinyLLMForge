@@ -16,12 +16,12 @@ class VocabParallelEmbedding(nn.Module):
         self.num_embeddings_per_partition = self.num_embeddings // self.tp_size
         self.vocab_start_idx = self.num_embeddings_per_partition * self.tp_rank
         self.vocab_end_idx = self.vocab_start_idx + self.num_embeddings_per_partition
-        self.weight = nn.Parameter(torch.empty(self.num_embeddings_per_partition, embedding_dim))
+        self.weight = nn.Parameter(torch.empty(self.num_embeddings_per_partition, embedding_dim))  #parameter表示模型的 可学习参数   能够自动注册 计算梯度
         self.weight.weight_loader = self.weight_loader
     
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):      #按 GPU 编号拆分完整权重，只加载当前 GPU 负责的分块 是词表并行的关键步骤
         param_data = param.data
-        shard_size = param_data.size(0)
+        shard_size = param_data.size(0)     #也就是num_embeddings_per_partition
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
         assert param_data.size() == loaded_weight.size()
@@ -40,6 +40,7 @@ class VocabParallelEmbedding(nn.Module):
 
 # 在模型中，输入的embedding权重和输出头的矩阵权重共享，embedding是查表，输出则是矩阵乘
 class ParallelLMHead(VocabParallelEmbedding):
+    
     def __init__(self, num_embedding: int,
                  embedding_dim: int, 
                  bias: bool = False,):
@@ -49,6 +50,7 @@ class ParallelLMHead(VocabParallelEmbedding):
             self.bias.weight_loader = self.weight_loader
         else:
             self.register_parameter("bias", None)
+
     def forward(self, x: torch.Tensor):
         context = get_context()
         if context.is_prefill:

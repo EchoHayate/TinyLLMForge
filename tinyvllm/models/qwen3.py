@@ -150,13 +150,13 @@ class Qwen3DecoderLayer(nn.Module):
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    def forward(
+    def forward(                                    #这是整个llama架构的核心
         self,
         positions: torch.Tensor, 
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None
     )-> tuple[torch.Tensor, torch.Tensor]:
-        if residual is None:
+        if residual is None:                        #没有残差表示是第一层的attention
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
@@ -191,6 +191,7 @@ class Qwen3Model(nn.Module):
     
 
 class Qwen3ForCausalLM(nn.Module):
+    # 打包权重 机制  为了适配tensor parallel 读取一个大文件比读取多个小文件更快
     packed_modules_mapping = {
         "q_proj":("qkv_proj", "q"), 
         "k_proj":("qkv_proj", "k"),
