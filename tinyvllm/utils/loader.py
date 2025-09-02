@@ -18,9 +18,9 @@ def load_model(model: nn.Module, path: str):
                 # 将weight_name中压缩过的k替换成完整的，才是正确的参数名
                 for k in packed_modules_mapping: #匹配packed_modules_mapping和safetensor里的的key
                     if k in weight_name:                                        # shared_id 是因为模型是GQA, 一组q共享kv
-                        v, shared_id = packed_modules_mapping[k]
-                        param_name = weight_name.replace(k, v)
-                        param = model.get_parameter(param_name)
+                        v, shared_id = packed_modules_mapping[k]        
+                        param_name = weight_name.replace(k, v)          #e.g. qkv_proj替换q_proj
+                        param = model.get_parameter(param_name)         #通过这种方式实现了 3×[hidden_size, hidden_size] -> [3×hidden_size, hidden_size]
                         weight_loader = getattr(param, "weight_loader")
                         weight_loader(param, f.get_tensor(weight_name), shared_id)
                         break
