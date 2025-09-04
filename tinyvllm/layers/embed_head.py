@@ -6,7 +6,7 @@ import torch.distributed as dist                # 用于张量并行
 from tinyvllm.utils.context import get_context
 
 # 输入embedding层
-class VocabParallelEmbedding(nn.Module):
+class VocabParallelEmbedding(nn.Module):        
     def __init__(self, num_embeddings: int, embedding_dim: int):
         super().__init__()
         self.tp_rank = dist.get_rank()              # 张量并行id, 分块的张量序号
@@ -18,20 +18,24 @@ class VocabParallelEmbedding(nn.Module):
         self.vocab_end_idx = self.vocab_start_idx + self.num_embeddings_per_partition
         self.weight = nn.Parameter(torch.empty(self.num_embeddings_per_partition, embedding_dim))  #parameter表示模型的 可学习参数   能够自动注册 计算梯度
         self.weight.weight_loader = self.weight_loader
-    
+        # num_embeddings 是初始化时传入的参数，明确代表整个模型的词表总大小（比如 30 万、50 万等）
+
+    # param需要符合上文定义的nn.Parameter大小 否则会报错
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):      #按 GPU 编号拆分完整权重，只加载当前 GPU 负责的分块 是词表并行的关键步骤
         param_data = param.data
         shard_size = param_data.size(0)     #也就是num_embeddings_per_partition
         start_idx = self.tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
+        loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)      #narrow表示只能连续切片 对大张量可能有潜在的性能优化 
         assert param_data.size() == loaded_weight.size()
         param_data.copy_(loaded_weight)
 
+        # x:(batch_size, seq_len)  mask:(batch_size, seq_len)   y:(batch_size, seq_len, embedding_dim)
+        # batch_size：每次输入的样本数量
     def forward(self, x: torch.Tensor):
         if self.tp_size > 1:
-            mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)
-            x = mask * (x - self.vocab_start_idx)
-        y = F.embedding(x, self.weight)
+            mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)        #e.g.((1,1,0,0) (1,0,0,0) (0,0,0,0))   
+            x = mask * (x - self.vocab_start_idx)           #重置当前GPU分块的token索引 让其落在当前GPU分块内 e.g 75000→0，75001→1，
+        y = F.embedding(x, self.weight)         #根据index和权重去做lookup 计算输出形状
         if self.tp_size > 1:
             y = mask.unsqueeze(1) * y                 # 这里只是计算到了局部值
             dist.all_reduce(y)                        # 因此需要规约广播，使得每张卡上的计算结果一致
