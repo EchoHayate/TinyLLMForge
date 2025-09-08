@@ -58,10 +58,10 @@ class ParallelLMHead(VocabParallelEmbedding):
     def forward(self, x: torch.Tensor):
         context = get_context()
         if context.is_prefill:
-            last_indices = context.cu_seqlens_q[1:] - 1
-            x = x[last_indices].contiguous()
-        logits = F.linear(x, self.weight, self.bias)
-        if self.tp_size > 1:
+            last_indices = context.cu_seqlens_q[1:] - 1         #获取每个序列最后一个token的索引
+            x = x[last_indices].contiguous()                #把tensor转换成连续的 符合后续linear或者dist要求
+        logits = F.linear(x, self.weight, self.bias)        # (10,1024) * (50000,1024)^T + (10,50000) = (10,50000)
+        if self.tp_size > 1:                                #将各个GPU上的logits结果进行拼接 并返回到 0号GPU
             # 这里的 [[logits]], 就表示在第0维进行堆叠
             all_logits = [torch.empty_like(logits) for _ in range(self.tp_size)] if self.tp_rank == 0 else None
             dist.gather(logits, all_logits, 0)

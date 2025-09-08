@@ -5,7 +5,7 @@ import torch
 @dataclass
 class Context:
     is_prefill: bool = False    #prefill or decode
-    cu_seqlens_q: torch.Tensor | None = None    #prefill
+    cu_seqlens_q: torch.Tensor | None = None    #prefill        累积序列长度 记录批量中每个序列的起始和结束位置。cu_seqlens_q = [0, 3, 8]
     cu_seqlens_k: torch.Tensor | None = None    #prefill
     max_seqlen_q: int = 0   #prefill
     max_seqlen_k: int = 0   #prefill

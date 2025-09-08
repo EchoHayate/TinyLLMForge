@@ -99,8 +99,9 @@ class Qwen3MLP(nn.Module):
         hidden_size: int,               # 1024
         intermediate_size: int,         # 3072 = 1024 * 3, 即gate up输出的维度，
         hidden_act: str,                # 激活函数名称，这里仅支持 SiLU
-        ):
+        ): 
         super().__init__()
+    # 这里gate和up做Column parallel   down做row parallel
         self.gate_up_proj = MergedColumnParallelLinear(
             hidden_size, 
             [intermediate_size]*2, 

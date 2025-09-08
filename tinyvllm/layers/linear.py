@@ -9,7 +9,7 @@ def divide(numerator, denominator):
 
 class LinearBase(nn.Module):
     def __init__(self, 
-        input_size: int, 
+        input_size: int,        #用 input_size（输入维度）和 output_size（输出维度）对应线性层权重矩阵的列数和行数
         output_size: int,
         tp_dim: int | None = None,
         ):
@@ -36,14 +36,14 @@ class ReplicatedLinear(LinearBase):
         self.weight = nn.Parameter(torch.empty(self.output_size, self.input_size))
         self.weight.weight_loader = self.weight_loader
         if bias:
-            self.bias = nn.Parameter(torch.empty(self.output_size))
-            self.bias.weight_loader = self.weight_loader()
+            self.bias = nn.Parameter(torch.empty(self.output_size))   #节省显存 后面会有广播机制拓展为 [batch_size,output_size]
+            self.bias.weight_loader = self.weight_loader
         else:
             self.register_parameter("bias", None)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        param.data.copy_(loaded_weight)
-        pass
+        param.data.copy_(loaded_weight)     #param 是 带身份的参数包装器，param.data 是这个包装器里 实际存储数值的张量
+        
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.weight, self.bias)
@@ -58,13 +58,14 @@ class ColumnParallelLinear(LinearBase):
         bias: bool = False
     ):
         super().__init__(input_size, output_size, 0)                            
-        # F.linear(x, weight) = x @ weight^T， 因此weight = [output_size, input_size]，
-        # tp_dim = 0, 所有只有 ouput_size被切割, w^T, 则output_size就是列拆分
+        # F.linear(x, weight) = x @ weight^T， 因此weight = [output_size, input_size]，   x = [batch_size, input_size]
+        # tp_dim = 0, 所有只有 ouput_size被切割, w^T, weight会有一个转置 则output_size就是列拆分
+        #为了保证线性变换的输入[batch_size, input_size] 输出[batch_size, output_size]  所以框架存储约定 定义的weight维度[output_size, input_size]
         self.input_size_per_partition = input_size
-        self.output_size_per_partition = divide(output_size, self.tp_size)
-
+        self.output_size_per_partition = divide(output_size, self.tp_size) 
         self.weight = nn.Parameter(torch.empty(self.output_size_per_partition, self.input_size))
         self.weight.weight_loader = self.weight_loader
+
         if bias:
             self.bias = nn.Parameter(torch.empty(self.output_size_per_partition))
             self.bias.weight_loader = self.weight_loader
@@ -161,7 +162,7 @@ class RowParallelLinear(LinearBase):
             self.bias.weight_loader = self.weight_loader
         else:
             self.register_parameter("bias", None)
-        pass
+        
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
@@ -169,7 +170,7 @@ class RowParallelLinear(LinearBase):
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
         param_data.copy_(loaded_weight)
-        pass
+        
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)
