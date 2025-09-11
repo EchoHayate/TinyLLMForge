@@ -48,7 +48,7 @@ class ReplicatedLinear(LinearBase):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.weight, self.bias)
 
-
+#列切分最后需要concatenate tp_dim = 0 对output_size切割就是列切割
 class ColumnParallelLinear(LinearBase):
 
     def __init__(
@@ -70,7 +70,7 @@ class ColumnParallelLinear(LinearBase):
             self.bias = nn.Parameter(torch.empty(self.output_size_per_partition))
             self.bias.weight_loader = self.weight_loader
         else:
-            self.register_parameter("bias", None)
+            self.register_parameter("bias", None)           #注册参数 防止后面调用报错
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
@@ -87,24 +87,25 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     def __init__(
             self, 
             input_size: int, 
-            output_sizes: list[int], 
+            output_sizes: list[int],        #只有gate和up
             bias: bool = False):
         self.output_sizes = output_sizes
         super().__init__(input_size, sum(output_sizes), bias = bias)
-
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shared_id: int):
+    #param narrow把原来能放x的长度大小给切分成y的片段 然后weightloader又把原来要放在一个位置上的权重平分成worldsize块 在放到大小刚刚合适的y尺寸的param上
+    #gate和up拼接起来的大矩阵进行分片
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shared_id: int):   #这里的loaded_shared_id将gate和up分开处理 所以不会导致gate up混合切片
         param_data = param.data
         # 在每个节点上，gate和up权重是交替的，即每个节点都有部分 gate 权重和 up 权重
         # loaded_shared_id = 0/1, 0表示取出 gate 的部分权重，1表示取出 up 的部分权重
         # para_data是单卡的权重数据，不是所有的
-        shard_offset = sum(self.output_sizes[:loaded_shared_id]) // self.tp_size
-        shard_size = self.output_sizes[loaded_shared_id] // self.tp_size
-        param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
-        loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
+        shard_offset = sum(self.output_sizes[:loaded_shared_id]) // self.tp_size    #gate_size // tp_size  分片中的起始位   对于当前模型 只有gate up两维度 可以不加sum
+        shard_size = self.output_sizes[loaded_shared_id] // self.tp_size            #步长
+        param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)       #按照tp_dim进行分片
+        loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]        #narrow() 是 “在单个张量中截取连续片段”，而 chunk() 是 “将张量平均拆分成多个子张量”
         param_data.copy_(loaded_weight)
+        #param表示空容器 loaded_weight表示实际权重
 
-
-class QKVParallelLinear(ColumnParallelLinear):
+class QKVParallelLinear(ColumnParallelLinear):                      #暂时跳过
     def __init__(
         self, 
         hidden_size: int, 
@@ -143,7 +144,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
 
-
+#行切分最后需要all_reduce  tp_dim = 1
 class RowParallelLinear(LinearBase):
 
     def __init__(self, 
@@ -153,7 +154,6 @@ class RowParallelLinear(LinearBase):
     ):
         super().__init__(input_size, output_size, 1)
         self.input_size_per_partition = divide(input_size, self.tp_size)
-        self.output_size_per_partition = output_size
 
         self.weight = nn.Parameter(torch.empty(output_size, self.input_size_per_partition))
         self.weight.weight_loader = self.weight_loader
