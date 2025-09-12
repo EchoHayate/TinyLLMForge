@@ -34,7 +34,7 @@ class ModelRunner:
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
         self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
-        load_model(self.model, config.model)            #暂时跳过
+        load_model(self.model, config.model)            #涉及到一些qwen里面的
         self.sampler =  Sampler()
         
         self.warmup_model()                             #暂时跳过
@@ -109,10 +109,10 @@ class ModelRunner:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()                    # 从新统计GPU内存使用的峰值信息
         max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len       #[16384, 4096]
-        # num_seqs即batch_size
-        num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)
+        # num_seqs即batch_size   
+        num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)   #min(4,512) 假设每个seq都占满的情况下 batch最大只能有4个seq  这里属于边界条件
         seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
-        self.run(seqs, True)
+        self.run(seqs, True) 
         torch.cuda.empty_cache() 
 
     def allocate_kv_cache(self):

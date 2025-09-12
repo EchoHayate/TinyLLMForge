@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-
+# 根据输入的预测分数（logits）和温度参数（temperatures），动态选择采样策略生成输出 token
 class Sampler(nn.Module):
     def __init__(self):
         super().__init__()
