@@ -9,7 +9,7 @@ class SequenceStatus(Enum):
     FINISHED = auto()           # 3
 
 class Sequence:
-    block_size = 256
+    block_size = 256            #通过block管理token  不同 Seq 的 KV 缓存数据是严格隔离的
     counter = count()           # 每次返回值后，+1,  [0, 1, 2, 3, ...]
 
     def __init__(self, token_ids: list[int], sampling_params = SamplingParams()):

@@ -39,7 +39,7 @@ class ModelRunner:
         
         self.warmup_model()                             #暂时跳过
 
-        self.allocate_kv_cache()                        #暂时跳过
+        self.allocate_kv_cache()                        #预分配空间（没有具体值）
         if not self.enforce_eager:
             self.capture_cudagraph()                    #暂时跳过
         torch.set_default_device("cpu")
@@ -106,12 +106,12 @@ class ModelRunner:
         return method(*args)            #执行函数并返回结果
 
     def warmup_model(self): 
-        torch.cuda.empty_cache()
+        torch.cuda.empty_cache()                                #[thinking]可以看一下源码的执行策略 可能会有优化的点  
         torch.cuda.reset_peak_memory_stats()                    # 从新统计GPU内存使用的峰值信息
         max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len       #[16384, 4096]
         # num_seqs即batch_size   
         num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)   #min(4,512) 假设每个seq都占满的情况下 batch最大只能有4个seq  这里属于边界条件
-        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
+        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)] #这里warmup是按照极限的边界情况执行的
         self.run(seqs, True) 
         torch.cuda.empty_cache() 
 
@@ -124,7 +124,9 @@ class ModelRunner:
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * \
-            hf_config.head_dim * hf_config.torch_dtype.itemsize
+            hf_config.head_dim * hf_config.torch_dtype.itemsize             
+        # 2: key 和 value各占一块   num_hidden_layers:attention总层数     block_size：单个缓存块能存储的 token 数量
+        # num_kv_heads：键值注意力头的数量  head_dim：每个注意力头的维度    torch_dtype.itemsize：单个数据元素的字节数
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // block_bytes
         assert config.num_kvcache_blocks > 0
         self.kv_cache = torch.zeros(2, hf_config.num_hidden_layers, 
@@ -135,6 +137,20 @@ class ModelRunner:
                 module.k_cache = self.kv_cache[0, layer_id]
                 module.v_cache = self.kv_cache[1, layer_id]
                 layer_id += 1
+        # 假设 block_size=256（每个块存 256 个 token），其他参数不变：
+
+        # 32 层（num_hidden_layers=32）；
+        # 8 个 KV 头（num_kv_heads=8）；
+        # 每个头 64 维（head_dim=64）；
+        # Key+Value 共 2 组（2）。
+
+        # 对于 1 个 token，它的 KV 数据总元素数是：
+        # 2（K+V） × 32（层） × 8（头） × 64（维度） = 32768 个元素。
+
+        # 而 1 个缓存块能存 256 个 token，因此这个块的总元素数是：
+        # 256（token数） × 32768（每个token的元素数） = 8388608 个元素
+
+    
 
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
@@ -153,7 +169,7 @@ class ModelRunner:
         block_tables = None     # 有前缀和的时候，才会初始化该块表
         for seq in seqs:
             seq_len = len(seq)
-            input_ids.extend(seq[seq.num_cached_tokens:])
+            input_ids.extend(seq[seq.num_cached_tokens:])       #从已有的cache开始计数
             positions.extend(list(range(seq.num_cached_tokens, seq_len)))
             seqlen_q = seq_len - seq.num_cached_tokens
             seqlen_k = seq_len
