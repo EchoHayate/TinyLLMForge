@@ -83,7 +83,7 @@ class ColumnParallelLinear(LinearBase):
         return F.linear(x, self.weight, self.bias)
     
 
-class MergedColumnParallelLinear(ColumnParallelLinear):
+class MergedColumnParallelLinear(ColumnParallelLinear):         #针对FFN的gate up做切分
     def __init__(
             self, 
             input_size: int, 
@@ -105,7 +105,12 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         param_data.copy_(loaded_weight)
         #param表示空容器 loaded_weight表示实际权重
 
-class QKVParallelLinear(ColumnParallelLinear):                      #暂时跳过
+
+
+# q = W_q @ hidden_states，k = W_k @ hidden_states，v = W_v @ hidden_states
+# W_q、W_k、W_v 这 3 个权重矩阵横向拼接成一个更大的矩阵 W_qkv，合并的目的是减少矩阵乘法的调用次数（GPU 对单次大矩阵乘法的优化更好）
+# [hidden_size, (num_q_heads + num_k_heads + num_v_heads) * head_dim]，然后用一次矩阵乘法就能同时算出 q、k、v 的拼接结果
+class QKVParallelLinear(ColumnParallelLinear):                      #针对attention的QKV做切分
     def __init__(
         self, 
         hidden_size: int, 
@@ -114,12 +119,12 @@ class QKVParallelLinear(ColumnParallelLinear):                      #暂时跳�
         total_num_kv_heads: int | None, 
         bias: bool = False, 
     ):
-        self.head_size = head_size
-        self.total_num_heads = total_num_heads
-        self.total_num_kv_heads = total_num_kv_heads or total_num_heads
+        self.head_size = head_size      #for qwen3 0.6b  128
+        self.total_num_heads = total_num_heads      #for qwen3 0.6b  16
+        self.total_num_kv_heads = total_num_kv_heads or total_num_heads     #for qwen3 0.6b  8 or 16
         tp_size = dist.get_world_size()
-        self.num_heads = divide(self.total_num_heads, tp_size)
-        self.num_kv_heads = divide(self.total_num_kv_heads, tp_size)
+        self.num_heads = divide(self.total_num_heads, tp_size)      #for qwen3  16/tp_size
+        self.num_kv_heads = divide(self.total_num_kv_heads, tp_size)    #for qwen3  8/tp_size
 
         input_size = hidden_size
         # q + k + v = q + 2 * k/v
@@ -173,7 +178,7 @@ class RowParallelLinear(LinearBase):
         
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)
+        y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)      #简单的矩阵乘
         if self.tp_size > 1:
             dist.all_reduce(y)
         return y

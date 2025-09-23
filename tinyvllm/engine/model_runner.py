@@ -170,7 +170,7 @@ class ModelRunner:
         for seq in seqs:
             seq_len = len(seq)
             input_ids.extend(seq[seq.num_cached_tokens:])       #从已有的cache开始计数
-            positions.extend(list(range(seq.num_cached_tokens, seq_len)))
+            positions.extend(list(range(seq.num_cached_tokens, seq_len)))   #
             seqlen_q = seq_len - seq.num_cached_tokens
             seqlen_k = seq_len
             cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)

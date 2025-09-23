@@ -75,20 +75,24 @@ class QWen3Attention(nn.Module):
                 positions: torch.Tensor,                       # [batch_size * seq_len]
                 hidden_states: torch.Tensor                    # [batch_size * seq_len, num_kv_heads * head_dim] = [16384, 8 * 128]
         ) -> torch.Tensor:
-        qkv = self.qkv_proj(hidden_states)                     # [16384, (2 *8 + 16) * 128] = [16384, 4096]
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim = -1)    # q = [16384, 16 * 1024]
-        q_by_head = q.view(-1, self.num_heads, self.head_dim)
+        qkv = self.qkv_proj(hidden_states)                     #[batch_size×seq_len, q_size + 2×kv_size]   [16384, (2 *8 + 16) * 128] = [16384, 4096]
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim = -1)    # q = [16384, 16 * 128]
+        q_by_head = q.view(-1, self.num_heads, self.head_dim)           # q_by_head = [16384, 16, 128]
         k_by_head = k.view(-1, self.num_kv_heads, self.head_dim)
         q_by_head = self.q_norm(q_by_head)
         k_by_head = self.k_norm(k_by_head)
-
-        q = q_by_head.view(q.shape)
+# 注意力权重 = softmax( (Q @ K^T) * 缩放因子 )
+# 注意力输出 = 注意力权重 @ V
+# V 的数值范围对最终结果的影响远小于 Q/K
+# 即使 V 的数值有波动，注意力权重本身已经是 “归一化的概率分布”（sum=1），加权求和后会自然 “平滑” V 的数值差异；
+# 退一步说，即使 V 有较大数值，后续通常还有线性层（如代码中的 o_proj）和后续的归一化层（如 Transformer 块的输出归一化），可以进一步调整输出分布，无需在 V 本身额外加归一化。
+        q = q_by_head.view(q.shape)         #q变回原来的 q = [16384, 16 * 128]
         k = k_by_head.view(k.shape)
 
         q, k = self.rotary_emb(positions, q, k)
 
         o = self.attn(q, k, v)
-        output = self.o_proj(o)
+        output = self.o_proj(o) #1.前面拆分过num_heads 所以需要合并   2.o只是多个注意力头的简单拼接  linear融合 all_reduce聚合 “多头简单拼接的原始特征” 转换为 “整合了所有头信息的优化特征”
         return output
     
 

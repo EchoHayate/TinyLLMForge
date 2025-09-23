@@ -1,7 +1,9 @@
 import torch
 from torch import nn
-
-# RMSNorm: x / (sum(x_i^2) + epsilon) * gamma
+# x_normalized = (x / sqrt(mean(x²) + ε)) * γ   (✔)
+# RMSNorm: x / (sum(x_i^2) + epsilon) * gamma  (❌)
+# epsilon：一个极小值（如 1e-6），防止分母为 0；
+# γ（weight）：可学习的缩放参数（初始为 1），用于恢复特征的表达能力（避免归一化后特征被 “抹平”）
 class RMSNorm(nn.Module):
     
     def __init__(
@@ -14,19 +16,19 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(hidden_size))
     
-    @torch.compile                          #暂时跳过
-    def rms_forward(
+    @torch.compile                          #RMS无残差
+    def rms_forward(            
         self, 
         x: torch.Tensor                     # [batch_size, seq_len, hidden_size]
         ) -> torch.Tensor:
         origin_dtype = x.dtype
-        x = x.to(torch.float32)
+        x = x.to(torch.float32)     # 转为 float32 计算（避免低精度下的数值不稳定）
         var = x.pow(2).mean(dim = -1, keepdim = True)
         x.mul_(torch.rsqrt(var + self.eps))
         x = x.to(origin_dtype).mul_(self.weight)
         return x
 
-    @torch.compile                          #展示跳过
+    @torch.compile                          #RMS有残差
     def add_rms_forward(
         self,
         x: torch.Tensor,
