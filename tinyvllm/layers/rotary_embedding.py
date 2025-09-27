@@ -2,7 +2,7 @@ from functools import lru_cache
 import torch
 from torch import nn
 
-def apply_rotary_emb(
+def apply_rotary_emb(               #公式可参考根据ROFORMER: ENHANCED TRANSFORMER WITH ROTARY POSITION EMBEDDING p7 eq34之间的公式
     x: torch.Tensor,       # [batch_size * seq_len, num_head, head_size], num_tokens = batch_size * seq_len
     cos: torch.Tensor,     # [batch_size * seq_len, 1, head_size/2]
     sin: torch.Tensor,     # [batch_size * seq_len, 1, head_size/2]
@@ -25,29 +25,29 @@ class RotaryEmbedding(nn.Module):
         base: float                     # rope_theta = 10000
     ):
         super().__init__()
-        self.head_size = head_size
+        self.head_size = head_size      #for qwen  head_size =[128]
         assert rotary_dim == head_size
-        inv_freq = 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
-        t = torch.arange(max_position_embedding, dtype = torch.float32)
-        # 计算外积，变成矩阵
-        freqs = torch.einsum("i,j -> ij", t, inv_freq)
+        inv_freq = 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))       #[64]   根据ROFORMER: ENHANCED TRANSFORMER WITH ROTARY POSITION EMBEDDING p5 eq15-eq16之间的公式
+        t = torch.arange(max_position_embedding, dtype = torch.float32)             #[40960]
+        freqs = torch.einsum("i,j -> ij", t, inv_freq)      # 计算外积，变成矩阵  freqs =  [40960,64]
         cos = freqs.cos()
         sin = freqs.sin()
-        cache = torch.cat((cos, sin), dim = -1)
-        # persistent决定该buffer会不会被保存到模型中
+        cache = torch.cat((cos, sin), dim = -1)     #cache = [40960,128]
+        # persistent决定该buffer会不会被保存到模型stat_dict中
+        # 这里不保存到stat_dict是为了用一点计算时间换取显存空间
         self.register_buffer("cos_sin_cache", cache, persistent= False)
 
     @torch.compile
     def forward(self,
-        positions: torch.Tensor,    # [batch_size * seq_len]
+        positions: torch.Tensor,    # [batch_size * seq_len]    positions表示当前输入序列的具体位置
         query: torch.Tensor,        # [batch_size * seq_len, num_heads * head_size] = [16384, 16 * 128]
         key: torch.Tensor,          # [batch_size * seq_len, num_kv_heads * head_size] = [16384, 16 * 128]
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        num_tokens = positions.size(0)
-        cos_sin = self.cos_sin_cache[positions]
+        num_tokens = positions.size(0)  #总tokens   
+        cos_sin = self.cos_sin_cache[positions] #按位置索引获取缓存的旋转参数   
         cos, sin = cos_sin.chunk(2, -1)
         query_shape = query.shape
-        query = query.view(num_tokens, -1, self.head_size)                 
+        query = query.view(num_tokens, -1, self.head_size)         #[batch_size*seq_len,num_heads*head_size] => [batch_size*seq_len,num_heads, head_size]     
         query = apply_rotary_emb(query, cos, sin).view(query_shape)
 
         key_shape = key.shape
