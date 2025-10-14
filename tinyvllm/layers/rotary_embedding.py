@@ -2,18 +2,19 @@ from functools import lru_cache
 import torch
 from torch import nn
 
-def apply_rotary_emb(               #公式可参考根据ROFORMER: ENHANCED TRANSFORMER WITH ROTARY POSITION EMBEDDING p7 eq34之间的公式
+def apply_rotary_emb(              
     x: torch.Tensor,       # [batch_size * seq_len, num_head, head_size], num_tokens = batch_size * seq_len
     cos: torch.Tensor,     # [batch_size * seq_len, 1, head_size/2]
     sin: torch.Tensor,     # [batch_size * seq_len, 1, head_size/2]
 ) -> torch.Tensor:         # [batch_size * seq_len, num_head, head_size]
-    cos = cos.unsqueeze(-2)
+    cos = cos.unsqueeze(-2) #[40960, 1, 64]
     sin = sin.unsqueeze(-2)
-    x1, x2 = torch.chunk(x.to(torch.float32), 2, dim=-1)
-    y1 = cos * x1 - sin * x2
+    x1, x2 = torch.chunk(x.to(torch.float32), 2, dim=-1)    #x1=x2=[40960, 16, 64]      若原始维度是[x0, x1, x2, x3]； 拆分后x1 = [x0, x2]（每对的 “第一个元素”），x2 = [x1, x3]（每对的 “第二个元素”）。
+    y1 = cos * x1 - sin * x2             #公式可参考 根据ROFORMER: ENHANCED TRANSFORMER WITH ROTARY POSITION EMBEDDING p7 eq34之间的公式
     y2 = cos * x2 + sin * x1
     return torch.cat((y1, y2), dim = -1).to(x.dtype)
-
+# 公式中旋转后 Q 的维度顺序是 [q0, q1, q2, q3]（每组的两个元素相邻）；
+# 代码中旋转后 Q 的维度顺序是 [q0, q2, q1, q3] （先所有组的 y1，再所有组的 y2）。  后面还要经过点积处理 所以顺序不满足公式没关系
 
 class RotaryEmbedding(nn.Module):
     
@@ -40,8 +41,8 @@ class RotaryEmbedding(nn.Module):
     @torch.compile
     def forward(self,
         positions: torch.Tensor,    # [batch_size * seq_len]    positions表示当前输入序列的具体位置
-        query: torch.Tensor,        # [batch_size * seq_len, num_heads * head_size] = [16384, 16 * 128]
-        key: torch.Tensor,          # [batch_size * seq_len, num_kv_heads * head_size] = [16384, 16 * 128]
+        query: torch.Tensor,        # [batch_size * seq_len, num_heads * head_size] = [40960, 16 * 128]
+        key: torch.Tensor,          # [batch_size * seq_len, num_kv_heads * head_size] = [40960, 16 * 128]
     ) -> tuple[torch.Tensor, torch.Tensor]:
         num_tokens = positions.size(0)  #总tokens   
         cos_sin = self.cos_sin_cache[positions] #按位置索引获取缓存的旋转参数   
@@ -56,7 +57,7 @@ class RotaryEmbedding(nn.Module):
         return query, key
 
 
-@lru_cache(1)
+@lru_cache(1) #缓存cos_sin_cache
 def get_rope(
     head_size: int,
     rotary_dim: int, 

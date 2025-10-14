@@ -31,22 +31,41 @@ def store_kvcache_kernel(
 
 
 def store_kvcache(
-    key: torch.Tensor,                       # [batch_size * seq_len, num_heads, head_dim]
-    value: torch.Tensor,                     # [batch_size * seq_len, num_heads, head_dim]
-    k_cache: torch.Tensor,                   # [num_kvcache_blocks, block_size, num_kv_heads, head_dim]
-    v_cache: torch.Tensor,
+    key: torch.Tensor,                       # 当前步计算的key张量  [batch_size * seq_len, num_heads, head_dim]
+    value: torch.Tensor,                     # 当前步计算的value张量 [batch_size * seq_len, num_heads, head_dim]
+    k_cache: torch.Tensor,                   # key缓存 [num_kvcache_blocks, block_size, num_kv_heads, head_dim]
+    v_cache: torch.Tensor,                   # value缓存  [num_kvcache_blocks, block_size, num_kv_heads, head_dim]
     slot_mapping: torch.Tensor,              # [N], num_kvcache_blocks, slot_mapping[i] 里面存的是 block_id * block_size, 即，token_id 在kv_cache中的位置 
 ):
     # N = batch_size * seq_len
     N, num_heads, head_dim = key.shape
     D = num_heads * head_dim
-    # 确保连续
-    assert key.stride(-1) == 1 and value.stride(-1) == 1
+    assert key.stride(-1) == 1 and value.stride(-1) == 1  #    确保连续
     # 确保逻辑视图和物理内存视图一致 key = [N, num_heads, head_dim]
     assert key.stride(1) == head_dim and value.stride(1) == head_dim
     assert k_cache.stride(1) == D and v_cache.stride(1) == D
     assert slot_mapping.numel() == N
     store_kvcache_kernel[(N, )](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
+
+
+#简化版本
+def store_kvcache_simplified(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    k_cache:torch.Tensor,
+    v_cache:torch.Tensor,
+    slot_mapping: torch.Tensor
+):
+    N,num_heads,head_dim= key.shape
+
+    flat_key = key.view(N,-1)
+    flat_value = value.view(N,-1)
+
+    for i in range(N):
+        slot = slot_mapping[i].item()
+        k_cache[slot] = flat_key[i]
+        v_cache[slot] = flat_value[i]
+
 
 
 class Attention(nn.Module):

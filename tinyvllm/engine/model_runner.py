@@ -151,14 +151,17 @@ class ModelRunner:
         # 256（token数） × 32768（每个token的元素数） = 8388608 个元素
 
     
-
+    # 每个序列（seq）的block_table是一个列表，记录该序列在 KV Cache 中使用的块编号。
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
-        block_tables = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
+        block_tables = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]  #用-1补齐
         block_tables = torch.tensor(block_tables, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         return block_tables
 
-    def prepare_prefill(self, seqs: list[Sequence]):        #暂时跳过
+
+
+# 收集新token输入（input_ids/positions） → 划分多序列边界（cu_seqlens） → 适配内存需求（max_seqlen） → 管理缓存块（block_tables） → 映射块内槽位（slot_mapping） → 将所有数据送GPU并设置上下文
+    def prepare_prefill(self, seqs: list[Sequence]):        #输入数据收集、序列边界划分、缓存映射、内存适配
         input_ids = []          # 记录每个 seq 的 所有输入token id，一维[] 
         positions = []          # 记录每个 seq中 输入的 token的位置，一维[]
         cu_seqlens_q = [0]       # 以前缀和的形式，记录每个seq的长度，如 [0, 3, 5] 表示有两个seq, 一个长度为 3 = 3 - 0， 另一个长度为 2 = 5-3
@@ -170,9 +173,10 @@ class ModelRunner:
         for seq in seqs:
             seq_len = len(seq)
             input_ids.extend(seq[seq.num_cached_tokens:])       #从已有的cache开始计数
-            positions.extend(list(range(seq.num_cached_tokens, seq_len)))   #
+            positions.extend(list(range(seq.num_cached_tokens, seq_len)))   
             seqlen_q = seq_len - seq.num_cached_tokens
             seqlen_k = seq_len
+            #前缀和 累计长度，用于区分不同的序列
             cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)
             cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
             max_seqlen_q = max(max_seqlen_q, seqlen_q)
@@ -214,7 +218,7 @@ class ModelRunner:
             # 下一个token的位置
             positions.append(len(seq))
             context_lens.append(len(seq))
-            slot_mapping.append(seq.block_table[-1] * seq.block_size + seq.last_block_num_tokens - 1)
+            slot_mapping.append(seq.block_table[-1] * seq.block_size + seq.last_block_num_tokens - 1)   #
         input_ids = torch.tensor(data=input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(data=positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(data=slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
