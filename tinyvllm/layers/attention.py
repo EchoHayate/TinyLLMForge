@@ -15,19 +15,19 @@ def store_kvcache_kernel(
     k_cache_ptr: torch.Tensor, 
     v_cache_ptr: torch.Tensor,
     slot_mapping_ptr: torch.Tensor,         # 1一个token对应的 一行 kv cache, 因此需要一个slot去定位当前 token 的kv cache位置
-    D: tl.constexpr
+    D: tl.constexpr                         # 单个 token 的 Key/Value 数据长度
 ):
     pid = tl.program_id(axis = 0)
     key_offsets = pid * key_stride + tl.arange(0, D)
     value_offsets = pid * value_stride + tl.arange(0, D)
 
-    key = tl.load(key_ptr + key_offsets)
+    key = tl.load(key_ptr + key_offsets)    #tl.load(内存地址)：从 GPU 内存读取数据到 GPU 寄存器（“加载”）
     value = tl.load(value_ptr + value_offsets)
 
-    slot = tl.load(slot_mapping_ptr + pid)
+    slot = tl.load(slot_mapping_ptr + pid)  #当前 token 在 KV Cache 中的 “起始位置索引”
     offsets = slot * D + tl.arange(0, D)
-    tl.store(k_cache_ptr + offsets, key)
-    tl.store(v_cache_ptr + offsets, value)
+    tl.store(k_cache_ptr + offsets, key)    #key 和 value 是要存入这个 slot 的 “具体内容”
+    tl.store(v_cache_ptr + offsets, value)  #tl.store(内存地址, 数据)：从 GPU 寄存器写入数据到 GPU 内存（“存储”）。
 
 
 def store_kvcache(
