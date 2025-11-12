@@ -1,6 +1,7 @@
 # TinyLLMForge
 build a tiny LLM engine from scratch
 
+- [] apply APC(automatic prefix caching)
 
 ## 参考资料
 ```
