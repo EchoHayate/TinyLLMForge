@@ -1,4 +1,4 @@
-from collections import deque
+from collections import deque, OrderedDict
 import xxhash
 #[thinking] 这里是把token_ids转换成hash值 然后去做处理 这样做：用哈希处理 token_ids 能减轻 KV 缓存负担  有没有别的方式呢
 import numpy as np
@@ -27,11 +27,15 @@ class BlockManager:
         assert num_blocks > 0
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]   
-        self.hash_to_block_id: dict[int, int] = dict()              #键代表某个block的token序列的哈希值 值代表这个哈希值对应的kv缓存块的id（block_id） 用于快速查找和复用内容相同的 KV 缓存块
-        self.free_block_ids: deque[int] = deque(range(num_blocks))  #双向队列分配和回收元素
-        self.used_block_ids: set[int] = set()                       #跟踪所有正在被使用的block_id 查找的时间复杂度O（1） 如果使用deque 查找的时间复杂度为O（n） 
+        self.hash_to_block_id: dict[int, int] = dict()              
+        
+        # 使用 OrderedDict 管理空闲块，实现 LRU 淘汰策略
+        # Key: block_id, Value: None (只利用 Order 属性)
+        # 头部 (Front): 最旧的空闲块 (Least Recently Freed / Eviction Victim)
+        # 尾部 (Back): 最近释放的块 (Most Recently Freed)
+        self.free_block_ids: OrderedDict[int, None] = OrderedDict.fromkeys(range(num_blocks)) 
 
-#block只有占满的时候 才会计算hash
+    #block只有占满的时候 才会计算hash
     # 以整数形式，返回计算出的哈希值
     @classmethod                           # 对标c++中的static, 第一个参数为类本身，cls, class self
     def compute_hash(cls, token_ids: list[int], prefix: int = -1):   #prefix表示是否依赖于上一个block的hash 若为-1 表示当前是第一个block 不需要
@@ -41,68 +45,96 @@ class BlockManager:
         h.update(np.array(token_ids).tobytes())
         return h.intdigest()
 
-    # 分配对应id的block, 重置状态，并且更新 free_block_ids 队列 和 used_block_ids 集合
+    # 分配对应id的block, 重置状态
     def _allocate_block(self, block_id: int) -> Block:
         block = self.blocks[block_id]
+        
+        # [Fix] Clean up stale hash mapping if this block was previously cached
+        if block.hash != -1:
+            # Check if this block is actually the one mapped in hash_to_block_id
+            # (In rare cases with hash collisions or logic errors, it might differ, but safe to check)
+            if self.hash_to_block_id.get(block.hash) == block_id:
+                del self.hash_to_block_id[block.hash]
+
         assert block.ref_count == 0
         block.reset()
-        self.free_block_ids.remove(block_id)
-        self.used_block_ids.add(block_id)
+        
+        # Remove from free_blocks if present. 
+        # Since this can be called on cache hit (block in free_blocks) or cache miss (popped from free_blocks),
+        # we try to remove it cautiously or rely on caller logic.
+        # Actually, in this refactor, let's assume caller handles removal from free_blocks logic OR we handle it here.
+        # To be safe and idempotent:
+        if block_id in self.free_block_ids:
+             del self.free_block_ids[block_id]
+             
         return self.blocks[block_id]
 
-    # [warning!] 隐含错误 定义了返回类型 但是没有return 实际返回 None
-    #将块从 “使用中” 状态转为 “空闲” 状态（例如从 used_block_ids 移到 free_block_ids），但不会清除该块的哈希映射（hash_to_block_id 中 h→block_id 的关联）和块本身存储的 token_ids。
-    def _deallocate_block(self, block_id: int) -> Block:
+    # 将块从 “使用中” 状态转为 “空闲” 状态
+    def _deallocate_block(self, block_id: int):
         assert self.blocks[block_id].ref_count == 0
-        self.used_block_ids.remove(block_id)
-        self.free_block_ids.append(block_id)
+        # Add to end of OrderedDict (Most Recently Freed)
+        self.free_block_ids[block_id] = None
 
     # can_allocate 和 allocate 函数都是在prefill阶段调用
     # allocate, deallocate函数，都是针对一条 sequence 语句来说的
     def can_allocate(self, seq: Sequence) -> bool:
+        # We can allocate if we have enough free blocks
+        # Note: Cached blocks are technically "free" in free_block_ids until allocated.
         return len(self.free_block_ids) >= seq.num_blocks
 
     # allocate  blocks for the sequences, update the block table and hash table
     def allocate(self, seq: Sequence):    
         assert not seq.block_table
         h = -1
-        cache_miss = False
         for i in range(seq.num_blocks):
             token_ids = seq.block(i)     #token_ids：块中包含的 token 编号列表  核心作用是用于计算当前块的哈希值
             # 未填满的块（非完整块）的哈希值为 -1，不纳入缓存（因为复用价值低）
             h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1   #计算hash的前提是当前block_size能被占满 如果占不满说明当前sequence结束
             block_id = self.hash_to_block_id.get(h, -1)
-            # 没有缓存或者缓存未命中
-            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:    #self.blocks[block_id].token_ids != token_ids 确保内容没有变动过
-                cache_miss = True
             
-            # 没有缓存或者缓存为命中，那么就从空闲块表的头部，取出一块进行分配
-            if cache_miss:
-                block_id = self.free_block_ids[0]
-                block = self._allocate_block(block_id)
-            # 缓存命中
-            else:
-                seq.num_cached_tokens += self.block_size
-                if block_id in self.used_block_ids:   #可复用的块
-                    block = self.blocks[block_id]
-                    block.ref_count += 1
-                # 由于deallocate 并没有清除字典的hash， 也没有清除 block.token_id 列表。
-                # 因此通过字典映射的 block_id， 可能已经被_deallocate了，但是由于 token_id还在，因此也可以用于缓存
-                # 所以需要 _allocate_block回来
-                else:    #曾经用过但已释放的块  保留哈希映射和块内容，让这些块能被再次快速复用
-                    block = self._allocate_block(block_id)
+            # Cache Hit Condition:
+            # 1. Block ID exists in hash map
+            # 2. Block content matches (collision check)
+            # 3. Block is EITHER in free_blocks (resurrecting cached block) OR already referenced (shared prefix)
+            
+            cache_hit = False
+            if block_id != -1:
+                block = self.blocks[block_id]
+                if block.token_ids == token_ids:
+                    cache_hit = True
 
-            if h != -1:      #相同的 token_ids 序列（通过哈希 h 标识）始终对应到同一个 block_id
-                block.update(h, token_ids)   #对这一步的操作不是很明白 为什么要更新
-                self.hash_to_block_id[h] = block_id
-            seq.block_table.append(block_id)
+            if cache_hit:
+                seq.num_cached_tokens += self.block_size
+                block = self.blocks[block_id]
+                block.ref_count += 1
+                
+                # If block was in free list (cached but currently unused), remove it (resurrect)
+                if block_id in self.free_block_ids:
+                     del self.free_block_ids[block_id]
+                     
+            else: # Cache Miss
+                # Allocation:
+                # 1. If we have free blocks, take one.
+                # 2. Strategy: Take from FRONT of OrderedDict (Oldest / Least Recently Used)
+                if not self.free_block_ids:
+                    raise MemoryError("No free blocks available!") # Should be checked by scheduler
+                    
+                block_id, _ = self.free_block_ids.popitem(last=False) # pop from front
+                block = self._allocate_block(block_id)
             
+            # Update Hash Mapping if valid
+            if h != -1:
+                block.update(h, token_ids)
+                self.hash_to_block_id[h] = block.block_id  #使用实体去更新hash_to_block_id
+                
+            seq.block_table.append(block.block_id)
+
     def deallocate(self, seq: Sequence):
-        for block_id in reversed(seq.block_table):   #先释放末尾的 “独有块”（引用计数容易降为 0） 再处理可能被共享的 “前缀块”
+        for block_id in reversed(seq.block_table):
             block = self.blocks[block_id]
             block.ref_count -= 1
             if block.ref_count == 0:
-                self._deallocate_block(block_id)    #这里对应上面的block = self._allocate_block(block_id) 虽然这里清理了blocks里面的blockid 但是hash和 block.token_ids 还在
+                self._deallocate_block(block_id)
         seq.num_cached_tokens = 0
         seq.block_table.clear()
     
@@ -122,7 +154,7 @@ class BlockManager:
         # 所以需要在 == 1时更新外部的标记block
         if len(seq) % self.block_size == 1:   #如果当前序列长度是block_size的整数倍+1 说明需要一个新块
             assert last_block.hash != -1
-            block_id = self.free_block_ids[0]
+            block_id, _ = self.free_block_ids.popitem(last=False)
             self._allocate_block(block_id)
             block_table.append(block_id)
         

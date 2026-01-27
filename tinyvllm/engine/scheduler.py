@@ -13,6 +13,7 @@ class Scheduler:
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()     #未分配 KV 缓存块
         self.running: deque[Sequence] = deque()     #已分配 KV 缓存块  参与decode阶段生成
+    
     def is_finished(self):
         return not self.waiting and not self.running
 

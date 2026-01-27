@@ -1,0 +1,6 @@
+# 忽略所有 pycache 目录
+__pycache__/
+
+# 忽略所有 python 编译文件
+*.py[cod]
+*$py.class

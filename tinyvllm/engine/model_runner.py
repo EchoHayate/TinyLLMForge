@@ -37,11 +37,11 @@ class ModelRunner:
         load_model(self.model, config.model)            #涉及到一些qwen里面的
         self.sampler =  Sampler()
         
-        self.warmup_model()                             #暂时跳过
+        self.warmup_model()                             
 
         self.allocate_kv_cache()                        #预分配空间（没有具体值）
         if not self.enforce_eager:
-            self.capture_cudagraph()                    #暂时跳过
+            self.capture_cudagraph()                    
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
 
@@ -257,7 +257,7 @@ class ModelRunner:
             graph_vars["slot_mapping"][:bs] = context.slot_mapping
             graph_vars["context_lens"][:bs] = context.context_lens
             graph_vars["block_tables"][:bs, :context.block_tables.size(1)] = context.block_tables
-            graph.replay()
+            graph.replay()  #执行之前捕获的 cuda graph
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
 
@@ -275,26 +275,32 @@ class ModelRunner:
         hf_config = config.hf_config
         max_bs = min(self.config.max_num_seqs, 512)        # 这里的 max_batch_size默认了seq_len = 1, 因此 batch_size * seq_len = max_bs
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
+        # 开辟好cuda graph需要的最大空间
         input_ids = torch.zeros(max_bs, dtype=torch.int64)
         positions = torch.zeros(max_bs, dtype=torch.int64)
         slot_mapping = torch.zeros(max_bs, dtype=torch.int32)
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
-        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))      # 捕捉各种batch_size的cuda graph
+        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))      # 捕捉各种batch_size的cuda graph   这么涉及是为了填满warp 实现占用率100%
+        #self.graph_bs= [1, 2,4,8,16,32,48, 64,80,96,112,128,144,160,176,192,208,224,240,256,272,288,304,320,336,352,368,352,368,384,400,416,432,448,464,480,496,512]
         self.graphs = {}
         self.graph_pool = None
 
         # decode 阶段
-        for bs in reversed(self.graph_bs):
+        for bs in reversed(self.graph_bs):  #倒叙 是因为batch_size越大 需要的内存空间越大 所以先捕捉大的batch_size 再捕捉小的batch_size 避免内存碎片  也是为了后面的graph pool能够复用 先用大的 小的肯定够用
             graph = torch.cuda.CUDAGraph()
-            set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs, :])
+            set_context(
+                False, 
+                slot_mapping=slot_mapping[:bs], 
+                context_lens=context_lens[:bs], 
+                block_tables=block_tables[:bs, :])
             outputs[:bs] = self.model(input_ids[:bs], positions[:bs])       # warm up
             with torch.cuda.graph(graph, self.graph_pool):                  # 开始 capture
                 outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
             if self.graph_pool is None:
                 self.graph_pool = graph.pool()
-            self.graphs[bs] = graph
+            self.graphs[bs] = graph #根据batch_size 将graph 存入字典    
             torch.cuda.synchronize()
             reset_context()
 
