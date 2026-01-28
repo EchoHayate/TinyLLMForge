@@ -12,3 +12,13 @@ class SiluAndMul(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, y = x.chunk(2, -1)
         return F.silu(x) * y         
+
+class QuickGELU(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * torch.sigmoid(1.702 * x)
+
+ACT2FN = {
+    "gelu": F.gelu,
+    "gelu_quick": QuickGELU(),
+    "silu": F.silu,
+}
