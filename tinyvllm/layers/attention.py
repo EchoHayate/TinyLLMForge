@@ -3,7 +3,8 @@ from torch import nn
 import triton
 import triton.language as tl
 
-from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+from tinyvllm.kernels import flash_attn2_fwd, flash_decoding_fwd, reduction
+
 from tinyvllm.utils.context import get_context
 
 @triton.jit
@@ -98,14 +99,17 @@ class Attention(nn.Module):
             # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
             if context.block_tables is not None:
                 k, v = k_cache, v_cache
-            o = flash_attn_varlen_func(q, k, v, 
+            o = flash_attn2_fwd(q, k, v, 
                                        cu_seqlens_q = context.cu_seqlens_q, cu_seqlens_k = context.cu_seqlens_k, 
                                        max_seqlen_q = context.max_seqlen_q, max_seqlen_k = context.max_seqlen_k, 
-                                        softmax_scale = self.scale, causal = True, block_table = context.block_tables
+                                        softmax_scale = self.scale, causal = True
                                        )
         else:
             # decode阶段传入的 q = [batch_size, num_heads, head_dim]
-            o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = context.context_lens,
-                                        block_table = context.block_tables, softmax_scale = self.scale, causal = True)
+            # o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = context.context_lens,
+            #                             block_table = context.block_tables, softmax_scale = self.scale, causal = True)
+            mid_o, mid_l = flash_decoding_fwd(q, k_cache, v_cache, context.block_tables, context.context_lens, 
+                                        context.max_seqlen_k, softmax_scale=self.scale)
+            o = reduction(mid_o, mid_l)
         o = o.view(-1, self.num_heads * self.head_dim)
         return o
