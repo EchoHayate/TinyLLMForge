@@ -6,7 +6,10 @@ from transformers import Qwen3Config
 from tinyvllm.layers.activation import SiluAndMul
 from tinyvllm.layers.attention import Attention
 from tinyvllm.layers.layernorm import RMSNorm
-from tinyvllm.layers.linear import QKVParallelLinear, MergedColumnParallelLinear, RowParallelLinear
+from tinyvllm.layers.linear import (
+    QKVParallelLinear, MergedColumnParallelLinear, RowParallelLinear, QuantLinear,
+    QuantQKVParallelLinear, QuantMergedColumnParallelLinear, QuantRowParallelLinear
+)
 from tinyvllm.layers.rotary_embedding import get_rope
 from tinyvllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
 
@@ -23,10 +26,11 @@ class QWen3Attention(nn.Module):
         rms_norm_eps: float = 1e-6, 
         qkv_bias: bool = False,
         rope_theta: float = 10000, 
-        rope_scaling: tuple | None = None
+        rope_scaling: tuple | None = None,
+        quantization: str | None = None,
     ):
         super().__init__()
-        tp_size = dist.get_world_size()
+        tp_size = dist.get_world_size() if dist.is_initialized() else 1
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
@@ -40,18 +44,32 @@ class QWen3Attention(nn.Module):
         self.kv_size = self.num_kv_heads * self.head_dim
         self.scaling = self.head_dim ** (-0.5)
         
-        self.qkv_proj = QKVParallelLinear(
-            hidden_size, 
-            self.head_dim, 
-            self.total_num_heads, 
-            self.total_num_kv_heads, 
-            bias = qkv_bias)
+        if quantization == "int8":
+            self.qkv_proj = QuantQKVParallelLinear(
+                hidden_size, 
+                self.head_dim, 
+                self.total_num_heads, 
+                self.total_num_kv_heads, 
+                bias=qkv_bias
+            )
+            self.o_proj = QuantRowParallelLinear(
+                self.total_num_heads * self.head_dim,
+                hidden_size,
+                bias=False
+            )
+        else:
+            self.qkv_proj = QKVParallelLinear(
+                hidden_size, 
+                self.head_dim, 
+                self.total_num_heads, 
+                self.total_num_kv_heads, 
+                bias = qkv_bias)
 
-        self.o_proj = RowParallelLinear(
-            self.total_num_heads * self.head_dim,
-            hidden_size, 
-            bias = False
-        )
+            self.o_proj = RowParallelLinear(
+                self.total_num_heads * self.head_dim,
+                hidden_size, 
+                bias = False
+            )
 
         self.rotary_emb = get_rope(
             head_size = self.head_dim,
@@ -103,20 +121,34 @@ class Qwen3MLP(nn.Module):
         hidden_size: int,               # 1024
         intermediate_size: int,         # 3072 = 1024 * 3, 即gate up输出的维度，
         hidden_act: str,                # 激活函数名称，这里仅支持 SiLU
+        quantization: str | None = None,
         ): 
         super().__init__()
+        tp_size = dist.get_world_size() if dist.is_initialized() else 1
     # 这里gate和up做Column parallel   down做row parallel
-        self.gate_up_proj = MergedColumnParallelLinear(
-            hidden_size, 
-            [intermediate_size]*2, 
-            bias = False
-        )
-        #这里 gate_up的输出，在单卡上是 gate分块 + up分块，
-        # 因此刚好契合 down_proj的分块，所以不用通信就可以直接计算
-        self.down_proj = RowParallelLinear(
-            intermediate_size, 
-            hidden_size, 
-            bias = False)
+        if quantization == "int8":
+            self.gate_up_proj = QuantMergedColumnParallelLinear(
+                hidden_size, 
+                [intermediate_size] * 2, 
+                bias=False
+            )
+            self.down_proj = QuantRowParallelLinear(
+                intermediate_size,
+                hidden_size,
+                bias=False
+            )
+        else:
+            self.gate_up_proj = MergedColumnParallelLinear(
+                hidden_size, 
+                [intermediate_size]*2, 
+                bias = False
+            )
+            #这里 gate_up的输出，在单卡上是 gate分块 + up分块，
+            # 因此刚好契合 down_proj的分块，所以不用通信就可以直接计算
+            self.down_proj = RowParallelLinear(
+                intermediate_size, 
+                hidden_size, 
+                bias = False)
         assert hidden_act == "silu"
         self.act_fn = SiluAndMul()
         
@@ -145,12 +177,14 @@ class Qwen3DecoderLayer(nn.Module):
             qkv_bias=getattr(config, 'attention_bias', False),
             head_dim=getattr(config, 'head_dim', None),
             rope_theta=getattr(config, 'rope_theta', None),
-            rope_scaling=getattr(config, 'rope_scaling', None)
+            rope_scaling=getattr(config, 'rope_scaling', None),
+            quantization=getattr(config, 'quantization', None)
         )
         self.mlp = Qwen3MLP(
             hidden_size=config.hidden_size, 
             intermediate_size=config.intermediate_size,
-            hidden_act=config.hidden_act
+            hidden_act=config.hidden_act,
+            quantization=getattr(config, 'quantization', None)
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
