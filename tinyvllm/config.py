@@ -11,11 +11,14 @@ class Config:
     gpu_memory_utilization: float = 0.9                 #gpu利用率 可以用来确定实际 kv cache大小
     tensor_parallel_size: int = 1                       #并行计算gpu的个数
     enforce_eager: bool = False                         # True表示以即时执行模式推理，用于debug   false表示启用cuda graph  cuda graph开启后减少kernal launch时间 可用于吞吐量测试
-    quantization: str = None                            # 量化方式，如 "int8"
+    quantization: str = None                            # 模型权重量化方式，如 "int8"
+    kv_quantization: str = None                         # KV Cache 量化方式，如 "int8"
     hf_config: AutoConfig | None = None                 # hugging face config, 加载模型的层数，隐藏层数，注意力头数
     eos: int  = -1                                      # end of sentence, 使用模型默认的句子结束符
     kvcache_block_size: int = 256                       
     num_kvcache_blocks: int = -1                        #-1代表自动计算  num_kvcache_blocks=kv cache/kvcache_block_size 
+    swap_space_bytes: int = 4 * 1024**3                 # 默认分配 4GB 的 CPU 锁页内存用于 Swap
+    num_cpu_kvcache_blocks: int = 0                     # CPU swap blocks (在 model_runner 中计算)
 
     # 在默认的构造函数之后自动启用，用于补充缺少的初始化逻辑
     def __post_init__(self):

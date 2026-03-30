@@ -5,7 +5,57 @@ import triton.language as tl
 
 from tinyvllm.kernels import flash_attn2_fwd, flash_decoding_fwd, reduction
 
+
+
 from tinyvllm.utils.context import get_context
+
+
+
+
+@triton.jit
+def store_kvcache_int8_kernel(
+    key_ptr: torch.Tensor,
+    key_stride: int,   
+    value_ptr: torch.Tensor,
+    value_stride: int,
+    k_cache_ptr: torch.Tensor, 
+    v_cache_ptr: torch.Tensor,
+    k_scale_ptr: torch.Tensor,
+    v_scale_ptr: torch.Tensor,
+    slot_mapping_ptr: torch.Tensor,         
+    num_kv_heads: int,
+    head_dim: tl.constexpr                         
+):
+    pid = tl.program_id(axis = 0)
+    slot = tl.load(slot_mapping_ptr + pid)
+
+    for head_idx in range(num_kv_heads):
+        key_offsets = pid * key_stride + head_idx * head_dim + tl.arange(0, head_dim)
+        value_offsets = pid * value_stride + head_idx * head_dim + tl.arange(0, head_dim)
+
+        key = tl.load(key_ptr + key_offsets)
+        value = tl.load(value_ptr + value_offsets)
+
+        k_max = tl.max(tl.abs(key))
+        v_max = tl.max(tl.abs(value))
+        
+        k_scale = k_max / 127.0
+        v_scale = v_max / 127.0
+        
+        k_scale = tl.where(k_scale == 0.0, 1.0, k_scale)
+        v_scale = tl.where(v_scale == 0.0, 1.0, v_scale)
+        
+        key_int8 = (key / k_scale).to(tl.int8)
+        value_int8 = (value / v_scale).to(tl.int8)
+        
+        out_offsets = slot * num_kv_heads * head_dim + head_idx * head_dim + tl.arange(0, head_dim)
+        
+        tl.store(k_cache_ptr + out_offsets, key_int8)
+        tl.store(v_cache_ptr + out_offsets, value_int8)
+        
+        scale_offset = slot * num_kv_heads + head_idx
+        tl.store(k_scale_ptr + scale_offset, k_scale)
+        tl.store(v_scale_ptr + scale_offset, v_scale)
 
 @triton.jit
 def store_kvcache_kernel(
@@ -15,41 +65,46 @@ def store_kvcache_kernel(
     value_stride: int,
     k_cache_ptr: torch.Tensor, 
     v_cache_ptr: torch.Tensor,
-    slot_mapping_ptr: torch.Tensor,         # 1一个token对应的 一行 kv cache, 因此需要一个slot去定位当前 token 的kv cache位置
-    D: tl.constexpr                         # 单个 token 的 Key/Value 数据长度
+    slot_mapping_ptr: torch.Tensor,         
+    D: tl.constexpr                         
 ):
     pid = tl.program_id(axis = 0)
     key_offsets = pid * key_stride + tl.arange(0, D)
     value_offsets = pid * value_stride + tl.arange(0, D)
 
-    key = tl.load(key_ptr + key_offsets)    #tl.load(内存地址)：从 GPU 内存读取数据到 GPU 寄存器（“加载”）
+    key = tl.load(key_ptr + key_offsets)    
     value = tl.load(value_ptr + value_offsets)
 
-    slot = tl.load(slot_mapping_ptr + pid)  #当前 token 在 KV Cache 中的 “起始位置索引”
+    slot = tl.load(slot_mapping_ptr + pid)  
     offsets = slot * D + tl.arange(0, D)
-    tl.store(k_cache_ptr + offsets, key)    #key 和 value 是要存入这个 slot 的 “具体内容”
-    tl.store(v_cache_ptr + offsets, value)  #tl.store(内存地址, 数据)：从 GPU 寄存器写入数据到 GPU 内存（“存储”）。
-
+    tl.store(k_cache_ptr + offsets, key)    
+    tl.store(v_cache_ptr + offsets, value)  
 
 def store_kvcache(
-    key: torch.Tensor,                       # 当前步计算的key张量  [batch_size * seq_len, num_heads, head_dim]
-    value: torch.Tensor,                     # 当前步计算的value张量 [batch_size * seq_len, num_heads, head_dim]
-    k_cache: torch.Tensor,                   # key缓存 [num_kvcache_blocks, block_size, num_kv_heads, head_dim]
-    v_cache: torch.Tensor,                   # value缓存  [num_kvcache_blocks, block_size, num_kv_heads, head_dim]
-    slot_mapping: torch.Tensor,              # [N], num_kvcache_blocks, slot_mapping[i] 里面存的是 block_id * block_size, 即，token_id 在kv_cache中的位置 
+    key: torch.Tensor,                       
+    value: torch.Tensor,                     
+    k_cache: torch.Tensor,                   
+    v_cache: torch.Tensor,                   
+    slot_mapping: torch.Tensor,              
+    k_cache_scale: torch.Tensor = None,
+    v_cache_scale: torch.Tensor = None
 ):
-    # N = batch_size * seq_len
     N, num_heads, head_dim = key.shape
     D = num_heads * head_dim
-    assert key.stride(-1) == 1 and value.stride(-1) == 1  #    确保连续
-    # 确保逻辑视图和物理内存视图一致 key = [N, num_heads, head_dim]
+    assert key.stride(-1) == 1 and value.stride(-1) == 1
     assert key.stride(1) == head_dim and value.stride(1) == head_dim
-    assert k_cache.stride(1) == D and v_cache.stride(1) == D
     assert slot_mapping.numel() == N
-    store_kvcache_kernel[(N, )](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
+    
+    if k_cache.dtype == torch.int8:
+        store_kvcache_int8_kernel[(N, )](
+            key, key.stride(0), value, value.stride(0),
+            k_cache, v_cache, k_cache_scale, v_cache_scale,
+            slot_mapping, num_heads, head_dim
+        )
+    else:
+        assert k_cache.stride(1) == D and v_cache.stride(1) == D
+        store_kvcache_kernel[(N, )](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
 
-
-#简化版本
 def store_kvcache_simplified(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -58,19 +113,14 @@ def store_kvcache_simplified(
     slot_mapping: torch.Tensor
 ):
     N,num_heads,head_dim= key.shape
-
     flat_key = key.view(N,-1)
     flat_value = value.view(N,-1)
-
     for i in range(N):
         slot = slot_mapping[i].item()
         k_cache[slot] = flat_key[i]
         v_cache[slot] = flat_value[i]
 
-
-
 class Attention(nn.Module):
-
     def __init__(
         self, 
         num_heads: int, 
@@ -84,6 +134,7 @@ class Attention(nn.Module):
         self.scale = scale
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.Tensor([]) 
+        
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)
@@ -92,11 +143,13 @@ class Attention(nn.Module):
 
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
+        k_cache_scale = getattr(self, "k_cache_scale", None)
+        v_cache_scale = getattr(self, "v_cache_scale", None)
+        
         if k_cache.numel() and v_cache.numel():
-            store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+            store_kvcache(k, v, k_cache, v_cache, context.slot_mapping, k_cache_scale, v_cache_scale)
+            
         if context.is_prefill:
-            # prefill传入的 q = [batch_size, seq_len, num_heads, head_dim]
-            # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
             if context.block_tables is not None:
                 k, v = k_cache, v_cache
             o = flash_attn2_fwd(q, k, v, 
@@ -105,11 +158,9 @@ class Attention(nn.Module):
                                         softmax_scale = self.scale, causal = True
                                        )
         else:
-            # decode阶段传入的 q = [batch_size, num_heads, head_dim]
-            # o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = context.context_lens,
-            #                             block_table = context.block_tables, softmax_scale = self.scale, causal = True)
             mid_o, mid_l = flash_decoding_fwd(q, k_cache, v_cache, context.block_tables, context.context_lens, 
-                                        context.max_seqlen_k, softmax_scale=self.scale)
+                                        context.max_seqlen_k, softmax_scale=self.scale, 
+                                        k_scale=k_cache_scale, v_scale=v_cache_scale)
             o = reduction(mid_o, mid_l)
         o = o.view(-1, self.num_heads * self.head_dim)
         return o

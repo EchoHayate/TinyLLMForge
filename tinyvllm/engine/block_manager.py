@@ -22,6 +22,25 @@ class Block:
         self.token_ids = []
     
 
+class CPUBlockAllocator:
+    def __init__(self, num_blocks: int):
+        self.num_blocks = num_blocks
+        self.free_block_ids = list(range(num_blocks))
+        
+    def allocate(self) -> int:
+        if not self.free_block_ids:
+            raise MemoryError("No free CPU blocks available for swap!")
+        return self.free_block_ids.pop()
+        
+    def deallocate(self, block_id: int):
+        self.free_block_ids.append(block_id)
+        
+    def deallocate_many(self, block_ids: list[int]):
+        self.free_block_ids.extend(block_ids)
+        
+    def can_allocate(self, num_blocks: int) -> bool:
+        return len(self.free_block_ids) >= num_blocks
+
 class BlockManager:
     def __init__(self, num_blocks: int, block_size: int):
         assert num_blocks > 0
@@ -169,4 +188,52 @@ class BlockManager:
             self.hash_to_block_id[h] = last_block.block_id
         else:   #最后一个块未填满，h是-1，没有计算哈希值写入字典用于缓存
             assert last_block.hash == -1
+
+    def can_swap_out(self, seq: Sequence, cpu_allocator: CPUBlockAllocator) -> bool:
+        return cpu_allocator.can_allocate(len(seq.block_table))
+
+    def swap_out(self, seq: Sequence, cpu_allocator: CPUBlockAllocator) -> dict[int, int]:
+        """将序列的所有物理块换出到CPU，释放GPU块。返回 GPU_ID -> CPU_ID 的映射关系。"""
+        assert self.can_swap_out(seq, cpu_allocator)
+        mapping = {}
+        cpu_blocks = []
+        for block_id in seq.block_table:
+            cpu_block_id = cpu_allocator.allocate()
+            cpu_blocks.append(cpu_block_id)
+            mapping[block_id] = cpu_block_id
+            
+        self.deallocate(seq)
+        seq.cpu_block_table = cpu_blocks
+        return mapping
+
+    def can_swap_in(self, seq: Sequence) -> bool:
+        return len(self.free_block_ids) >= len(seq.cpu_block_table)
+
+    def swap_in(self, seq: Sequence, cpu_allocator: CPUBlockAllocator) -> dict[int, int]:
+        """从CPU读取并分配对应的GPU块，重组序列逻辑块，恢复Hash。返回 CPU_ID -> GPU_ID 的映射关系。"""
+        assert self.can_swap_in(seq)
+        mapping = {}
+        seq.block_table = []
+        seq.num_cached_tokens = 0
+        
+        h = -1
+        # 按照顺序重新分配内存块，不走复用逻辑（保证私有），但是计算新Hash注册到系统，供未来别人复用
+        for i, cpu_block_id in enumerate(seq.cpu_block_table):
+            block_id, _ = self.free_block_ids.popitem(last=False)
+            block = self._allocate_block(block_id)
+            
+            token_ids = seq.block(i)
+            h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1
+            if h != -1:
+                block.update(h, token_ids)
+                self.hash_to_block_id[h] = block.block_id
+                seq.num_cached_tokens += self.block_size
+                
+            block.ref_count = 1
+            seq.block_table.append(block_id)
+            mapping[cpu_block_id] = block_id
+            
+        cpu_allocator.deallocate_many(seq.cpu_block_table)
+        seq.cpu_block_table = []
+        return mapping
             

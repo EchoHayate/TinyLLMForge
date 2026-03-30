@@ -7,6 +7,7 @@ class SequenceStatus(Enum):
     WAITING = auto()            # 1
     RUNNING = auto()            # 2
     FINISHED = auto()           # 3
+    SWAPPED = auto()            # 4
 
 class Sequence:
     block_size = 256            #通过block管理token  不同 Seq 的 KV 缓存数据是严格隔离的
@@ -21,6 +22,7 @@ class Sequence:
         self.num_prompt_tokens = len(token_ids)         # 记录prompt的token数量 传入时就确定了
         self.num_cached_tokens = 0                      # 记录prefix cache的 token数量
         self.block_table = []                           # 记录当前语句用到的 块id
+        self.cpu_block_table = []                       # 记录swap到CPU时的区块id
         self.temperature = sampling_params.temperature  # 记录该语句的采样温度
         self.max_tokens = sampling_params.max_tokens    # 记录该语句的最大生成长度
         self.ignore_eos = sampling_params.ignore_eos    # 记录是否忽略句子的结束符号
@@ -73,12 +75,12 @@ class Sequence:
     # 由于是多卡，涉及通信发送，需要将sequence进行序列化，这个函数是决定将哪些 Sequence的属性进行序列化传输
     # 增加这个魔术方法后，pickle模块会自动调用该函数，将 Sequence 数据进行序列化
     def __getstate__(self):                             
-         return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table, 
+         return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table, self.cpu_block_table,
                  self.token_ids if self.num_completion_tokens == 0 else self.last_token)
     
     # 由于是多卡，涉及通信接收，需要对序列化的 Sequence 进行解析，该函数和 getstate函数一一对应
     def __setstate__(self, state):
-        self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table = state[-1]
+        self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table, self.cpu_block_table = state[:-1]
         if self.num_completion_tokens == 0:
             self.token_ids = state[-1]
         else:

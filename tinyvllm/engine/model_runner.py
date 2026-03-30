@@ -123,19 +123,52 @@ class ModelRunner:
         peak = torch.cuda.memory_stats()["allocated_bytes.all.peak"]
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
+        
+        kv_dtype = torch.int8 if getattr(config, "kv_quantization", None) == "int8" else hf_config.torch_dtype
+        # block大小 = key,value各一块 + 可能存在的scale
+        # scale的字节数为 sizeof(float) = 4, per token per head
+        element_size = kv_dtype.itemsize
+        scale_size = 4 if getattr(config, "kv_quantization", None) == "int8" else 0
         block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * \
-            hf_config.head_dim * hf_config.torch_dtype.itemsize             
+            (hf_config.head_dim * element_size + scale_size)             
         # 2: key 和 value各占一块   num_hidden_layers:attention总层数     block_size：单个缓存块能存储的 token 数量
-        # num_kv_heads：键值注意力头的数量  head_dim：每个注意力头的维度    torch_dtype.itemsize：单个数据元素的字节数
+        # num_kv_heads：键值注意力头的数量  head_dim：每个注意力头的维度
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // block_bytes
         assert config.num_kvcache_blocks > 0
         self.kv_cache = torch.zeros(2, hf_config.num_hidden_layers, 
-                config.num_kvcache_blocks, self.block_size, num_kv_heads, hf_config.head_dim)
+                config.num_kvcache_blocks, self.block_size, num_kv_heads, hf_config.head_dim, dtype=kv_dtype)
+        
+        if getattr(config, "kv_quantization", None) == "int8":
+            self.kv_cache_scales = torch.zeros(2, hf_config.num_hidden_layers, 
+                config.num_kvcache_blocks, self.block_size, num_kv_heads, dtype=torch.float32)
+        else:
+            self.kv_cache_scales = None
+        
+        if getattr(config, "swap_space_bytes", 0) > 0:
+            config.num_cpu_kvcache_blocks = config.swap_space_bytes // block_bytes
+            if config.num_cpu_kvcache_blocks > 0:
+                self.cpu_kv_cache = torch.zeros(2, hf_config.num_hidden_layers, 
+                    config.num_cpu_kvcache_blocks, self.block_size, num_kv_heads, hf_config.head_dim, dtype=kv_dtype, pin_memory=True)
+                if getattr(config, "kv_quantization", None) == "int8":
+                    self.cpu_kv_cache_scales = torch.zeros(2, hf_config.num_hidden_layers, 
+                        config.num_cpu_kvcache_blocks, self.block_size, num_kv_heads, dtype=torch.float32, pin_memory=True)
+                else:
+                    self.cpu_kv_cache_scales = None
+            else:
+                self.cpu_kv_cache = None
+                self.cpu_kv_cache_scales = None
+        else:
+            self.cpu_kv_cache = None
+            self.cpu_kv_cache_scales = None
+
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
                 module.k_cache = self.kv_cache[0, layer_id]
                 module.v_cache = self.kv_cache[1, layer_id]
+                if self.kv_cache_scales is not None:
+                    module.k_cache_scale = self.kv_cache_scales[0, layer_id]
+                    module.v_cache_scale = self.kv_cache_scales[1, layer_id]
                 layer_id += 1
         # 假设 block_size=256（每个块存 256 个 token），其他参数不变：
 
@@ -151,6 +184,22 @@ class ModelRunner:
         # 256（token数） × 32768（每个token的元素数） = 8388608 个元素
 
     
+    def swap_in(self, mapping: dict[int, int]):
+        """ mapping: cpu_block_id -> gpu_block_id """
+        if not mapping or self.cpu_kv_cache is None: return
+        for cpu_id, gpu_id in mapping.items():
+            self.kv_cache[:, :, gpu_id].copy_(self.cpu_kv_cache[:, :, cpu_id], non_blocking=True)
+            if self.cpu_kv_cache_scales is not None:
+                self.kv_cache_scales[:, :, gpu_id].copy_(self.cpu_kv_cache_scales[:, :, cpu_id], non_blocking=True)
+
+    def swap_out(self, mapping: dict[int, int]):
+        """ mapping: gpu_block_id -> cpu_block_id """
+        if not mapping or self.cpu_kv_cache is None: return
+        for gpu_id, cpu_id in mapping.items():
+            self.cpu_kv_cache[:, :, cpu_id].copy_(self.kv_cache[:, :, gpu_id], non_blocking=True)
+            if self.cpu_kv_cache_scales is not None:
+                self.cpu_kv_cache_scales[:, :, cpu_id].copy_(self.kv_cache_scales[:, :, gpu_id], non_blocking=True)
+
     # 每个序列（seq）的block_table是一个列表，记录该序列在 KV Cache 中使用的块编号。
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
@@ -312,4 +361,3 @@ class ModelRunner:
             block_tables=block_tables,
             outputs=outputs
         )
-
