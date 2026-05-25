@@ -3,11 +3,118 @@ from torch import nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
+from tinyvllm.layers.quantization import (
+    quantize_weight,
+    dequantize_weight,
+)
+
+# bnb 是可选依赖：只有走 int8_bnb fused GEMM 路径才需要
+try:
+    import bitsandbytes.functional as _bnbF                       # type: ignore
+except Exception:                                                 # noqa
+    _bnbF = None
+
+
+def _bnb_int8_matmul(x: torch.Tensor, qweight: torch.Tensor,
+                     w_scales: torch.Tensor, bias: torch.Tensor | None) -> torch.Tensor:
+    """fused W8A16: 输入 fp16/bf16 -> 行量化 int8 -> int8 GEMM -> dequant fp16 -> 还原原 dtype。
+
+    qweight: [out, in] int8 (per-row 量化)
+    w_scales: [out] float32 (= max_abs/127)
+    """
+    if _bnbF is None or x.dtype not in (torch.float16, torch.bfloat16):
+        return None
+    orig_dtype = x.dtype
+    orig_shape = x.shape
+    # bnb 的 int8_vectorwise_quant 只支持 fp16 输入
+    x2d = x.reshape(-1, orig_shape[-1])
+    if orig_dtype != torch.float16:
+        x2d = x2d.to(torch.float16)
+    x2d = x2d.contiguous()
+    qx, sx, _ = _bnbF.int8_vectorwise_quant(x2d)                  # qx int8, sx fp32 [M]
+    out_i32 = _bnbF.int8_linear_matmul(qx, qweight)               # [M, out_features] int32
+    # bnb 的 col_stats 期望 weight per-row absmax；我们存的是 absmax/127，因此乘回 127
+    col_stats = (w_scales.to(torch.float32) * 127.0)
+    y = _bnbF.int8_mm_dequant(out_i32, sx, col_stats, bias=None)  # [M, out] fp16
+    y = y.reshape(*orig_shape[:-1], qweight.shape[0])
+    if orig_dtype != torch.float16:
+        y = y.to(orig_dtype)
+    if bias is not None:
+        y = y + bias
+    return y
+
+# ------------------------------------------------------------------
+# 全局量化 / cpu-offload 设置
+# 由 ModelRunner 在构建模型前通过 set_quant_config() 注入。
+# 这样可以避免改动每个层的构造签名（侵入性最小）。
+# ------------------------------------------------------------------
+_QUANT_METHOD: str | None = None
+_QUANT_GROUP_SIZE: int = 128
+
+
+def set_quant_config(method: str | None, group_size: int = 128):
+    global _QUANT_METHOD, _QUANT_GROUP_SIZE
+    _QUANT_METHOD = method
+    _QUANT_GROUP_SIZE = group_size
+
+
+def get_quant_method() -> str | None:
+    return _QUANT_METHOD
+
+
 def divide(numerator, denominator):
     assert numerator % denominator == 0
     return numerator // denominator
 
-class LinearBase(nn.Module):
+
+# ------------------------------------------------------------------
+# Quant 工具：将一个普通 Parameter 替换为 (qweight, scales) buffer 对，
+# 同时保留一个轻量 Parameter “shadow” 以兼容 weight_loader 流程。
+# 加载流程：loader 把 fp 权重写到 self.weight.data -> 在 finalize_quantization()
+# 中真正做量化并丢掉 fp 权重。
+# ------------------------------------------------------------------
+class _QuantMixin:
+    """为线性层提供量化辅助方法（在 self 上挂 qweight / scales buffer）。"""
+
+    quant_method: str | None = None
+    quant_group_size: int = 128
+
+    def _maybe_init_quant(self):
+        self.quant_method = _QUANT_METHOD
+        self.quant_group_size = _QUANT_GROUP_SIZE
+
+    def finalize_quantization(self):
+        """把当前 self.weight 量化为 (qweight, scales)，释放 fp weight。"""
+        if self.quant_method is None:
+            return
+        weight = self.weight.data
+        qweight, scales = quantize_weight(weight, self.quant_method, self.quant_group_size)
+        # 用 buffer 注册（不参与梯度，且 .to(device) 时会跟随移动）
+        self.register_buffer("qweight", qweight, persistent=False)
+        self.register_buffer("scales", scales, persistent=False)
+        # 释放 fp 权重：把 Parameter 设为 None（nn.Module 允许）
+        self.weight = None
+
+    def _get_dequantized_weight(self, dtype: torch.dtype) -> torch.Tensor:
+        return dequantize_weight(
+            self.qweight, self.scales,
+            self.quant_method, self.quant_group_size, dtype,
+        )
+
+    def _linear_forward(self, x: torch.Tensor, bias: torch.Tensor | None) -> torch.Tensor:
+        if self.quant_method is None:
+            return F.linear(x, self.weight, bias)
+        # int8_bnb：fused W8A16 GEMM（仅 fp16 走快路径，bf16 fallback）
+        if self.quant_method == "int8_bnb":
+            y = _bnb_int8_matmul(x, self.qweight, self.scales, bias)
+            if y is not None:
+                return y
+        # weight-only 量化：临时反量化（同设备：x.device 即 weight 当前所在设备）
+        w = self._get_dequantized_weight(x.dtype)
+        return F.linear(x, w, bias)
+
+
+class LinearBase(nn.Module, _QuantMixin):
     def __init__(self, 
         input_size: int,        #用 input_size（输入维度）和 output_size（输出维度）对应线性层权重矩阵的列数和行数
         output_size: int,
@@ -19,6 +126,7 @@ class LinearBase(nn.Module):
         self.tp_dim = tp_dim                        # 张量并行的维度，0维，1维...
         self.tp_rank = dist.get_rank()
         self.tp_size = dist.get_world_size()        # 张量并行的数量
+        self._maybe_init_quant()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
@@ -46,7 +154,7 @@ class ReplicatedLinear(LinearBase):
         
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.linear(x, self.weight, self.bias)
+        return self._linear_forward(x, self.bias)
 
 #列切分最后需要concatenate tp_dim = 0 对output_size切割就是列切割
 class ColumnParallelLinear(LinearBase):
@@ -80,7 +188,7 @@ class ColumnParallelLinear(LinearBase):
         param_data.copy_(loaded_weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.linear(x, self.weight, self.bias)
+        return self._linear_forward(x, self.bias)
     
 
 class MergedColumnParallelLinear(ColumnParallelLinear):         #针对FFN的gate up做切分
@@ -178,7 +286,8 @@ class RowParallelLinear(LinearBase):
         
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)      #简单的矩阵乘
+        bias = self.bias if self.tp_rank == 0 else None
+        y = self._linear_forward(x, bias)                       #简单的矩阵乘
         if self.tp_size > 1:
             dist.all_reduce(y)
         return y

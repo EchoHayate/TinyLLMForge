@@ -6,6 +6,8 @@ from tinyvllm.config import Config
 from tinyvllm.engine.sequence import Sequence
 from tinyvllm.models.qwen3 import Qwen3ForCausalLM
 from tinyvllm.utils.loader import load_model
+from tinyvllm.utils.cpu_offload import apply_cpu_offload
+from tinyvllm.layers.linear import set_quant_config
 from tinyvllm.layers.sampler import Sampler
 from tinyvllm.utils.context import reset_context, set_context, get_context
 
@@ -33,8 +35,13 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
+        # 注入全局量化配置（在构建模型前）
+        set_quant_config(config.quantization, config.quant_group_size)
         self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
         load_model(self.model, config.model)            #涉及到一些qwen里面的
+        # 加载完成后再做 cpu-offload（量化已在 loader 内 finalize 完成）
+        if config.cpu_offload:
+            apply_cpu_offload(self.model, config.cpu_offload_num_layers)
         self.sampler =  Sampler()
         
         self.warmup_model()                             #暂时跳过

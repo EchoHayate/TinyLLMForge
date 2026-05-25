@@ -1,12 +1,39 @@
 import os
+import argparse
 from tinyvllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--model", type=str, default=os.path.expanduser("../Qwen3-0.6B"))
+    p.add_argument("--tensor-parallel-size", type=int, default=1)
+    p.add_argument("--enforce-eager", action="store_true", default=True)
+    # 量化 / cpu-offload demo flag
+    p.add_argument("--quantization", type=str, default=None,
+                   choices=[None, "int8", "int8_bnb", "int2"], help="weight-only 量化方式")
+    p.add_argument("--quant-group-size", type=int, default=128,
+                   help="分组量化组大小")
+    p.add_argument("--cpu-offload", action="store_true", default=False,
+                   help="是否启用 cpu-offload (decoder layer 粒度)")
+    p.add_argument("--cpu-offload-num-layers", type=int, default=-1,
+                   help="卸载到 cpu 的 decoder 层数；-1 表示除最后两层外全部卸载")
+    return p.parse_args()
+
+
 def main():
-    path = os.path.expanduser("../Qwen3-0.6B")
+    args = parse_args()
+    path = args.model
     # 分词器，将句子分成多个token, 然后编码成数字
     tokenizer = AutoTokenizer.from_pretrained(path)
-    llm = LLM(path, enforce_eager = True, tensor_parallel_size = 1)
+    llm = LLM(
+        path,
+        enforce_eager=args.enforce_eager,
+        tensor_parallel_size=args.tensor_parallel_size,
+        quantization=args.quantization,
+        quant_group_size=args.quant_group_size,
+        cpu_offload=args.cpu_offload,
+        cpu_offload_num_layers=args.cpu_offload_num_layers,
+    )
 
     sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
     prompts = [

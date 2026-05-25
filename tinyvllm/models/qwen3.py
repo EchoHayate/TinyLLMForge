@@ -53,12 +53,16 @@ class QWen3Attention(nn.Module):
             bias = False
         )
 
+        # 一些 hf config 会写成 {"rope_type": "default", ...}，等价于 None；为避免 dict 不可 hash 进 lru_cache 报错，归一化一下
+        _rs = rope_scaling
+        if isinstance(_rs, dict) and _rs.get("rope_type", "default") == "default":
+            _rs = None
         self.rotary_emb = get_rope(
             head_size = self.head_dim,
             rotary_dim = self.head_dim,
             max_position = max_position,
             base = rope_theta,
-            rope_scaling = rope_scaling             # 缩放旋转角度，增强超长文本的处理能力, 这个参数其实没用到
+            rope_scaling = _rs                      # 缩放旋转角度，增强超长文本的处理能力, 这个参数其实没用到
         )
 
         self.attn = Attention(
@@ -144,7 +148,8 @@ class Qwen3DecoderLayer(nn.Module):
             rms_norm_eps=config.rms_norm_eps, 
             qkv_bias=getattr(config, 'attention_bias', False),
             head_dim=getattr(config, 'head_dim', None),
-            rope_theta=getattr(config, 'rope_theta', None),
+            rope_theta=getattr(config, 'rope_theta', None) or
+                       (getattr(config, 'rope_scaling', None) or {}).get('rope_theta', 10000),
             rope_scaling=getattr(config, 'rope_scaling', None)
         )
         self.mlp = Qwen3MLP(

@@ -4,6 +4,9 @@ import torch
 from torch import nn
 from safetensors import safe_open
 
+from tinyvllm.layers.linear import LinearBase, get_quant_method
+
+
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):    #copy to parm from loaded_weight
     param.data.copy_(loaded_weight)     
 
@@ -29,4 +32,10 @@ def load_model(model: nn.Module, path: str):
                     weight_loader = getattr(param, "weight_loader", default_weight_loader)  # 获取参数的加载方法
                     weight_loader(param, f.get_tensor(weight_name))     #f.get_tensor按键取值
 
-                    
+    # 加载完整 fp 权重后，对所有线性层执行量化（如开启）
+    if get_quant_method() is not None:
+        for module in model.modules():
+            if isinstance(module, LinearBase):
+                module.finalize_quantization()
+        torch.cuda.empty_cache()
+
