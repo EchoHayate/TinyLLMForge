@@ -24,6 +24,11 @@ def parse_args():
                    help="是否启用 cpu-offload (decoder layer 粒度)")
     p.add_argument("--cpu-offload-num-layers", type=int, default=-1,
                    help="卸载到 cpu 的 decoder 层数；-1 表示除最后两层外全部卸载")
+    # Quest 动态稀疏 attention
+    p.add_argument("--quest-top-k-blocks", type=int, default=-1,
+                   help="Quest 每个 query 选 top-k block，-1 关闭")
+    p.add_argument("--quest-min-seq-len", type=int, default=1024,
+                   help="序列长度小于此值不启用 Quest")
     return p.parse_args()
 
 
@@ -44,6 +49,8 @@ def main():
         quant_group_size=args.quant_group_size,
         cpu_offload=args.cpu_offload,
         cpu_offload_num_layers=args.cpu_offload_num_layers,
+        quest_top_k_blocks=args.quest_top_k_blocks,
+        quest_min_seq_len=args.quest_min_seq_len,
     )
 
     prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]

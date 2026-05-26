@@ -22,6 +22,10 @@ class Config:
     cpu_offload: bool = False                           # 是否启用 cpu-offload (decoder layer 粒度)
     cpu_offload_num_layers: int = -1                    # 卸载到 cpu 的 decoder 层数，-1 表示除最后 2 层外全部卸载
 
+    # 动态稀疏 attention（Quest，page-level top-k）相关配置
+    quest_top_k_blocks: int = -1                        # decode 时每个 query 选择的 block 数，-1 表示关闭 Quest
+    quest_min_seq_len: int = 1024                       # 序列长度小于此值时退化为 full attention
+
     # 在默认的构造函数之后自动启用，用于补充缺少的初始化逻辑
     def __post_init__(self):
         assert os.path.isdir(self.model)

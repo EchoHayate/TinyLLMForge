@@ -134,15 +134,34 @@ class ModelRunner:
             hf_config.head_dim * hf_config.torch_dtype.itemsize             
         # 2: key 和 value各占一块   num_hidden_layers:attention总层数     block_size：单个缓存块能存储的 token 数量
         # num_kv_heads：键值注意力头的数量  head_dim：每个注意力头的维度    torch_dtype.itemsize：单个数据元素的字节数
-        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // block_bytes
+        # Quest 启用时还需要预留 per-block K min/max summary 显存（每块 2*num_kv_heads*head_dim 元素）
+        quest_enabled = config.quest_top_k_blocks > 0
+        summary_bytes = (2 * hf_config.num_hidden_layers * num_kv_heads *
+                         hf_config.head_dim * hf_config.torch_dtype.itemsize) if quest_enabled else 0
+        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // (block_bytes + summary_bytes)
         assert config.num_kvcache_blocks > 0
         self.kv_cache = torch.zeros(2, hf_config.num_hidden_layers, 
                 config.num_kvcache_blocks, self.block_size, num_kv_heads, hf_config.head_dim)
+        # Quest summary：[2, num_layers, num_blocks, num_kv_heads, head_dim]，dim0 = (min, max)
+        if quest_enabled:
+            self.kv_summary = torch.empty(
+                2, hf_config.num_hidden_layers, config.num_kvcache_blocks,
+                num_kv_heads, hf_config.head_dim,
+                dtype=hf_config.torch_dtype,
+            )
+            # 用 +inf / -inf 作为 min/max 的初始值，确保第一次 token 写入后被替换
+            self.kv_summary[0].fill_(float("inf"))
+            self.kv_summary[1].fill_(float("-inf"))
+        else:
+            self.kv_summary = None
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
                 module.k_cache = self.kv_cache[0, layer_id]
                 module.v_cache = self.kv_cache[1, layer_id]
+                if quest_enabled:
+                    module.k_min = self.kv_summary[0, layer_id]
+                    module.k_max = self.kv_summary[1, layer_id]
                 layer_id += 1
         # 假设 block_size=256（每个块存 256 个 token），其他参数不变：
 
@@ -231,7 +250,9 @@ class ModelRunner:
         slot_mapping = torch.tensor(data=slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(data=context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
-        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
+        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,
+                    quest_top_k_blocks=self.config.quest_top_k_blocks,
+                    quest_min_seq_len=self.config.quest_min_seq_len)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上
@@ -249,7 +270,9 @@ class ModelRunner:
     #只需要前向传播 禁用梯度计算（无需反向传播），节省内存；
     # 加速推理过程（跳过与训练相关的检查和操作）。
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512:     #动态执行 eager mode    input_ids.size(0) > 512：大批量输入的形状不固定，预编译静态图的收益有限，动态执行更灵活。
+        # Quest 走 eager（含动态 control flow + 形状变化的 block_table），不走 cuda graph
+        quest_active = self.config.quest_top_k_blocks > 0
+        if is_prefill or self.enforce_eager or input_ids.size(0) > 512 or quest_active:     #动态执行 eager mode    input_ids.size(0) > 512：大批量输入的形状不固定，预编译静态图的收益有限，动态执行更灵活。
             return self.model.compute_logits(self.model(input_ids, positions))
         else:           #静态执行  graph replay
             bs = input_ids.size(0)
