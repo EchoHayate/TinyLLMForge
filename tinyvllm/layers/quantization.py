@@ -54,6 +54,99 @@ def dequantize_int8(qweight: torch.Tensor, scales: torch.Tensor,
     return w.reshape(out, in_dim).to(dtype)
 
 
+def quantize_int4(weight: torch.Tensor, group_size: int = 128):
+    """对称分组量化 -> int4，每 2 个 int4 pack 成 1 个 uint8。
+
+    int4 取值集合 {-8, -7, ..., 6, 7}（对称 16 level，clip 到 [-7, 7] 保证 zero 落在中心）。
+    存储时偏移 +8 -> [1, 15]，再每 2 个 pack 进 1 字节（low nibble 在前）。
+
+    精度优化沿用 int2 的策略：
+      1. 99.5% 分位异常值保护
+      2. 1D scale 搜索最小化重建 MSE
+    """
+    assert weight.dim() == 2
+    out, in_dim = weight.shape
+    if in_dim % group_size != 0:
+        group_size = in_dim
+    assert in_dim % 2 == 0, "int4 pack 要求 in_dim 能被 2 整除"
+    num_groups = in_dim // group_size
+
+    w = weight.detach().float().reshape(out, num_groups, group_size)
+
+    abs_w = w.abs()
+    p995 = torch.quantile(abs_w, 0.995, dim=-1, keepdim=True).clamp_min(1e-8)
+    abs_max = abs_w.amax(dim=-1, keepdim=True).clamp_min(1e-8)
+    clip_val = torch.minimum(abs_max, p995 * 1.5)
+
+    # 对 int4，scale 让 ±7*s ≈ clip_val
+    n_grid = 13
+    ks = torch.linspace(0.7, 1.1, n_grid, device=w.device, dtype=w.dtype)
+    best_mse = None
+    best_scales = None
+    for k in ks.tolist():
+        s = (clip_val * k) / 7.0
+        q = (w / s).round().clamp(-7, 7)
+        recon = q * s
+        mse = (recon - w).pow(2).mean(dim=-1, keepdim=True)
+        if best_mse is None:
+            best_mse = mse
+            best_scales = s
+        else:
+            mask = mse < best_mse
+            best_mse = torch.where(mask, mse, best_mse)
+            best_scales = torch.where(mask, s, best_scales)
+    scales = best_scales
+    q = (w / scales).round().clamp(-7, 7).to(torch.int8)
+    q = q.reshape(out, in_dim)
+
+    # pack：每 2 个连续元素 -> 1 字节
+    q_unsigned = (q + 8).to(torch.uint8)                            # [0, 15] 实际 [1, 15]
+    q_unsigned = q_unsigned.reshape(out, in_dim // 2, 2)
+    packed = (q_unsigned[..., 0]
+              | (q_unsigned[..., 1] << 4)).to(torch.uint8)          # [out, in_dim/2]
+    scales = scales.reshape(out, num_groups).to(torch.float32)
+    return packed, scales
+
+
+def dequantize_int4(packed: torch.Tensor, scales: torch.Tensor,
+                    group_size: int, dtype: torch.dtype) -> torch.Tensor:
+    out, packed_in = packed.shape
+    in_dim = packed_in * 2
+    num_groups = scales.shape[1]
+    g = in_dim // num_groups
+
+    p = packed.to(torch.int16)
+    q0 = (p & 0xF)
+    q1 = (p >> 4) & 0xF
+    q = torch.stack([q0, q1], dim=-1).reshape(out, in_dim)
+    q = q.to(torch.float32) - 8.0
+
+    w = q.reshape(out, num_groups, g) * scales.unsqueeze(-1)
+    return w.reshape(out, in_dim).to(dtype)
+
+
+def fake_quantize_act_int8(x: torch.Tensor) -> torch.Tensor:
+    """per-token 对称 int8 dynamic fake-quant：round + clamp + 立即 dequant 回 fp。
+
+    用于 W4A8 naive 路径：在 GEMM 前对 activation 做"假量化"以模拟 int8 GEMM 的舍入行为。
+    输入形状任意，最后一维是 hidden / channel；以最后一维为 token，沿其余维度共享 scale 不合理，
+    所以这里"per-token" = 沿最后一维之外的所有维度逐位置算 scale，最后一维（channel）共享。
+
+    具体：x [..., C] → reshape [N, C]，每行算 max(|x|)/127 当 scale。
+    """
+    if x.numel() == 0:
+        return x
+    orig_dtype = x.dtype
+    orig_shape = x.shape
+    x2d = x.reshape(-1, orig_shape[-1])
+    # 用 fp32 算 scale 避免 amax 在 fp16/bf16 上的精度问题
+    x_fp = x2d.float()
+    s = x_fp.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0     # [N, 1]
+    q = (x_fp / s).round().clamp(-128, 127)
+    deq = (q * s).to(orig_dtype)
+    return deq.reshape(orig_shape)
+
+
 def quantize_int2(weight: torch.Tensor, group_size: int = 128):
     """对称分组量化 -> int2，每 4 个 int2 pack 进 1 个 uint8。
 
@@ -159,6 +252,8 @@ def quantize_weight(weight: torch.Tensor, method: str, group_size: int):
         return quantize_int8(weight, group_size)
     if method == "int8_bnb":
         return quantize_int8_per_row(weight)
+    if method == "int4":
+        return quantize_int4(weight, group_size)
     if method == "int2":
         return quantize_int2(weight, group_size)
     raise ValueError(f"unsupported quantization method: {method}")
@@ -170,6 +265,8 @@ def dequantize_weight(qweight: torch.Tensor, scales: torch.Tensor,
         return dequantize_int8(qweight, scales, group_size, dtype)
     if method == "int8_bnb":
         return dequantize_int8_per_row(qweight, scales, dtype)
+    if method == "int4":
+        return dequantize_int4(qweight, scales, group_size, dtype)
     if method == "int2":
         return dequantize_int2(qweight, scales, group_size, dtype)
     raise ValueError(f"unsupported quantization method: {method}")

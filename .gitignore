@@ -1,0 +1,9 @@
+.ttadk/
+specs/doc_export/
+.claude/
+.mcp.json
+ai-plugin.json
+ai-plugin-lock.json
+__pycache__/
+*.pyc
+profile_out/

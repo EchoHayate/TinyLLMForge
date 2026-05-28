@@ -17,7 +17,7 @@ def parse_args():
     p.add_argument("--max-output-len", type=int, default=1024)
     # 量化 / cpu-offload demo flag
     p.add_argument("--quantization", type=str, default=None,
-                   choices=[None, "int8", "int8_bnb", "int2"], help="weight-only 量化方式")
+                   choices=[None, "int8", "int8_bnb", "int4", "int2"], help="weight-only 量化方式")
     p.add_argument("--quant-group-size", type=int, default=128,
                    help="分组量化组大小")
     p.add_argument("--cpu-offload", action="store_true", default=False,
@@ -29,6 +29,15 @@ def parse_args():
                    help="Quest 每个 query 选 top-k block，-1 关闭")
     p.add_argument("--quest-min-seq-len", type=int, default=1024,
                    help="序列长度小于此值不启用 Quest")
+    # KV cache 量化（C4）
+    p.add_argument("--kv-quant-bits", type=int, default=0,
+                   choices=[0, 4, 8], help="KV cache 量化位宽（0=不量化）")
+    p.add_argument("--kv-quant-group-size", type=int, default=128,
+                   help="KV 量化的 group 大小（沿 head_dim 切）")
+    p.add_argument("--kv-quant-symmetric", action="store_true", default=True,
+                   help="对称量化（仅 scale，无 zero-point）")
+    p.add_argument("--act-quant-bits", type=int, default=0,
+                   choices=[0, 8], help="Activation 量化位宽（W4A8 用）")
     return p.parse_args()
 
 
@@ -51,6 +60,10 @@ def main():
         cpu_offload_num_layers=args.cpu_offload_num_layers,
         quest_top_k_blocks=args.quest_top_k_blocks,
         quest_min_seq_len=args.quest_min_seq_len,
+        kv_quant_bits=args.kv_quant_bits,
+        kv_quant_group_size=args.kv_quant_group_size,
+        kv_quant_symmetric=args.kv_quant_symmetric,
+        act_quant_bits=args.act_quant_bits,
     )
 
     prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]

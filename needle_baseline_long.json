@@ -1,0 +1,809 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B",
+    "max_model_len": 16384,
+    "enforce_eager": true,
+    "context_lens": [
+      4096,
+      8192,
+      15000
+    ],
+    "depths": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "top_k_blocks_list": [
+      -1
+    ],
+    "quest_min_seq_len": 512,
+    "num_trials": 5,
+    "max_output_len": 16,
+    "seed": 0,
+    "out_json": "needle_baseline_long.json",
+    "kv_quant_bits": 0,
+    "kv_quant_group_size": 128,
+    "quantization": null,
+    "quant_group_size": 128,
+    "act_quant_bits": 0
+  },
+  "results": [
+    {
+      "top_k": -1,
+      "overall_accuracy": 0.9733333333333334,
+      "throughput_tok_s": 102.9386182780604,
+      "time_s": 11.657432556152344,
+      "per_setting": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "accuracy": 0.6,
+          "n": 5
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 60494,
+          "answer": "60494",
+          "hit": true,
+          "raw": " The magic number is 60494.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 65125,
+          "answer": "65125",
+          "hit": true,
+          "raw": " The magic number is 65125.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 2,
+          "magic": 15306,
+          "answer": "15306",
+          "hit": true,
+          "raw": " The magic number is 15306.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 3,
+          "magic": 43936,
+          "answer": "43936",
+          "hit": true,
+          "raw": " The magic number is 43936.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 4,
+          "magic": 77013,
+          "answer": "77013",
+          "hit": true,
+          "raw": " The magic number is 77013.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 73691,
+          "answer": "73691",
+          "hit": true,
+          "raw": " The answer is 73691.\nAnswer:\n7369"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 63075,
+          "answer": "63075",
+          "hit": true,
+          "raw": " The answer is 63075.\nAnswer:\n6307"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 2,
+          "magic": 49755,
+          "answer": "49755",
+          "hit": true,
+          "raw": " The answer is 49755.\nAnswer:\n4975"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 3,
+          "magic": 72468,
+          "answer": "72468",
+          "hit": true,
+          "raw": " The answer is 72468.\nAnswer:\n7246"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 4,
+          "magic": 56930,
+          "answer": "56930",
+          "hit": true,
+          "raw": " The answer is 56930.\nAnswer:\n5693"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 86465,
+          "answer": "86465",
+          "hit": true,
+          "raw": " The answer is 86465.\nAnswer:\n8646"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 38631,
+          "answer": "38631",
+          "hit": true,
+          "raw": " The answer is 38631.\nAnswer:\n3863"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 2,
+          "magic": 76150,
+          "answer": "76150",
+          "hit": true,
+          "raw": " The answer is 76150.\nAnswer:\n7615"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 3,
+          "magic": 28254,
+          "answer": "28254",
+          "hit": true,
+          "raw": " The answer is 28254.\nAnswer:\n2825"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 4,
+          "magic": 46941,
+          "answer": "46941",
+          "hit": true,
+          "raw": " The answer is 46941.\nAnswer:\n4694"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 28316,
+          "answer": "28316",
+          "hit": true,
+          "raw": " The answer is 28316.\nAnswer:\n2831"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 22429,
+          "answer": "22429",
+          "hit": true,
+          "raw": " The answer is 22429.\nAnswer:\n2242"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 2,
+          "magic": 91050,
+          "answer": "91050",
+          "hit": true,
+          "raw": " The answer is 91050.\nAnswer:\n9105"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 3,
+          "magic": 42834,
+          "answer": "42834",
+          "hit": true,
+          "raw": " The answer is 42834.\nAnswer:\n4283"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 4,
+          "magic": 79804,
+          "answer": "79804",
+          "hit": true,
+          "raw": " The answer is 79804.\nAnswer:\n7980"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 88892,
+          "answer": "88892",
+          "hit": true,
+          "raw": " The answer is 88892.\n**Final Answer**\nThe magic"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 29262,
+          "answer": "29262",
+          "hit": true,
+          "raw": " The answer is 29262.\n**Final Answer**\n29"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 2,
+          "magic": 50651,
+          "answer": "50651",
+          "hit": true,
+          "raw": " The answer is 50651.\nAnswer:\n5065"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 3,
+          "magic": 22945,
+          "answer": "22945",
+          "hit": true,
+          "raw": " The answer is 22945.\n**Final Answer**\n22"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 4,
+          "magic": 19665,
+          "answer": "19665",
+          "hit": true,
+          "raw": " The answer is 19665. \n\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 99651,
+          "answer": "99651",
+          "hit": true,
+          "raw": " The magic number is 99651.\nAnswer:\n996"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 53279,
+          "answer": "53279",
+          "hit": true,
+          "raw": " The magic number is 53279.\nAnswer:\n532"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 2,
+          "magic": 71884,
+          "answer": "71884",
+          "hit": true,
+          "raw": " The magic number is 71884.\nAnswer:\n718"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 3,
+          "magic": 83375,
+          "answer": "83375",
+          "hit": true,
+          "raw": " The magic number is 83375.\nAnswer:\n833"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 4,
+          "magic": 23199,
+          "answer": "23199",
+          "hit": true,
+          "raw": " The magic number is 23199.\nAnswer:\n231"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 56372,
+          "answer": "56372",
+          "hit": true,
+          "raw": " The magic number is 56372.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 66907,
+          "answer": "66907",
+          "hit": true,
+          "raw": " The magic number is 66907.\nAnswer:\n669"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 2,
+          "magic": 51444,
+          "answer": "51444",
+          "hit": true,
+          "raw": " The magic number is 51444.\nAnswer:\n514"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 3,
+          "magic": 90070,
+          "answer": "90070",
+          "hit": true,
+          "raw": " The magic number is 90070.\nAnswer:\n900"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 4,
+          "magic": 93941,
+          "answer": "93941",
+          "hit": true,
+          "raw": " The magic number is 93941.\nAnswer:\n939"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 36801,
+          "answer": "36801",
+          "hit": true,
+          "raw": " The magic number is 36801.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 82420,
+          "answer": "82420",
+          "hit": true,
+          "raw": " The magic number is 82420.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 2,
+          "magic": 72522,
+          "answer": "72522",
+          "hit": true,
+          "raw": " The magic number is 72522.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 3,
+          "magic": 68024,
+          "answer": "68024",
+          "hit": true,
+          "raw": " The magic number is 68024.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 4,
+          "magic": 78334,
+          "answer": "78334",
+          "hit": true,
+          "raw": " The magic number is 78334.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 44143,
+          "answer": "44143",
+          "hit": true,
+          "raw": " The magic number is 44143.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 18163,
+          "answer": "18163",
+          "hit": true,
+          "raw": " The magic number is 18163.\nAnswer:\n181"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 2,
+          "magic": 81919,
+          "answer": "81919",
+          "hit": true,
+          "raw": " The magic number is 81919.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 3,
+          "magic": 11840,
+          "answer": "11840",
+          "hit": true,
+          "raw": " The magic number is 11840.\nAnswer:\n118"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 4,
+          "magic": 22225,
+          "answer": "22225",
+          "hit": true,
+          "raw": " The magic number is 22225.\nAnswer:\n222"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 62274,
+          "answer": "62274",
+          "hit": true,
+          "raw": " The answer is 62274.\nAnswer:\n6227"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 97576,
+          "answer": "97576",
+          "hit": true,
+          "raw": " \n\nThe magic number is 97576.\n**Final Answer**\n"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 2,
+          "magic": 91954,
+          "answer": "91954",
+          "hit": true,
+          "raw": " \n\nThe answer is 91954.\n**Final Answer**\n9"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 3,
+          "magic": 10149,
+          "answer": "10149",
+          "hit": true,
+          "raw": " \n\nThe magic number is 10149.\n**Final Answer**\n"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 4,
+          "magic": 90202,
+          "answer": "90202",
+          "hit": true,
+          "raw": " \n\nThe magic number is 90202.\nAnswer:\n90"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 74694,
+          "answer": "74694",
+          "hit": true,
+          "raw": " The magic number is 74694.\nAnswer:\n746"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 53664,
+          "answer": "53664",
+          "hit": true,
+          "raw": " The magic number is 53664.\nAnswer:\n536"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 2,
+          "magic": 41969,
+          "answer": "41969",
+          "hit": true,
+          "raw": " The magic number is 41969.\nAnswer:\nThe magic number"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 3,
+          "magic": 52625,
+          "answer": "52625",
+          "hit": true,
+          "raw": " The magic number is 52625.\nAnswer:\n526"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 4,
+          "magic": 18255,
+          "answer": "18255",
+          "hit": true,
+          "raw": " The magic number is 18255.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 35043,
+          "answer": "35043",
+          "hit": true,
+          "raw": " The magic number is 35043.\nAnswer:\n350"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 84384,
+          "answer": "84384",
+          "hit": true,
+          "raw": " The magic number is 84384.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 2,
+          "magic": 39059,
+          "answer": "39059",
+          "hit": true,
+          "raw": " The magic number is 39059.\nAnswer:\n390"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 3,
+          "magic": 41275,
+          "answer": "41275",
+          "hit": true,
+          "raw": " The magic number is 41275.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 4,
+          "magic": 28677,
+          "answer": "28677",
+          "hit": true,
+          "raw": " The magic number is 28677.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 81170,
+          "answer": "81170",
+          "hit": true,
+          "raw": " The magic number is 81170.\nAnswer:\n811"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 68716,
+          "answer": "68716",
+          "hit": true,
+          "raw": " The magic number is 68716.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 2,
+          "magic": 21955,
+          "answer": "21955",
+          "hit": true,
+          "raw": " The magic number is 21955.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 3,
+          "magic": 20544,
+          "answer": "20544",
+          "hit": true,
+          "raw": " The magic number is 20544.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 4,
+          "magic": 51950,
+          "answer": "51950",
+          "hit": true,
+          "raw": " The magic number is 51950.\nAnswer:\n519"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 76576,
+          "answer": "76576",
+          "hit": true,
+          "raw": " The magic number is 76576.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 74131,
+          "answer": "74131",
+          "hit": true,
+          "raw": " The magic number is 74131.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 2,
+          "magic": 24294,
+          "answer": "24294",
+          "hit": true,
+          "raw": " The magic number is 24294.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 3,
+          "magic": 49511,
+          "answer": "49511",
+          "hit": true,
+          "raw": " The magic number is 49511.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 4,
+          "magic": 82255,
+          "answer": "82255",
+          "hit": true,
+          "raw": " The magic number is 82255.\n**Final Answer**\nThe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 48153,
+          "answer": "48153",
+          "hit": true,
+          "raw": " The answer is 48153.\n**Final Answer**\nThe magic"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 26359,
+          "answer": "26359",
+          "hit": true,
+          "raw": " The answer is 26359.\n\n**Final Answer**\n26"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 2,
+          "magic": 81754,
+          "answer": null,
+          "hit": false,
+          "raw": " \n\nThe grass is green. The sky is blue. The sun is yellow."
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 3,
+          "magic": 53614,
+          "answer": "53614",
+          "hit": true,
+          "raw": " The answer is 53614.\n**Final Answer**\nThe magic"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 4,
+          "magic": 80816,
+          "answer": null,
+          "hit": false,
+          "raw": " \n\nThe grass is green. The sky is blue. The sun is yellow."
+        }
+      ]
+    }
+  ]
+}

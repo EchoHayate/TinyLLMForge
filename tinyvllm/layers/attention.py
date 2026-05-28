@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import triton
 import triton.language as tl
+from triton.language.extra import libdevice
 
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from tinyvllm.utils.context import get_context
@@ -48,6 +49,159 @@ def store_kvcache(
     store_kvcache_kernel[(N, )](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
 
 
+# ============================================================================
+# C4 / KV cache 4-bit 量化路径
+# ============================================================================
+# group-wise 对称量化：每 group 个 fp16/bf16 数 -> 1 个 fp scale + group_size 个 int4
+# 对称量化的反量化：x_fp = x_int4 * scale，量化范围 [-8, 7]
+# 4-bit pack：把 group_size 个 int4（实际存为 int8 寄存器）打成 group_size/2 个 int8
+#              低 4 位 = 偶数索引，高 4 位 = 奇数索引（注意 sign-extension 在反量化时处理）
+#
+# 设计上 head_dim 必须能被 group_size 整除；group_size 必须为偶数。
+# 实现上把 [num_kv_heads, head_dim] 拍平成 [num_kv_heads * head_dim] 一条 1D 处理。
+@triton.jit
+def store_kvcache_q4_kernel(
+    key_ptr,                # [N, num_kv_heads, head_dim]，dtype = fp16/bf16
+    key_stride_n,           # = num_kv_heads * head_dim
+    value_ptr,
+    value_stride_n,
+    k_cache_ptr,            # int8 packed，按 token-major 存：slot * (D//2)
+    v_cache_ptr,
+    k_scale_ptr,            # fp，按 slot * num_groups 存
+    v_scale_ptr,
+    slot_mapping_ptr,       # [N] int32
+    D: tl.constexpr,        # = num_kv_heads * head_dim
+    GROUP_SIZE: tl.constexpr,
+    HALF: tl.constexpr,     # = GROUP_SIZE // 2
+    NUM_GROUPS: tl.constexpr,  # = D // GROUP_SIZE
+):
+    pid = tl.program_id(0)         # token id (= 0..N-1)
+    gid = tl.program_id(1)         # group id (= 0..NUM_GROUPS-1)
+
+    base_in_k = pid * key_stride_n + gid * GROUP_SIZE
+    base_in_v = pid * value_stride_n + gid * GROUP_SIZE
+
+    # 一次性 load 整 group 求 amax；再分两次（偶/奇 stride=2）load 用于 pack
+    full_offs = tl.arange(0, GROUP_SIZE)
+    k_full = tl.load(key_ptr + base_in_k + full_offs).to(tl.float32)
+    v_full = tl.load(value_ptr + base_in_v + full_offs).to(tl.float32)
+
+    # symmetric int4：scale = max(|x|) / 7（[-8,7] 区间，对称用 7）
+    k_scale = tl.max(tl.abs(k_full), axis=0) / 7.0 + 1e-8
+    v_scale = tl.max(tl.abs(v_full), axis=0) / 7.0 + 1e-8
+
+    # 偶/奇 lane 分别量化，pack 进 int8（低 4 位 = 偶，高 4 位 = 奇）
+    even_offs = tl.arange(0, HALF) * 2
+    odd_offs = even_offs + 1
+
+    k_lo_f = tl.load(key_ptr + base_in_k + even_offs).to(tl.float32)
+    k_hi_f = tl.load(key_ptr + base_in_k + odd_offs).to(tl.float32)
+    v_lo_f = tl.load(value_ptr + base_in_v + even_offs).to(tl.float32)
+    v_hi_f = tl.load(value_ptr + base_in_v + odd_offs).to(tl.float32)
+
+    k_lo = tl.minimum(tl.maximum(libdevice.rint(k_lo_f / k_scale), -8.0), 7.0).to(tl.int32) & 0xF
+    k_hi = tl.minimum(tl.maximum(libdevice.rint(k_hi_f / k_scale), -8.0), 7.0).to(tl.int32) & 0xF
+    v_lo = tl.minimum(tl.maximum(libdevice.rint(v_lo_f / v_scale), -8.0), 7.0).to(tl.int32) & 0xF
+    v_hi = tl.minimum(tl.maximum(libdevice.rint(v_hi_f / v_scale), -8.0), 7.0).to(tl.int32) & 0xF
+
+    k_packed = (k_lo | (k_hi << 4)).to(tl.int8)
+    v_packed = (v_lo | (v_hi << 4)).to(tl.int8)
+
+    slot = tl.load(slot_mapping_ptr + pid).to(tl.int64)
+    out_offs = slot * (D // 2) + gid * HALF + tl.arange(0, HALF)
+    tl.store(k_cache_ptr + out_offs, k_packed)
+    tl.store(v_cache_ptr + out_offs, v_packed)
+
+    # scale：按 slot * NUM_GROUPS 存
+    tl.store(k_scale_ptr + slot * NUM_GROUPS + gid, k_scale)
+    tl.store(v_scale_ptr + slot * NUM_GROUPS + gid, v_scale)
+
+
+def store_kvcache_q4(
+    key: torch.Tensor,            # [N, num_kv_heads, head_dim] fp
+    value: torch.Tensor,
+    k_cache: torch.Tensor,        # int8 packed [num_blocks, block_size, num_kv_heads, head_dim/2]
+    v_cache: torch.Tensor,
+    k_scale: torch.Tensor,        # fp [num_blocks, block_size, num_kv_heads, num_groups]
+    v_scale: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    group_size: int,
+):
+    N, num_kv_heads, head_dim = key.shape
+    D = num_kv_heads * head_dim
+    num_groups_total = D // group_size  # 注意这里把 num_kv_heads 也展平了
+    assert head_dim % group_size == 0
+    assert group_size % 2 == 0
+    assert k_cache.dtype == torch.int8 and v_cache.dtype == torch.int8
+    # 调度：每个 (token, group) 一个 program
+    store_kvcache_q4_kernel[(N, num_groups_total)](
+        key, key.stride(0),
+        value, value.stride(0),
+        k_cache, v_cache,
+        k_scale, v_scale,
+        slot_mapping,
+        D=D,
+        GROUP_SIZE=group_size,
+        HALF=group_size // 2,
+        NUM_GROUPS=num_groups_total,
+    )
+
+
+def dequant_kv_blocks(
+    cache_packed: torch.Tensor,   # int8 [num_blocks_total, block_size, num_kv_heads, head_dim/2]
+    cache_scale: torch.Tensor,    # fp   [num_blocks_total, block_size, num_kv_heads, num_groups]
+    block_tables: torch.Tensor,   # int32 [B, max_blocks], -1 padded
+    group_size: int,
+    out_dtype: torch.dtype,
+):
+    """A-2 朴素反量化：把 batch 实际访问的所有 block (int4 packed) gather 出来并展开成 fp16。
+
+    返回:
+      cache_fp:    [B*max_blocks, block_size, num_kv_heads, head_dim] (out_dtype)
+      new_table:   [B, max_blocks] int32，identity 编号；padding 位置保持 -1
+    备注:
+      - padding 位（block_tables == -1）会被 clamp 到 0 然后产生 garbage 数据，
+        但 flash-attn 的 cache_seqlens 已经限定了实际读取的 token 数，所以无害。
+      - int4 sign-extension：用 int32 算术左/右移；torch 的 int32 `>>` 是算术右移。
+      - 内存：B*max_blocks*block_size*num_kv_heads*head_dim*sizeof(fp)。
+        15k 上下文 batch=16 时约 ~480MB/层 K + 480MB/层 V = ~1GB 瞬态，A-3 会优化。
+    """
+    B, max_blocks = block_tables.shape
+    nb_total, block_size, num_kv_heads, half = cache_packed.shape
+    head_dim = half * 2
+    num_groups = cache_scale.shape[-1]
+    assert num_groups * group_size == head_dim, "head_dim 必须 = num_groups * group_size"
+
+    valid_mask = block_tables >= 0
+    safe_idx = block_tables.clamp_min(0).to(torch.long)  # [B, max_blocks]
+
+    # gather： [B, max_blocks, block_size, num_kv_heads, head_dim/2]   int8
+    pack_b = cache_packed[safe_idx]
+    scale_b = cache_scale[safe_idx]                        # [B, max_blocks, block_size, num_kv_heads, num_groups]
+
+    # int4 nibble 解包到 int32（带符号），然后转 fp
+    p32 = pack_b.to(torch.int32)
+    low = (p32 << 28) >> 28          # 低 4 位 sign-extend
+    high = (p32 << 24) >> 28         # 高 4 位 sign-extend
+    # 交错 low/high → [..., head_dim]，与 store 时 even=low/odd=high 对齐
+    nibbles = torch.stack([low, high], dim=-1).flatten(-2)  # [..., head_dim] int32 in [-8,7]
+
+    # 把 scale 沿 head_dim 复制 group_size 次
+    scale_exp = scale_b.repeat_interleave(group_size, dim=-1)  # [..., head_dim]
+    # 反量化
+    cache_fp = nibbles.to(out_dtype) * scale_exp.to(out_dtype)
+
+    # 展平 (B, max_blocks) -> 单一 block 轴，给 flash-attn block_table 用
+    nb_active = B * max_blocks
+    cache_fp = cache_fp.reshape(nb_active, block_size, num_kv_heads, head_dim).contiguous()
+    new_table = (torch.arange(nb_active, device=block_tables.device, dtype=torch.int32)
+                 .view(B, max_blocks))
+    new_table = torch.where(valid_mask, new_table, torch.full_like(new_table, -1))
+    return cache_fp, new_table
+
+
+
+
 def update_block_summary(
     key: torch.Tensor,           # [N, num_kv_heads, head_dim]
     slot_mapping: torch.Tensor,  # [N] int32, slot = block_id * block_size + intra
@@ -75,27 +229,17 @@ def quest_select_blocks(
     k_max_layer: torch.Tensor,       # [num_blocks_total, num_kv_heads, head_dim]
     block_size: int,
     top_k: int,
-    min_seq_len: int,
 ):
     """Quest 选块：对每个 batch row，估计每个 block 的 max-inner-product 上界，取 top-k。
 
-    返回 (sparse_block_tables, sparse_context_lens)：
-      - 仅当某 row 的 num_blocks > top_k 才稀疏化；否则原样
-      - 全 batch 都不需要稀疏化时，返回 (None, None)
+    前置条件（在 prepare_decode host 端已校验）：
+      - batch 内所有 row 都满足 num_blocks > top_k
+      - 不需要再做 .item() / .min() 等 sync 判断
     """
     B, max_blocks = block_tables.shape
     num_q_heads, head_dim = q.shape[1], q.shape[2]
     num_kv_heads = k_min_layer.shape[1]
     n_groups = num_q_heads // num_kv_heads  # GQA group
-
-    # 每行实际有效 block 数：ceil(context_len / block_size)
-    num_blocks_in_seq = (context_lens.to(torch.long) + block_size - 1) // block_size  # [B]
-
-    # 任何一行 seq_len < min_seq_len 都不稀疏（保稳）；
-    # 且要求 batch 内所有 row 的 num_blocks > top_k，避免 mixed batch 边界 + 重复块带来的 logits 漂移
-    if (context_lens.min().item() < min_seq_len
-            or num_blocks_in_seq.min().item() <= top_k):
-        return None, None
 
     valid_mask = block_tables >= 0                      # [B, max_blocks]
     safe_idx = block_tables.clamp_min(0).to(torch.long) # [B, max_blocks]
@@ -108,21 +252,22 @@ def quest_select_blocks(
     q_grouped = q.view(B, num_kv_heads, n_groups, head_dim)
     q_repr = q_grouped.amax(dim=2)                      # [B, kv_h, d]
 
-    # criticality = sum_d max(q*k_min, q*k_max) per kv_head, 再跨 head 求和
-    qm_min = q_repr.unsqueeze(1) * k_min_b               # [B, max_blocks, kv_h, d]
-    qm_max = q_repr.unsqueeze(1) * k_max_b
-    qm = torch.maximum(qm_min, qm_max)
-    criticality = qm.sum(dim=(-1, -2)).to(torch.float32) # [B, max_blocks]
+    # criticality = sum_{h,d} max(q*k_min, q*k_max)
+    # 用 einsum 直接折叠 head/dim 两维，避免 4D 中间 tensor
+    qm = torch.maximum(
+        torch.einsum("bhd,bnhd->bnh", q_repr, k_min_b),
+        torch.einsum("bhd,bnhd->bnh", q_repr, k_max_b),
+    )                                                    # [B, max_blocks, kv_h]
+    criticality = qm.sum(dim=-1).to(torch.float32)       # [B, max_blocks]
 
     # 屏蔽 invalid block
     criticality = criticality.masked_fill(~valid_mask, float("-inf"))
 
     # 强制保留：首 block (attention sink) + 末 block (recency / partial)
+    num_blocks_in_seq = (context_lens.to(torch.long) + block_size - 1) // block_size  # [B]
     arange = torch.arange(max_blocks, device=block_tables.device).unsqueeze(0)  # [1, max_blocks]
-    is_first = (arange == 0)
     last_idx = (num_blocks_in_seq - 1).clamp_min(0).unsqueeze(1)
-    is_last = (arange == last_idx)
-    must_keep = (is_first | is_last) & valid_mask
+    must_keep = ((arange == 0) | (arange == last_idx)) & valid_mask
     criticality = criticality.masked_fill(must_keep, float("inf"))
 
     # top-k：因前置条件保证所有 row 的 num_blocks > top_k，topk 必然落在 valid 位置
@@ -175,6 +320,12 @@ class Attention(nn.Module):
         self.k_cache = self.v_cache = torch.Tensor([])
         # Quest per-block summary（model_runner 在 allocate_kv_cache 里挂入；未启用为 None）
         self.k_min = self.k_max = None
+        # C4：KV 量化辅助张量 + 标志位（model_runner 注入；未启用为 None / 0）
+        self.k_scale = self.v_scale = None
+        self.k_zero = self.v_zero = None
+        self.kv_quant_bits = 0
+        self.kv_quant_group_size = 128
+        self.kv_quant_symmetric = True
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)
@@ -184,37 +335,89 @@ class Attention(nn.Module):
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
         if k_cache.numel() and v_cache.numel():
-            store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
-            # Quest：写入 KV 后同步维护 per-block summary
-            if self.k_min is not None and self.k_max is not None:
-                update_block_summary(k, context.slot_mapping, self.k_min, self.k_max, k_cache.shape[1])
+            if self.kv_quant_bits == 4:
+                # C4 写入路径：4-bit pack + group-wise scale
+                # 注意 k_cache 此时是 int8 packed，shape [num_blocks, block_size, num_kv_heads, head_dim/2]
+                store_kvcache_q4(
+                    k, v,
+                    k_cache, v_cache,
+                    self.k_scale, self.v_scale,
+                    context.slot_mapping,
+                    self.kv_quant_group_size,
+                )
+                # Quest summary：现在 K 已经被量化存了，summary 用反量化前的 k 维护更准
+                if self.k_min is not None and self.k_max is not None:
+                    update_block_summary(k, context.slot_mapping, self.k_min, self.k_max, k_cache.shape[1])
+            else:
+                store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+                # Quest：写入 KV 后同步维护 per-block summary
+                if self.k_min is not None and self.k_max is not None:
+                    update_block_summary(k, context.slot_mapping, self.k_min, self.k_max, k_cache.shape[1])
         if context.is_prefill:
             # prefill传入的 q = [batch_size, seq_len, num_heads, head_dim]
             # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
-            if context.block_tables is not None:
-                k, v = k_cache, v_cache
-            o = flash_attn_varlen_func(q, k, v, 
-                                       cu_seqlens_q = context.cu_seqlens_q, cu_seqlens_k = context.cu_seqlens_k, 
-                                       max_seqlen_q = context.max_seqlen_q, max_seqlen_k = context.max_seqlen_k, 
-                                        softmax_scale = self.scale, causal = True, block_table = context.block_tables
-                                       )
+            if self.kv_quant_bits == 4:
+                # C4 prefill：
+                #   - 无 prefix-cache：cache 里只有当前刚写入的 token；为避免再读一次量化后掉精度，
+                #     直接用反量化前的 fp k/v 算 attention（等价语义，且省一次 dequant）。
+                #   - 有 prefix-cache：必须把命中块从 int4 反量化出来再喂 flash-attn。
+                if context.block_tables is None:
+                    o = flash_attn_varlen_func(
+                        q, k, v,
+                        cu_seqlens_q=context.cu_seqlens_q, cu_seqlens_k=context.cu_seqlens_k,
+                        max_seqlen_q=context.max_seqlen_q, max_seqlen_k=context.max_seqlen_k,
+                        softmax_scale=self.scale, causal=True, block_table=None)
+                else:
+                    k_fp, new_bt = dequant_kv_blocks(
+                        k_cache, self.k_scale, context.block_tables,
+                        self.kv_quant_group_size, q.dtype)
+                    v_fp, _ = dequant_kv_blocks(
+                        v_cache, self.v_scale, context.block_tables,
+                        self.kv_quant_group_size, q.dtype)
+                    o = flash_attn_varlen_func(
+                        q, k_fp, v_fp,
+                        cu_seqlens_q=context.cu_seqlens_q, cu_seqlens_k=context.cu_seqlens_k,
+                        max_seqlen_q=context.max_seqlen_q, max_seqlen_k=context.max_seqlen_k,
+                        softmax_scale=self.scale, causal=True, block_table=new_bt)
+            else:
+                if context.block_tables is not None:
+                    k, v = k_cache, v_cache
+                o = flash_attn_varlen_func(q, k, v, 
+                                           cu_seqlens_q = context.cu_seqlens_q, cu_seqlens_k = context.cu_seqlens_k, 
+                                           max_seqlen_q = context.max_seqlen_q, max_seqlen_k = context.max_seqlen_k, 
+                                            softmax_scale = self.scale, causal = True, block_table = context.block_tables
+                                           )
         else:
             # decode阶段传入的 q = [batch_size, num_heads, head_dim]
             block_tables = context.block_tables
             cache_seqlens = context.context_lens
+            if self.kv_quant_bits == 4:
+                # C4 decode：把命中块整体反量化为 fp16，再喂 flash_attn_with_kvcache。
+                # NOTE: 与 Quest 同时启用尚未支持（block_table 改写顺序冲突），A-3 后再考虑叠加。
+                assert not (context.quest_top_k_blocks > 0 and self.k_min is not None), \
+                    "C4 + Quest 叠加暂未实现"
+                k_fp, new_bt = dequant_kv_blocks(
+                    k_cache, self.k_scale, block_tables,
+                    self.kv_quant_group_size, q.dtype)
+                v_fp, _ = dequant_kv_blocks(
+                    v_cache, self.v_scale, block_tables,
+                    self.kv_quant_group_size, q.dtype)
+                o = flash_attn_with_kvcache(
+                    q.unsqueeze(1), k_fp, v_fp,
+                    cache_seqlens=cache_seqlens,
+                    block_table=new_bt, softmax_scale=self.scale, causal=True)
+                o = o.view(-1, self.num_heads * self.head_dim)
+                return o
             # Quest：动态选 top-k block，重写 block_table 与 cache_seqlens
+            # context.quest_top_k_blocks > 0 表示已通过 host 端早返回校验
             if (context.quest_top_k_blocks > 0 and self.k_min is not None
                     and block_tables is not None and cache_seqlens is not None):
-                sparse_bt, sparse_lens = quest_select_blocks(
+                block_tables, cache_seqlens = quest_select_blocks(
                     q, block_tables, cache_seqlens,
                     self.k_min, self.k_max,
                     k_cache.shape[1],
                     context.quest_top_k_blocks,
-                    context.quest_min_seq_len,
                 )
-                if sparse_bt is not None:
-                    block_tables = sparse_bt
-                    cache_seqlens = sparse_lens
             o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = cache_seqlens,
                                         block_table = block_tables, softmax_scale = self.scale, causal = True)
         o = o.view(-1, self.num_heads * self.head_dim)

@@ -17,7 +17,7 @@ class Config:
     num_kvcache_blocks: int = -1                        #-1代表自动计算  num_kvcache_blocks=kv cache/kvcache_block_size 
 
     # 量化 / cpu-offload 相关配置
-    quantization: str | None = None                     # None | "int8" | "int8_bnb" | "int2"  线性层权重量化方式
+    quantization: str | None = None                     # None | "int8" | "int8_bnb" | "int4" | "int2"  线性层权重量化方式
     quant_group_size: int = 128                         # 分组量化的组大小（更小的组 -> 更高精度但额外开销大）
     cpu_offload: bool = False                           # 是否启用 cpu-offload (decoder layer 粒度)
     cpu_offload_num_layers: int = -1                    # 卸载到 cpu 的 decoder 层数，-1 表示除最后 2 层外全部卸载
@@ -26,12 +26,24 @@ class Config:
     quest_top_k_blocks: int = -1                        # decode 时每个 query 选择的 block 数，-1 表示关闭 Quest
     quest_min_seq_len: int = 1024                       # 序列长度小于此值时退化为 full attention
 
+    # KV cache 量化（C4 等）相关配置
+    kv_quant_bits: int = 0                              # 0 / 4 / 8，KV cache 量化位宽，0 表示不量化
+    kv_quant_group_size: int = 128                      # group-wise 量化的组大小，沿 head_dim 切
+    kv_quant_symmetric: bool = True                     # True = 对称量化（仅 scale），False = 非对称（scale + zero）
+    # Activation 量化（A8 等）相关配置（W4A8 用）
+    act_quant_bits: int = 0                             # 0 / 8
+
     # 在默认的构造函数之后自动启用，用于补充缺少的初始化逻辑
     def __post_init__(self):
         assert os.path.isdir(self.model)
         assert self.kvcache_block_size % 256 == 0
         assert 1 <= self.tensor_parallel_size <= 8
-        assert self.quantization in (None, "int8", "int8_bnb", "int2")
+        assert self.quantization in (None, "int8", "int8_bnb", "int4", "int2")
+        assert self.kv_quant_bits in (0, 4, 8), "kv_quant_bits 仅支持 0/4/8"
+        assert self.act_quant_bits in (0, 8), "act_quant_bits 仅支持 0/8"
+        if self.kv_quant_bits == 4:
+            # group_size 必须能整除 head_dim，且对 4-bit pack 友好（即 group_size 为偶数）
+            assert self.kv_quant_group_size % 2 == 0
         self.hf_config = AutoConfig.from_pretrained(self.model)
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
         assert self.max_num_batched_tokens >= self.max_model_len

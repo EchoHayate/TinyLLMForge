@@ -6,6 +6,7 @@ import torch.distributed as dist
 from tinyvllm.layers.quantization import (
     quantize_weight,
     dequantize_weight,
+    fake_quantize_act_int8,
 )
 
 # bnb 是可选依赖：只有走 int8_bnb fused GEMM 路径才需要
@@ -50,12 +51,14 @@ def _bnb_int8_matmul(x: torch.Tensor, qweight: torch.Tensor,
 # ------------------------------------------------------------------
 _QUANT_METHOD: str | None = None
 _QUANT_GROUP_SIZE: int = 128
+_ACT_QUANT_BITS: int = 0
 
 
-def set_quant_config(method: str | None, group_size: int = 128):
-    global _QUANT_METHOD, _QUANT_GROUP_SIZE
+def set_quant_config(method: str | None, group_size: int = 128, act_bits: int = 0):
+    global _QUANT_METHOD, _QUANT_GROUP_SIZE, _ACT_QUANT_BITS
     _QUANT_METHOD = method
     _QUANT_GROUP_SIZE = group_size
+    _ACT_QUANT_BITS = act_bits
 
 
 def get_quant_method() -> str | None:
@@ -78,10 +81,12 @@ class _QuantMixin:
 
     quant_method: str | None = None
     quant_group_size: int = 128
+    act_quant_bits: int = 0
 
     def _maybe_init_quant(self):
         self.quant_method = _QUANT_METHOD
         self.quant_group_size = _QUANT_GROUP_SIZE
+        self.act_quant_bits = _ACT_QUANT_BITS
 
     def finalize_quantization(self):
         """把当前 self.weight 量化为 (qweight, scales)，释放 fp weight。"""
@@ -102,6 +107,9 @@ class _QuantMixin:
         )
 
     def _linear_forward(self, x: torch.Tensor, bias: torch.Tensor | None) -> torch.Tensor:
+        # A8 假量化（对所有量化路径都生效，包括 None；naive W4A8 用，没有 weight 量化时也允许 A8 验 act 噪声单独的影响）
+        if self.act_quant_bits == 8:
+            x = fake_quantize_act_int8(x)
         if self.quant_method is None:
             return F.linear(x, self.weight, bias)
         # int8_bnb：fused W8A16 GEMM（仅 fp16 走快路径，bf16 fallback）

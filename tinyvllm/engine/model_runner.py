@@ -36,7 +36,7 @@ class ModelRunner:
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
         # 注入全局量化配置（在构建模型前）
-        set_quant_config(config.quantization, config.quant_group_size)
+        set_quant_config(config.quantization, config.quant_group_size, config.act_quant_bits)
         self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
         load_model(self.model, config.model)            #涉及到一些qwen里面的
         # 加载完成后再做 cpu-offload（量化已在 loader 内 finalize 完成）
@@ -47,7 +47,8 @@ class ModelRunner:
         self.warmup_model()                             #暂时跳过
 
         self.allocate_kv_cache()                        #预分配空间（没有具体值）
-        if not self.enforce_eager:
+        # C4 decode 反量化路径里有动态 alloc，无法 capture，跳过 cuda graph
+        if not self.enforce_eager and config.kv_quant_bits != 4:
             self.capture_cudagraph()                    #暂时跳过
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
@@ -130,35 +131,92 @@ class ModelRunner:
         peak = torch.cuda.memory_stats()["allocated_bytes.all.peak"]
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
-        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * \
-            hf_config.head_dim * hf_config.torch_dtype.itemsize             
-        # 2: key 和 value各占一块   num_hidden_layers:attention总层数     block_size：单个缓存块能存储的 token 数量
-        # num_kv_heads：键值注意力头的数量  head_dim：每个注意力头的维度    torch_dtype.itemsize：单个数据元素的字节数
+        head_dim = hf_config.head_dim
+        dtype = hf_config.torch_dtype
+        elem_bytes = dtype.itemsize
+
+        # ----- KV cache 主存储：根据 kv_quant_bits 决定字节数 -----
+        # 0: fp/half 原样；4: 每 token 每 head_dim 半字节（按 int8 pack）；8: 每 token 每 head_dim 1 字节
+        kvq_bits = config.kv_quant_bits
+        if kvq_bits == 0:
+            tokens_per_block_bytes = self.block_size * num_kv_heads * head_dim * elem_bytes
+            kv_scale_bytes_per_block = 0
+        elif kvq_bits == 4:
+            assert head_dim % config.kv_quant_group_size == 0, \
+                f"head_dim={head_dim} 必须能被 kv_quant_group_size={config.kv_quant_group_size} 整除"
+            n_groups_per_token = head_dim // config.kv_quant_group_size
+            # 4-bit pack 进 int8：每 byte 存 2 个 4-bit；group_size 偶数保证字节对齐
+            packed_bytes = self.block_size * num_kv_heads * (head_dim // 2)
+            tokens_per_block_bytes = packed_bytes
+            # scale: fp16 / bf16 一份，对称量化只存 scale；非对称额外存 zero（同 dtype）
+            scale_count = self.block_size * num_kv_heads * n_groups_per_token
+            kv_scale_bytes_per_block = scale_count * elem_bytes * (1 if config.kv_quant_symmetric else 2)
+        else:  # 8
+            tokens_per_block_bytes = self.block_size * num_kv_heads * head_dim
+            n_groups_per_token = max(1, head_dim // config.kv_quant_group_size)
+            scale_count = self.block_size * num_kv_heads * n_groups_per_token
+            kv_scale_bytes_per_block = scale_count * elem_bytes * (1 if config.kv_quant_symmetric else 2)
+
+        block_bytes = 2 * hf_config.num_hidden_layers * tokens_per_block_bytes
+        kv_scale_bytes_per_block = 2 * hf_config.num_hidden_layers * kv_scale_bytes_per_block
+
         # Quest 启用时还需要预留 per-block K min/max summary 显存（每块 2*num_kv_heads*head_dim 元素）
         quest_enabled = config.quest_top_k_blocks > 0
         summary_bytes = (2 * hf_config.num_hidden_layers * num_kv_heads *
-                         hf_config.head_dim * hf_config.torch_dtype.itemsize) if quest_enabled else 0
-        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // (block_bytes + summary_bytes)
+                         head_dim * elem_bytes) if quest_enabled else 0
+
+        per_block = block_bytes + kv_scale_bytes_per_block + summary_bytes
+        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // per_block
         assert config.num_kvcache_blocks > 0
-        self.kv_cache = torch.zeros(2, hf_config.num_hidden_layers, 
-                config.num_kvcache_blocks, self.block_size, num_kv_heads, hf_config.head_dim)
+
+        nb = config.num_kvcache_blocks
+        L = hf_config.num_hidden_layers
+        if kvq_bits == 0:
+            self.kv_cache = torch.zeros(2, L, nb, self.block_size, num_kv_heads, head_dim, dtype=dtype)
+            self.kv_scale = None
+            self.kv_zero = None
+        elif kvq_bits == 4:
+            # int8 pack 后，沿最后一维 head_dim/2
+            self.kv_cache = torch.zeros(2, L, nb, self.block_size, num_kv_heads, head_dim // 2, dtype=torch.int8)
+            n_groups = head_dim // config.kv_quant_group_size
+            self.kv_scale = torch.zeros(2, L, nb, self.block_size, num_kv_heads, n_groups, dtype=dtype)
+            self.kv_zero = (None if config.kv_quant_symmetric else
+                            torch.zeros(2, L, nb, self.block_size, num_kv_heads, n_groups, dtype=dtype))
+        else:  # 8
+            self.kv_cache = torch.zeros(2, L, nb, self.block_size, num_kv_heads, head_dim, dtype=torch.int8)
+            n_groups = max(1, head_dim // config.kv_quant_group_size)
+            self.kv_scale = torch.zeros(2, L, nb, self.block_size, num_kv_heads, n_groups, dtype=dtype)
+            self.kv_zero = (None if config.kv_quant_symmetric else
+                            torch.zeros(2, L, nb, self.block_size, num_kv_heads, n_groups, dtype=dtype))
+
         # Quest summary：[2, num_layers, num_blocks, num_kv_heads, head_dim]，dim0 = (min, max)
         if quest_enabled:
-            self.kv_summary = torch.empty(
-                2, hf_config.num_hidden_layers, config.num_kvcache_blocks,
-                num_kv_heads, hf_config.head_dim,
-                dtype=hf_config.torch_dtype,
-            )
+            self.kv_summary = torch.empty(2, L, nb, num_kv_heads, head_dim, dtype=dtype)
             # 用 +inf / -inf 作为 min/max 的初始值，确保第一次 token 写入后被替换
             self.kv_summary[0].fill_(float("inf"))
             self.kv_summary[1].fill_(float("-inf"))
         else:
             self.kv_summary = None
+
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
                 module.k_cache = self.kv_cache[0, layer_id]
                 module.v_cache = self.kv_cache[1, layer_id]
+                # 把量化辅助张量也挂上去；非量化时为 None
+                if self.kv_scale is not None:
+                    module.k_scale = self.kv_scale[0, layer_id]
+                    module.v_scale = self.kv_scale[1, layer_id]
+                else:
+                    module.k_scale = module.v_scale = None
+                if self.kv_zero is not None:
+                    module.k_zero = self.kv_zero[0, layer_id]
+                    module.v_zero = self.kv_zero[1, layer_id]
+                else:
+                    module.k_zero = module.v_zero = None
+                module.kv_quant_bits = kvq_bits
+                module.kv_quant_group_size = config.kv_quant_group_size
+                module.kv_quant_symmetric = config.kv_quant_symmetric
                 if quest_enabled:
                     module.k_min = self.kv_summary[0, layer_id]
                     module.k_max = self.kv_summary[1, layer_id]
@@ -250,9 +308,20 @@ class ModelRunner:
         slot_mapping = torch.tensor(data=slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(data=context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
+
+        # Quest 早返回判定（host 端，避免每层 .item() 触发 GPU sync）：
+        #   仅当 batch 内所有 row 都满足 (seq_len >= min_seq_len) 且 (num_blocks > top_k) 才启用
+        cfg_top_k = self.config.quest_top_k_blocks
+        cfg_min_len = self.config.quest_min_seq_len
+        if cfg_top_k > 0 and seqs:
+            min_seq_len_host = min(len(s) for s in seqs)
+            min_blocks_host = min(s.num_blocks for s in seqs)
+            quest_active_top_k = cfg_top_k if (min_seq_len_host >= cfg_min_len and min_blocks_host > cfg_top_k) else -1
+        else:
+            quest_active_top_k = -1
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,
-                    quest_top_k_blocks=self.config.quest_top_k_blocks,
-                    quest_min_seq_len=self.config.quest_min_seq_len)
+                    quest_top_k_blocks=quest_active_top_k,
+                    quest_min_seq_len=cfg_min_len)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上
@@ -270,9 +339,11 @@ class ModelRunner:
     #只需要前向传播 禁用梯度计算（无需反向传播），节省内存；
     # 加速推理过程（跳过与训练相关的检查和操作）。
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
-        # Quest 走 eager（含动态 control flow + 形状变化的 block_table），不走 cuda graph
-        quest_active = self.config.quest_top_k_blocks > 0
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512 or quest_active:     #动态执行 eager mode    input_ids.size(0) > 512：大批量输入的形状不固定，预编译静态图的收益有限，动态执行更灵活。
+        # Quest 实际启用时（context 已确认）才走 eager；否则照常走 cuda graph
+        quest_active = (not is_prefill) and (get_context().quest_top_k_blocks > 0)
+        # C4：decode 反量化每步都要 alloc，cuda graph 无法 replay，强制 eager
+        c4_active = self.config.kv_quant_bits == 4
+        if is_prefill or self.enforce_eager or input_ids.size(0) > 512 or quest_active or c4_active:     #动态执行 eager mode    input_ids.size(0) > 512：大批量输入的形状不固定，预编译静态图的收益有限，动态执行更灵活。
             return self.model.compute_logits(self.model(input_ids, positions))
         else:           #静态执行  graph replay
             bs = input_ids.size(0)
