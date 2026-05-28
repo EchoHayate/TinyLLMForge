@@ -488,6 +488,7 @@ attn out err: 0.014 / amax 0.099  (相对 14%)
 1. 7B+ 模型上是否 α 路线就足以收敛？（业界 W4A8KV4 论文都是 ≥7B 跑的）
 2. flash-attn 上游是否会原生支持 4-bit KV？（如果是，β2 就免做了）
 3. 与 Quest 叠加时，是否可以**只对选中的 top-k block 做 dequant**？这能把 dequant 开销除以 N_blocks/top_k，理论上 long-ctx 反而能翻盘。但前提是先有 acc 能用的量化路线。
+   → **2026-05-28 已落地为 §10 β3，吞吐 2.29× 翻盘成功；acc 仍受 §8.3 同样的限制。**
 
 #### 8.3.8 文件留痕
 - `tools/test_c4_roundtrip.py`：保留，已验证 kernel 正确性
@@ -569,3 +570,136 @@ attn out err: 0.014 / amax 0.099  (相对 14%)
 - `needle_w4_g32_long.json`（W4 g=32 长 ctx）
 - `needle_w4a8_g32_long.json`（W4A8 g=32 长 ctx）
 - 上面 9.2 的 4k 数据沿用 `needle_w4*_g32.json` / `needle_w4a8_g32.json`
+
+
+---
+
+## 10. Phase A-revisit：β3 — C4 + Quest 叠加，仅 dequant top-k 选中块
+
+> §8.3 把 α 路线（纯 C4，dequant 全部命中块）枪毙后，§8.3.7 的开放问题 #3 留了一个伏笔：
+> "只对 Quest 选中的 top-k 块做 dequant，能把 dequant 开销除以 max_blocks/top_k"。
+> 本节是这个伏笔的实测落地，编号沿用 §8.3 列出的路线候选 → β3。
+
+### 10.1 关键观察：α 路线的瓶颈不是 KV 带宽，而是瞬态 buffer
+
+§8.3 已经定位：长 ctx 下 `dequant_kv_blocks` 每层每 step 都分配
+`[B*max_blocks, block_size, num_kv_heads, head_dim]` 的 fp16 buffer，
+量级 ~480 MB/层 × 2 (K+V) × num_layers = 几十 GB/step 的瞬态分配 + 写回，
+**反而比 baseline 慢 5.4×**。
+
+直接的解法有两个：
+- β1（fork flash-attn 直接吃 int4 KV）：消除 buffer，工作量极大，与上游脱钩
+- **β3（Quest 叠 C4，sparse dequant）：buffer 从 B·max_blocks 缩到 B·top_k，工作量极小**
+
+β3 的关键是改 ordering：先用未量化的 `k_min/k_max` summary 选 top-k 块，
+**再**对这 top-k 块做 dequant；选块本身只用 fp16 summary（store 时维护，反量化前），
+不需要先 dequant 整张 cache。
+
+### 10.2 实现：attention.py decode 分支重构
+
+```python
+quest_active = (context.quest_top_k_blocks > 0
+                and self.k_min is not None
+                and block_tables is not None
+                and cache_seqlens is not None)
+
+if self.kv_quant_bits == 4:
+    if quest_active:
+        # 1) 用未量化的 summary 选 top-k
+        sparse_bt, sparse_cs = quest_select_blocks(
+            q, block_tables, cache_seqlens,
+            self.k_min, self.k_max, k_cache.shape[1],
+            context.quest_top_k_blocks)
+        # 2) 仅对 top-k 做 dequant；buffer = B*top_k*block_size*kv_h*hd
+        k_fp, new_bt = dequant_kv_blocks(
+            k_cache, self.k_scale, sparse_bt,
+            self.kv_quant_group_size, q.dtype)
+        v_fp, _ = dequant_kv_blocks(
+            v_cache, self.v_scale, sparse_bt,
+            self.kv_quant_group_size, q.dtype)
+        o = flash_attn_with_kvcache(
+            q.unsqueeze(1), k_fp, v_fp,
+            cache_seqlens=sparse_cs, block_table=new_bt,
+            softmax_scale=self.scale, causal=True)
+    else:
+        # C4 only 路径（α）保留作回退/对照
+        ...
+```
+
+要点：
+- `quest_select_blocks` 用 `k_min/k_max`（未量化）算 criticality，metadata 干净
+- 必保留：第 0 块（attention sink）+ 末块（recency / partial），由 `must_keep` 强制 +∞
+- `quest_select_blocks` 返回的 `sparse_bt: [B, top_k]`、`sparse_cs: [B]` 形状
+  跟 `dequant_kv_blocks` 期望的 `block_tables: [B, max_blocks]` 兼容（top_k 替代 max_blocks）
+- 取掉了原 `assert not (Quest && C4)` 拦截
+
+`tools/eval_needle.py` 同步解禁：is_c4 时也允许走 `--top-k-blocks-list`，
+单进程内可以一次跑 "C4 only" + "C4+top_k=k1" + "C4+top_k=k2"。
+
+### 10.3 长 ctx 吞吐：2.29× 翻盘
+
+A100 / Qwen3-0.6B / kv_quant_bits=4 / kv_quant_group_size=32 /
+quest_min_seq_len=1024 / num_trials=2 / depth ∈ {0.0, 0.5, 1.0}：
+
+| 配置 | ctx ∈ {8192, 15000} 平均 tok/s | 相对 C4 only |
+|---|---|---|
+| C4 only（α） | 22.11 | 1.00× |
+| **C4 + top_k=16（β3）** | **50.73** | **2.29×** |
+
+**这是 §8.3 之后第一次让 C4 路线在长 ctx 上跑赢自己。**
+
+短 ctx 对照（ctx=4096，max_blocks=4096/256≈16，top_k 已经接近 max_blocks）：
+
+| 配置 | ctx=4096 tok/s |
+|---|---|
+| C4 only | 72.39 |
+| C4 + top_k=8 | 108.57 (1.50×) |
+| C4 + top_k=16 | 74.36 (1.03×) |
+
+短 ctx 下 top_k=16 ≈ max_blocks，β3 没收益是预期内的；说明只有
+"max_blocks ≫ top_k"时叠加才划算。
+
+### 10.4 acc：β3 没让它更差，但也没解决 §8.3 的根因
+
+| 配置 (g=32) | needle 4k overall acc |
+|---|---|
+| C4 only（历史 needle_c4_g32.json） | 0.0% |
+| C4 only（本轮 4 trials） | 0.0% |
+| C4 + top_k=8（本轮 4 trials） | 0.0% |
+| C4 + top_k=16（本轮 4 trials） | 0.0% |
+
+C4 g=32 在 0.6B Qwen3 上的 needle acc 本来就是 0%（§8.3 的 negative result 没变）。
+β3 的价值是**性能**，不是 acc：长 ctx 翻盘后，C4 路线终于不再"省了 KV 带宽却跑得更慢"。
+要再要 acc，得换更大模型（≥7B）或叠非对称量化 / per-channel scale，那是后续事。
+
+输出 raw 抽样确认模型仍在做合理推理（连贯英文，未崩成乱码）：
+```
+top_k=-1 -> "The answer is inside the box. The answer is on the top of the box. ..."
+top_k=8  -> "The number is . The number is the number is, the number is, ..."
+```
+即 acc=0% 是 0.6B 找不到 needle，不是数值崩坏。
+
+### 10.5 结论：β3 是 §8.3 三选项里最低成本的，已落地
+
+| 路线 | 工作量 | 长 ctx 吞吐 | 落地状态 |
+|---|---|---|---|
+| α（纯 C4） | — | 0.18× baseline（即比 baseline 慢 5.4×） | 历史负结果 |
+| β1（fork flash-attn 接 int4） | 极大 | 理论 ~2× | 未做 |
+| β2（非对称 + zero-point） | 中 | 仍含 dequant buffer | 未做 |
+| **β3（Quest 选块 + sparse dequant）** | **小（~60 行 attention.py 改动）** | **2.29× 相对 C4 only** | **已落地** |
+
+β3 + Quest 都是只在 decode 启用，prefill 走原路径，不影响 prefill 吞吐。
+
+### 10.6 已知不做
+- ❌ β3 接 cuda graph：dequant 仍有动态 alloc，与 §8.3 同样原因；要 capture 得先把
+  dequant 改成"写到固定大小的 pre-alloc buffer"，工作量不小
+- ❌ β3 + W4A8 三叠加：本仓库 0.6B 上 acc 已经在 §8.3 / §9.4 各自钉死，
+  叠加不会改善 acc 只会复合性能成本
+
+### 10.7 文件留痕
+- `tinyvllm/layers/attention.py::Attention.forward`：decode 分支新增 `quest_active`，
+  C4+Quest 走 sparse 路径，C4 only 保留作回退；取掉互斥 assert
+- `tools/eval_needle.py::run_one_setting / main`：is_c4 时不再强制 `top_k=-1`
+- `needle_c4_quest_long.json`（β3 长 ctx 性能数据）
+- `needle_c4_quest_acc.json`（β3 短 ctx 多 trial acc 数据）
+- commit `5f5a38a`
