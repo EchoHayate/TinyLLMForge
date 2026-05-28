@@ -55,18 +55,20 @@ class _PrefetchOffloadManager:
         self.entries: list[list[tuple[torch.Tensor, torch.Tensor]]] = []
         self.gpu_resident: list[bool] = [False] * len(layers)
         self.prefetch_done: list[torch.cuda.Event | None] = [None] * len(layers)
+        # 记录 evict 完成事件，确保下次 fetch 等到 master 写完
+        self.evict_done: list[torch.cuda.Event | None] = [None] * len(layers)
 
         for layer in layers:
             layer_entries: list[tuple[torch.Tensor, torch.Tensor]] = []
             for _, t, _ in _iter_storage_tensors(layer):
-                cpu_master = t.data.detach().to("cpu")
-                try:
-                    cpu_master = cpu_master.pin_memory()
-                except RuntimeError:
-                    pass
+                # init 阶段一次性 D2H（non_blocking + 末尾 sync），减少多层叠加同步开销
+                cpu_master = torch.empty_like(t.data, device="cpu", pin_memory=True)
+                cpu_master.copy_(t.data, non_blocking=True)
                 t.data = cpu_master
                 layer_entries.append((t, cpu_master))
             self.entries.append(layer_entries)
+        # 等所有 init 期 D2H 完成
+        torch.cuda.synchronize(gpu_device)
 
         for idx, layer in enumerate(layers):
             layer.register_forward_pre_hook(self._make_pre_hook(idx))
@@ -76,8 +78,13 @@ class _PrefetchOffloadManager:
         """在 prefetch_stream 上发起第 idx 层的 H2D，并记录完成事件。"""
         if self.gpu_resident[idx]:
             return
-        # 让 prefetch_stream 等 compute_stream，确保上一次 D2H 写完 master 后再读
+        # 让 prefetch_stream 等 compute_stream 上当前已发起的工作（含可能未发起 evict_done event 的旧路径）
         self.prefetch_stream.wait_stream(torch.cuda.current_stream())
+        # 显式等同一层上次 evict 的完成事件（保险，跨 step 也成立）
+        evict_evt = self.evict_done[idx]
+        if evict_evt is not None:
+            self.prefetch_stream.wait_event(evict_evt)
+            self.evict_done[idx] = None
         with torch.cuda.stream(self.prefetch_stream):
             for t, cpu_master in self.entries[idx]:
                 gpu_t = cpu_master.to(self.gpu_device, non_blocking=True)
@@ -91,9 +98,14 @@ class _PrefetchOffloadManager:
         """把第 idx 层的 GPU 权重拷回 CPU master，释放 GPU 内存。"""
         if not self.gpu_resident[idx]:
             return
+        compute_stream = torch.cuda.current_stream()
         for t, cpu_master in self.entries[idx]:
             cpu_master.copy_(t.data, non_blocking=True)
             t.data = cpu_master
+        # 记录 D2H 完成事件，下次 fetch 同一层时显式等它
+        evt = torch.cuda.Event()
+        evt.record(compute_stream)
+        self.evict_done[idx] = evt
         self.gpu_resident[idx] = False
         self.prefetch_done[idx] = None
 

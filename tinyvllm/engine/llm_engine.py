@@ -23,7 +23,7 @@ class LLMEngine:
         ctx = mp.get_context("spawn")                       # 生成全新解释器，继承基本资源，全局变量，打开的文件，线程不会被继承
         for i in range(1, config.tensor_parallel_size):     # 生成所有的子进程
             event = ctx.Event()                             #进程间同步的“信号量”，用于进程间通信
-            process = ctx.Process(target=ModelRunner, args = {config, i, event}) #创建子进程对象 modelrunner是子进程要执行的目标函数
+            process = ctx.Process(target=ModelRunner, args=(config, i, event)) #创建子进程对象 modelrunner是子进程要执行的目标函数
             process.start()
             self.ps.append(process)
             self.events.append(event)

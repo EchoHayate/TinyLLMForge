@@ -17,6 +17,18 @@
 import torch
 
 
+def _percentile_along_last(x: torch.Tensor, q: float) -> torch.Tensor:
+    """沿最后一维取 q 分位（0<q<1）。比 torch.quantile 快得多：用 kthvalue O(n)。
+
+    返回 shape = x.shape[:-1] + (1,)
+    """
+    n = x.shape[-1]
+    k = max(1, min(n, int(round(q * n))))
+    # kthvalue 返回升序第 k 小的值；q 分位 = 升序第 ceil(q*n) 个
+    val = torch.kthvalue(x, k, dim=-1, keepdim=True).values
+    return val
+
+
 def quantize_int8(weight: torch.Tensor, group_size: int = 128):
     """对称分组量化 -> int8。
 
@@ -30,9 +42,7 @@ def quantize_int8(weight: torch.Tensor, group_size: int = 128):
     """
     assert weight.dim() == 2
     out, in_dim = weight.shape
-    if in_dim % group_size != 0:
-        # 退化：用整行做一组
-        group_size = in_dim
+    assert in_dim % group_size == 0, f"int8 量化要求 in_dim={in_dim} 能被 group_size={group_size} 整除"
     num_groups = in_dim // group_size
 
     w = weight.detach().float().reshape(out, num_groups, group_size)
@@ -66,15 +76,14 @@ def quantize_int4(weight: torch.Tensor, group_size: int = 128):
     """
     assert weight.dim() == 2
     out, in_dim = weight.shape
-    if in_dim % group_size != 0:
-        group_size = in_dim
+    assert in_dim % group_size == 0, f"int4 量化要求 in_dim={in_dim} 能被 group_size={group_size} 整除"
     assert in_dim % 2 == 0, "int4 pack 要求 in_dim 能被 2 整除"
     num_groups = in_dim // group_size
 
     w = weight.detach().float().reshape(out, num_groups, group_size)
 
     abs_w = w.abs()
-    p995 = torch.quantile(abs_w, 0.995, dim=-1, keepdim=True).clamp_min(1e-8)
+    p995 = _percentile_along_last(abs_w, 0.995).clamp_min(1e-8)
     abs_max = abs_w.amax(dim=-1, keepdim=True).clamp_min(1e-8)
     clip_val = torch.minimum(abs_max, p995 * 1.5)
 
@@ -160,8 +169,7 @@ def quantize_int2(weight: torch.Tensor, group_size: int = 128):
     """
     assert weight.dim() == 2
     out, in_dim = weight.shape
-    if in_dim % group_size != 0:
-        group_size = in_dim
+    assert in_dim % group_size == 0, f"int2 量化要求 in_dim={in_dim} 能被 group_size={group_size} 整除"
     assert in_dim % 4 == 0, "int2 量化要求 in_dim 能被 4 整除"
     num_groups = in_dim // group_size
 
@@ -169,8 +177,7 @@ def quantize_int2(weight: torch.Tensor, group_size: int = 128):
 
     # ---- 异常值保护：每组单独按 99.5% absmax 做 soft clip ----
     abs_w = w.abs()
-    # 99.5 分位（torch.quantile 对每组沿 -1 维做）
-    p995 = torch.quantile(abs_w, 0.995, dim=-1, keepdim=True).clamp_min(1e-8)  # [out, ng, 1]
+    p995 = _percentile_along_last(abs_w, 0.995).clamp_min(1e-8)               # [out, ng, 1]
     abs_max = abs_w.amax(dim=-1, keepdim=True).clamp_min(1e-8)
     clip_val = torch.minimum(abs_max, p995 * 1.5)                              # 保留少量大值
 

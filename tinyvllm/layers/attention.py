@@ -283,26 +283,6 @@ def quest_select_blocks(
     return sparse_bt.contiguous(), sparse_context_lens.contiguous()
 
 
-#简化版本
-def store_kvcache_simplified(
-    key: torch.Tensor,
-    value: torch.Tensor,
-    k_cache:torch.Tensor,
-    v_cache:torch.Tensor,
-    slot_mapping: torch.Tensor
-):
-    N,num_heads,head_dim= key.shape
-
-    flat_key = key.view(N,-1)
-    flat_value = value.view(N,-1)
-
-    for i in range(N):
-        slot = slot_mapping[i].item()
-        k_cache[slot] = flat_key[i]
-        v_cache[slot] = flat_value[i]
-
-
-
 class Attention(nn.Module):
 
     def __init__(
