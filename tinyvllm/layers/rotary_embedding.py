@@ -38,7 +38,8 @@ class RotaryEmbedding(nn.Module):
         # 这里不保存到stat_dict是为了用一点计算时间换取显存空间
         self.register_buffer("cos_sin_cache", cache, persistent= False)
 
-    @torch.compile
+    # dynamic=True：prefill num_tokens 动态，避免每个新 shape 触发 inductor 重编译
+    @torch.compile(dynamic=True)
     def forward(self,
         positions: torch.Tensor,    # [batch_size * seq_len]    positions表示当前输入序列的具体位置
         query: torch.Tensor,        # [batch_size * seq_len, num_heads * head_size] = [40960, 16 * 128]

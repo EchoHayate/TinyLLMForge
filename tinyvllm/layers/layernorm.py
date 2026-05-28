@@ -18,7 +18,9 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
     
     # 图优化
-    @torch.compile                          #RMS无残差
+    # dynamic=True：prefill 阶段 [num_tokens, hidden] 第 0 维随 batch 变化，
+    # 走动态形状避免每个新 shape 触发重编译
+    @torch.compile(dynamic=True)                          #RMS无残差
     def rms_forward(            
         self, 
         x: torch.Tensor                     # [batch_size, seq_len, hidden_size]
@@ -30,7 +32,7 @@ class RMSNorm(nn.Module):
         x = x.to(origin_dtype).mul_(self.weight)    #转 fp32 只是为了完成 RMSNorm 核心计算，计算结束后必须换回原始精度        
         return x
 
-    @torch.compile                          #RMS有残差
+    @torch.compile(dynamic=True)                          #RMS有残差
     def add_rms_forward(
         self,
         x: torch.Tensor,
