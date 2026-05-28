@@ -371,27 +371,53 @@ class Attention(nn.Module):
             # decode阶段传入的 q = [batch_size, num_heads, head_dim]
             block_tables = context.block_tables
             cache_seqlens = context.context_lens
+
+            # ---- C4 + Quest 叠加路径（β3）----
+            # 单独 C4：要把命中块全部 dequant 成 fp16；瞬态 buffer ~ B*max_blocks*block_size*..
+            #         A-3 评测显示长 ctx 下这层瞬态 buffer 把"省下的 KV 带宽"全吃了，反慢 5.4×
+            # 叠加 Quest：先用 k_min/k_max summary 选 top_k 块，再"只对选中块"做 dequant，
+            #             瞬态 buffer 缩到 B*top_k，长 ctx 下 max_blocks 远 > top_k，理论上能翻盘
+            quest_active = (context.quest_top_k_blocks > 0
+                            and self.k_min is not None
+                            and block_tables is not None
+                            and cache_seqlens is not None)
+
             if self.kv_quant_bits == 4:
-                # C4 decode：把命中块整体反量化为 fp16，再喂 flash_attn_with_kvcache。
-                # NOTE: 与 Quest 同时启用尚未支持（block_table 改写顺序冲突），A-3 后再考虑叠加。
-                assert not (context.quest_top_k_blocks > 0 and self.k_min is not None), \
-                    "C4 + Quest 叠加暂未实现"
-                k_fp, new_bt = dequant_kv_blocks(
-                    k_cache, self.k_scale, block_tables,
-                    self.kv_quant_group_size, q.dtype)
-                v_fp, _ = dequant_kv_blocks(
-                    v_cache, self.v_scale, block_tables,
-                    self.kv_quant_group_size, q.dtype)
-                o = flash_attn_with_kvcache(
-                    q.unsqueeze(1), k_fp, v_fp,
-                    cache_seqlens=cache_seqlens,
-                    block_table=new_bt, softmax_scale=self.scale, causal=True)
+                if quest_active:
+                    # 1) 用未量化的 k_min/k_max（store 时维护，反量化前）算 criticality 选 top-k
+                    sparse_bt, sparse_cs = quest_select_blocks(
+                        q, block_tables, cache_seqlens,
+                        self.k_min, self.k_max,
+                        k_cache.shape[1],
+                        context.quest_top_k_blocks,
+                    )
+                    # 2) 仅对选中的 top-k 块做反量化；buffer = [B*top_k, block_size, kv_h, hd]
+                    k_fp, new_bt = dequant_kv_blocks(
+                        k_cache, self.k_scale, sparse_bt,
+                        self.kv_quant_group_size, q.dtype)
+                    v_fp, _ = dequant_kv_blocks(
+                        v_cache, self.v_scale, sparse_bt,
+                        self.kv_quant_group_size, q.dtype)
+                    o = flash_attn_with_kvcache(
+                        q.unsqueeze(1), k_fp, v_fp,
+                        cache_seqlens=sparse_cs,
+                        block_table=new_bt, softmax_scale=self.scale, causal=True)
+                else:
+                    # C4 单独路径（α）：把全部命中块 dequant，长 ctx 下慢，留作回退/对照
+                    k_fp, new_bt = dequant_kv_blocks(
+                        k_cache, self.k_scale, block_tables,
+                        self.kv_quant_group_size, q.dtype)
+                    v_fp, _ = dequant_kv_blocks(
+                        v_cache, self.v_scale, block_tables,
+                        self.kv_quant_group_size, q.dtype)
+                    o = flash_attn_with_kvcache(
+                        q.unsqueeze(1), k_fp, v_fp,
+                        cache_seqlens=cache_seqlens,
+                        block_table=new_bt, softmax_scale=self.scale, causal=True)
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o
-            # Quest：动态选 top-k block，重写 block_table 与 cache_seqlens
-            # context.quest_top_k_blocks > 0 表示已通过 host 端早返回校验
-            if (context.quest_top_k_blocks > 0 and self.k_min is not None
-                    and block_tables is not None and cache_seqlens is not None):
+            # Quest（无 C4）：动态选 top-k block，重写 block_table 与 cache_seqlens
+            if quest_active:
                 block_tables, cache_seqlens = quest_select_blocks(
                     q, block_tables, cache_seqlens,
                     self.k_min, self.k_max,

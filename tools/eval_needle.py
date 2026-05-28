@@ -106,12 +106,15 @@ def extract_answer(text: str) -> str | None:
 
 def run_one_setting(llm, tokenizer, args, top_k: int):
     is_c4 = args.kv_quant_bits == 4
-    label = "C4" if is_c4 else f"top_k={top_k}" if top_k > 0 else "baseline"
+    if is_c4:
+        label = "C4" if top_k <= 0 else f"C4+top_k={top_k}"
+    else:
+        label = f"top_k={top_k}" if top_k > 0 else "baseline"
     print(f"\n=== {label} ===", flush=True)
 
     # 热改 config：quest_top_k_blocks 仅在 prepare_decode 里被读，可运行时切换
-    # 注意：C4 模式下 quest 与之互斥（attention.forward 里有 assert），固定 -1
-    llm.model_runner.config.quest_top_k_blocks = -1 if is_c4 else top_k
+    # C4 + Quest 叠加（β3）：attention.forward 里"先选 top-k 再 dequant"已支持
+    llm.model_runner.config.quest_top_k_blocks = top_k
     llm.model_runner.config.quest_min_seq_len = args.quest_min_seq_len
 
     # 每个 setting 用不同的 seed，避免后续 setting 命中前一个 setting 写入的 prefix cache，
@@ -183,10 +186,13 @@ def main():
 
     is_c4 = args.kv_quant_bits == 4
     if is_c4:
-        # C4 模式：KV cache 物理布局变了，不能热切。整个进程只跑 C4 一种设定。
-        # 想要 baseline 对照，请另跑一次（不带 --kv-quant-bits 4）。
-        top_k_list = [-1]
-        init_top_k = -1
+        # C4 模式：KV cache 物理布局变了；但 quest_top_k_blocks 仍可热切，
+        # 所以同进程内可以跑 "C4 only" + "C4+top_k=k1" + "C4+top_k=k2"
+        top_k_list = args.top_k_blocks_list
+        # 用 list 中的最大 top_k 初始化（确保 kv_summary 被分配）；
+        # 若 list 全是 <=0 则初始化时关闭 Quest（不分配 summary）
+        positive = [k for k in top_k_list if k > 0]
+        init_top_k = max(positive) if positive else -1
     else:
         # baseline + Quest 热切模式
         # 用 list 中的最大 top_k 初始化（确保 kv_summary 被分配）；后续每个 setting
