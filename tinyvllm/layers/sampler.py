@@ -4,6 +4,16 @@ from torch import nn
 class Sampler(nn.Module):
     def __init__(self):
         super().__init__()
+        # Gumbel-Max 用的指数随机数 buffer：按需扩容并复用，避免每步 alloc 一个 [bs, vocab] 的临时张量
+        self._gumbel_buf: torch.Tensor | None = None
+
+    def _get_gumbel_buf(self, ref: torch.Tensor) -> torch.Tensor:
+        buf = self._gumbel_buf
+        if (buf is None or buf.shape != ref.shape
+                or buf.dtype != ref.dtype or buf.device != ref.device):
+            buf = torch.empty_like(ref)
+            self._gumbel_buf = buf
+        return buf
 
     def forward(
         self, 
@@ -17,5 +27,6 @@ class Sampler(nn.Module):
         epsilon = 1e-10 
         # 温度 < 1：放大 logits 之间的差异（让高概率更高，低概率更低，接近贪心采样）。
         # 温度 > 1：缩小 logits 之间的差异（让概率分布更平缓，增加随机性）。
-        sample_tokens = probs.div_(torch.empty_like(probs).exponential_(1) + epsilon).argmax(dim = -1)      #Gumbel-Max 采样
+        gumbel = self._get_gumbel_buf(probs).exponential_(1)
+        sample_tokens = probs.div_(gumbel + epsilon).argmax(dim = -1)      #Gumbel-Max 采样
         return torch.where(temperatures == 0, greedy_tokens, sample_tokens)

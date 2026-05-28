@@ -43,7 +43,11 @@ class ModelRunner:
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)
         self.sampler =  Sampler()
-        
+
+        # prepare_prefill / prepare_decode 用的 pinned host buffer 池：按 (name, dtype) 复用，
+        # 容量按需向上扩；避免每步 torch.tensor(list, pin_memory=True).cuda() 触发 host alloc + pin
+        self._pinned_buf_cache: dict[tuple[str, torch.dtype], torch.Tensor] = {}
+
         self.warmup_model()                             #暂时跳过
 
         self.allocate_kv_cache()                        #预分配空间（没有具体值）
@@ -52,6 +56,7 @@ class ModelRunner:
             self.capture_cudagraph()                    #暂时跳过
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
+
 
         if self.world_size > 1:
             if rank == 0:
@@ -238,9 +243,36 @@ class ModelRunner:
     # 每个序列（seq）的block_table是一个列表，记录该序列在 KV Cache 中使用的块编号。
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
-        block_tables = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]  #用-1补齐
-        block_tables = torch.tensor(block_tables, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        return block_tables
+        block_tables_data = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]  #用-1补齐
+        return self._list_to_cuda_2d(block_tables_data, "block_tables", torch.int32)
+
+    # ---- pinned host buffer 池：把多次小 H2D 改成 buffer 复用 + non_blocking copy ----
+    def _get_pinned(self, name: str, n: int, dtype: torch.dtype) -> torch.Tensor:
+        """按 (name, dtype) 拿一个长度 ≥ n 的 1D pinned host tensor；按需翻倍扩容并复用。"""
+        key = (name, dtype)
+        buf = self._pinned_buf_cache.get(key)
+        if buf is None or buf.numel() < n:
+            new_size = max(n, (buf.numel() * 2) if buf is not None else max(n, 64))
+            # 显式 device="cpu" + pin_memory=True，避开 default_device 被设成 cuda 的情况
+            buf = torch.empty(new_size, dtype=dtype, device="cpu", pin_memory=True)
+            self._pinned_buf_cache[key] = buf
+        return buf
+
+    def _list_to_cuda(self, data: list, name: str, dtype: torch.dtype) -> torch.Tensor:
+        """把 python list 写入 pinned host buffer 后 non_blocking H2D。返回 GPU tensor。"""
+        n = len(data)
+        host = self._get_pinned(name, n, dtype)
+        host[:n].copy_(torch.tensor(data, dtype=dtype, device="cpu"))
+        return host[:n].cuda(non_blocking=True)
+
+    def _list_to_cuda_2d(self, data: list[list[int]], name: str, dtype: torch.dtype) -> torch.Tensor:
+        """2D list（每行长度相同）打成 pinned host 矩阵后 non_blocking H2D。"""
+        rows = len(data)
+        cols = len(data[0]) if rows else 0
+        n = rows * cols
+        host = self._get_pinned(name, n, dtype)
+        host[:n].copy_(torch.tensor(data, dtype=dtype, device="cpu").flatten())
+        return host[:n].view(rows, cols).cuda(non_blocking=True)
 
 
 
@@ -280,11 +312,11 @@ class ModelRunner:
             block_tables = self.prepare_block_tables(seqs)
         
         # 将准备好的数据传输到GPU上
-        input_ids = torch.tensor(data=input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
-        positions = torch.tensor(data=positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
-        cu_seqlens_q = torch.tensor(data=cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        cu_seqlens_k = torch.tensor(data=cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        slot_mapping = torch.tensor(data=slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
+        positions = self._list_to_cuda(positions, "positions", torch.int64)
+        cu_seqlens_q = self._list_to_cuda(cu_seqlens_q, "cu_seqlens_q", torch.int32)
+        cu_seqlens_k = self._list_to_cuda(cu_seqlens_k, "cu_seqlens_k", torch.int32)
+        slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
         return input_ids, positions
 
@@ -303,10 +335,10 @@ class ModelRunner:
             positions.append(len(seq))
             context_lens.append(len(seq))
             slot_mapping.append(seq.block_table[-1] * seq.block_size + seq.last_block_num_tokens - 1)   #
-        input_ids = torch.tensor(data=input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
-        positions = torch.tensor(data=positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
-        slot_mapping = torch.tensor(data=slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        context_lens = torch.tensor(data=context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
+        positions = self._list_to_cuda(positions, "positions", torch.int64)
+        slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
+        context_lens = self._list_to_cuda(context_lens, "context_lens", torch.int32)
         block_tables = self.prepare_block_tables(seqs)
 
         # Quest 早返回判定（host 端，避免每层 .item() 触发 GPU sync）：
@@ -329,7 +361,7 @@ class ModelRunner:
         temperatures = []
         for seq in seqs:
             temperatures.append(seq.temperature)
-        temperatures = torch.tensor(data=temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)    #pin_memory=True将张量存储在锁定内存（page-locked memory）中，而非普通的可分页内存
+        temperatures = self._list_to_cuda(temperatures, "temperatures", torch.float32)    #pin_memory=True将张量存储在锁定内存（page-locked memory）中，而非普通的可分页内存
         return temperatures
         #普通可分页内存（Pageable Memory）  |	锁定内存（Page-locked Memory / Pinned Memory）
         #操作系统可将其 “分页” 到磁盘       |     被 “锁定” 在物理内存中，不允许换出到磁盘,

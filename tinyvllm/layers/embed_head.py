@@ -54,6 +54,9 @@ class ParallelLMHead(VocabParallelEmbedding):
             self.bias.weight_loader = self.weight_loader
         else:
             self.register_parameter("bias", None)
+        # all_gather buffer 缓存（仅 rank0 用）：复用一组 [tp_size] 个 [max_n, vocab_per_part] 的 buffer
+        self._gather_bufs: list[torch.Tensor] | None = None
+        self._gather_buf_shape: tuple[int, ...] | None = None
 
     def forward(self, x: torch.Tensor):
         context = get_context()
@@ -62,10 +65,15 @@ class ParallelLMHead(VocabParallelEmbedding):
             x = x[last_indices].contiguous()                #把tensor转换成连续的 符合后续linear或者dist要求
         logits = F.linear(x, self.weight, self.bias)        # (10,1024) * (50000,1024)^T + (10,50000) = (10,50000)
         if self.tp_size > 1:                                #将各个GPU上的logits结果进行拼接 并返回到 0号GPU
-            # 这里的 [[logits]], 就表示在第0维进行堆叠
-            all_logits = [torch.empty_like(logits) for _ in range(self.tp_size)] if self.tp_rank == 0 else None
+            if self.tp_rank == 0:
+                if self._gather_bufs is None or self._gather_buf_shape != tuple(logits.shape) or self._gather_bufs[0].dtype != logits.dtype:
+                    self._gather_bufs = [torch.empty_like(logits) for _ in range(self.tp_size)]
+                    self._gather_buf_shape = tuple(logits.shape)
+                all_logits = self._gather_bufs
+            else:
+                all_logits = None
             dist.gather(logits, all_logits, 0)
             # logits最终是二维的，因此需要使用 cat 进行降维
-            logits = torch.cat(all_logits, 0) if self.tp.rank == 0 else None
+            logits = torch.cat(all_logits, 0) if self.tp_rank == 0 else None
         return logits
     
