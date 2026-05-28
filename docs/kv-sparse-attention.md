@@ -703,3 +703,54 @@ top_k=8  -> "The number is . The number is the number is, the number is, ..."
 - `needle_c4_quest_long.json`（β3 长 ctx 性能数据）
 - `needle_c4_quest_acc.json`（β3 短 ctx 多 trial acc 数据）
 - commit `5f5a38a`
+
+### 10.8 调参扫描：top_k × ctx_len 的 Pareto 前沿
+
+跑一发 `top_k ∈ {-1, 4, 8, 16, 32}` × `ctx_len ∈ {4096, 8192, 15000}` × 5 depths × 2 trials = 30 prompt/setting，
+看不同稀疏度下的吞吐 / acc 走势。
+
+跑法：
+```
+CUDA_VISIBLE_DEVICES=3 python tools/eval_needle.py \
+  --context-lens 4096 8192 15000 --depths 0.0 0.25 0.5 0.75 1.0 \
+  --top-k-blocks-list -1 4 8 16 32 --num-trials 2 --max-output-len 200 \
+  --kv-quant-bits 4 --kv-quant-group-size 32 --max-model-len 16384 \
+  --gpu-memory-utilization 0.55 --max-num-seqs 4 --enforce-eager \
+  --out-json needle_b3_sweep.json
+```
+
+OOM 修复：本轮在共享 A100 上踩到一次 C4-only 路径 OOM —— 默认 `gpu_memory_utilization=0.9`
+让 KV pool 吃满，长 ctx + batch=10 的瞬态 dequant buffer（B·max_blocks·block_size·heads·dim·2byte ≈ 6-8GB）放不下。
+解决：`tools/eval_needle.py` 加了 `--gpu-memory-utilization` / `--max-num-seqs` 两个 CLI，
+本轮用 0.55 / 4 跑。这个事故本身正好印证了 §10 β3 的核心动机——**α 路线的瓶颈不是 KV 带宽，是瞬态 dequant buffer**。
+
+结果（混合 4k/8k/15k 三档；acc 全 0% 是 §8.3 的固有结果）：
+
+| top_k | 总耗时 (s) | 吞吐 (tok/s) | vs C4-only |
+|---|---:|---:|---:|
+| -1 (C4 only) | 151.64 | 39.57 | 1.00× |
+| 4 | 130.77 | **45.88** | 1.16× |
+| 8 | 131.92 | 45.48 | 1.15× |
+| 16 | 129.76 | 46.24 | 1.17× |
+| 32 | 130.29 | 46.05 | 1.16× |
+
+### 10.9 观察 & 结论
+
+1. **β3 整体相对 C4-only 提速 ~16%**（混合 ctx 下；§10.2 单测 15k ctx 是 2.29× —— 短 ctx 稀释了收益）
+2. **top_k 4 / 8 / 16 / 32 之间几乎没差**（45.5–46.2 tok/s，差异 <2%）
+   - 说明 0.6B + 这个 batch 规模下 attention 已经不是瓶颈，固定开销（model fwd / sampler / kv writeback / overhead）占主导
+   - 也意味着**取小 top_k 没成本**——在更大模型 / 更大 batch 下会拉开差距，但本仓库不投入做更大模型
+3. **acc 不区分 top_k**——无论 4 还是 32 都是 0%，说明 needle 的失败发生在更早的环节（§8.3 g=32 量化误差堆叠），不是 Quest 选错了块
+4. **推荐配置**：C4 g=32 + Quest top_k=4。理由：
+   - 收益（+16% throughput）跟 top_k=32 一样
+   - dequant buffer 最小（B·4 而不是 B·max_blocks），对显存友好
+   - 留出 §10.6 提到的"接 cuda graph"未来的可能性（top_k 越小，固定 buffer pre-alloc 越可行）
+
+### 10.10 已知不做（叠加）
+- ❌ 把 sweep 拓到 ctx≥30k：0.6B 自己已经 92%→60% 退化（§9 已留痕），不在重点支持范围
+- ❌ 跑大 batch（max_num_seqs=32+）：远端共享 GPU 显存有限，且本仓库目标不是 serving 吞吐
+- ❌ 跑更大模型（≥7B）的扫描：模型不在本仓库，复刻成本太高
+
+### 10.11 sweep 文件留痕
+- `needle_b3_sweep.json`（本轮 top_k 扫描的原始 details）
+- `tools/eval_needle.py`：新增 `--gpu-memory-utilization` / `--max-num-seqs` CLI

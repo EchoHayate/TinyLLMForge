@@ -70,6 +70,9 @@ def parse_args():
                    choices=[None, "int8", "int4", "int2"])
     p.add_argument("--quant-group-size", type=int, default=128)
     p.add_argument("--act-quant-bits", type=int, default=0, choices=[0, 8])
+    p.add_argument("--gpu-memory-utilization", type=float, default=0.9,
+                   help="KV pool 占显存比例。长 ctx + C4 全 dequant 路径下需要给瞬态 buffer 留空间，建议 0.6-0.7")
+    p.add_argument("--max-num-seqs", type=int, default=512)
     return p.parse_args()
 
 
@@ -205,6 +208,8 @@ def main():
         enforce_eager=args.enforce_eager,
         tensor_parallel_size=1,
         max_model_len=args.max_model_len,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_num_seqs=args.max_num_seqs,
         quest_top_k_blocks=init_top_k,
         quest_min_seq_len=args.quest_min_seq_len,
         kv_quant_bits=args.kv_quant_bits,
