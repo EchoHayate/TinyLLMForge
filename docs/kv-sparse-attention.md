@@ -1109,3 +1109,98 @@ A100 + Qwen3-0.6B + TP=2，8/8 init_ok + gen_ok：
 - `tinyvllm/engine/sequence.py`：`__setstate__` 解包修复 + num_cached_blocks @property 绕过
 - `tinyvllm/engine/model_runner.py`：`call()` 传参 `*args` 展开
 - `tp_smoke_out/tp_smoke.json`：8 条 config 的详细结果（A100 远端，不入仓库）
+
+## 14. 7B（Qwen3-8B）上验证 W4A8C4 + TP 显存切分（2026-05-29）
+
+### 14.1 动机与选模型
+
+§13 在 0.6B 上看到 W4 / KV4 叠加时输出复读，怀疑是模型太小撑不住量化误差，
+真正能否用要在中等模型上验。这一波目标：
+**(a) 把 W4A8C4（W4A8 + KV4 全栈量化叠加）跑到 7B 量级看质量；(b) 顺带验"TP 是否在大模型上真切显存"**。
+
+选模型：仓库代码是 `Qwen3ForCausalLM`，必须用 Qwen3 架构。modelscope 上 Qwen3 系列**没有 7B**
+（只有 1.7B / 4B / 8B），改用 **Qwen3-8B**（fp16 ~16GB，最接近 7B 量级，架构原生兼容）。
+
+### 14.2 跑法
+
+扩展 `tools/tp_smoke.py`：
+- 加 `w4a8c4` 配置（`int4 weight + act_quant_bits=8 + kv_quant_bits=4`），上波 §13 漏了这条核心
+- 加 `--prompt-source english`：8 条固定英文 prompt + 贪心采样，跨配置可对比
+- 收集前 3 条 `text_samples` 而不是只首条
+
+跑了 4 条 TP=1（baseline / c4_only / w4a8 / w4a8c4）+ 4 条 TP=2（同上）共 8 跑次。
+
+### 14.3 结果
+
+A100 + Qwen3-8B + `gpu_memory_utilization=0.7` + `num_seqs=8, max_input=256, max_output=64`：
+
+| config | tp | decode_tps | peak_gb | 质量（首条 sample 节选） |
+|---|---|---|---|---|
+| baseline | 1 | **187.40** | 53.13 | ✅ "Paris. The capital of France is Paris..." |
+| c4_only | 1 | 120.74 | 53.17 | ⚠️ "Paris. The capital of Paris is... Hmm" |
+| w4a8_g128 | 1 | 34.99 | 51.73 | ❌ `\  \     \    \    \  ...` |
+| w4a8c4 | 1 | 33.67 | 51.74 | ❌ `\  \    \  \  \  \   \  ...` |
+| baseline | 2 | 155.36 | 53.51 | ✅ "Paris. The capital of France is Paris..." |
+| c4_only | 2 | 95.84 | 53.52 | ⚠️ "Italy is Rome. The capital of Germany is...?" |
+| w4a8_g128 | 2 | 63.85 | 52.86 | ❌ `                 \                  ` |
+| w4a8c4 | 2 | 60.28 | 52.87 | ❌ `         \          \      \  ...` |
+
+### 14.4 三个明确结论
+
+**(1) W4A8 实现在 8B 上不能用 — 不是 TP 的锅**
+
+W4A8 / W4A8C4 在 TP=1 单卡也塌（一模一样的反斜杠），坐实**根因是 W4A8 量化路径本身**，
+不是 TP 引入的回归。0.6B 上 §10 早就观察到复读，本以为是模型太小，现在 8B 上**塌得更彻底**
+（连复读都不复读，直接吐 backslash），说明 W4A8 实现存在数值问题，至少包括以下可能：
+- act 量化的 dynamic scale 在 layer 之间累积误差
+- W4 dequant + A8 matmul 的 fused kernel 数值不稳
+- group_size=128 对 8B 隐层维度（`hidden_size=4096`，每行 32 组）颗粒度可能仍不够
+
+但**单 KV4（c4_only）质量勉强在线**：TP=1 出"Paris. Hmm" 略迷糊但逻辑通；TP=2 出"Italy is Rome"
+（事实错但格式对）。说明 **C4 路径自己是 OK 的，问题集中在 W4A8**。
+
+**(2) TP 在 8B 上仍然没真切显存**
+
+| config | tp=1 peak | tp=2 peak | 切分了吗 |
+|---|---|---|---|
+| baseline | 53.13 | 53.51 | ❌ 反而略多 |
+| c4_only | 53.17 | 53.52 | ❌ 反而略多 |
+| w4a8_g128 | 51.73 | 52.86 | ❌ 反而略多 |
+| w4a8c4 | 51.74 | 52.87 | ❌ 反而略多 |
+
+延续 §13 的现象。根因是 KV cache 容量按 `gpu_memory_utilization * 总显存 - 已用` 反算，
+TP=2 时**每张卡都独立按"剩余显存的 70%"分 KV cache**，把 weight 切分省下来的空间又吃回去。
+这不是 TP 实现的 bug，是配置策略的问题——要看到真切分效果，得把 `gpu_memory_utilization`
+按 tp_size 自动缩，或者直接显式指定 `kv_cache_ratio`。这一波**只验通路兼容**，节省策略的修
+留给后续如果真要用 TP 跑大模型再做。
+
+**(3) TP=2 decode TPS 比 TP=1 慢（除了 W4A8 路径）**
+
+| config | tp=1 tps | tp=2 tps | 比值 |
+|---|---|---|---|
+| baseline | 187.40 | 155.36 | 0.83× |
+| c4_only | 120.74 | 95.84 | 0.79× |
+| w4a8_g128 | 34.99 | 63.85 | **1.83×** |
+| w4a8c4 | 33.67 | 60.28 | **1.79×** |
+
+baseline / C4 路径 TP=2 比 TP=1 慢约 17–21%（NCCL 通信开销 > 计算并行收益，符合 8B + bs=8 这个量级）。
+W4A8 路径反而 TP=2 比 TP=1 快接近 2×：怀疑是 weight dequant 是计算瓶颈，TP 把 dequant 也并行了；
+但既然 W4A8 输出垃圾，这个 TPS 不能当真实可用吞吐采纳。
+
+### 14.5 已知不做
+
+- ❌ **修 W4A8 量化在 8B 上的塌**：根因可能在 dynamic act scale / dequant kernel 数值，
+  追这个要先在 0.6B 上重做 ppl 漂移定位 → 找到坏层 → 重做 group_size 扫描或换 per-channel scale，
+  工程量大；本仓库主线是稀疏注意力 (Quest/C4)，W4A8 本来就是 §9 加的辅料
+- ❌ **TP 节省策略修复**（按 tp_size 缩 gpu_memory_utilization）：偏离主线，0.6B/8B 单卡都跑得动
+- ❌ **跑 Qwen2.5-7B**：modelscope 上有，但要补 Qwen2 架构 modeling，工作量超出 smoke 验证范畴
+- ❌ **加 perplexity 评测**：贪心 + 固定 prompt 的 text_sample 已经能定性判断"塌"，
+  跑 ppl 要拉 wikitext，磁盘只剩 96GB，性价比低
+
+### 14.6 文件留痕
+
+- `tools/tp_smoke.py`：加 `w4a8c4` 配置 + `--prompt-source english` + 多条 text_samples
+- `tp_smoke_out/tp_smoke_8b_tp1.json`：TP=1 baseline
+- `tp_smoke_out/tp_smoke_8b_tp1_quant.json`：TP=1 c4_only / w4a8 / w4a8c4 对照
+- `tp_smoke_out/tp_smoke_8b_tp2.json`：TP=2 baseline + 量化叠加 4 条
+- 远端模型：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B`（modelscope 拉，~16GB，不入仓库）
