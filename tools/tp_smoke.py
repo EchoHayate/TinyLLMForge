@@ -43,6 +43,8 @@ CONFIGS = [
     ("baseline",   dict(enforce_eager=True)),
     ("quest",      dict(enforce_eager=True, quest_top_k_blocks=8, quest_min_seq_len=512)),
     ("c4_only",    dict(enforce_eager=True, kv_quant_bits=4, kv_quant_group_size=128)),
+    ("c4_g64",     dict(enforce_eager=True, kv_quant_bits=4, kv_quant_group_size=64)),
+    ("c4_g32",     dict(enforce_eager=True, kv_quant_bits=4, kv_quant_group_size=32)),
     ("c4_quest",   dict(enforce_eager=True, kv_quant_bits=4, kv_quant_group_size=128,
                         quest_top_k_blocks=8, quest_min_seq_len=512)),
     ("w4_g128",    dict(enforce_eager=True, quantization="int4", quant_group_size=128)),

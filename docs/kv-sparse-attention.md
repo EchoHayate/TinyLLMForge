@@ -1343,3 +1343,57 @@ decode_tps 全部 32–36 tok/s，没退化。
 - `tools/test_weight_quant.py`：`test_fake_quant_act` 改为 MSE-based 验证（单值上界放宽到 amax）
 - `tools/tp_smoke.py`：加 `w4_g32` / `w4a8_g32` / `w4a8c4_g32` 三条 config
 - `tp_smoke_out/tp_smoke_8b_tp1_quantfix.json`：8B 量化修复后 smoke 结果
+
+## 17. C4 在 8B 上事实错误：根因是 group_size=head_dim（2026-05-30）
+
+承接 §14.4：C4 (g=128) 在 8B 上跑 "The capital of France is" 续出 "Paris. The capital of
+Paris is... Hmm" — 格式对、事实错、还自言自语。本节定位并修复。
+
+### 17.1 病因
+
+Qwen3-8B `head_dim = 128`，C4 默认 `kv_quant_group_size = 128`。
+**group_size == head_dim 意味着每个 KV head 只共享 1 个 scale**，等于 per-head（不是 per-group）量化。
+KV 中常见现象：head 内不同维度的能量分布差异大（attention/ROPE 后某些维度专门承载位置信息，
+absmax 比其他维度大若干倍），单 scale 拍下去会把"小 amplitude 维度"全 round 到 ±1/±2，
+信息丢失到事实开始漂。
+
+§13 在 0.6B 上没暴露这条，是因为 0.6B 的 `head_dim` 也是 128，但模型表征能力弱，"漂事实"被
+"模型本来就不会说事实"掩盖了；8B 上事实信号明确，漂就显出来了。
+
+### 17.2 修法 + 验证
+
+不动默认值（保 §14 的对照可重现），通过 `kv_quant_group_size` 直接传更小的值即可。
+扩展 `tools/tp_smoke.py` 加 `c4_g64` / `c4_g32` 两条 config，TP=1 / Qwen3-8B / 英文 prompt：
+
+| config | decode_tps | weight_gb | kv_gb | text_sample |
+|---|---|---|---|---|
+| c4_only (g=128) | 118.44 | 15.288 | 37.88 | ⚠️ "Paris. The capital of France is Paris. The capital of Paris is... Hmm" |
+| **c4_g64** | 122.40 | 15.288 | 37.88 | ✅ "Paris. The capital of Germany is Berlin. The capital of Italy is Rome..." |
+| **c4_g32** | 115.19 | 15.288 | 37.88 | ✅ "Paris. The capital of Italy is Rome. The capital of Spain is Madrid..." |
+
+### 17.3 三个明确结论
+
+- ✅ **g=64 / g=32 都修好事实漂**：能正确续出 Berlin / Rome / Madrid。
+- ✅ **TPS 与显存几乎不变**：g 缩小后 scale 张量占的字节数随之增长，但相对 KV cache 是 1‰ 量级，
+  KV mem 三档 37.88 GB 完全一致。
+- ✅ **g=64 是 sweet spot**：TPS 反而最高（122 vs g=128 的 118），可能是 g=64 的 triton kernel
+  调度更友好（HALF=32，align 32 lane）。
+
+### 17.4 推荐用法
+
+`kv_quant_group_size` **必须严格小于 `head_dim`**，等于的话退化成 per-head 量化、事实漂。
+对 head_dim=128 的模型（Qwen3-8B、Llama2-7B 等）推荐 64；对 head_dim=64 的小模型推荐 32。
+
+未改默认（§14 对照可复现），调用方自己传。
+
+### 17.5 已知不做
+
+- 改默认值：会影响 §13 / §14 的对照实验复现。后续如果要做 release 默认值再改。
+- 加 runtime warn `group_size >= head_dim`：可加但与"用户应理解参数语义"矛盾，留给文档。
+- per-token 而非 per-channel KV scale：C4 已经是 per-(slot, head, group) scale，
+  再切 token 维度会让 scale 张量翻倍，性价比低。
+
+### 17.6 文件留痕
+
+- `tools/tp_smoke.py`：加 `c4_g64` / `c4_g32` 两条 config
+- `tp_smoke_out/tp_smoke_8b_tp1_c4sweep.json`：C4 group_size 扫描结果

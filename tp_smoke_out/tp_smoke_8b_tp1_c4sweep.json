@@ -1,0 +1,53 @@
+[
+  {
+    "name": "c4_only",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 118.44,
+    "text_sample": " Paris. The capital of France is Paris. The capital of Paris is... Hmm, that's a bit of a problem. Paris is a city in Fr",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of Paris is... Hmm, that's a bit of a problem. Paris is a city in Fr",
+      " there lived a young girl named Lina. Lina was known for her kindness for adventure and her courage for adventure. One d",
+      " a function that multiplies all integers from 1 to n. Let's implement this.  Okay, I need to write a function called fac"
+    ],
+    "peak_mem_gb": 53.169,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.881,
+    "error": ""
+  },
+  {
+    "name": "c4_g64",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 122.4,
+    "text_sample": " Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of B",
+    "text_samples": [
+      " Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of B",
+      " there was a young girl named Lina. Lina was known for her kindness and her love for nature. She spent her days tending ",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation:  def factorial(n):     result ="
+    ],
+    "peak_mem_gb": 53.167,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.879,
+    "error": ""
+  },
+  {
+    "name": "c4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 115.19,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Germany is Berlin. The capital of B",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Germany is Berlin. The capital of B",
+      " there was a young girl named Lila. She was known for her kindness and love for nature. One day, while exploring the for",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation using a loop:  ```python def fac"
+    ],
+    "peak_mem_gb": 53.169,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.881,
+    "error": ""
+  }
+]
