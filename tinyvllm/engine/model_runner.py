@@ -51,9 +51,18 @@ class ModelRunner:
         self.warmup_model()                             #暂时跳过
 
         self.allocate_kv_cache()                        #预分配空间（没有具体值）
-        # C4 decode 反量化路径里有动态 alloc，无法 capture，跳过 cuda graph
-        if not self.enforce_eager and config.kv_quant_bits != 4:
-            self.capture_cudagraph()                    #暂时跳过
+        # cuda graph 跳过条件：
+        #   1) enforce_eager：用户显式关
+        #   2) kv_quant_bits == 4 (C4)：decode 反量化路径里有动态 alloc，无法 capture
+        #   3) cpu_offload：layer 权重 H2D 走独立 stream + cross-stream sync，
+        #      在 capture mode 下会报 "operation failed due to a previous error during capture"
+        skip_cudagraph = (
+            self.enforce_eager
+            or config.kv_quant_bits == 4
+            or config.cpu_offload
+        )
+        if not skip_cudagraph:
+            self.capture_cudagraph()
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
 
@@ -375,7 +384,10 @@ class ModelRunner:
         quest_active = (not is_prefill) and (get_context().quest_top_k_blocks > 0)
         # C4：decode 反量化每步都要 alloc，cuda graph 无法 replay，强制 eager
         c4_active = self.config.kv_quant_bits == 4
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512 or quest_active or c4_active:     #动态执行 eager mode    input_ids.size(0) > 512：大批量输入的形状不固定，预编译静态图的收益有限，动态执行更灵活。
+        # cpu_offload：init 阶段已跳过 capture，这里也必须走 eager（否则 self.graphs 不存在）
+        offload_active = self.config.cpu_offload
+        if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
+                or quest_active or c4_active or offload_active):     #动态执行 eager mode
             return self.model.compute_logits(self.model(input_ids, positions))
         else:           #静态执行  graph replay
             bs = input_ids.size(0)

@@ -822,3 +822,100 @@ c4_quest 唯一新增的 kernel：
 - `tools/profile_quest.py`：新增 `c4_only` / `c4_quest` 两个 mode + `--compare A B` CLI + `--gpu-memory-utilization` / `--max-num-seqs` 参数
 - `profile_out/b3_vs_c4/{c4_only,c4_quest}/trace.json`（chrome trace，~40-80 MB，不入仓库）
 - 上面 §10.13 的 kernel 表是从 trace 解析出来的 saved-time 摘要
+
+## 11. CUDA Graph 兼容性回归
+
+### 11.1 动机
+前几波改动（β3 sparse dequant / cpu_offload 加 prefetch stream / W4A8 fake-quant / Quest 选块）都只在
+`enforce_eager=True` 下做 smoke。打开 cuda graph 后哪些路径会在 capture 阶段崩、哪些 capture 通过、
+哪些 capture 通过但 replay 数值崩——之前没有系统性回归。
+
+### 11.2 跑法
+新建 `tools/cuda_graph_smoke.py`：每条路径在独立子进程里 init `LLM(enforce_eager=False, ...)` + `generate`，
+捕获 init / generate 阶段的异常，输出汇总表。
+
+```
+CUDA_VISIBLE_DEVICES=3 python tools/cuda_graph_smoke.py \
+  --model /path/to/Qwen3-0.6B \
+  --max-model-len 2048 --max-num-seqs 4 --gpu-memory-utilization 0.55 \
+  --out-json cuda_graph_smoke_final.json
+```
+
+覆盖配置：`baseline / quest / c4_only / c4_quest / w4_g128 / w4a8_g32 / cpu_offload`。
+
+### 11.3 第一次跑：cpu_offload 在 capture 阶段崩
+
+| label | init | gen | init_s | err |
+|---|---|---|---:|---|
+| baseline | ok | ok | 55.4 | |
+| quest | ok | ok | 54.6 | |
+| c4_only | ok | ok | 30.9 | （`config.kv_quant_bits==4` 时 capture 已被 init 阶段 skip） |
+| c4_quest | ok | ok | 32.2 | （同上） |
+| w4_g128 | ok | ok | 55.0 | |
+| w4a8_g32 | ok | ok | 53.7 | |
+| **cpu_offload** | **FAIL** | FAIL | 33.4 | `RuntimeError: CUDA error: operation failed due to a previous error during capture` |
+
+cpu_offload 在 capture 阶段崩的根因：cpu_offload 用独立 stream 异步把下一层权重 H2D，
+然后用 `event.wait(compute_stream)` 同步。cuda graph 的 capture mode 只允许"一个 stream 上的 op 序列"被录制，
+跨 stream 的 H2D + event sync 会触发"previous error during capture"。
+
+### 11.4 修复：init/run_model 双侧加 cpu_offload skip
+
+`tinyvllm/engine/model_runner.py`：
+
+```python
+# init 阶段（构造 ModelRunner 末尾）
+skip_cudagraph = (
+    self.enforce_eager
+    or config.kv_quant_bits == 4   # 已有
+    or config.cpu_offload          # 新增
+)
+if not skip_cudagraph:
+    self.capture_cudagraph()
+
+# run_model 阶段
+offload_active = self.config.cpu_offload
+if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
+        or quest_active or c4_active or offload_active):
+    return self.model.compute_logits(self.model(input_ids, positions))
+else:
+    # graph replay 路径
+    ...
+```
+
+两处都改是必要的：init 阶段 skip 了 capture 后 `self.graphs` 不存在，
+run_model 还走 replay 分支会 AttributeError。
+
+### 11.5 修复后全量回归：7/7 PASS
+
+| label | init | gen | init_s | gen_s | 备注 |
+|---|---|---|---:|---:|---|
+| baseline | ok | ok | 58.1 | 28.3 | 走 cuda graph |
+| quest | ok | ok | 54.0 | 26.9 | capture 通过；runtime 触发 quest_active 时退 eager |
+| c4_only | ok | ok | 32.3 | 28.6 | init 阶段 skip capture，全程 eager |
+| c4_quest | ok | ok | 31.4 | 28.6 | 同上 |
+| w4_g128 | ok | ok | 54.9 | 27.9 | 走 cuda graph |
+| w4a8_g32 | ok | ok | 53.5 | 26.9 | 走 cuda graph（act fake-quant 是 elementwise，可 capture） |
+| cpu_offload | ok | ok | 30.9 | 27.5 | init 阶段 skip capture（修复后） |
+
+观察：
+- **init 时间分两档**：能 capture 的 ~54s（含 ~25s 录 graph），skip 的 ~31s
+- **gen 时间几乎一样**（27-28s）：因为 prompt 短 + max_tokens=16，graph 收益被 prefill / sampler 稀释；
+  这跟 §10 / profiler 的结论一致——0.6B 上 attention 不是瓶颈，cuda graph 只省 launch overhead，
+  在小 batch 短 prompt 上看不出明显差异。这是预期，不是回归
+- **生成的文本**：6 条用 temperature=0 跑 `"The quick brown fox"` 都拿到 `"jumps over the lazy dog. ..."`；
+  w4 / w4a8 是量化版（temperature=0 仍带轻微数值漂移），文本继续走"trees / story is about a fox"，
+  读起来连贯，没崩成乱码
+
+### 11.6 已知不修
+- ❌ **让 c4 路径也接 cuda graph**：sparse dequant 每步要 alloc 一个 size 依赖于 batch 实际 block 数的临时 buffer，
+  这是动态 alloc，capture 不进。要修的话得把 dequant buffer 改成"pre-allocated 固定 max_blocks 大小，每步只读一部分"，
+  代价是显存 worst-case 始终占用，§10.6 已留过这个 known-no
+- ❌ **让 cpu_offload 也接 cuda graph**：cuda graph 的 capture 不支持 cross-stream 异步 H2D；
+  workaround 是在 capture 前同步 wait 完所有层权重——那就退化为同步 offload，prefetch 收益消失，得不偿失
+
+### 11.7 文件留痕
+- `tools/cuda_graph_smoke.py`（新建，~150 行）：spawn 子进程跑 7 条路径的 cuda graph 兼容性回归
+- `tinyvllm/engine/model_runner.py`：init 阶段 skip 条件改成 `enforce_eager or kv_quant==4 or cpu_offload`，
+  run_model 也加 `offload_active`
+- `cuda_graph_smoke_final.json`（修复后全量结果，7/7 PASS）
