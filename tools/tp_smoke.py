@@ -135,7 +135,10 @@ def run_single(args):
               "init_ok": False, "gen_ok": False,
               "decode_tps": 0.0, "text_sample": "",
               "text_samples": [],
-              "peak_mem_gb": 0.0, "error": ""}
+              "peak_mem_gb": 0.0,
+              "weight_mem_gb": 0.0,
+              "kv_cache_mem_gb": 0.0,
+              "error": ""}
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
@@ -177,6 +180,12 @@ def run_single(args):
 
         result["decode_tps"] = round(decode_tokens / decode_time, 2) if decode_time > 0 else 0.0
         result["peak_mem_gb"] = round(torch.cuda.max_memory_allocated() / (1024**3), 3)
+        # weight-only 占用（KV cache 分配前的快照），用来确认 TP 是否真切了 weight
+        wmb = getattr(llm.model_runner, "weight_mem_bytes", 0)
+        result["weight_mem_gb"] = round(wmb / (1024**3), 3)
+        # kv cache 占用 ≈ peak - weight（粗估，含 sampler / pinned buffer 等少量 overhead）
+        result["kv_cache_mem_gb"] = round(max(0.0,
+            (torch.cuda.max_memory_allocated() - wmb) / (1024**3)), 3)
 
         # 收集前 3 条输出文本，便于离线判断质量是否塌
         if outputs_collected:
@@ -255,17 +264,19 @@ def main():
 
     # 汇总
     print("\n\n========== TP=%d SMOKE SUMMARY ==========" % args.tp_size)
-    header = f"{'config':>22} | {'init':>4} | {'gen':>3} | {'decode_tps':>10} | {'peak_gb':>7} | text_sample"
+    header = f"{'config':>22} | {'init':>4} | {'gen':>3} | {'decode_tps':>10} | {'weight_gb':>9} | {'kv_gb':>6} | {'peak_gb':>7} | text_sample"
     print(header)
     print("-" * len(header))
     for r in all_results:
         init_str = "ok" if r.get("init_ok") else "FAIL"
         gen_str = "ok" if r.get("gen_ok") else "-"
         dtps = r.get("decode_tps", 0)
+        wmem = r.get("weight_mem_gb", 0)
+        kvmem = r.get("kv_cache_mem_gb", 0)
         peak = r.get("peak_mem_gb", 0)
         sample = r.get("text_sample", "") or r.get("error", "")[:60]
         print(f"{r['name']:>22} | {init_str:>4} | {gen_str:>3} | "
-              f"{dtps:>10.2f} | {peak:>7.3f} | {sample}")
+              f"{dtps:>10.2f} | {wmem:>9.3f} | {kvmem:>6.3f} | {peak:>7.3f} | {sample}")
 
     summary_path = os.path.join(out_dir, args.out_file)
     with open(summary_path, "w") as f:

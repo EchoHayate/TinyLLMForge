@@ -1204,3 +1204,66 @@ W4A8 路径反而 TP=2 比 TP=1 快接近 2×：怀疑是 weight dequant 是计�
 - `tp_smoke_out/tp_smoke_8b_tp1_quant.json`：TP=1 c4_only / w4a8 / w4a8c4 对照
 - `tp_smoke_out/tp_smoke_8b_tp2.json`：TP=2 baseline + 量化叠加 4 条
 - 远端模型：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B`（modelscope 拉，~16GB，不入仓库）
+
+## 15. TP 显存切分纠错：拆分 weight / KV cache 度量后的真相（2026-05-29）
+
+### 15.1 上一波的错误结论
+
+§13 / §14 都断言"TP 没真切显存"，证据是 TP=1 vs TP=2 的 `peak_mem_gb` 几乎一样（都 ~53GB）。
+当时给出的解释是"KV cache 按 `gpu_memory_utilization * 总显存` 反算时每张卡都拿到独立的 70%，
+把 weight 切下来的省了又吃回去"。
+
+### 15.2 重新审视：peak 是错的度量
+
+`tools/tp_smoke.py` 只读 `torch.cuda.max_memory_allocated()`，这个值天然包含 **weight + KV cache + 临时 buffer**。
+KV cache 在 `allocate_kv_cache()` 里按"剩余显存的 util 比例"自动填满 → **peak 总会逼近上限**，
+不论 TP 是否真切了 weight。**用 peak 判断 TP 切分根本不可能得到正确结论**。
+
+### 15.3 修：把 weight 单独度量出来
+
+`tinyvllm/engine/model_runner.py::allocate_kv_cache` 开头加一行：
+
+```python
+# 记一次 weight-only 占用（KV cache 还没分），方便外部观察 TP 是否真切到了 weight
+self.weight_mem_bytes = torch.cuda.memory_allocated()
+```
+
+`tools/tp_smoke.py` 把它和 `peak - weight`（≈ KV cache）一起写进 result：
+
+```python
+wmb = getattr(llm.model_runner, "weight_mem_bytes", 0)
+result["weight_mem_gb"] = round(wmb / (1024**3), 3)
+result["kv_cache_mem_gb"] = round((torch.cuda.max_memory_allocated() - wmb) / (1024**3), 3)
+```
+
+### 15.4 真相：TP 一直在切 weight
+
+A100 + Qwen3-8B + `gpu_memory_utilization=0.7`：
+
+| config | tp | **weight_gb** | kv_gb | peak_gb |
+|---|---|---|---|---|
+| baseline | 1 | **15.288** | 37.847 | 53.135 |
+| baseline | 2 | **7.660** | 45.845 | 53.506 |
+
+`7.66 ≈ 15.29 / 2`，**weight 完美切半**。peak 看起来一样，是因为 KV cache 把多出来的 ~8GB
+自动填满了——这本来就是 `gpu_memory_utilization` 的设计意图（把卡用满，越多 KV 越能容纳并发）。
+
+### 15.5 重新审视 §13 / §14 的"已知不做"条目
+
+§14.5 列了一条："修 TP 节省策略（按 tp_size 缩 gpu_memory_utilization）"。
+**这条根本不需要修**。`gpu_memory_utilization` 的语义是"每张卡用满到多少"，
+TP=2 时每卡分到自己的 weight + 额外 KV cache 空间，这是正常用法。
+真要省整体显存，用户应该自己显式设小 `gpu_memory_utilization`，或显式给 `num_kvcache_blocks`。
+
+### 15.6 结论
+
+- ✅ TP 实现是对的，weight 真切了
+- ✅ `gpu_memory_utilization` 行为是对的，KV cache 自动吃满空间是设计意图
+- ❌ 上波的"TP 不省显存"是**度量错误**，不是 TP 实现 bug
+- 度量层修复后，后续所有 mem 相关分析必须分 weight / kv / peak 三档看，不能只看 peak
+
+### 15.7 文件留痕
+
+- `tinyvllm/engine/model_runner.py`：`allocate_kv_cache` 开头记 `self.weight_mem_bytes`
+- `tools/tp_smoke.py`：result 加 `weight_mem_gb` / `kv_cache_mem_gb`，summary 表头同步
+- `tp_smoke_out/tp_smoke_8b_tp{1,2}_split.json`：纠错后的 TP=1/2 baseline 度量结果

@@ -142,6 +142,9 @@ class ModelRunner:
     def allocate_kv_cache(self):
         config = self.config
         hf_config = config.hf_config
+        # 记一次 weight-only 占用（KV cache 还没分），方便外部观察 TP 是否真切到了 weight
+        # 这里走 memory_allocated 而不是 mem_get_info：前者只算本进程 torch alloc，后者算整卡（含别人）
+        self.weight_mem_bytes = torch.cuda.memory_allocated()
         free, total = torch.cuda.mem_get_info()
         used = total - free
         peak = torch.cuda.memory_stats()["allocated_bytes.all.peak"]
