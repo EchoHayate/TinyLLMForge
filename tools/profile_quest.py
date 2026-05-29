@@ -40,8 +40,18 @@ def parse_args():
     p.add_argument("--profile-steps", type=int, default=16)
     p.add_argument("--out-dir", type=str, default="profile_out")
     p.add_argument("--top-n", type=int, default=20)
-    p.add_argument("--mode", type=str, default=None, choices=["baseline", "quest"],
-                   help="internal: run single mode in subprocess")
+    p.add_argument("--mode", type=str, default=None,
+                   choices=["baseline", "quest", "c4_only", "c4_quest"],
+                   help="internal: run single mode in subprocess. "
+                        "baseline = FP16 KV no Quest; quest = FP16 KV + Quest; "
+                        "c4_only = C4 KV no Quest (α 路线); c4_quest = C4 KV + Quest (β3)")
+    p.add_argument("--kv-quant-group-size", type=int, default=32,
+                   help="C4 路径下的 group_size，仅 c4_only / c4_quest 模式生效")
+    p.add_argument("--gpu-memory-utilization", type=float, default=0.55)
+    p.add_argument("--max-num-seqs", type=int, default=4)
+    p.add_argument("--compare", type=str, nargs=2, default=["c4_only", "c4_quest"],
+                   metavar=("MODE_A", "MODE_B"),
+                   help="主进程要对比的两个 mode")
     return p.parse_args()
 
 
@@ -158,17 +168,35 @@ def diff_kernels(base_avg, quest_avg, top_n: int = 20):
 
 
 def run_single(mode: str, args):
-    """Run profiling for a single mode (baseline or quest) in current process."""
+    """Run profiling for a single mode (baseline / quest / c4_only / c4_quest) in current process."""
     prompts, sps = build_inputs(args)
 
-    quest_top_k = -1 if mode == "baseline" else args.quest_top_k
-    print(f"init {mode} LLM...")
+    if mode == "baseline":
+        kv_quant_bits = 0
+        quest_top_k = -1
+    elif mode == "quest":
+        kv_quant_bits = 0
+        quest_top_k = args.quest_top_k
+    elif mode == "c4_only":
+        kv_quant_bits = 4
+        quest_top_k = -1
+    elif mode == "c4_quest":
+        kv_quant_bits = 4
+        quest_top_k = args.quest_top_k
+    else:
+        raise ValueError(f"unknown mode {mode}")
+
+    print(f"init {mode} LLM (kv_quant_bits={kv_quant_bits}, quest_top_k={quest_top_k})...")
     llm = LLM(
         args.model,
         enforce_eager=True,
         max_model_len=args.max_model_len,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_num_seqs=args.max_num_seqs,
         quest_top_k_blocks=quest_top_k,
         quest_min_seq_len=args.quest_min_seq_len,
+        kv_quant_bits=kv_quant_bits,
+        kv_quant_group_size=args.kv_quant_group_size if kv_quant_bits == 4 else 128,
     )
     run_with_profiler(mode, llm, prompts, sps, args)
 
@@ -195,13 +223,17 @@ def main():
         "--max-model-len", str(args.max_model_len),
         "--quest-top-k", str(args.quest_top_k),
         "--quest-min-seq-len", str(args.quest_min_seq_len),
+        "--kv-quant-group-size", str(args.kv_quant_group_size),
+        "--gpu-memory-utilization", str(args.gpu_memory_utilization),
+        "--max-num-seqs", str(args.max_num_seqs),
         "--warmup-steps", str(args.warmup_steps),
         "--profile-steps", str(args.profile_steps),
         "--out-dir", args.out_dir,
         "--top-n", str(args.top_n),
     ]
 
-    for mode in ("baseline", "quest"):
+    mode_a, mode_b = args.compare
+    for mode in (mode_a, mode_b):
         cmd = base_cmd + ["--mode", mode]
         print(f"\n>>> spawning subprocess: {mode}", flush=True)
         ret = subprocess.run(cmd)
@@ -210,11 +242,11 @@ def main():
             return
 
     # 3) 加载两份 trace 做 diff（从 chrome trace JSON 解析 kernel 时间）
-    print("\n\n========== DIFF (from chrome traces) ==========")
+    print(f"\n\n========== DIFF (from chrome traces) {mode_b} - {mode_a} ==========")
     try:
-        base_kernels = parse_trace_kernels(os.path.join(args.out_dir, "baseline", "trace.json"))
-        quest_kernels = parse_trace_kernels(os.path.join(args.out_dir, "quest", "trace.json"))
-        diff_from_traces(base_kernels, quest_kernels, top_n=args.top_n)
+        a_kernels = parse_trace_kernels(os.path.join(args.out_dir, mode_a, "trace.json"))
+        b_kernels = parse_trace_kernels(os.path.join(args.out_dir, mode_b, "trace.json"))
+        diff_from_traces(a_kernels, b_kernels, top_n=args.top_n)
     except Exception as e:
         print(f"diff failed: {e}")
 

@@ -754,3 +754,71 @@ OOM 修复：本轮在共享 A100 上踩到一次 C4-only 路径 OOM —— 默�
 ### 10.11 sweep 文件留痕
 - `needle_b3_sweep.json`（本轮 top_k 扫描的原始 details）
 - `tools/eval_needle.py`：新增 `--gpu-memory-utilization` / `--max-num-seqs` CLI
+
+### 10.12 Profiler 验证：β3 到底省在哪里
+
+§10.9 的两个观察需要 kernel 级证据：(1) β3 提速来源是 dequant 而不是 attention 本身；
+(2) 0.6B + 小 batch 下固定开销（model fwd / sampler）占主导。
+跑 `tools/profile_quest.py` 直接对比 c4_only（α 路线）vs c4_quest top_k=4（β3）。
+
+跑法：
+```
+CUDA_VISIBLE_DEVICES=3 python tools/profile_quest.py \
+  --num-seqs 4 --max-input-len 14000 --max-output-len 32 \
+  --max-model-len 16384 --quest-top-k 4 \
+  --warmup-steps 4 --profile-steps 12 \
+  --gpu-memory-utilization 0.55 --max-num-seqs 4 --kv-quant-group-size 32 \
+  --compare c4_only c4_quest --out-dir profile_out/b3_vs_c4
+```
+
+为支持 β3 路径对比，`profile_quest.py` 加了两个新 mode：`c4_only`（α）和 `c4_quest`（β3），
+并通过 `--compare A B` 选择主进程对比对象。
+
+### 10.13 结果：β3 砍掉 87% 的 attention/dequant CUDA 时间
+
+12 步 decode，4 个 14k ctx prompt，总 CUDA kernel time：
+
+| 路径 | total CUDA kernel time | vs c4_only |
+|---|---:|---:|
+| c4_only（α） | 1588.33 ms | 1.00× |
+| **c4_quest top_k=4（β3）** | **206.62 ms** | **0.13×（-87%）** |
+
+按 kernel 分解 top-N（saved = c4_only - c4_quest，单位 ms）：
+
+| saved (ms) | c4_only (ms) | c4_quest (ms) | kernel（截断名） |
+|---:|---:|---:|---|
+| 438.7 | 467.0 | 28.3 | `elementwise_kernel<128,2,...>`（dequant 主体） |
+| 183.8 | 200.4 | 16.6 | `unrolled_elementwise_kernel<...>`（cast/copy） |
+| 179.5 | 188.3 | 8.8 | `vectorized_elementwise_kernel<4,...>`（int4 sign-extend） |
+| 179.3 | 188.2 | 8.8 | `vectorized_elementwise_kernel<4,...>` |
+| 131.1 | 138.5 | 7.3 | `vectorized_elementwise_kernel<4,...>`（scale `repeat_interleave`） |
+| 122.4 | 136.3 | 13.9 | `index_elementwise_kernel<128,4,...>`（gather block_tables） |
+| 87.4 | 100.3 | 13.0 | `elementwise_kernel<128,4,...>` |
+| 58.1 | 64.5 | 6.4 | `unrolled_elementwise_kernel<...>` |
+| **41.2** | **47.3** | **6.1** | **`flash_fwd_splitkv_kernel<...>`（attention 本身）** |
+
+c4_quest 唯一新增的 kernel：
+
+| 新增 (ms) | kernel |
+|---:|---|
+| +2.4 | `flash_fwd_splitkv_combine_kernel<...>` |
+
+### 10.14 结论与回答 §10.9 的两个观察
+
+1. **β3 提速来源 = dequant，不是 attention 本身**
+   - dequant 相关的 6 个 elementwise/index kernel 总共省了 ~1300 ms
+   - flash-attn 本身只省了 ~41 ms（K/V 体量从 max_blocks 缩到 top_k=4 也只是次要）
+   - 唯一的"新债" splitkv_combine 仅 2.4 ms，可忽略
+2. **§10.9 观察 (2) 部分修正**：固定开销在端到端 throughput 数字（39.57 vs 45.88 tok/s）里看是 +16%；
+   但 profiler 视角下 attention/dequant 占的绝对 CUDA 时间从 1588ms→207ms，**只占总耗时的一小部分**，
+   model fwd（gemm / norm / silu）才是 0.6B 上真正的 wall-clock 主导。
+   这也解释了为什么 §10.8 里 top_k 4/8/16/32 几乎没差——attention 自身已经小到敏感度极低
+3. **β1 路线的预期收益上界进一步收紧**：β1 = "fork flash-attn 直接吃 int4 KV"，
+   理论上能省的就是 dequant 的 ~1300 ms。这个数字在 0.6B 上换算成 throughput 提升就是
+   `1382/1588 × 16% ≈ 14%`（β3 已经吃掉），**β1 在 0.6B 上没有边际增益**。
+   这正式 close 了 §10.5 表里 β1 的"理论 ~2×" —— 在 0.6B 上理论上界就是 β3 现在拿到的 16%
+
+### 10.15 profiler 文件留痕
+- `tools/profile_quest.py`：新增 `c4_only` / `c4_quest` 两个 mode + `--compare A B` CLI + `--gpu-memory-utilization` / `--max-num-seqs` 参数
+- `profile_out/b3_vs_c4/{c4_only,c4_quest}/trace.json`（chrome trace，~40-80 MB，不入仓库）
+- 上面 §10.13 的 kernel 表是从 trace 解析出来的 saved-time 摘要
