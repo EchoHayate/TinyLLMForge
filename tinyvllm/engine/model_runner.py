@@ -123,7 +123,9 @@ class ModelRunner:
     def call(self, method_name, *args):         #动态方法调用 提供一个通用接口 把主进程调用的函数推给从进程
         if self.world_size > 1 and self.rank == 0:
             # 主进程调用的函数会被写入共享块中，供从进程调用, 这样可以自动实现 主进程调用 -> 从进程调用
-            self.write_shm(method_name, args)
+            # 注意：必须 *args 展开，否则 worker 端解包出来 args 会是一层多余的 tuple，
+            # 导致 method(*args) 传给目标函数的实参只有一个 tuple（缺位置参数）
+            self.write_shm(method_name, *args)
         method = getattr(self, method_name, None)       #获取函数对象
         return method(*args)            #执行函数并返回结果
 

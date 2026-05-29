@@ -73,7 +73,8 @@ class ParallelLMHead(VocabParallelEmbedding):
             else:
                 all_logits = None
             dist.gather(logits, all_logits, 0)
-            # logits最终是二维的，因此需要使用 cat 进行降维
-            logits = torch.cat(all_logits, 0) if self.tp_rank == 0 else None
+            # logits 形状是 [N, vocab/tp]，要沿 vocab 维（dim=1）拼回 [N, vocab]，
+            # 而不是沿 batch 维（dim=0）—— 否则下游 sampler 的 temperatures[N] 维度对不上
+            logits = torch.cat(all_logits, 1) if self.tp_rank == 0 else None
         return logits
     

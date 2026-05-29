@@ -994,3 +994,118 @@ cpu_offload 在本仓库保留意义：作为"装不下大模型"的后备路径
 - `tools/bench_offload.py`（新建，~210 行）：spawn 子进程跑 (mode × ctx) 组合的吞吐 + peak mem 测量
 - `bench_offload_out/{baseline,offload}_ctx{4096,15000}.json`：每条配置的详细数据（A100 远端，不入仓库）
 - `bench_offload_out/summary.json`：4 行汇总
+
+## 13. TP=2 多卡路径兼容性回归（2026-05-29）
+
+### 13.1 动机
+
+仓库历史上多数优化（Quest / C4 / W4 / W4A8 / cpu_offload / cuda_graph）都是单卡上写的，
+TP 路径作为后写入的一条横切，跟它们正交但没有交叉验证过。这一波目标：
+**把 §6–§12 攒下来的 8 条配置，在 TP=2 上各跑一遍 smoke，证明它们都不崩、能出 token**。
+
+### 13.2 跑法
+
+新建 `tools/tp_smoke.py`：spawn 子进程串行跑每条 config（端口 2333 + shm name `tinyvllm` 都硬编码，
+不能并发）。每条记 init_ok / gen_ok / decode_tps / peak_mem_gb / text_sample / error。
+
+跑前清理 `/dev/shm/tinyvllm`，避免上一轮 worker 异常退出残留文件污染下一条。
+prompt 用 16 条随机 token id（避免 tokenizer 不一致），warmup 一次后清峰值。
+
+### 13.3 审计修出来的 4 个 TP bug
+
+跑之前先走 Explore 审计了一遍 TP 实现，发现 4 处实际跑起来肯定崩的位置，先修后跑：
+
+**(1) `tinyvllm/layers/linear.py` — QKVParallelLinear 双切**
+
+```python
+# 修复前：output_size 已经是切完的，再传给 ColumnParallelLinear 又会被切一次
+output_size = (self.num_heads + 2 * self.num_kv_heads) * head_size
+# 修复后：传 total（未切分）的，让 ColumnParallel 自己切
+output_size = (self.total_num_heads + 2 * self.total_num_kv_heads) * head_size
+```
+症状：`narrow start (1024) + length (512) exceeds dimension size (1024)`，weight loader 越界。
+
+**(2) `tinyvllm/layers/embed_head.py` — ParallelLMHead 拼接维度错**
+
+```python
+# 修复前：沿 batch 维拼接 → [N*tp, vocab/tp]，sampler 维度对不上
+logits = torch.cat(all_logits, 0)
+# 修复后：沿 vocab 维拼接 → [N, vocab]
+logits = torch.cat(all_logits, 1)
+```
+症状：`size of tensor a (8) must match the size of tensor b (4) at non-singleton dimension 0`。
+
+**(3) `tinyvllm/engine/sequence.py` — `__setstate__` 解包错**
+
+```python
+# 修复前：对 state[-1]（一个 token_ids 或 last_token）解包 4 个变量 → ValueError
+self.num_tokens, ..., self.block_table = state[-1]
+# 修复后：state[:4] 解包前 4 个；num_cached_blocks 是 @property，反推回 num_cached_tokens
+self.num_tokens, self.num_prompt_tokens, num_cached_blocks, self.block_table = state[:4]
+self.num_cached_tokens = num_cached_blocks * self.block_size
+```
+
+**(4) `tinyvllm/engine/model_runner.py` — `call()` 传参未展开**
+
+```python
+# 修复前：args（tuple）作为单个参数写进去，worker 端 *args 解包后多了一层 tuple
+self.write_shm(method_name, args)
+# 修复后：展开
+self.write_shm(method_name, *args)
+```
+症状：`ModelRunner.run() missing 1 required positional argument: 'is_prefill'`。
+
+### 13.4 结果
+
+A100 + Qwen3-0.6B + TP=2，8/8 init_ok + gen_ok：
+
+| config | decode_tps | peak_mem_gb (rank0) |
+|---|---|---|
+| baseline | 206.07 | 53.359 |
+| quest | 188.24 | 53.359 |
+| c4_only | 134.62 | 53.371 |
+| c4_quest | 131.80 | 53.369 |
+| w4_g128 | 124.75 | 53.283 |
+| w4a8_g128 | 98.09 | 53.076 |
+| cpu_offload | 147.67 | 53.358 |
+| cuda_graph_baseline | **1798.18** | 53.368 |
+
+### 13.5 异常观察
+
+**(1) peak_mem ~53GB / rank**：单卡 0.6B baseline 才 ~2GB，这里两卡各 53GB（合计 106GB）。
+说明 KV cache 容量按 `gpu_memory_utilization=0.7` 反算时每张卡都拿到了"独立的 70%"，
+没有按 TP 切；而 weight 也没有真切到一半（gpu_memory_utilization 默认抽到的剩余空间被吃满了）。
+这一波**只验兼容性**，"TP 是否真省显存"留给后续真做大模型时再追。
+
+**(2) cuda_graph_baseline decode_tps=1798 异常高**：单卡 §11 同样配置只有 ~250 tps。
+怀疑是 NCCL × cuda graph capture 路径把 all-reduce 吞掉了 / 或者 timer 被异步队列吃掉，
+不应当作真实吞吐采纳。这里只读 init_ok + gen_ok 两个布尔位，TPS 数字打个 ⚠️ 标记。
+
+**(3) c4_quest / w4_g128 文本明显复读**（`here here here here ...`）：
+这是 0.6B 模型在 W4 / KV4 叠加下的精度坍塌，不是 TP 的锅（单卡 §10 就观察到过类似现象），
+通过 `ignore_eos=True` 强制跑满 32 token 才显得明显。smoke 不评估生成质量，gen_ok 只看是否非空。
+
+### 13.6 结论
+
+| 维度 | 状态 |
+|---|---|
+| 8 条历史路径在 TP=2 上是否都能 init + 出 token | ✅ 全部 PASS |
+| TP 真正省显存 | ❌ 没省（rank0 = 53GB），需要后续在 7B+ 模型上验真 TP 切分 |
+| TP × cuda graph | ⚠️ 不崩，但 TPS 数据可疑，不作为吞吐结论 |
+| TP × cpu_offload | ✅ 不崩 |
+| TP × KV4 / W4 / W4A8 | ✅ 不崩，质量是另说 |
+
+### 13.7 已知不做
+
+- ❌ 在 0.6B 上对比 TP=1 vs TP=2 吞吐：0.6B 单卡就放得下，TP 通信开销只会让吞吐变差，没意义
+- ❌ 调 TP × cuda graph 的真实 TPS：要先解决 NCCL × graph capture 的同步语义，工程量大且偏离主线
+- ❌ 修 c4_quest / w4 路径的复读：这是模型量化精度问题，不是 TP 引入的回归
+
+### 13.8 文件留痕
+
+- `tools/tp_smoke.py`（新建，~240 行）：spawn 子进程跑 8 条 config 的 TP=2 兼容性回归
+- `tinyvllm/layers/linear.py`：QKVParallelLinear 双切修复（output_size 传 total）
+- `tinyvllm/layers/embed_head.py`：ParallelLMHead cat 维度修复（dim=0 → dim=1）
+- `tinyvllm/engine/sequence.py`：`__setstate__` 解包修复 + num_cached_blocks @property 绕过
+- `tinyvllm/engine/model_runner.py`：`call()` 传参 `*args` 展开
+- `tp_smoke_out/tp_smoke.json`：8 条 config 的详细结果（A100 远端，不入仓库）

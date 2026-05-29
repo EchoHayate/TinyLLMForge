@@ -78,7 +78,13 @@ class Sequence:
     
     # 由于是多卡，涉及通信接收，需要对序列化的 Sequence 进行解析，该函数和 getstate函数一一对应
     def __setstate__(self, state):
-        self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table = state[-1]
+        # state 是 5 元组：(num_tokens, num_prompt_tokens, num_cached_blocks, block_table,
+        # token_ids 或 last_token)。前 4 个直接复原；最后一项按 num_completion_tokens 分支：
+        #   - 还在 prefill（completion=0）：last item 是完整 token_ids
+        #   - 已进入 decode（completion>0）：last item 是 last_token（int）
+        # 注意：num_cached_blocks 是 @property，不能直接赋值，反推回 num_cached_tokens。
+        self.num_tokens, self.num_prompt_tokens, num_cached_blocks, self.block_table = state[:4]
+        self.num_cached_tokens = num_cached_blocks * self.block_size
         if self.num_completion_tokens == 0:
             self.token_ids = state[-1]
         else:

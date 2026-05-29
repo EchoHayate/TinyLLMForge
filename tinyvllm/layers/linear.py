@@ -243,8 +243,10 @@ class QKVParallelLinear(ColumnParallelLinear):                      #针对atten
         self.num_kv_heads = divide(self.total_num_kv_heads, tp_size)    #for qwen3  8/tp_size
 
         input_size = hidden_size
-        # q + k + v = q + 2 * k/v
-        output_size = (self.num_heads + 2 * self.num_kv_heads) * head_size
+        # 注意：传给 super().__init__ 的是 total（未切分）output_size，
+        # ColumnParallelLinear 会自己按 tp_size 切。如果这里传切完的（self.num_heads * ...），
+        # ColumnParallel 会再切一次，导致 param 大小只剩 1/tp_size²，weight_loader narrow 越界。
+        output_size = (self.total_num_heads + 2 * self.total_num_kv_heads) * head_size
         super().__init__(input_size, output_size, bias)
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shared_id: str):
