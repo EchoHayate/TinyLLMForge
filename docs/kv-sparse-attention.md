@@ -919,3 +919,78 @@ run_model 还走 replay 分支会 AttributeError。
 - `tinyvllm/engine/model_runner.py`：init 阶段 skip 条件改成 `enforce_eager or kv_quant==4 or cpu_offload`，
   run_model 也加 `offload_active`
 - `cuda_graph_smoke_final.json`（修复后全量结果，7/7 PASS）
+
+## 12. cpu_offload 吞吐基线测量（2026-05-29）
+
+### 12.1 动机
+
+§11 只证明了 cpu_offload 在 cuda graph 路径下不崩（init 阶段 skip capture），但全程 eager 跑下来
+decode TPS 损失多少、显存到底省没省，还没量化。这是回答"0.6B 上 cpu_offload 实用吗"必须有的数据。
+
+### 12.2 跑法
+
+新建 `tools/bench_offload.py`：spawn 子进程跑每个 `(mode, ctx)` 组合，避免 cpu_offload 的独立 stream /
+异步 H2D buffer 污染下一轮，也保证 `torch.cuda.max_memory_allocated()` 干净。
+
+每个子进程：
+1. warmup 一次后 `reset_peak_memory_stats()`，确保峰值测的是稳态
+2. 手动 `add_request` + `step`，用 `step()` 返回的 `num_tokens` 符号区分 prefill (>0) / decode (<0)
+3. 每步 `torch.cuda.synchronize()` 后计时
+4. 结束时输出 `prefill_tps` / `decode_tps` / `peak_mem_gb`
+
+### 12.3 结果
+
+A100 + Qwen3-0.6B：
+
+| mode | ctx | num_seqs | prefill_tps | decode_tps | peak_mem_gb |
+|---|---|---|---|---|---|
+| baseline | 4096 | 16 | 77552.56 | **266.26** | 1.943 |
+| offload | 4096 | 16 | 63211.61 | **61.10** | 2.201 |
+| baseline | 15000 | 4 | 60075.22 | **512.19** | 14.111 |
+| offload | 15000 | 4 | 49660.81 | **74.10** | 14.137 |
+
+decode_tps 相对损失：
+- ctx=4k：61.10 / 266.26 = **0.23×（-77%，慢 4.36×）**
+- ctx=15k：74.10 / 512.19 = **0.14×（-86%，慢 6.9×）**
+
+### 12.4 反常观察：peak_mem 几乎不省
+
+| ctx | baseline peak_mem_gb | offload peak_mem_gb | 节省 |
+|---|---|---|---|
+| 4096 | 1.943 | 2.201 | **-0.26（反而多）** |
+| 15000 | 14.111 | 14.137 | -0.026 |
+
+这看起来很反直觉——cpu_offload 不就是为了省显存吗？拆开看：
+
+- **0.6B 模型权重总共 ~1.2 GB**（fp16），其中保留在 GPU 的 embedding/lm_head/最后两层 + 当前层 +
+  prefetch 下一层 ≈ 0.6 GB；理论上能省 ~0.6 GB 权重
+- **但 cpu_offload 自己还引入了** pinned host buffer + prefetch GPU buffer + 独立 stream 的 workspace，
+  这部分加起来抵消了节省
+- **ctx=4k 时甚至更高**：因为 KV cache 容量按 `gpu_memory_utilization * 总显存 - 当前已用` 反算，
+  offload 模式下 init 时 GPU 已用更少 → 自动分配更多 KV blocks → 总占用反而上去
+
+也就是说：在 0.6B 这种"权重本来就放得下"的场景，cpu_offload **省的那点权重显存又被它自己的 buffer
+和扩大的 KV 池吃回去了**，净节省 ≈ 0。
+
+### 12.5 结论：0.6B 上 cpu_offload 是纯负担
+
+| 场景 | 结论 |
+|---|---|
+| 模型权重 < GPU 显存（如本仓库 0.6B） | ❌ 不要开。decode 慢 4–7×，显存几乎不省 |
+| 模型权重远超 GPU 显存（如 70B 单卡） | cpu_offload 才是它的设计场景 |
+
+cpu_offload 在本仓库保留意义：作为"装不下大模型"的后备路径 + cuda graph 兼容性回归用例，
+不作为 0.6B 推理的常规配置推荐。
+
+### 12.6 已知不做
+
+- ❌ **优化 0.6B 上 cpu_offload 性能**：根因是 0.6B 权重 H2D 时间和单步 decode 计算时间几乎同量级，
+  prefetch 重叠空间很小；继续优化是把"装得下的模型卸载到 CPU"这条路本身做得更好，性价比低
+- ❌ **改用 zero-copy 共享 host 内存**：A100 走 PCIe，host-pinned 已经是极限；要进一步省得换硬件
+- ❌ **测 1B+ 模型上的 cpu_offload**：本仓库聚焦 Qwen3-0.6B 配套优化，不扩到更大模型
+
+### 12.7 文件留痕
+
+- `tools/bench_offload.py`（新建，~210 行）：spawn 子进程跑 (mode × ctx) 组合的吞吐 + peak mem 测量
+- `bench_offload_out/{baseline,offload}_ctx{4096,15000}.json`：每条配置的详细数据（A100 远端，不入仓库）
+- `bench_offload_out/summary.json`：4 行汇总
