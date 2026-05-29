@@ -1448,3 +1448,57 @@ tp_smoke.py）凭印象比**。
 - `tp_smoke_out/tp_smoke_06b_tp1_cgraph.json`：单卡 0.6B baseline / cuda_graph 对照
 - `tp_smoke_out/tp_smoke_06b_tp2_cgraph.json`：双卡 0.6B baseline / cuda_graph 对照
 - `tp_smoke_out/tp_smoke_06b_tp1_cgraph_big.json`：单卡 0.6B 大 workload 对照（n=16, in=1024, out=256）
+
+## 19. 主线回归 smoke：四个修复 commit 没打坏旧路径（2026-05-30）
+
+§16 / §17 / §18 一波改了 4 个文件 + 4 个 commit。这一节做"全量主线回归"，确认数值修复没把
+baseline / quest / cpu_offload / cuda_graph 这些不动的路径冲坏。
+
+### 19.1 跑法
+
+跑 4 跑次的笛卡尔积：{0.6B, 8B} × {TP=1, TP=2}，每跑 7–8 条核心 config：
+`baseline / quest / c4_g64 / w4_g32 / w4a8_g32 / w4a8c4_g32 / cpu_offload / cuda_graph_baseline`
+（8B 不跑 cpu_offload，单卡放得下，没意义）。
+
+### 19.2 结果摘要
+
+| 跑次 | init+gen ok | 输出连贯 / 复读不崩 | weight_mem 切分 |
+|---|---|---|---|
+| 0.6B TP=1 | 8/8 | 5 / 3 | 1.140 GB |
+| 0.6B TP=2 | 8/8 | 5 / 3 | **0.592 ≈ 1.140/2** ✅ |
+| 8B TP=1 | 7/7 | 5 / 2 | 15.288 GB |
+| 8B TP=2 | 7/7 | 5 / 2 | **7.660 ≈ 15.288/2** ✅ |
+
+### 19.3 各路径状态（vs 历史）
+
+| 路径 | 状态 | 备注 |
+|---|---|---|
+| baseline | ✅ 全 ok | 0.6B 256/8 tps、8B 194 tps，与 §13/§14 一致 |
+| quest | ✅ 全 ok | TPS 略低于 baseline，符合 quest 选块开销 |
+| c4_g64 | 8B ✅ / 0.6B ⚠️ | 8B 上 §17 的 Berlin/Rome/Madrid 复现；0.6B 上塌（与 §13 一致，小模型 + KV4 本来就掉） |
+| w4_g32 | ✅ 全 ok | §16 的 Paris/London/阶乘复现 |
+| w4a8_g32 / w4a8c4_g32 | ⚠️ 全部"复读不崩" | §16.3 / §16.4 标定的"达 §14.4 最低目标"状态复现 |
+| cpu_offload | ✅ 全 ok | 0.6B 上 weight_mem 0.378 GB（offload 后剩驻留权重） |
+| cuda_graph_baseline | ✅ 全 ok | TP=1 / TP=2 与 baseline 输出字字对齐，§18 结论复现 |
+
+### 19.4 三个明确结论
+
+- ✅ **四个修复 commit (E / A+B+C / D / F) 全部无回归**：旧路径 TPS / 显存 / 文本质量与历史报告一致
+- ✅ **TP weight 切分仍然严格 ≈ 1/tp_size**：8B `15.288 → 7.660`、0.6B `1.140 → 0.592`，§15 修正持续生效
+- ⚠️ **量化叠加在 0.6B 上的质量问题继续存在**：c4_g64 / w4a8_g32 / w4a8c4_g32 在 0.6B 上塌或复读，
+  这是模型表征能力 vs 量化误差的耦合问题，不在本期修复范围；8B 上 W4 g32 和 c4_g64 都是
+  "可用质量"，验证了"中等模型 + 合适参数"的量化路径是可行的
+
+### 19.5 已知不做
+
+- **0.6B 上修 c4_g64 复读**：0.6B 模型本身在 KV4 量化下表征不够，§13.4 早就观察到，
+  不是新引入的回归
+- **W4A8 真正修好**：仍需 SmoothQuant，§16.5 已标定
+- **加自动 regression diff 脚本**：smoke 输出已经 JSON 化，未来真要做 CI 再加；当前手动 4 跑次足够
+
+### 19.6 文件留痕
+
+- `tp_smoke_out/tp_smoke_06b_tp1_regression.json`
+- `tp_smoke_out/tp_smoke_06b_tp2_regression.json`
+- `tp_smoke_out/tp_smoke_8b_tp1_regression.json`
+- `tp_smoke_out/tp_smoke_8b_tp2_regression.json`

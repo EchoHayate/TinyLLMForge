@@ -1,0 +1,121 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 194.35,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation:  def factorial(n):     result ="
+    ],
+    "peak_mem_gb": 53.135,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.847,
+    "error": ""
+  },
+  {
+    "name": "quest",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 181.94,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation:  def factorial(n):     result ="
+    ],
+    "peak_mem_gb": 53.141,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.853,
+    "error": ""
+  },
+  {
+    "name": "c4_g64",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 121.18,
+    "text_sample": " Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of B",
+    "text_samples": [
+      " Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of B",
+      " there was a young girl named Lina. Lina was known for her kindness and her love for nature. She spent her days tending ",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation:  def factorial(n):     result ="
+    ],
+    "peak_mem_gb": 53.167,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.879,
+    "error": ""
+  },
+  {
+    "name": "w4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 35.85,
+    "text_sample": " Paris. The capital of the United States is Washington, D.C. The capital of the United Kingdom is London. The capital of",
+    "text_samples": [
+      " Paris. The capital of the United States is Washington, D.C. The capital of the United Kingdom is London. The capital of",
+      " there lived a young girl named Lila. She was known for her kindness and love for nature. One day, while exploring the f",
+      " a function that takes an integer n as input and returns the product of all positive integers up to n. Here's a possible"
+    ],
+    "peak_mem_gb": 53.763,
+    "weight_mem_gb": 6.417,
+    "kv_cache_mem_gb": 47.346,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 33.71,
+    "text_sample": " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+    "text_samples": [
+      " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+      " in a small village near the mountains, in a small village near the mountains, in a small village near the mountains, in",
+      " the factorial of n in Python, and the factorial of n in Python, and the factorial of n in Python, and the factorial of "
+    ],
+    "peak_mem_gb": 50.986,
+    "weight_mem_gb": 6.417,
+    "kv_cache_mem_gb": 44.569,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 32.62,
+    "text_sample": " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+    "text_samples": [
+      " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+      " in a small village, in a small village, in a small, in a small, in a small, in a small, in a small, in a small, in a sm",
+      " the factorial of n in Python. We can write the factorial of n in Python. We can write the factorial of n in Python. We "
+    ],
+    "peak_mem_gb": 51.0,
+    "weight_mem_gb": 6.417,
+    "kv_cache_mem_gb": 44.583,
+    "error": ""
+  },
+  {
+    "name": "cuda_graph_baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 656.84,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation:  def factorial(n):     result ="
+    ],
+    "peak_mem_gb": 53.147,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.859,
+    "error": ""
+  }
+]

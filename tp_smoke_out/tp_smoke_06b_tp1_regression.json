@@ -1,0 +1,138 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 256.8,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she noticed that her village",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.483,
+    "weight_mem_gb": 1.14,
+    "kv_cache_mem_gb": 37.343,
+    "error": ""
+  },
+  {
+    "name": "quest",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 235.91,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she noticed that her village",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.464,
+    "weight_mem_gb": 1.14,
+    "kv_cache_mem_gb": 37.324,
+    "error": ""
+  },
+  {
+    "name": "c4_g64",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 152.16,
+    "text_sample": " Paris. - a. a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a",
+    "text_samples": [
+      " Paris. - a. a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a",
+      " there was a young young, a a young girl, a a young, a a young, a young, a a young, a a young, a a young, a a young, a a",
+      " a recursive function function but the recursive function. or recursive function. recursive a recursive function or recu"
+    ],
+    "peak_mem_gb": 38.505,
+    "weight_mem_gb": 1.14,
+    "kv_cache_mem_gb": 37.365,
+    "error": ""
+  },
+  {
+    "name": "w4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 153.33,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital of ",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital of ",
+      " there was a magical forest that had a special property. The forest had a magical tree that could grow and reproduce, bu",
+      " a recursive function. Let's say that n is 5. What is the value of the factorial of 5?  To compute the factorial of n, w"
+    ],
+    "peak_mem_gb": 38.253,
+    "weight_mem_gb": 0.603,
+    "kv_cache_mem_gb": 37.65,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 99.49,
+    "text_sample": " the capital city of the country. So, if a country has a capital city, then it has a capital city. So, if a country has ",
+    "text_samples": [
+      " the capital city of the country. So, if a country has a capital city, then it has a capital city. So, if a country has ",
+      " there lived a man who had a lot of money. He had a son, and the son was a son of a man. The man had a lot of money, and",
+      " a recursive function that uses the fact that n! is equal to n! * n / n! (n! is factorial of n). But how to write this r"
+    ],
+    "peak_mem_gb": 37.515,
+    "weight_mem_gb": 0.603,
+    "kv_cache_mem_gb": 36.911,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 78.99,
+    "text_sample": " the: ? ( The is the the capital? The The correct? The????? The The.. is the the............. (.......",
+    "text_samples": [
+      " the: ? ( The is the the capital? The The correct? The????? The The.. is the the............. (.......",
+      " there, there, there, there there, and, and,, and,, and,, and,, and,, and,, and,, and,, and, and, and, and,, and,, and",
+      " a recursive numbers numbers but but but the factorial, and, and,, and,, and,, and,, and,, and,, and,, and,, and,, and,,"
+    ],
+    "peak_mem_gb": 37.538,
+    "weight_mem_gb": 0.603,
+    "kv_cache_mem_gb": 36.935,
+    "error": ""
+  },
+  {
+    "name": "cpu_offload",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 170.92,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she noticed that her village",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.502,
+    "weight_mem_gb": 0.378,
+    "kv_cache_mem_gb": 38.124,
+    "error": ""
+  },
+  {
+    "name": "cuda_graph_baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 2321.43,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she noticed that her village",
+      " a recursive function. However, for large values of n, this approach may not be efficient. What is the correct approach "
+    ],
+    "peak_mem_gb": 38.492,
+    "weight_mem_gb": 1.14,
+    "kv_cache_mem_gb": 37.352,
+    "error": ""
+  }
+]

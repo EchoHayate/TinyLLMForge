@@ -1,0 +1,138 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 209.38,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she decided to start a small",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.51,
+    "weight_mem_gb": 0.592,
+    "kv_cache_mem_gb": 37.918,
+    "error": ""
+  },
+  {
+    "name": "quest",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 187.23,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she decided to start a small",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.521,
+    "weight_mem_gb": 0.592,
+    "kv_cache_mem_gb": 37.929,
+    "error": ""
+  },
+  {
+    "name": "c4_g64",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 134.33,
+    "text_sample": " Paris, and the Paris is the the capital., and the Paris is the capital. So So the, and and, and, and, and and, and, and",
+    "text_samples": [
+      " Paris, and the Paris is the the capital., and the Paris is the capital. So So the, and and, and, and, and and, and, and",
+      " there are was a young young girl.. who the young girl. The young girl is a girl. the the the, the the, the the, the the",
+      " a recursive function function but the recursive function, or the recursive function, or the recursive function or the r"
+    ],
+    "peak_mem_gb": 38.522,
+    "weight_mem_gb": 0.592,
+    "kv_cache_mem_gb": 37.93,
+    "error": ""
+  },
+  {
+    "name": "w4_g32",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 132.81,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital of ",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital of ",
+      " there was a magical forest that had a special property. The forest had a magical tree that could grow and reproduce, bu",
+      " a recursive function. Let's say that n is 5. What is the value of the factorial of 5?  To compute the factorial of n, w"
+    ],
+    "peak_mem_gb": 38.454,
+    "weight_mem_gb": 0.308,
+    "kv_cache_mem_gb": 38.146,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g32",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 90.22,
+    "text_sample": " the capital of the country. The capital of France is the capital of the country. The capital of France is the capital o",
+    "text_samples": [
+      " the capital of the country. The capital of France is the capital of the country. The capital of France is the capital o",
+      " a man is trying to find a way to get out of the village. He has a few coins, and he has a few coins in his possession. ",
+      " a function that takes n as an integer and returns the factorial of n as a integer. Let's say that the factorial of n is"
+    ],
+    "peak_mem_gb": 38.112,
+    "weight_mem_gb": 0.308,
+    "kv_cache_mem_gb": 37.804,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4_g32",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 75.21,
+    "text_sample": " the a capital. of a. capital of of a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a",
+    "text_samples": [
+      " the a capital. of a. capital of of a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a",
+      " a village, there, there there, and,, and I, and a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a",
+      " a simple recursive number, but but a code code code code a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a "
+    ],
+    "peak_mem_gb": 38.112,
+    "weight_mem_gb": 0.308,
+    "kv_cache_mem_gb": 37.804,
+    "error": ""
+  },
+  {
+    "name": "cpu_offload",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 166.05,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she decided to start a small",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.493,
+    "weight_mem_gb": 0.205,
+    "kv_cache_mem_gb": 38.288,
+    "error": ""
+  },
+  {
+    "name": "cuda_graph_baseline",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 1881.27,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She was known for her kindness and compassion. One day, she noticed that her village",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.519,
+    "weight_mem_gb": 0.592,
+    "kv_cache_mem_gb": 37.927,
+    "error": ""
+  }
+]

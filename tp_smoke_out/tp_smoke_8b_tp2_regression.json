@@ -1,0 +1,121 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 160.95,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. For example, the factorial of 5 is 5 × 4 × 3 × 2 × 1 = 120. Let"
+    ],
+    "peak_mem_gb": 53.506,
+    "weight_mem_gb": 7.66,
+    "kv_cache_mem_gb": 45.845,
+    "error": ""
+  },
+  {
+    "name": "quest",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 144.17,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. For example, the factorial of 5 is 5 × 4 × 3 × 2 × 1 = 120. Let"
+    ],
+    "peak_mem_gb": 53.509,
+    "weight_mem_gb": 7.66,
+    "kv_cache_mem_gb": 45.848,
+    "error": ""
+  },
+  {
+    "name": "c4_g64",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 104.85,
+    "text_sample": " Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of t",
+    "text_samples": [
+      " Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of t",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for helping others. One day, while sh",
+      " a function that multiplies all integers from 1 up to n. For example, the factorial of 5 is 5*4*3*2*1 = 120. Let's imple"
+    ],
+    "peak_mem_gb": 53.522,
+    "weight_mem_gb": 7.66,
+    "kv_cache_mem_gb": 45.862,
+    "error": ""
+  },
+  {
+    "name": "w4_g32",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 67.21,
+    "text_sample": " Paris. The capital of the United States is Washington, D.C. The capital of the United Kingdom is London. The capital of",
+    "text_samples": [
+      " Paris. The capital of the United States is Washington, D.C. The capital of the United Kingdom is London. The capital of",
+      " there lived a young girl named Lila. She was known for her kindness and love for nature. One day, while exploring the f",
+      " a function that takes an integer n as input and returns the product of all positive integers up to n. Here's a simple i"
+    ],
+    "peak_mem_gb": 53.877,
+    "weight_mem_gb": 3.218,
+    "kv_cache_mem_gb": 50.658,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g32",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 60.96,
+    "text_sample": " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+    "text_samples": [
+      " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+      " in a small village near the mountains, in a small village near the mountains, in a small village near the mountains, in",
+      " n in Python, we can write n in Python, we can write n in Python, we can write n in Python, we can write n in Python, we"
+    ],
+    "peak_mem_gb": 52.488,
+    "weight_mem_gb": 3.218,
+    "kv_cache_mem_gb": 49.27,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4_g32",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 57.05,
+    "text_sample": " is is is capital of is is is is of IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF ",
+    "text_samples": [
+      " is is is capital of is is is is of IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF IS OF ",
+      " in a small village, in a small village, in a small village, in a small, in a, in a, in a, in a, in a, in a, in a, in a,",
+      " n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n N N"
+    ],
+    "peak_mem_gb": 52.5,
+    "weight_mem_gb": 3.218,
+    "kv_cache_mem_gb": 49.282,
+    "error": ""
+  },
+  {
+    "name": "cuda_graph_baseline",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 686.46,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Germany is Berlin. The capital of t",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Germany is Berlin. The capital of t",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. For example, 5! = 5 × 4 × 3 × 2 × 1 = 120. Let's implement this"
+    ],
+    "peak_mem_gb": 53.519,
+    "weight_mem_gb": 7.66,
+    "kv_cache_mem_gb": 45.858,
+    "error": ""
+  }
+]
