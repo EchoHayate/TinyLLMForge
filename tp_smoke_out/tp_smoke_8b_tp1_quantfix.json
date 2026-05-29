@@ -1,0 +1,104 @@
+[
+  {
+    "name": "w4_g128",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 35.94,
+    "text_sample": " C C \" \" \" \" \"══ \" \"══ \" \"══ \" \"══ \" \"══ \" \"══ \" \" \"══ \" \" \" \" \" \"══ \" \" \" \" \" \" \" \"══ \" \" \" \" \"",
+    "text_samples": [
+      " C C \" \" \" \" \"══ \" \"══ \" \"══ \" \"══ \" \"══ \" \"══ \" \" \"══ \" \" \" \" \" \"══ \" \" \" \" \" \" \" \"══ \" \" \" \" \"",
+      " C C \" \" \" \" \" \"══ C \" \" \"══ \" \"══ \" \"══ \" \"══ \" \"══ \" \"══ \" \" \"══ \" \"══ \" \" \" \"══ \" \" \"══ \" \" \"",
+      " \" \" \" \"════════════════════════════════════════════════════════════════════════════════════════"
+    ],
+    "peak_mem_gb": 53.739,
+    "weight_mem_gb": 5.794,
+    "kv_cache_mem_gb": 47.944,
+    "error": ""
+  },
+  {
+    "name": "w4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 35.81,
+    "text_sample": " Paris. The capital of the United States is Washington, D.C. The capital of the United Kingdom is London. The capital of",
+    "text_samples": [
+      " Paris. The capital of the United States is Washington, D.C. The capital of the United Kingdom is London. The capital of",
+      " there lived a young girl named Lila. She was known for her kindness and love for nature. One day, while exploring the f",
+      " a function that takes an integer n as input and returns the product of all positive integers up to n. Here's a possible"
+    ],
+    "peak_mem_gb": 53.763,
+    "weight_mem_gb": 6.417,
+    "kv_cache_mem_gb": 47.346,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g128",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 33.87,
+    "text_sample": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "text_samples": [
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      " in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in",
+      ", and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and"
+    ],
+    "peak_mem_gb": 50.961,
+    "weight_mem_gb": 5.794,
+    "kv_cache_mem_gb": 45.167,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 33.72,
+    "text_sample": " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+    "text_samples": [
+      " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+      " in a small village near the mountains, in a small village near the mountains, in a small village near the mountains, in",
+      " the factorial of n in Python, and the factorial of n in Python, and the factorial of n in Python, and the factorial of "
+    ],
+    "peak_mem_gb": 50.986,
+    "weight_mem_gb": 6.417,
+    "kv_cache_mem_gb": 44.569,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 32.65,
+    "text_sample": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "text_samples": [
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      " infffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      ", and in, in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in in"
+    ],
+    "peak_mem_gb": 50.985,
+    "weight_mem_gb": 5.794,
+    "kv_cache_mem_gb": 45.191,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4_g32",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 32.67,
+    "text_sample": " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+    "text_samples": [
+      " is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is is",
+      " in a small village, in a small village, in a small, in a small, in a small, in a small, in a small, in a small, in a sm",
+      " the factorial of n in Python. We can write the factorial of n in Python. We can write the factorial of n in Python. We "
+    ],
+    "peak_mem_gb": 51.0,
+    "weight_mem_gb": 6.417,
+    "kv_cache_mem_gb": 44.583,
+    "error": ""
+  }
+]

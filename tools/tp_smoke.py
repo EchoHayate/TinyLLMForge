@@ -46,10 +46,15 @@ CONFIGS = [
     ("c4_quest",   dict(enforce_eager=True, kv_quant_bits=4, kv_quant_group_size=128,
                         quest_top_k_blocks=8, quest_min_seq_len=512)),
     ("w4_g128",    dict(enforce_eager=True, quantization="int4", quant_group_size=128)),
+    ("w4_g32",     dict(enforce_eager=True, quantization="int4", quant_group_size=32)),
     ("w4a8_g128",  dict(enforce_eager=True, quantization="int4", quant_group_size=128,
+                        act_quant_bits=8)),
+    ("w4a8_g32",   dict(enforce_eager=True, quantization="int4", quant_group_size=32,
                         act_quant_bits=8)),
     # W4A8 + KV4 全栈量化叠加（7B 验证主目标）
     ("w4a8c4",     dict(enforce_eager=True, quantization="int4", quant_group_size=128,
+                        act_quant_bits=8, kv_quant_bits=4, kv_quant_group_size=128)),
+    ("w4a8c4_g32", dict(enforce_eager=True, quantization="int4", quant_group_size=32,
                         act_quant_bits=8, kv_quant_bits=4, kv_quant_group_size=128)),
     ("cpu_offload", dict(enforce_eager=True, cpu_offload=True, cpu_offload_num_layers=-1)),
     # 最后一条：放开 cuda graph（baseline，最稳的路径），看 NCCL × graph capture 行不行

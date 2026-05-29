@@ -1267,3 +1267,79 @@ TP=2 时每卡分到自己的 weight + 额外 KV cache 空间，这是正常用�
 - `tinyvllm/engine/model_runner.py`：`allocate_kv_cache` 开头记 `self.weight_mem_bytes`
 - `tools/tp_smoke.py`：result 加 `weight_mem_gb` / `kv_cache_mem_gb`，summary 表头同步
 - `tp_smoke_out/tp_smoke_8b_tp{1,2}_split.json`：纠错后的 TP=1/2 baseline 度量结果
+
+## 16. W4A8 / W4A8C4 数值塌：activation outlier 软裁剪 + W4 g32（2026-05-30）
+
+承接 §14.4：W4A8 / W4A8C4 在 8B 上吐 `\\\\\\\` 全塌，0.6B 复读。本节在不引入 SmoothQuant
+的前提下，给一个"轻量修法 + 诚实标注边界"的修复。
+
+### 16.1 病因定位
+
+W4A8 path = `dequant_int4(W) @ fake_quant_act_int8(x)`。两个嫌疑点：
+
+1. W4 的 group_size=128 在 8B（hidden=4096）上太粗，每组覆盖 128 列，outlier 把组 scale 拉爆；
+2. 激活 fake-quant 用纯 amax 当 scale。transformer 激活有约 1% outlier channel，absmax 比典型
+   channel 高 10–100×，单 outlier 让整 token 的 scale 拉爆，典型 channel 的小值全 round 到 0。
+   叠加 W4 量化误差后 logits 直接乱掉。
+
+实验佐证（TP=1，单卡 0.6B）：
+- 把 `fake_quantize_act_int8` 的 scale 改成 `min(absmax, p999*1.5) / 127`：0.6B 从复读修到能续句；
+- 8B 上单改激活 fake-quant 还不够；再叠 W4 g32 才能让 W4-only 跑出 "Paris / London / 阶乘"。
+
+### 16.2 修法
+
+#### 16.2.1 激活 fake-quant 软 outlier 裁剪
+
+`tinyvllm/layers/quantization.py::fake_quantize_act_int8`：
+
+```python
+abs_x = x_fp.abs()
+abs_max = abs_x.amax(dim=-1, keepdim=True).clamp_min(1e-8)
+p999 = _percentile_along_last(abs_x, 0.999).clamp_min(1e-8)
+clip_val = torch.minimum(abs_max, p999 * 1.5)   # 软 outlier 保护
+s = clip_val / 127.0
+```
+
+每 token 仅允许 0.1% channel 当 outlier，其余被 clip 到 1.5×p999。无校准开销，纯 runtime。
+
+试过 p99 × 1.2，太激进，把"次 outlier"的真信号也 clip 没了，反而更差，回退 p999 × 1.5。
+
+#### 16.2.2 W4 group_size=32（8B 必须）
+
+`tools/tp_smoke.py` 加 `w4_g32` / `w4a8_g32` / `w4a8c4_g32` 三条 config，
+weight 分组从 128 缩到 32。代价：scales 体积 ×4，weight 显存从 5.79 → 6.42 GB（+0.62 GB / 11%）。
+
+### 16.3 8B TP=1 结果（`tp_smoke_8b_tp1_quantfix.json`）
+
+| config | weight_gb | text 质量 |
+|---|---|---|
+| w4_g128 | 5.794 | ❌ `C C " "═══` 全塌 |
+| **w4_g32** | 6.417 | ✅ "Paris / London / 阶乘"，连贯 |
+| w4a8_g128 | 5.794 | ❌ `ffff...` 全塌 |
+| w4a8_g32 | 6.417 | ⚠️ 不塌但短语复读：`is is is is...`、`small village near the mountains, ...` 循环 |
+| w4a8c4_g128 | 5.794 | ❌ `ffff...` 全塌 |
+| w4a8c4_g32 | 6.417 | ⚠️ 同 w4a8_g32：不塌但复读 |
+
+decode_tps 全部 32–36 tok/s，没退化。
+
+### 16.4 三个明确结论
+
+- ✅ **W4 single quant 修好了**：W4 g32 在 8B 上能正常输出。
+- ⚠️ **W4A8 / W4A8C4 仍偏弱**：从"全塌"修到"不塌但复读"，达到 §14.4 的最低目标
+  ("能跑出像样输出"，但显然不接近 fp16 质量)。
+- ❌ **不要期待轻量修法替代 SmoothQuant**：transformer 激活 outlier 是结构问题，
+  per-token p999 软裁剪只能压一部分。要真正修好 W4A8 必须把 outlier 从激活迁移到权重
+  （SmoothQuant：`x' = x / s`，`W' = diag(s) W`），需要离线校准一遍激活 scale，本期不做。
+
+### 16.5 已知不做
+
+- SmoothQuant / GPTQ / AWQ：需要离线校准管线，超出 toy infra 工程范围。
+- W4A8 上线产品质量：当前 W4A8 仅作为"全栈量化能跑通"的演示路径，不作为推荐配置。
+- KV cache 4-bit 在 8B 上的精度（D 项）：见后续 §17。
+
+### 16.6 文件留痕
+
+- `tinyvllm/layers/quantization.py`：`fake_quantize_act_int8` p999 软裁剪 + docstring 标注边界
+- `tools/test_weight_quant.py`：`test_fake_quant_act` 改为 MSE-based 验证（单值上界放宽到 amax）
+- `tools/tp_smoke.py`：加 `w4_g32` / `w4a8_g32` / `w4a8c4_g32` 三条 config
+- `tp_smoke_out/tp_smoke_8b_tp1_quantfix.json`：8B 量化修复后 smoke 结果

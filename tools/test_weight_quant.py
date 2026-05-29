@@ -246,18 +246,25 @@ def test_fake_quant_act(verbose=True):
         assert y.shape == x.shape
         assert y.dtype == x.dtype
 
-        # per-token：每行 scale = max_abs/127；单值误差最坏 ≈ scale/2 = max_abs/254
+        # 新实现：scale = min(absmax, 1.5×p999) / 127，outlier 会被 clip 到 ±1.5×p999；
+        # 因此最坏单值误差 ≈ amax - 1.5×p999（被 clip 的那些 channel）。
+        # 对未 clip 的非 outlier，误差 ≤ scale/2 ≤ amax/254。这里给一个 amax 同量级的弱界，
+        # 验证 "outlier 不会让大多数 channel 失真"，并且 MSE 远小于信号方差。
         per_token_amax = x.float().abs().amax(dim=-1)           # [N]
-        per_token_bound = per_token_amax / 254.0 + 1e-3         # fp16 round 噪声
+        per_token_bound = per_token_amax + 1e-3                  # 单值最坏 = amax 量级
 
         per_token_max_err = (x.float() - y.float()).abs().amax(dim=-1)
+        per_token_mse = (x.float() - y.float()).pow(2).mean(dim=-1)
         if verbose:
             print(f"[actq ] shape={shape} max_max_err={per_token_max_err.max().item():.5f} "
-                  f"bound_max={per_token_bound.max().item():.5f}")
+                  f"max_mse={per_token_mse.max().item():.2e}")
 
-        # fp16 deq 路径会引入额外 round 噪声，给 1.5x 余量
-        assert (per_token_max_err <= per_token_bound * 1.5).all(), \
-            f"fake_quant_act shape={shape} 误差超界"
+        # 单值误差不超过 amax（语义合理性下界）
+        assert (per_token_max_err <= per_token_bound).all(), \
+            f"fake_quant_act shape={shape} 单值误差超 amax"
+        # 关键：MSE 应远小于信号方差（outlier 保护后大多数 channel 仍精确）
+        assert (per_token_mse <= x.float().var() * 0.05).all(), \
+            f"fake_quant_act shape={shape} MSE {per_token_mse.max().item()} 超过信号方差 5%"
 
     # 边界：空张量应原样返回
     e = torch.empty(0, 16)

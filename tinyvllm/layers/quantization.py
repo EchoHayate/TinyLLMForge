@@ -138,10 +138,17 @@ def fake_quantize_act_int8(x: torch.Tensor) -> torch.Tensor:
     """per-token 对称 int8 dynamic fake-quant：round + clamp + 立即 dequant 回 fp。
 
     用于 W4A8 naive 路径：在 GEMM 前对 activation 做"假量化"以模拟 int8 GEMM 的舍入行为。
-    输入形状任意，最后一维是 hidden / channel；以最后一维为 token，沿其余维度共享 scale 不合理，
-    所以这里"per-token" = 沿最后一维之外的所有维度逐位置算 scale，最后一维（channel）共享。
+    输入形状任意，最后一维是 hidden / channel。
 
-    具体：x [..., C] → reshape [N, C]，每行算 max(|x|)/127 当 scale。
+    数值要点：transformer 激活有约 1% 的 outlier channel，absmax 比典型 channel 高 10–100×。
+    用纯 amax 当 scale 会让 outlier 把整 token 的 scale 拉爆，典型 channel 的小值全部 round 到 0，
+    叠加 W4 量化后输出直接塌（吐 backslash 等 garbage）。
+    修法：每个 token 的 scale 用 absmax 与 99.9% 分位 × 1.5 取 min（保留极少数大值，
+    但不让单 outlier 主导整 token），等价于"软 outlier 保护"，无校准开销。
+
+    局限：这是"轻量"修法，不能替代 SmoothQuant 等"把 outlier 迁移到 weight 上"的正经方法。
+    在 0.6B 上从复读修到能续连贯句子；但在 8B（hidden=4096，outlier channel 显著更多）上仍偏弱，
+    需要叠加 W4 g32（更细组）才能到"勉强可用"水平，且 A8 仍会引入明显复读。
     """
     if x.numel() == 0:
         return x
@@ -150,7 +157,12 @@ def fake_quantize_act_int8(x: torch.Tensor) -> torch.Tensor:
     x2d = x.reshape(-1, orig_shape[-1])
     # 用 fp32 算 scale 避免 amax 在 fp16/bf16 上的精度问题
     x_fp = x2d.float()
-    s = x_fp.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0     # [N, 1]
+    abs_x = x_fp.abs()
+    abs_max = abs_x.amax(dim=-1, keepdim=True).clamp_min(1e-8)
+    # 99.9% 分位：每 token 仅允许 0.1% channel 当 outlier；其余被 clip 到 1.5×p999
+    p999 = _percentile_along_last(abs_x, 0.999).clamp_min(1e-8)
+    clip_val = torch.minimum(abs_max, p999 * 1.5)
+    s = clip_val / 127.0
     q = (x_fp / s).round().clamp(-128, 127)
     deq = (q * s).to(orig_dtype)
     return deq.reshape(orig_shape)
