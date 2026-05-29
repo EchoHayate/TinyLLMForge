@@ -48,6 +48,9 @@ CONFIGS = [
     ("w4_g128",    dict(enforce_eager=True, quantization="int4", quant_group_size=128)),
     ("w4a8_g128",  dict(enforce_eager=True, quantization="int4", quant_group_size=128,
                         act_quant_bits=8)),
+    # W4A8 + KV4 全栈量化叠加（7B 验证主目标）
+    ("w4a8c4",     dict(enforce_eager=True, quantization="int4", quant_group_size=128,
+                        act_quant_bits=8, kv_quant_bits=4, kv_quant_group_size=128)),
     ("cpu_offload", dict(enforce_eager=True, cpu_offload=True, cpu_offload_num_layers=-1)),
     # 最后一条：放开 cuda graph（baseline，最稳的路径），看 NCCL × graph capture 行不行
     ("cuda_graph_baseline", dict(enforce_eager=False)),
@@ -63,6 +66,9 @@ def parse_args():
     p.add_argument("--max-input-len", type=int, default=512)
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.7)
+    p.add_argument("--prompt-source", type=str, default="random",
+                   choices=["random", "english"],
+                   help="random: 随机 token id（只验通路）；english: 固定英文文本（顺便看质量）")
     p.add_argument("--filter", type=str, default=None,
                    help="只跑名字精确匹配的 config（多个用逗号分隔）；不设则跑全部")
     p.add_argument("--out-file", type=str, default="tp_smoke.json")
@@ -74,10 +80,34 @@ def parse_args():
     return p.parse_args()
 
 
-def build_inputs(num_seqs: int, max_input_len: int, max_output_len: int):
+def build_inputs(num_seqs: int, max_input_len: int, max_output_len: int,
+                 prompt_source: str = "random", tokenizer=None):
     from random import randint, seed
     from tinyvllm import SamplingParams
     seed(0)
+
+    if prompt_source == "english":
+        # 8 条固定英文开头，看 7B 上是否能续出连贯文本（量化叠加质量信号）
+        # ignore_eos=False 让模型自己决定停；temperature=0 跑贪心，结果可对比
+        base_prompts = [
+            "The capital of France is",
+            "Once upon a time, in a small village near the mountains,",
+            "To compute the factorial of n in Python, we can write",
+            "The mitochondria is known as the powerhouse of the cell because",
+            "In a typical transformer architecture, the self-attention mechanism",
+            "Climate change is primarily caused by",
+            "The Pythagorean theorem states that in a right triangle,",
+            "When designing a REST API, the most important principles are",
+        ]
+        prompts = []
+        for i in range(num_seqs):
+            text = base_prompts[i % len(base_prompts)]
+            ids = tokenizer.encode(text)
+            prompts.append(ids)
+        sps = [SamplingParams(temperature=0.0, ignore_eos=False, max_tokens=max_output_len)
+               for _ in range(num_seqs)]
+        return prompts, sps
+
     prompts = [
         [randint(0, 10000) for _ in range(randint(max_input_len // 2, max_input_len))]
         for _ in range(num_seqs)
@@ -104,9 +134,11 @@ def run_single(args):
     result = {"name": name, "tp_size": args.tp_size,
               "init_ok": False, "gen_ok": False,
               "decode_tps": 0.0, "text_sample": "",
+              "text_samples": [],
               "peak_mem_gb": 0.0, "error": ""}
 
     try:
+        tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
         llm = LLM(
             args.model,
             tensor_parallel_size=args.tp_size,
@@ -121,7 +153,8 @@ def run_single(args):
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
 
-        prompts, sps = build_inputs(args.num_seqs, args.max_input_len, args.max_output_len)
+        prompts, sps = build_inputs(args.num_seqs, args.max_input_len, args.max_output_len,
+                                    prompt_source=args.prompt_source, tokenizer=tokenizer)
 
         for prompt, sp in zip(prompts, sps):
             llm.add_request(prompt, sp)
@@ -145,13 +178,15 @@ def run_single(args):
         result["decode_tps"] = round(decode_tokens / decode_time, 2) if decode_time > 0 else 0.0
         result["peak_mem_gb"] = round(torch.cuda.max_memory_allocated() / (1024**3), 3)
 
-        # decode 出来的 token id list 是数字 prompt 的输出，也能体现"非空 + 非乱"
+        # 收集前 3 条输出文本，便于离线判断质量是否塌
         if outputs_collected:
-            tok_ids = next(iter(outputs_collected.values()))
-            tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
-            text = tokenizer.decode(tok_ids[:32], skip_special_tokens=True)
-            result["text_sample"] = text[:60].replace("\n", " ")
-            result["gen_ok"] = len(tok_ids) > 0
+            samples = []
+            for tok_ids in list(outputs_collected.values())[:3]:
+                text = tokenizer.decode(tok_ids[:48], skip_special_tokens=True)
+                samples.append(text[:120].replace("\n", " "))
+            result["text_samples"] = samples
+            result["text_sample"] = samples[0]
+            result["gen_ok"] = len(samples[0]) > 0
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {str(e)[:200]}"
         traceback.print_exc()
@@ -191,6 +226,7 @@ def main():
         "--max-input-len", str(args.max_input_len),
         "--max-output-len", str(args.max_output_len),
         "--gpu-memory-utilization", str(args.gpu_memory_utilization),
+        "--prompt-source", args.prompt_source,
     ]
 
     all_results = []
