@@ -1,0 +1,36 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 517.19,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She lived in a quiet village surrounded by ancient trees and a peaceful atmosphere. ",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.503,
+    "weight_mem_gb": 1.14,
+    "kv_cache_mem_gb": 37.363,
+    "error": ""
+  },
+  {
+    "name": "cuda_graph_baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 4421.9,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of China is Beijing. The capital of Ja",
+      " there was a young girl named Lila. She lived in a quiet village surrounded by ancient trees and a peaceful atmosphere. ",
+      " a recursive function. However, for large values of n, such as n=1000, the recursive approach may not be efficient enoug"
+    ],
+    "peak_mem_gb": 38.512,
+    "weight_mem_gb": 1.14,
+    "kv_cache_mem_gb": 37.372,
+    "error": ""
+  }
+]

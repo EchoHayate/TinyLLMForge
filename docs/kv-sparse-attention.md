@@ -1397,3 +1397,54 @@ absmax 比其他维度大若干倍），单 scale 拍下去会把"小 amplitude 
 
 - `tools/tp_smoke.py`：加 `c4_g64` / `c4_g32` 两条 config
 - `tp_smoke_out/tp_smoke_8b_tp1_c4sweep.json`：C4 group_size 扫描结果
+
+## 18. F 项纠错：cuda_graph_baseline 1798 tps 不是异常，是对照不公平（2026-05-30）
+
+§13.5 把 TP=2 0.6B 的 `cuda_graph_baseline decode_tps=1798` 标成"⚠️ 不正常"，理由是
+"§11 单卡同样配置只有 ~250 tps"。重做对照后：**这是错误的怀疑，单卡 + cuda graph 在
+smoke 配置下本来就能上 2300 tps。**
+
+### 18.1 重做对照（0.6B，A100，smoke 配置 n=8, in=256, out=64）
+
+| tp | config | decode_tps | text_sample（首条） |
+|---|---|---|---|
+| 1 | baseline | 259.55 | "Paris. Italy is Rome. Spain is Madrid. China is Beijing. Japan..." |
+| 1 | cuda_graph_baseline | **2342.10** | "Paris. Italy is Rome. Spain is Madrid. China is Beijing. Japan..." |
+| 2 | baseline | 209.22 | 同上 |
+| 2 | cuda_graph_baseline | **1896.06** | 同上 |
+
+更大 workload（n=16, in=1024, out=256）单卡：
+
+| config | decode_tps |
+|---|---|
+| baseline | 517.19 |
+| cuda_graph_baseline | **4421.90** |
+
+### 18.2 三个明确结论
+
+- ✅ **graph 输出与 eager 完全一致**：TP=1 / TP=2 上贪心采样三条 text_sample 字字对齐，
+  完全没有 §13.5 担心的"NCCL all-reduce 被吞 → garbage 但快"。
+- ✅ **8–9× 倍速是真实 launch overhead 收益**：0.6B 单层 attention/FFN 在 A100 上几十微秒，
+  Python 侧 schedule + per-op kernel launch + per-step 同步成本占总 step 时间的 80%+。
+  graph 把这些全消掉，吞吐基本只受 kernel 本身限制。
+- ❌ **§13.5 标的"⚠️"是错误的怀疑**：之前拿 `bench.py n=16 ctx=4000` 的 ~250 tps 跟 smoke
+  `n=8 in=256 out=64` 的 1798 tps 对比，前者 per-step 计算重 + ctx 长 KV gather 成本高，
+  根本不是同一个 workload。同 workload 单卡也能上 2300 tps，1798 在 TP=2（多通信成本）下完全合理。
+
+### 18.3 为什么之前会误判
+
+§11 / §13 同期上线，§13 写"异常观察"时没有跑单卡同 workload 对照，只凭"§11 我记得是 250"
+做了横向对比。教训：**cross-section 比数字时必须跑同 workload，不能跨脚本（bench.py vs
+tp_smoke.py）凭印象比**。
+
+### 18.4 已知不做
+
+- 改 §13.5 / §13.6 表格：保历史轨迹完整，本节作为修正注解；§13.6 的"⚠️ TP × cuda graph"
+  请阅读到本节为止。
+- 重测 §11 ablation 行：§11 是 bench.py 的 long-ctx 数据，本身没问题，不需要重做。
+
+### 18.5 文件留痕
+
+- `tp_smoke_out/tp_smoke_06b_tp1_cgraph.json`：单卡 0.6B baseline / cuda_graph 对照
+- `tp_smoke_out/tp_smoke_06b_tp2_cgraph.json`：双卡 0.6B baseline / cuda_graph 对照
+- `tp_smoke_out/tp_smoke_06b_tp1_cgraph_big.json`：单卡 0.6B 大 workload 对照（n=16, in=1024, out=256）
