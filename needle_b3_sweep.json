@@ -1,0 +1,1890 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "max_model_len": 16384,
+    "enforce_eager": true,
+    "context_lens": [
+      4096,
+      8192,
+      15000
+    ],
+    "depths": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "top_k_blocks_list": [
+      -1,
+      4,
+      8,
+      16,
+      32
+    ],
+    "quest_min_seq_len": 512,
+    "num_trials": 2,
+    "max_output_len": 200,
+    "seed": 0,
+    "out_json": "needle_b3_sweep.json",
+    "kv_quant_bits": 4,
+    "kv_quant_group_size": 32,
+    "quantization": null,
+    "quant_group_size": 128,
+    "act_quant_bits": 0,
+    "gpu_memory_utilization": 0.55,
+    "max_num_seqs": 4
+  },
+  "results": [
+    {
+      "top_k": -1,
+      "overall_accuracy": 0.0,
+      "throughput_tok_s": 39.56703518478009,
+      "time_s": 151.64138460159302,
+      "per_setting": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 86172,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  number. The magic number is  number. The magic number is the number. The magic number is the number. The m"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 35526,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. Here we go. There And back again. The grass is green. The sky is blue. "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 80677,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside. The answer is on the top. The answer is inside. The answer is on the top. The answer is inside. The answe"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 57012,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the number. The number is the number. The number is the number. The number is the number. The number is the numbe"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 71228,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same. The number is the same. The number is the same. The number is the same. The num"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 16359,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same. The number is the same. The number is the same. The number is the same. The num"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 96962,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is correct. The answer is right. The answer is correct. The answer is correct. The answer is correct. The answer is "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 75997,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is in the blue. The sun is yellow. Here we go. There and back again. The answer is in the blue. The sky is yellow. H"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 38117,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the number.. The number is the number. The number is the number. The number is the number. The number is the numb"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 88910,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is the digits. The magic number is the digits. The magic number is the digits. The magic number is the digits."
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 39058,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  . The magic number is . The magic number is. The magic number is. The magic number is. The magic number is"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 47817,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is 47. The magic number is  . The magic number is . The magic number is is. The magic number is is. The magic "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 73630,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number is with the digits, nothing else. Here we go. There and back again. The magi"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 37836,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number. Answer with the digits, nothing else. Here we go. There and back again. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 53127,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The grass is green. The sun is yellow. Here we go. There and back again. The grass is green. "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 67407,
+          "answer": null,
+          "hit": false,
+          "raw": " Now, the number is the number is the number is the number is the number is the number is the number is the the number is the nu"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 19221,
+          "answer": null,
+          "hit": false,
+          "raw": " Answer with the digits, nothing else. Answer with the digits, nothing else. Answer with the digits, nothing else. Answer with t"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 43455,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number. Here we go. There and back again. The magic number. Answer with the number."
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 35334,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the magic number. Answer with the magic number. Answer with the magic number. Answer with"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 31111,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the number. Answer with the number. Answer with the number. Answer with the number. Answe"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 21647,
+          "answer": "2164",
+          "hit": false,
+          "raw": " The magic number is  2 21  4 4  216 4  21  2  2      2   2164  2  2   2  2   21   2      2    2  2   2164  2   2   2   2  216  "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 68354,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  6 8    6    8   6               6                                                                         "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 80428,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 58039,
+          "answer": null,
+          "hit": false,
+          "raw": ", and, and, and, and, and, and, and, and, and, and, and, and, and and, and, and, and, and, and, and, and and, and, and, and, and"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 35114,
+          "answer": null,
+          "hit": false,
+          "raw": " nothing. Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back a"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 71824,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 52733,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 41302,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 93548,
+          "answer": null,
+          "hit": false,
+          "raw": ", and so on. Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and bac"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 62939,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing else, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, noth"
+        }
+      ]
+    },
+    {
+      "top_k": 4,
+      "overall_accuracy": 0.0,
+      "throughput_tok_s": 45.881471817973015,
+      "time_s": 130.771742105484,
+      "per_setting": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 23624,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. The answer is   magic number. The answer is  magic number. The answer i"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 87093,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. The magic number is is    magic number is is is is is is is is is is is"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 85194,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is . The number is the number. The number is the number. The number is the number. The number is the number. The num"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 36855,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is in the middle. The answer is on the top. So The answer is on the top. The answer is on the top. The answer is on "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 15485,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is . The number is. The number is. The number is. The number is. The number is. The number is. The number is. The nu"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 11656,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is in the box. Please put the answer in the box. So The answer is  answer is in the box.  Please put the answer in t"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 45047,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. Here we go. The answer is the magic number. So The answer is the magic "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 76587,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside the box.\n.\n the answer is inside the box.\n answer is inside the box.\n answer is inside the box.\n answer is"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 80032,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the magic number. The answer is the number. The number is the magic number. The number is the magic number. The a"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 29283,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is. The answer is. The number is. The answer is. The number is. The number is. The number is. The number is. The num"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 26623,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 22890,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is 2 is22. The magic number is is is is is is is is is is is is is is is is is is is is is is is is is is is i"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 78736,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. And back again. The magic number. Answer with the digits. Here we go. And back again. The magic number. Answer with"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 65752,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. And back again. The magic number. Answer with the magic number. Answer with the number. Answer with the number. Ans"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 60184,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same.. The number is the same.. The number is the same.. The number is the same.. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 55397,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. And back again. The grass is green. The sky is blue. The sun is yellow. Here we go. And back again. The grass is gr"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 31945,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is with the digits. The answer is the number. The answer is the number. The answer is the number. The answer i"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 21599,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is with the digits. The magic number is with the digits. The magic number is with the digits. The magic number"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 77393,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the digits. What is the magic number. Answer with the digits. What is the magic number. A"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 59100,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the digits. What is the number. Answer with the number. What is the number. Answer with t"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 29054,
+          "answer": "9054",
+          "hit": false,
+          "raw": ". The magic number is is 9054. Remember it. The is is 9054. Remember it. The is is  9054. Remember it. The is is 9054. Remember "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 82587,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. The grass is green. The sky is blue. "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 73974,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 32255,
+          "answer": null,
+          "hit": false,
+          "raw": ", and, and back again, and, and, and, and, and, and, and, and, and, and and, and, and, and, and, and, and, and and, and, and, an"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 97260,
+          "answer": null,
+          "hit": false,
+          "raw": ". The grass is green. The sky is blue. The sun is yellow. Here we go and back again. The grass is green. The sky is blue. The su"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 45328,
+          "answer": null,
+          "hit": false,
+          "raw": ". So the answer is the the answer is the the answer is the the answer is the the answer is the the answer is the the answer is t"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 74542,
+          "answer": null,
+          "hit": false,
+          "raw": ". Answer with the number. Answer with number. Answer with number. Answer with number. Answer with number. Answer with number. An"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 27438,
+          "answer": null,
+          "hit": false,
+          "raw": ". So here we go. So here we go. So here we go. So here we go. So here we go. So here we go. So here we go. So here we go. So her"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 70941,
+          "answer": null,
+          "hit": false,
+          "raw": ". The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. He"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 42885,
+          "answer": null,
+          "hit": false,
+          "raw": ". The number is magic. Answer with magic. The number is magic. Answer with magic. The number is magic. Answer with magic. The nu"
+        }
+      ]
+    },
+    {
+      "top_k": 8,
+      "overall_accuracy": 0.0,
+      "throughput_tok_s": 45.48056413824124,
+      "time_s": 131.92448496818542,
+      "per_setting": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 57754,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. Here we go. There And back again. The grass is green. The sky is blue. "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 69270,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is   number.. The magic number is  the number. The magic number is the number. The magic number is the number."
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 65279,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is in the middle. The answer is in the middle. The answer is in the middle. The answer is in the middle. The answer "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 27674,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the number. The number is the number. The number is the number. The number is the number. The number is the numbe"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 19544,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is in the middle. The answer is in the middle. The answer is inside. The answer is on the top of the book. The answe"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 52626,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is with only the digits. The answer is with only the digits. The magic number is with only the digits. The ans"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 82487,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside the box. The answer is on the box. The box is number. The answer is inside the box. The box is number. The"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 61156,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is  the number. The answer is the number. The answer is the number. The answer is the number. The answer is the numb"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 49417,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the magic. The magic number is the digits. The number is the magic. The number is the magic. The number is the ma"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 33184,
+          "answer": null,
+          "hit": false,
+          "raw": " The sun is yellow. Here we go. There And back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 31291,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 58413,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is   . The magic number is . The magic number is is. The magic number is is. The magic number is is. The magic"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 29716,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. The magic number. Here we go. The magic number. Here we go. The magic number. Here we go. The magic number. Here we"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 22082,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. And back again. The grass is green. The sun is yellow. Here we go. And back again. The grass is green. The sun is y"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 44030,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. And back again. The magic number. Answer with the magic number. Answer with the magic number. Answer with the magic"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 15129,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sun is yellow. Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 74708,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. The sun is green. The answer is blue. Here we go. The sun is green. The answer is blue. Here we go. The answer is g"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 58029,
+          "answer": null,
+          "hit": false,
+          "raw": " Now, the magic number. Now, the magic number. Now, the magic number. Now, the magic number. Now, the magic number. Now, the mag"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 90562,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the digits. Answer with the digits. What is the magic number. Answer with the digits. Ans"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 77648,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the digits, nothing. What is the magic. Answer with the digits. What is the magic. Answer"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 33339,
+          "answer": null,
+          "hit": false,
+          "raw": ". The magic is here. The magic is here. The magic is here. The magic is here. The magic is here. The magic is here. The magic is"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 59232,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  592. The grass is green. The sky is blue. The sun is yellow. The grass is green. The sky is blue. The gras"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 46169,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 72899,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 30707,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 73732,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing else, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, noth"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 21523,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go. Go"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 44356,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun i"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 76486,
+          "answer": null,
+          "hit": false,
+          "raw": ". What is it? Answer with only. What is it. Answer with.. What is it. Answer with. What is it. Answer with.. What is it. Answer "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 89874,
+          "answer": null,
+          "hit": false,
+          "raw": ". What is it? Answer with and the digits, nothing else.. What is it. Answer with and the digits, nothing else. What is it. Answe"
+        }
+      ]
+    },
+    {
+      "top_k": 16,
+      "overall_accuracy": 0.0,
+      "throughput_tok_s": 46.238401973189376,
+      "time_s": 129.76226997375488,
+      "per_setting": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 98970,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is   the digits, the magic number is the digits, the magic number is the digits, the magic number is the digit"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 70230,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  magic number is  the magic number is , the magic number is, the magic number is, the magic number is, the "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 34604,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside. The answer is on. The answer is inside. The answer is on. The answer is inside. The answer is on. The ans"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 48280,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside the box. The answer is inside the box. The answer is inside the box. The answer is inside the box. The ans"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 34962,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside the box. The answer is inside the box. The answer is in the box. The answer is inside the box. The answer "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 26652,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is inside the box. The answer is inside the box. The answer is inside the box. The answer is inside the box. The ans"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 88271,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same. The number is the same. The number is the same. The number is the same. The num"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 51016,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same. The number is the same. The number is the same. The number is the same. The num"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 81088,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the magic. The number is the magic. The number is the magic. The number is the magic. The number is the magic. Th"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 19342,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same. The number is the same. The number is the same. The number is the same. The num"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 87661,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 40580,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is 4 . The magic number is 4. The magic number is is4. The magic number is is. The magic number is is. The mag"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 41073,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. The number is the number. The number is the number. The number is the number. The number is the numbe"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 59008,
+          "answer": null,
+          "hit": false,
+          "raw": " Answer with the digits, nothing else. Answer with the digits, nothing else. Answer with the digits, nothing else. Answer with t"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 95380,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. And back again. The magic number. Here we go. And back again. The magic number. Here we go. And back again. The mag"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 23748,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number. Answer with the number. Here we go. There and back again. The magic number."
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 64555,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is with the digits. The number is with the digits. The number is with the digits. The number is with the digit"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 69260,
+          "answer": null,
+          "hit": false,
+          "raw": " So, the magic number. Answer with the digits. So, the magic number. Answer with the digits. So, the magic number. Answer with t"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 19948,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the number. Answer with the digits. What is the number. Answer with the digits. What What is the number. Answer with th"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 49986,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the digits, nothing else. What is the magic number. Answer with the digits, nothing else."
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 57431,
+          "answer": null,
+          "hit": false,
+          "raw": ". The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. The grass is green. The sky is blue."
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 67553,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  6 753.  The grass is green. The sky is blue. The sun is yellow. Here and back again. The grass is green. T"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 23080,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 70939,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 20868,
+          "answer": null,
+          "hit": false,
+          "raw": ", and, and, and, and, and, and, and, and, and, and, and, and, and and, and, and, and, and, and, and, and and, and, and, and, and"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 90245,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 75979,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 47538,
+          "answer": null,
+          "hit": false,
+          "raw": ". Answer with the the number. Answer and the number. Answer and number. Answer and number. Answer and number. Answer and number."
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 65792,
+          "answer": null,
+          "hit": false,
+          "raw": ", and, and, and, and, and, and,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 34721,
+          "answer": null,
+          "hit": false,
+          "raw": ". What is the magic number. Answer with. What is the magic number. Answer with.. What is it magic. Answer and. What is it. Answe"
+        }
+      ]
+    },
+    {
+      "top_k": 32,
+      "overall_accuracy": 0.0,
+      "throughput_tok_s": 46.052396754424116,
+      "time_s": 130.28637862205505,
+      "per_setting": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "accuracy": 0.0,
+          "n": 2
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "accuracy": 0.0,
+          "n": 2
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 30205,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. Here we go. There And back again. The grass is green. The sky is blue. "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 34435,
+          "answer": null,
+          "hit": false,
+          "raw": " The grass is green. The sky is blue. The sun is yellow. Here we go. There And back again. The grass is green. The sky is blue. "
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 80791,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is in the blue. The answer is inside the box. The box is number . The number is inside the box. The box is number. T"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 46932,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is located in the center. The answer is located at the top of the number, but the number is in the center. The answe"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 26896,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is and the magic number is and the magic number is and the magic number is and the magic number is and the mag"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 97497,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is the same number. The number is the same number. The number is the same number. The number is the same numbe"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 27286,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is green. The answer is blue. The answer is yellow. The answer is green. The answer is blue. The answer is yellow. T"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 97514,
+          "answer": null,
+          "hit": false,
+          "raw": " The answer is  the number. The answer is the number. The answer is the number. The answer is the number. The answer is the numb"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 66286,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the magic. The answer is the magic number. The answer is the magic number. The answer is the magic number. The an"
+        },
+        {
+          "ctx_len": 4096,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 58279,
+          "answer": null,
+          "hit": false,
+          "raw": " The number is the same. The number is the same. The number is the same. The number is the same. The number is the same. The num"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 56341,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is    the magic number is is is is is is is is is is is is is is is is is is is is is is is is is is is is is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 54038,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is  . The magic number is . The magic number is. The magic number is. The grass is green. The sky is blue. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 92205,
+          "answer": null,
+          "hit": false,
+          "raw": " Answer with the digits, nothing else. Answer with the digits, nothing else. Answer with the digits, nothing else. Answer with t"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 27066,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number. Here we go. There and back again. The magic number. Here we go. There and b"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 91831,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number is the the. The magic number is the. Here we go. The magic number is the. Here we go. The magic number is the."
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 15182,
+          "answer": null,
+          "hit": false,
+          "raw": " The magic number. with the digits, nothing. The magic number. with the digits, nothing. The magic number. The number. The numbe"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 67755,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number. Here we go. There and back again. The magic number. The magic number. Here "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 77803,
+          "answer": null,
+          "hit": false,
+          "raw": " Here we go. There and back again. The magic number. Answer with the digits. Nothing else. Here we go. There and back again. The"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 61378,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the answer. What is the magic number. Answer with the number. Answer with the number. Wha"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 83947,
+          "answer": null,
+          "hit": false,
+          "raw": " What is the magic number. Answer with the digits, nothing else. What is the magic number. Answer with the digits, nothing else."
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 18169,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 35781,
+          "answer": "3578",
+          "hit": false,
+          "raw": " The magic number is  3578  1  back again again. The magic number is   357 8  back  again. The magic number is  357 8  back  aga"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 15733,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 97636,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 43575,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 75109,
+          "answer": null,
+          "hit": false,
+          "raw": ". Here we go. There and back again. The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again. Th"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 72804,
+          "answer": null,
+          "hit": false,
+          "raw": " nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. nothing. n"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 22359,
+          "answer": null,
+          "hit": false,
+          "raw": ", nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, "
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 60394,
+          "answer": null,
+          "hit": false,
+          "raw": ". What is it? magic number. Answer with it. There and back again. The grass is green. The sky is blue. Here we go. There and bac"
+        },
+        {
+          "ctx_len": 15000,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 89346,
+          "answer": null,
+          "hit": false,
+          "raw": ". What is it. Number. What is it. Number. What is it. Number. What is it. Number. What is it. Number. What is it. Number. What i"
+        }
+      ]
+    }
+  ]
+}

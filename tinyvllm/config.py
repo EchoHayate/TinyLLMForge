@@ -32,6 +32,14 @@ class Config:
     kv_quant_symmetric: bool = True                     # True = 对称量化（仅 scale），False = 非对称（scale + zero）
     # Activation 量化（A8 等）相关配置（W4A8 用）
     act_quant_bits: int = 0                             # 0 / 8
+    # A8 首尾层跳过：长文 W4A8+SQ 复读塌方根因——首尾若干层 outlier 最严重，
+    # 让这些层保 fp 激活、中间层走 A8 能显著修复（详见 docs/qwen3-8b-fixes.md §21）
+    act_quant_skip_first: int = 0                       # 前 N 层不做 A8 假量化
+    act_quant_skip_last: int = 0                        # 后 N 层不做 A8 假量化
+
+    # SmoothQuant 相关配置（把激活离群值迁移到 weight 上的 per-input-channel scale）
+    smoothquant_scale_path: str | None = None           # 校准产物路径；None 关闭
+    smoothquant_alpha: float = 0.5                      # 仅 calibration 时用；loader 不需要
 
     # 在默认的构造函数之后自动启用，用于补充缺少的初始化逻辑
     def __post_init__(self):
@@ -41,6 +49,11 @@ class Config:
         assert self.quantization in (None, "int8", "int8_bnb", "int4", "int2")
         assert self.kv_quant_bits in (0, 4, 8), "kv_quant_bits 仅支持 0/4/8"
         assert self.act_quant_bits in (0, 8), "act_quant_bits 仅支持 0/8"
+        assert self.act_quant_skip_first >= 0 and self.act_quant_skip_last >= 0
+        assert 0.0 <= self.smoothquant_alpha <= 1.0
+        if self.smoothquant_scale_path is not None:
+            assert os.path.isfile(self.smoothquant_scale_path), \
+                f"smoothquant_scale_path 不存在: {self.smoothquant_scale_path}"
         if self.kv_quant_bits == 4:
             # group_size 必须能整除 head_dim，且对 4-bit pack 友好（即 group_size 为偶数）
             assert self.kv_quant_group_size % 2 == 0

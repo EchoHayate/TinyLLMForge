@@ -1,0 +1,19 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 185.72,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. Here's a simple implementation:  def factorial(n):     result ="
+    ],
+    "peak_mem_gb": 53.135,
+    "weight_mem_gb": 15.288,
+    "kv_cache_mem_gb": 37.847,
+    "error": ""
+  }
+]

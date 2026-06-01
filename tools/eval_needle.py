@@ -70,6 +70,12 @@ def parse_args():
                    choices=[None, "int8", "int4", "int2"])
     p.add_argument("--quant-group-size", type=int, default=128)
     p.add_argument("--act-quant-bits", type=int, default=0, choices=[0, 8])
+    p.add_argument("--smoothquant-scale-path", type=str, default=None,
+                   help="SmoothQuant 校准产物（.pt）。仅在 W4A8 场景下加载，把 per-input-channel scale 注入 weight。")
+    p.add_argument("--act-quant-skip-first", type=int, default=0,
+                   help="前 N 层不做 A8（W4A8+SQ 长文塌方根因——首尾层 outlier 极端，留 fp 可显著修复召回）")
+    p.add_argument("--act-quant-skip-last", type=int, default=0,
+                   help="后 N 层不做 A8（同上）")
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9,
                    help="KV pool 占显存比例。长 ctx + C4 全 dequant 路径下需要给瞬态 buffer 留空间，建议 0.6-0.7")
     p.add_argument("--max-num-seqs", type=int, default=512)
@@ -217,6 +223,9 @@ def main():
         quantization=args.quantization,
         quant_group_size=args.quant_group_size,
         act_quant_bits=args.act_quant_bits,
+        smoothquant_scale_path=args.smoothquant_scale_path,
+        act_quant_skip_first=args.act_quant_skip_first,
+        act_quant_skip_last=args.act_quant_skip_last,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
 

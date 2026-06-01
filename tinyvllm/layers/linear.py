@@ -107,6 +107,15 @@ class _QuantMixin:
         )
 
     def _linear_forward(self, x: torch.Tensor, bias: torch.Tensor | None) -> torch.Tensor:
+        # SmoothQuant：x = x / s 把激活离群值"除掉"（s 已经在 loader 中乘进 weight）
+        # buffer 仅在校准 + loader 注入路径下存在；getattr 默认 None 保证未启用零开销
+        ss = getattr(self, "smooth_scale", None)
+        if ss is not None:
+            # 防呆：input-channel 维必须对得上（最后一维），否则除法会广播到错位
+            assert ss.shape[-1] == x.shape[-1], (
+                f"[smoothquant] smooth_scale dim {ss.shape[-1]} != x last dim {x.shape[-1]}"
+            )
+            x = x / ss
         # A8 假量化（对所有量化路径都生效，包括 None；naive W4A8 用，没有 weight 量化时也允许 A8 验 act 噪声单独的影响）
         if self.act_quant_bits == 8:
             x = fake_quantize_act_int8(x)

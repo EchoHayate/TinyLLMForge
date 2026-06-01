@@ -38,7 +38,10 @@ class ModelRunner:
         # 注入全局量化配置（在构建模型前）
         set_quant_config(config.quantization, config.quant_group_size, config.act_quant_bits)
         self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
-        load_model(self.model, config.model)            #涉及到一些qwen里面的
+        load_model(self.model, config.model,
+                   smoothquant_scale_path=config.smoothquant_scale_path,
+                   act_quant_skip_first=config.act_quant_skip_first,
+                   act_quant_skip_last=config.act_quant_skip_last)            #涉及到一些qwen里面的
         # 加载完成后再做 cpu-offload（量化已在 loader 内 finalize 完成）
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)
@@ -210,7 +213,7 @@ class ModelRunner:
 
         # Quest summary：[2, num_layers, num_blocks, num_kv_heads, head_dim]，dim0 = (min, max)
         if quest_enabled:
-            self.kv_summary = torch.empty(2, L, nb, num_kv_heads, head_dim, dtype=dtype)
+            self.kv_summary = torch.empty(2, L, nb, num_kv_heads, head_dim, dtype=torch.float32)
             # 用 +inf / -inf 作为 min/max 的初始值，确保第一次 token 写入后被替换
             self.kv_summary[0].fill_(float("inf"))
             self.kv_summary[1].fill_(float("-inf"))
@@ -356,13 +359,24 @@ class ModelRunner:
         block_tables = self.prepare_block_tables(seqs)
 
         # Quest 早返回判定（host 端，避免每层 .item() 触发 GPU sync）：
-        #   仅当 batch 内所有 row 都满足 (seq_len >= min_seq_len) 且 (num_blocks > top_k) 才启用
+        #   1) 至少一条 seq 满足 seq_len >= min_seq_len（按 min 算保守）
+        #   2) num_blocks > top_k（不然 top-k 退化为 full）
+        #   3) **短序列保护**：top_k * block_size 已经 >= 最长 seq * 0.8 时，
+        #      Quest 能裁掉的块 <20%，selection overhead 远超收益 → 降级 full attention
+        #      （kv-sparse-attention.md §5.5 #4）
         cfg_top_k = self.config.quest_top_k_blocks
         cfg_min_len = self.config.quest_min_seq_len
         if cfg_top_k > 0 and seqs:
             min_seq_len_host = min(len(s) for s in seqs)
             min_blocks_host = min(s.num_blocks for s in seqs)
-            quest_active_top_k = cfg_top_k if (min_seq_len_host >= cfg_min_len and min_blocks_host > cfg_top_k) else -1
+            max_seq_len_host = max(len(s) for s in seqs)
+            cover = cfg_top_k * self.block_size  # top-k 已能覆盖的 token 数
+            short_seq_skip = cover >= max_seq_len_host * 0.8
+            quest_active_top_k = cfg_top_k if (
+                min_seq_len_host >= cfg_min_len
+                and min_blocks_host > cfg_top_k
+                and not short_seq_skip
+            ) else -1
         else:
             quest_active_top_k = -1
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,

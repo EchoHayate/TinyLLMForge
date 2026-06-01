@@ -53,6 +53,13 @@ CONFIGS = [
                         act_quant_bits=8)),
     ("w4a8_g32",   dict(enforce_eager=True, quantization="int4", quant_group_size=32,
                         act_quant_bits=8)),
+    # SmoothQuant W4A8（per-input-channel scale，把激活离群值迁到 weight 上）
+    # 走这两条需要先用 tools/calibrate_smoothquant.py 生成 scale 文件，
+    # 然后通过 --smoothquant-scale-path 传入；缺路径会触发 config 断言报错。
+    ("w4a8_sq_g128", dict(enforce_eager=True, quantization="int4", quant_group_size=128,
+                          act_quant_bits=8)),
+    ("w4a8_sq_g32",  dict(enforce_eager=True, quantization="int4", quant_group_size=32,
+                          act_quant_bits=8)),
     # W4A8 + KV4 全栈量化叠加（7B 验证主目标）
     ("w4a8c4",     dict(enforce_eager=True, quantization="int4", quant_group_size=128,
                         act_quant_bits=8, kv_quant_bits=4, kv_quant_group_size=128)),
@@ -76,6 +83,8 @@ def parse_args():
     p.add_argument("--prompt-source", type=str, default="random",
                    choices=["random", "english"],
                    help="random: 随机 token id（只验通路）；english: 固定英文文本（顺便看质量）")
+    p.add_argument("--smoothquant-scale-path", type=str, default=None,
+                   help="SmoothQuant 校准产物路径（仅 w4a8_sq_* 配置使用）")
     p.add_argument("--filter", type=str, default=None,
                    help="只跑名字精确匹配的 config（多个用逗号分隔）；不设则跑全部")
     p.add_argument("--out-file", type=str, default="tp_smoke.json")
@@ -149,12 +158,17 @@ def run_single(args):
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
+        # 仅 SmoothQuant 路径需要 scale 文件
+        extra_cfg = {}
+        if name.startswith("w4a8_sq") and args.smoothquant_scale_path:
+            extra_cfg["smoothquant_scale_path"] = args.smoothquant_scale_path
         llm = LLM(
             args.model,
             tensor_parallel_size=args.tp_size,
             max_model_len=args.max_model_len,
             gpu_memory_utilization=args.gpu_memory_utilization,
             **cfg,
+            **extra_cfg,
         )
         result["init_ok"] = True
 
@@ -244,6 +258,8 @@ def main():
         "--gpu-memory-utilization", str(args.gpu_memory_utilization),
         "--prompt-source", args.prompt_source,
     ]
+    if args.smoothquant_scale_path:
+        base_cmd += ["--smoothquant-scale-path", args.smoothquant_scale_path]
 
     all_results = []
     for name, _ in cfgs:

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "baseline",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 155.36,
+    "text_sample": " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of France is Paris. The capital of France is Paris. The capital of F",
+      " there lived a young girl named Lila. Lila was known for her kindness and her love for nature. She spent most of her day",
+      " a function that multiplies all integers from 1 up to n. For example, the factorial of 5 is 5 × 4 × 3 × 2 × 1 = 120. Let"
+    ],
+    "peak_mem_gb": 53.506,
+    "error": ""
+  },
+  {
+    "name": "c4_only",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 95.84,
+    "text_sample": " Paris. The capital of Italy is Rome. The capital of Germany is...? Okay, let's see. The question is about the capital c",
+    "text_samples": [
+      " Paris. The capital of Italy is Rome. The capital of Germany is...? Okay, let's see. The question is about the capital c",
+      " there lived a young girl named Lily. She was known for her kindness for helpinging others. One day, she decided to go o",
+      " a function that multiplies all integers from 1 up to n. Let's see how to do that.  The factorial of a number n is the p"
+    ],
+    "peak_mem_gb": 53.52,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g128",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 63.85,
+    "text_sample": "                            \\                    ",
+    "text_samples": [
+      "                            \\                    ",
+      "                                      \\          ",
+      " \"                                               "
+    ],
+    "peak_mem_gb": 52.862,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4",
+    "tp_size": 2,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 60.28,
+    "text_sample": "          \\          \\      \\            \\       \\   ",
+    "text_samples": [
+      "          \\          \\      \\            \\       \\   ",
+      "                                     \\          \\ ",
+      " \" \" \" \" \" C                                          "
+    ],
+    "peak_mem_gb": 52.867,
+    "error": ""
+  }
+]

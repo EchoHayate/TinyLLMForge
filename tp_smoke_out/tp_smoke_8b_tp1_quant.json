@@ -1,0 +1,47 @@
+[
+  {
+    "name": "c4_only",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 120.74,
+    "text_sample": " Paris. The capital of France is Paris. The capital of Paris is... Hmm, that's a bit of a problem. Paris is a city in Fr",
+    "text_samples": [
+      " Paris. The capital of France is Paris. The capital of Paris is... Hmm, that's a bit of a problem. Paris is a city in Fr",
+      " there lived a young girl named Lina. Lina was known for her kindness for adventure and her courage for adventure. One d",
+      " a function that multiplies all integers from 1 to n. Let's implement this.  Okay, I need to write a function called fac"
+    ],
+    "peak_mem_gb": 53.169,
+    "error": ""
+  },
+  {
+    "name": "w4a8_g128",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 34.99,
+    "text_sample": "  \\  \\     \\    \\    \\            \\  \\    \\   \\     \\   \\  \\",
+    "text_samples": [
+      "  \\  \\     \\    \\    \\            \\  \\    \\   \\     \\   \\  \\",
+      "                  \\        \\     \\    \\    \\    \\   \\  ",
+      " y ' y \" ' ' ' ' ' ' ' Хс Хぜ════ ОО x Windows XC══════════════════════════════════════════════════════"
+    ],
+    "peak_mem_gb": 51.735,
+    "error": ""
+  },
+  {
+    "name": "w4a8c4",
+    "tp_size": 1,
+    "init_ok": true,
+    "gen_ok": true,
+    "decode_tps": 33.67,
+    "text_sample": "   \\  \\    \\  \\  \\  \\   \\    \\ \\ \\   \\   \\  \\       \\ \\ \\  \\     ",
+    "text_samples": [
+      "   \\  \\    \\  \\  \\  \\   \\    \\ \\ \\   \\   \\  \\       \\ \\ \\  \\     ",
+      "         \\  \\                  \\   \\      \\          \\",
+      " y                \\      \\   \\    \\     \\   \\   \\     \\  "
+    ],
+    "peak_mem_gb": 51.737,
+    "error": ""
+  }
+]

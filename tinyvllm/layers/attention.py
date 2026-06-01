@@ -205,20 +205,89 @@ def dequant_kv_blocks(
 def update_block_summary(
     key: torch.Tensor,           # [N, num_kv_heads, head_dim]
     slot_mapping: torch.Tensor,  # [N] int32, slot = block_id * block_size + intra
-    k_min: torch.Tensor,         # [num_blocks, num_kv_heads, head_dim]
-    k_max: torch.Tensor,         # [num_blocks, num_kv_heads, head_dim]
+    k_min: torch.Tensor,         # [num_blocks, num_kv_heads, head_dim] fp32
+    k_max: torch.Tensor,         # [num_blocks, num_kv_heads, head_dim] fp32
     block_size: int,
 ):
     """Quest：对刚写入的 token，按其所在 block_id 维护 per-channel min/max。
 
-    用 index_reduce_ 做 segment-style amin/amax；初始值为 +inf / -inf，include_self=True
-    保证多次调用累计正确。
+    走 fused triton kernel：一个 program 处理一个 token 的整 (kv_h, head_dim) 向量，
+    triton 的 `atomic_min/atomic_max` 直接打到 fp32 buffer 上。
+    与原 index_reduce_(amin/amax)×2 等价但只走一次 HBM、且只 launch 一次 kernel。
     """
-    block_ids = (slot_mapping.to(torch.long) // block_size)  # [N]
-    # index_reduce 在 fp16 上有支持，但部分版本 amin/amax 仅 fp32 稳定 —— 先转 fp32 再写回
-    # 为减少开销，直接用原 dtype；如遇精度问题再加 fp32 fallback
-    k_min.index_reduce_(0, block_ids, key, reduce="amin", include_self=True)
-    k_max.index_reduce_(0, block_ids, key, reduce="amax", include_self=True)
+    N, num_kv_heads, head_dim = key.shape
+    KVHD = num_kv_heads * head_dim
+    assert k_min.dtype == torch.float32 and k_max.dtype == torch.float32, \
+        "k_min/k_max must be fp32 for atomic_min/atomic_max"
+    update_block_summary_kernel[(N,)](
+        key, slot_mapping, k_min, k_max,
+        BLOCK_SIZE=block_size,
+        KVHD=KVHD,
+        BLOCK=_next_pow2(KVHD),
+    )
+
+
+@triton.jit
+def update_block_summary_kernel(
+    key_ptr,             # [N, KVHD] fp16/bf16
+    slot_ptr,            # [N] int32, slot = block_id * block_size + intra
+    k_min_ptr,           # [num_blocks, KVHD] fp32
+    k_max_ptr,           # [num_blocks, KVHD] fp32
+    BLOCK_SIZE: tl.constexpr,
+    KVHD: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(0)  # 一个 token 一个 program
+    slot = tl.load(slot_ptr + pid)
+    block_id = (slot // BLOCK_SIZE).to(tl.int64)
+    offs = tl.arange(0, BLOCK)
+    mask = offs < KVHD
+    k = tl.load(key_ptr + pid * KVHD + offs, mask=mask, other=0.0).to(tl.float32)
+    base = block_id * KVHD + offs
+    # atomic_min/atomic_max 直接打到 fp32 summary buffer
+    tl.atomic_min(k_min_ptr + base, k, mask=mask)
+    tl.atomic_max(k_max_ptr + base, k, mask=mask)
+
+
+def _next_pow2(n: int) -> int:
+    p = 1
+    while p < n:
+        p *= 2
+    return p
+
+
+@triton.jit
+def quest_score_kernel(
+    q_repr_ptr,         # [B, KV_H, D] fp16/bf16, contig
+    k_min_ptr,          # [N_BLOCKS, KV_H, D]
+    k_max_ptr,
+    block_tables_ptr,   # [B, MAX_BLOCKS] int32
+    out_ptr,            # [B, MAX_BLOCKS] fp32
+    MAX_BLOCKS: tl.constexpr,
+    KVHD: tl.constexpr,     # = num_kv_heads * head_dim
+    BLOCK: tl.constexpr,    # next pow2 >= KVHD
+):
+    """每个 program 算一个 (b, n) 的 criticality：
+       score = sum_{h,d} max(q_repr[b,h,d] * k_min[block_id,h,d],
+                              q_repr[b,h,d] * k_max[block_id,h,d])
+       gather + 双 einsum + max + sum 在一个 kernel 内完成，省掉 [B,N,kv_h,d] 中间 tensor。
+       reduce 在 fp32 上做（比原 einsum-fp16 reduce 更稳）。
+    """
+    pid_b = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    bt_off = pid_b * MAX_BLOCKS + pid_n
+    block_id = tl.load(block_tables_ptr + bt_off)
+    valid = block_id >= 0
+    safe_id = tl.where(valid, block_id, 0).to(tl.int64)
+
+    offs = tl.arange(0, BLOCK)
+    mask = offs < KVHD
+    q = tl.load(q_repr_ptr + pid_b * KVHD + offs, mask=mask, other=0.0).to(tl.float32)
+    kmin = tl.load(k_min_ptr + safe_id * KVHD + offs, mask=mask, other=0.0).to(tl.float32)
+    kmax = tl.load(k_max_ptr + safe_id * KVHD + offs, mask=mask, other=0.0).to(tl.float32)
+    score = tl.sum(tl.maximum(q * kmin, q * kmax), axis=0)
+    score = tl.where(valid, score, float("-inf"))
+    tl.store(out_ptr + bt_off, score)
 
 
 def quest_select_blocks(
@@ -242,26 +311,24 @@ def quest_select_blocks(
     n_groups = num_q_heads // num_kv_heads  # GQA group
 
     valid_mask = block_tables >= 0                      # [B, max_blocks]
-    safe_idx = block_tables.clamp_min(0).to(torch.long) # [B, max_blocks]
-
-    # gather 每个 (b, block) 对应的 k_min/k_max
-    k_min_b = k_min_layer[safe_idx]                     # [B, max_blocks, kv_h, d]
-    k_max_b = k_max_layer[safe_idx]
 
     # GQA: 把 q head 按 kv head 分组，组内取 max（保激进估计）
     q_grouped = q.view(B, num_kv_heads, n_groups, head_dim)
-    q_repr = q_grouped.amax(dim=2)                      # [B, kv_h, d]
+    q_repr = q_grouped.amax(dim=2).contiguous()         # [B, kv_h, d]
 
-    # criticality = sum_{h,d} max(q*k_min, q*k_max)
-    # 用 einsum 直接折叠 head/dim 两维，避免 4D 中间 tensor
-    qm = torch.maximum(
-        torch.einsum("bhd,bnhd->bnh", q_repr, k_min_b),
-        torch.einsum("bhd,bnhd->bnh", q_repr, k_max_b),
-    )                                                    # [B, max_blocks, kv_h]
-    criticality = qm.sum(dim=-1).to(torch.float32)       # [B, max_blocks]
-
-    # 屏蔽 invalid block
-    criticality = criticality.masked_fill(~valid_mask, float("-inf"))
+    # 融合 kernel：gather + max(q·kmin, q·kmax) + sum 一气呵成
+    KVHD = num_kv_heads * head_dim
+    criticality = torch.empty(B, max_blocks, device=q.device, dtype=torch.float32)
+    quest_score_kernel[(B, max_blocks)](
+        q_repr,
+        k_min_layer,
+        k_max_layer,
+        block_tables,
+        criticality,
+        MAX_BLOCKS=max_blocks,
+        KVHD=KVHD,
+        BLOCK=_next_pow2(KVHD),
+    )
 
     # 强制保留：首 block (attention sink) + 末 block (recency / partial)
     num_blocks_in_seq = (context_lens.to(torch.long) + block_size - 1) // block_size  # [B]
