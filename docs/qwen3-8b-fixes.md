@@ -880,4 +880,50 @@ C8 仅掉 3.3 个点（vs fp16 KV），失败点只剩 `ctx=8192 depth=0.0/1.0`�
 - 等价性测试：`/tmp/test_c8_roundtrip.py`
 
 
+---
+
+## 27. C8 + Quest sparse-dequant：修 TPS 同时保召回（2026-06-02）
+
+### 27.1 动机
+
+§26 拿到 C8 稳态召回 90%，但 TPS 17.14 仍明显低于 fp16 KV 的 23.87 —— 瓶颈是
+decode 每步把**全部命中块** dequant 成 fp16 的瞬态 buffer + dequant 开销（不是
+KV 带宽）。§26.5 指出叠 Quest sparse-dequant 可修：Quest 只选 top-k 块 →
+sparse-dequant 只对这 k 块反量化，瞬态 buffer 从 `B*max_blocks` 缩到 `B*top_k`。
+
+该路径 §26 实现 C8 时已自动复用（decode `quest_active` 分支），本节纯实验验证。
+
+### 27.2 结果
+
+Qwen3-8B, W4A8C8+SQ(α=0.85)+skip2/2, needle 16K：
+
+| 配置 | 召回率 | TPS |
+|---|---|---|
+| C8 baseline（全块 dequant） | 90.0% | 17.12 |
+| C8 + Quest top-k=8 | 73.3% | 25.09 |
+| **C8 + Quest top-k=16** | **90.0%** | **23.26 (+36%)** |
+
+### 27.3 结论
+
+- **top-k=16 是甜点**：召回与 baseline 完全持平（90%），TPS +36%，**追平 fp16 KV
+  全 attention 的 23.87** —— 即"KV 显存省一半 + 召回 90% + 不掉速"三者兼得
+- top-k=8 太激进：sparse-dequant 漏块导致召回掉到 73.3%（与 §23 纯 W4A8 的
+  top-k=8=76.7% 一致，说明掉点来自 Quest 选块而非 C8）
+- 机理印证：C8 的 TPS 瓶颈确实是 dequant 瞬态 buffer 而非带宽 —— 一旦只 dequant
+  16 块，开销立刻回落到全 attention 水平
+
+### 27.4 全栈量化最终推荐配置
+
+**W4(g32) + A8(skip 首尾2层) + SQ(α=0.85) + KV8(g32) + Quest(top-k=16)**
+
+- 召回 90%（长上下文 needle 16K）
+- weight 4bit + KV 8bit 显存双省
+- TPS 23.26，不输 fp16 KV 全 attention
+
+### 27.5 文件留痕
+
+- `needle_sq_results/needle_w4a8c8_sq_quest.json`
+- 路径：§26 的 C8 forward + 既有 Quest sparse-dequant（无新代码）
+
+
 
