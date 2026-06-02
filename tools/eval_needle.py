@@ -76,6 +76,8 @@ def parse_args():
                    help="前 N 层不做 A8（W4A8+SQ 长文塌方根因——首尾层 outlier 极端，留 fp 可显著修复召回）")
     p.add_argument("--act-quant-skip-last", type=int, default=0,
                    help="后 N 层不做 A8（同上）")
+    p.add_argument("--act-quant-skip-layers", type=int, nargs="+", default=None,
+                   help="显式指定不做 A8 的层（按 outlier 强度精准 skip，见 tools/diag_layer_outlier.py）")
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9,
                    help="KV pool 占显存比例。长 ctx + C4 全 dequant 路径下需要给瞬态 buffer 留空间，建议 0.6-0.7")
     p.add_argument("--max-num-seqs", type=int, default=512)
@@ -226,6 +228,7 @@ def main():
         smoothquant_scale_path=args.smoothquant_scale_path,
         act_quant_skip_first=args.act_quant_skip_first,
         act_quant_skip_last=args.act_quant_skip_last,
+        act_quant_skip_layers=args.act_quant_skip_layers,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
 

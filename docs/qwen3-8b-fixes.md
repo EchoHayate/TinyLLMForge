@@ -925,5 +925,75 @@ Qwen3-8B, W4A8C8+SQ(α=0.85)+skip2/2, needle 16K：
 - `needle_sq_results/needle_w4a8c8_sq_quest.json`
 - 路径：§26 的 C8 forward + 既有 Quest sparse-dequant（无新代码）
 
+---
+
+## 28. 研究：A8 skip 层数消融 —— 推翻"首尾对称 skip"的经验配置（2026-06-02）
+
+### 28.1 问题
+
+§23 的 `skip first=2/last=2` 是拍脑袋定的（首尾对称），只验证了它有效（40%→93.3%），
+从未回答：(1) outlier 集中在首层还是尾层？(2) skip 几层性价比最高？(3) 2/2 是否
+既不饱和又不过度？把"经验配置"做成"有依据的最优配置"。
+
+### 28.2 先验：per-layer 激活 outlier 诊断
+
+新增 `tools/diag_layer_outlier.py`：forward_pre_hook 收集每个 decoder layer 所有
+LinearBase 输入激活的 per-channel absmax / p99-median 比 / kurtosis。Qwen3-8B 实测：
+
+```
+layer |   amax | p99/med | kurtosis     观察
+  0   |   8.5  |  15.5   |   9260       L0 反而很干净
+  1-3 |  48-79 | 20-236  |  4-6万       首部中等
+  6   | 5952.0 |  14.7   | 24.5万       ★ 极端 outlier 层
+ 8-11 |  12-17 |  7-8    |  <900        中段最干净
+ 31   |  116   |         |              尾部开始爬
+ ...单调递增...
+ 35   | 1328.0 |  26.4   |  1.6万       ★ 尾部最强
+```
+
+两个先验：**L6 是孤立的 amax 怪物层；尾部 L31-35 amax 单调递增**。
+
+### 28.3 实验矩阵（W4A8 g32 + SQ α=0.85, needle 16K）
+
+扩展 loader 支持 `act_quant_skip_layers`（显式层列表），跑 6 组对照：
+
+| 配置 | 关 A8 的层 | 召回率 | TPS |
+|---|---|---|---|
+| A 对照 | 无 | 40.0% | 24.55 |
+| C 只关 L6 | {6} | **26.7%** ↓ | 24.60 |
+| D L6+尾 | {6, 35} | 76.7% | 24.75 |
+| E 精准 | {6, 33, 34, 35} | 93.3% | 25.22 |
+| **F 尾4层** | {32, 33, 34, 35} | **96.7%** 🏆 | 25.23 |
+| G 首4层 | {0, 1, 2, 3} | 70.0% | 25.19 |
+| （旧）skip2/2 | {0, 1, 34, 35} | 93.3% | 23.87 |
+
+### 28.4 发现（多处反直觉）
+
+1. **只关 L6 反而更差（40% → 26.7%）**：L6 amax=5952 虽最极端，但单独关它会打破
+   SQ 已建立的层间数值平衡，有害。→ **outlier amax 不是决定召回的直接指标**，
+   "关掉最毒的层"这一直觉是错的。
+2. **尾部 >> 首部**：F（只关尾 4 层）拿到全场最高 96.7%，G（只关首 4 层）只有 70%。
+   尾部层更靠近 logits，A8 噪声直接污染贪心解码；首部噪声还会被后续层 re-normalize
+   稀释。印证 diag 里 L31-35 单调递增的观测。
+3. **首部 skip 是浪费**：旧 skip2/2 把 2 个名额花在首部（L0 还很干净）。同样 4 层
+   预算，F（尾4层）召回 93.3% → 96.7%，且配置更规整。
+
+### 28.5 结论 & 配置更新
+
+- **最优策略：只关尾部 N 层，而非首尾对称。** Qwen3-8B 上 **skip last=4（关 L32-35）
+  = 96.7%** 是新最优点。
+- 旧推荐（§23/§27 的 skip first=2/last=2）**应更新为 skip last=4**。
+- 方法论留痕：**单层 outlier 指标（amax/kurtosis）不能直接指导 skip 选择**，要靠
+  端到端召回消融；位置（靠近 logits 的尾部）比 outlier 绝对强度更重要。
+
+### 28.6 文件留痕
+
+- `tools/diag_layer_outlier.py`（per-layer outlier 诊断）
+- `tinyvllm/utils/loader.py`：`disable_act_quant_in_layers` 加 `skip_layers` 显式列表
+- `tinyvllm/config.py` / `model_runner.py` / `tools/eval_needle.py`：透传 `act_quant_skip_layers`
+- `needle_sq_results/needle_ablate_*.json`（6 组）
+- 诊断输出：`/tmp/outlier.json`
+
+
 
 

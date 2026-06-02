@@ -71,18 +71,26 @@ def _apply_smoothquant_scales(model: nn.Module, scales: dict):
     )
 
 
-def disable_act_quant_in_layers(model: nn.Module, skip_first: int, skip_last: int):
-    """把首 skip_first 层 + 末 skip_last 层 LinearBase 的 act_quant_bits 设为 0。
+def disable_act_quant_in_layers(model: nn.Module, skip_first: int, skip_last: int,
+                                skip_layers: list[int] | None = None):
+    """把指定 decoder 层 LinearBase 的 act_quant_bits 设为 0。
+
+    层选择 = 首 skip_first 层 ∪ 末 skip_last 层 ∪ skip_layers（显式列表）。
 
     模块名规则按 Qwen3 系：`model.layers.{idx}.<sub>`，靠正则抽 idx。
     必须在 finalize_quantization 之前（act_quant_bits 是 forward 时读取的实例属性，
     finalize 不影响它，但放在 SQ 之后、量化之前最自然）。
 
-    设计动机：W4A8+SQ 长文复读塌方的根因在首尾层 outlier 极端，per-token A8 量化
-    被这几层撑爆，整段 logits 噪声放大；让首尾保 fp16 激活、中间走 A8 能在
-    几乎不动 TPS 的前提下大幅修复长文召回。详见 docs/qwen3-8b-fixes.md §21。
+    设计动机：W4A8+SQ 长文复读塌方的根因在 outlier 极端层，per-token A8 量化
+    被这些层撑爆，整段 logits 噪声放大；让这些层保 fp16 激活、其余走 A8 能在
+    几乎不动 TPS 的前提下大幅修复长文召回。
+
+    skip_layers 用于"按 outlier 强度精准 skip"（诊断见 tools/diag_layer_outlier.py）：
+    Qwen3-8B 上 L6 是 amax≈5952 的极端 outlier 层、尾部 L31-35 递增，首尾对称 skip
+    会漏掉 L6 / 浪费在干净的 L0 上。详见 docs/qwen3-8b-fixes.md §28。
     """
-    if skip_first <= 0 and skip_last <= 0:
+    explicit = set(skip_layers) if skip_layers else set()
+    if skip_first <= 0 and skip_last <= 0 and not explicit:
         return
     import re
     layer_re = re.compile(r"\.layers\.(\d+)\.")
@@ -97,7 +105,8 @@ def disable_act_quant_in_layers(model: nn.Module, skip_first: int, skip_last: in
         return
     num_layers = max_idx + 1
     skip_set = set(range(min(skip_first, num_layers))) | \
-               set(range(max(0, num_layers - skip_last), num_layers))
+               set(range(max(0, num_layers - skip_last), num_layers)) | \
+               {i for i in explicit if 0 <= i < num_layers}
 
     n_disabled = 0
     for name, mod in model.named_modules():
@@ -118,7 +127,8 @@ def disable_act_quant_in_layers(model: nn.Module, skip_first: int, skip_last: in
 
 
 def load_model(model: nn.Module, path: str, smoothquant_scale_path: str | None = None,
-               act_quant_skip_first: int = 0, act_quant_skip_last: int = 0):
+               act_quant_skip_first: int = 0, act_quant_skip_last: int = 0,
+               act_quant_skip_layers: list[int] | None = None):
     # 获取模型中的 packed_modules_mapping 属性，如果没有，那么返回空字典
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
     for file in glob(os.path.join(path, "*.safetensors")):
@@ -145,9 +155,10 @@ def load_model(model: nn.Module, path: str, smoothquant_scale_path: str | None =
         scales = bundle["scales"] if isinstance(bundle, dict) and "scales" in bundle else bundle
         _apply_smoothquant_scales(model, scales)
 
-    # 首尾层关 A8：必须在 finalize 之前（虽然 finalize 不动 act_quant_bits，
+    # 关 A8 的指定层：必须在 finalize 之前（虽然 finalize 不动 act_quant_bits，
     # 但和 SQ 一样属于"权重就位、forward 还没真跑"的注入窗口）
-    disable_act_quant_in_layers(model, act_quant_skip_first, act_quant_skip_last)
+    disable_act_quant_in_layers(model, act_quant_skip_first, act_quant_skip_last,
+                                act_quant_skip_layers)
 
     # 加载完整 fp 权重后，对所有线性层执行量化（如开启）
     if get_quant_method() is not None:

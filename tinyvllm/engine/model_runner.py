@@ -41,7 +41,8 @@ class ModelRunner:
         load_model(self.model, config.model,
                    smoothquant_scale_path=config.smoothquant_scale_path,
                    act_quant_skip_first=config.act_quant_skip_first,
-                   act_quant_skip_last=config.act_quant_skip_last)            #涉及到一些qwen里面的
+                   act_quant_skip_last=config.act_quant_skip_last,
+                   act_quant_skip_layers=config.act_quant_skip_layers)            #涉及到一些qwen里面的
         # 加载完成后再做 cpu-offload（量化已在 loader 内 finalize 完成）
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)

@@ -36,6 +36,7 @@ class Config:
     # 让这些层保 fp 激活、中间层走 A8 能显著修复（详见 docs/qwen3-8b-fixes.md §21）
     act_quant_skip_first: int = 0                       # 前 N 层不做 A8 假量化
     act_quant_skip_last: int = 0                        # 后 N 层不做 A8 假量化
+    act_quant_skip_layers: list[int] | None = None      # 显式指定不做 A8 的层（按 outlier 强度精准 skip）
 
     # SmoothQuant 相关配置（把激活离群值迁移到 weight 上的 per-input-channel scale）
     smoothquant_scale_path: str | None = None           # 校准产物路径；None 关闭
