@@ -994,6 +994,57 @@ layer |   amax | p99/med | kurtosis     观察
 - `needle_sq_results/needle_ablate_*.json`（6 组）
 - 诊断输出：`/tmp/outlier.json`
 
+---
+
+## 29. skip-last 拐点扫描 + 全栈最优端到端确认（2026-06-02）
+
+### 29.1 skip-last 档位扫描
+
+补全 §28 只测了 last=4 的空白（纯 W4A8 g32 + SQ α=0.85, needle 16K）：
+
+| skip last | 召回率 | TPS |
+|---|---|---|
+| 2 | 83.3% | 24.92 |
+| 3 | 83.3% | 25.03 |
+| **4** | **96.7%** | 25.23 |
+| 5 | 96.7% | 25.44 |
+| 6 | 86.7% | 25.66 |
+
+**拐点清晰：last=4 是甜点**。last=2/3 不够（83.3%），last=4/5 达峰（96.7%），
+last=6 反而回落（86.7%）—— 关太多层后损失的 A8 量化收益开始反噬召回。
+**last=4 用最少层数达到峰值召回**。
+
+### 29.2 全栈最优端到端确认
+
+把 skip last=4 整合进全栈 C8+Quest，对比 §27 旧版（skip first=2/last=2）：
+
+配置：**W4 g32 + A8(skip last=4) + SQ(α=0.85) + KV8 g32 + Quest**
+
+| 档 | 旧 skip2/2（§27） | 新 skip last=4 |
+|---|---|---|
+| C8 baseline（全块 dequant） | 90.0% / 17.14 | **96.7%** / 17.11 |
+| C8 + Quest top-k=8 | 73.3% / 25.09 | **90.0%** / 25.09 |
+| C8 + Quest top-k=16 | 90.0% / 23.26 | **93.3%** / 23.24 |
+
+**三档全面提升**：
+- baseline 90% → **96.7%**
+- top-k=8 大涨 73.3% → **90.0%**（尾部 skip 让 Quest 在激进稀疏下也稳）
+- top-k=16 90% → **93.3%**，TPS 持平（追平 fp16 KV 全 attention）
+
+### 29.3 最终推荐配置（更新 §27.4）
+
+**W4(g32) + A8(skip last=4) + SQ(α=0.85) + KV8(g32) + Quest(top-k=16)**
+
+- 召回 93.3%（长上下文 needle 16K），不开 Quest 的 baseline 96.7%
+- weight 4bit + KV 8bit 显存双省
+- TPS 23.24，不输 fp16 KV 全 attention
+- 相比 §27 的首尾对称 skip2/2，召回每档 +3~17 点，零额外成本
+
+### 29.4 文件留痕
+
+- `needle_sq_results/needle_sweep_last{2,3,5,6}.json`
+- `needle_sq_results/needle_fullstack_skiplast4.json`
+
 
 
 
