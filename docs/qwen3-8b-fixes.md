@@ -747,3 +747,137 @@ read+write 双 fuse。
 - 等价性测试：`/tmp/test_update_summary_fuse.py`
 
 
+---
+
+## 25. W4A8C4 全栈 4-bit + SQ + skip2/2 长文复测（2026-06-02）
+
+### 25.1 动机
+
+§23 把 W4A8+SQ+skip2/2 长文召回救到 93.3%。问题：再叠加 KV4（C4）做成
+**全栈 4-8-4 量化**（weight 4bit + act 8bit + KV 4bit），首尾层关 A8 的修复
+是否仍然 hold？§21 当时记录 W4A8C4+SQ（无 skip）仍部分塌方，本节验证 skip
+之后能否翻盘到 70%+。
+
+### 25.2 配置
+
+在 §23 基础上仅加 `--kv-quant-bits 4 --kv-quant-group-size 32`：
+
+```
+int4 g32 + A8 + SQ(α=0.85) + skip_first=2/skip_last=2 + KV4 g32
+```
+
+needle 16K（ctx ∈ {4096, 8192, 15000}, 5 depth, n=2，full attention 无 Quest）。
+
+### 25.3 结果
+
+| 配置 | overall_acc | TPS |
+|---|---|---|
+| W4A8+SQ+skip2/2（§23，不开 C4） | 93.3% | 23.87 |
+| **W4A8C4+SQ+skip2/2（全栈 4-8-4）** | **66.7%** | 12.45 |
+
+per-(ctx, depth) 失败点分布（acc<100% 的格子）：
+
+```
+ctx=4096  depth=0.50 → 0%    depth=0.75 → 50%
+ctx=8192  depth=0.25 → 0%    depth=0.50 → 50%   depth=1.00 → 0%
+ctx=15000 depth=0.25 → 50%   depth=1.00 → 50%
+```
+
+### 25.4 结论
+
+- **C4 叠加掉 ~27 个点**（93.3% → 66.7%），**未达 70% 稳态线**
+- 失败点**散布在中段 depth（0.25/0.5/0.75）和末尾**，不是单一长度塌方
+  → 典型 **KV4 量化噪声导致 attention 定位漂移**，与 A8 复读塌方（集中在末尾
+  指令复读）是不同失败模式
+- TPS 几乎腰斩（23.87 → 12.45）：C4 decode 路径每步把命中块全 dequant 成 fp16，
+  长 ctx 下瞬态 buffer 开销大（§17 / `w4a8c4-quantization.md §10` 已知问题，
+  需 Quest 叠加 sparse-dequant 才能翻盘）
+- **判定：全栈 4-8-4 在长上下文上"能跑但不稳"**。要坐实稳态可用，KV 量化需要
+  升级：(a) KV4 改非对称 + per-channel scale，或 (b) KV 只压到 8bit（C8）而非 4bit
+
+### 25.5 下一步备选（未实施）
+
+| 方向 | 思路 | 预期 |
+|---|---|---|
+| C8 替 C4 | KV cache 量化降到 8bit，噪声远小于 4bit | 召回回到 85%+，显存省一半（仍优于 fp16） |
+| KV4 非对称 + per-channel | 当前是对称 group scale，换非对称带 zero-point | 召回 +10~15% |
+| C4 + Quest sparse-dequant | 只 dequant top-k 块，省瞬态 buffer + 修 TPS | TPS 翻盘，召回看 top-k |
+
+### 25.6 文件留痕
+
+- `needle_sq_results/needle_w4a8c4_sq_a085_skip2.json`
+- 配置：§23 全部参数 + `--kv-quant-bits 4 --kv-quant-group-size 32`
+
+
+---
+
+## 26. C8 替 C4：全栈量化稳态落地（2026-06-02）
+
+### 26.1 动机
+
+§25 判定 KV4 是全栈 4-8-4 的真瓶颈（93.3% → 66.7%）。按 §25.5 备选里"C8 替 C4"
+最划算：KV 只压到 8bit（噪声比 4bit 小一个量级），显存仍省一半。本节实现 C8
+路径并复测。
+
+### 26.2 实现
+
+C8 的 store / dequant 比 C4 简单（int8 不需要 nibble pack / 符号扩展）：
+
+- `tinyvllm/layers/attention.py`:
+  - `store_kvcache_q8_kernel` / `store_kvcache_q8`：对称 group 量化，
+    `scale = max(|x|)/127`，int8 直存（不 pack）
+  - `dequant_kv_blocks_q8`：gather 命中块 int8 → 按 group scale 展开 fp
+  - forward 三处（write / prefill / decode）把 `kv_quant_bits == 4` 改成
+    `in (4, 8)`，内部用 `_dequant = dequant_kv_blocks if bits==4 else dequant_kv_blocks_q8`
+    分发；C8 与 C4、Quest 叠加路径全部复用
+- `tinyvllm/config.py`: C8 加 `kv_quant_symmetric` 校验
+- `tinyvllm/engine/model_runner.py`: §（已有）C8 分配 int8 cache + group scale 已就位
+
+注：内存分配层（`allocate_kv_cache` 的 `kvq_bits==8` 分支）此前已写好但 forward
+从未接，本节把 forward 接上才真正可用。
+
+### 26.3 等价性验证
+
+`/tmp/test_c8_roundtrip.py` 三组 group_size round-trip：
+
+```
+gs=32  max_abs_err=2.0e-02  mean_abs_err=4.5e-03
+gs=64  max_abs_err=2.0e-02  mean_abs_err=5.0e-03
+gs=128 max_abs_err=2.0e-02  mean_abs_err=5.5e-03
+PASS
+```
+
+mean abs err ~0.005，比 C4 小约一个量级（符合 int8 vs int4 量化步长比）。
+
+### 26.4 needle 16K 结果
+
+Qwen3-8B, int4 g32 + A8 + SQ(α=0.85) + skip2/2 + **KV8 g32**（full attention）：
+
+| 配置 | KV | overall_acc | TPS |
+|---|---|---|---|
+| W4A8+SQ+skip2/2（§23） | fp16 | 93.3% | 23.87 |
+| **W4A8C8+SQ+skip2/2（本节）** | **8bit** | **90.0%** | 17.14 |
+| W4A8C4+SQ+skip2/2（§25） | 4bit | 66.7% | 12.45 |
+
+C8 仅掉 3.3 个点（vs fp16 KV），失败点只剩 `ctx=8192 depth=0.0/1.0`（边界位置），
+中段全 100%。
+
+### 26.5 结论
+
+- **全栈量化稳态可用方案确定：W4 + A8(skip 首尾2层) + SQ(α=0.85) + KV8 g32**
+  - 召回 90%（接近 fp16 KV 的 93.3%），KV 显存省一半
+- KV 量化档位的明确权衡：
+  - **KV4**：显存省 75%，但召回塌到 66.7%（attention 定位漂移）→ 需非对称/per-channel 救
+  - **KV8**：显存省 50%，召回 90% → 当前**最优稳态点**
+- TPS 17.14 仍低于 fp16 KV 的 23.87：C8 decode 同样每步全块 dequant，瓶颈是瞬态
+  buffer + dequant 开销，不是带宽——叠 Quest sparse-dequant 可修（§25.5 同理）
+
+### 26.6 文件留痕
+
+- `tinyvllm/layers/attention.py`：`store_kvcache_q8` / `dequant_kv_blocks_q8` + forward 分发
+- `tinyvllm/config.py`：C8 对称校验
+- `needle_sq_results/needle_w4a8c8_sq_a085_skip2.json`
+- 等价性测试：`/tmp/test_c8_roundtrip.py`
+
+
+

@@ -147,6 +147,105 @@ def store_kvcache_q4(
     )
 
 
+@triton.jit
+def store_kvcache_q8_kernel(
+    key_ptr,                # [N, num_kv_heads, head_dim] fp16/bf16
+    key_stride_n,           # = num_kv_heads * head_dim
+    value_ptr,
+    value_stride_n,
+    k_cache_ptr,            # int8 [num_blocks, block_size, num_kv_heads, head_dim]
+    v_cache_ptr,
+    k_scale_ptr,            # fp，按 slot * num_groups 存
+    v_scale_ptr,
+    slot_mapping_ptr,       # [N] int32
+    D: tl.constexpr,        # = num_kv_heads * head_dim
+    GROUP_SIZE: tl.constexpr,
+    NUM_GROUPS: tl.constexpr,  # = D // GROUP_SIZE
+):
+    pid = tl.program_id(0)         # token id
+    gid = tl.program_id(1)         # group id
+
+    base_in_k = pid * key_stride_n + gid * GROUP_SIZE
+    base_in_v = pid * value_stride_n + gid * GROUP_SIZE
+    offs = tl.arange(0, GROUP_SIZE)
+    k_full = tl.load(key_ptr + base_in_k + offs).to(tl.float32)
+    v_full = tl.load(value_ptr + base_in_v + offs).to(tl.float32)
+
+    # symmetric int8：scale = max(|x|) / 127（[-128,127] 区间，对称用 127）
+    k_scale = tl.max(tl.abs(k_full), axis=0) / 127.0 + 1e-8
+    v_scale = tl.max(tl.abs(v_full), axis=0) / 127.0 + 1e-8
+
+    k_q = tl.minimum(tl.maximum(libdevice.rint(k_full / k_scale), -128.0), 127.0).to(tl.int8)
+    v_q = tl.minimum(tl.maximum(libdevice.rint(v_full / v_scale), -128.0), 127.0).to(tl.int8)
+
+    slot = tl.load(slot_mapping_ptr + pid).to(tl.int64)
+    out_offs = slot * D + gid * GROUP_SIZE + offs
+    tl.store(k_cache_ptr + out_offs, k_q)
+    tl.store(v_cache_ptr + out_offs, v_q)
+
+    tl.store(k_scale_ptr + slot * NUM_GROUPS + gid, k_scale)
+    tl.store(v_scale_ptr + slot * NUM_GROUPS + gid, v_scale)
+
+
+def store_kvcache_q8(
+    key: torch.Tensor,            # [N, num_kv_heads, head_dim] fp
+    value: torch.Tensor,
+    k_cache: torch.Tensor,        # int8 [num_blocks, block_size, num_kv_heads, head_dim]
+    v_cache: torch.Tensor,
+    k_scale: torch.Tensor,        # fp [num_blocks, block_size, num_kv_heads, num_groups]
+    v_scale: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    group_size: int,
+):
+    N, num_kv_heads, head_dim = key.shape
+    D = num_kv_heads * head_dim
+    num_groups_total = D // group_size
+    assert head_dim % group_size == 0
+    assert k_cache.dtype == torch.int8 and v_cache.dtype == torch.int8
+    store_kvcache_q8_kernel[(N, num_groups_total)](
+        key, key.stride(0),
+        value, value.stride(0),
+        k_cache, v_cache,
+        k_scale, v_scale,
+        slot_mapping,
+        D=D,
+        GROUP_SIZE=group_size,
+        NUM_GROUPS=num_groups_total,
+    )
+
+
+def dequant_kv_blocks_q8(
+    cache_q: torch.Tensor,        # int8 [num_blocks_total, block_size, num_kv_heads, head_dim]
+    cache_scale: torch.Tensor,    # fp   [num_blocks_total, block_size, num_kv_heads, num_groups]
+    block_tables: torch.Tensor,   # int32 [B, max_blocks], -1 padded
+    group_size: int,
+    out_dtype: torch.dtype,
+):
+    """C8 反量化：gather batch 命中块（int8），按 group scale 展开成 fp。
+
+    与 dequant_kv_blocks（int4）等价语义，但 int8 不需要 nibble 解包/符号扩展。
+    """
+    B, max_blocks = block_tables.shape
+    nb_total, block_size, num_kv_heads, head_dim = cache_q.shape
+    num_groups = cache_scale.shape[-1]
+    assert num_groups * group_size == head_dim, "head_dim 必须 = num_groups * group_size"
+
+    valid_mask = block_tables >= 0
+    safe_idx = block_tables.clamp_min(0).to(torch.long)
+
+    q_b = cache_q[safe_idx]                                  # [B, max_blocks, block_size, kv_h, head_dim] int8
+    scale_b = cache_scale[safe_idx]                          # [..., num_groups]
+    scale_exp = scale_b.repeat_interleave(group_size, dim=-1)  # [..., head_dim]
+    cache_fp = q_b.to(out_dtype) * scale_exp.to(out_dtype)
+
+    nb_active = B * max_blocks
+    cache_fp = cache_fp.reshape(nb_active, block_size, num_kv_heads, head_dim).contiguous()
+    new_table = (torch.arange(nb_active, device=block_tables.device, dtype=torch.int32)
+                 .view(B, max_blocks))
+    new_table = torch.where(valid_mask, new_table, torch.full_like(new_table, -1))
+    return cache_fp, new_table
+
+
 def dequant_kv_blocks(
     cache_packed: torch.Tensor,   # int8 [num_blocks_total, block_size, num_kv_heads, head_dim/2]
     cache_scale: torch.Tensor,    # fp   [num_blocks_total, block_size, num_kv_heads, num_groups]
@@ -395,6 +494,17 @@ class Attention(nn.Module):
                 # Quest summary：现在 K 已经被量化存了，summary 用反量化前的 k 维护更准
                 if self.k_min is not None and self.k_max is not None:
                     update_block_summary(k, context.slot_mapping, self.k_min, self.k_max, k_cache.shape[1])
+            elif self.kv_quant_bits == 8:
+                # C8 写入路径：8-bit 对称 group 量化（不 pack）
+                store_kvcache_q8(
+                    k, v,
+                    k_cache, v_cache,
+                    self.k_scale, self.v_scale,
+                    context.slot_mapping,
+                    self.kv_quant_group_size,
+                )
+                if self.k_min is not None and self.k_max is not None:
+                    update_block_summary(k, context.slot_mapping, self.k_min, self.k_max, k_cache.shape[1])
             else:
                 store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
                 # Quest：写入 KV 后同步维护 per-block summary
@@ -403,11 +513,12 @@ class Attention(nn.Module):
         if context.is_prefill:
             # prefill传入的 q = [batch_size, seq_len, num_heads, head_dim]
             # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
-            if self.kv_quant_bits == 4:
-                # C4 prefill：
+            if self.kv_quant_bits in (4, 8):
+                # C4/C8 prefill：
                 #   - 无 prefix-cache：cache 里只有当前刚写入的 token；为避免再读一次量化后掉精度，
                 #     直接用反量化前的 fp k/v 算 attention（等价语义，且省一次 dequant）。
-                #   - 有 prefix-cache：必须把命中块从 int4 反量化出来再喂 flash-attn。
+                #   - 有 prefix-cache：必须把命中块从 int4/int8 反量化出来再喂 flash-attn。
+                _dequant = dequant_kv_blocks if self.kv_quant_bits == 4 else dequant_kv_blocks_q8
                 if context.block_tables is None:
                     o = flash_attn_varlen_func(
                         q, k, v,
@@ -415,10 +526,10 @@ class Attention(nn.Module):
                         max_seqlen_q=context.max_seqlen_q, max_seqlen_k=context.max_seqlen_k,
                         softmax_scale=self.scale, causal=True, block_table=None)
                 else:
-                    k_fp, new_bt = dequant_kv_blocks(
+                    k_fp, new_bt = _dequant(
                         k_cache, self.k_scale, context.block_tables,
                         self.kv_quant_group_size, q.dtype)
-                    v_fp, _ = dequant_kv_blocks(
+                    v_fp, _ = _dequant(
                         v_cache, self.v_scale, context.block_tables,
                         self.kv_quant_group_size, q.dtype)
                     o = flash_attn_varlen_func(
@@ -449,7 +560,8 @@ class Attention(nn.Module):
                             and block_tables is not None
                             and cache_seqlens is not None)
 
-            if self.kv_quant_bits == 4:
+            if self.kv_quant_bits in (4, 8):
+                _dequant = dequant_kv_blocks if self.kv_quant_bits == 4 else dequant_kv_blocks_q8
                 if quest_active:
                     # 1) 用未量化的 k_min/k_max（store 时维护，反量化前）算 criticality 选 top-k
                     sparse_bt, sparse_cs = quest_select_blocks(
@@ -459,10 +571,10 @@ class Attention(nn.Module):
                         context.quest_top_k_blocks,
                     )
                     # 2) 仅对选中的 top-k 块做反量化；buffer = [B*top_k, block_size, kv_h, hd]
-                    k_fp, new_bt = dequant_kv_blocks(
+                    k_fp, new_bt = _dequant(
                         k_cache, self.k_scale, sparse_bt,
                         self.kv_quant_group_size, q.dtype)
-                    v_fp, _ = dequant_kv_blocks(
+                    v_fp, _ = _dequant(
                         v_cache, self.v_scale, sparse_bt,
                         self.kv_quant_group_size, q.dtype)
                     o = flash_attn_with_kvcache(
@@ -470,11 +582,11 @@ class Attention(nn.Module):
                         cache_seqlens=sparse_cs,
                         block_table=new_bt, softmax_scale=self.scale, causal=True)
                 else:
-                    # C4 单独路径（α）：把全部命中块 dequant，长 ctx 下慢，留作回退/对照
-                    k_fp, new_bt = dequant_kv_blocks(
+                    # C4/C8 单独路径（α）：把全部命中块 dequant，长 ctx 下慢，留作回退/对照
+                    k_fp, new_bt = _dequant(
                         k_cache, self.k_scale, block_tables,
                         self.kv_quant_group_size, q.dtype)
-                    v_fp, _ = dequant_kv_blocks(
+                    v_fp, _ = _dequant(
                         v_cache, self.v_scale, block_tables,
                         self.kv_quant_group_size, q.dtype)
                     o = flash_attn_with_kvcache(

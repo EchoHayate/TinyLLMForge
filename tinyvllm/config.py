@@ -58,6 +58,8 @@ class Config:
             # group_size 必须能整除 head_dim，且对 4-bit pack 友好（即 group_size 为偶数）
             assert self.kv_quant_group_size % 2 == 0
             assert self.kv_quant_symmetric, "非对称 KV 量化分支尚未实现，仅支持对称"
+        if self.kv_quant_bits == 8:
+            assert self.kv_quant_symmetric, "C8 仅实现对称量化"
         self.hf_config = AutoConfig.from_pretrained(self.model)
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
         assert self.max_num_batched_tokens >= self.max_model_len
