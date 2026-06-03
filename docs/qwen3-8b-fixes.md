@@ -1436,3 +1436,71 @@ There and back again. The grass is green. ...
 
 - `needle_sq_results/needle_boundary_variant_probe.json`
 - `needle_sq_results/needle_sq_layer_adaptive_newline_fixed_prompts_topk12_n5.json`
+
+## 35. Speculative Decoding v0：n-gram draft 离线上限估计（2026-06-03）
+
+### 35.1 问题
+
+前面几轮主线都在优化单步 decode 的每 token 成本（W4/A8/SQ/KV8/Quest）。另一个推理引擎方向是减少目标模型
+decode 次数：先用便宜 draft 产生多个候选 token，再用目标模型一次性验证。完整 speculative decoding 要改 KV cache、
+scheduler 和 verification path，风险较高；因此先做一个 **n-gram draft 离线 profiler**，回答一个更小的问题：
+
+> 当前任务/输出分布里，基于 prompt/history 的 n-gram draft 到底有多少可接受 token？
+
+如果离线 replay 的接受率很低，说明 n-gram draft 不值得进入在线路径；如果接受率较高，再继续做真正的 batch verification。
+
+### 35.2 v0 实现
+
+新增 `tinyvllm/speculative/ngram.py`，只做纯 token 序列逻辑：
+
+- `propose_ngram_draft(history, ngram_size, max_draft_tokens)`：拿当前 history 末尾 n-gram，在历史中找最近一次相同 n-gram，
+  把该位置之后的 token 作为 draft。
+- `replay_ngram_acceptance(tokens, prompt_len, ngram_size, max_draft_tokens)`：对已经生成好的 token 流做离线 replay，
+  统计 draft token 中有多少和真实后续 token 前缀一致。
+- `summarize_replay_stats()`：输出 JSON-friendly 指标。
+
+新增 `tools/profile_ngram_spec.py`，先正常调用 `LLM.generate()`，再对 prompt+output token 做 replay，避免在第一版就触碰
+online KV cache / scheduler。
+
+### 35.3 Qwen3-8B smoke 结果
+
+配置沿用当前推荐量化栈：
+
+```text
+Qwen3-8B + W4(g32) + A8(skip last=4) + SQ(layer-adaptive floor=0.85) + KV8(g32)
+ngram_size=3, max_draft_tokens=4, max_output_len=64, temperature=0.0
+```
+
+远端 A100 smoke（3 条内置 prompt，共 192 个 decode position）：
+
+| metric | value |
+|---|---:|
+| positions | 192 |
+| draft_events | 127 |
+| drafted_tokens | 508 |
+| accepted_tokens | 384 |
+| acceptance_rate | **75.6%** |
+| avg_draft_len | 4.0 |
+
+分 prompt 看差异很大：
+
+| prompt | output 现象 | acceptance_rate |
+|---|---|---:|
+| 简单事实问答 | 量化栈仍出现 `Wait, no.` 复读 | 97.4% |
+| 代码补全 | 正常结构化输出 | 57.1% |
+| 重复 haystack 后续 | 继续复读 Q/A 模板 | 57.3% |
+
+### 35.4 结论
+
+- n-gram draft 在“复读/模板化输出”上非常容易命中，所以总接受率 **75.6%** 不能直接等价为线上收益；它部分反映了当前
+  W4A8+SQ 栈仍会在某些短 prompt 上复读。
+- 更有参考价值的是非纯复读样本仍有约 **57%** 接受率，说明 prompt/history n-gram 作为 cheap draft 有一定潜力。
+- v0 暂不接 online path。下一步若继续做，需要实现“多 token target verification + KV 回滚/提交”或先做更轻的
+  batch verification 原型；否则离线 profiler 已足够作为研究工具。
+
+文件留痕：
+
+- `tinyvllm/speculative/ngram.py`
+- `tinyvllm/speculative/__init__.py`
+- `tools/profile_ngram_spec.py`
+- `tools/test_ngram_speculative.py`
