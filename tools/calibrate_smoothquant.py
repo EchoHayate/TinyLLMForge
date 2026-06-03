@@ -22,6 +22,7 @@ per-input-channel 激活 absmax，结合 fp 权重 absmax 计算 per-channel sca
 import os
 import sys
 import argparse
+import re
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -151,6 +152,14 @@ def parse_args():
     p.add_argument("--model", type=str, required=True, help="HF 模型目录")
     p.add_argument("--output", type=str, required=True, help="保存路径，例如 /tmp/sq_scales.pt")
     p.add_argument("--alpha", type=float, default=0.5, help="SmoothQuant alpha (0~1)；典型 0.5–0.85")
+    p.add_argument("--alpha-mode", choices=("global", "layer-adaptive"), default="global",
+                   help="global=所有层共用 --alpha；layer-adaptive=按层 outlier 强度在 [alpha-min, alpha-max] 自适应")
+    p.add_argument("--alpha-min", type=float, default=0.85,
+                   help="layer-adaptive 模式下最干净层使用的 alpha 下界")
+    p.add_argument("--alpha-max", type=float, default=0.90,
+                   help="layer-adaptive 模式下 outlier 最强层使用的 alpha 上界")
+    p.add_argument("--alpha-gamma", type=float, default=1.0,
+                   help="layer-adaptive 归一化分数的幂指数；>1 会只抬高最极端层")
     p.add_argument("--num-prompts", type=int, default=96, help="实际使用的 prompt 数（< 内联池大小则截断）")
     # scale 健壮性兜底：极端 channel 可能让 s 冲到 fp16 范围之外，loader 端做 1/s 会 overflow
     p.add_argument("--clamp-min", type=float, default=1e-3, help="s clamp 下界（fp16 friendly）")
@@ -164,6 +173,8 @@ def parse_args():
 def main():
     args = parse_args()
     assert 0.0 <= args.alpha <= 1.0
+    assert 0.0 <= args.alpha_min <= args.alpha_max <= 1.0
+    assert args.alpha_gamma > 0.0
     out_dir = os.path.dirname(os.path.abspath(args.output))
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -219,8 +230,47 @@ def main():
     for h in handles:
         h.remove()
 
+    # ---- 可选：按 decoder layer 的 outlier 强度分配 alpha ----
+    layer_re = re.compile(r"\.layers\.(\d+)\.")
+    alpha_by_layer: dict[int, float] = {}
+    alpha_by_module: dict[str, float] = {}
+    if args.alpha_mode == "layer-adaptive":
+        layer_score: dict[int, float] = {}
+        for name, act_max in state.items():
+            m = layer_re.search(name)
+            if m is None:
+                continue
+            idx = int(m.group(1))
+            # log1p 压缩 L6 这类怪物层，避免一个极值把所有中尾层挤到 alpha_min。
+            score = float(torch.log1p(act_max.float().max().cpu()).item())
+            layer_score[idx] = max(layer_score.get(idx, 0.0), score)
+        if layer_score:
+            lo = min(layer_score.values())
+            hi = max(layer_score.values())
+            denom = max(hi - lo, 1e-12)
+            for idx, score in layer_score.items():
+                norm = ((score - lo) / denom) ** args.alpha_gamma
+                alpha_i = args.alpha_min + (args.alpha_max - args.alpha_min) * norm
+                alpha_by_layer[idx] = float(alpha_i)
+            print("[calib] layer-adaptive alpha:", flush=True)
+            for idx in sorted(alpha_by_layer):
+                print(
+                    f"  L{idx:02d}: alpha={alpha_by_layer[idx]:.4f} "
+                    f"(outlier_score={layer_score[idx]:.4f})",
+                    flush=True,
+                )
+        else:
+            print("[calib] WARN: no decoder layer names matched; fallback to global alpha", flush=True)
+
     # ---- 聚合：s = act_max^alpha / w_max^(1-alpha) ----
-    print(f"[calib] computing scales with alpha={args.alpha} ...", flush=True)
+    if args.alpha_mode == "global":
+        print(f"[calib] computing scales with global alpha={args.alpha} ...", flush=True)
+    else:
+        print(
+            f"[calib] computing scales with layer-adaptive alpha "
+            f"range=[{args.alpha_min}, {args.alpha_max}], gamma={args.alpha_gamma} ...",
+            flush=True,
+        )
     scales: dict[str, torch.Tensor] = {}
     alpha = float(args.alpha)
     n_clamp_lo = 0
@@ -232,11 +282,17 @@ def main():
         if name not in state:
             print(f"[calib] WARN: no activation captured for {name} (skipped)", flush=True)
             continue
+        m = layer_re.search(name)
+        if args.alpha_mode == "layer-adaptive" and m is not None:
+            alpha_i = alpha_by_layer.get(int(m.group(1)), alpha)
+        else:
+            alpha_i = alpha
+        alpha_by_module[name] = float(alpha_i)
         # 校准 TP=1 → mod.weight 是全维 [out, in_full]，沿 dim=0 (out) 求 absmax
         w = mod.weight.data.detach().float()
         w_max = w.abs().amax(dim=0).clamp_min(1e-5)         # [in_full]
         a_max = state[name].clamp_min(1e-5).cpu()
-        s = (a_max.pow(alpha) / w_max.cpu().pow(1.0 - alpha)).to(torch.float32)
+        s = (a_max.pow(alpha_i) / w_max.cpu().pow(1.0 - alpha_i)).to(torch.float32)
         # 健壮性：clamp 到 fp16-friendly 范围；统计被夹的 channel 数
         n_total += s.numel()
         n_clamp_lo += int((s < args.clamp_min).sum().item())
@@ -260,6 +316,12 @@ def main():
     bundle = {
         "scales": scales,
         "alpha": alpha,
+        "alpha_mode": args.alpha_mode,
+        "alpha_min": args.alpha_min,
+        "alpha_max": args.alpha_max,
+        "alpha_gamma": args.alpha_gamma,
+        "alpha_by_layer": alpha_by_layer,
+        "alpha_by_module": alpha_by_module,
         "num_prompts": len(prompts),
         "model_path": args.model,
         "clamp_min": args.clamp_min,

@@ -1,5 +1,6 @@
 import torch
 import pickle
+import os
 
 import torch.distributed as dist
 from tinyvllm.config import Config
@@ -25,9 +26,10 @@ class ModelRunner:
         self.rank = rank
         self.event = event
 
+        dist_port = os.environ.get("TINYVLLM_DIST_PORT", os.environ.get("MASTER_PORT", "2333"))
         dist.init_process_group(
             backend="nccl", 
-            init_method="tcp://localhost:2333",               # 初始化建立连接的方法有 tcp, 共享文件系统，环境变量等
+            init_method=f"tcp://localhost:{dist_port}",       # 初始化建立连接的方法有 tcp, 共享文件系统，环境变量等
             world_size=self.world_size, 
             rank=self.rank
         )
@@ -471,4 +473,3 @@ class ModelRunner:
             block_tables=block_tables,
             outputs=outputs
         )
-

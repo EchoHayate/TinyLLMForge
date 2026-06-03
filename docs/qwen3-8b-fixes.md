@@ -1045,6 +1045,241 @@ last=6 反而回落（86.7%）—— 关太多层后损失的 A8 量化收益开
 - `needle_sq_results/needle_sweep_last{2,3,5,6}.json`
 - `needle_sq_results/needle_fullstack_skiplast4.json`
 
+## 30. SQ α 逐层自适应（2026-06-02）
 
+### 30.1 问题
 
+当前最优配置仍使用全局 `SQ α=0.85`。但 §28 的诊断已经说明 Qwen3-8B 的 outlier
+并不均匀：L6 是极端怪物层，尾部 L31-L35 递增，干净层和 outlier 层共用同一个 α
+可能不是最优。全局 α 偏高会把所有层的激活离群值都更激进地迁移到权重侧，可能增加干净层
+W4 重建误差；全局 α 偏低又压不住 L6/尾部 outlier。
 
+### 30.2 改动
+
+在 `tools/calibrate_smoothquant.py` 增加 `--alpha-mode layer-adaptive`：
+
+- hook 收集方式不变，仍记录每个 `LinearBase` 的 per-input-channel activation absmax。
+- 对每个 decoder layer 取该层所有 LinearBase 的最大 `log1p(act_absmax_max)` 作为 outlier score。
+- 将 score min-max 归一化后映射到 `[--alpha-min, --alpha-max]`：
+
+```text
+alpha(layer) = alpha_min + (alpha_max - alpha_min) * norm(score)^gamma
+```
+
+默认参数：`alpha_min=0.85, alpha_max=0.90, gamma=1.0`。`log1p` 用来压缩 L6 这类极端值，
+避免单个怪物层把所有中尾层都挤到 alpha_min。校准产物额外保存
+`alpha_mode / alpha_by_layer / alpha_by_module`，loader 无需改动，因为落盘的仍然是最终 per-channel scale。
+
+### 30.3 待跑实验
+
+先生成逐层 α 的 SQ scale：
+
+```bash
+python tools/calibrate_smoothquant.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --output /tmp/sq_scales_qwen3_8b_layer_adaptive.pt \
+  --alpha-mode layer-adaptive \
+  --alpha-min 0.85 --alpha-max 0.90 --alpha-gamma 1.0 \
+  --num-prompts 96 --max-model-len 2048 --gpu-memory-utilization 0.7
+```
+
+再用当前最佳策略验证 needle 16K：
+
+```bash
+python tools/eval_needle.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --out-json needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4.json \
+  --context-lens 4096 8192 15000 --depths 0.0 0.25 0.5 0.75 1.0 --num-trials 2 \
+  --top-k-blocks-list -1 16 \
+  --quantization int4 --quant-group-size 32 --act-quant-bits 8 \
+  --smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt \
+  --act-quant-skip-last 4 \
+  --kv-quant-bits 8 --kv-quant-group-size 32 --gpu-memory-utilization 0.7
+```
+
+对照目标是 §29.2 的 **93.3% / 23.24 TPS**。如果逐层 α 能提高 top-k=16 或至少保持召回，
+下一步再扫 `alpha_min/max/gamma`；如果下降，则说明当前瓶颈主要由 A8 skip / Quest 选块决定，
+SQ α 全局 0.85 已接近最优。
+
+### 30.4 第一轮实验：激进下界失败
+
+先试了较激进的下界 `alpha_min=0.65, alpha_max=0.90, gamma=1.0`：
+
+| setting | 召回率 | TPS |
+|---|---:|---:|
+| baseline | 63.3% | 17.20 |
+| Quest top-k=16 | 60.0% | 23.45 |
+
+结论：**不能把干净层 α 大幅降到 0.65**。虽然这会减少干净层的 W4 重建压力，但 A8 仍然需要
+足够强的 SQ 抑制中间层 outlier；过低 α 会让非 skip 层重新暴露 A8 激活量化误差。
+
+### 30.5 第二/三轮实验：保守下界恢复并提升 Quest
+
+进一步做了两档保守下界：
+
+| adaptive α | baseline | Quest top-k=16 | 结论 |
+|---|---:|---:|---|
+| `[0.82, 0.90]` | 86.7% / 17.18 | 76.7% / 23.41 | 下界仍偏低，召回掉点 |
+| **`[0.85, 0.90]`** | **96.7% / 17.17** | **96.7% / 23.39** | 保持 baseline 峰值，同时 top-k=16 +3.4 点 |
+
+`[0.85, 0.90]` 的 per-layer α 分布基本围绕全局 0.85，只对极端层小幅抬高：
+L2=0.900、L6=0.886、L16=0.882、L34=0.891、L35=0.898，尾部 L29-L33 约 0.864~0.868。
+
+对比 §29.2 原推荐（全局 α=0.85）：
+
+| setting | 全局 α=0.85 | 逐层 α=[0.85,0.90] |
+|---|---:|---:|
+| C8 baseline | 96.7% / 17.11 | 96.7% / 17.17 |
+| C8 + Quest top-k=16 | 93.3% / 23.24 | **96.7% / 23.39** |
+
+结论：逐层 α 只有在**不低于当前全局最优 α=0.85**时才有价值；它不是“干净层降 α”，而是
+“以 0.85 为地板，对极端 outlier 层小幅加压”。当前新推荐：
+**W4(g32) + A8(skip last=4) + SQ(layer-adaptive α=0.85~0.90) + KV8(g32) + Quest(top-k=16)**。
+
+文件留痕：
+- `/tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4.json`
+
+## 31. Quest top-k 复测与甜点扫描（2026-06-02）
+
+### 31.1 动机
+
+§30 的 n=2 结果显示 layer-adaptive SQ 能让 Quest top-k=16 从 93.3% 提到 96.7%。
+但 n=2 总样本只有 30 条，单条波动就是 3.3 个点；因此继续用 n=3（45 条）复测，
+并扫描 `top_k ∈ {8,12,16,24}`，看是否存在比 16 更好的速度/质量甜点。
+
+### 31.2 并行实验踩坑：dist 端口硬编码
+
+两组 eval 并行跑时，`ModelRunner` 固定使用 `tcp://localhost:2333` 初始化 NCCL，第二个进程会报：
+
+```text
+RuntimeError: EADDRINUSE, message: address already in use
+```
+
+已修复为读取 `TINYVLLM_DIST_PORT` / `MASTER_PORT`，默认仍是 2333。这样多组单卡实验可以并行跑：
+
+```bash
+CUDA_VISIBLE_DEVICES=1 TINYVLLM_DIST_PORT=2333 python tools/eval_needle.py ...
+CUDA_VISIBLE_DEVICES=3 TINYVLLM_DIST_PORT=2345 python tools/eval_needle.py ...
+```
+
+### 31.3 n=3 top-k 扫描结果
+
+配置固定为：**W4 g32 + A8(skip last=4) + KV8 g32 + Quest**。
+
+| SQ scale | baseline | top-k=8 | top-k=12 | top-k=16 | top-k=24 |
+|---|---:|---:|---:|---:|---:|
+| 全局 α=0.85 | **97.8% / 18.40** | 91.1% / **27.18** | 88.9% / 26.16 | 95.6% / 24.96 | 95.6% / 18.66 |
+| 逐层 α=[0.85,0.90] | 93.3% / 18.35 | 88.9% / **27.28** | **97.8% / 26.29** | 93.3% / 25.09 | 93.3% / 18.79 |
+
+观察：
+
+- `top-k=8` 最快（~27 tok/s），但召回明显掉到 89~91%，太激进。
+- `top-k=24` 没有更稳，TPS 退回到 ~18.7，接近 baseline，性价比差。
+- 全局 α 下 `top-k=16` 更稳：95.6% / 24.96。
+- 逐层 α 下 `top-k=12` 成为甜点：97.8% / 26.29，质量追平/超过 baseline，同时速度比 top-k=16 更快。
+
+### 31.4 失败样本初步分析
+
+失败 bucket 主要集中在 `ctx=4096` 的边界位置（depth=0 / 0.5 / 1.0），长上下文 15K 反而较稳。
+这提示当前 needle eval 的短上下文边界/插入位置对结果影响很大，并不完全是“上下文越长越难”。
+
+注意：当前 `tools/eval_needle.py` 为避免 prefix cache 影响吞吐，每个 top-k setting 使用不同 seed，
+所以不同 top-k 的失败样本不是同一组 magic number，不能严格逐条判断“Quest 是否漏掉 baseline 命中的同一条”。
+下一轮如果要做根因归因，需要加一个“固定 prompt 集合、只看质量、不看 TPS”的模式。
+
+### 31.5 当前推荐更新
+
+如果追求最好的端到端速度/质量平衡，推荐改为：
+
+**W4(g32) + A8(skip last=4) + SQ(layer-adaptive α=0.85~0.90) + KV8(g32) + Quest(top-k=12)**
+
+理由：n=3 下 `top-k=12` 达到 **97.8% / 26.29 tok/s**，比之前 top-k=16 的 ~23~25 tok/s 更快，
+且质量不低于 baseline。由于 n=3 仍有随机波动，下一步需要跑固定 prompt 的质量归因 + n=5 稳定复测。
+
+文件留痕：
+
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_topk_sweep_n3.json`
+- `needle_sq_results/needle_sq_global_a085_topk_sweep_n3.json`
+
+## 32. fixed-prompt Quest 归因模式（2026-06-03）
+
+### 32.1 问题
+
+§31 的 top-k 扫描为了避免 prefix cache 让后续 setting 的 TPS 虚高，每个 `top_k` 都会加不同
+seed offset。因此不同 top-k 看到的是不同 magic number/prompt 集合，只能比较总体趋势，不能逐条回答：
+
+> top-k=12 命中而 top-k=8 失败，是 Quest 真的漏块，还是刚好抽到了不同样本？
+
+### 32.2 改动
+
+`tools/eval_needle.py` 增加 `--fixed-prompts`：
+
+- 默认关闭，保持原行为：每个 top-k 使用不同 seed，避免 prefix cache 影响吞吐统计。
+- 开启后，所有 top-k 共用同一批 `(ctx_len, depth, trial, magic, prompt)`，用于质量归因；每个 setting
+  开始前会清空跨 setting prefix-cache 元数据，避免后续 setting 复用前一个 setting 的 KV block。
+- 新增 `build_eval_batch(tokenizer, args, top_k)` 统一生成 prompt/metas，测试覆盖两种行为：
+  - `--fixed-prompts`：baseline/top-k prompt 完全一致。
+  - 默认模式：不同 top-k 使用不同 magic，保持旧吞吐评测语义。
+- 新增 `clear_prefix_cache(llm)`：清空 `BlockManager.hash_to_block_id`，并只重置 `ref_count==0` 的空闲
+  block 的 `hash/token_ids`，避免误伤正在运行的序列。
+
+使用方式：
+
+```bash
+python tools/eval_needle.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --out-json needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_topk.json \
+  --context-lens 4096 8192 15000 --depths 0.0 0.25 0.5 0.75 1.0 --num-trials 3 \
+  --top-k-blocks-list -1 8 12 16 24 --fixed-prompts \
+  --quantization int4 --quant-group-size 32 --act-quant-bits 8 \
+  --smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt \
+  --act-quant-skip-last 4 --kv-quant-bits 8 --kv-quant-group-size 32 --gpu-memory-utilization 0.7
+```
+
+### 32.3 prefix cache 污染确认
+
+未清 cache 的 fixed-prompt 首轮结果（baseline 先跑）：
+
+| setting | acc | tok/s | 失败样本 |
+|---|---:|---:|---|
+| baseline | 93.3% | 18.26 | `(4096,0.0,t2)`, `(4096,0.5,t0)`, `(4096,0.5,t1)` |
+| top-k=8 | 100.0% | 95.19 | 无 |
+| top-k=12 | 100.0% | 84.45 | 无 |
+| top-k=16 | 97.8% | 73.47 | `(4096,0.0,t2)` |
+| top-k=24 | 97.8% | 37.08 | `(4096,0.0,t2)` |
+
+这里后续 setting 的 TPS 高到 70~95 tok/s，明显不是正常 prefill+decode 口径，而是命中了前一个 setting
+留下的 prefix cache。因此这组只能说明“同 prompt 归因功能可用”，不能直接用来比较 top-k 质量/速度。
+
+反序验证（`--top-k-blocks-list 12 -1 --fixed-prompts`，top-k=12 先跑）：
+
+| setting | acc | tok/s | 失败样本 |
+|---|---:|---:|---|
+| top-k=12 | 95.6% | 25.14 | `(4096,0.5,t0)`, `(4096,0.5,t1)` |
+| baseline | 97.8% | 37.09 | `(4096,0.0,t2)` |
+
+结论：同进程 fixed-prompt 如果不清 prefix cache，结果会依赖 setting 顺序；尤其吞吐必然虚高，质量归因也会变得难解释。
+根因在 `BlockManager.deallocate()` 释放 block 时保留 `hash_to_block_id` / `token_ids` 以支持 prefix reuse，
+而 `prepare_prefill()` 会从 `seq.num_cached_tokens` 后开始送 token。正常吞吐评测用不同 seed 绕开这个问题；
+fixed-prompt 归因必须显式清 cache 或拆成独立进程。
+
+### 32.4 验证状态
+
+本地和远端均运行 `tools/test_eval_needle_fixed_prompts.py`，已验证：
+
+```text
+eval_needle fixed-prompt tests passed
+```
+
+覆盖内容：
+
+- `--fixed-prompts` 下 baseline/top-k 生成完全相同 prompt/magic。
+- 默认模式仍为不同 top-k 使用不同 seed offset。
+- `clear_prefix_cache(llm)` 会清空 cache 索引，并只重置空闲 block 元数据。
+
+文件留痕：
+
+- `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_topk.json`（未清 cache，baseline 先跑）
+- `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_topk12_first.json`（未清 cache，top-k=12 先跑）
+- `tools/test_eval_needle_fixed_prompts.py`

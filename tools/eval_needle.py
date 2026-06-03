@@ -60,6 +60,8 @@ def parse_args():
     p.add_argument("--num-trials", type=int, default=3, help="每个 (ctx_len, depth) 重复多少次")
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--fixed-prompts", action="store_true", default=False,
+                   help="所有 top-k setting 复用同一批 prompt/magic，用于质量归因；setting 间会清空 prefix cache")
     p.add_argument("--out-json", type=str, default="needle_results.json")
     # C4 / KV cache 量化（与 quest 不可同时开，互斥逻辑在 setting loop 里处理）
     p.add_argument("--kv-quant-bits", type=int, default=0, choices=[0, 4, 8],
@@ -115,6 +117,49 @@ def extract_answer(text: str) -> str | None:
     return m.group(0) if m else None
 
 
+def _setting_seed(args, top_k: int) -> int:
+    if getattr(args, "fixed_prompts", False):
+        return args.seed
+    # 每个 setting 用不同的 seed，避免后续 setting 命中前一个 setting 写入的 prefix cache，
+    # 把吞吐数字虚高。fixed-prompts 模式会关闭这个 offset，用于逐条质量归因。
+    seed_offset = (top_k if top_k > 0 else 0) * 7919 + (101 if args.kv_quant_bits == 4 else 0)
+    return args.seed + seed_offset
+
+
+def build_eval_batch(tokenizer, args, top_k: int):
+    rng = random.Random(_setting_seed(args, top_k))
+    prompts = []
+    metas = []
+    for ctx_len in args.context_lens:
+        for depth in args.depths:
+            for trial in range(args.num_trials):
+                magic = rng.randint(10000, 99999)
+                prompt = build_prompt(tokenizer, ctx_len, depth, magic)
+                prompts.append(prompt)
+                metas.append(dict(ctx_len=ctx_len, depth=depth, trial=trial, magic=magic))
+    return prompts, metas
+
+
+def clear_prefix_cache(llm) -> int:
+    """清空跨 setting 复用的 prefix-cache 索引，返回被清掉元数据的空闲 block 数。
+
+    fixed-prompts 模式需要复用同一批 prompt 做逐条质量归因；如果不清这里，第二个及
+    后续 setting 会复用前一个 setting 留下的完整 block KV，吞吐会虚高，也会让归因日志
+    难以解释。只清 ref_count==0 的空闲 block 元数据，避免误伤正在运行的序列。
+    """
+    block_manager = llm.scheduler.block_manager
+    block_manager.hash_to_block_id.clear()
+    cleared = 0
+    for block in block_manager.blocks:
+        if block.ref_count != 0:
+            continue
+        if block.hash != -1 or block.token_ids:
+            block.hash = -1
+            block.token_ids = []
+            cleared += 1
+    return cleared
+
+
 def run_one_setting(llm, tokenizer, args, top_k: int):
     is_c4 = args.kv_quant_bits == 4
     if is_c4:
@@ -128,21 +173,8 @@ def run_one_setting(llm, tokenizer, args, top_k: int):
     llm.model_runner.config.quest_top_k_blocks = top_k
     llm.model_runner.config.quest_min_seq_len = args.quest_min_seq_len
 
-    # 每个 setting 用不同的 seed，避免后续 setting 命中前一个 setting 写入的 prefix cache，
-    # 把吞吐数字虚高
-    seed_offset = (top_k if top_k > 0 else 0) * 7919 + (101 if is_c4 else 0)
-    rng = random.Random(args.seed + seed_offset)
-
     # 先组装所有 prompt（一次 generate 跑完）
-    prompts = []
-    metas = []
-    for ctx_len in args.context_lens:
-        for depth in args.depths:
-            for trial in range(args.num_trials):
-                magic = rng.randint(10000, 99999)
-                prompt = build_prompt(tokenizer, ctx_len, depth, magic)
-                prompts.append(prompt)
-                metas.append(dict(ctx_len=ctx_len, depth=depth, trial=trial, magic=magic))
+    prompts, metas = build_eval_batch(tokenizer, args, top_k)
 
     sps = [
         SamplingParams(temperature=0.0, ignore_eos=False, max_tokens=args.max_output_len)
@@ -237,6 +269,10 @@ def main():
 
     all_results = []
     for top_k in top_k_list:
+        if args.fixed_prompts:
+            cleared = clear_prefix_cache(llm)
+            if cleared:
+                print(f"[fixed-prompts] cleared prefix cache metadata for {cleared} free blocks", flush=True)
         r = run_one_setting(llm, tokenizer, args, top_k)
         all_results.append(r)
 
