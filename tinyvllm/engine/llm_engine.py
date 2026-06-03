@@ -51,11 +51,14 @@ class LLMEngine:
         self.scheduler.add(seq)           #直接加到waiting
 
     def step(self):     #decode阶段：每次step生成新的token加到seq后面
-        seqs, is_prefill = self.scheduler.schedule()
-        token_ids = self.model_runner.call("run", seqs, is_prefill)     
-        self.scheduler.postprocess(seqs, token_ids)
+        seqs, is_prefill, do_sample = self.scheduler.schedule()
+        token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample)     
+        self.scheduler.postprocess(seqs, token_ids, is_prefill, do_sample)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
-        num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
+        if is_prefill:
+            num_tokens = sum(seq.prefill_chunk_end - seq.prefill_chunk_start for seq in seqs)
+        else:
+            num_tokens = -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
         return outputs, num_tokens      #计算的是每个step的单次增量
 
     def is_finished(self):

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 import pickle
 import os
@@ -308,10 +310,16 @@ class ModelRunner:
         block_tables = None     # 有前缀和的时候，才会初始化该块表
         for seq in seqs:
             seq_len = len(seq)
-            input_ids.extend(seq[seq.num_cached_tokens:])       #从已有的cache开始计数
-            positions.extend(list(range(seq.num_cached_tokens, seq_len)))   
-            seqlen_q = seq_len - seq.num_cached_tokens
-            seqlen_k = seq_len
+            chunk_start = getattr(seq, "prefill_chunk_start", seq.num_cached_tokens)
+            chunk_end = getattr(seq, "prefill_chunk_end", seq_len)
+            if chunk_end == 0 and chunk_start == 0:
+                # warmup_model() calls ModelRunner.run() directly with fresh Sequence
+                # objects, bypassing Scheduler's chunk boundary initialization.
+                chunk_end = seq_len
+            input_ids.extend(seq[chunk_start:chunk_end])       #从已有的cache/chunk进度开始计数
+            positions.extend(list(range(chunk_start, chunk_end)))   
+            seqlen_q = chunk_end - chunk_start
+            seqlen_k = chunk_end
             #前缀和 累计长度，用于区分不同的序列
             cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)
             cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
@@ -320,13 +328,9 @@ class ModelRunner:
             if not seq.block_table:
                 continue
             
-            for i in range(seq.num_cached_blocks, seq.num_blocks):
-                start = seq.block_table[i] * self.block_size
-                if i != seq.num_blocks - 1:
-                    end = start + seq.block_size
-                else:
-                    end = start + seq.last_block_num_tokens
-                slot_mapping.extend(list(range(start, end)))
+            for pos in range(chunk_start, chunk_end):
+                block_id = seq.block_table[pos // self.block_size]
+                slot_mapping.append(block_id * self.block_size + (pos % self.block_size))
         
         if cu_seqlens_k[-1] > cu_seqlens_q[-1]:      # 正常情况下二者是相等的，大于则说明有前缀缓存, 因此取出seq中的block_table, 拼成 blocktables表
             block_tables = self.prepare_block_tables(seqs)
@@ -428,10 +432,13 @@ class ModelRunner:
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
 
-    def run(self, seqs:list[Sequence], is_prefill: bool) -> list[int]:
+    def run(self, seqs:list[Sequence], is_prefill: bool, do_sample: bool = True) -> list[int] | None:
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
-        temperatures = self.prepare_sample(seqs) if self.rank == 0 else None    #只有主进程做采样
         logits = self.run_model(input_ids, positions, is_prefill)
+        if not do_sample:
+            reset_context()
+            return None
+        temperatures = self.prepare_sample(seqs) if self.rank == 0 else None    #只有主进程做采样
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
         reset_context()
         return token_ids

@@ -26,6 +26,10 @@ class Config:
     quest_top_k_blocks: int = -1                        # decode 时每个 query 选择的 block 数，-1 表示关闭 Quest
     quest_min_seq_len: int = 1024                       # 序列长度小于此值时退化为 full attention
 
+    # Chunked prefill：把长 prompt 的 prefill 拆成多个小步，避免单个超长 prefill 长时间占住调度器
+    max_num_prefill_tokens_per_step: int = 0             # 0 表示关闭；>0 时每次 prefill step 最多处理这么多 prompt token
+    chunked_prefill_decode_first: bool = True            # 已有 decode 请求时优先 decode，避免被新长 prompt prefill 阻塞
+
     # KV cache 量化（C4 等）相关配置
     kv_quant_bits: int = 0                              # 0 / 4 / 8，KV cache 量化位宽，0 表示不量化
     kv_quant_group_size: int = 128                      # group-wise 量化的组大小，沿 head_dim 切
@@ -51,6 +55,7 @@ class Config:
         assert self.kv_quant_bits in (0, 4, 8), "kv_quant_bits 仅支持 0/4/8"
         assert self.act_quant_bits in (0, 8), "act_quant_bits 仅支持 0/8"
         assert self.act_quant_skip_first >= 0 and self.act_quant_skip_last >= 0
+        assert self.max_num_prefill_tokens_per_step >= 0
         assert 0.0 <= self.smoothquant_alpha <= 1.0
         if self.smoothquant_scale_path is not None:
             assert os.path.isfile(self.smoothquant_scale_path), \

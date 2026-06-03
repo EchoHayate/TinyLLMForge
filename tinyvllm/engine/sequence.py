@@ -7,6 +7,7 @@ class SequenceStatus(Enum):
     WAITING = auto()            # 1
     RUNNING = auto()            # 2
     FINISHED = auto()           # 3
+    PREFILLING = auto()         # 4，chunked prefill 中：KV 已分配但 prompt 尚未完整算完
 
 class Sequence:
     block_size = 256            #通过block管理token  不同 Seq 的 KV 缓存数据是严格隔离的
@@ -20,6 +21,10 @@ class Sequence:
         self.num_tokens = len(self.token_ids)           # 记录每次生成+prompt的所有token 数量
         self.num_prompt_tokens = len(token_ids)         # 记录prompt的token数量 传入时就确定了
         self.num_cached_tokens = 0                      # 记录prefix cache的 token数量
+        self.num_computed_tokens = 0                    # chunked prefill 已经写入 KV cache 的 prompt token 数
+        self.prefill_chunk_start = 0                    # 当前 prefill chunk 的起始 token 位置（含）
+        self.prefill_chunk_end = 0                      # 当前 prefill chunk 的结束 token 位置（不含）
+        self.prefill_chunk_final = False                # 当前 chunk 是否覆盖 prompt 末尾，并需要采样首个输出 token
         self.block_table = []                           # 记录当前语句用到的 块id
         self.temperature = sampling_params.temperature  # 记录该语句的采样温度
         self.max_tokens = sampling_params.max_tokens    # 记录该语句的最大生成长度
@@ -73,18 +78,29 @@ class Sequence:
     # 由于是多卡，涉及通信发送，需要将sequence进行序列化，这个函数是决定将哪些 Sequence的属性进行序列化传输
     # 增加这个魔术方法后，pickle模块会自动调用该函数，将 Sequence 数据进行序列化
     def __getstate__(self):                             
-         return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table, 
+         return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table,
+                 self.num_computed_tokens, self.prefill_chunk_start, self.prefill_chunk_end,
+                 self.prefill_chunk_final,
                  self.token_ids if self.num_completion_tokens == 0 else self.last_token)
     
     # 由于是多卡，涉及通信接收，需要对序列化的 Sequence 进行解析，该函数和 getstate函数一一对应
     def __setstate__(self, state):
-        # state 是 5 元组：(num_tokens, num_prompt_tokens, num_cached_blocks, block_table,
-        # token_ids 或 last_token)。前 4 个直接复原；最后一项按 num_completion_tokens 分支：
+        # state 是 9 元组：(num_tokens, num_prompt_tokens, num_cached_blocks, block_table,
+        # num_computed_tokens, prefill_chunk_start, prefill_chunk_end, prefill_chunk_final,
+        # token_ids 或 last_token)。前 8 个直接复原；最后一项按 num_completion_tokens 分支：
         #   - 还在 prefill（completion=0）：last item 是完整 token_ids
         #   - 已进入 decode（completion>0）：last item 是 last_token（int）
         # 注意：num_cached_blocks 是 @property，不能直接赋值，反推回 num_cached_tokens。
         self.num_tokens, self.num_prompt_tokens, num_cached_blocks, self.block_table = state[:4]
         self.num_cached_tokens = num_cached_blocks * self.block_size
+        if len(state) >= 9:
+            (self.num_computed_tokens, self.prefill_chunk_start,
+             self.prefill_chunk_end, self.prefill_chunk_final) = state[4:8]
+        else:
+            self.num_computed_tokens = self.num_cached_tokens
+            self.prefill_chunk_start = self.num_cached_tokens
+            self.prefill_chunk_end = self.num_tokens
+            self.prefill_chunk_final = True
         if self.num_completion_tokens == 0:
             self.token_ids = state[-1]
         else:

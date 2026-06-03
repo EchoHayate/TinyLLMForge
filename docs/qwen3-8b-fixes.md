@@ -1504,3 +1504,91 @@ ngram_size=3, max_draft_tokens=4, max_output_len=64, temperature=0.0
 - `tinyvllm/speculative/__init__.py`
 - `tools/profile_ngram_spec.py`
 - `tools/test_ngram_speculative.py`
+
+## 36. Chunked Prefill v0：先做安全拆块，不做 mixed batch（2026-06-03）
+
+### 36.1 问题
+
+当前 scheduler 是 **prefill 优先且一次性 prefill 完整 prompt**：只要 `waiting` 队列里有新请求，`schedule()` 就先把它完整
+prefill 完，再进入 decode。这对长 prompt 很不友好：一个 8k/15k prompt 会把 decode 暂停很久。
+
+完整的 serving 方案应该把 decode token 和 prefill chunk 混在同一个 batch 里，但这会同时牵动 attention context、KV cache、
+CUDA graph 和采样路径。v0 先做保守版本：**仍然每步只跑 pure prefill 或 pure decode，但把 prefill 拆成小 chunk**，把单次
+prefill 对调度器的阻塞时间上限压下来。
+
+### 36.2 实现边界
+
+新增两个配置：
+
+```python
+max_num_prefill_tokens_per_step: int = 0   # 0 = 关闭，保持旧行为
+chunked_prefill_decode_first: bool = True  # 有 running decode 时优先 decode
+```
+
+核心状态拆分：
+
+- `waiting`：还没分配 KV block。
+- `prefilling`：已分配 KV block，但 prompt KV 还没全部算完。
+- `running`：prompt prefill 已完成，可进入 decode。
+
+每条 `Sequence` 新增：
+
+- `num_computed_tokens`：已经真实写入 KV cache 的 prompt token 数。
+- `prefill_chunk_start/end/final`：当前 prefill chunk 的边界，以及是否需要采样首个输出 token。
+
+调度语义：
+
+- 中间 chunk：`is_prefill=True, do_sample=False`，只写 KV，不采样、不 append token。
+- final chunk：`is_prefill=True, do_sample=True`，取 chunk 最后一个位置 logits，采样首个输出 token，随后进入 `running`。
+- decode：保持旧路径。
+
+### 36.3 最关键的安全修复：delayed prefix-cache commit
+
+不能在分配 KV block 时立刻把未来完整 block 发布到 `hash_to_block_id`。否则后续相同 prefix 的请求可能复用到“CPU 元数据已存在、
+GPU KV 还没写入”的 block。
+
+因此 v0 把 `BlockManager.allocate()` 加了 `publish_hashes` 参数：
+
+- 默认 `publish_hashes=True`，旧非 chunked 路径不变。
+- chunked prefill 用 `publish_hashes=False`，只分配 block，不发布 hash。
+- prefix-cache 命中的已计算 block 即使在 `publish_hashes=False` 下也必须恢复 `hash/token_ids`，否则后续块的 hash chain 会断。
+- 每个 chunk postprocess 后调用 `commit_prefill(seq, old_end, new_end)`，只发布已经计算完成的完整 block。
+
+测试覆盖：第一块 chunk 完成后只发布第一块 hash，第二块 hash 必须等第二个 chunk 完成后才出现在 `hash_to_block_id`。
+
+### 36.4 smoke 结果
+
+本地非 GPU 测试：
+
+```text
+chunked prefill tests passed
+ngram speculative tests passed
+eval_needle fixed-prompt tests passed
+```
+
+远端 A100 + Qwen3-0.6B 贪心 smoke：同一长 prompt，默认 prefill vs `max_num_prefill_tokens_per_step=16` 输出 token 完全一致。
+
+```text
+match: True
+chunk_text: " The answer is blue. So, the answer is blue.\nThe answer is blue"
+```
+
+### 36.5 结论与下一步
+
+- v0 已经验证 chunked prefill 的基本正确性：中间 chunk 不会误 append；final chunk 能采样；未计算 block 不会污染 prefix cache；
+  小模型 smoke 与默认 prefill 贪心输出一致。
+- 当前还不是完整 serving 级 chunked prefill：没有 mixed prefill+decode batch，`decode_first=True` 可能让新长 prompt 在已有长 decode
+  期间等待更久。它解决的是“单次 prefill step 太长”的安全拆块问题。
+- 下一步如果继续推进，应做 latency profiler：构造“一个长 prompt 进入时已有多条 running decode”的场景，对比 default、
+  chunked prefill、未来 mixed batch 的 decode step 间隔。
+
+文件留痕：
+
+- `tinyvllm/config.py`
+- `tinyvllm/engine/sequence.py`
+- `tinyvllm/engine/block_manager.py`
+- `tinyvllm/engine/scheduler.py`
+- `tinyvllm/engine/model_runner.py`
+- `tinyvllm/engine/llm_engine.py`
+- `tools/test_chunked_prefill.py`
+- `docs/superpowers/plans/2026-06-03-chunked-prefill-v0.md`

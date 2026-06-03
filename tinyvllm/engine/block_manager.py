@@ -63,7 +63,7 @@ class BlockManager:
         return len(self.free_block_ids) >= seq.num_blocks
 
     # allocate  blocks for the sequences, update the block table and hash table
-    def allocate(self, seq: Sequence):    
+    def allocate(self, seq: Sequence, publish_hashes: bool = True):    
         assert not seq.block_table
         h = -1
         cache_miss = False
@@ -91,11 +91,42 @@ class BlockManager:
                 # 所以需要 _allocate_block回来
                 else:    #曾经用过但已释放的块  保留哈希映射和块内容，让这些块能被再次快速复用
                     block = self._allocate_block(block_id)
+                # chunked prefill 关闭 publish_hashes 只是不发布“未计算的新 block”。
+                # 对 prefix-cache 命中的 block，KV 已经存在，必须恢复 hash/token_ids 元数据，
+                # 否则后续 commit_prefill 计算下一块 hash 时 prefix 链会断。
+                if h != -1:
+                    block.update(h, token_ids)
+                    self.hash_to_block_id[h] = block_id
 
-            if h != -1:      #相同的 token_ids 序列（通过哈希 h 标识）始终对应到同一个 block_id
+            if h != -1 and publish_hashes:      #相同的 token_ids 序列（通过哈希 h 标识）始终对应到同一个 block_id
                 block.update(h, token_ids)   #对这一步的操作不是很明白 为什么要更新
                 self.hash_to_block_id[h] = block_id
             seq.block_table.append(block_id)
+        seq.num_computed_tokens = seq.num_cached_tokens
+
+    def commit_prefill(self, seq: Sequence, old_end: int, new_end: int):
+        """Publish prefix-cache hashes only for blocks whose KV has been computed.
+
+        Chunked prefill may allocate all blocks up front, but future blocks must not
+        be visible through hash_to_block_id until their KV slots have actually been
+        written by a completed prefill chunk.
+        """
+        if new_end <= old_end:
+            return
+        first_block = max(0, old_end // self.block_size)
+        last_full_block = new_end // self.block_size - 1
+        for i in range(first_block, last_full_block + 1):
+            token_ids = seq.block(i)
+            if len(token_ids) != self.block_size:
+                continue
+            block_id = seq.block_table[i]
+            block = self.blocks[block_id]
+            if block.hash != -1:
+                continue
+            prefix = self.blocks[seq.block_table[i - 1]].hash if i > 0 else -1
+            h = self.compute_hash(token_ids, prefix)
+            block.update(h, token_ids)
+            self.hash_to_block_id[h] = block_id
             
     def deallocate(self, seq: Sequence):
         for block_id in reversed(seq.block_table):   #先释放末尾的 “独有块”（引用计数容易降为 0） 再处理可能被共享的 “前缀块”
