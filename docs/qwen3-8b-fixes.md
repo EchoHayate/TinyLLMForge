@@ -1660,3 +1660,76 @@ profiler 内部先跑 batch=2 和 batch=1 warmup，避免 torch.compile/cold-sha
 - 远端结果：`/tmp/chunked_prefill_latency_default.json`
 - 远端结果：`/tmp/chunked_prefill_latency_chunked.json`
 - 远端结果：`/tmp/chunked_prefill_latency_decode_first.json`
+
+## 38. Chunked Prefill 公平调度：每 N 个 chunk 让出一次 decode（2026-06-03）
+
+### 38.1 问题
+
+§37 证明了 v0 的两个极端策略都有明显缺点：
+
+- `prefill-first`：新长 prompt 会连续跑完所有 chunk，已有 decode 被连续阻塞。
+- `decode-first`：已有 decode 很快完成，但新长 prompt 被推迟，总 wall time 变长。
+
+在不做 mixed prefill+decode kernel 的前提下，一个更小的折中是：**允许 prefill 连续跑 N 个 chunk，但达到阈值后，
+如果已有 running decode，就强制让出 1 个 decode batch**。
+
+### 38.2 实现
+
+新增配置：
+
+```python
+chunked_prefill_max_consecutive_chunks: int = 0
+```
+
+语义：
+
+- `0`：关闭，保持 §36 的行为。
+- `>0`：chunked prefill 开启且 `chunked_prefill_decode_first=False` 时生效。
+- Scheduler 维护 `_consecutive_prefill_chunks`：
+  - 每调度一个 prefill chunk 就 `+1`。
+  - 每调度 decode 就清零。
+  - 如果计数达到阈值且 `running` 非空，则本 step 先调度 decode。
+
+测试覆盖：`chunked_prefill_max_consecutive_chunks=2` 时，两个 prefill chunk 后必须让出一个 decode batch，然后再恢复 prefill。
+
+profiler 增加：
+
+```text
+--max-consecutive-prefill-chunks N
+```
+
+### 38.3 远端 smoke：balanced policy
+
+沿用 §37 的 Qwen3-0.6B workload，新增一条：
+
+```text
+mode=chunked
+max_num_prefill_tokens_per_step=128
+chunked_prefill_max_consecutive_chunks=1
+enforce_eager=True
+```
+
+| mode | prefill steps | decode steps | max decode gap | first_output_ms | total_ms |
+|---|---:|---:|---:|---:|---:|
+| default | 2 | 9 | **68.49 ms** | 303.35 ms | **367.66 ms** |
+| chunked prefill-first | 6 | 9 | 170.72 ms | 445.64 ms | 510.67 ms |
+| chunked decode-first | 6 | 21 | 180.16 ms | **256.59 ms** | 867.33 ms |
+| **balanced N=1** | 6 | 12 | 74.50 ms | 443.82 ms | 597.66 ms |
+
+balanced 的 step 序列符合预期：prefill / decode 交替穿插，插入长 prompt 后不再连续 4 个 prefill chunk 独占调度器。
+
+### 38.4 结论
+
+- `N=1` 明显修复了 prefill-first 的 decode gap：从 **170.72 ms 降到 74.50 ms**，接近 default 的 68.49 ms。
+- 代价是 total wall time 比 default 高，也比 prefill-first 高；这是 pure batch scheduler 下“公平性换吞吐”的预期结果。
+- 这条策略比 decode-first 更均衡：不会让长 prompt 一直等到短 decode 全结束，也不会让 prefill chunk 连续霸占调度器。
+- 当前建议：保留默认 `chunked_prefill_max_consecutive_chunks=0`，实验/serving 场景可试 `N=1~2`；真正高性能仍需要 mixed batch。
+
+文件留痕：
+
+- `tinyvllm/config.py`
+- `tinyvllm/engine/scheduler.py`
+- `tools/test_chunked_prefill.py`
+- `tools/profile_chunked_prefill.py`
+- `docs/superpowers/plans/2026-06-03-chunked-prefill-fair-scheduler.md`
+- 远端结果：`/tmp/chunked_prefill_latency_balanced.json`

@@ -70,6 +70,7 @@ def make_config(**overrides):
         kvcache_block_size=4,
         max_num_prefill_tokens_per_step=4,
         chunked_prefill_decode_first=False,
+        chunked_prefill_max_consecutive_chunks=0,
     )
     cfg.update(overrides)
     return SimpleNamespace(**cfg)
@@ -209,12 +210,53 @@ def test_chunked_prefill_restores_reused_cached_block_metadata():
     assert seq.completion_token_ids == [77]
 
 
+def test_max_consecutive_prefill_chunks_yields_to_decode():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=4,
+        chunked_prefill_decode_first=False,
+        chunked_prefill_max_consecutive_chunks=2,
+    ))
+    running = make_seq([90, 91, 92, 93], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.append_token(94)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+    long_prefill = make_seq(range(16), max_tokens=4)
+    scheduler.add(long_prefill)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    assert seqs == [long_prefill]
+    assert is_prefill is True
+    assert do_sample is False
+    scheduler.postprocess(seqs, None, is_prefill, do_sample)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    assert seqs == [long_prefill]
+    assert is_prefill is True
+    assert do_sample is False
+    scheduler.postprocess(seqs, None, is_prefill, do_sample)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    assert seqs == [running]
+    assert is_prefill is False
+    assert do_sample is True
+    scheduler.postprocess(seqs, [123], is_prefill, do_sample)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    assert seqs == [long_prefill]
+    assert is_prefill is True
+    assert do_sample is False
+
+
 def main():
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
     test_decode_first_prioritizes_existing_running_sequence()
     test_chunked_prefill_does_not_publish_future_block_hashes()
     test_chunked_prefill_restores_reused_cached_block_metadata()
+    test_max_consecutive_prefill_chunks_yields_to_decode()
     print("chunked prefill tests passed")
 
 

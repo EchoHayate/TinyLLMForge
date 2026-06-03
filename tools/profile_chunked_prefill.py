@@ -90,6 +90,7 @@ def parse_args():
     p.add_argument("--inject-long-after-decode-steps", type=int, default=2)
     p.add_argument("--max-num-prefill-tokens-per-step", type=int, default=256)
     p.add_argument("--chunked-decode-first", action="store_true", default=False)
+    p.add_argument("--max-consecutive-prefill-chunks", type=int, default=0)
     p.add_argument("--max-model-len", type=int, default=2048)
     p.add_argument("--max-num-batched-tokens", type=int, default=2048)
     p.add_argument("--max-num-seqs", type=int, default=16)
@@ -128,6 +129,7 @@ def run_profile(args) -> dict:
         engine_kwargs.update(
             max_num_prefill_tokens_per_step=args.max_num_prefill_tokens_per_step,
             chunked_prefill_decode_first=args.chunked_decode_first,
+            chunked_prefill_max_consecutive_chunks=args.max_consecutive_prefill_chunks,
         )
 
     llm = LLM(args.model, **engine_kwargs)

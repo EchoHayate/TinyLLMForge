@@ -13,6 +13,8 @@ class Scheduler:
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.max_num_prefill_tokens_per_step = getattr(config, "max_num_prefill_tokens_per_step", 0)
         self.chunked_prefill_decode_first = getattr(config, "chunked_prefill_decode_first", True)
+        self.chunked_prefill_max_consecutive_chunks = getattr(config, "chunked_prefill_max_consecutive_chunks", 0)
+        self._consecutive_prefill_chunks = 0
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()     #未分配 KV 缓存块
@@ -32,10 +34,18 @@ class Scheduler:
     def schedule(self) -> tuple[list[Sequence], bool, bool]:
         if self.chunked_prefill_enabled:
             if self.chunked_prefill_decode_first and self.running:
+                self._consecutive_prefill_chunks = 0
+                return (*self._schedule_decode(), True)
+            if (self.running
+                    and self.chunked_prefill_max_consecutive_chunks > 0
+                    and self._consecutive_prefill_chunks >= self.chunked_prefill_max_consecutive_chunks):
+                self._consecutive_prefill_chunks = 0
                 return (*self._schedule_decode(), True)
             prefill = self._schedule_chunked_prefill()
             if prefill is not None:
+                self._consecutive_prefill_chunks += 1
                 return prefill
+            self._consecutive_prefill_chunks = 0
             return (*self._schedule_decode(), True)
 
         # prefill, 从 waiting 队列中取出 seq   prefill阶段：处理输入 prompt 的所有 token（批量计算，生成初始 KV 缓存）。
