@@ -1373,3 +1373,66 @@ torch=2.4.1+cu121, transformers=5.8.1, flash_attn=2.6.3
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk12.json`
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk12_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk8_16_n5.json`
+
+## 34. Needle prompt 边界归因：分隔符不是免费午餐（2026-06-03）
+
+### 34.1 问题
+
+§33 的固定 prompt hit matrix 显示共同失败主要集中在 `ctx=4096 depth=0.5`。进一步检查 prompt token 边界发现，
+当前 `build_prompt()` 是直接把 needle token 插入 haystack token 中间，可能产生单词粘连：
+
+```text
+... The sun is yellow. HereThe magic number is 76150. Remember it.  we go. ...
+```
+
+这说明 `ctx=4096 depth=0.5` 的共同失败不一定是 Quest 漏块，也可能是 needle eval 构造本身在 token 边界上不自然。
+
+### 34.2 最小 probe：只看 `ctx=4096 depth=0.5`
+
+对同一组 n=5 magic，比较三种 needle 插入格式：
+
+| style | 模板 | baseline | top-k=12 |
+|---|---|---:|---:|
+| original | `The magic number is X. Remember it. ` | 3/5 | 3/5 |
+| space | ` The magic number is X. Remember it. ` | 3/5 | 3/5 |
+| newline | `\n\nThe magic number is X. Remember it.\n\n` | **5/5** | **5/5** |
+
+结论：对 `4096/0.5` 这个失败桶，空行分隔确实能消除 `HereThe` 这类粘连，并把共同失败样本全部修复。
+
+### 34.3 全量 n=5 反证：全局 newline 会伤害长文召回
+
+但把 `--needle-style newline` 扩展到完整 n=5 eval 后，结果明显变差：
+
+| needle style | setting | acc | tok/s |
+|---|---|---:|---:|
+| original | baseline | 94.7% | 19.19 |
+| original | top-k=12 | **96.0%** | 26.80 |
+| newline | baseline | 74.7% | 19.21 |
+| newline | top-k=12 | 74.7% | 26.79 |
+
+newline 失败集中在 `depth=0.0/0.25/0.5`，输出常见模式是复读 filler / question，而不是数字：
+
+```text
+Answer with only the digits, nothing else. Answer with only the digits, nothing else. ...
+There and back again. The grass is green. ...
+```
+
+解释：空行 delimiter 局部解决了中间插入的单词粘连，但全局改变了 prompt 分布；在长重复 haystack 中，
+多余换行反而更容易触发模型复读或忽略 needle。因此不能直接把历史 needle eval 默认改成 newline。
+
+### 34.4 代码改动与当前建议
+
+`tools/eval_needle.py` 增加 `--needle-style {original,newline}`，默认仍是 `original`，用于后续做 prompt 构造消融，
+不影响历史结果可比性。测试覆盖 newline 模式确实会用空行包住 needle。
+
+当前建议：
+
+- 主评测继续使用默认 `original`，保持与 §29~§33 可比。
+- 如果要研究“模型真实召回能力”而不是“当前 needle benchmark 口径”，再单独跑 `--needle-style newline` 或更合理的
+  delimiter 设计；但不能和历史 original 结果混在一张表里。
+- `ctx=4096 depth=0.5` 的共同失败应归因于 **prompt 构造边界 + 模型脆弱性**，不是 Quest 的系统性漏块。
+
+文件留痕：
+
+- `needle_sq_results/needle_boundary_variant_probe.json`
+- `needle_sq_results/needle_sq_layer_adaptive_newline_fixed_prompts_topk12_n5.json`

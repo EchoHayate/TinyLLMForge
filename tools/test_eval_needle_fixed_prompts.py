@@ -92,6 +92,14 @@ def test_default_prompts_keep_topk_seed_offset():
     assert [m["magic"] for m in base_metas] != [m["magic"] for m in sparse_metas]
 
 
+def test_newline_needle_style_delimits_inserted_needle():
+    tokenizer = FakeTokenizer()
+
+    prompt = eval_needle.build_prompt(tokenizer, 128, 0.5, 12345, needle_style="newline")
+
+    assert "\n\nThe magic number is 12345. Remember it.\n\n" in prompt
+
+
 def test_clear_prefix_cache_drops_only_reusable_free_blocks():
     llm = FakeLLM()
 
@@ -109,6 +117,7 @@ def test_clear_prefix_cache_drops_only_reusable_free_blocks():
 def main():
     test_fixed_prompts_reuse_same_magic_across_topk()
     test_default_prompts_keep_topk_seed_offset()
+    test_newline_needle_style_delimits_inserted_needle()
     test_clear_prefix_cache_drops_only_reusable_free_blocks()
     print("eval_needle fixed-prompt tests passed")
 

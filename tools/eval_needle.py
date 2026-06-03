@@ -62,6 +62,8 @@ def parse_args():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--fixed-prompts", action="store_true", default=False,
                    help="所有 top-k setting 复用同一批 prompt/magic，用于质量归因；setting 间会清空 prefix cache")
+    p.add_argument("--needle-style", type=str, default="original", choices=["original", "newline"],
+                   help="needle 插入格式。original 保持历史口径；newline 用空行包住 needle，避免和 haystack 单词粘连")
     p.add_argument("--out-json", type=str, default="needle_results.json")
     # C4 / KV cache 量化（与 quest 不可同时开，互斥逻辑在 setting loop 里处理）
     p.add_argument("--kv-quant-bits", type=int, default=0, choices=[0, 4, 8],
@@ -86,12 +88,20 @@ def parse_args():
     return p.parse_args()
 
 
-def build_prompt(tokenizer, ctx_len_tok: int, depth: float, magic_num: int) -> str:
+def _format_needle(magic_num: int, needle_style: str = "original") -> str:
+    if needle_style == "original":
+        return NEEDLE_TEMPLATE.format(num=magic_num)
+    if needle_style == "newline":
+        return "\n\n" + NEEDLE_TEMPLATE.format(num=magic_num).rstrip() + "\n\n"
+    raise ValueError(f"unknown needle_style={needle_style!r}")
+
+
+def build_prompt(tokenizer, ctx_len_tok: int, depth: float, magic_num: int, needle_style: str = "original") -> str:
     """构造一条 prompt：填充文本中按比例 depth 插入 needle，再加问题。
 
     ctx_len_tok 是目标 prompt token 数（含 needle 和问题）。
     """
-    needle = NEEDLE_TEMPLATE.format(num=magic_num)
+    needle = _format_needle(magic_num, needle_style)
     question = QUESTION
 
     # 估计填充用的句子需要重复多少次：先按字符 → token 的近似比 4:1 给个上限
@@ -134,7 +144,7 @@ def build_eval_batch(tokenizer, args, top_k: int):
         for depth in args.depths:
             for trial in range(args.num_trials):
                 magic = rng.randint(10000, 99999)
-                prompt = build_prompt(tokenizer, ctx_len, depth, magic)
+                prompt = build_prompt(tokenizer, ctx_len, depth, magic, getattr(args, "needle_style", "original"))
                 prompts.append(prompt)
                 metas.append(dict(ctx_len=ctx_len, depth=depth, trial=trial, magic=magic))
     return prompts, metas
