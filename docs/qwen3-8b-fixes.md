@@ -1339,7 +1339,37 @@ torch=2.4.1+cu121, transformers=5.8.1, flash_attn=2.6.3
 - 当前推荐保持不变：
   **W4(g32) + A8(skip last=4) + SQ(layer-adaptive α=0.85~0.90) + KV8(g32) + Quest(top-k=12)**。
 
+### 33.4 top-k=8/16 同 prompt 补跑
+
+为了判断 top-k=12 的优势是不是偶然，又用同一批 n=5 prompt 补跑 `top_k ∈ {8,16}`：
+
+| setting | acc | tok/s | 失败数 | 备注 |
+|---|---:|---:|---:|---|
+| baseline | 94.7% | 19.19 | 4/75 | 对照，来自 §33.3 |
+| top-k=8 | 94.7% | **28.11** | 4/75 | 最快，但新增 `(8192,0.75,t4)` 误答 `222225` |
+| **top-k=12** | **96.0%** | 26.80 | **3/75** | 质量/速度综合最优 |
+| top-k=16 | 94.7% | 25.59 | 4/75 | 更慢，且没有修复 baseline 的 2 个边界失败 |
+
+关键 hit matrix：
+
+| 样本 | baseline | top-k=8 | top-k=12 | top-k=16 |
+|---|---:|---:|---:|---:|
+| `(4096,0.0,t2,15306)` | fail | hit | hit | fail |
+| `(4096,0.5,t2,76150)` | fail | fail | fail | fail |
+| `(4096,0.5,t3,28254)` | fail | fail | fail | fail |
+| `(8192,0.75,t4,22225)` | hit | fail | hit | hit |
+| `(15000,0.0,t0,74694)` | fail | fail | hit | fail |
+| `(15000,0.25,t1,84384)` | hit | hit | fail | hit |
+
+解释：
+
+- `top-k=8` 的速度最高，但开始出现 Quest 独有错误；n=5 下它没有比 baseline 提质，只是提速。
+- `top-k=16` 不是“更大更稳”：它的失败集合几乎回到 baseline，且速度低于 top-k=12。
+- `top-k=12` 恰好避开了 top-k=8 的过稀疏漏召回，也不像 top-k=16 那样回落到 baseline 失败模式；
+  这支持 §31 的“top-k=12 是甜点”结论。
+
 文件留痕：
 
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk12.json`
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk12_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk8_16_n5.json`
