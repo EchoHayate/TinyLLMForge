@@ -1592,3 +1592,71 @@ chunk_text: " The answer is blue. So, the answer is blue.\nThe answer is blue"
 - `tinyvllm/engine/llm_engine.py`
 - `tools/test_chunked_prefill.py`
 - `docs/superpowers/plans/2026-06-03-chunked-prefill-v0.md`
+
+## 37. Chunked Prefill latency profiler：v0 拆块的收益与副作用（2026-06-03）
+
+### 37.1 问题
+
+§36 只验证了 chunked prefill 的正确性，还没回答性能问题：当已有 decode 请求正在跑时，新进来一个长 prompt，
+default prefill、chunked prefill-first、chunked decode-first 分别会怎样影响 decode 间隔和首 token 延迟？
+
+新增 `tools/profile_chunked_prefill.py`，不用改 engine，只手动驱动 `LLM.add_request()` / `LLM.step()` 并记录每一步：
+
+- `kind`: prefill / decode
+- `tokens`: 本 step 实际处理 token 数
+- `dt_ms`: step latency（CUDA sync 后计时）
+- `outputs`: 本 step 完成的请求数
+
+统计输出包括 prefill/decode p50/p95/max、`first_output_ms`、以及相邻 decode step 之间的最大间隔。
+
+### 37.2 测试 workload
+
+远端 A100 + Qwen3-0.6B：
+
+```text
+num_decode_seqs=2
+decode_prompt_tokens=64
+long_prompt_tokens=512
+max_output_len=8
+inject_long_after_decode_steps=2
+max_model_len=1024
+max_num_batched_tokens=1024
+enforce_eager=True
+```
+
+解释：先让 2 条短请求进入 decode，跑 2 个 decode step 后插入一条 512-token 长 prompt，观察长 prefill 对 decode 的阻塞。
+profiler 内部先跑 batch=2 和 batch=1 warmup，避免 torch.compile/cold-shape 把单步延迟污染到几十秒。
+
+### 37.3 结果
+
+| mode | prefill steps | prefill p95 | decode p50 | max decode gap | first_output_ms | total_ms |
+|---|---:|---:|---:|---:|---:|---:|
+| default | 2 | 37.08 ms | 32.81 ms | **68.49 ms** | 303.35 ms | **367.66 ms** |
+| chunked prefill-first (`chunk=128`) | 6 | 38.20 ms | 33.73 ms | 170.72 ms | 445.64 ms | 510.67 ms |
+| chunked decode-first (`chunk=128`) | 6 | 38.06 ms | 30.58 ms | 180.16 ms | **256.59 ms** | 867.33 ms |
+
+几个现象：
+
+- 对 0.6B + 512-token prompt，这里的 default 一次性 prefill 本身只有 ~35 ms；把它拆成 4 个 128-token chunk 后，单个 chunk
+  并没有明显更快，反而多了 step overhead。
+- prefill-first chunked 会连续跑 4 个长 prompt chunk，再恢复 decode，所以最大 decode gap 从 68 ms 增到 171 ms；这是 v0
+  “只拆块但不 mixed batch”的直接副作用。
+- decode-first 会优先把已有 running decode 请求跑完，第一批短请求更快完成（first output 256 ms），但长 prompt 被推迟，
+  总 wall time 变长到 867 ms；这说明 decode-first 是偏向在线 decode latency 的策略，不是整体吞吐最优。
+
+### 37.4 结论
+
+- 在当前 0.6B 小模型 / 512-token prompt 上，**chunked prefill v0 不是吞吐优化**；它更像是一个安全机制和后续 mixed batch 的地基。
+- 只做 pure prefill/pure decode 的 v0 无法真正解决“长 prefill 与 decode 公平混排”：prefill-first 会连续 chunk 阻塞 decode，
+  decode-first 会让新长 prompt 等已有 decode 完成。
+- 下一步真正值得做的是 **mixed prefill+decode batch** 或更轻量的 scheduler policy：每跑 N 个 prefill chunk 插入一次 decode，
+  而不是让 prefill chunk 或 decode 任一方独占调度器。
+
+文件留痕：
+
+- `tools/profile_chunked_prefill.py`
+- `tools/test_profile_chunked_prefill.py`
+- `docs/superpowers/plans/2026-06-03-chunked-prefill-latency-profiler.md`
+- 远端结果：`/tmp/chunked_prefill_latency_default.json`
+- 远端结果：`/tmp/chunked_prefill_latency_chunked.json`
+- 远端结果：`/tmp/chunked_prefill_latency_decode_first.json`
