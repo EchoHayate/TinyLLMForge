@@ -1283,3 +1283,63 @@ eval_needle fixed-prompt tests passed
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_topk.json`（未清 cache，baseline 先跑）
 - `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_topk12_first.json`（未清 cache，top-k=12 先跑）
 - `tools/test_eval_needle_fixed_prompts.py`
+
+## 33. cache-cleared fixed-prompt Quest 归因复测（2026-06-03）
+
+### 33.1 环境修复
+
+远端实际可用的评测环境是：
+
+```text
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+torch=2.4.1+cu121, transformers=5.8.1, flash_attn=2.6.3
+```
+
+误用 `/data00/home/sitian/miniconda3/envs/py311/bin/python` 时会先缺 `Qwen3Config`，升级 transformers 后又缺
+`flash_attn`；而该 env 的 PyTorch 是 cu126，本机 nvcc 是 11.7，源码编译 flash-attn 会 CUDA mismatch。
+后续长评测统一使用 `tllm/env/bin/python`。
+
+### 33.2 n=3 cache-cleared fixed-prompt：baseline vs top-k=12
+
+命令要点：`--top-k-blocks-list -1 12 --fixed-prompts --num-trials 3`，且每个 setting 前清 prefix cache。
+
+| setting | acc | tok/s | 失败样本 |
+|---|---:|---:|---|
+| baseline | 93.3% | 18.24 | `(4096,0.0,t2)`, `(4096,0.5,t0)`, `(4096,0.5,t1)` |
+| top-k=12 | 95.6% | 24.81 | `(4096,0.5,t0)`, `(4096,0.5,t1)` |
+
+逐样本 diff：`top-k=12` 没有新增失败，反而修复了 baseline 在 `(4096,0.0,t2, magic=15306)` 的失败。
+这说明 §31 中 top-k=12 的甜点不是 prefix-cache 假象；清 cache 后速度仍有 **+36.0%**（24.81 vs 18.24 tok/s）。
+
+### 33.3 n=5 稳定复测
+
+继续把 trial 从 3 提到 5（总样本 75 条）：
+
+| setting | acc | tok/s | 失败数 |
+|---|---:|---:|---:|
+| baseline | 94.7% | 19.19 | 4/75 |
+| top-k=12 | 96.0% | 26.80 | 3/75 |
+
+失败样本：
+
+| 样本 | baseline | top-k=12 | 现象 |
+|---|---:|---:|---|
+| `(4096,0.0,t2,15306)` | fail | hit | top-k=12 修复 |
+| `(4096,0.5,t2,76150)` | fail | fail | 共同失败 |
+| `(4096,0.5,t3,28254)` | fail | fail | 共同失败 |
+| `(15000,0.0,t0,74694)` | fail | hit | top-k=12 修复 |
+| `(15000,0.25,t1,84384)` | hit | fail | top-k=12 新增失败，输出截断成 `84` |
+
+结论：
+
+- `top-k=12` 在固定 prompt、清 cache 的公平口径下仍然比 baseline 快，且 n=5 质量没有下降：
+  **96.0% / 26.80 tok/s** vs baseline **94.7% / 19.19 tok/s**。
+- Quest 的主要风险不是“系统性漏 needle block”，因为 75 条里只新增 1 条 Quest 独有失败；更多失败来自
+  `ctx=4096 depth=0.5` 这类模型/提示边界本身不稳的样本。
+- 当前推荐保持不变：
+  **W4(g32) + A8(skip last=4) + SQ(layer-adaptive α=0.85~0.90) + KV8(g32) + Quest(top-k=12)**。
+
+文件留痕：
+
+- `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk12.json`
+- `needle_sq_results/needle_sq_layer_adaptive_fixed_prompts_cacheclear_topk12_n5.json`
