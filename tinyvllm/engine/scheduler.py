@@ -14,6 +14,7 @@ class Scheduler:
         self.max_num_prefill_tokens_per_step = getattr(config, "max_num_prefill_tokens_per_step", 0)
         self.chunked_prefill_decode_first = getattr(config, "chunked_prefill_decode_first", True)
         self.chunked_prefill_max_consecutive_chunks = getattr(config, "chunked_prefill_max_consecutive_chunks", 0)
+        self.chunked_prefill_mixed_batch = getattr(config, "chunked_prefill_mixed_batch", False)
         self._consecutive_prefill_chunks = 0
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
@@ -41,6 +42,14 @@ class Scheduler:
                     and self._consecutive_prefill_chunks >= self.chunked_prefill_max_consecutive_chunks):
                 self._consecutive_prefill_chunks = 0
                 return (*self._schedule_decode(), True)
+            if self.chunked_prefill_mixed_batch and self.running:
+                mixed = self._schedule_mixed_prefill_decode()
+                if mixed is not None:
+                    if len(mixed) == 4:
+                        self._consecutive_prefill_chunks = 0
+                    else:
+                        self._consecutive_prefill_chunks += 1
+                    return mixed
             prefill = self._schedule_chunked_prefill()
             if prefill is not None:
                 self._consecutive_prefill_chunks += 1
@@ -122,13 +131,49 @@ class Scheduler:
         seq.prefill_chunk_final = (end == len(seq))
         return [seq], True, seq.prefill_chunk_final
 
+    def _schedule_mixed_prefill_decode(self) -> tuple[list[Sequence], bool, bool, str] | None:
+        prefill = self._schedule_chunked_prefill()
+        if prefill is None:
+            return None
+        prefill_seqs, is_prefill, prefill_do_sample = prefill
+        assert is_prefill
+        decode_seqs = []
+        while self.running and len(prefill_seqs) + len(decode_seqs) < self.max_num_seqs:
+            seq = self.running.popleft()
+            while not self.block_manager.can_append(seq):
+                if self.running:
+                    self.preempt(self.running.pop())
+                else:
+                    self.preempt(seq)
+                    seq = None
+                    break
+            if seq is None:
+                continue
+            self.block_manager.may_append(seq)
+            decode_seqs.append(seq)
+
+        if not decode_seqs:
+            return prefill
+
+        for seq in prefill_seqs:
+            seq.step_is_decode = False
+            seq.step_do_sample = prefill_do_sample
+        for seq in decode_seqs:
+            seq.step_is_decode = True
+            seq.step_do_sample = True
+        return prefill_seqs + decode_seqs, True, True, "mixed"
+
     def preempt(self, seq: Sequence):       #将正在running队列中的seq给“踢”出去 
         seq.status = SequenceStatus.WAITING
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int] | None,
-                    is_prefill: bool = False, do_sample: bool = True):
+                    is_prefill: bool = False, do_sample: bool = True,
+                    batch_kind: str | None = None):
+        if batch_kind == "mixed":
+            self._postprocess_mixed(seqs, token_ids)
+            return
         if is_prefill and self.chunked_prefill_enabled:
             self._postprocess_chunked_prefill(seqs, token_ids, do_sample)
             return
@@ -162,3 +207,41 @@ class Scheduler:
             else:
                 seq.status = SequenceStatus.RUNNING
                 self.running.append(seq)
+
+    def _postprocess_mixed(self, seqs: list[Sequence], token_ids: list[int] | None):
+        token_iter = iter(token_ids or [])
+        for seq in seqs:
+            if getattr(seq, "step_is_decode", False):
+                token_id = next(token_iter)
+                seq.append_token(token_id)
+                if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
+                    seq.status = SequenceStatus.FINISHED
+                    self.block_manager.deallocate(seq)
+                else:
+                    seq.status = SequenceStatus.RUNNING
+                    self.running.append(seq)
+                seq.step_is_decode = False
+                seq.step_do_sample = True
+                continue
+
+            old_end = seq.num_computed_tokens
+            new_end = max(seq.num_computed_tokens, seq.prefill_chunk_end)
+            self.block_manager.commit_prefill(seq, old_end, new_end)
+            seq.num_computed_tokens = new_end
+            if not getattr(seq, "step_do_sample", True):
+                # mixed varlen prefill still produces one logits row per sequence;
+                # discard the intermediate prefill chunk's sampled token.
+                next(token_iter, None)
+                seq.status = SequenceStatus.PREFILLING
+                self.prefilling.append(seq)
+            else:
+                token_id = next(token_iter)
+                seq.append_token(token_id)
+                if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
+                    seq.status = SequenceStatus.FINISHED
+                    self.block_manager.deallocate(seq)
+                else:
+                    seq.status = SequenceStatus.RUNNING
+                    self.running.append(seq)
+            seq.step_is_decode = False
+            seq.step_do_sample = True

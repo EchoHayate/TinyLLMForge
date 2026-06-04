@@ -32,6 +32,7 @@ class LLMEngine:
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast = True)
         config.eos = self.tokenizer.eos_token_id
         self.scheduler = Scheduler(config)
+        self.last_batch_kind = None
         atexit.register(self.exit)
         
     def exit(self):
@@ -51,14 +52,27 @@ class LLMEngine:
         self.scheduler.add(seq)           #直接加到waiting
 
     def step(self):     #decode阶段：每次step生成新的token加到seq后面
-        seqs, is_prefill, do_sample = self.scheduler.schedule()
-        token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample)     
-        self.scheduler.postprocess(seqs, token_ids, is_prefill, do_sample)
-        outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
-        if is_prefill:
+        scheduled = self.scheduler.schedule()
+        if len(scheduled) == 4:
+            seqs, is_prefill, do_sample, batch_kind = scheduled
+        else:
+            seqs, is_prefill, do_sample = scheduled
+            batch_kind = None
+        self.last_batch_kind = batch_kind
+        token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample, batch_kind)     
+        if batch_kind == "mixed":
+            prefill_tokens = sum(
+                seq.prefill_chunk_end - seq.prefill_chunk_start
+                for seq in seqs if not getattr(seq, "step_is_decode", False)
+            )
+            decode_tokens = sum(1 for seq in seqs if getattr(seq, "step_is_decode", False))
+            num_tokens = prefill_tokens + decode_tokens
+        elif is_prefill:
             num_tokens = sum(seq.prefill_chunk_end - seq.prefill_chunk_start for seq in seqs)
         else:
             num_tokens = -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
+        self.scheduler.postprocess(seqs, token_ids, is_prefill, do_sample, batch_kind)
+        outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
         return outputs, num_tokens      #计算的是每个step的单次增量
 
     def is_finished(self):

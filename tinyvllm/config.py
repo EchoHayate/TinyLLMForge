@@ -30,6 +30,7 @@ class Config:
     max_num_prefill_tokens_per_step: int = 0             # 0 表示关闭；>0 时每次 prefill step 最多处理这么多 prompt token
     chunked_prefill_decode_first: bool = True            # 已有 decode 请求时优先 decode，避免被新长 prompt prefill 阻塞
     chunked_prefill_max_consecutive_chunks: int = 0       # >0 时 prefill 连续 N 个 chunk 后若有 running decode，则让出 1 次 decode
+    chunked_prefill_mixed_batch: bool = False             # True 时允许一个 prefill chunk 和 running decode 走同一次 varlen prefill forward
 
     # KV cache 量化（C4 等）相关配置
     kv_quant_bits: int = 0                              # 0 / 4 / 8，KV cache 量化位宽，0 表示不量化

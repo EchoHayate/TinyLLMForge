@@ -344,6 +344,57 @@ class ModelRunner:
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
         return input_ids, positions
 
+    def prepare_mixed(self, seqs: list[Sequence]):
+        """Prepare a mixed chunked-prefill + decode batch as varlen prefill.
+
+        Decode rows are represented as query length 1, so they can share the
+        same FlashAttention varlen prefill path with prefill chunks.
+        """
+        input_ids = []
+        positions = []
+        cu_seqlens_q = [0]
+        cu_seqlens_k = [0]
+        max_seqlen_q = 0
+        max_seqlen_k = 0
+        slot_mapping = []
+        block_tables = None
+        for seq in seqs:
+            if getattr(seq, "step_is_decode", False):
+                input_ids.append(seq.last_token)
+                positions.append(len(seq))
+                seqlen_q = 1
+                seqlen_k = len(seq)
+                slot_mapping.append(seq.block_table[-1] * seq.block_size + seq.last_block_num_tokens - 1)
+            else:
+                seq_len = len(seq)
+                chunk_start = getattr(seq, "prefill_chunk_start", seq.num_cached_tokens)
+                chunk_end = getattr(seq, "prefill_chunk_end", seq_len)
+                if chunk_end == 0 and chunk_start == 0:
+                    chunk_end = seq_len
+                input_ids.extend(seq[chunk_start:chunk_end])
+                positions.extend(list(range(chunk_start, chunk_end)))
+                seqlen_q = chunk_end - chunk_start
+                seqlen_k = chunk_end
+                for pos in range(chunk_start, chunk_end):
+                    block_id = seq.block_table[pos // self.block_size]
+                    slot_mapping.append(block_id * self.block_size + (pos % self.block_size))
+
+            cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)
+            cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
+            max_seqlen_q = max(max_seqlen_q, seqlen_q)
+            max_seqlen_k = max(max_seqlen_k, seqlen_k)
+
+        if cu_seqlens_k[-1] > cu_seqlens_q[-1]:
+            block_tables = self.prepare_block_tables(seqs)
+
+        input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
+        positions = self._list_to_cuda(positions, "positions", torch.int64)
+        cu_seqlens_q = self._list_to_cuda(cu_seqlens_q, "cu_seqlens_q", torch.int32)
+        cu_seqlens_k = self._list_to_cuda(cu_seqlens_k, "cu_seqlens_k", torch.int32)
+        slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
+        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
+        return input_ids, positions
+
 
 
     # decode阶段单token输出
@@ -432,8 +483,12 @@ class ModelRunner:
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
 
-    def run(self, seqs:list[Sequence], is_prefill: bool, do_sample: bool = True) -> list[int] | None:
-        input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+    def run(self, seqs:list[Sequence], is_prefill: bool, do_sample: bool = True,
+            batch_kind: str | None = None) -> list[int] | None:
+        if batch_kind == "mixed":
+            input_ids, positions = self.prepare_mixed(seqs)
+        else:
+            input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
         logits = self.run_model(input_ids, positions, is_prefill)
         if not do_sample:
             reset_context()

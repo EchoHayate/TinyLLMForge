@@ -1733,3 +1733,98 @@ balanced 的 step 序列符合预期：prefill / decode 交替穿插，插入长
 - `tools/profile_chunked_prefill.py`
 - `docs/superpowers/plans/2026-06-03-chunked-prefill-fair-scheduler.md`
 - 远端结果：`/tmp/chunked_prefill_latency_balanced.json`
+
+## 39. Mixed Prefill+Decode v0：复用 varlen prefill 路径的保守 mixed batch（2026-06-03）
+
+### 39.1 问题
+
+§38 的 fair scheduler 仍是 pure batch：一个 step 不是 prefill chunk，就是 decode batch。它能把最大 decode gap 从
+170.72 ms 拉回到 74.50 ms，但代价是 total wall time 变长，因为 prefill 和 decode 仍然互相让路，不能同一步推进。
+
+下一步尝试一个保守 mixed v0：**不写新 kernel，只把 decode seq 包装成 query length = 1 的 varlen prefill row，
+和一个 prefill chunk 放进同一次 prefill forward**。
+
+### 39.2 实现
+
+新增配置：
+
+```python
+chunked_prefill_mixed_batch: bool = False
+```
+
+启用条件：
+
+- `max_num_prefill_tokens_per_step > 0`
+- `chunked_prefill_decode_first=False`
+- `chunked_prefill_mixed_batch=True`
+- 当前存在 running decode，且可以调度到一个 prefill chunk
+
+核心路径：
+
+- Scheduler 为 mixed batch 中每条 seq 打临时标记：
+  - `step_is_decode=True`：这条 seq 本 step 是 decode token。
+  - `step_is_decode=False`：这条 seq 本 step 是 prefill chunk。
+  - `step_do_sample=False`：中间 prefill chunk 的 logits 会被丢弃，不 append token。
+- `ModelRunner.prepare_mixed()` 复用 prefill varlen attention：
+  - prefill row 使用 `[prefill_chunk_start, prefill_chunk_end)`。
+  - decode row 使用 `input_id=seq.last_token`、`position=len(seq)`、`seqlen_q=1`、`seqlen_k=len(seq)`。
+  - 只要存在 decode row，就会带 `block_tables`，让 prefill attention 从 KV cache 读完整上下文。
+- `Scheduler._postprocess_mixed()` 按 seq role 分流：
+  - 中间 prefill chunk：commit 已计算完整 block，丢弃 sampled token，回 `prefilling`。
+  - final prefill chunk：commit 后 append sampled token，进入 `running` 或结束。
+  - decode seq：append sampled token，进入 `running` 或结束。
+
+### 39.3 本地验证
+
+```text
+python3 tools/test_chunked_prefill.py
+chunked prefill tests passed
+
+python3 tools/test_profile_chunked_prefill.py
+chunked prefill profiler tests passed
+
+python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine.py tinyvllm/engine/scheduler.py tinyvllm/engine/sequence.py tinyvllm/config.py
+python3 -m py_compile tools/profile_chunked_prefill.py
+```
+
+测试新增覆盖：
+
+- mixed scheduler 必须同时返回 prefill chunk 和 running decode，batch kind 为 `mixed`。
+- mixed intermediate prefill chunk 只 commit KV，不 append token；decode seq 同步 append token。
+- mixed final prefill chunk 与多条 decode row 按 `seqs` 顺序消费 sampled token。
+- mixed fallback 成普通 prefill 时仍计入 `chunked_prefill_max_consecutive_chunks`，避免让路策略失效。
+- TP worker pickle/unpickle 后保留 `step_is_decode` / `step_do_sample`。
+- profiler summary 把 `mixed` 计入 decode progress，用于更合理地计算 decode gap。
+
+### 39.4 下一步远端 smoke 命令
+
+```bash
+python tools/profile_chunked_prefill.py \
+  --model <Qwen3-0.6B> \
+  --mode mixed \
+  --max-num-prefill-tokens-per-step 128 \
+  --max-model-len 2048 \
+  --max-num-batched-tokens 2048 \
+  --max-num-seqs 16 \
+  --gpu-memory-utilization 0.5 \
+  --enforce-eager \
+  --out-json /tmp/chunked_prefill_latency_mixed.json
+```
+
+### 39.5 当前边界
+
+- v0 只验证调度和数据准备链路；尚未远端 GPU smoke。
+- mixed row 走 prefill varlen path，暂不叠加 Quest/C4 评估。
+- 中间 prefill chunk 仍会产生一个 logits row 并采样一次；postprocess 会丢弃它。后续若要极致优化，可改 LMHead/采样器只返回需要采样的 row。
+
+文件留痕：
+
+- `tinyvllm/config.py`
+- `tinyvllm/engine/sequence.py`
+- `tinyvllm/engine/scheduler.py`
+- `tinyvllm/engine/model_runner.py`
+- `tinyvllm/engine/llm_engine.py`
+- `tools/test_chunked_prefill.py`
+- `tools/profile_chunked_prefill.py`
+- `tools/test_profile_chunked_prefill.py`
+- `docs/superpowers/plans/2026-06-03-mixed-prefill-decode-v0.md`

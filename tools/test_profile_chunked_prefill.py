@@ -44,9 +44,27 @@ def test_summarize_steps_splits_prefill_decode_and_decode_gap():
     assert summary["first_output_ms"] == 21.0
 
 
+def test_summarize_steps_counts_mixed_as_decode_progress_for_gap():
+    records = [
+        {"step": 0, "kind": "decode", "tokens": 2, "dt_ms": 2.0, "outputs": 0},
+        {"step": 1, "kind": "prefill", "tokens": 8, "dt_ms": 10.0, "outputs": 0},
+        {"step": 2, "kind": "mixed", "tokens": 9, "dt_ms": 11.0, "outputs": 1},
+        {"step": 3, "kind": "decode", "tokens": 2, "dt_ms": 3.0, "outputs": 0},
+    ]
+
+    summary = summarize_steps(records)
+
+    assert summary["mixed"]["steps"] == 1
+    assert summary["mixed"]["tokens"] == 9
+    assert summary["decode_gap"]["max_steps_between_decode"] == 2
+    assert summary["decode_gap"]["max_ms_between_decode"] == 21.0
+    assert summary["first_output_step"] == 2
+
+
 def main():
     test_percentile_uses_nearest_rank_without_interpolation()
     test_summarize_steps_splits_prefill_decode_and_decode_gap()
+    test_summarize_steps_counts_mixed_as_decode_progress_for_gap()
     print("chunked prefill profiler tests passed")
 
 

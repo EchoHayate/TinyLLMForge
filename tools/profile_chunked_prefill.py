@@ -44,7 +44,7 @@ def _kind_summary(records: list[dict], kind: str) -> dict[str, float | int]:
 
 
 def summarize_steps(records: list[dict]) -> dict:
-    decode_indices = [i for i, r in enumerate(records) if r["kind"] == "decode"]
+    decode_indices = [i for i, r in enumerate(records) if r["kind"] in ("decode", "mixed")]
     max_gap_steps = 0
     max_gap_ms = 0.0
     prev = None
@@ -69,6 +69,7 @@ def summarize_steps(records: list[dict]) -> dict:
         "num_steps": len(records),
         "total_ms": sum(float(r["dt_ms"]) for r in records),
         "prefill": _kind_summary(records, "prefill"),
+        "mixed": _kind_summary(records, "mixed"),
         "decode": _kind_summary(records, "decode"),
         "decode_gap": {
             "max_steps_between_decode": max_gap_steps,
@@ -82,7 +83,7 @@ def summarize_steps(records: list[dict]) -> dict:
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=str, required=True)
-    p.add_argument("--mode", choices=["default", "chunked"], default="default")
+    p.add_argument("--mode", choices=["default", "chunked", "mixed"], default="default")
     p.add_argument("--num-decode-seqs", type=int, default=4)
     p.add_argument("--decode-prompt-tokens", type=int, default=64)
     p.add_argument("--long-prompt-tokens", type=int, default=1024)
@@ -125,11 +126,12 @@ def run_profile(args) -> dict:
         max_num_seqs=args.max_num_seqs,
         gpu_memory_utilization=args.gpu_memory_utilization,
     )
-    if args.mode == "chunked":
+    if args.mode in ("chunked", "mixed"):
         engine_kwargs.update(
             max_num_prefill_tokens_per_step=args.max_num_prefill_tokens_per_step,
-            chunked_prefill_decode_first=args.chunked_decode_first,
+            chunked_prefill_decode_first=False if args.mode == "mixed" else args.chunked_decode_first,
             chunked_prefill_max_consecutive_chunks=args.max_consecutive_prefill_chunks,
+            chunked_prefill_mixed_batch=(args.mode == "mixed"),
         )
 
     llm = LLM(args.model, **engine_kwargs)
@@ -164,8 +166,8 @@ def run_profile(args) -> dict:
         cuda_sync_if_available()
         dt_ms = (time.perf_counter() - t0) * 1000.0
 
-        kind = "prefill" if num_tokens > 0 else "decode"
-        if kind == "decode":
+        kind = llm.last_batch_kind if getattr(llm, "last_batch_kind", None) == "mixed" else ("prefill" if num_tokens > 0 else "decode")
+        if kind in ("decode", "mixed"):
             decode_steps_seen += 1
         for seq_id, token_ids in out:
             outputs[seq_id] = token_ids
