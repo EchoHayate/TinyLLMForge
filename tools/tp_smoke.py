@@ -23,6 +23,8 @@
         --model /path/to/Qwen3-0.6B --tp-size 2 --filter c4_only
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -133,6 +135,19 @@ def build_inputs(num_seqs: int, max_input_len: int, max_output_len: int,
     return prompts, sps
 
 
+def smoothquant_extra_cfg_for_config(name: str, smoothquant_scale_path: str | None):
+    """Return extra LLM kwargs for SmoothQuant smoke configs.
+
+    w4a8_sq_* 的名字必须对应真实 SQ scale 注入；否则会静默退化成普通 W4A8，
+    让质量对比结果失真。
+    """
+    if not name.startswith("w4a8_sq"):
+        return {}
+    if not smoothquant_scale_path:
+        raise ValueError(f"{name} requires --smoothquant-scale-path")
+    return {"smoothquant_scale_path": smoothquant_scale_path}
+
+
 def run_single(args):
     """子进程：跑一条 config，结果写到 --result-file。"""
     import torch
@@ -158,10 +173,7 @@ def run_single(args):
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
-        # 仅 SmoothQuant 路径需要 scale 文件
-        extra_cfg = {}
-        if name.startswith("w4a8_sq") and args.smoothquant_scale_path:
-            extra_cfg["smoothquant_scale_path"] = args.smoothquant_scale_path
+        extra_cfg = smoothquant_extra_cfg_for_config(name, args.smoothquant_scale_path)
         llm = LLM(
             args.model,
             tensor_parallel_size=args.tp_size,

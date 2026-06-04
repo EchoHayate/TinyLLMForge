@@ -401,6 +401,27 @@ def test_calibrate_hook_pipeline_dryrun():
     _ok("end-to-end: hook → aggregate → inject → forward matches fp reference")
 
 
+def test_tp_smoke_requires_scale_path_for_sq_configs():
+    """w4a8_sq_* 配置名必须真的加载 SQ scale，不能静默退化成普通 W4A8。"""
+    print("[test_tp_smoke_requires_scale_path_for_sq_configs]", flush=True)
+    tp_smoke = _load_module("tp_smoke_under_test",
+                            os.path.join(_REPO_ROOT, "tools/tp_smoke.py"))
+
+    try:
+        tp_smoke.smoothquant_extra_cfg_for_config("w4a8_sq_g32", None)
+    except ValueError as e:
+        assert "--smoothquant-scale-path" in str(e), str(e)
+        _ok(f"missing SQ scale path rejected: {e}")
+    else:
+        raise AssertionError("expected ValueError for w4a8_sq config without scale path")
+
+    assert tp_smoke.smoothquant_extra_cfg_for_config("w4a8_g32", None) == {}
+    assert tp_smoke.smoothquant_extra_cfg_for_config("w4a8_sq_g32", "/tmp/sq.pt") == {
+        "smoothquant_scale_path": "/tmp/sq.pt",
+    }
+    _ok("tp_smoke SQ config helper returns expected extra config")
+
+
 def main():
     print("=" * 60)
     print("SmoothQuant CPU unit tests")
@@ -413,6 +434,7 @@ def main():
     test_buffer_survives_finalize()
     test_sq_suppresses_outlier_a8_error()
     test_calibrate_hook_pipeline_dryrun()
+    test_tp_smoke_requires_scale_path_for_sq_configs()
     print()
     print("ALL PASS")
 
