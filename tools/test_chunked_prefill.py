@@ -138,6 +138,34 @@ def test_final_chunk_samples_once_and_moves_to_running():
     assert list(scheduler.prefilling) == []
 
 
+def test_chunked_prefill_batches_multiple_short_final_prompts():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=4,
+        max_num_batched_tokens=16,
+        max_num_prefill_tokens_per_step=4,
+    ))
+    seq_a = make_seq([1, 2, 3, 4])
+    seq_b = make_seq([5, 6, 7, 8])
+    scheduler.add(seq_a)
+    scheduler.add(seq_b)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [seq_a, seq_b]
+    assert is_prefill is True
+    assert do_sample is True
+    assert seq_a.prefill_chunk_start == 0
+    assert seq_a.prefill_chunk_end == 4
+    assert seq_b.prefill_chunk_start == 0
+    assert seq_b.prefill_chunk_end == 4
+    scheduler.postprocess(seqs, [91, 92], is_prefill, do_sample)
+
+    assert seq_a.completion_token_ids == [91]
+    assert seq_b.completion_token_ids == [92]
+    assert list(scheduler.running) == [seq_a, seq_b]
+
+
 def test_decode_first_prioritizes_existing_running_sequence():
     reset_sequence_state()
     scheduler = Scheduler(make_config(
@@ -282,6 +310,36 @@ def test_mixed_prefill_decode_schedules_prefill_chunk_with_decode():
     assert list(scheduler.running) == []
 
 
+def test_mixed_short_prefill_batching_reserves_slot_for_decode():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=4,
+        max_num_batched_tokens=32,
+        max_num_prefill_tokens_per_step=4,
+        chunked_prefill_decode_first=False,
+        chunked_prefill_mixed_batch=True,
+    ))
+    running = make_seq([90, 91, 92, 93], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.append_token(94)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+    short_prompts = [make_seq([i, i + 1, i + 2, i + 3], max_tokens=4) for i in range(0, 16, 4)]
+    for seq in short_prompts:
+        scheduler.add(seq)
+
+    seqs, is_prefill, do_sample, batch_kind = scheduler.schedule()
+
+    assert is_prefill is True
+    assert do_sample is True
+    assert batch_kind == "mixed"
+    assert running in seqs
+    assert seqs[-1] == running
+    assert len([seq for seq in seqs if not seq.step_is_decode]) == 3
+    assert list(scheduler.waiting) == [short_prompts[-1]]
+
+
 def test_mixed_postprocess_commits_prefill_and_appends_decode_only_for_intermediate_chunk():
     reset_sequence_state()
     scheduler = Scheduler(make_config(
@@ -399,11 +457,13 @@ def test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers():
 def main():
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
+    test_chunked_prefill_batches_multiple_short_final_prompts()
     test_decode_first_prioritizes_existing_running_sequence()
     test_chunked_prefill_does_not_publish_future_block_hashes()
     test_chunked_prefill_restores_reused_cached_block_metadata()
     test_max_consecutive_prefill_chunks_yields_to_decode()
     test_mixed_prefill_decode_schedules_prefill_chunk_with_decode()
+    test_mixed_short_prefill_batching_reserves_slot_for_decode()
     test_mixed_postprocess_commits_prefill_and_appends_decode_only_for_intermediate_chunk()
     test_mixed_final_prefill_chunk_and_decode_consume_tokens_in_sequence_order()
     test_mixed_prefill_fallback_counts_toward_consecutive_prefill_limit()

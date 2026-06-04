@@ -102,20 +102,51 @@ class Scheduler:
         self.running.extendleft(reversed(scheduled_seqs))       #当前step结束 但未到达终止条件 所以需要在返回running队列
         return scheduled_seqs, False
 
-    def _schedule_chunked_prefill(self) -> tuple[list[Sequence], bool, bool] | None:
-        seq = None
+    def _schedule_chunked_prefill(self, max_prefill_seqs: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
+        max_prefill_seqs = self.max_num_seqs if max_prefill_seqs is None else max_prefill_seqs
         if self.prefilling:
             seq = self.prefilling.popleft()
-        elif self.waiting:
+            return self._schedule_one_prefill_chunk(seq)
+
+        if not self.waiting:
+            return None
+
+        candidate = self.waiting[0]
+        if not self.block_manager.can_allocate(candidate):
+            return None
+        seq = self.waiting.popleft()
+        self.block_manager.allocate(seq, publish_hashes=False)
+        seq.status = SequenceStatus.PREFILLING
+        first = self._schedule_one_prefill_chunk(seq)
+        if first is None:
+            return None
+        scheduled, is_prefill, do_sample = first
+        if not do_sample:
+            return first
+
+        num_batched_tokens = scheduled[0].prefill_chunk_end - scheduled[0].prefill_chunk_start
+        while self.waiting and len(scheduled) < max_prefill_seqs:
             candidate = self.waiting[0]
+            # Conservative short-prompt batching: only admit prompts that finish
+            # in one chunk without relying on prefix-cache state discovered after allocation.
+            if len(candidate) > self.max_num_prefill_tokens_per_step:
+                break
+            if num_batched_tokens + len(candidate) > self.max_num_batched_tokens:
+                break
             if not self.block_manager.can_allocate(candidate):
-                return None
+                break
             seq = self.waiting.popleft()
             self.block_manager.allocate(seq, publish_hashes=False)
             seq.status = SequenceStatus.PREFILLING
-        if seq is None:
-            return None
+            one = self._schedule_one_prefill_chunk(seq)
+            if one is None or not one[2]:
+                self.prefilling.appendleft(seq)
+                break
+            scheduled.append(seq)
+            num_batched_tokens += seq.prefill_chunk_end - seq.prefill_chunk_start
+        return scheduled, is_prefill, do_sample
 
+    def _schedule_one_prefill_chunk(self, seq: Sequence) -> tuple[list[Sequence], bool, bool] | None:
         if seq.num_computed_tokens >= len(seq):
             # 全 prompt 命中 prefix cache 时仍需重算最后一个 prompt token 拿 logits，采样首个输出 token。
             seq.prefill_chunk_start = max(0, len(seq) - 1)
@@ -132,7 +163,8 @@ class Scheduler:
         return [seq], True, seq.prefill_chunk_final
 
     def _schedule_mixed_prefill_decode(self) -> tuple[list[Sequence], bool, bool, str] | None:
-        prefill = self._schedule_chunked_prefill()
+        prefill_slots = max(1, self.max_num_seqs - 1)
+        prefill = self._schedule_chunked_prefill(max_prefill_seqs=prefill_slots)
         if prefill is None:
             return None
         prefill_seqs, is_prefill, prefill_do_sample = prefill

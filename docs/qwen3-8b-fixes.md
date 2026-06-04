@@ -1909,3 +1909,71 @@ python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine
 - `tinyvllm/engine/scheduler.py`
 - `tools/test_chunked_prefill.py`
 - 远端结果：`/tmp/chunked_prefill_latency_mixed_sample_mask.json`
+
+## 41. Chunked Prefill short prompt batching：短 prompt 不再逐条 admission（2026-06-04）
+
+### 41.1 问题
+
+§39/§40 的 profiler 暴露了一个非 mixed-kernel 本身的问题：chunked prefill 开启后，Scheduler 的 prefill admission
+一次只取一条 waiting seq。即使初始 4 条 decode prompt 都只有 64 token、且 `max_num_prefill_tokens_per_step=128`，也会被拆成多次
+prefill admission；mixed 模式下还会把后续短 prompt prefill 与已有 decode 混在一起。
+
+这会放大 chunked/mixed 的调度开销，并让 profiler 不再只测“长 prompt 插入后”的影响。
+
+### 41.2 实现
+
+在 chunked prefill 路径中保守加入 short prompt batching：
+
+- 如果当前调度的是 `prefilling` 队列中的长 prompt，保持单 chunk 行为。
+- 如果从 `waiting` 取出的第一条 seq 在本 step 就是 final chunk，则继续从 waiting 队列追加更多短 prompt：
+  - `len(candidate) <= max_num_prefill_tokens_per_step`
+  - 不超过 `max_num_seqs`
+  - 不超过 `max_num_batched_tokens`
+  - `BlockManager.can_allocate(candidate)` 成立
+- 所有被追加的 short prompt 都走 final prefill：`do_sample=True`，postprocess 中正常 append 首个输出 token。
+- 长 prompt / 中间 chunk 仍保持一次只调度一个 chunk，避免把不同 `do_sample` 语义混进普通 prefill 3-tuple。
+- mixed 模式额外保留至少 1 个 `max_num_seqs` slot 给 decode，避免 short prompt batching 把已有 running decode 挤出 mixed batch。
+
+新增测试：两条 4-token prompt 在 `max_num_prefill_tokens_per_step=4` 下应同一 step prefill，并分别消费 sampled token。
+回归测试：`chunked_prefill_mixed_batch=True` 且已有 running decode 时，即使 waiting 中有 `max_num_seqs` 条短 prompt，
+本轮也必须返回 mixed batch，并保留 decode row。
+
+### 41.3 验证与远端 smoke
+
+本地：
+
+```text
+python3 tools/test_chunked_prefill.py
+chunked prefill tests passed
+
+python3 tools/test_profile_chunked_prefill.py
+chunked prefill profiler tests passed
+
+python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine.py tinyvllm/engine/scheduler.py tinyvllm/engine/sequence.py tinyvllm/config.py tools/profile_chunked_prefill.py
+```
+
+远端 A100 + Qwen3-0.6B，复用 §39 workload：
+
+| mode | prefill steps | mixed steps | decode steps | max decode gap | first_output_ms | total_ms |
+|---|---:|---:|---:|---:|---:|---:|
+| chunked prefill-first (§39 rerun) | 12 | 0 | 33 | 288.12 ms | 1378.22 ms | 1443.17 ms |
+| chunked + short batching | 9 | 0 | 33 | 291.93 ms | 1265.50 ms | 1330.37 ms |
+| mixed + sample mask (§40) | 1 | 11 | 31 | 38.93 ms | 1023.33 ms | 1359.66 ms |
+| mixed + short batching | 1 | 8 | 33 | 36.06 ms | **1004.02 ms** | **1300.95 ms** |
+| mixed + short batching + decode slot reserve | 1 | 8 | 33 | **36.46 ms** | 1013.51 ms | 1316.84 ms |
+
+### 41.4 结论
+
+- short prompt batching 修复了 chunked 模式的 admission 低效：初始短 prompts 回到一个 prefill step，prefill steps 从 12 降到 9。
+- 对 prefill-first，total 从 1443.17 ms 降到 1330.37 ms，first output 也提前；但长 prompt 的连续 prefill chunk 仍会造成约 292 ms decode gap。
+- 对 mixed，mixed steps 从 11 降到 8；加入 decode slot reserve 后仍保持较低 decode gap（36.46 ms），total 为 1316.84 ms。
+- decode slot reserve 是正确性/公平性修复：防止短 prompt batching 占满 batch，让已有 running decode 被挤出 mixed step。
+- 这说明 mixed v0 的一个主要可修收益不是 sample mask，而是 admission policy：不要把本可同批完成的短 prompt 拆成多步。
+
+文件留痕：
+
+- `tinyvllm/engine/scheduler.py`
+- `tools/test_chunked_prefill.py`
+- 远端结果：`/tmp/chunked_prefill_latency_chunked_short_batch.json`
+- 远端结果：`/tmp/chunked_prefill_latency_mixed_short_batch.json`
+- 远端结果：`/tmp/chunked_prefill_latency_mixed_short_batch_reserve.json`
