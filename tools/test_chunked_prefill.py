@@ -300,7 +300,9 @@ def test_mixed_postprocess_commits_prefill_and_appends_decode_only_for_intermedi
     scheduler.add(long_prefill)
 
     seqs, is_prefill, do_sample, batch_kind = scheduler.schedule()
-    scheduler.postprocess(seqs, [999, 123], is_prefill, do_sample, batch_kind)
+    # Intermediate prefill chunks do not need a sampled token; mixed sampling
+    # should only return tokens for rows whose step_do_sample is True.
+    scheduler.postprocess(seqs, [123], is_prefill, do_sample, batch_kind)
 
     assert long_prefill.completion_token_ids == []
     assert long_prefill.num_computed_tokens == 4

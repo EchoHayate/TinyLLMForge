@@ -1847,3 +1847,65 @@ enforce_eager=True
 - 远端结果：`/tmp/chunked_prefill_latency_decode_first_rerun.json`
 - 远端结果：`/tmp/chunked_prefill_latency_balanced_rerun.json`
 - 远端结果：`/tmp/chunked_prefill_latency_mixed.json`
+
+## 40. Mixed Prefill+Decode sample mask：跳过中间 prefill chunk 采样（2026-06-04）
+
+### 40.1 问题
+
+§39 的 mixed v0 为了让同一个 batch 内 decode row 能采样，把 `do_sample=True` 传给整个 mixed batch。
+这样中间 prefill chunk 虽然最终不会 append token，但仍会在 LMHead 输出后被 sampler 采样一次，然后在
+`_postprocess_mixed()` 里丢弃。
+
+这个开销理论上主要来自 `[1, vocab]` 的 argmax/softmax/Gumbel-Max；如果 vocab 采样是 mixed v0 的主要瓶颈，
+跳过这部分应该降低 mixed step latency。
+
+### 40.2 实现
+
+把 mixed batch 的采样协议从“每个 logits row 都返回一个 token”改成“只为 `step_do_sample=True` 的 row 返回 token”：
+
+- `ModelRunner._select_sample_rows()`：
+  - 非 mixed：保持旧行为，采样所有 row。
+  - mixed：按 `seq.step_do_sample` 过滤 logits rows 和 sample seqs。
+- `Scheduler._postprocess_mixed()`：
+  - 中间 prefill chunk 不再消费 dummy sampled token。
+  - decode row / final prefill chunk 仍按 `seqs` 中需要采样的顺序消费 token。
+
+测试把 intermediate mixed case 从 `[dummy, decode]` 改成只传 `[decode]`，防止协议回退。
+
+### 40.3 验证
+
+本地：
+
+```text
+python3 tools/test_chunked_prefill.py
+chunked prefill tests passed
+
+python3 tools/test_profile_chunked_prefill.py
+chunked prefill profiler tests passed
+
+python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine.py tinyvllm/engine/scheduler.py tinyvllm/engine/sequence.py tinyvllm/config.py tools/profile_chunked_prefill.py
+```
+
+远端 A100 + Qwen3-0.6B，复用 §39 mixed workload：
+
+| mode | prefill steps | mixed steps | decode steps | max decode gap | first_output_ms | total_ms |
+|---|---:|---:|---:|---:|---:|---:|
+| mixed v0 (§39) | 1 | 11 | 31 | 39.00 ms | 1010.05 ms | 1336.65 ms |
+| mixed + sample mask | 1 | 11 | 31 | **38.93 ms** | 1023.33 ms | 1359.66 ms |
+
+### 40.4 结论
+
+- sample mask 正确性成立：中间 prefill chunk 不再需要 dummy sampled token。
+- latency 没有变好，total 反而在本次 smoke 中从 1336.65 ms 到 1359.66 ms；差异很可能被 profiler 抖动和 prefill forward 主开销覆盖。
+- 结论：mixed v0 的主要瓶颈不是“多采样一个 prefill row”，而是仍走 varlen prefill path / LMHead 仍产出中间 prefill logits。
+- 下一步若继续优化，应考虑：
+  - LMHead 支持按 row mask 只计算需要采样的 hidden states；或
+  - 更严格的 admission policy：只在长 prompt 已经进入 `prefilling` 后 mixed，避免初始短 prompt prefill 也被 chunked/mixed 化；或
+  - 真正的 decode+prefill mixed attention kernel，而不是把 decode 包装成 prefill row。
+
+文件留痕：
+
+- `tinyvllm/engine/model_runner.py`
+- `tinyvllm/engine/scheduler.py`
+- `tools/test_chunked_prefill.py`
+- 远端结果：`/tmp/chunked_prefill_latency_mixed_sample_mask.json`

@@ -229,9 +229,6 @@ class Scheduler:
             self.block_manager.commit_prefill(seq, old_end, new_end)
             seq.num_computed_tokens = new_end
             if not getattr(seq, "step_do_sample", True):
-                # mixed varlen prefill still produces one logits row per sequence;
-                # discard the intermediate prefill chunk's sampled token.
-                next(token_iter, None)
                 seq.status = SequenceStatus.PREFILLING
                 self.prefilling.append(seq)
             else:

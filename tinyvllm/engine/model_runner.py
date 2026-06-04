@@ -453,6 +453,16 @@ class ModelRunner:
         #操作系统可将其 “分页” 到磁盘       |     被 “锁定” 在物理内存中，不允许换出到磁盘,
         # （swap） ，释放物理内存给其他进程 |     
 
+    def _select_sample_rows(self, logits: torch.Tensor, seqs: list[Sequence],
+                            batch_kind: str | None) -> tuple[torch.Tensor, list[Sequence]]:
+        if batch_kind != "mixed":
+            return logits, seqs
+        sample_indices = [i for i, seq in enumerate(seqs) if getattr(seq, "step_do_sample", True)]
+        if len(sample_indices) == len(seqs):
+            return logits, seqs
+        return logits[sample_indices], [seqs[i] for i in sample_indices]
+
+
     @torch.inference_mode()
     #只需要前向传播 禁用梯度计算（无需反向传播），节省内存；
     # 加速推理过程（跳过与训练相关的检查和操作）。
@@ -493,8 +503,12 @@ class ModelRunner:
         if not do_sample:
             reset_context()
             return None
-        temperatures = self.prepare_sample(seqs) if self.rank == 0 else None    #只有主进程做采样
-        token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
+        if self.rank == 0:
+            logits, sample_seqs = self._select_sample_rows(logits, seqs, batch_kind)
+            temperatures = self.prepare_sample(sample_seqs)    #只有主进程做采样
+            token_ids = self.sampler(logits, temperatures).tolist()
+        else:
+            token_ids = None
         reset_context()
         return token_ids
 
