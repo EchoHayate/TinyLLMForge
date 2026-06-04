@@ -1796,24 +1796,38 @@ python3 -m py_compile tools/profile_chunked_prefill.py
 - TP worker pickle/unpickle 后保留 `step_is_decode` / `step_do_sample`。
 - profiler summary 把 `mixed` 计入 decode progress，用于更合理地计算 decode gap。
 
-### 39.4 下一步远端 smoke 命令
+### 39.4 远端 smoke：mixed v0
 
-```bash
-python tools/profile_chunked_prefill.py \
-  --model <Qwen3-0.6B> \
-  --mode mixed \
-  --max-num-prefill-tokens-per-step 128 \
-  --max-model-len 2048 \
-  --max-num-batched-tokens 2048 \
-  --max-num-seqs 16 \
-  --gpu-memory-utilization 0.5 \
-  --enforce-eager \
-  --out-json /tmp/chunked_prefill_latency_mixed.json
+远端 A100 + Qwen3-0.6B，同一 profiler workload，在 GPU 3 上重跑 default / chunked / decode-first / balanced / mixed。
+
+mixed 命令：
+
+```text
+mode=mixed
+max_num_prefill_tokens_per_step=128
+enforce_eager=True
 ```
+
+| mode | prefill steps | mixed steps | decode steps | max decode gap | first_output_ms | total_ms |
+|---|---:|---:|---:|---:|---:|---:|
+| default | 2 | 0 | 33 | 65.75 ms | 1027.30 ms | **1089.63 ms** |
+| chunked prefill-first | 12 | 0 | 33 | 288.12 ms | 1378.22 ms | 1443.17 ms |
+| chunked decode-first | 12 | 0 | 155 | 290.08 ms | **948.94 ms** | 4896.86 ms |
+| balanced N=1 | 12 | 0 | 42 | 74.62 ms | 1387.08 ms | 1716.79 ms |
+| **mixed v0** | 1 | 11 | 31 | **39.00 ms** | 1010.05 ms | 1336.65 ms |
+
+解释：
+
+- mixed v0 的 decode gap 最好：39.00 ms，说明 mixed step 确实让 decode progress 不再被 prefill chunk 阻断。
+- total wall time 比 prefill-first 和 balanced 好，但仍慢于 default。原因是 v0 每个 mixed step 仍走 prefill varlen path，并且中间 prefill chunk
+  仍会产出/采样一个最终丢弃的 logits row。
+- first_output 接近 default，但略慢；decode-first 仍最早，但代价是 total wall time 极差。
+- 注意 profiler 里初始 4 条 decode prompt 也会被 chunked/mixed admission 影响：mixed v0 会把后续短 prompt prefill 与已有 decode 混起来，
+  因此它不是单纯“长 prompt 插入后才 mixed”的 serving 策略。
 
 ### 39.5 当前边界
 
-- v0 只验证调度和数据准备链路；尚未远端 GPU smoke。
+- v0 已通过远端 GPU smoke，但还不是最终 serving 策略。
 - mixed row 走 prefill varlen path，暂不叠加 Quest/C4 评估。
 - 中间 prefill chunk 仍会产生一个 logits row 并采样一次；postprocess 会丢弃它。后续若要极致优化，可改 LMHead/采样器只返回需要采样的 row。
 
@@ -1828,3 +1842,8 @@ python tools/profile_chunked_prefill.py \
 - `tools/profile_chunked_prefill.py`
 - `tools/test_profile_chunked_prefill.py`
 - `docs/superpowers/plans/2026-06-03-mixed-prefill-decode-v0.md`
+- 远端结果：`/tmp/chunked_prefill_latency_default_rerun.json`
+- 远端结果：`/tmp/chunked_prefill_latency_chunked_rerun.json`
+- 远端结果：`/tmp/chunked_prefill_latency_decode_first_rerun.json`
+- 远端结果：`/tmp/chunked_prefill_latency_balanced_rerun.json`
+- 远端结果：`/tmp/chunked_prefill_latency_mixed.json`
