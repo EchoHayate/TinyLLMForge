@@ -422,6 +422,24 @@ def test_tp_smoke_requires_scale_path_for_sq_configs():
     _ok("tp_smoke SQ config helper returns expected extra config")
 
 
+def test_tp_smoke_act_quant_skip_extra_cfg():
+    """tp_smoke 需要能把 A8 skip 参数透传给 LLM，用于验证 W4A8+SQ 稳态配置。"""
+    print("[test_tp_smoke_act_quant_skip_extra_cfg]", flush=True)
+    tp_smoke = _load_module("tp_smoke_under_test_skip",
+                            os.path.join(_REPO_ROOT, "tools/tp_smoke.py"))
+
+    assert tp_smoke.act_quant_skip_extra_cfg(0, 0, None) == {}
+    assert tp_smoke.act_quant_skip_extra_cfg(2, 2, None) == {
+        "act_quant_skip_first": 2,
+        "act_quant_skip_last": 2,
+    }
+    assert tp_smoke.act_quant_skip_extra_cfg(1, 0, "6,31,35") == {
+        "act_quant_skip_first": 1,
+        "act_quant_skip_layers": [6, 31, 35],
+    }
+    _ok("tp_smoke act quant skip helper returns expected extra config")
+
+
 def main():
     print("=" * 60)
     print("SmoothQuant CPU unit tests")
@@ -435,6 +453,7 @@ def main():
     test_sq_suppresses_outlier_a8_error()
     test_calibrate_hook_pipeline_dryrun()
     test_tp_smoke_requires_scale_path_for_sq_configs()
+    test_tp_smoke_act_quant_skip_extra_cfg()
     print()
     print("ALL PASS")
 

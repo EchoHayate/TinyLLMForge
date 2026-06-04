@@ -87,6 +87,12 @@ def parse_args():
                    help="random: 随机 token id（只验通路）；english: 固定英文文本（顺便看质量）")
     p.add_argument("--smoothquant-scale-path", type=str, default=None,
                    help="SmoothQuant 校准产物路径（仅 w4a8_sq_* 配置使用）")
+    p.add_argument("--act-quant-skip-first", type=int, default=0,
+                   help="A8 跳过前 N 个 decoder layer（用于 W4A8+SQ 稳态验证）")
+    p.add_argument("--act-quant-skip-last", type=int, default=0,
+                   help="A8 跳过后 N 个 decoder layer（用于 W4A8+SQ 稳态验证）")
+    p.add_argument("--act-quant-skip-layers", type=str, default=None,
+                   help="A8 显式跳过的 layer id，逗号分隔，例如 6,31,35")
     p.add_argument("--filter", type=str, default=None,
                    help="只跑名字精确匹配的 config（多个用逗号分隔）；不设则跑全部")
     p.add_argument("--out-file", type=str, default="tp_smoke.json")
@@ -148,6 +154,20 @@ def smoothquant_extra_cfg_for_config(name: str, smoothquant_scale_path: str | No
     return {"smoothquant_scale_path": smoothquant_scale_path}
 
 
+def act_quant_skip_extra_cfg(skip_first: int, skip_last: int, skip_layers: str | None):
+    """Return extra LLM kwargs for selectively disabling activation quantization."""
+    extra = {}
+    if skip_first > 0:
+        extra["act_quant_skip_first"] = skip_first
+    if skip_last > 0:
+        extra["act_quant_skip_last"] = skip_last
+    if skip_layers:
+        layers = [int(x.strip()) for x in skip_layers.split(",") if x.strip()]
+        if layers:
+            extra["act_quant_skip_layers"] = layers
+    return extra
+
+
 def run_single(args):
     """子进程：跑一条 config，结果写到 --result-file。"""
     import torch
@@ -174,6 +194,11 @@ def run_single(args):
     try:
         tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
         extra_cfg = smoothquant_extra_cfg_for_config(name, args.smoothquant_scale_path)
+        extra_cfg.update(act_quant_skip_extra_cfg(
+            args.act_quant_skip_first,
+            args.act_quant_skip_last,
+            args.act_quant_skip_layers,
+        ))
         llm = LLM(
             args.model,
             tensor_parallel_size=args.tp_size,
@@ -272,6 +297,12 @@ def main():
     ]
     if args.smoothquant_scale_path:
         base_cmd += ["--smoothquant-scale-path", args.smoothquant_scale_path]
+    if args.act_quant_skip_first:
+        base_cmd += ["--act-quant-skip-first", str(args.act_quant_skip_first)]
+    if args.act_quant_skip_last:
+        base_cmd += ["--act-quant-skip-last", str(args.act_quant_skip_last)]
+    if args.act_quant_skip_layers:
+        base_cmd += ["--act-quant-skip-layers", args.act_quant_skip_layers]
 
     all_results = []
     for name, _ in cfgs:
