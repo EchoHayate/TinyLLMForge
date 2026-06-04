@@ -11,6 +11,13 @@ import hashlib
 import pickle
 from types import SimpleNamespace
 
+try:
+    import torch
+    import torch.distributed as dist
+except ModuleNotFoundError:
+    torch = None
+    dist = None
+
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
 if _REPO_ROOT not in sys.path:
@@ -20,8 +27,14 @@ tinyvllm_pkg = types.ModuleType("tinyvllm")
 tinyvllm_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm")]
 engine_pkg = types.ModuleType("tinyvllm.engine")
 engine_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm", "engine")]
+utils_pkg = types.ModuleType("tinyvllm.utils")
+utils_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm", "utils")]
+layers_pkg = types.ModuleType("tinyvllm.layers")
+layers_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm", "layers")]
 sys.modules.setdefault("tinyvllm", tinyvllm_pkg)
 sys.modules.setdefault("tinyvllm.engine", engine_pkg)
+sys.modules.setdefault("tinyvllm.utils", utils_pkg)
+sys.modules.setdefault("tinyvllm.layers", layers_pkg)
 
 
 def load_module(module_name: str, relative_path: str):
@@ -52,14 +65,24 @@ class _FakeXXH64:
 xxhash_mod.xxh64 = _FakeXXH64
 sys.modules.setdefault("xxhash", xxhash_mod)
 sampling_mod = load_module("tinyvllm.sampling_params", "tinyvllm/sampling_params.py")
+context_mod = load_module("tinyvllm.utils.context", "tinyvllm/utils/context.py") if torch is not None else None
 sequence_mod = load_module("tinyvllm.engine.sequence", "tinyvllm/engine/sequence.py")
 load_module("tinyvllm.engine.block_manager", "tinyvllm/engine/block_manager.py")
 scheduler_mod = load_module("tinyvllm.engine.scheduler", "tinyvllm/engine/scheduler.py")
+if dist is not None:
+    dist.get_rank = lambda: 0
+    dist.get_world_size = lambda: 1
+    embed_head_mod = load_module("tinyvllm.layers.embed_head", "tinyvllm/layers/embed_head.py")
+else:
+    embed_head_mod = None
 
 Sequence = sequence_mod.Sequence
 SequenceStatus = sequence_mod.SequenceStatus
 Scheduler = scheduler_mod.Scheduler
 SamplingParams = sampling_mod.SamplingParams
+ParallelLMHead = embed_head_mod.ParallelLMHead if embed_head_mod is not None else None
+set_context = context_mod.set_context if context_mod is not None else None
+reset_context_global = context_mod.reset_context if context_mod is not None else None
 
 
 def make_config(**overrides):
@@ -454,6 +477,36 @@ def test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers():
     assert restored.prefill_chunk_final is True
 
 
+def test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows():
+    if torch is None:
+        return
+    head = ParallelLMHead(4, 2)
+    with torch.no_grad():
+        head.weight.copy_(torch.tensor([
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [-1.0, 1.0],
+        ]))
+    hidden = torch.tensor([
+        [0.0, 0.0],
+        [1.0, 2.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+    ])
+    set_context(True, cu_seqlens_q=torch.tensor([0, 2, 5, 6], dtype=torch.int32),
+                logits_indices=torch.tensor([1, 5], dtype=torch.int64))
+
+    logits = head(hidden)
+
+    expected = torch.nn.functional.linear(hidden[[1, 5]], head.weight)
+    assert logits.shape == (2, 4)
+    assert torch.equal(logits, expected)
+    reset_context_global()
+
+
 def main():
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
@@ -468,6 +521,7 @@ def main():
     test_mixed_final_prefill_chunk_and_decode_consume_tokens_in_sequence_order()
     test_mixed_prefill_fallback_counts_toward_consecutive_prefill_limit()
     test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers()
+    test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows()
     print("chunked prefill tests passed")
 
 

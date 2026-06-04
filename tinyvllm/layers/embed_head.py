@@ -61,7 +61,9 @@ class ParallelLMHead(VocabParallelEmbedding):
     def forward(self, x: torch.Tensor):
         context = get_context()
         if context.is_prefill:
-            last_indices = context.cu_seqlens_q[1:] - 1         #获取每个序列最后一个token的索引
+            last_indices = context.logits_indices
+            if last_indices is None:
+                last_indices = context.cu_seqlens_q[1:] - 1         #获取每个序列最后一个token的索引
             x = x[last_indices].contiguous()                #把tensor转换成连续的 符合后续linear或者dist要求
         logits = F.linear(x, self.weight, self.bias)        # (10,1024) * (50000,1024)^T + (10,50000) = (10,50000)
         if self.tp_size > 1:                                #将各个GPU上的logits结果进行拼接 并返回到 0号GPU

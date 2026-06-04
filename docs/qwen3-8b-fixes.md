@@ -1977,3 +1977,62 @@ python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine
 - 远端结果：`/tmp/chunked_prefill_latency_chunked_short_batch.json`
 - 远端结果：`/tmp/chunked_prefill_latency_mixed_short_batch.json`
 - 远端结果：`/tmp/chunked_prefill_latency_mixed_short_batch_reserve.json`
+
+## 42. Mixed Prefill+Decode logits indices：LMHead 只计算需要采样的 row（2026-06-04）
+
+### 42.1 问题
+
+§40 的 sample mask 只是在 LMHead 输出之后过滤 logits row：中间 prefill chunk 的 sampled token 不再生成，
+但 LMHead 仍然会先对这个 row 做一次 `[hidden, vocab]` 投影。对 mixed batch 来说，intermediate prefill chunk
+的 logits 最终一定被丢弃，因此这部分 vocab 维度计算是纯开销。
+
+目标：把 row selection 前移到 LMHead 输入侧，让 prefill/mixed forward 只对真正需要采样的 hidden row 计算 logits。
+
+### 42.2 实现
+
+新增 `Context.logits_indices`：
+
+```python
+logits_indices: torch.Tensor | None = None
+```
+
+语义：在 `context.is_prefill=True` 时，`logits_indices` 指向 flattened hidden states 中需要进入 LMHead 的 row。
+
+具体改动：
+
+- `ModelRunner.prepare_mixed()`：按 mixed batch 中每条 seq 的 query row 起点 `q_start` 收集 logits row。
+  - `step_do_sample=True`：加入 `q_start + seqlen_q - 1`。
+  - `step_do_sample=False`：跳过，代表 intermediate prefill chunk 不需要 logits。
+- `set_context(..., logits_indices=...)`：把 indices 透传到全局 context。
+- `ParallelLMHead.forward()`：prefill 路径优先使用 `context.logits_indices`；若为 `None`，回退旧逻辑
+  `context.cu_seqlens_q[1:] - 1`，保持普通 prefill 兼容。
+- `ModelRunner._select_sample_rows()`：mixed 下不再切 logits tensor，只返回需要采样的 seq 列表；因为 LMHead 已经只输出这些 row。
+
+### 42.3 验证
+
+本地新增 CPU 单测：构造 6 行 hidden、`cu_seqlens_q=[0,2,5,6]`、`logits_indices=[1,5]`，确认
+LMHead 输出形状从旧的 3 row 变成 2 row，并且数值等于 `hidden[[1, 5]] @ W^T`。
+
+远端 A100 + Qwen3-0.6B，复用 §41 mixed workload：
+
+| mode | mixed steps | max decode gap | total_ms |
+|---|---:|---:|---:|
+| mixed + short batching + decode slot reserve (§41) | 8 | **36.46 ms** | **1316.84 ms** |
+| mixed + logits_indices | 8 | 139.45 ms | 1515.69 ms |
+
+### 42.4 结论
+
+- 正确性成立：LMHead 不再为 `step_do_sample=False` 的 intermediate prefill chunk 计算 logits，采样协议也保持一致。
+- 本次远端 latency 没有改善：`total_ms` 从 1316.84 ms 上升到 1515.69 ms，`max_gap` 从 36.46 ms 上升到 139.45 ms。
+- 画像解释：本次 workload 中长 prompt chunk 更早进入第一个 mixed step，p95/max 被大 chunk 的 attention 计算拉高；
+  `logits_indices` 只能减少 LMHead vocab 投影，对 chunk attention 主开销无能为力，因此 wall time 受 admission 时序和 chunk 位置影响更大。
+- 结论：保留 `logits_indices` 作为正确的低开销协议优化，但它不是 mixed v0 当前总 latency 的主瓶颈。继续优化应优先看
+  admission policy / chunk size 自适应 / 真正的 mixed attention kernel。
+
+文件留痕：
+
+- `tinyvllm/utils/context.py`
+- `tinyvllm/layers/embed_head.py`
+- `tinyvllm/engine/model_runner.py`
+- `tools/test_chunked_prefill.py`
+- 远端结果：`/tmp/chunked_prefill_latency_mixed_logits_indices.json`

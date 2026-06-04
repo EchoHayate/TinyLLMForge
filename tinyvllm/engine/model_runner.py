@@ -357,8 +357,10 @@ class ModelRunner:
         max_seqlen_q = 0
         max_seqlen_k = 0
         slot_mapping = []
+        logits_indices = []
         block_tables = None
         for seq in seqs:
+            q_start = cu_seqlens_q[-1]
             if getattr(seq, "step_is_decode", False):
                 input_ids.append(seq.last_token)
                 positions.append(len(seq))
@@ -379,6 +381,9 @@ class ModelRunner:
                     block_id = seq.block_table[pos // self.block_size]
                     slot_mapping.append(block_id * self.block_size + (pos % self.block_size))
 
+            if getattr(seq, "step_do_sample", True):
+                logits_indices.append(q_start + seqlen_q - 1)
+
             cu_seqlens_q.append(cu_seqlens_q[-1] + seqlen_q)
             cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
             max_seqlen_q = max(max_seqlen_q, seqlen_q)
@@ -392,7 +397,9 @@ class ModelRunner:
         cu_seqlens_q = self._list_to_cuda(cu_seqlens_q, "cu_seqlens_q", torch.int32)
         cu_seqlens_k = self._list_to_cuda(cu_seqlens_k, "cu_seqlens_k", torch.int32)
         slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
-        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
+        logits_indices = self._list_to_cuda(logits_indices, "logits_indices", torch.int64)
+        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+                    slot_mapping, None, block_tables, logits_indices)
         return input_ids, positions
 
 
@@ -457,10 +464,8 @@ class ModelRunner:
                             batch_kind: str | None) -> tuple[torch.Tensor, list[Sequence]]:
         if batch_kind != "mixed":
             return logits, seqs
-        sample_indices = [i for i, seq in enumerate(seqs) if getattr(seq, "step_do_sample", True)]
-        if len(sample_indices) == len(seqs):
-            return logits, seqs
-        return logits[sample_indices], [seqs[i] for i in sample_indices]
+        sample_seqs = [seq for seq in seqs if getattr(seq, "step_do_sample", True)]
+        return logits, sample_seqs
 
 
     @torch.inference_mode()
