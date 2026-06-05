@@ -2036,3 +2036,171 @@ LMHead 输出形状从旧的 3 row 变成 2 row，并且数值等于 `hidden[[1,
 - `tinyvllm/engine/model_runner.py`
 - `tools/test_chunked_prefill.py`
 - 远端结果：`/tmp/chunked_prefill_latency_mixed_logits_indices.json`
+
+## 43. W4A8+SQ needle 回归复核：skip last=4 是当前稳态配置（2026-06-05）
+
+### 43.1 背景
+
+§23 曾记录 `W4A8+SQ α=0.85 + skip first=2/last=2` 在 Qwen3-8B needle 16K 上达到 93.3%。
+后续 §27/§29 已经指出首部 skip 浪费，尾部 outlier 更关键，`skip_last=4` 是更稳配置。
+
+本轮在同步最新代码到远端后重新跑 needle，目标是确认当前代码路径下推荐配置是否仍然成立。
+
+### 43.2 远端环境
+
+- 机器：`sitian@10.232.195.203`
+- 代码目录：`/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge`
+- Python：`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`（torch 2.4.1+cu121）
+- GPU：`CUDA_VISIBLE_DEVICES=7`
+- 模型：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B`
+- SQ scale：`/tmp/sq_scales_qwen3_8b_a0.85.pt`
+
+### 43.3 复跑结果
+
+先复跑旧配置 `skip first=2 / skip last=2`：
+
+```text
+--quantization int4 --quant-group-size 32
+--act-quant-bits 8
+--smoothquant-scale-path /tmp/sq_scales_qwen3_8b_a0.85.pt
+--act-quant-skip-first 2 --act-quant-skip-last 2
+```
+
+完整 baseline-only needle（ctx=4096/8192/15000，depth=0/0.25/0.5/0.75/1.0，n=2）：
+
+| config | overall_acc | throughput |
+|---|---:|---:|
+| W4A8+SQ α=0.85 + skip2/2 | 83.3% | 25.60 tok/s |
+
+失败仍是典型长文末尾 instruction 复读：`Answer with only the digits...`，不是数字算错。
+
+再跑当前推荐配置 `skip_last=4`：
+
+```text
+--quantization int4 --quant-group-size 32
+--act-quant-bits 8
+--smoothquant-scale-path /tmp/sq_scales_qwen3_8b_a0.85.pt
+--act-quant-skip-last 4
+```
+
+远端确认跳过层：
+
+```text
+[act-quant-skip] disabled A8 on 16 LinearBase modules (layers=[32, 33, 34, 35], total=36)
+```
+
+结果：
+
+| config | overall_acc | throughput |
+|---|---:|---:|
+| **W4A8+SQ α=0.85 + skip_last=4** | **100.0%** | 25.52 tok/s |
+
+所有 ctx/depth bucket 均为 100%。
+
+### 43.4 结论
+
+- `skip2/2` 仍比无 skip 的 40% 明显好，但当前复跑只到 83.3%，不再作为推荐配置。
+- `skip_last=4` 当前复跑达到 100%，并且 TPS 与 `skip2/2` 基本持平，说明把 A8 skip 预算集中在尾部 outlier 层更稳。
+- 后续 W4A8+SQ 长上下文默认应优先使用：
+
+```text
+--quantization int4 --quant-group-size 32
+--act-quant-bits 8
+--smoothquant-scale-path /tmp/sq_scales_qwen3_8b_a0.85.pt
+--act-quant-skip-last 4
+```
+
+### 43.5 full-stack 复跑：layer-adaptive SQ + KV8 + Quest top-k=12
+
+继续复跑 §31 的速度/质量平衡配置：
+
+```text
+--quantization int4 --quant-group-size 32
+--act-quant-bits 8 --act-quant-skip-last 4
+--smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt
+--kv-quant-bits 8 --kv-quant-group-size 32
+--top-k-blocks-list -1 12
+```
+
+结果（同样是 30 sample，n=2）：
+
+| setting | overall_acc | throughput |
+|---|---:|---:|
+| C8 baseline/full attention | **100.0%** | 17.23 tok/s |
+| C8 + Quest top-k=12 | 96.7% | **24.53 tok/s** |
+
+对比 §43.3 的 fp16 KV full-attn `skip_last=4`：100.0% / 25.52 tok/s。
+KV8 baseline 主要收益是 KV 显存，不是速度；叠加 Quest top-k=12 后在保持 96.7% 召回的同时，
+相对 KV8 full attention 提升约 42% TPS。
+
+当前 full-stack 推荐仍是：
+
+```text
+W4(g32) + A8(skip last=4) + SQ(layer-adaptive α=0.85~0.90) + KV8(g32) + Quest(top-k=12)
+```
+
+### 43.6 fixed-prompt n=5 公平口径复跑
+
+为了排除不同 setting 使用不同随机 prompt 带来的质量归因偏差，继续复跑 fixed-prompt + cache-clear 口径：
+
+```text
+--fixed-prompts
+--num-trials 5
+--top-k-blocks-list -1 12
+--smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt
+--act-quant-skip-last 4
+--kv-quant-bits 8 --kv-quant-group-size 32
+```
+
+结果（75 sample / setting）：
+
+| setting | overall_acc | throughput | failures |
+|---|---:|---:|---:|
+| C8 baseline/full attention | 96.0% | 19.45 tok/s | 3/75 |
+| C8 + Quest top-k=12 | 93.3% | **27.10 tok/s** | 5/75 |
+
+失败集合：
+
+- baseline 的 3 个失败都集中在 `(ctx=4096, depth=0.5)`，输出为 question/instruction 复读。
+- top-k=12 继承这 3 个失败，并新增 2 个：
+  - `(15000, 0.25, trial=0, magic=35043)` 输出截成 `354`；
+  - `(15000, 0.75, trial=4, magic=82255)` 输出成 `822255`。
+
+对比历史 fixed-prompt n=5：
+
+| run | baseline | top-k=12 |
+|---|---:|---:|
+| §33 历史 | 94.7% / 19.19 | **96.0% / 26.80** |
+| 本轮复跑 | **96.0% / 19.45** | 93.3% / **27.10** |
+
+结论：top-k=12 的速度收益仍稳定（约 +39% TPS），但本轮 fixed-prompt 质量比历史低 2/75 个样本，
+不再声称 top-k=12 “不降质量”；更准确表述是：**top-k=12 是高吞吐折中档，baseline/full attention 是最高召回档**。
+
+### 43.7 fixed-prompt n=5 top-k=8/12/16 补扫
+
+为了判断 §43.6 中 top-k=12 掉到 93.3% 后，当前甜点是否仍是 12，继续用同一 fixed-prompt 口径补跑
+`top_k ∈ {8,16}`。
+
+| setting | overall_acc | throughput | failures |
+|---|---:|---:|---:|
+| C8 baseline/full attention | 96.0% | 19.45 tok/s | 3/75 |
+| C8 + Quest top-k=8 | 94.7% | **28.39 tok/s** | 4/75 |
+| C8 + Quest top-k=12 | 93.3% | 27.10 tok/s | 5/75 |
+| C8 + Quest top-k=16 | **96.0%** | 25.83 tok/s | 3/75 |
+
+失败集合上，baseline/top-k=16 只有同一组 `(4096, depth=0.5, trial=1/2/3)` question 复读失败；
+top-k=8 额外新增 `(15000, depth=0.0, trial=0, magic=74694)`；top-k=12 额外新增两条 15K 数字截断/重复错误。
+
+本轮 fixed-prompt n=5 下，推荐从 §31 的 top-k=12 调整为：
+
+- **最高召回**：C8 baseline/full attention（96.0%，19.45 tok/s）或 Quest top-k=16（96.0%，25.83 tok/s）。
+- **最高吞吐折中**：Quest top-k=8（94.7%，28.39 tok/s）。
+- **top-k=12** 本轮不再是最优点：速度低于 top-k=8，召回低于 top-k=16。
+
+文件留痕：
+
+- `needle_sq_results/needle_w4a8_sq_a085_g32_skip2_rerun_full_baseline.json`
+- `needle_sq_results/needle_w4a8_sq_a085_g32_skiplast4_rerun_baseline.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_topk12_rerun_n2.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_fixed_prompts_topk12_rerun_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_fixed_prompts_topk8_16_rerun_n5.json`
