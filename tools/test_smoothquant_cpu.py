@@ -440,6 +440,23 @@ def test_tp_smoke_act_quant_skip_extra_cfg():
     _ok("tp_smoke act quant skip helper returns expected extra config")
 
 
+def test_tp_smoke_summary_path_creates_nested_parent(tmp_root=None):
+    """tp_smoke --out-file 支持带子目录的路径，避免汇总写文件阶段失败。"""
+    print("[test_tp_smoke_summary_path_creates_nested_parent]", flush=True)
+    import tempfile
+
+    tp_smoke = _load_module("tp_smoke_under_test_summary_path",
+                            os.path.join(_REPO_ROOT, "tools/tp_smoke.py"))
+    root = tmp_root or tempfile.mkdtemp(prefix="tp_smoke_summary_path_")
+    summary_path = tp_smoke.prepare_summary_path(root, "nested/result.json")
+
+    assert summary_path == os.path.join(root, "nested/result.json")
+    assert os.path.isdir(os.path.join(root, "nested"))
+    with open(summary_path, "w") as f:
+        f.write("[]")
+    _ok("tp_smoke summary path creates nested parent directories")
+
+
 def main():
     print("=" * 60)
     print("SmoothQuant CPU unit tests")
@@ -454,6 +471,7 @@ def main():
     test_calibrate_hook_pipeline_dryrun()
     test_tp_smoke_requires_scale_path_for_sq_configs()
     test_tp_smoke_act_quant_skip_extra_cfg()
+    test_tp_smoke_summary_path_creates_nested_parent()
     print()
     print("ALL PASS")
 

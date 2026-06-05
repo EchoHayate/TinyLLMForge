@@ -264,6 +264,13 @@ def run_single(args):
             json.dump(result, f, ensure_ascii=False)
 
 
+def prepare_summary_path(out_dir: str, out_file: str) -> str:
+    """Return summary path and ensure its parent directory exists."""
+    summary_path = os.path.join(out_dir, out_file)
+    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+    return summary_path
+
+
 def main():
     args = parse_args()
 
@@ -344,7 +351,7 @@ def main():
         print(f"{r['name']:>22} | {init_str:>4} | {gen_str:>3} | "
               f"{dtps:>10.2f} | {wmem:>9.3f} | {kvmem:>6.3f} | {peak:>7.3f} | {sample}")
 
-    summary_path = os.path.join(out_dir, args.out_file)
+    summary_path = prepare_summary_path(out_dir, args.out_file)
     with open(summary_path, "w") as f:
         json.dump(all_results, f, indent=2, ensure_ascii=False)
     print(f"\nsummary saved to {summary_path}")

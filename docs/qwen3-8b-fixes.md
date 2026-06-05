@@ -2204,3 +2204,70 @@ top-k=8 额外新增 `(15000, depth=0.0, trial=0, magic=74694)`；top-k=12 额�
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_topk12_rerun_n2.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_fixed_prompts_topk12_rerun_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_fixed_prompts_topk8_16_rerun_n5.json`
+
+## 44. TP=2 W4A8+SQ 稳态配置验证（2026-06-05）
+
+继续验证 §43 推荐的 `skip_last=4` 在 tensor parallel 下是否存在 scale slicing / shape / 通信问题。
+
+### 44.1 TP smoke：W4A8+SQ g32 + skip_last=4
+
+命令口径：
+
+```text
+CUDA_VISIBLE_DEVICES=5,7
+tools/tp_smoke.py
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+  --tp-size 2
+  --filter w4a8_sq_g32
+  --smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt
+  --act-quant-skip-last 4
+  --prompt-source english
+  --out-file tp_smoke_results/tp2_w4a8_sq_g32_skiplast4.json
+```
+
+结果：
+
+| config | TP | init | gen | decode_tps | weight_mem | kv_cache_mem | peak_mem |
+|---|---:|---|---|---:|---:|---:|---:|
+| W4A8+SQ g32 + skip_last=4 | 2 | ok | ok | 62.27 | 3.219 GB | 49.006 GB | 52.225 GB |
+
+远端日志确认每个 rank 都成功加载 SQ scale 并跳过尾部 4 层 A8：
+
+```text
+[smoothquant] applied scales to 144 modules (skipped 0 without matching key)
+[act-quant-skip] disabled A8 on 16 LinearBase modules (layers=[32, 33, 34, 35], total=36)
+```
+
+### 44.2 full-stack smoke：W4A8+SQ + KV8 + Quest top-k=16
+
+继续用同两张 A100 跑完整组合：
+
+```text
+W4(g32) + A8(skip_last=4) + SQ(layer-adaptive floor085) + KV8(g32) + Quest(top-k=16), TP=2
+```
+
+结果：
+
+| config | TP | gen_ok | elapsed |
+|---|---:|---|---:|
+| W4A8+SQ g32 + KV8 g32 + Quest top-k=16 | 2 | true | 4.86 s |
+
+该 smoke 只验证初始化、TP 分片、SQ scale 注入、KV8 cache、Quest summary 与一次 generate 路径均可跑通；
+不是 needle 质量结论。样例中第一个 prompt 仍有逗号复读，后续若要给 TP=2 质量背书，需要把
+`eval_needle.py` 的 `tensor_parallel_size=1` 参数化后再跑 fixed-prompt needle。
+
+### 44.3 工具修复
+
+本轮第一次 smoke 用 `--out-file tp_smoke_results/...json` 时，主流程已经跑通但汇总写文件失败：
+
+```text
+FileNotFoundError: .../tp_smoke_out/tp_smoke_results/tp2_w4a8_sq_g32_skiplast4.json
+```
+
+根因是 `tp_smoke.py` 会把 `--out-file` 拼到固定 `tp_smoke_out/` 下，但没有创建 `out_file` 中的子目录。
+已补 `prepare_summary_path()`，在写 summary 前创建 parent directory，并加入 CPU helper 测试覆盖。
+
+文件留痕：
+
+- `tp_smoke_out/tp_smoke_results/tp2_w4a8_sq_g32_skiplast4.json`
+- `tp_smoke_out/tp_smoke_results/tp2_fullstack_w4a8_sq_kv8_quest16.json`
