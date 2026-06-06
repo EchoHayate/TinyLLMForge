@@ -47,6 +47,8 @@ def parse_args():
     p.add_argument("--model", type=str, required=True)
     p.add_argument("--max-model-len", type=int, default=16384)
     p.add_argument("--enforce-eager", action="store_true", default=True)
+    p.add_argument("--tp-size", type=int, default=1,
+                   help="Tensor parallel size. 默认 1；TP=2/多卡用于验证 SQ scale 切片和通信路径。")
     p.add_argument("--context-lens", type=int, nargs="+", default=[4096, 8192, 15000])
     p.add_argument("--depths", type=float, nargs="+", default=[0.0, 0.25, 0.5, 0.75, 1.0])
     p.add_argument(
@@ -234,6 +236,27 @@ def run_one_setting(llm, tokenizer, args, top_k: int):
     return out
 
 
+def build_llm_kwargs(args, init_top_k: int) -> dict:
+    return dict(
+        enforce_eager=args.enforce_eager,
+        tensor_parallel_size=args.tp_size,
+        max_model_len=args.max_model_len,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_num_seqs=args.max_num_seqs,
+        quest_top_k_blocks=init_top_k,
+        quest_min_seq_len=args.quest_min_seq_len,
+        kv_quant_bits=args.kv_quant_bits,
+        kv_quant_group_size=args.kv_quant_group_size,
+        quantization=args.quantization,
+        quant_group_size=args.quant_group_size,
+        act_quant_bits=args.act_quant_bits,
+        smoothquant_scale_path=args.smoothquant_scale_path,
+        act_quant_skip_first=args.act_quant_skip_first,
+        act_quant_skip_last=args.act_quant_skip_last,
+        act_quant_skip_layers=args.act_quant_skip_layers,
+    )
+
+
 def main():
     args = parse_args()
 
@@ -255,22 +278,7 @@ def main():
 
     llm = LLM(
         args.model,
-        enforce_eager=args.enforce_eager,
-        tensor_parallel_size=1,
-        max_model_len=args.max_model_len,
-        gpu_memory_utilization=args.gpu_memory_utilization,
-        max_num_seqs=args.max_num_seqs,
-        quest_top_k_blocks=init_top_k,
-        quest_min_seq_len=args.quest_min_seq_len,
-        kv_quant_bits=args.kv_quant_bits,
-        kv_quant_group_size=args.kv_quant_group_size,
-        quantization=args.quantization,
-        quant_group_size=args.quant_group_size,
-        act_quant_bits=args.act_quant_bits,
-        smoothquant_scale_path=args.smoothquant_scale_path,
-        act_quant_skip_first=args.act_quant_skip_first,
-        act_quant_skip_last=args.act_quant_skip_last,
-        act_quant_skip_layers=args.act_quant_skip_layers,
+        **build_llm_kwargs(args, init_top_k),
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
 

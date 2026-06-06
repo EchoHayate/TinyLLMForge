@@ -114,11 +114,39 @@ def test_clear_prefix_cache_drops_only_reusable_free_blocks():
     assert bm.blocks[1].token_ids == [4, 5, 6]
 
 
+def test_build_llm_kwargs_uses_configured_tp_size():
+    args = SimpleNamespace(
+        model="/tmp/model",
+        enforce_eager=True,
+        tp_size=2,
+        max_model_len=4096,
+        gpu_memory_utilization=0.7,
+        max_num_seqs=8,
+        quest_min_seq_len=512,
+        kv_quant_bits=8,
+        kv_quant_group_size=32,
+        quantization="int4",
+        quant_group_size=32,
+        act_quant_bits=8,
+        smoothquant_scale_path="/tmp/sq.pt",
+        act_quant_skip_first=0,
+        act_quant_skip_last=4,
+        act_quant_skip_layers=None,
+    )
+
+    kwargs = eval_needle.build_llm_kwargs(args, init_top_k=16)
+
+    assert kwargs["tensor_parallel_size"] == 2
+    assert kwargs["quest_top_k_blocks"] == 16
+    assert kwargs["act_quant_skip_last"] == 4
+
+
 def main():
     test_fixed_prompts_reuse_same_magic_across_topk()
     test_default_prompts_keep_topk_seed_offset()
     test_newline_needle_style_delimits_inserted_needle()
     test_clear_prefix_cache_drops_only_reusable_free_blocks()
+    test_build_llm_kwargs_uses_configured_tp_size()
     print("eval_needle fixed-prompt tests passed")
 
 
