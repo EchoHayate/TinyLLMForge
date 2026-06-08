@@ -2340,3 +2340,164 @@ TP=2 本轮多 1 个 `(4096, depth=0.5)` 复读失败，但 top-k=6/8/12/16 与 
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk4_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk6_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk5_n5.json`
+
+## 45. 潜空间 KV 压缩：从 uniform KV-Cartridge 到 Attention Matching（2026-06-08）
+
+前面 §36~§44 的主线都是在既有 KV cache 上做**读写侧优化**：chunked prefill 降低 prefill 阻塞、
+KV8 降显存、Quest 在 decode 阶段只读 top-k block。用户提出进一步尝试类似 Cartridges 的
+“潜空间压缩”方向，但优先级明确为**秒级可用性**：不接受对每段上下文做数小时端到端梯度下降。
+
+本轮先落两级原型：
+
+1. **KV-Cartridge v0 / uniform read-side compaction**：不训练、不改写 KV cache，只在 decode 时把
+   `block_table` 压成少量代表性 block（保首尾，中间均匀抽样），验证“简单压缩历史 block”是否足够；
+2. **Fast KV Compaction via Attention Matching 核心算法**：实现论文
+   *Fast KV Compaction via Attention Matching*（arXiv:2602.16284）里的快速
+   `AM-HighestAttnKeys` 单 layer/head 数学路径，先验证 `beta + C_v least-squares` 是否真的能显著降低
+   attention-output matching 误差。
+
+### 45.1 KV-Cartridge v0 实现与 fixed-prompt 曲线
+
+实现提交：
+
+```text
+c1bd1c5 实验：加入 KV-Cartridge read-side 压缩原型
+```
+
+关键改动：
+
+- `tinyvllm/engine/kv_cartridge.py`：新增 uniform block 选择、batch 启用判定、compact `block_table/context_lens` helper；
+- `tinyvllm/engine/model_runner.py`：decode 准备阶段在 `set_context()` 前可替换 compact block table；
+- `tinyvllm/config.py`：新增 `kv_cartridge_blocks` / `kv_cartridge_min_seq_len` / `kv_cartridge_mode`；
+- `tools/eval_needle.py`：新增 `--kv-cartridge-blocks` 等评测参数；
+- `tools/test_kv_cartridge.py`、`tools/test_eval_needle_fixed_prompts.py`：覆盖 helper 与参数透传。
+
+远端 fixed-prompt n=5，沿用当前全栈稳态配置：
+
+```text
+Qwen3-8B
+W4 g32 + A8 skip_last=4 + layer-adaptive SQ floor0.85
+KV8 g32
+--fixed-prompts --num-trials 5
+ctx=4096/8192/15000, depth=0/0.25/0.5/0.75/1.0
+```
+
+结果（75 sample / setting）：
+
+| setting | overall_acc | throughput | failures |
+|---|---:|---:|---:|
+| KV-Cartridge uniform b=4 | 33.3% | 30.00 tok/s | 50/75 |
+| KV-Cartridge uniform b=6 | 26.7% | 29.32 tok/s | 55/75 |
+| KV-Cartridge uniform b=8 | 42.7% | 28.77 tok/s | 43/75 |
+| KV-Cartridge uniform b=12 | 56.0% | 27.66 tok/s | 33/75 |
+| KV-Cartridge uniform b=16 | 69.3% | 26.33 tok/s | 23/75 |
+| KV-Cartridge uniform b=32 | **96.0%** | 19.48 tok/s | 3/75 |
+
+对比 §43.7 的 TP=1 推荐点：
+
+- `C8 + Quest top-k=16`：96.0% / 25.83 tok/s / 3 failures；
+- `KV-Cartridge uniform b=32`：96.0% / 19.48 tok/s / 3 failures。
+
+结论：**uniform read-side compaction 只能作为 sanity baseline**。它在 b≤16 时质量明显不够；b=32 能回到
+Quest top-k=16 的质量，但吞吐反而更低，说明“均匀保块”没有利用 query/KV 内容，无法替代 Quest 或真正的
+latent compaction。
+
+文件留痕：
+
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_kv8_kvcartridge_b4_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_kv8_kvcartridge_b6_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_kv8_kvcartridge_b8_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_kv8_kvcartridge_b12_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_kv8_kvcartridge_b16_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_kv8_kvcartridge_b32_n5.json`
+
+### 45.2 Attention Matching 核心算法实现
+
+论文与代码参考：
+
+- 论文：*Fast KV Compaction via Attention Matching*，<https://arxiv.org/pdf/2602.16284>
+- 代码：<https://github.com/adamzweiger/compaction>
+
+实现提交：
+
+```text
+9bb4677 实现：加入 Attention Matching KV 压缩核心算法
+```
+
+本轮先实现单 `(layer, KV-head)` 的 `AM-HighestAttnKeys` 核心，不急着接真实 decode cache：
+
+1. 给定原始 `K,V ∈ R^{T×d}` 与 reference queries `Q ∈ R^{n×d}`；
+2. 计算 `softmax(QK^T/sqrt(d))`，按 RMS/mean/max attention score 选择 top `budget` 个 key；
+3. 固定 compact keys `C_k=K[S]`，用 box-NNLS 拟合 attention bias `beta`，让 compact keys 的
+   unnormalized attention mass 接近原始 KV mass；
+4. 固定 `C_k,beta`，用 least squares 拟合 compact values `C_v`，最小化
+   `softmax(QC_k^T/sqrt(d)+beta) C_v` 与原始 `softmax(QK^T/sqrt(d)) V` 的输出误差。
+
+关键文件：
+
+- `tinyvllm/engine/attention_matching.py`
+  - `highest_attention_key_indices()`：AM-HighestAttnKeys 的 key 选择；
+  - `fit_attention_bias()`：attention-mass matching；
+  - `fit_compacted_values()`：attention-output matching；
+  - `attention_matching_highest_keys()`：端到端返回 `C_k/beta/C_v/indices`；
+- `tools/test_attention_matching.py`：覆盖 key selection、mass matching、value LSQ 优于 direct value、输出 shape/dtype。
+
+远端 A100 合成单 head 验证：
+
+```text
+T=1024, d=128, queries=128, device=cuda
+```
+
+| budget | ratio | direct subset MSE | AM fitted MSE | improvement |
+|---:|---:|---:|---:|---:|
+| 16 | 1.6% | 1.677880e-01 | 1.291376e-03 | 129.93× |
+| 32 | 3.1% | 9.969880e-02 | 9.998721e-04 | 99.71× |
+| 64 | 6.2% | 5.242080e-02 | 5.916372e-04 | 88.60× |
+| 128 | 12.5% | 2.262743e-02 | 3.463814e-04 | 65.33× |
+
+这说明论文核心 insight 在我们的张量口径上成立：**同样选择高 attention keys，直接使用原始 `V[S]` 误差很大；
+加入 `beta + C_v least-squares` 后 attention output matching 误差下降约 65~130 倍。**
+
+验证命令：
+
+```text
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_attention_matching.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_kv_cartridge.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_eval_needle_fixed_prompts.py
+```
+
+输出：
+
+```text
+attention matching tests passed
+KV-Cartridge helper tests passed
+eval_needle fixed-prompt tests passed
+```
+
+### 45.3 后续执行门槛与 todo
+
+当前不要直接做 OMP-fast。原因：OMP 是论文更强版本，但工程复杂度更高，且真实 decode 路径尚未接入
+`C_k/beta/C_v`。最高性价比路线是：
+
+1. **先把 `AM-HighestAttnKeys` 接入真实模型 decode 路径**：
+   - 支持 compact prefix `C_k/beta/C_v`；
+   - 先只走 eager decode，不碰 CUDA graph；
+   - 先用 context-prefill queries，后续再补 repeat-prefill / self-study；
+   - 先跑 budget `b=16/32/64/128` 的 fixed-prompt needle 曲线。
+2. **判定是否进入 OMP-fast**：
+   - 如果 `AM-HighestAttnKeys b=16/32` 能接近 Quest top-k=16 的质量（当前参考：96.0% / 3 failures），
+     再继续做 OMP-fast；
+   - 如果 b=16/32 质量明显不够，但 b=64/128 才接近，则先优化 query 采样/分层预算，不急着上 OMP；
+   - 如果 AM 在真实 decode 上无法明显优于 uniform KV-Cartridge，则 OMP-fast 暂缓，优先查 query 分布与
+     `beta` 在 FlashAttention 路径中的注入方式。
+
+后续推荐实验表：
+
+| method | budget | 目标 |
+|---|---:|---|
+| full attention / KV8 | - | 质量上界 |
+| Quest | top-k=16 | 当前 TP=1 参考点：96.0% / 25.83 tok/s |
+| KV-Cartridge uniform | b=32 | 简单 read-side baseline：96.0% / 19.48 tok/s |
+| AM-HighestAttnKeys | b=16/32 | 若接近 Quest 质量，进入 OMP-fast |
+| AM-HighestAttnKeys | b=64/128 | 判断 AM 是否只是需要更大 budget |
+| OMP-fast | TBD | 仅在 AM-HighestAttnKeys 达到门槛后实现 |
