@@ -2296,7 +2296,7 @@ CUDA_VISIBLE_DEVICES=3,5
 --kv-quant-bits 8 --kv-quant-group-size 32
 ```
 
-随后复用同一 fixed-prompt seed 单独补跑 `--top-k-blocks-list 4/6/8/12`，
+随后复用同一 fixed-prompt seed 单独补跑 `--top-k-blocks-list 4/5/6/8/12`，
 用于确认 TP=2 下最高吞吐档、历史折中档，以及更激进稀疏档的质量边界。
 
 结果（75 sample / setting）：
@@ -2305,6 +2305,7 @@ CUDA_VISIBLE_DEVICES=3,5
 |---|---:|---:|---:|---:|
 | C8 baseline/full attention | 2 | 94.7% | 27.31 tok/s | 4/75 |
 | C8 + Quest top-k=4 | 2 | 80.0% | 35.94 tok/s | 15/75 |
+| C8 + Quest top-k=5 | 2 | 89.3% | 35.54 tok/s | 8/75 |
 | C8 + Quest top-k=6 | 2 | 94.7% | **35.54 tok/s** | 4/75 |
 | C8 + Quest top-k=8 | 2 | 94.7% | **35.12 tok/s** | 4/75 |
 | C8 + Quest top-k=12 | 2 | 94.7% | 34.10 tok/s | 4/75 |
@@ -2319,15 +2320,17 @@ CUDA_VISIBLE_DEVICES=3,5
 
 失败输出仍是 question/instruction 复读，没有新增 15K 长上下文数字截断/重复错误。
 
-`top-k=4` 虽然吞吐最高，但质量明显掉到 80.0%，额外失败集中在：
+`top-k=5` 与 `top-k=4` 仍会额外掉质量，边界很清楚：
 
-- `(4096, depth=0.25)`：5/5 全错，输出为 haystack 复读；
-- `(8192, depth=0.25)`：5/5 全错，出现错误 magic 数字或截断数字；
-- `(8192, depth=0.75)`：新增 1 条错误数字。
+- `top-k=5` 掉到 89.3%，比 baseline/top-k=6 多 4 个 `(4096, depth=0.25)` haystack 复读失败；
+- `top-k=4` 掉到 80.0%，额外失败进一步扩大到：
+  - `(4096, depth=0.25)`：5/5 全错，输出为 haystack 复读；
+  - `(8192, depth=0.25)`：5/5 全错，出现错误 magic 数字或截断数字；
+  - `(8192, depth=0.75)`：新增 1 条错误数字。
 
 与 TP=1 fixed-prompt n=5 的 top-k=16 结果（§43.7：96.0% / 25.83 tok/s，3/75 failures）相比，
 TP=2 本轮多 1 个 `(4096, depth=0.5)` 复读失败，但 top-k=6/8/12/16 与 full attention 完全对齐；
-因此当前可给出的 TP=2 结论是：**scale slicing / KV8 / Quest TP 通路稳定，top-k=6/8/12/16 都不引入额外 needle 质量损失；top-k=6 是当前最高吞吐且不掉质量档（相对 TP=2 full attention +30.1%），top-k=8 是更稳妥的推荐吞吐档（+28.6%），top-k=12 为中间档（+24.9%），top-k=16 是更保守档（+21.6%）；top-k=4 过稀疏，不推荐**。
+因此当前可给出的 TP=2 结论是：**scale slicing / KV8 / Quest TP 通路稳定，top-k=6/8/12/16 都不引入额外 needle 质量损失；top-k=6 是当前最高吞吐且不掉质量档（相对 TP=2 full attention +30.1%），top-k=8 是更稳妥的推荐吞吐档（+28.6%），top-k=12 为中间档（+24.9%），top-k=16 是更保守档（+21.6%）；top-k≤5 过稀疏，不推荐**。
 
 文件留痕：
 
@@ -2336,3 +2339,4 @@ TP=2 本轮多 1 个 `(4096, depth=0.5)` 复读失败，但 top-k=6/8/12/16 与 
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk12_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk4_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk6_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk5_n5.json`
