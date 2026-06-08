@@ -59,6 +59,12 @@ def parse_args():
         help="-1 表示 baseline；其余值是 quest top-k",
     )
     p.add_argument("--quest-min-seq-len", type=int, default=512)
+    p.add_argument("--kv-cartridge-blocks", type=int, default=0,
+                   help="KV-Cartridge v0：decode 时保留的 uniform KV block 数；0 表示关闭。与 Quest 分开评测。")
+    p.add_argument("--kv-cartridge-min-seq-len", type=int, default=1024,
+                   help="KV-Cartridge 只在序列长度达到该阈值时启用。")
+    p.add_argument("--kv-cartridge-mode", type=str, default="uniform", choices=["uniform"],
+                   help="KV-Cartridge v0 压缩策略：保首尾，中间均匀抽样。")
     p.add_argument("--num-trials", type=int, default=3, help="每个 (ctx_len, depth) 重复多少次")
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
@@ -174,7 +180,9 @@ def clear_prefix_cache(llm) -> int:
 
 def run_one_setting(llm, tokenizer, args, top_k: int):
     is_c4 = args.kv_quant_bits == 4
-    if is_c4:
+    if args.kv_cartridge_blocks > 0:
+        label = f"KV-Cartridge b={args.kv_cartridge_blocks}"
+    elif is_c4:
         label = "C4" if top_k <= 0 else f"C4+top_k={top_k}"
     else:
         label = f"top_k={top_k}" if top_k > 0 else "baseline"
@@ -247,6 +255,9 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
         quest_min_seq_len=args.quest_min_seq_len,
         kv_quant_bits=args.kv_quant_bits,
         kv_quant_group_size=args.kv_quant_group_size,
+        kv_cartridge_blocks=args.kv_cartridge_blocks,
+        kv_cartridge_min_seq_len=args.kv_cartridge_min_seq_len,
+        kv_cartridge_mode=args.kv_cartridge_mode,
         quantization=args.quantization,
         quant_group_size=args.quant_group_size,
         act_quant_bits=args.act_quant_bits,
@@ -261,7 +272,12 @@ def main():
     args = parse_args()
 
     is_c4 = args.kv_quant_bits == 4
-    if is_c4:
+    cartridge_enabled = args.kv_cartridge_blocks > 0
+    if cartridge_enabled:
+        # KV-Cartridge v0 是 Quest 的替代稀疏策略：一次运行只评测一个 cartridge budget。
+        top_k_list = [-1]
+        init_top_k = -1
+    elif is_c4:
         # C4 模式：KV cache 物理布局变了；但 quest_top_k_blocks 仍可热切，
         # 所以同进程内可以跑 "C4 only" + "C4+top_k=k1" + "C4+top_k=k2"
         top_k_list = args.top_k_blocks_list
@@ -298,7 +314,9 @@ def main():
     print(f"{'setting':>10} | {'acc':>7} | {'tok/s':>9}")
     print("-" * 36)
     for r in all_results:
-        if is_c4:
+        if cartridge_enabled:
+            label = f"cartridge_b{args.kv_cartridge_blocks}"
+        elif is_c4:
             label = "C4"
         else:
             label = "baseline" if r["top_k"] < 0 else f"top_k={r['top_k']}"

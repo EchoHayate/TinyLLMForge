@@ -13,6 +13,7 @@ from tinyvllm.utils.cpu_offload import apply_cpu_offload
 from tinyvllm.layers.linear import set_quant_config
 from tinyvllm.layers.sampler import Sampler
 from tinyvllm.utils.context import reset_context, set_context, get_context
+from tinyvllm.engine.kv_cartridge import compress_decode_block_table_rows, should_use_kv_cartridge
 
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
@@ -266,7 +267,10 @@ class ModelRunner:
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
         block_tables_data = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]  #用-1补齐
-        return self._list_to_cuda_2d(block_tables_data, "block_tables", torch.int32)
+        return self.prepare_block_tables_from_rows(block_tables_data)
+
+    def prepare_block_tables_from_rows(self, rows: list[list[int]], name: str = "block_tables"):
+        return self._list_to_cuda_2d(rows, name, torch.int32)
 
     # ---- pinned host buffer 池：把多次小 H2D 改成 buffer 复用 + non_blocking copy ----
     def _get_pinned(self, name: str, n: int, dtype: torch.dtype) -> torch.Tensor:
@@ -410,18 +414,38 @@ class ModelRunner:
         positions = []
         slot_mapping = []
         context_lens = []
+        num_blocks_host = []
         for seq in seqs:
             # 上一次输出的最后token
             input_ids.append(seq.last_token)
             # 下一个token的位置
             positions.append(len(seq))
             context_lens.append(len(seq))
+            num_blocks_host.append(seq.num_blocks)
             slot_mapping.append(seq.block_table[-1] * seq.block_size + seq.last_block_num_tokens - 1)   #
+
+        max_blocks = max(len(seq.block_table) for seq in seqs)
+        block_table_rows = [seq.block_table + [-1] * (max_blocks - len(seq.block_table)) for seq in seqs]
+
+        cartridge_active = should_use_kv_cartridge(
+            context_lens,
+            num_blocks_host,
+            self.config.kv_cartridge_blocks,
+            self.config.kv_cartridge_min_seq_len,
+        )
+        if cartridge_active:
+            block_table_rows, context_lens = compress_decode_block_table_rows(
+                block_table_rows,
+                context_lens,
+                self.block_size,
+                self.config.kv_cartridge_blocks,
+            )
+
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
         slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
         context_lens = self._list_to_cuda(context_lens, "context_lens", torch.int32)
-        block_tables = self.prepare_block_tables(seqs)
+        block_tables = self.prepare_block_tables_from_rows(block_table_rows)
 
         # Quest 早返回判定（host 端，避免每层 .item() 触发 GPU sync）：
         #   1) 至少一条 seq 满足 seq_len >= min_seq_len（按 min 算保守）
@@ -429,7 +453,7 @@ class ModelRunner:
         #   3) **短序列保护**：top_k * block_size 已经 >= 最长 seq * 0.8 时，
         #      Quest 能裁掉的块 <20%，selection overhead 远超收益 → 降级 full attention
         #      （kv-sparse-attention.md §5.5 #4）
-        cfg_top_k = self.config.quest_top_k_blocks
+        cfg_top_k = self.config.quest_top_k_blocks if not cartridge_active else -1
         cfg_min_len = self.config.quest_min_seq_len
         if cfg_top_k > 0 and seqs:
             min_seq_len_host = min(len(s) for s in seqs)

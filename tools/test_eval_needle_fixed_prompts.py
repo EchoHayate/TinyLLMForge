@@ -132,6 +132,9 @@ def test_build_llm_kwargs_uses_configured_tp_size():
         act_quant_skip_first=0,
         act_quant_skip_last=4,
         act_quant_skip_layers=None,
+        kv_cartridge_blocks=8,
+        kv_cartridge_min_seq_len=2048,
+        kv_cartridge_mode="uniform",
     )
 
     kwargs = eval_needle.build_llm_kwargs(args, init_top_k=16)
@@ -139,6 +142,9 @@ def test_build_llm_kwargs_uses_configured_tp_size():
     assert kwargs["tensor_parallel_size"] == 2
     assert kwargs["quest_top_k_blocks"] == 16
     assert kwargs["act_quant_skip_last"] == 4
+    assert kwargs["kv_cartridge_blocks"] == 8
+    assert kwargs["kv_cartridge_min_seq_len"] == 2048
+    assert kwargs["kv_cartridge_mode"] == "uniform"
 
 
 def main():
