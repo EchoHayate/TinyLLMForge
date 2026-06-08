@@ -2296,7 +2296,8 @@ CUDA_VISIBLE_DEVICES=3,5
 --kv-quant-bits 8 --kv-quant-group-size 32
 ```
 
-随后复用同一 fixed-prompt seed 单独补跑 `--top-k-blocks-list 8`，用于确认 TP=2 下最高吞吐档是否仍不额外掉质量。
+随后复用同一 fixed-prompt seed 单独补跑 `--top-k-blocks-list 8` 与 `--top-k-blocks-list 12`，
+用于确认 TP=2 下最高吞吐档与历史折中档是否仍不额外掉质量。
 
 结果（75 sample / setting）：
 
@@ -2304,9 +2305,10 @@ CUDA_VISIBLE_DEVICES=3,5
 |---|---:|---:|---:|---:|
 | C8 baseline/full attention | 2 | 94.7% | 27.31 tok/s | 4/75 |
 | C8 + Quest top-k=8 | 2 | 94.7% | **35.12 tok/s** | 4/75 |
+| C8 + Quest top-k=12 | 2 | 94.7% | 34.10 tok/s | 4/75 |
 | C8 + Quest top-k=16 | 2 | 94.7% | **33.21 tok/s** | 4/75 |
 
-补扫 `top-k=8` 后，失败集合与 baseline/top-k=16 也完全相同，均集中在 `(ctx=4096, depth=0.5)` 的 4 个 trial：
+补扫 `top-k=8/12` 后，失败集合与 baseline/top-k=16 也完全相同，均集中在 `(ctx=4096, depth=0.5)` 的 4 个 trial：
 
 - `trial=0, magic=86465`
 - `trial=1, magic=38631`
@@ -2316,10 +2318,11 @@ CUDA_VISIBLE_DEVICES=3,5
 失败输出仍是 question/instruction 复读，没有新增 15K 长上下文数字截断/重复错误。
 
 与 TP=1 fixed-prompt n=5 的 top-k=16 结果（§43.7：96.0% / 25.83 tok/s，3/75 failures）相比，
-TP=2 本轮多 1 个 `(4096, depth=0.5)` 复读失败，但 top-k=8/16 与 full attention 完全对齐；
-因此当前可给出的 TP=2 结论是：**scale slicing / KV8 / Quest TP 通路稳定，top-k=8/16 都不引入额外 needle 质量损失；top-k=8 吞吐最高（相对 TP=2 full attention +28.6%），top-k=16 是更保守档（+21.6%）**。
+TP=2 本轮多 1 个 `(4096, depth=0.5)` 复读失败，但 top-k=8/12/16 与 full attention 完全对齐；
+因此当前可给出的 TP=2 结论是：**scale slicing / KV8 / Quest TP 通路稳定，top-k=8/12/16 都不引入额外 needle 质量损失；top-k=8 吞吐最高（相对 TP=2 full attention +28.6%），top-k=12 为中间档（+24.9%），top-k=16 是更保守档（+21.6%）**。
 
 文件留痕：
 
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk16_n5.json`
 - `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk8_n5.json`
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk12_n5.json`
