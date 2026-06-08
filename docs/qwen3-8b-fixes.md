@@ -2271,3 +2271,51 @@ FileNotFoundError: .../tp_smoke_out/tp_smoke_results/tp2_w4a8_sq_g32_skiplast4.j
 
 - `tp_smoke_out/tp_smoke_results/tp2_w4a8_sq_g32_skiplast4.json`
 - `tp_smoke_out/tp_smoke_results/tp2_fullstack_w4a8_sq_kv8_quest16.json`
+
+### 44.4 TP=2 fixed-prompt needle 质量复核（2026-06-08）
+
+为把 §44.2 的“通路跑通”推进到 needle 质量背书，先将 `tools/eval_needle.py` 的
+`tensor_parallel_size=1` 硬编码改成可配置：
+
+```text
+--tp-size 2
+```
+
+默认仍为 TP=1；本轮新增 CPU 测试覆盖 `tp_size=2 -> tensor_parallel_size=2` 的参数透传。
+
+远端 fixed-prompt n=5 口径：
+
+```text
+CUDA_VISIBLE_DEVICES=3,5
+--tp-size 2
+--fixed-prompts --num-trials 5
+--top-k-blocks-list -1 16
+--quantization int4 --quant-group-size 32
+--act-quant-bits 8 --act-quant-skip-last 4
+--smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt
+--kv-quant-bits 8 --kv-quant-group-size 32
+```
+
+结果（75 sample / setting）：
+
+| setting | TP | overall_acc | throughput | failures |
+|---|---:|---:|---:|---:|
+| C8 baseline/full attention | 2 | 94.7% | 27.31 tok/s | 4/75 |
+| C8 + Quest top-k=16 | 2 | 94.7% | **33.21 tok/s** | 4/75 |
+
+失败集合 baseline 与 top-k=16 完全相同，均集中在 `(ctx=4096, depth=0.5)` 的 4 个 trial：
+
+- `trial=0, magic=86465`
+- `trial=1, magic=38631`
+- `trial=2, magic=76150`
+- `trial=4, magic=46941`
+
+失败输出仍是 question/instruction 复读，没有新增 15K 长上下文数字截断/重复错误。
+
+与 TP=1 fixed-prompt n=5 的 top-k=16 结果（§43.7：96.0% / 25.83 tok/s，3/75 failures）相比，
+TP=2 本轮多 1 个 `(4096, depth=0.5)` 复读失败，但 top-k=16 与 full attention 完全对齐；
+因此当前可给出的 TP=2 结论是：**scale slicing / KV8 / Quest(top-k=16) TP 通路稳定，top-k=16 不引入额外 needle 质量损失，吞吐相对 TP=2 full attention 提升约 21.6%**。
+
+文件留痕：
+
+- `needle_sq_results/needle_sq_layer_adaptive_floor085_skiplast4_tp2_fixed_prompts_topk16_n5.json`
