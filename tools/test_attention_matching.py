@@ -1,0 +1,104 @@
+"""Fast KV Compaction via Attention Matching 核心算法单测。
+
+跑法：python3 tools/test_attention_matching.py
+"""
+
+import os
+import sys
+
+import torch
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_THIS_DIR)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tinyvllm.engine.attention_matching import (  # noqa: E402
+    attention_matching_highest_keys,
+    attention_output,
+    fit_attention_bias,
+    fit_compacted_values,
+    highest_attention_key_indices,
+)
+
+
+def test_highest_attention_key_indices_selects_dominant_key_by_rms_attention():
+    queries = torch.tensor([[5.0, 0.0], [4.0, 0.0], [6.0, 0.0]], dtype=torch.float32)
+    keys = torch.tensor([
+        [0.0, 1.0],
+        [1.0, 0.0],
+        [-1.0, 0.0],
+        [0.0, -1.0],
+    ], dtype=torch.float32)
+
+    indices = highest_attention_key_indices(keys, queries, budget=2, score_method="rms")
+
+    assert indices.tolist()[0] == 1
+    assert len(indices.tolist()) == 2
+
+
+def test_fit_attention_bias_preserves_attention_mass_for_selected_keys():
+    torch.manual_seed(0)
+    keys = torch.randn(6, 4)
+    queries = torch.randn(5, 4)
+    selected = torch.tensor([0, 2, 4, 5])
+
+    beta = fit_attention_bias(keys, queries, selected, beta_bound=3.0)
+
+    full_mass = torch.exp((queries @ keys.T) / (keys.shape[1] ** 0.5)).sum(dim=1)
+    compact_mass = torch.exp((queries @ keys[selected].T) / (keys.shape[1] ** 0.5) + beta).sum(dim=1)
+    compact_mass_without_beta = torch.exp((queries @ keys[selected].T) / (keys.shape[1] ** 0.5)).sum(dim=1)
+
+    err_with_beta = torch.mean((compact_mass - full_mass).abs())
+    err_without_beta = torch.mean((compact_mass_without_beta - full_mass).abs())
+
+    assert err_with_beta < err_without_beta
+    assert torch.all(beta <= 3.0)
+    assert torch.all(beta >= -3.0)
+
+
+def test_fit_compacted_values_reduces_attention_output_error_vs_direct_values():
+    torch.manual_seed(1)
+    keys = torch.randn(8, 4)
+    values = torch.randn(8, 4)
+    queries = torch.randn(12, 4)
+    selected = torch.tensor([0, 2, 5, 7])
+    beta = fit_attention_bias(keys, queries, selected, beta_bound=3.0)
+
+    target = attention_output(queries, keys, values)
+    direct = attention_output(queries, keys[selected], values[selected], beta)
+    compact_values = fit_compacted_values(keys, values, queries, selected, beta, ridge_lambda=1e-6)
+    fitted = attention_output(queries, keys[selected], compact_values, beta)
+
+    direct_mse = torch.mean((direct - target) ** 2)
+    fitted_mse = torch.mean((fitted - target) ** 2)
+
+    assert fitted_mse < direct_mse
+
+
+def test_attention_matching_highest_keys_returns_compacted_cache_and_indices():
+    torch.manual_seed(2)
+    keys = torch.randn(10, 6)
+    values = torch.randn(10, 6)
+    queries = torch.randn(16, 6)
+
+    compact = attention_matching_highest_keys(keys, values, queries, budget=4)
+
+    assert compact.keys.shape == (4, 6)
+    assert compact.values.shape == (4, 6)
+    assert compact.beta.shape == (4,)
+    assert compact.indices.shape == (4,)
+    assert compact.keys.dtype == keys.dtype
+    assert compact.values.dtype == values.dtype
+
+
+def main():
+    test_highest_attention_key_indices_selects_dominant_key_by_rms_attention()
+    test_fit_attention_bias_preserves_attention_mass_for_selected_keys()
+    test_fit_compacted_values_reduces_attention_output_error_vs_direct_values()
+    test_attention_matching_highest_keys_returns_compacted_cache_and_indices()
+    print("attention matching tests passed")
+
+
+if __name__ == "__main__":
+    main()
