@@ -2501,3 +2501,55 @@ eval_needle fixed-prompt tests passed
 | AM-HighestAttnKeys | b=16/32 | 若接近 Quest 质量，进入 OMP-fast |
 | AM-HighestAttnKeys | b=64/128 | 判断 AM 是否只是需要更大 budget |
 | OMP-fast | TBD | 仅在 AM-HighestAttnKeys 达到门槛后实现 |
+
+### 45.4 AM compact tensors 接入 decode 路径（2026-06-09）
+
+实现提交：
+
+```text
+7a04c82 实现：接入 Attention Matching decode 路径
+```
+
+本轮按“秒级可用性优先”只做 eager decode 验证路径，不碰 CUDA graph：
+
+1. `tinyvllm/engine/attention_matching.py` 新增 `attention_matching_decode()`：
+   - 输入 dense fp KV cache `[B, T, kv_h, hd]` 与 decode query `[B, q_h, hd]`；
+   - 按 GQA group 在每个 `(batch, kv_head)` 上运行 `AM-HighestAttnKeys`；
+   - 输出路径显式使用 `C_k / beta / C_v`；
+   - 当 `budget >= seq_len` 时退化为 full attention，方便单测校验。
+2. `tinyvllm/layers/attention.py` 接入两条 decode 分支：
+   - fp16 KV：按 `block_table` gather 成 dense cache 后进入 AM；
+   - KV8：先 dequant 命中 blocks，再 reshape 成 dense cache 后进入 AM；
+   - KV4 暂不支持，避免一次性引入 int4 dequant + AM attribution 混淆。
+3. `tinyvllm/engine/model_runner.py`：
+   - AM 开启时跳过 CUDA graph capture；
+   - decode 阶段按 `am_compact_min_seq_len` 与 `am_compact_blocks` 判定是否启用；
+   - AM 与 Quest / KV-Cartridge 互斥，保证 needle 曲线可归因。
+4. `tools/eval_needle.py` 新增 AM CLI：
+   - `--am-compact-blocks`；
+   - `--am-compact-min-seq-len`；
+   - `--am-compact-score-method`；
+   - `--am-compact-beta-bound`；
+   - `--am-compact-ridge-lambda`。
+
+本地可执行验证（当前 macOS `/usr/bin/python3` 无 torch，AM torch 单测需远端 A100 补跑）：
+
+```text
+python3 tools/test_eval_needle_fixed_prompts.py  -> eval_needle fixed-prompt tests passed
+python3 tools/test_chunked_prefill.py            -> chunked prefill tests passed
+python3 -m py_compile ...                        -> passed
+git diff --check                                 -> passed
+python3 tools/test_attention_matching.py         -> blocked locally: ModuleNotFoundError: No module named 'torch'
+```
+
+远端 A100 状态：Kerberos 凭据仍过期，`ssh sitian@10.232.195.203` 返回
+`Connection closed by UNKNOWN port 65535`，`kinit -R` 返回
+`Matching credential (krbtgt/BYTEDANCE.COM@BYTEDANCE.COM) not found`。待凭据恢复后补跑：
+
+```bash
+python tools/test_attention_matching.py
+python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-blocks 16  --num-trials 5 --fixed-prompts
+python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-blocks 32  --num-trials 5 --fixed-prompts
+python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-blocks 64  --num-trials 5 --fixed-prompts
+python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-blocks 128 --num-trials 5 --fixed-prompts
+```
