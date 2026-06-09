@@ -68,6 +68,7 @@ class ModelRunner:
         skip_cudagraph = (
             self.enforce_eager
             or config.kv_quant_bits == 4
+            or config.am_compact_blocks > 0
             or config.cpu_offload
         )
         if not skip_cudagraph:
@@ -441,6 +442,12 @@ class ModelRunner:
                 self.config.kv_cartridge_blocks,
             )
 
+        am_compact_active = (
+            self.config.am_compact_blocks > 0
+            and min(context_lens) >= self.config.am_compact_min_seq_len
+            and min(context_lens) > self.config.am_compact_blocks
+        )
+
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
         slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
@@ -453,7 +460,7 @@ class ModelRunner:
         #   3) **短序列保护**：top_k * block_size 已经 >= 最长 seq * 0.8 时，
         #      Quest 能裁掉的块 <20%，selection overhead 远超收益 → 降级 full attention
         #      （kv-sparse-attention.md §5.5 #4）
-        cfg_top_k = self.config.quest_top_k_blocks if not cartridge_active else -1
+        cfg_top_k = self.config.quest_top_k_blocks if not (cartridge_active or am_compact_active) else -1
         cfg_min_len = self.config.quest_min_seq_len
         if cfg_top_k > 0 and seqs:
             min_seq_len_host = min(len(s) for s in seqs)
@@ -470,7 +477,11 @@ class ModelRunner:
             quest_active_top_k = -1
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,
                     quest_top_k_blocks=quest_active_top_k,
-                    quest_min_seq_len=cfg_min_len)
+                    quest_min_seq_len=cfg_min_len,
+                    am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
+                    am_compact_score_method=self.config.am_compact_score_method,
+                    am_compact_beta_bound=self.config.am_compact_beta_bound,
+                    am_compact_ridge_lambda=self.config.am_compact_ridge_lambda)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上
@@ -498,12 +509,13 @@ class ModelRunner:
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
         # Quest 实际启用时（context 已确认）才走 eager；否则照常走 cuda graph
         quest_active = (not is_prefill) and (get_context().quest_top_k_blocks > 0)
+        am_active = (not is_prefill) and (get_context().am_compact_blocks > 0)
         # C4：decode 反量化每步都要 alloc，cuda graph 无法 replay，强制 eager
         c4_active = self.config.kv_quant_bits == 4
         # cpu_offload：init 阶段已跳过 capture，这里也必须走 eager（否则 self.graphs 不存在）
         offload_active = self.config.cpu_offload
         if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
-                or quest_active or c4_active or offload_active):     #动态执行 eager mode
+                or quest_active or am_active or c4_active or offload_active):     #动态执行 eager mode
             return self.model.compute_logits(self.model(input_ids, positions))
         else:           #静态执行  graph replay
             bs = input_ids.size(0)

@@ -15,6 +15,7 @@ if _REPO_ROOT not in sys.path:
 
 from tinyvllm.engine.attention_matching import (  # noqa: E402
     attention_matching_highest_keys,
+    attention_matching_decode,
     attention_output,
     fit_attention_bias,
     fit_compacted_values,
@@ -92,11 +93,39 @@ def test_attention_matching_highest_keys_returns_compacted_cache_and_indices():
     assert compact.values.dtype == values.dtype
 
 
+def test_attention_matching_decode_supports_gqa_and_compact_output_shape():
+    torch.manual_seed(3)
+    q = torch.randn(1, 4, 6)
+    keys = torch.randn(1, 10, 2, 6)
+    values = torch.randn(1, 10, 2, 6)
+    context_lens = torch.tensor([10], dtype=torch.int32)
+
+    out = attention_matching_decode(q, keys, values, context_lens, budget=4)
+
+    assert out.shape == (1, 4, 6)
+    assert out.dtype == q.dtype
+
+
+def test_attention_matching_decode_matches_full_attention_when_budget_covers_cache():
+    torch.manual_seed(4)
+    q = torch.randn(1, 2, 4)
+    keys = torch.randn(1, 5, 1, 4)
+    values = torch.randn(1, 5, 1, 4)
+    context_lens = torch.tensor([5], dtype=torch.int32)
+
+    out = attention_matching_decode(q, keys, values, context_lens, budget=8)
+    expected = attention_output(q[0], keys[0, :, 0], values[0, :, 0]).view(1, 2, 4)
+
+    assert torch.allclose(out, expected.to(out.dtype), atol=1e-5, rtol=1e-5)
+
+
 def main():
     test_highest_attention_key_indices_selects_dominant_key_by_rms_attention()
     test_fit_attention_bias_preserves_attention_mass_for_selected_keys()
     test_fit_compacted_values_reduces_attention_output_error_vs_direct_values()
     test_attention_matching_highest_keys_returns_compacted_cache_and_indices()
+    test_attention_matching_decode_supports_gqa_and_compact_output_shape()
+    test_attention_matching_decode_matches_full_attention_when_budget_covers_cache()
     print("attention matching tests passed")
 
 

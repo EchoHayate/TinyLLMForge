@@ -16,6 +16,11 @@ class Context:
     # Quest 动态稀疏 attention：>0 表示开启，每个 query 只看 top-k block
     quest_top_k_blocks: int = -1
     quest_min_seq_len: int = 0
+    # Attention Matching KV compaction：>0 表示 decode eager 路径按 AM 生成 C_k/beta/C_v
+    am_compact_blocks: int = 0
+    am_compact_score_method: str = "rms"
+    am_compact_beta_bound: float = 3.0
+    am_compact_ridge_lambda: float = 1e-6
 
 _CONTEXT = Context()
 
@@ -25,11 +30,15 @@ def get_context():
 def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0,
                 slot_mapping=None, context_lens=None, block_tables=None,
                 logits_indices=None,
-                quest_top_k_blocks: int = -1, quest_min_seq_len: int = 0):
+                quest_top_k_blocks: int = -1, quest_min_seq_len: int = 0,
+                am_compact_blocks: int = 0, am_compact_score_method: str = "rms",
+                am_compact_beta_bound: float = 3.0, am_compact_ridge_lambda: float = 1e-6):
     global _CONTEXT
     _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                        slot_mapping, context_lens, block_tables, logits_indices,
-                       quest_top_k_blocks, quest_min_seq_len)
+                       quest_top_k_blocks, quest_min_seq_len,
+                       am_compact_blocks, am_compact_score_method,
+                       am_compact_beta_bound, am_compact_ridge_lambda)
 
 def reset_context():
     global _CONTEXT              #声明为global变量非常重要 否则将导致修改无效

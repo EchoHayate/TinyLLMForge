@@ -135,6 +135,11 @@ def test_build_llm_kwargs_uses_configured_tp_size():
         kv_cartridge_blocks=8,
         kv_cartridge_min_seq_len=2048,
         kv_cartridge_mode="uniform",
+        am_compact_blocks=32,
+        am_compact_min_seq_len=4096,
+        am_compact_score_method="rms",
+        am_compact_beta_bound=3.0,
+        am_compact_ridge_lambda=1e-6,
     )
 
     kwargs = eval_needle.build_llm_kwargs(args, init_top_k=16)
@@ -145,6 +150,11 @@ def test_build_llm_kwargs_uses_configured_tp_size():
     assert kwargs["kv_cartridge_blocks"] == 8
     assert kwargs["kv_cartridge_min_seq_len"] == 2048
     assert kwargs["kv_cartridge_mode"] == "uniform"
+    assert kwargs["am_compact_blocks"] == 32
+    assert kwargs["am_compact_min_seq_len"] == 4096
+    assert kwargs["am_compact_score_method"] == "rms"
+    assert kwargs["am_compact_beta_bound"] == 3.0
+    assert kwargs["am_compact_ridge_lambda"] == 1e-6
 
 
 def main():

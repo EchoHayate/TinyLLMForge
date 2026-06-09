@@ -65,6 +65,16 @@ def parse_args():
                    help="KV-Cartridge 只在序列长度达到该阈值时启用。")
     p.add_argument("--kv-cartridge-mode", type=str, default="uniform", choices=["uniform"],
                    help="KV-Cartridge v0 压缩策略：保首尾，中间均匀抽样。")
+    p.add_argument("--am-compact-blocks", type=int, default=0,
+                   help="Attention Matching compact decode：每个 KV head 保留的 compact KV 数；0 表示关闭。")
+    p.add_argument("--am-compact-min-seq-len", type=int, default=1024,
+                   help="Attention Matching compact decode 只在序列长度达到该阈值时启用。")
+    p.add_argument("--am-compact-score-method", type=str, default="rms", choices=["rms", "mean", "max"],
+                   help="AM-HighestAttnKeys 的 key score 聚合方式。")
+    p.add_argument("--am-compact-beta-bound", type=float, default=3.0,
+                   help="Attention Matching beta box bound，实际范围为 [-bound, bound]。")
+    p.add_argument("--am-compact-ridge-lambda", type=float, default=1e-6,
+                   help="Attention Matching C_v least-squares ridge lambda。")
     p.add_argument("--num-trials", type=int, default=3, help="每个 (ctx_len, depth) 重复多少次")
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
@@ -180,7 +190,9 @@ def clear_prefix_cache(llm) -> int:
 
 def run_one_setting(llm, tokenizer, args, top_k: int):
     is_c4 = args.kv_quant_bits == 4
-    if args.kv_cartridge_blocks > 0:
+    if args.am_compact_blocks > 0:
+        label = f"AM-HighestAttnKeys b={args.am_compact_blocks}"
+    elif args.kv_cartridge_blocks > 0:
         label = f"KV-Cartridge b={args.kv_cartridge_blocks}"
     elif is_c4:
         label = "C4" if top_k <= 0 else f"C4+top_k={top_k}"
@@ -258,6 +270,11 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
         kv_cartridge_blocks=args.kv_cartridge_blocks,
         kv_cartridge_min_seq_len=args.kv_cartridge_min_seq_len,
         kv_cartridge_mode=args.kv_cartridge_mode,
+        am_compact_blocks=args.am_compact_blocks,
+        am_compact_min_seq_len=args.am_compact_min_seq_len,
+        am_compact_score_method=args.am_compact_score_method,
+        am_compact_beta_bound=args.am_compact_beta_bound,
+        am_compact_ridge_lambda=args.am_compact_ridge_lambda,
         quantization=args.quantization,
         quant_group_size=args.quant_group_size,
         act_quant_bits=args.act_quant_bits,
@@ -273,7 +290,12 @@ def main():
 
     is_c4 = args.kv_quant_bits == 4
     cartridge_enabled = args.kv_cartridge_blocks > 0
-    if cartridge_enabled:
+    am_enabled = args.am_compact_blocks > 0
+    if am_enabled:
+        # Attention Matching 是 Quest / KV-Cartridge 的替代 decode compaction 策略。
+        top_k_list = [-1]
+        init_top_k = -1
+    elif cartridge_enabled:
         # KV-Cartridge v0 是 Quest 的替代稀疏策略：一次运行只评测一个 cartridge budget。
         top_k_list = [-1]
         init_top_k = -1
@@ -314,7 +336,9 @@ def main():
     print(f"{'setting':>10} | {'acc':>7} | {'tok/s':>9}")
     print("-" * 36)
     for r in all_results:
-        if cartridge_enabled:
+        if am_enabled:
+            label = f"am_b{args.am_compact_blocks}"
+        elif cartridge_enabled:
             label = f"cartridge_b{args.kv_cartridge_blocks}"
         elif is_c4:
             label = "C4"

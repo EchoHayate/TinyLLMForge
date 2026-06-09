@@ -6,6 +6,7 @@ from triton.language.extra import libdevice
 
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from tinyvllm.utils.context import get_context
+from tinyvllm.engine.attention_matching import attention_matching_decode
 
 @triton.jit
 def store_kvcache_kernel(
@@ -449,6 +450,20 @@ def quest_select_blocks(
     return sparse_bt.contiguous(), sparse_context_lens.contiguous()
 
 
+def gather_kv_cache_dense(
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    block_tables: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Gather block-table KV cache into dense `[B, max_tokens, kv_h, head_dim]` tensors."""
+    safe_idx = block_tables.clamp_min(0).to(torch.long)
+    B, max_blocks = block_tables.shape
+    block_size = k_cache.shape[1]
+    k_dense = k_cache[safe_idx].reshape(B, max_blocks * block_size, k_cache.shape[2], k_cache.shape[3])
+    v_dense = v_cache[safe_idx].reshape(B, max_blocks * block_size, v_cache.shape[2], v_cache.shape[3])
+    return k_dense.contiguous(), v_dense.contiguous()
+
+
 class Attention(nn.Module):
 
     def __init__(
@@ -559,10 +574,35 @@ class Attention(nn.Module):
                             and self.k_min is not None
                             and block_tables is not None
                             and cache_seqlens is not None)
+            am_active = (context.am_compact_blocks > 0
+                         and block_tables is not None
+                         and cache_seqlens is not None)
 
             if self.kv_quant_bits in (4, 8):
                 _dequant = dequant_kv_blocks if self.kv_quant_bits == 4 else dequant_kv_blocks_q8
-                if quest_active:
+                if am_active:
+                    assert self.kv_quant_bits == 8, "Attention Matching compact decode v0 仅支持 KV8 / fp16 KV"
+                    k_fp, new_bt = _dequant(
+                        k_cache, self.k_scale, block_tables,
+                        self.kv_quant_group_size, q.dtype)
+                    v_fp, _ = _dequant(
+                        v_cache, self.v_scale, block_tables,
+                        self.kv_quant_group_size, q.dtype)
+                    B, max_blocks = block_tables.shape
+                    block_size = k_fp.shape[1]
+                    k_dense = k_fp.reshape(B, max_blocks * block_size, self.num_kv_heads, self.head_dim)
+                    v_dense = v_fp.reshape(B, max_blocks * block_size, self.num_kv_heads, self.head_dim)
+                    o = attention_matching_decode(
+                        q,
+                        k_dense,
+                        v_dense,
+                        cache_seqlens,
+                        budget=context.am_compact_blocks,
+                        score_method=context.am_compact_score_method,
+                        beta_bound=context.am_compact_beta_bound,
+                        ridge_lambda=context.am_compact_ridge_lambda,
+                    )
+                elif quest_active:
                     # 1) 用未量化的 k_min/k_max（store 时维护，反量化前）算 criticality 选 top-k
                     sparse_bt, sparse_cs = quest_select_blocks(
                         q, block_tables, cache_seqlens,
@@ -593,6 +633,20 @@ class Attention(nn.Module):
                         q.unsqueeze(1), k_fp, v_fp,
                         cache_seqlens=cache_seqlens,
                         block_table=new_bt, softmax_scale=self.scale, causal=True)
+                o = o.view(-1, self.num_heads * self.head_dim)
+                return o
+            if am_active:
+                k_dense, v_dense = gather_kv_cache_dense(k_cache, v_cache, block_tables)
+                o = attention_matching_decode(
+                    q,
+                    k_dense,
+                    v_dense,
+                    cache_seqlens,
+                    budget=context.am_compact_blocks,
+                    score_method=context.am_compact_score_method,
+                    beta_bound=context.am_compact_beta_bound,
+                    ridge_lambda=context.am_compact_ridge_lambda,
+                )
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o
             # Quest（无 C4）：动态选 top-k block，重写 block_table 与 cache_seqlens

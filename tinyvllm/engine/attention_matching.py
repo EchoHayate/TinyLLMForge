@@ -193,3 +193,63 @@ def attention_matching_highest_keys(
         values=compact_values.contiguous(),
         indices=selected.contiguous(),
     )
+
+
+def attention_matching_decode(
+    queries: torch.Tensor,
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    context_lens: torch.Tensor,
+    budget: int,
+    score_method: str = "rms",
+    beta_bound: float = 3.0,
+    ridge_lambda: float = 1e-6,
+) -> torch.Tensor:
+    """Decode attention through AM compact tensors.
+
+    Parameters
+    ----------
+    queries:
+        `[B, num_q_heads, head_dim]` query tensor for the current decode token.
+    keys / values:
+        Dense fp cache tensors after optional KV8 dequant, shaped
+        `[B, max_seq_len, num_kv_heads, head_dim]`.
+    context_lens:
+        Valid token count per batch row. Rows may be padded in `keys/values`.
+    budget:
+        Number of compact KV entries per `(batch,row,kv_head)`.
+
+    The implementation is intentionally eager and loop-based. It is the first
+    integration path for `C_k / beta / C_v`; performance work can happen after
+    quality is established.
+    """
+    if budget <= 0:
+        raise ValueError("budget must be positive")
+    batch, num_q_heads, head_dim = queries.shape
+    _, _, num_kv_heads, _ = keys.shape
+    assert num_q_heads % num_kv_heads == 0, "GQA requires q heads divisible by KV heads"
+    group_size = num_q_heads // num_kv_heads
+    out = torch.empty_like(queries)
+    for b in range(batch):
+        seq_len = int(context_lens[b].item())
+        for kv_h in range(num_kv_heads):
+            q_start = kv_h * group_size
+            q_end = q_start + group_size
+            q_group = queries[b, q_start:q_end]
+            k_seq = keys[b, :seq_len, kv_h]
+            v_seq = values[b, :seq_len, kv_h]
+            if budget >= seq_len:
+                group_out = attention_output(q_group, k_seq, v_seq)
+            else:
+                compact = attention_matching_highest_keys(
+                    k_seq,
+                    v_seq,
+                    q_group,
+                    budget=budget,
+                    score_method=score_method,
+                    beta_bound=beta_bound,
+                    ridge_lambda=ridge_lambda,
+                )
+                group_out = attention_output(q_group, compact.keys, compact.values, compact.beta)
+            out[b, q_start:q_end] = group_out.to(out.dtype)
+    return out
