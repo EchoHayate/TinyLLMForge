@@ -2675,3 +2675,24 @@ python tools/test_attention_matching.py
 | omp (`candidate_pool=4`) | 0.0% | 19.25 tok/s | `needle_sq_results/needle_am_selector_omp_smoke.json` |
 
 这个 smoke 只证明 CLI/config/decode 链路走通，不作为质量结论；正式质量结论仍需按 §45.5 的 8B fixed-prompt 口径跑 b=16/32。
+
+追加 8B 单样本对照（Qwen3-8B，`ctx=4096/depth=0.5/num_trials=1/max_output=4`，同一 magic=60494）：
+
+| selector | b | candidate_pool | acc | throughput | raw 输出 |
+|---|---:|---:|---:|---:|---|
+| HighestAttnKeys | 16 | - | 0.0% | 1.2248 tok/s | ` The magic number is` |
+| HighestAttnKeys | 32 | - | 0.0% | 1.2576 tok/s | ` The magic number is` |
+| OMP | 16 | 20 | 0.0% | 0.0173 tok/s | ` The magic number is` |
+| OMP | 32 | 36 | 0.0% | 0.0051 tok/s | ` The magic number is` |
+
+输出文件：
+
+- `needle_sq_results/needle_am_highest_b16_ctx4096_d05_n1_smoke.json`
+- `needle_sq_results/needle_am_highest_b32_ctx4096_d05_n1_smoke.json`
+- `needle_sq_results/needle_am_omp_b16_ctx4096_d05_n1_smoke.json`
+- `needle_sq_results/needle_am_omp_b32_ctx4096_d05_n1_smoke.json`
+
+结论：当前 eager OMP 质量链路已接通，但执行形态不可用。即使只在 HighestAttnKeys 候选池内做 greedy OMP，
+`ctx=4096` 单样本吞吐也从 Highest 的约 `1.2 tok/s` 降到 OMP b=16 的 `0.017 tok/s`、b=32 的 `0.005 tok/s`。
+因此不应继续跑默认 full grid 的 OMP n=1/n=5；下一步必须先做 OMP-fast execution-shape（缓存 compact tensors、低频 refresh、减少每步/每层重拟合），
+否则正式 fixed-prompt 曲线没有工程意义。
