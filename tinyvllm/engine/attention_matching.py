@@ -30,6 +30,54 @@ class AttentionMatchedKV:
     indices: torch.Tensor
 
 
+@dataclass
+class AttentionMatchingCacheEntry:
+    """Cached compact tensors for one sequence/KV-head selector state."""
+
+    compact: AttentionMatchedKV
+    step: int
+
+
+@dataclass
+class AttentionMatchingDecodeCache:
+    """Tiny per-layer AM compact cache used by decode refresh experiments."""
+
+    entries: dict[tuple, AttentionMatchingCacheEntry]
+    step: int = 0
+    hits: int = 0
+    misses: int = 0
+
+    def __init__(self):
+        self.entries = {}
+        self.step = 0
+        self.hits = 0
+        self.misses = 0
+
+    def begin_step(self) -> int:
+        self.step += 1
+        return self.step
+
+    def get(self, key: tuple, refresh_interval: int) -> AttentionMatchedKV | None:
+        entry = self.entries.get(key)
+        if entry is None:
+            self.misses += 1
+            return None
+        if refresh_interval <= 0 or self.step - entry.step >= refresh_interval:
+            self.misses += 1
+            return None
+        self.hits += 1
+        return entry.compact
+
+    def put(self, key: tuple, compact: AttentionMatchedKV) -> None:
+        self.entries[key] = AttentionMatchingCacheEntry(compact=compact, step=self.step)
+
+    def clear(self) -> None:
+        self.entries.clear()
+        self.step = 0
+        self.hits = 0
+        self.misses = 0
+
+
 def _scaled_scores(queries: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
     head_dim = keys.shape[-1]
     return (queries @ keys.T).to(torch.float32) / (head_dim ** 0.5)
@@ -328,6 +376,9 @@ def attention_matching_decode(
     beta_bound: float = 3.0,
     ridge_lambda: float = 1e-6,
     omp_candidate_pool_size: int = 0,
+    cache: AttentionMatchingDecodeCache | None = None,
+    cache_refresh_interval: int = 0,
+    cache_signatures: tuple | list | None = None,
 ) -> torch.Tensor:
     """Decode attention through AM compact tensors.
 
@@ -354,8 +405,14 @@ def attention_matching_decode(
     assert num_q_heads % num_kv_heads == 0, "GQA requires q heads divisible by KV heads"
     group_size = num_q_heads // num_kv_heads
     out = torch.empty_like(queries)
+    if cache is not None and cache_refresh_interval > 0:
+        cache.begin_step()
     for b in range(batch):
         seq_len = int(context_lens[b].item())
+        if cache_signatures is None:
+            cache_signature = (b, seq_len)
+        else:
+            cache_signature = cache_signatures[b]
         for kv_h in range(num_kv_heads):
             q_start = kv_h * group_size
             q_end = q_start + group_size
@@ -365,17 +422,35 @@ def attention_matching_decode(
             if budget >= seq_len:
                 group_out = attention_output(q_group, k_seq, v_seq)
             else:
-                compact = attention_matching_compact_keys(
-                    k_seq,
-                    v_seq,
-                    q_group,
-                    budget=budget,
-                    selector=selector,
-                    score_method=score_method,
-                    beta_bound=beta_bound,
-                    ridge_lambda=ridge_lambda,
-                    omp_candidate_pool_size=omp_candidate_pool_size,
+                cache_key = (
+                    cache_signature,
+                    kv_h,
+                    selector,
+                    budget,
+                    score_method,
+                    float(beta_bound),
+                    float(ridge_lambda),
+                    int(omp_candidate_pool_size),
+                    str(k_seq.dtype),
+                    str(k_seq.device),
                 )
+                compact = None
+                if cache is not None and cache_refresh_interval > 0:
+                    compact = cache.get(cache_key, cache_refresh_interval)
+                if compact is None:
+                    compact = attention_matching_compact_keys(
+                        k_seq,
+                        v_seq,
+                        q_group,
+                        budget=budget,
+                        selector=selector,
+                        score_method=score_method,
+                        beta_bound=beta_bound,
+                        ridge_lambda=ridge_lambda,
+                        omp_candidate_pool_size=omp_candidate_pool_size,
+                    )
+                    if cache is not None and cache_refresh_interval > 0:
+                        cache.put(cache_key, compact)
                 group_out = attention_output(q_group, compact.keys, compact.values, compact.beta)
             out[b, q_start:q_end] = group_out.to(out.dtype)
     return out

@@ -2696,3 +2696,41 @@ python tools/test_attention_matching.py
 `ctx=4096` 单样本吞吐也从 Highest 的约 `1.2 tok/s` 降到 OMP b=16 的 `0.017 tok/s`、b=32 的 `0.005 tok/s`。
 因此不应继续跑默认 full grid 的 OMP n=1/n=5；下一步必须先做 OMP-fast execution-shape（缓存 compact tensors、低频 refresh、减少每步/每层重拟合），
 否则正式 fixed-prompt 曲线没有工程意义。
+
+### 45.7 AM-OMP decode-step cache / low-frequency refresh 原型（2026-06-11）
+
+为验证 §45.6 的 execution-shape 判断，本轮加了最小 cache 原型：每个 Attention layer 持有一个
+`AttentionMatchingDecodeCache`，首次 decode 或超过 `am_compact_cache_refresh_interval` 时拟合 compact KV；
+刷新间隔内复用 `C_k/beta/C_v`，只对当前 query 做 compact attention 输出。
+
+新增配置 / CLI：
+
+- `Config.am_compact_cache_refresh_interval`；
+- `tools/eval_needle.py --am-compact-cache-refresh-interval`。
+
+远端验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+8B 单样本 cache 对照（同 §45.6：`ctx=4096/depth=0.5/num_trials=1/max_output=4`）：
+
+| selector | b | candidate_pool | cache_refresh | acc | throughput | raw 输出 |
+|---|---:|---:|---:|---:|---:|---|
+| OMP | 16 | 20 | 0 | 0.0% | 0.0173 tok/s | ` The magic number is` |
+| OMP | 16 | 20 | 8 | 0.0% | 0.0476 tok/s | ` The magic is the` |
+| OMP | 32 | 36 | 0 | 0.0% | 0.0051 tok/s | ` The magic number is` |
+| OMP | 32 | 36 | 8 | 0.0% | 0.0147 tok/s | ` The magic is the` |
+
+输出文件：
+
+- `needle_sq_results/needle_am_omp_b16_ctx4096_d05_n1_cache8_smoke.json`
+- `needle_sq_results/needle_am_omp_b32_ctx4096_d05_n1_cache8_smoke.json`
+
+结论：decode-step cache 能把 OMP b=16/b=32 都提约 `2.8×`，证明“每 step 重拟合”确实是主要瓶颈之一；
+但绝对吞吐仍远低于 HighestAttnKeys（约 `1.2 tok/s`）。下一步需要把 cache 从“按 decode step 复用”升级为
+“prefill 后/长上下文阶段一次构建，按 layer/block/kv-head 持久复用”，并减少首次拟合里的 `lstsq/solve` 次数，否则 OMP 仍不具备跑 full grid 的工程意义。

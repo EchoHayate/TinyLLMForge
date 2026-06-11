@@ -6,7 +6,13 @@ from triton.language.extra import libdevice
 
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from tinyvllm.utils.context import get_context
-from tinyvllm.engine.attention_matching import attention_matching_decode
+from tinyvllm.engine.attention_matching import AttentionMatchingDecodeCache, attention_matching_decode
+
+
+def _am_cache_signatures(block_tables: torch.Tensor) -> tuple[tuple[int, ...], ...]:
+    """Build stable per-row signatures for AM compact cache reuse."""
+    rows = block_tables.detach().to("cpu").tolist()
+    return tuple(tuple(int(x) for x in row if int(x) >= 0) for row in rows)
 
 @triton.jit
 def store_kvcache_kernel(
@@ -487,6 +493,7 @@ class Attention(nn.Module):
         self.kv_quant_bits = 0
         self.kv_quant_group_size = 128
         self.kv_quant_symmetric = True
+        self.am_compact_cache = AttentionMatchingDecodeCache()
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)
@@ -603,6 +610,9 @@ class Attention(nn.Module):
                         beta_bound=context.am_compact_beta_bound,
                         ridge_lambda=context.am_compact_ridge_lambda,
                         omp_candidate_pool_size=context.am_omp_candidate_pool_size,
+                        cache=self.am_compact_cache,
+                        cache_refresh_interval=context.am_compact_cache_refresh_interval,
+                        cache_signatures=_am_cache_signatures(block_tables),
                     )
                 elif quest_active:
                     # 1) 用未量化的 k_min/k_max（store 时维护，反量化前）算 criticality 选 top-k
@@ -650,6 +660,9 @@ class Attention(nn.Module):
                     beta_bound=context.am_compact_beta_bound,
                     ridge_lambda=context.am_compact_ridge_lambda,
                     omp_candidate_pool_size=context.am_omp_candidate_pool_size,
+                    cache=self.am_compact_cache,
+                    cache_refresh_interval=context.am_compact_cache_refresh_interval,
+                    cache_signatures=_am_cache_signatures(block_tables),
                 )
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o

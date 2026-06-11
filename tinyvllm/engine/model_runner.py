@@ -483,7 +483,8 @@ class ModelRunner:
                     am_compact_score_method=self.config.am_compact_score_method,
                     am_compact_beta_bound=self.config.am_compact_beta_bound,
                     am_compact_ridge_lambda=self.config.am_compact_ridge_lambda,
-                    am_omp_candidate_pool_size=self.config.am_omp_candidate_pool_size)
+                    am_omp_candidate_pool_size=self.config.am_omp_candidate_pool_size,
+                    am_compact_cache_refresh_interval=self.config.am_compact_cache_refresh_interval)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上

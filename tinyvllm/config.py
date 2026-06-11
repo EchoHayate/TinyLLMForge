@@ -39,6 +39,7 @@ class Config:
     am_compact_beta_bound: float = 3.0                  # beta box bound：[-bound, bound]
     am_compact_ridge_lambda: float = 1e-6               # C_v least-squares ridge
     am_omp_candidate_pool_size: int = 0                 # 0 表示按 max(2*b, b+4) 自动选择 OMP 候选池
+    am_compact_cache_refresh_interval: int = 0          # >0 时复用 compact KV N 个 decode step 后刷新
 
     # Chunked prefill：把长 prompt 的 prefill 拆成多个小步，避免单个超长 prefill 长时间占住调度器
     max_num_prefill_tokens_per_step: int = 0             # 0 表示关闭；>0 时每次 prefill step 最多处理这么多 prompt token
@@ -82,6 +83,7 @@ class Config:
         assert self.am_compact_beta_bound > 0.0
         assert self.am_compact_ridge_lambda >= 0.0
         assert self.am_omp_candidate_pool_size >= 0
+        assert self.am_compact_cache_refresh_interval >= 0
         assert not (self.am_compact_blocks > 0 and self.quest_top_k_blocks > 0), \
             "Attention Matching compact decode 和 Quest 请分开评测"
         assert not (self.am_compact_blocks > 0 and self.kv_cartridge_blocks > 0), \

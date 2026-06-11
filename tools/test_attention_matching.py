@@ -14,6 +14,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from tinyvllm.engine.attention_matching import (  # noqa: E402
+    AttentionMatchingDecodeCache,
     attention_matching_compact_keys,
     attention_matching_highest_keys,
     attention_matching_decode,
@@ -171,6 +172,82 @@ def test_attention_matching_decode_accepts_omp_selector():
     assert out.dtype == q.dtype
 
 
+def test_attention_matching_decode_reuses_compact_cache_within_refresh_interval():
+    torch.manual_seed(12)
+    cache = AttentionMatchingDecodeCache()
+    q1 = torch.randn(1, 2, 4)
+    q2 = torch.randn(1, 2, 4)
+    keys = torch.randn(1, 8, 1, 4)
+    values = torch.randn(1, 8, 1, 4)
+    context_lens = torch.tensor([8], dtype=torch.int32)
+
+    out1 = attention_matching_decode(
+        q1,
+        keys,
+        values,
+        context_lens,
+        budget=3,
+        selector="omp",
+        cache=cache,
+        cache_refresh_interval=8,
+        cache_signatures=("seq-a",),
+    )
+    out2 = attention_matching_decode(
+        q2,
+        keys,
+        values,
+        context_lens,
+        budget=3,
+        selector="omp",
+        cache=cache,
+        cache_refresh_interval=8,
+        cache_signatures=("seq-a",),
+    )
+
+    assert out1.shape == q1.shape
+    assert out2.shape == q2.shape
+    assert cache.misses == 1
+    assert cache.hits == 1
+    assert len(cache.entries) == 1
+
+
+def test_attention_matching_decode_refreshes_compact_cache_after_interval():
+    torch.manual_seed(13)
+    cache = AttentionMatchingDecodeCache()
+    q1 = torch.randn(1, 2, 4)
+    q2 = torch.randn(1, 2, 4)
+    keys = torch.randn(1, 8, 1, 4)
+    values = torch.randn(1, 8, 1, 4)
+    context_lens = torch.tensor([8], dtype=torch.int32)
+
+    attention_matching_decode(
+        q1,
+        keys,
+        values,
+        context_lens,
+        budget=3,
+        selector="omp",
+        cache=cache,
+        cache_refresh_interval=1,
+        cache_signatures=("seq-a",),
+    )
+    attention_matching_decode(
+        q2,
+        keys,
+        values,
+        context_lens,
+        budget=3,
+        selector="omp",
+        cache=cache,
+        cache_refresh_interval=1,
+        cache_signatures=("seq-a",),
+    )
+
+    assert cache.misses == 2
+    assert cache.hits == 0
+    assert len(cache.entries) == 1
+
+
 def test_attention_matching_decode_matches_full_attention_when_budget_covers_cache():
     torch.manual_seed(4)
     q = torch.randn(1, 2, 4)
@@ -193,6 +270,8 @@ def main():
     test_attention_matching_highest_keys_returns_compacted_cache_and_indices()
     test_attention_matching_decode_supports_gqa_and_compact_output_shape()
     test_attention_matching_decode_accepts_omp_selector()
+    test_attention_matching_decode_reuses_compact_cache_within_refresh_interval()
+    test_attention_matching_decode_refreshes_compact_cache_after_interval()
     test_attention_matching_decode_matches_full_attention_when_budget_covers_cache()
     print("attention matching tests passed")
 
