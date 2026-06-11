@@ -24,6 +24,7 @@ class Context:
     am_compact_ridge_lambda: float = 1e-6
     am_omp_candidate_pool_size: int = 0
     am_compact_cache_refresh_interval: int = 0
+    am_prefill_cache_ref_query_stride: int = 8
 
 _CONTEXT = Context()
 
@@ -38,14 +39,16 @@ def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0
                 am_compact_score_method: str = "rms",
                 am_compact_beta_bound: float = 3.0, am_compact_ridge_lambda: float = 1e-6,
                 am_omp_candidate_pool_size: int = 0,
-                am_compact_cache_refresh_interval: int = 0):
+                am_compact_cache_refresh_interval: int = 0,
+                am_prefill_cache_ref_query_stride: int = 8):
     global _CONTEXT
     _CONTEXT = Context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                        slot_mapping, context_lens, block_tables, logits_indices,
                        quest_top_k_blocks, quest_min_seq_len,
                        am_compact_blocks, am_compact_selector, am_compact_score_method,
                        am_compact_beta_bound, am_compact_ridge_lambda,
-                       am_omp_candidate_pool_size, am_compact_cache_refresh_interval)
+                       am_omp_candidate_pool_size, am_compact_cache_refresh_interval,
+                       am_prefill_cache_ref_query_stride)
 
 def reset_context():
     global _CONTEXT              #声明为global变量非常重要 否则将导致修改无效

@@ -6,13 +6,52 @@ from triton.language.extra import libdevice
 
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from tinyvllm.utils.context import get_context
-from tinyvllm.engine.attention_matching import AttentionMatchingDecodeCache, attention_matching_decode
+from tinyvllm.engine.attention_matching import (
+    AttentionMatchingDecodeCache,
+    attention_matching_decode,
+    build_attention_matching_prefill_cache,
+)
 
 
 def _am_cache_signatures(block_tables: torch.Tensor) -> tuple[tuple[int, ...], ...]:
     """Build stable per-row signatures for AM compact cache reuse."""
     rows = block_tables.detach().to("cpu").tolist()
     return tuple(tuple(int(x) for x in row if int(x) >= 0) for row in rows)
+
+
+def _am_prefill_dense_and_signatures(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    cu_seqlens_q: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    block_size: int,
+):
+    """Convert flattened prefill Q/K/V to padded batch tensors plus block signatures."""
+    cu = cu_seqlens_q.detach().to("cpu").tolist()
+    lengths = [int(cu[i + 1] - cu[i]) for i in range(len(cu) - 1)]
+    max_len = max(lengths) if lengths else 0
+    batch = len(lengths)
+    q_dense = q.new_zeros((batch, max_len, q.shape[1], q.shape[2]))
+    k_dense = k.new_zeros((batch, max_len, k.shape[1], k.shape[2]))
+    v_dense = v.new_zeros((batch, max_len, v.shape[1], v.shape[2]))
+    signatures = []
+    slots = slot_mapping.detach().to("cpu").tolist()
+    for b, length in enumerate(lengths):
+        start = int(cu[b])
+        end = int(cu[b + 1])
+        if length > 0:
+            q_dense[b, :length] = q[start:end]
+            k_dense[b, :length] = k[start:end]
+            v_dense[b, :length] = v[start:end]
+        block_ids = []
+        for slot in slots[start:end]:
+            block_id = int(slot) // block_size
+            if not block_ids or block_ids[-1] != block_id:
+                block_ids.append(block_id)
+        signatures.append(tuple(block_ids))
+    context_lens = torch.tensor(lengths, device=q.device, dtype=torch.int32)
+    return q_dense, k_dense, v_dense, context_lens, tuple(signatures)
 
 @triton.jit
 def store_kvcache_kernel(
@@ -567,6 +606,31 @@ class Attention(nn.Module):
                                            max_seqlen_q = context.max_seqlen_q, max_seqlen_k = context.max_seqlen_k, 
                                             softmax_scale = self.scale, causal = True, block_table = context.block_tables
                                            )
+            if (context.am_compact_blocks > 0
+                    and context.am_compact_cache_refresh_interval > 0
+                    and k_cache.dim() >= 2
+                    and context.block_tables is None
+                    and context.cu_seqlens_q is not None
+                    and context.slot_mapping is not None
+                    and int(context.max_seqlen_q) == int(context.max_seqlen_k)):
+                q_dense, k_dense, v_dense, prefill_lens, signatures = _am_prefill_dense_and_signatures(
+                    q, k, v, context.cu_seqlens_q, context.slot_mapping, k_cache.shape[1]
+                )
+                build_attention_matching_prefill_cache(
+                    self.am_compact_cache,
+                    q_dense,
+                    k_dense,
+                    v_dense,
+                    prefill_lens,
+                    budget=context.am_compact_blocks,
+                    selector=context.am_compact_selector,
+                    score_method=context.am_compact_score_method,
+                    beta_bound=context.am_compact_beta_bound,
+                    ridge_lambda=context.am_compact_ridge_lambda,
+                    omp_candidate_pool_size=context.am_omp_candidate_pool_size,
+                    cache_signatures=signatures,
+                    ref_query_stride=context.am_prefill_cache_ref_query_stride,
+                )
         else:
             # decode阶段传入的 q = [batch_size, num_heads, head_dim]
             block_tables = context.block_tables

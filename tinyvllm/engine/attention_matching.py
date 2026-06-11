@@ -46,12 +46,14 @@ class AttentionMatchingDecodeCache:
     step: int = 0
     hits: int = 0
     misses: int = 0
+    prefill_builds: int = 0
 
     def __init__(self):
         self.entries = {}
         self.step = 0
         self.hits = 0
         self.misses = 0
+        self.prefill_builds = 0
 
     def begin_step(self) -> int:
         self.step += 1
@@ -76,6 +78,33 @@ class AttentionMatchingDecodeCache:
         self.step = 0
         self.hits = 0
         self.misses = 0
+        self.prefill_builds = 0
+
+
+def _compact_cache_key(
+    cache_signature,
+    kv_h: int,
+    selector: str,
+    budget: int,
+    score_method: str,
+    beta_bound: float,
+    ridge_lambda: float,
+    omp_candidate_pool_size: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> tuple:
+    return (
+        cache_signature,
+        kv_h,
+        selector,
+        budget,
+        score_method,
+        float(beta_bound),
+        float(ridge_lambda),
+        int(omp_candidate_pool_size),
+        str(dtype),
+        str(device),
+    )
 
 
 def _scaled_scores(queries: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
@@ -365,6 +394,68 @@ def attention_matching_compact_keys(
     )
 
 
+def build_attention_matching_prefill_cache(
+    cache: AttentionMatchingDecodeCache,
+    queries: torch.Tensor,
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    context_lens: torch.Tensor,
+    budget: int,
+    selector: str = "highest",
+    score_method: str = "rms",
+    beta_bound: float = 3.0,
+    ridge_lambda: float = 1e-6,
+    omp_candidate_pool_size: int = 0,
+    cache_signatures: tuple | list | None = None,
+    ref_query_stride: int = 1,
+) -> None:
+    """Build persistent compact KV entries from prefill Q/K/V references."""
+    if budget <= 0:
+        raise ValueError("budget must be positive")
+    if ref_query_stride <= 0:
+        raise ValueError("ref_query_stride must be positive")
+    batch, _, num_q_heads, head_dim = queries.shape
+    _, _, num_kv_heads, _ = keys.shape
+    assert num_q_heads % num_kv_heads == 0, "GQA requires q heads divisible by KV heads"
+    group_size = num_q_heads // num_kv_heads
+    for b in range(batch):
+        seq_len = int(context_lens[b].item())
+        if seq_len <= budget:
+            continue
+        cache_signature = (b, seq_len) if cache_signatures is None else cache_signatures[b]
+        for kv_h in range(num_kv_heads):
+            q_start = kv_h * group_size
+            q_end = q_start + group_size
+            q_refs = queries[b, :seq_len:ref_query_stride, q_start:q_end].reshape(-1, head_dim)
+            k_seq = keys[b, :seq_len, kv_h]
+            v_seq = values[b, :seq_len, kv_h]
+            compact = attention_matching_compact_keys(
+                k_seq,
+                v_seq,
+                q_refs,
+                budget=budget,
+                selector=selector,
+                score_method=score_method,
+                beta_bound=beta_bound,
+                ridge_lambda=ridge_lambda,
+                omp_candidate_pool_size=omp_candidate_pool_size,
+            )
+            key = _compact_cache_key(
+                cache_signature,
+                kv_h,
+                selector,
+                budget,
+                score_method,
+                beta_bound,
+                ridge_lambda,
+                omp_candidate_pool_size,
+                k_seq.dtype,
+                k_seq.device,
+            )
+            cache.put(key, compact)
+            cache.prefill_builds += 1
+
+
 def attention_matching_decode(
     queries: torch.Tensor,
     keys: torch.Tensor,
@@ -422,17 +513,17 @@ def attention_matching_decode(
             if budget >= seq_len:
                 group_out = attention_output(q_group, k_seq, v_seq)
             else:
-                cache_key = (
+                cache_key = _compact_cache_key(
                     cache_signature,
                     kv_h,
                     selector,
                     budget,
                     score_method,
-                    float(beta_bound),
-                    float(ridge_lambda),
-                    int(omp_candidate_pool_size),
-                    str(k_seq.dtype),
-                    str(k_seq.device),
+                    beta_bound,
+                    ridge_lambda,
+                    omp_candidate_pool_size,
+                    k_seq.dtype,
+                    k_seq.device,
                 )
                 compact = None
                 if cache is not None and cache_refresh_interval > 0:

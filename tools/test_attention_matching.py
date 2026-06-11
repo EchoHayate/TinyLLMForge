@@ -15,6 +15,7 @@ if _REPO_ROOT not in sys.path:
 
 from tinyvllm.engine.attention_matching import (  # noqa: E402
     AttentionMatchingDecodeCache,
+    build_attention_matching_prefill_cache,
     attention_matching_compact_keys,
     attention_matching_highest_keys,
     attention_matching_decode,
@@ -248,6 +249,46 @@ def test_attention_matching_decode_refreshes_compact_cache_after_interval():
     assert len(cache.entries) == 1
 
 
+def test_build_attention_matching_prefill_cache_populates_decode_cache():
+    torch.manual_seed(14)
+    cache = AttentionMatchingDecodeCache()
+    queries = torch.randn(1, 6, 2, 4)
+    keys = torch.randn(1, 6, 1, 4)
+    values = torch.randn(1, 6, 1, 4)
+    context_lens = torch.tensor([6], dtype=torch.int32)
+
+    build_attention_matching_prefill_cache(
+        cache,
+        queries,
+        keys,
+        values,
+        context_lens,
+        budget=3,
+        selector="omp",
+        cache_signatures=("seq-a",),
+        ref_query_stride=2,
+    )
+
+    assert cache.prefill_builds == 1
+    assert len(cache.entries) == 1
+
+    out = attention_matching_decode(
+        torch.randn(1, 2, 4),
+        keys,
+        values,
+        context_lens,
+        budget=3,
+        selector="omp",
+        cache=cache,
+        cache_refresh_interval=1024,
+        cache_signatures=("seq-a",),
+    )
+
+    assert out.shape == (1, 2, 4)
+    assert cache.hits == 1
+    assert cache.misses == 0
+
+
 def test_attention_matching_decode_matches_full_attention_when_budget_covers_cache():
     torch.manual_seed(4)
     q = torch.randn(1, 2, 4)
@@ -272,6 +313,7 @@ def main():
     test_attention_matching_decode_accepts_omp_selector()
     test_attention_matching_decode_reuses_compact_cache_within_refresh_interval()
     test_attention_matching_decode_refreshes_compact_cache_after_interval()
+    test_build_attention_matching_prefill_cache_populates_decode_cache()
     test_attention_matching_decode_matches_full_attention_when_budget_covers_cache()
     print("attention matching tests passed")
 

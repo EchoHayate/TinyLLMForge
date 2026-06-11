@@ -346,7 +346,21 @@ class ModelRunner:
         cu_seqlens_q = self._list_to_cuda(cu_seqlens_q, "cu_seqlens_q", torch.int32)
         cu_seqlens_k = self._list_to_cuda(cu_seqlens_k, "cu_seqlens_k", torch.int32)
         slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
-        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)
+        am_compact_active = (
+            self.config.am_compact_blocks > 0
+            and self.config.am_compact_cache_refresh_interval > 0
+            and min(len(seq) for seq in seqs) >= self.config.am_compact_min_seq_len
+            and min(len(seq) for seq in seqs) > self.config.am_compact_blocks
+        )
+        set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables,
+                    am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
+                    am_compact_selector=self.config.am_compact_selector,
+                    am_compact_score_method=self.config.am_compact_score_method,
+                    am_compact_beta_bound=self.config.am_compact_beta_bound,
+                    am_compact_ridge_lambda=self.config.am_compact_ridge_lambda,
+                    am_omp_candidate_pool_size=self.config.am_omp_candidate_pool_size,
+                    am_compact_cache_refresh_interval=self.config.am_compact_cache_refresh_interval,
+                    am_prefill_cache_ref_query_stride=self.config.am_prefill_cache_ref_query_stride)
         return input_ids, positions
 
     def prepare_mixed(self, seqs: list[Sequence]):

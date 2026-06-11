@@ -81,6 +81,8 @@ def parse_args():
                    help="AM-OMP 候选池大小；0 表示按 max(2*b, b+4) 自动选择。")
     p.add_argument("--am-compact-cache-refresh-interval", type=int, default=0,
                    help="AM compact cache 复用步数；0 表示关闭，每个 decode step 重新拟合。")
+    p.add_argument("--am-prefill-cache-ref-query-stride", type=int, default=8,
+                   help="prefill 构建 AM compact cache 时参考 query 的采样 stride。")
     p.add_argument("--num-trials", type=int, default=3, help="每个 (ctx_len, depth) 重复多少次")
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
@@ -285,6 +287,7 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
         am_compact_ridge_lambda=args.am_compact_ridge_lambda,
         am_omp_candidate_pool_size=args.am_omp_candidate_pool_size,
         am_compact_cache_refresh_interval=args.am_compact_cache_refresh_interval,
+        am_prefill_cache_ref_query_stride=args.am_prefill_cache_ref_query_stride,
         quantization=args.quantization,
         quant_group_size=args.quant_group_size,
         act_quant_bits=args.act_quant_bits,

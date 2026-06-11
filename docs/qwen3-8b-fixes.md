@@ -2734,3 +2734,45 @@ python tools/test_attention_matching.py
 结论：decode-step cache 能把 OMP b=16/b=32 都提约 `2.8×`，证明“每 step 重拟合”确实是主要瓶颈之一；
 但绝对吞吐仍远低于 HighestAttnKeys（约 `1.2 tok/s`）。下一步需要把 cache 从“按 decode step 复用”升级为
 “prefill 后/长上下文阶段一次构建，按 layer/block/kv-head 持久复用”，并减少首次拟合里的 `lstsq/solve` 次数，否则 OMP 仍不具备跑 full grid 的工程意义。
+
+### 45.8 AM-OMP prefill-build persistent compact cache 原型（2026-06-11）
+
+承接 §45.7，本轮把 compact KV 构建前移到 prefill：当 `am_compact_cache_refresh_interval > 0` 且无 prefix-cache block table 时，
+每层在 prefill 结束后用 prefill 阶段的 Q/K/V 参考样本构建 `C_k/beta/C_v`，decode 阶段按 block-table signature 复用。
+
+新增实现：
+
+- `build_attention_matching_prefill_cache()`：从 batched prefill Q/K/V 构建持久 compact cache；
+- `am_prefill_cache_ref_query_stride` / `--am-prefill-cache-ref-query-stride`：控制 prefill reference query 采样密度；
+- prefill 构建只在真实 KV cache 已分配时触发，避免 warmup 空 cache 误访问。
+
+远端验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+8B 单样本 prefill-cache 对照（`ctx=4096/depth=0.5/num_trials=1`）：
+
+| selector | b | candidate_pool | ref_stride | max_output | acc | throughput | raw 输出 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| OMP | 16 | 20 | 16 | 4 | 0.0% | 0.0226 tok/s | ` The magic is the` |
+| OMP | 16 | 20 | 256 | 4 | 0.0% | 0.0225 tok/s | ` The magic is the` |
+| OMP | 16 | 20 | 256 | 16 | 0.0% | 0.0899 tok/s | ` The magic is the magic is ...` |
+| OMP | 32 | 36 | 256 | 16 | 0.0% | 0.0276 tok/s | ` The magic is the magic is ...` |
+
+输出文件：
+
+- `needle_sq_results/needle_am_omp_b16_ctx4096_d05_n1_prefillcache_smoke.json`
+- `needle_sq_results/needle_am_omp_b16_ctx4096_d05_n1_prefillcache_s256_smoke.json`
+- `needle_sq_results/needle_am_omp_b16_ctx4096_d05_n1_prefillcache_s256_o16_smoke.json`
+- `needle_sq_results/needle_am_omp_b32_ctx4096_d05_n1_prefillcache_s256_o16_smoke.json`
+
+结论：prefill-build persistent cache 证明了“decode 阶段复用 compact KV”可以随输出长度摊薄成本：b=16 在 `max_output=16`
+达到 `0.0899 tok/s`，高于 §45.7 的 decode-step cache8（`0.0476 tok/s`，max_output=4）和无 cache（`0.0173 tok/s`）。
+但质量明显不行，输出变成 `The magic is the ...` 复读；说明仅用稀疏 prefill reference query 构建全局 compact KV，会损失 decode-step query 自适应性。
+下一步若继续 OMP-fast，应该做“prefill 阶段构建多个 query-cluster / block-local compact cache”，decode 按当前 query 选择最近 cluster，
+而不是单一全局 compact cache。
