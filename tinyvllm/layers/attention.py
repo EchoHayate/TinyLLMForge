@@ -598,9 +598,11 @@ class Attention(nn.Module):
                         v_dense,
                         cache_seqlens,
                         budget=context.am_compact_blocks,
+                        selector=context.am_compact_selector,
                         score_method=context.am_compact_score_method,
                         beta_bound=context.am_compact_beta_bound,
                         ridge_lambda=context.am_compact_ridge_lambda,
+                        omp_candidate_pool_size=context.am_omp_candidate_pool_size,
                     )
                 elif quest_active:
                     # 1) 用未量化的 k_min/k_max（store 时维护，反量化前）算 criticality 选 top-k
@@ -643,9 +645,11 @@ class Attention(nn.Module):
                     v_dense,
                     cache_seqlens,
                     budget=context.am_compact_blocks,
+                    selector=context.am_compact_selector,
                     score_method=context.am_compact_score_method,
                     beta_bound=context.am_compact_beta_bound,
                     ridge_lambda=context.am_compact_ridge_lambda,
+                    omp_candidate_pool_size=context.am_omp_candidate_pool_size,
                 )
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o

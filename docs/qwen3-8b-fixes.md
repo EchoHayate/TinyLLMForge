@@ -2553,3 +2553,125 @@ python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-bl
 python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-blocks 64  --num-trials 5 --fixed-prompts
 python tools/eval_needle.py --model <Qwen3-8B> --kv-quant-bits 8 --am-compact-blocks 128 --num-trials 5 --fixed-prompts
 ```
+
+### 45.5 AM-HighestAttnKeys 真实模型 fixed-prompt needle 曲线（2026-06-09）
+
+远端环境与口径：
+
+```text
+机器：sitian@10.232.195.203 / A100 80GB PCIe
+Python：/data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+模型：/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+配置：W4(g32) + A8(skip_last=4) + SQ(layer-adaptive floor0.85) + KV8(g32)
+评测：--fixed-prompts --num-trials 5
+ctx=4096/8192/15000, depth=0/0.25/0.5/0.75/1.0，共 75 sample / setting
+```
+
+命令要点：
+
+```bash
+python tools/eval_needle.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --fixed-prompts --num-trials 5 \
+  --quantization int4 --quant-group-size 32 \
+  --act-quant-bits 8 --act-quant-skip-last 4 \
+  --smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt \
+  --kv-quant-bits 8 --kv-quant-group-size 32 \
+  [--top-k-blocks-list -1 16 | --kv-cartridge-blocks 32 | --am-compact-blocks B]
+```
+
+结果：
+
+| setting | overall_acc | throughput | failures | 备注 |
+|---|---:|---:|---:|---|
+| C8 baseline/full attention | 96.0% | 19.34 tok/s | 3/75 | 质量上界 |
+| C8 + Quest top-k=16 | 96.0% | 25.73 tok/s | 3/75 | 当前推荐召回档 |
+| KV-Cartridge uniform b=32 | 96.0% | 19.38 tok/s | 3/75 | uniform sanity baseline |
+| AM-HighestAttnKeys b=16 | **96.0%** | 2.16 tok/s | 3/75 | 与 Quest/full 同失败集合 |
+| AM-HighestAttnKeys b=32 | **96.0%** | 2.12 tok/s | 3/75 | 与 Quest/full 同失败集合 |
+| AM-HighestAttnKeys b=64 | **96.0%** | 2.06 tok/s | 3/75 | 与 Quest/full 同失败集合 |
+| AM-HighestAttnKeys b=128 | 93.3% | 1.96 tok/s | 5/75 | `gpu_memory_utilization=0.6` 重跑；新增 2 个 `4096/depth=0.0` haystack 复读失败 |
+
+失败集合：
+
+- baseline / Quest top-k=16 / KV-Cartridge b=32 / AM b=16/32/64 的失败完全一致：
+  - `(ctx=4096, depth=0.5, trial=0, magic=86465)`；
+  - `(ctx=4096, depth=0.5, trial=1, magic=38631)`；
+  - `(ctx=4096, depth=0.5, trial=2, magic=76150)`；
+  - 输出均为 question/instruction 复读，未抽到数字。
+- AM b=128 除上述 3 个外，新增：
+  - `(ctx=4096, depth=0.0, trial=2, magic=15306)`；
+  - `(ctx=4096, depth=0.0, trial=4, magic=77013)`；
+  - 输出为 haystack 复读。
+
+b=128 说明：默认 `gpu_memory_utilization=0.9` 首跑在一张已有其它进程占用的 A100 上因 KV8 full dequant buffer OOM；随后用
+`--gpu-memory-utilization 0.6` 在空闲卡重跑完成。因此 b=128 的吞吐与其它 setting 不完全同显存口径，但质量结论仍可作为参考。
+
+结论：
+
+1. **质量门槛已达到**：AM b=16/32 已达到 Quest top-k=16 的 96.0% / 3 failures 参考门槛，且失败集合完全一致；按 §45.3 的规则，
+   可以进入 OMP-fast 方向。
+2. **当前 eager v0 不能作为可用吞吐方案**：AM b=16/32/64 只有约 2 tok/s，显著慢于 Quest top-k=16 的 25.73 tok/s。
+   这是预期工程代价：当前每层、每步、每个 KV head 都即时 gather/dequant dense KV，并在线做 top attention key、beta NNLS、C_v least-squares。
+3. **下一步做 OMP-fast 时必须同时改执行形态**：不要只把选择器从 HighestAttnKeys 换成 OMP；需要避免每个 decode step 重复完整拟合，至少应考虑
+   reference query 采样、按 block/层缓存 compact tensors、低频 refresh，或只在长上下文阶段触发，否则 OMP-fast 即使质量更好也会被 Python eager overhead 吞掉。
+
+文件留痕：
+
+- `needle_sq_results/needle_am_compare_full_quest16_n5.json`
+- `needle_sq_results/needle_am_compare_kvcartridge_b32_n5.json`
+- `needle_sq_results/needle_am_compare_am_b16_n5.json`
+- `needle_sq_results/needle_am_compare_am_b32_n5.json`
+- `needle_sq_results/needle_am_compare_am_b64_n5.json`
+- `needle_sq_results/needle_am_compare_am_b128_n5_retry_gmem06.json`
+
+### 45.6 AM-OMP selector 接入（2026-06-11）
+
+承接 §45.5：AM-HighestAttnKeys b=16/32 已达到 Quest top-k=16 的质量门槛，因此进入 OMP-fast 方向。
+本轮先做最小质量验证入口，而不是吞吐优化版：只把 Attention Matching 的 key selector 从
+`highest` 扩展为可选 `omp`，beta box fitting 与 `C_v` least-squares 仍复用 §45.2 的实现。
+
+实现范围：
+
+- `tinyvllm/engine/attention_matching.py`：新增 `omp_attention_key_indices()` 与
+  `attention_matching_compact_keys(selector=...)`；
+- OMP 不是全 token 暴力搜索，而是先用 HighestAttnKeys 取一个小候选池（默认 `max(2*b, b+4)`，
+  可通过 `--am-omp-candidate-pool-size` 覆盖），
+  再在候选池内逐步 greedy 拟合，避免长上下文 fixed-prompt smoke 直接不可用；
+- `Config.am_compact_selector`：支持 `highest` / `omp`；
+- `tools/eval_needle.py --am-compact-selector`：真实 needle 评测可直接切换 selector。
+
+本轮刻意不做：
+
+- compact tensor cache；
+- decode step 低频 refresh；
+- block/layer 级 selector 结果复用；
+- OMP GPU kernel 化。
+
+原因是先分离质量问题和执行形态问题：若 OMP 在 fixed-prompt needle 上不能优于 HighestAttnKeys，
+则不值得继续优化工程路径；若 OMP 质量更稳，再进入 OMP-fast execution-shape 优化。
+
+本地验证：
+
+```bash
+python3 -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python3 tools/test_attention_matching.py
+```
+
+远端验证（`sitian@10.232.195.203`，`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`）：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+最小模型链路 smoke（Qwen3-0.6B，`ctx=512/depth=0.5/num_trials=1/max_output=1/b=2`）：
+
+| selector | acc | throughput | 输出文件 |
+|---|---:|---:|---|
+| highest | 0.0% | 20.39 tok/s | `needle_sq_results/needle_am_selector_highest_b2_smoke.json` |
+| omp (`candidate_pool=4`) | 0.0% | 19.25 tok/s | `needle_sq_results/needle_am_selector_omp_smoke.json` |
+
+这个 smoke 只证明 CLI/config/decode 链路走通，不作为质量结论；正式质量结论仍需按 §45.5 的 8B fixed-prompt 口径跑 b=16/32。

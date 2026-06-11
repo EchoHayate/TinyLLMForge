@@ -14,12 +14,14 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from tinyvllm.engine.attention_matching import (  # noqa: E402
+    attention_matching_compact_keys,
     attention_matching_highest_keys,
     attention_matching_decode,
     attention_output,
     fit_attention_bias,
     fit_compacted_values,
     highest_attention_key_indices,
+    omp_attention_key_indices,
 )
 
 
@@ -36,6 +38,56 @@ def test_highest_attention_key_indices_selects_dominant_key_by_rms_attention():
 
     assert indices.tolist()[0] == 1
     assert len(indices.tolist()) == 2
+
+
+def test_omp_attention_key_indices_returns_budget_unique_indices():
+    torch.manual_seed(10)
+    queries = torch.randn(5, 4)
+    keys = torch.randn(9, 4)
+    values = torch.randn(9, 4)
+
+    indices = omp_attention_key_indices(
+        keys,
+        values,
+        queries,
+        budget=4,
+        ridge_lambda=1e-6,
+        candidate_pool_size=6,
+    )
+
+    assert indices.shape == (4,)
+    assert indices.dtype == torch.long
+    assert len(set(indices.tolist())) == 4
+    assert torch.all(indices >= 0)
+    assert torch.all(indices < keys.shape[0])
+
+
+def test_omp_selector_reduces_error_vs_highest_keys_on_synthetic_case():
+    queries = torch.tensor([[6.0, 0.0], [0.0, 6.0]], dtype=torch.float32)
+    keys = torch.tensor([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.8, 0.8],
+        [-1.0, 0.0],
+    ], dtype=torch.float32)
+    values = torch.tensor([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.5, 0.5],
+        [-1.0, 0.0],
+    ], dtype=torch.float32)
+    target = attention_output(queries, keys, values)
+
+    highest = attention_matching_compact_keys(keys, values, queries, budget=2, selector="highest")
+    omp = attention_matching_compact_keys(keys, values, queries, budget=2, selector="omp")
+
+    highest_out = attention_output(queries, highest.keys, highest.values, highest.beta)
+    omp_out = attention_output(queries, omp.keys, omp.values, omp.beta)
+
+    highest_mse = torch.mean((highest_out - target) ** 2)
+    omp_mse = torch.mean((omp_out - target) ** 2)
+
+    assert omp_mse <= highest_mse + 1e-6
 
 
 def test_fit_attention_bias_preserves_attention_mass_for_selected_keys():
@@ -106,6 +158,19 @@ def test_attention_matching_decode_supports_gqa_and_compact_output_shape():
     assert out.dtype == q.dtype
 
 
+def test_attention_matching_decode_accepts_omp_selector():
+    torch.manual_seed(11)
+    q = torch.randn(1, 4, 6)
+    keys = torch.randn(1, 12, 2, 6)
+    values = torch.randn(1, 12, 2, 6)
+    context_lens = torch.tensor([12], dtype=torch.int32)
+
+    out = attention_matching_decode(q, keys, values, context_lens, budget=4, selector="omp")
+
+    assert out.shape == (1, 4, 6)
+    assert out.dtype == q.dtype
+
+
 def test_attention_matching_decode_matches_full_attention_when_budget_covers_cache():
     torch.manual_seed(4)
     q = torch.randn(1, 2, 4)
@@ -121,10 +186,13 @@ def test_attention_matching_decode_matches_full_attention_when_budget_covers_cac
 
 def main():
     test_highest_attention_key_indices_selects_dominant_key_by_rms_attention()
+    test_omp_attention_key_indices_returns_budget_unique_indices()
+    test_omp_selector_reduces_error_vs_highest_keys_on_synthetic_case()
     test_fit_attention_bias_preserves_attention_mass_for_selected_keys()
     test_fit_compacted_values_reduces_attention_output_error_vs_direct_values()
     test_attention_matching_highest_keys_returns_compacted_cache_and_indices()
     test_attention_matching_decode_supports_gqa_and_compact_output_shape()
+    test_attention_matching_decode_accepts_omp_selector()
     test_attention_matching_decode_matches_full_attention_when_budget_covers_cache()
     print("attention matching tests passed")
 

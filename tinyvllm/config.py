@@ -33,10 +33,12 @@ class Config:
 
     # Attention Matching compact decode：实验性 eager-only 路径，用 C_k/beta/C_v 替代完整 KV attention
     am_compact_blocks: int = 0                          # 0 表示关闭；>0 时每个 KV head 生成这么多 compact KV
+    am_compact_selector: str = "highest"                  # highest / omp：AM compact key 选择器
     am_compact_min_seq_len: int = 1024                  # 序列长度小于此值时退化为 full attention
     am_compact_score_method: str = "rms"                # AM-HighestAttnKeys score: rms / mean / max
     am_compact_beta_bound: float = 3.0                  # beta box bound：[-bound, bound]
     am_compact_ridge_lambda: float = 1e-6               # C_v least-squares ridge
+    am_omp_candidate_pool_size: int = 0                 # 0 表示按 max(2*b, b+4) 自动选择 OMP 候选池
 
     # Chunked prefill：把长 prompt 的 prefill 拆成多个小步，避免单个超长 prefill 长时间占住调度器
     max_num_prefill_tokens_per_step: int = 0             # 0 表示关闭；>0 时每次 prefill step 最多处理这么多 prompt token
@@ -74,9 +76,12 @@ class Config:
             "KV-Cartridge v0 和 Quest 都是 decode 稀疏策略，请分开评测"
         assert self.am_compact_blocks >= 0
         assert self.am_compact_min_seq_len >= 0
+        assert self.am_compact_selector in ("highest", "omp"), \
+            "am_compact_selector 仅支持 highest / omp"
         assert self.am_compact_score_method in ("rms", "mean", "max")
         assert self.am_compact_beta_bound > 0.0
         assert self.am_compact_ridge_lambda >= 0.0
+        assert self.am_omp_candidate_pool_size >= 0
         assert not (self.am_compact_blocks > 0 and self.quest_top_k_blocks > 0), \
             "Attention Matching compact decode 和 Quest 请分开评测"
         assert not (self.am_compact_blocks > 0 and self.kv_cartridge_blocks > 0), \

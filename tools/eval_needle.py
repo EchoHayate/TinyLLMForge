@@ -67,6 +67,8 @@ def parse_args():
                    help="KV-Cartridge v0 压缩策略：保首尾，中间均匀抽样。")
     p.add_argument("--am-compact-blocks", type=int, default=0,
                    help="Attention Matching compact decode：每个 KV head 保留的 compact KV 数；0 表示关闭。")
+    p.add_argument("--am-compact-selector", type=str, default="highest", choices=["highest", "omp"],
+                   help="Attention Matching compact decode 的 key selector：highest 或 omp。")
     p.add_argument("--am-compact-min-seq-len", type=int, default=1024,
                    help="Attention Matching compact decode 只在序列长度达到该阈值时启用。")
     p.add_argument("--am-compact-score-method", type=str, default="rms", choices=["rms", "mean", "max"],
@@ -75,6 +77,8 @@ def parse_args():
                    help="Attention Matching beta box bound，实际范围为 [-bound, bound]。")
     p.add_argument("--am-compact-ridge-lambda", type=float, default=1e-6,
                    help="Attention Matching C_v least-squares ridge lambda。")
+    p.add_argument("--am-omp-candidate-pool-size", type=int, default=0,
+                   help="AM-OMP 候选池大小；0 表示按 max(2*b, b+4) 自动选择。")
     p.add_argument("--num-trials", type=int, default=3, help="每个 (ctx_len, depth) 重复多少次")
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
@@ -191,7 +195,8 @@ def clear_prefix_cache(llm) -> int:
 def run_one_setting(llm, tokenizer, args, top_k: int):
     is_c4 = args.kv_quant_bits == 4
     if args.am_compact_blocks > 0:
-        label = f"AM-HighestAttnKeys b={args.am_compact_blocks}"
+        am_name = "AM-HighestAttnKeys" if args.am_compact_selector == "highest" else "AM-OMP"
+        label = f"{am_name} b={args.am_compact_blocks}"
     elif args.kv_cartridge_blocks > 0:
         label = f"KV-Cartridge b={args.kv_cartridge_blocks}"
     elif is_c4:
@@ -271,10 +276,12 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
         kv_cartridge_min_seq_len=args.kv_cartridge_min_seq_len,
         kv_cartridge_mode=args.kv_cartridge_mode,
         am_compact_blocks=args.am_compact_blocks,
+        am_compact_selector=args.am_compact_selector,
         am_compact_min_seq_len=args.am_compact_min_seq_len,
         am_compact_score_method=args.am_compact_score_method,
         am_compact_beta_bound=args.am_compact_beta_bound,
         am_compact_ridge_lambda=args.am_compact_ridge_lambda,
+        am_omp_candidate_pool_size=args.am_omp_candidate_pool_size,
         quantization=args.quantization,
         quant_group_size=args.quant_group_size,
         act_quant_bits=args.act_quant_bits,
@@ -337,7 +344,8 @@ def main():
     print("-" * 36)
     for r in all_results:
         if am_enabled:
-            label = f"am_b{args.am_compact_blocks}"
+            prefix = "am_highest" if args.am_compact_selector == "highest" else "am_omp"
+            label = f"{prefix}_b{args.am_compact_blocks}"
         elif cartridge_enabled:
             label = f"cartridge_b{args.kv_cartridge_blocks}"
         elif is_c4:

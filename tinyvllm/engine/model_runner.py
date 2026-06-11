@@ -479,9 +479,11 @@ class ModelRunner:
                     quest_top_k_blocks=quest_active_top_k,
                     quest_min_seq_len=cfg_min_len,
                     am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
+                    am_compact_selector=self.config.am_compact_selector,
                     am_compact_score_method=self.config.am_compact_score_method,
                     am_compact_beta_bound=self.config.am_compact_beta_bound,
-                    am_compact_ridge_lambda=self.config.am_compact_ridge_lambda)
+                    am_compact_ridge_lambda=self.config.am_compact_ridge_lambda,
+                    am_omp_candidate_pool_size=self.config.am_omp_candidate_pool_size)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上

@@ -75,6 +75,88 @@ def highest_attention_key_indices(
     return torch.topk(key_scores, k=budget, largest=True).indices
 
 
+def _fit_selected_output_error(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    queries: torch.Tensor,
+    selected_indices: torch.Tensor,
+    target: torch.Tensor,
+    ridge_lambda: float,
+    beta_bound: float,
+) -> torch.Tensor:
+    if selected_indices.numel() == 0:
+        return torch.mean(target * target)
+    beta = fit_attention_bias(keys, queries, selected_indices, beta_bound=beta_bound)
+    compact_values = fit_compacted_values(
+        keys,
+        values,
+        queries,
+        selected_indices,
+        beta,
+        ridge_lambda=ridge_lambda,
+    )
+    pred = attention_output(queries, keys[selected_indices], compact_values, beta)
+    return torch.mean((pred - target) ** 2)
+
+
+def omp_attention_key_indices(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    queries: torch.Tensor,
+    budget: int,
+    ridge_lambda: float = 1e-6,
+    beta_bound: float = 3.0,
+    score_method: str = "rms",
+    candidate_pool_size: int | None = None,
+) -> torch.Tensor:
+    """Select compact key indices by greedy output-matching OMP.
+
+    The objective is the same attention-output MSE used by the AM value-fitting
+    stage. To keep long-context smoke runs usable, OMP only searches a small
+    HighestAttnKeys candidate pool rather than every historical token. At each
+    iteration we try every unselected candidate, refit beta/C_v for the temporary
+    set, and keep the candidate with the lowest fitted-output error.
+    """
+    num_keys = keys.shape[0]
+    if budget <= 0:
+        raise ValueError("budget must be positive")
+    if budget >= num_keys:
+        return torch.arange(num_keys, device=keys.device, dtype=torch.long)
+
+    target = attention_output(queries, keys, values)
+    selected: list[int] = []
+    if candidate_pool_size is None or candidate_pool_size <= 0:
+        candidate_pool_size = max(budget + 4, budget * 2)
+    candidate_pool_size = max(budget, min(num_keys, candidate_pool_size))
+    pool = highest_attention_key_indices(
+        keys,
+        queries,
+        budget=candidate_pool_size,
+        score_method=score_method,
+    )
+    remaining = pool.tolist()
+    for _ in range(budget):
+        best_candidate = remaining[0]
+        best_error: torch.Tensor | None = None
+        for candidate in remaining:
+            trial = torch.tensor(selected + [candidate], device=keys.device, dtype=torch.long)
+            err = _fit_selected_output_error(
+                keys,
+                values,
+                queries,
+                trial,
+                target,
+                ridge_lambda=ridge_lambda,
+                beta_bound=beta_bound,
+            )
+            if best_error is None or float(err.item()) < float(best_error.item()):
+                best_error = err
+                best_candidate = candidate
+        selected.append(best_candidate)
+        remaining.remove(best_candidate)
+    return torch.tensor(selected, device=keys.device, dtype=torch.long)
+
+
 def solve_box_nnls(
     design: torch.Tensor,
     target: torch.Tensor,
@@ -184,7 +266,47 @@ def attention_matching_highest_keys(
     ridge_lambda: float = 0.0,
 ) -> AttentionMatchedKV:
     """Run AM-HighestAttnKeys for one layer/head."""
-    selected = highest_attention_key_indices(keys, queries, budget, score_method)
+    return attention_matching_compact_keys(
+        keys,
+        values,
+        queries,
+        budget=budget,
+        selector="highest",
+        score_method=score_method,
+        beta_bound=beta_bound,
+        nnls_iters=nnls_iters,
+        ridge_lambda=ridge_lambda,
+    )
+
+
+def attention_matching_compact_keys(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    queries: torch.Tensor,
+    budget: int,
+    selector: str = "highest",
+    score_method: str = "rms",
+    beta_bound: float = 3.0,
+    nnls_iters: int = 0,
+    ridge_lambda: float = 0.0,
+    omp_candidate_pool_size: int = 0,
+) -> AttentionMatchedKV:
+    """Run Attention Matching with a configurable key selector."""
+    if selector == "highest":
+        selected = highest_attention_key_indices(keys, queries, budget, score_method)
+    elif selector == "omp":
+        selected = omp_attention_key_indices(
+            keys,
+            values,
+            queries,
+            budget,
+            ridge_lambda=ridge_lambda,
+            beta_bound=beta_bound,
+            score_method=score_method,
+            candidate_pool_size=omp_candidate_pool_size,
+        )
+    else:
+        raise ValueError("selector must be 'highest' or 'omp'")
     beta = fit_attention_bias(keys, queries, selected, beta_bound, nnls_iters)
     compact_values = fit_compacted_values(keys, values, queries, selected, beta, ridge_lambda)
     return AttentionMatchedKV(
@@ -201,9 +323,11 @@ def attention_matching_decode(
     values: torch.Tensor,
     context_lens: torch.Tensor,
     budget: int,
+    selector: str = "highest",
     score_method: str = "rms",
     beta_bound: float = 3.0,
     ridge_lambda: float = 1e-6,
+    omp_candidate_pool_size: int = 0,
 ) -> torch.Tensor:
     """Decode attention through AM compact tensors.
 
@@ -241,14 +365,16 @@ def attention_matching_decode(
             if budget >= seq_len:
                 group_out = attention_output(q_group, k_seq, v_seq)
             else:
-                compact = attention_matching_highest_keys(
+                compact = attention_matching_compact_keys(
                     k_seq,
                     v_seq,
                     q_group,
                     budget=budget,
+                    selector=selector,
                     score_method=score_method,
                     beta_bound=beta_bound,
                     ridge_lambda=ridge_lambda,
+                    omp_candidate_pool_size=omp_candidate_pool_size,
                 )
                 group_out = attention_output(q_group, compact.keys, compact.values, compact.beta)
             out[b, q_start:q_end] = group_out.to(out.dtype)
