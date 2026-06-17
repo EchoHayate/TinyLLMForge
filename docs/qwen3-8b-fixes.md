@@ -2776,3 +2776,684 @@ python tools/test_attention_matching.py
 但质量明显不行，输出变成 `The magic is the ...` 复读；说明仅用稀疏 prefill reference query 构建全局 compact KV，会损失 decode-step query 自适应性。
 下一步若继续 OMP-fast，应该做“prefill 阶段构建多个 query-cluster / block-local compact cache”，decode 按当前 query 选择最近 cluster，
 而不是单一全局 compact cache。
+
+### 45.9 AM-OMP multi-cluster compact KV bank 原型（2026-06-12）
+
+承接 §45.8，本轮实现 query-cluster compact bank：prefill 阶段不再只为每个 `(seq, kv_head)` 构建一份
+`C_k/beta/C_v`，而是先对 reference queries 做轻量 deterministic k-means，再为每个 query cluster 分别拟合 compact KV；
+decode 阶段用当前 query 到 centroid 的距离选择最近 cluster。
+
+新增实现：
+
+- `AttentionMatchingCacheEntry.compacts/centroids`：一个 cache entry 可持有多份 compact KV；
+- `AttentionMatchingDecodeCache.get(..., query=...)`：cache hit 时按当前 query 路由 cluster；
+- `build_attention_matching_prefill_cache(..., num_clusters=...)` 与 `attention_matching_decode(..., num_clusters=...)`；
+- `Config.am_compact_num_clusters` / `tools/eval_needle.py --am-compact-num-clusters`；
+- `Config.am_compact_route_top_k` / `--am-compact-route-top-k`：可把最近的多个 cluster 做 beta-shift ensemble，
+  避免硬路由只选一个 compact bank；
+- 单测覆盖 multi-cluster bank 构建、cluster routing、top-k ensemble、cache hit/miss 计数。
+
+远端验证（`sitian@10.232.195.203`，`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`）：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+链路 smoke：
+
+| model | ctx | selector | b | candidate_pool | clusters | max_output | acc | throughput | 输出文件 |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---|
+| Qwen3-0.6B | 512 | OMP | 2 | 4 | 1 | 2 | 0.0% | 0.78 tok/s | `needle_sq_results/needle_am_omp_clusters1_smoke.json` |
+| Qwen3-0.6B | 512 | OMP | 2 | 4 | 2 | 2 | 0.0% | 0.35 tok/s | `needle_sq_results/needle_am_omp_clusters2_smoke.json` |
+| Qwen3-0.6B | 512 | OMP | 2 | 4 | 2 | 8 | 0.0% | 0.72 tok/s | `needle_sq_results/needle_am_omp_clusters2_out8_smoke.json` |
+| Qwen3-8B | 512 | OMP | 2 | 4 | 2 | 1 | 0.0% | 0.14 tok/s | `needle_sq_results/needle_8b_am_omp_clusters2_smoke.json` |
+
+8B `ctx=4096/depth=0.5/num_trials=1/max_output=16/b=16/ref_stride=256` cluster 对比（同一 magic=60494）：
+
+| clusters | route_top_k | acc | throughput | raw 输出 |
+|---:|---:|---:|---:|---|
+| 1 | 1 | 0.0% | 0.0960 tok/s | `The magic is the magic\nThe magic number is the magic...` |
+| 2 | 1 | 0.0% | 0.0473 tok/s | `The grass magicass\n\nThe grass The grass...` |
+| 4 | 1 | 0.0% | 0.0253 tok/s | `The answer:  is the answer is the answer...` |
+| 4 | 2 | 0.0% | 0.0243 tok/s | `The answer: The answer: The answer...` |
+
+输出文件：
+
+- `needle_sq_results/needle_8b_am_omp_b16_ctx4096_c1_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b16_ctx4096_c2_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b16_ctx4096_c4_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b16_ctx4096_c4_rtop2_o16.json`
+
+结论：multi-cluster bank 的端到端链路已打通，并且 8B 最小 smoke 可运行；但当前实现仍是 Python eager + 每个 cluster
+独立 OMP/least-squares 拟合，`ctx=4096/b=16` 下吞吐基本随 cluster 数线性下降。质量上 hard routing 和 top-k ensemble
+都没有召回 magic number，只是把单 bank 的 `The magic is...` 复读变成其他局部模式复读。说明仅按 prefill query cluster
+做全局 compact KV 仍不足以恢复 needle 召回；下一步不应继续扩大 cluster 数，而应转向 block/span-local compact bank 或
+query-conditioned 候选池复用，让中间 needle span 有机会进入 compact basis，同时把 `beta+C_v` fitting 做 layer-batched 化。
+
+### 45.10 AM-OMP span-local compact bank 原型（2026-06-12）
+
+承接 §45.9 的 negative result，本轮不再继续增加 query cluster，而是做 key span-local bank：把历史 KV 按连续 token span
+切分，每个 span 单独拟合一份 compact KV，decode 时通过 `route_top_k` 把多个 span compact concat 成一个局部 ensemble。
+这样至少能保证中间 span 也有自己的 compact basis，不会被全局 Highest/OMP 直接挤掉。
+
+新增实现：
+
+- `_build_span_local_compact_bank()`：按连续 key span 构建 compact bank，并把 span-local indices 还原成全局位置；
+- `build_attention_matching_prefill_cache(..., num_key_spans=...)` / `attention_matching_decode(..., num_key_spans=...)`；
+- `Config.am_compact_num_key_spans` / `tools/eval_needle.py --am-compact-num-key-spans`；
+- 单测覆盖 span-local bank 构建、每个 span 的 indices 覆盖、decode ensemble 命中。
+
+远端验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+8B `ctx=4096/depth=0.5/num_trials=1/max_output=16/ref_stride=256/spans=4/route_top_k=4` smoke（同一 magic=60494）：
+
+| selector | per-span b | candidate_pool | total compact keys | acc | throughput | raw 输出 |
+|---|---:|---:|---:|---:|---:|---|
+| OMP | 4 | 8 | 16 | 0.0% | 0.1602 tok/s | `The grass is must\n Spin...` |
+| OMP | 8 | 12 | 32 | 0.0% | 0.0665 tok/s | `The grass is a\n\n. The grass is the grass...` |
+
+输出文件：
+
+- `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b8_ctx4096_s4_rtop4_o16.json`
+
+结论：span-local bank 相比 query-cluster c4 的吞吐更好（例如 total compact keys=16 时 `0.1602 tok/s`，高于 c1 全局 b16 的
+`0.0960 tok/s`），因为每个 OMP 只在较短 span 内拟合；但质量仍未召回 magic number，输出变成 haystack 模式复读。
+这说明“覆盖 needle 所在 span”仍不够，compact value fitting 在只用通用 prefill query refs 时没有学到“回答数字”的 decode query。
+下一步应转向 query-conditioned refresh：prefill 只缓存 span/candidate basis，decode 首步按当前 query 轻量重拟合 beta/C_v，
+或至少对候选 span 做 current-query top-k refinement，而不是完全复用 prefill fitted `C_v`。
+
+### 45.11 AM-OMP query-conditioned decode refit（2026-06-12）
+
+承接 §45.10，本轮验证“prefill 只缓存 selected basis，decode 用当前 query 重拟合 `beta/C_v`”是否能恢复质量。
+实现上不重新跑 OMP selector，而是复用 cache 里的 `indices`：cache hit 后用当前 decode query 对这些 selected keys 重新调用
+`fit_attention_bias()` 与 `fit_compacted_values()`，再做 compact attention 输出。
+
+新增实现：
+
+- `_refit_compact_for_queries()`：给定 cached `indices` 和当前 query，重拟合 `beta/C_v`；
+- `attention_matching_decode(..., decode_refit=True)`；
+- `Config.am_compact_decode_refit` / `tools/eval_needle.py --am-compact-decode-refit`；
+- 单测 `test_decode_refit_recomputes_cached_values_for_current_query()` 校验 cache hit 后输出等于手动 refit 结果。
+
+远端验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+8B `ctx=4096/depth={0.25,0.5,0.75}/num_trials=1/max_output=16/ref_stride=256` 对比：
+
+| mode | b | spans | route_top_k | decode_refit | acc | throughput | raw 输出 |
+|---|---:|---:|---:|---|---:|---:|---|
+| span-local OMP | 4 | 4 | 4 | off | 0.0% | 0.1602 tok/s | `The grass is must...` |
+| span-local OMP | 4 | 4 | 4 | on | 100.0% | 0.2326 tok/s | `The magic number is XXXXX. Remember it.` |
+| global OMP | 16 | 1 | 1 | on | 100.0% | 0.1385 tok/s | `The magic number is XXXXX. Remember it.` |
+
+输出文件：
+
+- `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_depth3_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b16_ctx4096_refit_depth3_o16.json`
+
+三深度明细（span-local b=4/spans=4/route_top_k=4/refit）：
+
+| depth | magic | answer | hit |
+|---:|---:|---:|---|
+| 0.25 | 60494 | 60494 | yes |
+| 0.50 | 65125 | 65125 | yes |
+| 0.75 | 15306 | 15306 | yes |
+
+结论：decode-time query-conditioned refit 是当前 AM-OMP-fast 最关键的质量修复。此前 prefill-fitted `C_v` 导致复读；只要保留
+selected basis、在 decode 用当前 query 重拟合 `beta/C_v`，8B fixed-prompt 4096 三个深度都能正确输出 magic number。
+吞吐上 span-local b=4/spans=4/refit 达到 `0.2326 tok/s`，比 global b16/refit 的 `0.1385 tok/s` 更好，也高于无 refit 的
+span-local b=4 单样本 `0.1602 tok/s`（批量三条时摊薄 warmup/构建成本）。下一步应该把 refit 的 least-squares 路径批量化，
+并跑 `ctx=8192/15000` 与 `b/spans` sweep，确认长上下文下 selected basis 是否仍覆盖 needle。
+
+### 45.12 AM-OMP refit 长上下文 smoke（2026-06-12）
+
+承接 §45.11，本轮固定当前最有希望的执行形态：`span-local OMP, per-span b=4, spans=4, route_top_k=4,
+decode_refit=on`，向 8K/15K 上下文扩展。除 15K 为避免一次 batch 过大设置 `max_num_seqs=1` 外，其他配置沿用
+§45.11：`depth={0.25,0.5,0.75}, num_trials=1, max_output=16`。
+
+远端验证前仍先跑：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+长上下文结果：
+
+| ctx | depths | acc | throughput | raw 输出形态 | 输出文件 |
+|---:|---|---:|---:|---|---|
+| 4096 | 0.25/0.5/0.75 | 100.0% | 0.2326 tok/s | `The magic number is XXXXX. Remember it.` | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_depth3_o16.json` |
+| 8192 | 0.25/0.5/0.75 | 100.0% | 0.1565 tok/s | `The magic number is XXXXX. Remember it.` | `needle_sq_results/needle_8b_am_omp_b4_ctx8192_s4_rtop4_refit_depth3_o16.json` |
+| 15000 | 0.25/0.5/0.75 | 100.0% | 0.2801 tok/s | `The magic number is XXXXX...` | `needle_sq_results/needle_8b_am_omp_b4_ctx15000_s4_rtop4_refit_depth3_o16.json` |
+
+15K 三深度明细：
+
+| depth | magic | answer | hit | raw 摘要 |
+|---:|---:|---:|---|---|
+| 0.25 | 60494 | 60494 | yes | `The magic number is 60494. The magic number is ...` |
+| 0.50 | 65125 | 65125 | yes | `The magic number is 65125. Remember it...` |
+| 0.75 | 15306 | 15306 | yes | `The magic number is 15306. Remember it.` |
+
+结论：span-local selected basis + decode query-conditioned refit 在 4K/8K/15K 三个上下文长度的单样本三深度 smoke 上都能召回
+needle。15K 的吞吐高于 8K 主要受调度/输出长度/`max_num_seqs` 差异影响，不应做横向性能结论；质量结论更重要：
+selected basis 在长上下文下仍覆盖 needle span。下一步应做两类工作：
+
+1. 质量 sweep：`ctx={4096,8192,15000}, depths=5, n>=2`，对比 `spans=4/8`、`per-span b=2/4/8`；
+2. 性能优化：把 decode refit 中每层/每 head 的 `fit_attention_bias + fit_compacted_values` 批量化，否则 full-grid 吞吐仍会被 Python eager + small solve 限制。
+
+### 45.13 AM-OMP refit 性能拆解与 fast small-solve（2026-06-12）
+
+§45.12 的质量已经说明 refit 方向正确，但吞吐仍很低。本轮先拆最明显的热点：`decode_refit=on` 时虽然复用 selected
+indices，不再重跑 OMP selector，但 `fit_compacted_values()` 为了重拟合 `C_v` 会先算一次 full attention target
+`attention_output(queries, keys, values)`；随后还要做每层/每 KV head 的小矩阵 solve。因此速度慢不是 query routing，而是
+“每步 full target + 小 solve + Python eager loop”。
+
+新增轻量实验入口：
+
+- `Config.am_compact_decode_refit_mode` / `--am-compact-decode-refit-mode {full,direct,beta}`；
+- `full`：原质量路径，用 full target 重拟合 `beta/C_v`；
+- `direct`：只重拟合 beta，`C_v = V[selected]`，不算 full target；
+- `beta`：只重拟合 beta，复用 prefill fitted `C_v`。
+
+同时做了一个不改变 `full` 语义的低秩 solve 优化：当 `num_queries < compact_keys` 时，
+
+```text
+(A^T A + λI)^-1 A^T y = A^T (A A^T + λI)^-1 y
+```
+
+把 decode refit 中常见的 `16x16` ridge solve 改成 `4x4` solve；`solve_box_nnls()` 里的 underdetermined 小矩阵也避免
+SVD-based `lstsq`，直接走低秩 solve + clamp。
+
+远端验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+8B `ctx=4096/depth={0.25,0.5,0.75}/b=4/spans=4/route_top_k=4/max_output=16` 对比：
+
+| refit_mode | acc | throughput | raw 输出结论 |
+|---|---:|---:|---|
+| full（旧 solve） | 100.0% | 0.2326 tok/s | 正确输出 magic number |
+| direct | 0.0% | 0.2626 tok/s | 无数字 / 模式复读 |
+| beta | 0.0% | 0.2499 tok/s | 胡乱 token / 模式复读 |
+| full（fast small-solve） | 100.0% | 0.2467 tok/s | 正确输出 magic number |
+
+输出文件：
+
+- `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_direct_depth3_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_beta_depth3_o16.json`
+- `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_full_fastsolve_depth3_o16.json`
+
+结论：
+
+- 不能简单省掉 `C_v` refit：`direct/beta` 虽然略快，但质量直接掉到 0%。
+- fast small-solve 保住质量，吞吐从 `0.2326` 到 `0.2467 tok/s`，只有约 `6%` 提升，说明主要瓶颈不是 solve 维度，
+  而是每 step 每层每 head 仍在算 full attention target 与 Python eager 循环。
+- 下一步真正有意义的性能优化应是结构性改造：
+  1. 把所有 KV head 的 `full target + beta/C_v refit` 做 layer-batched；
+  2. 尽量复用一次 dense/flash attention target，而不是在 AM Python loop 内按 KV head 重算；
+  3. 进一步把 refit interval 降频（例如每 2/4 token refit 一次，中间只更新 beta 或直接复用），验证质量/速度拐点。
+
+### 45.14 AM-OMP decode refit interval 降频实验（2026-06-12）
+
+承接 §45.13 的第三点，本轮把 `decode_refit` 结果缓存起来，新增：
+
+- `Config.am_compact_decode_refit_interval`；
+- `Context.am_compact_decode_refit_interval`；
+- `--am-compact-decode-refit-interval N`；
+- `AttentionMatchingDecodeCache.refit_entries/get_refit/put_refit`；
+- 单测 `test_decode_refit_interval_reuses_refitted_compact_values()`，验证 interval 内第二次 decode 会命中 refitted compact。
+
+验证入口仍先跑：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+远端结果：`attention matching tests passed`。
+
+8B smoke 固定 §45.13 的配置：`ctx=4096/depth={0.25,0.5,0.75}/num_trials=1/b=4/spans=4/route_top_k=4/max_output=16`，只改
+`decode_refit_interval`。
+
+| decode_refit_interval | acc | throughput | time | raw 输出形态 | 输出文件 |
+|---:|---:|---:|---:|---|---|
+| 1（fast small-solve baseline） | 100.0% | 0.2467 tok/s | - | 正确输出 magic number | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_full_fastsolve_depth3_o16.json` |
+| 2 | 0.0% | 0.2542 tok/s | 188.9s | `The magic number is ...` 后接无数字/异常 token | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_i2_depth3_o16.json` |
+| 4 | 0.0% | 0.2515 tok/s | 190.9s | `The magic number:` 后接非答案 token | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_i4_depth3_o16.json` |
+| 8 | 0.0% | 0.2658 tok/s | 180.6s | `The magic number:` 后接非答案 token/复读 | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_i8_depth3_o16.json` |
+
+三组 interval 的 magic 固定为 `60494/65125/15306`，均未提取到正确 answer。典型 raw：
+
+- `interval=2`: `The magic number is  the $__$$__$...`
+- `interval=4`: `The magic number: number is Wh m.sup.2number...`
+- `interval=8`: `The magic numberachtsachtsies...`
+
+结论：不能靠“每 N token 复用一次 refitted C_v”来保质量。needle 任务中生成数字的每个 decode token 对 query-conditioned
+`C_v` 都很敏感；即使 `interval=2`，第二个 token 起复用上一 token 的 `C_v/beta` 就会破坏输出链路。吞吐也只从 `0.2467`
+小幅到 `0.25~0.27 tok/s`，收益不足以抵消质量坍塌。
+
+因此 `decode_refit_interval` 只能保留为实验开关，默认必须是 `1`。下一步性能优化不应再沿 refit 降频做，而应转向：
+
+1. layer 内 KV-head batched refit，减少 Python eager loop；
+2. 一次性计算/复用 dense full-attention target，避免每 KV head 重算 target；
+3. 进一步把 `fit_attention_bias` 和 `fit_compacted_values` 合并成 batch solve，保留每 token full refit 的质量语义。
+
+### 45.15 AM-OMP layer 内 batch refit 原型（2026-06-12）
+
+承接 §45.14，继续保留 `decode_refit_interval=1` 的质量语义，不再降频；改为把同一层内可同形状的
+`(batch row, KV head)` refit miss 收集起来批量求解。实现点：
+
+- 新增 `_refit_compacts_for_query_groups_batched()`：输入 `keys/values=[N,L,D]`、`queries=[N,R,D]`、`selected=[N,M]`，
+  批量求 `beta` 和 `C_v`；
+- `attention_matching_decode()` 先保留原 compact cache/route 逻辑，只把需要 full refit 的项放到 `pending_refits`，最后按
+  `(L,R,M,D,dtype,device,mode)` 分桶 batch solve；
+- 不改外部接口，不改默认配置；不能 batch 的形状保留 scalar fallback；
+- 新增 `test_decode_refit_batches_multiple_rows_and_kv_heads()`，覆盖 `B=2, KV heads=2, GQA group=2`，并和逐 head 手工
+  `fit_attention_bias + fit_compacted_values` 对齐。
+
+远端验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+8B smoke 仍固定 `ctx=4096/depth={0.25,0.5,0.75}/num_trials=1/b=4/spans=4/route_top_k=4/max_output=16`：
+
+| 实现 | acc | throughput | time | raw 输出形态 | 输出文件 |
+|---|---:|---:|---:|---|---|
+| full refit + fast small-solve | 100.0% | 0.2467 tok/s | - | 正确输出 magic number | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_full_fastsolve_depth3_o16.json` |
+| full refit + layer 内 batch refit | 100.0% | 0.2730 tok/s | 175.8s | `The magic number is XXXXX. Remember it.` | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batch_depth3_o16.json` |
+
+三深度明细：
+
+| depth | magic | answer | hit | raw 摘要 |
+|---:|---:|---:|---|---|
+| 0.25 | 60494 | 60494 | yes | `The magic number is 60494. Remember it.` |
+| 0.50 | 65125 | 65125 | yes | `The magic number is 65125. Remember it.` |
+| 0.75 | 15306 | 15306 | yes | `The magic number is 15306. Remember it.` |
+
+结论：batch refit 保住了 §45.13 的 100% 质量，同时吞吐从 `0.2467` 提到 `0.2730 tok/s`，约 `+10.7%`。提升仍有限，说明
+当前瓶颈还包括 full attention target 本身、KV cache dense gather/dequant、以及 attention layer 之间的 Python 调度。下一步应继续做：
+
+1. 进一步把 batch refit 的 target 计算从每 KV head 的 `[L,D]` attention 改成 layer 级一次性 dense/flash target；
+2. 如果保持 Python eager，至少把 `attention_output(q_group, compact.keys, compact.values, beta)` 也改成 batched output，减少最后一段小 matmul loop；
+3. 跑 `ctx=8192/15000` batch refit smoke，确认长上下文质量不回退。
+
+### 45.16 AM-OMP batched compact output 与长上下文复测（2026-06-14）
+
+承接 §45.15，本轮继续做一个小的 eager loop 收敛：在 pending refit 已经按 bucket 完成 batch solve 后，把最后的 compact attention
+输出也改成 batch matmul：
+
+- 新增 `_attention_output_batched(queries, keys, values, beta)`，形状为 `queries=[N,R,D]`、`keys/values=[N,M,D]`、
+  `beta=[N,M]`；
+- `_process_pending_decode_refits()` 对同一 bucket 的 refitted compact 一次性计算输出，再逐项写回 `out`；
+- scalar fallback 与 refit cache hit 路径保持不变，外部接口不变。
+
+远端验证仍先跑完整编译和 AM 单测：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+4K 对比：
+
+| 实现 | acc | throughput | time | 输出文件 |
+|---|---:|---:|---:|---|
+| batch refit（§45.15） | 100.0% | 0.2730 tok/s | 175.8s | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batch_depth3_o16.json` |
+| batch refit + batched compact output | 100.0% | 0.2702 tok/s | 177.7s | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batchout_depth3_o16.json` |
+
+这次 batch output 没带来稳定增益，说明最后的 compact 输出小 matmul 不是主要热点；0.2702 vs 0.2730 更像运行噪声。
+
+随后复测长上下文，固定 `b=4/spans=4/route_top_k=4/decode_refit=on/interval=1/max_output=16/depth={0.25,0.5,0.75}`：
+
+| ctx | acc | throughput | time | raw 输出形态 | 输出文件 |
+|---:|---:|---:|---:|---|---|
+| 4096 | 100.0% | 0.2702 tok/s | 177.7s | 正确输出 magic number | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batchout_depth3_o16.json` |
+| 8192 | 100.0% | 0.1739 tok/s | 275.9s | 正确输出 magic number | `needle_sq_results/needle_8b_am_omp_b4_ctx8192_s4_rtop4_refit_batchout_depth3_o16.json` |
+| 15000 | 100.0% | 0.3440 tok/s | 139.5s | 正确输出 magic number | `needle_sq_results/needle_8b_am_omp_b4_ctx15000_s4_rtop4_refit_batchout_depth3_o16.json` |
+
+长上下文三深度明细：
+
+| ctx | depth | magic | answer | hit | raw 摘要 |
+|---:|---:|---:|---:|---|---|
+| 8192 | 0.25 | 60494 | 60494 | yes | `The magic number is 60494. Remember it.` |
+| 8192 | 0.50 | 65125 | 65125 | yes | `The magic number is 65125. Remember it.` |
+| 8192 | 0.75 | 15306 | 15306 | yes | `The magic number is 15306. Remember it.` |
+| 15000 | 0.25 | 60494 | 60494 | yes | `The magic number is 60494. The magic number is ...` |
+| 15000 | 0.50 | 65125 | 65125 | yes | `The magic number is 65125. Remember it.` |
+| 15000 | 0.75 | 15306 | 15306 | yes | `The magic number is 15306. Remember it.` |
+
+结论：batch refit 路径在 4K/8K/15K 均保持 100% needle recall；batched compact output 本身没有明显速度收益。下一步真正的性能突破仍应
+集中在更大的热点：
+
+1. layer 级 full attention target 复用，避免每个 KV head 重算 `attention_output(q_group, k_seq, v_seq)`；
+2. 减少 decode 前的 dense gather/dequant 成本；
+3. 如果继续保持 AM-OMP selected basis，考虑把 refit 的 `selected gather + beta/C_v solve + compact output` 融成一个更少 Python dispatch 的层内 kernel/批处理块。
+
+### 45.17 AM-OMP batched refit tensor-return 负结果（2026-06-14）
+
+在 §45.16 之后，又尝试把 `_refit_compacts_for_query_groups_batched()` 从“返回 `list[AttentionMatchedKV]` 后再 stack 输出”改成直接返回
+batched tensors，目标是减少 interval=1 时无用的逐项 compact 构造。实现上质量语义不变，但 4K smoke 结果反而变慢：
+
+| 实现 | acc | throughput | time | 输出文件 |
+|---|---:|---:|---:|---|
+| batch refit + batched compact output（§45.16） | 100.0% | 0.2702 tok/s | 177.7s | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batchout_depth3_o16.json` |
+| batched refit direct tensor return | 100.0% | 0.2575 tok/s | 186.4s | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batched_tensor_depth3_o16.json` |
+
+三深度仍全部命中：`60494/65125/15306`。由于吞吐从 `0.2702` 降到 `0.2575 tok/s`，该实验已回滚到 §45.16 的实现，并重新验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+结论：继续微调 Python 对象构造已经没有稳定收益，甚至会因不同 tensor 生命周期/stack 路径导致波动。后续不应再在这个局部继续抠，应该转向：
+
+1. KV cache dense gather/dequant 路径；
+2. layer 级 target 计算复用；
+3. 更大粒度的 fused/batched kernel。
+
+### 45.18 AM-OMP decode CPU sync 清理（2026-06-14）
+
+本轮排查发现两个不改变数学语义、但可能造成 decode 热路径 GPU→CPU 同步的位置：
+
+1. `decode_refit_interval=1` 时仍无条件构造 `_refit_cache_key()`，其中会执行 `compact.indices.detach().cpu().tolist()`；但 interval=1 时
+   `cache_refit_enabled=False`，这个 key 实际不会用于 get/put。
+2. 每个 attention layer 都调用 `_am_cache_signatures(block_tables)`，内部是 `block_tables.detach().to("cpu").tolist()`；同一个 decode step 的
+   `block_tables` 对所有层相同，应该在 `prepare_decode()` host 侧一次性构造。
+
+改动：
+
+- `attention_matching_decode()` 只在 `cache_refit_enabled=True` 时构造 `refit_key`；默认质量路径 `decode_refit_interval=1` 不再做
+  `compact.indices.cpu().tolist()`；
+- `Context` 增加 `am_compact_cache_signatures`；
+- `ModelRunner.prepare_decode()` 直接从 host `block_table_rows` 生成 signatures；
+- `Attention.forward()` 优先使用 `context.am_compact_cache_signatures`，缺失时才 fallback 到 `_am_cache_signatures(block_tables)`。
+
+验证：
+
+```bash
+python -m py_compile tinyvllm/engine/attention_matching.py tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+python tools/test_attention_matching.py
+```
+
+结果：`attention matching tests passed`。
+
+4K smoke 结果：
+
+| 实现 | acc | throughput | time | 输出文件 |
+|---|---:|---:|---:|---|
+| §45.16 batch refit + batched compact output | 100.0% | 0.2702 tok/s | 177.7s | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_batchout_depth3_o16.json` |
+| CPU sync 清理后 | 100.0% | 0.2644 tok/s | 181.5s | `needle_sq_results/needle_8b_am_omp_b4_ctx4096_s4_rtop4_refit_cpu_sync_depth3_o16.json` |
+
+三深度仍全部命中：`60494/65125/15306`。吞吐没有稳定提升，`0.2644` 相比 `0.2702` 更像运行噪声范围内的轻微回落。
+该改动仍保留：它删除了 interval=1 下确定无用的 GPU→CPU key 构造，并避免每层重复从 GPU block table 生成 signatures；即使 smoke
+吞吐未显著改善，也能减少潜在 sync 点，代码语义更合理。
+
+结论：CPU sync 清理不是当前 4K 单样本 smoke 的主瓶颈。至此，Python/eager 层面的安全小优化基本已经验证完。后续若继续提升，应直接进入
+KV cache dense gather/dequant 或 block-table aware fused refit 方向。
+
+### 45.19 20 tok/s 目标与 baseline 上限评估（2026-06-14）
+
+用户明确提出速度至少需要提升到 `20+ tok/s`，即相对当前 AM-OMP `0.26~0.27 tok/s` 提升约 100 倍。先测不启用 AM 的 baseline
+FlashAttention 路径，作为实际可达到的上限参考。配置保持 `depth={0.25,0.5,0.75}/num_trials=1/max_output=16`，只关闭 AM：
+
+```bash
+python tools/eval_needle.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --context-lens <ctx> --depths 0.25 0.5 0.75 --num-trials 1 \
+  --max-output-len 16 --top-k-blocks-list -1 --gpu-memory-utilization 0.7
+```
+
+baseline 结果：
+
+| ctx | acc | throughput | time | 输出文件 |
+|---:|---:|---:|---:|---|
+| 4096 | 100.0% | 31.0608 tok/s | 1.5s | `needle_sq_results/needle_8b_baseline_ctx4096_depth3_o16.json` |
+| 8192 | 100.0% | 19.9901 tok/s | 2.4s | `needle_sq_results/needle_8b_baseline_ctx8192_depth3_o16.json` |
+| 15000 | 100.0% | 8.5881 tok/s | 5.6s | `needle_sq_results/needle_8b_baseline_ctx15000_depth3_o16.json` |
+
+对比当前 AM-OMP 最好路径：
+
+| ctx | AM-OMP throughput | baseline throughput | 差距 |
+|---:|---:|---:|---:|
+| 4096 | 0.2644~0.2702 tok/s | 31.0608 tok/s | 约 115x |
+| 8192 | 0.1739 tok/s | 19.9901 tok/s | 约 115x |
+| 15000 | 0.3440 tok/s | 8.5881 tok/s | 约 25x |
+
+结论：`20+ tok/s` 不是硬件/模型层面不可能，4K baseline 已经达到 `31 tok/s`，8K baseline 约 `20 tok/s`；但它不是 AM-OMP
+路径，而是正常 FlashAttention。当前 AM-OMP/full decode refit 之所以慢两个数量级，是因为为了保质量，它每步每层仍要：
+
+1. gather/dequant dense KV；
+2. 计算 full QK scores 来拟合 beta 的 full attention mass；
+3. 计算 full target `softmax(QK) @ V` 来拟合 `C_v`；
+4. 做小 solve 和 compact output。
+
+也就是说，AM-OMP/full-refit 在数学上已经接近“用 Python/eager 重新实现一遍 full attention target + 额外拟合”，不可能靠局部小优化追到
+FlashAttention 的 `20+ tok/s`。要达到用户要求，有两条实际路线：
+
+1. **产品可用路线**：对 8B/15K 这类质量已由 baseline 满足的场景，直接关闭 AM，走 FlashAttention baseline；这是目前唯一已验证能达到
+   4K `31 tok/s`、8K `20 tok/s` 的路径。
+2. **研究路线**：如果必须保留 AM-OMP selected basis，则需要重写为 block-table aware fused kernel，把 `full score/mass/target + selected gather + solve`
+   尽量融合，至少避免 dense gather 和 Python eager。这个不是继续改 Python 函数能完成的 100x 提速，而是新的 CUDA/Triton 工程。
+
+短期工程建议：保留当前 AM-OMP 作为质量/研究路径；默认推理不要开启 AM。后续若继续 AM 性能，应先写 profiler/benchmark，把 dense gather、full QK、PV target、solve
+分段计时，再决定是否投入 fused kernel。
+
+### 45.20 AM layer-wise 开关（2026-06-14）
+
+用户提出“不是每一次 forward 阶段都压缩”的方向。由于 `decode_refit_interval>1` 已验证会让 needle recall 掉到 `0%`，不能降低每个启用 AM 层内部的 refit 频率；本轮改为降低**启用 AM 的层数**：未启用 AM 的层直接走原 baseline FlashAttention decode 路径，启用 AM 的层保持原 AM-OMP/full-refit 质量路径。
+
+实现：
+
+- `Config` 新增：
+  - `am_compact_skip_first_layers`
+  - `am_compact_skip_last_layers`
+  - `am_compact_enable_layers`
+  - `am_compact_layer_stride`
+- `Context` 透传上述字段；
+- `ModelRunner.allocate_kv_cache()` 给每个 `Attention` 注入 `layer_idx/num_hidden_layers`；
+- `Attention.forward()` 通过 `_am_compact_layer_enabled()` 判断当前层是否启用 AM；
+- `tools/eval_needle.py` 增加对应 CLI flags。
+
+推荐 sweep 先从少量层开始找 100% recall 边界：
+
+```bash
+# 每隔 2 层开 AM：约 1/2 层数走 AM
+python tools/eval_needle.py ... \
+  --am-compact-blocks 4 --am-compact-selector omp \
+  --am-compact-num-key-spans 4 --am-compact-route-top-k 4 \
+  --am-compact-decode-refit --am-compact-layer-stride 2
+
+# 跳过首尾，仅中间层走 AM
+python tools/eval_needle.py ... \
+  --am-compact-blocks 4 --am-compact-selector omp \
+  --am-compact-num-key-spans 4 --am-compact-route-top-k 4 \
+  --am-compact-decode-refit \
+  --am-compact-skip-first-layers 8 --am-compact-skip-last-layers 8
+
+# 显式只开若干层；该参数会覆盖 skip/stride
+python tools/eval_needle.py ... \
+  --am-compact-blocks 4 --am-compact-selector omp \
+  --am-compact-num-key-spans 4 --am-compact-route-top-k 4 \
+  --am-compact-decode-refit \
+  --am-compact-enable-layers 8 12 16 20 24
+```
+
+验证：
+
+```bash
+python3 -m py_compile tinyvllm/config.py tinyvllm/utils/context.py tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/eval_needle.py tools/test_attention_matching.py
+```
+
+本机 `python3 tools/test_attention_matching.py` 因当前 Python 环境缺少 `torch` 未能运行；语法编译检查已通过。
+
+## 46. Hidden-state reinjection / latent scratchpad smoke（2026-06-17）
+
+用户提出的新方向是：如果 agent 模型主要是“自己操作”，那么内部通信单元不一定要是 token；token 是给人读的离散表示，hidden state 才更接近模型自己的连续表征。目标不是继续优化 AM 的 KV 压缩，而是验证 **hidden state 能否作为 latent scratchpad / agent 内部通信格式**，从而减少 token 化 CoT 的开销。
+
+### 46.1 相关工作定位
+
+这个想法不是空穴来风，和几类已有研究方向一致：
+
+- **Coconut / Chain of Continuous Thought**：把部分 reasoning step 放在连续 latent space 中，而不是全部展开成自然语言 token。
+- **Gist / soft prompt / prefix tuning 类方法**：用少量连续向量承载上下文压缩或任务状态，但通常需要训练。
+- **Latent agent communication / hidden-state communication**：多 agent 不一定通过自然语言对话，可以传递连续状态；优点是高带宽、低冗余，缺点是不可解释且通常需要对齐训练。
+- **本轮实验差异**：我们先不训练，只做 smoke test：把模型最后一层 hidden state 通过 projector 映射回 embedding 空间，再作为下一步 `input_embeds` 喂回模型，看是否立即数值坍塌。
+
+### 46.2 代码改动
+
+核心链路已经接通：
+
+| 文件 | 改动 |
+|---|---|
+| `tinyvllm/models/qwen3.py:190` | `Qwen3Model.forward()` 增加 `input_embeds` 参数；`input_embeds is not None` 时绕过 `embed_tokens(input_ids)`，直接使用连续向量。 |
+| `tinyvllm/models/qwen3.py:227` | `Qwen3ForCausalLM.forward()` 透传 `input_embeds`。 |
+| `tinyvllm/engine/model_runner.py:555` | `run_model()` 增加 `input_embeds` 与 `return_hidden`；latent path / return hidden path 强制 eager，避免 CUDA graph capture 不兼容。 |
+| `tools/eval_latent_reinjection.py:91` | projector 工厂：`identity`、`rmsnorm`、`linear`、`mlp`。当前均未训练。 |
+| `tools/eval_latent_reinjection.py:252` | 主实验链路：prompt prefill → 取最后 hidden → 连续执行 K 个 latent `input_embeds` step → 再 greedy token decode。 |
+| `tools/eval_latent_reinjection.py:320` | CLI 支持 `--task needle/arithmetic/tool_action`、`--latent-steps-list`、`--projectors`。 |
+
+关键路径：
+
+```text
+prompt token prefill
+  -> logits, hidden_states = run_model(..., return_hidden=True)
+  -> hidden = last prompt hidden
+  -> repeat K times:
+       latent_embed = projector(hidden)
+       append dummy token only for position/KV bookkeeping
+       run_model(..., input_embeds=latent_embed, return_hidden=True)
+       hidden = new hidden
+  -> normal token decode
+```
+
+注意：latent step 仍然会写 KV cache，只是不经过 tokenizer / embedding lookup，也不产生人类可读 token。这里的 dummy token 只用于 `Sequence` 长度、position、block table 管理，并不会作为 embedding 使用。
+
+### 46.3 Smoke 实验口径
+
+远端环境：
+
+```text
+机器：sitian@10.232.195.203 / A100 80GB
+Python：/data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+模型：/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+GPU：CUDA_VISIBLE_DEVICES=1（GPU0 当时被占用，需避开）
+```
+
+任务：
+
+1. `needle`：长上下文中插入 magic number，问最后数字。
+2. `arithmetic`：简单多步整数运算。
+3. `tool_action`：agent 场景里从 `LS/READ/GREP` 中选择下一步工具。
+
+代表命令：
+
+```bash
+python tools/eval_latent_reinjection.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --task needle \
+  --context-lens 4096 --depths 0.25 0.5 0.75 --num-trials 1 \
+  --latent-steps-list 0 1 2 4 8 16 \
+  --projectors identity rmsnorm \
+  --max-model-len 4096 --gpu-memory-utilization 0.7 \
+  --out-json needle_sq_results/latent_smoke_needle.json
+```
+
+### 46.4 结果
+
+#### Needle 4K
+
+| projector | K latent steps | accuracy | 结论 |
+|---|---:|---:|---|
+| RMSNorm | 0/1/2/4/8/16 | 100% | latent reinjection 不会立刻破坏已在 KV cache 中的检索信息。 |
+| identity | 0/1/2 | 100% | 短 K 仍稳定。 |
+| identity | 4 | 66.7% | 未归一化 hidden 直接回灌开始不稳。 |
+
+文件留痕：
+
+- `needle_sq_results/latent_smoke_needle.json`
+
+#### Arithmetic
+
+| projector / K | accuracy |
+|---|---:|
+| 全部配置 | 0% |
+
+文件留痕：
+
+- `needle_sq_results/latent_smoke_arithmetic.json`
+
+#### Tool action
+
+| projector / K | accuracy |
+|---|---:|
+| 全部配置 | 0% |
+
+文件留痕：
+
+- `needle_sq_results/latent_smoke_tool_action.json`
+
+### 46.5 解释
+
+当前结果支持两个判断：
+
+1. **hidden-state reinjection 的数值通路成立**：`RMSNorm projector` 下，K=16 的 latent step 仍没有让 needle 检索崩掉，说明连续 hidden state 经 `input_embeds` 回灌后能维持模型基本动态，不是一步 NaN / 乱码。
+2. **无训练 latent step 还不会“思考”**：needle 成功更可能是 prompt prefill 阶段已经把 magic number 写入 KV cache，latent step 只是没有破坏它；arithmetic/tool_action 0% 说明 untrained projector 不会自动学会把 latent step 当 CoT reasoning 使用。
+
+换句话说：
+
+```text
+当前 smoke 证明的是：hidden state 可以作为稳定的内部传递格式。
+还没证明的是：hidden state 可以在无训练情况下替代 token CoT 完成新 reasoning。
+```
+
+### 46.6 结论
+
+- 用户的核心判断“token 是给人读的，hidden state 更像 AI 自己的语言”在架构上是合理的。
+- 但模型原始训练目标仍是“hidden -> logits -> token”，它没有被训练成“hidden -> hidden reasoning step -> answer”的闭环。
+- 因此下一步重点不是继续堆 K，而是训练/蒸馏 projector 或 latent transition，让 latent step 对齐 token CoT 的中间状态。
+
+### 46.7 下一步计划
+
+| 代号 | 实验 | 目标 | 判定标准 |
+|---|---|---|---|
+| A2 | harder latent stability | 扩大 K、ctx、任务难度，测 RMSNorm/MLP projector 是否长期稳定 | needle 不掉点；输出不复读/不崩。 |
+| B1 | teacher CoT distillation | 用 teacher token CoT 监督 trainable projector / latent transition | arithmetic/tool_action 从 0% 明显上升。 |
+| C1 | agent action toy | 构造小型 agent 状态转移任务，latent step 输出 tool/action | hidden 通信能否替代短自然语言 thought。 |
+| D1 | latent token cache policy | 把 latent step 作为特殊 KV entry 管理，避免污染 prefix cache | 多请求/复用场景下结果稳定。 |
+
+优先级建议：先做 **B1 teacher CoT distillation**。原因是 smoke 已说明通路稳定，瓶颈不是数值崩塌，而是没有训练信号；继续无训练扩 K 大概率只是在“保持/破坏 KV”之间摆动，不会凭空出现 reasoning。
