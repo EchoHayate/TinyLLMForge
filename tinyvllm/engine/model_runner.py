@@ -246,6 +246,8 @@ class ModelRunner:
                 module.kv_quant_bits = kvq_bits
                 module.kv_quant_group_size = config.kv_quant_group_size
                 module.kv_quant_symmetric = config.kv_quant_symmetric
+                module.layer_idx = layer_id
+                module.num_hidden_layers = L
                 if quest_enabled:
                     module.k_min = self.kv_summary[0, layer_id]
                     module.k_max = self.kv_summary[1, layer_id]
@@ -360,7 +362,17 @@ class ModelRunner:
                     am_compact_ridge_lambda=self.config.am_compact_ridge_lambda,
                     am_omp_candidate_pool_size=self.config.am_omp_candidate_pool_size,
                     am_compact_cache_refresh_interval=self.config.am_compact_cache_refresh_interval,
-                    am_prefill_cache_ref_query_stride=self.config.am_prefill_cache_ref_query_stride)
+                    am_prefill_cache_ref_query_stride=self.config.am_prefill_cache_ref_query_stride,
+                    am_compact_num_clusters=self.config.am_compact_num_clusters,
+                    am_compact_route_top_k=self.config.am_compact_route_top_k,
+                    am_compact_num_key_spans=self.config.am_compact_num_key_spans,
+                    am_compact_decode_refit=self.config.am_compact_decode_refit,
+                    am_compact_decode_refit_mode=self.config.am_compact_decode_refit_mode,
+                    am_compact_decode_refit_interval=self.config.am_compact_decode_refit_interval,
+                    am_compact_skip_first_layers=self.config.am_compact_skip_first_layers,
+                    am_compact_skip_last_layers=self.config.am_compact_skip_last_layers,
+                    am_compact_enable_layers=self.config.am_compact_enable_layers,
+                    am_compact_layer_stride=self.config.am_compact_layer_stride)
         return input_ids, positions
 
     def prepare_mixed(self, seqs: list[Sequence]):
@@ -461,6 +473,12 @@ class ModelRunner:
             and min(context_lens) >= self.config.am_compact_min_seq_len
             and min(context_lens) > self.config.am_compact_blocks
         )
+        am_compact_cache_signatures = None
+        if am_compact_active:
+            am_compact_cache_signatures = tuple(
+                tuple(int(block_id) for block_id in row if int(block_id) >= 0)
+                for row in block_table_rows
+            )
 
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
@@ -498,7 +516,18 @@ class ModelRunner:
                     am_compact_beta_bound=self.config.am_compact_beta_bound,
                     am_compact_ridge_lambda=self.config.am_compact_ridge_lambda,
                     am_omp_candidate_pool_size=self.config.am_omp_candidate_pool_size,
-                    am_compact_cache_refresh_interval=self.config.am_compact_cache_refresh_interval)
+                    am_compact_cache_refresh_interval=self.config.am_compact_cache_refresh_interval,
+                    am_compact_num_clusters=self.config.am_compact_num_clusters,
+                    am_compact_route_top_k=self.config.am_compact_route_top_k,
+                    am_compact_num_key_spans=self.config.am_compact_num_key_spans,
+                    am_compact_decode_refit=self.config.am_compact_decode_refit,
+                    am_compact_decode_refit_mode=self.config.am_compact_decode_refit_mode,
+                    am_compact_decode_refit_interval=self.config.am_compact_decode_refit_interval,
+                    am_compact_skip_first_layers=self.config.am_compact_skip_first_layers,
+                    am_compact_skip_last_layers=self.config.am_compact_skip_last_layers,
+                    am_compact_enable_layers=self.config.am_compact_enable_layers,
+                    am_compact_layer_stride=self.config.am_compact_layer_stride,
+                    am_compact_cache_signatures=am_compact_cache_signatures)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上

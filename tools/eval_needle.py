@@ -12,6 +12,8 @@ needle-in-haystack accuracy + throughput 评测
         --num-trials 3
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import re
@@ -26,8 +28,6 @@ _REPO_ROOT = os.path.dirname(_THIS_DIR)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from transformers import AutoTokenizer
-from tinyvllm import LLM, SamplingParams
 
 
 HAYSTACK_SENTENCE = (
@@ -44,7 +44,7 @@ NEEDLE_TEMPLATE = "The magic number is {num}. Remember it. "
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", type=str, required=True)
+    p.add_argument("--model", type=str, default=None)
     p.add_argument("--max-model-len", type=int, default=16384)
     p.add_argument("--enforce-eager", action="store_true", default=True)
     p.add_argument("--tp-size", type=int, default=1,
@@ -83,6 +83,33 @@ def parse_args():
                    help="AM compact cache 复用步数；0 表示关闭，每个 decode step 重新拟合。")
     p.add_argument("--am-prefill-cache-ref-query-stride", type=int, default=8,
                    help="prefill 构建 AM compact cache 时参考 query 的采样 stride。")
+    p.add_argument("--am-compact-num-clusters", type=int, default=1,
+                   help="prefill 持久 AM compact cache 的 query cluster 数；1 表示单 compact bank。")
+    p.add_argument("--am-compact-route-top-k", type=int, default=1,
+                   help="decode 时 ensemble 最近的 N 个 AM compact clusters；1 表示硬路由。")
+    p.add_argument("--am-compact-num-key-spans", type=int, default=1,
+                   help="prefill 按连续 key span 构建局部 AM compact bank 数；1 表示关闭 span-local bank。")
+    p.add_argument("--am-compact-decode-refit", action="store_true", default=False,
+                   help="decode 时复用 cached indices，但用当前 query 重拟合 beta/C_v。")
+    p.add_argument("--am-compact-decode-refit-mode", type=str, default="full", choices=["full", "direct", "beta", "anchor"],
+                   help="decode refit 的 C_v 策略：full=用 full target 重拟合；direct=直接用原始 V[selected]；beta=只重拟合 beta；anchor=用少量位置 anchor 近似 target。")
+    p.add_argument("--am-compact-decode-refit-interval", type=int, default=1,
+                   help="decode refit 后复用多少个 decode step；1 表示每步 refit。")
+    p.add_argument("--am-compact-skip-first-layers", type=int, default=0,
+                   help="层级 AM 开关：前 N 层不启用 AM，走 baseline FlashAttention。")
+    p.add_argument("--am-compact-skip-last-layers", type=int, default=0,
+                   help="层级 AM 开关：后 N 层不启用 AM，走 baseline FlashAttention。")
+    p.add_argument("--am-compact-enable-layers", type=int, nargs="+", default=None,
+                   help="层级 AM 开关：显式指定启用 AM 的层号；设置后覆盖 skip/stride 规则。")
+    p.add_argument("--am-compact-layer-stride", type=int, default=1,
+                   help="层级 AM 开关：每隔 N 层启用 AM；1 表示所有未 skip 的层启用。")
+    p.add_argument("--am-layer-sweep", type=str, nargs="*", default=None,
+                   help=("同进程 sweep 多组 AM 层级开关，格式：auto / off / all / stride:N / skip:F:L / layers:i,j,k；"
+                         "默认自动前置 off baseline。例：--am-layer-sweep auto"))
+    p.add_argument("--am-layer-sweep-print-only", action="store_true", default=False,
+                   help="只展开并打印 --am-layer-sweep 对应的 setting 列表，不加载模型、不运行评测。")
+    p.add_argument("--am-layer-sweep-no-auto-off", action="store_true", default=False,
+                   help="默认 --am-layer-sweep 会自动前置 off baseline；设置该 flag 后不自动加入 off。")
     p.add_argument("--num-trials", type=int, default=3, help="每个 (ctx_len, depth) 重复多少次")
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
@@ -196,11 +223,266 @@ def clear_prefix_cache(llm) -> int:
     return cleared
 
 
+def _format_layer_list(layers: tuple[int, ...], max_items: int = 16) -> str:
+    if len(layers) <= max_items:
+        return "[" + ",".join(str(x) for x in layers) + "]"
+    head_n = max_items // 2
+    tail_n = max_items - head_n
+    head = ",".join(str(x) for x in layers[:head_n])
+    tail = ",".join(str(x) for x in layers[-tail_n:])
+    return f"[{head},...,{tail}]"
+
+
+def _am_compact_enabled_layers_for_context(context, num_hidden_layers: int) -> tuple[int, ...]:
+    def layer_enabled(layer_idx: int) -> bool:
+        if context.am_compact_blocks <= 0:
+            return False
+        enable_layers = context.am_compact_enable_layers
+        if enable_layers is not None:
+            return layer_idx in enable_layers
+        skip_first = int(context.am_compact_skip_first_layers)
+        if layer_idx < skip_first:
+            return False
+        skip_last = int(context.am_compact_skip_last_layers)
+        if skip_last > 0 and layer_idx >= int(num_hidden_layers) - skip_last:
+            return False
+        stride = max(1, int(context.am_compact_layer_stride))
+        return ((layer_idx - skip_first) % stride) == 0
+
+    return tuple(layer_idx for layer_idx in range(int(num_hidden_layers)) if layer_enabled(layer_idx))
+
+
+def _parse_am_layer_spec(spec: str) -> dict:
+    spec = spec.strip()
+    if spec == "off":
+        return dict(label="off", am_blocks=0, skip_first=0, skip_last=0, enable_layers=None, layer_stride=1)
+    if spec == "all":
+        return dict(label="all", am_blocks=None, skip_first=0, skip_last=0, enable_layers=None, layer_stride=1)
+    if spec.startswith("stride:"):
+        stride = int(spec.split(":", 1)[1])
+        if stride <= 0:
+            raise ValueError(f"invalid AM layer sweep spec {spec!r}: stride 必须 > 0")
+        return dict(label=f"stride{stride}", am_blocks=None, skip_first=0, skip_last=0, enable_layers=None, layer_stride=stride)
+    if spec.startswith("skip:"):
+        parts = spec.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"invalid AM layer sweep spec {spec!r}: skip 格式应为 skip:F:L")
+        skip_first, skip_last = int(parts[1]), int(parts[2])
+        if skip_first < 0 or skip_last < 0:
+            raise ValueError(f"invalid AM layer sweep spec {spec!r}: skip 必须 >= 0")
+        return dict(label=f"skip{skip_first}_{skip_last}", am_blocks=None, skip_first=skip_first, skip_last=skip_last,
+                    enable_layers=None, layer_stride=1)
+    if spec.startswith("layers:"):
+        raw = spec.split(":", 1)[1]
+        layers = tuple(int(x) for x in raw.split(",") if x.strip() != "")
+        if not layers:
+            raise ValueError(f"invalid AM layer sweep spec {spec!r}: layers 不能为空")
+        if any(x < 0 for x in layers):
+            raise ValueError(f"invalid AM layer sweep spec {spec!r}: layer index 必须 >= 0")
+        layers = tuple(sorted(set(layers)))
+        label = "L" + ",".join(str(x) for x in layers)
+        return dict(label=label, am_blocks=None, skip_first=0, skip_last=0, enable_layers=layers, layer_stride=1)
+    raise ValueError(f"unknown AM layer sweep spec {spec!r}; 支持 off / all / stride:N / skip:F:L / layers:i,j,k")
+
+
+def _current_am_layer_setting(args) -> dict:
+    if args.am_compact_enable_layers is not None:
+        layers = tuple(sorted(set(int(x) for x in args.am_compact_enable_layers)))
+        label = "L" + ",".join(str(x) for x in layers)
+    else:
+        layers = None
+        label_parts = []
+        if args.am_compact_skip_first_layers > 0:
+            label_parts.append(f"sf{args.am_compact_skip_first_layers}")
+        if args.am_compact_skip_last_layers > 0:
+            label_parts.append(f"sl{args.am_compact_skip_last_layers}")
+        if args.am_compact_layer_stride > 1:
+            label_parts.append(f"st{args.am_compact_layer_stride}")
+        label = "_".join(label_parts) if label_parts else "all"
+    return dict(
+        label=label,
+        am_blocks=None,
+        skip_first=args.am_compact_skip_first_layers,
+        skip_last=args.am_compact_skip_last_layers,
+        enable_layers=layers,
+        layer_stride=args.am_compact_layer_stride,
+    )
+
+
+def _auto_am_layer_specs(num_layers: int) -> list[str]:
+    """Build a coarse, model-size-aware AM layer sweep preset."""
+    num_layers = int(num_layers)
+    specs = ["all"]
+    for stride in (2, 4, 8):
+        if stride < num_layers:
+            specs.append(f"stride:{stride}")
+
+    quarter = max(1, num_layers // 4)
+    three_eighths = max(1, (num_layers * 3) // 8)
+    for skip in (quarter, three_eighths):
+        if skip * 2 < num_layers:
+            specs.append(f"skip:{skip}:{skip}")
+
+    start = quarter
+    end = num_layers - quarter
+    step = max(1, quarter // 2)
+    layers = tuple(range(start, end + 1, step))
+    if layers:
+        specs.append("layers:" + ",".join(str(x) for x in layers))
+    return _dedupe_specs(specs)
+
+
+def _dedupe_specs(specs: list[str]) -> list[str]:
+    out = []
+    seen = set()
+    for spec in specs:
+        if spec in seen:
+            continue
+        seen.add(spec)
+        out.append(spec)
+    return out
+
+
+def _build_am_layer_settings(args, num_layers: int) -> list[dict]:
+    if args.am_layer_sweep is not None and len(args.am_layer_sweep) > 0:
+        raw_specs = list(args.am_layer_sweep)
+        if not args.am_layer_sweep_no_auto_off and "off" not in raw_specs:
+            raw_specs = ["off"] + raw_specs
+        specs = []
+        for spec in raw_specs:
+            if spec == "auto":
+                specs.extend(_auto_am_layer_specs(num_layers))
+            else:
+                specs.append(spec)
+        specs = _dedupe_specs(specs)
+        return [_parse_am_layer_spec(spec) for spec in specs]
+    return [_current_am_layer_setting(args)]
+
+
+def _print_am_layer_settings(settings: list[dict], num_layers: int):
+    print(f"[AM layer sweep] num_layers={num_layers} settings={len(settings)}", flush=True)
+    for setting in settings:
+        context_like = type("AMLayerSweepContext", (), {})()
+        context_like.am_compact_blocks = 0 if setting.get("am_blocks") == 0 else 1
+        context_like.am_compact_skip_first_layers = setting["skip_first"]
+        context_like.am_compact_skip_last_layers = setting["skip_last"]
+        context_like.am_compact_enable_layers = setting["enable_layers"]
+        context_like.am_compact_layer_stride = setting["layer_stride"]
+        enabled = _am_compact_enabled_layers_for_context(context_like, num_layers)
+        print(
+            f"  {setting['label']:>16}: enabled={len(enabled):>2}/{num_layers} "
+            f"layers={_format_layer_list(enabled)}",
+            flush=True,
+        )
+
+
+def _apply_am_layer_setting(args, llm, setting: dict, num_layers: int, base_am_blocks: int) -> tuple[int, ...]:
+    args.am_compact_blocks = base_am_blocks if setting.get("am_blocks") is None else int(setting["am_blocks"])
+    args.am_compact_skip_first_layers = setting["skip_first"]
+    args.am_compact_skip_last_layers = setting["skip_last"]
+    args.am_compact_enable_layers = list(setting["enable_layers"]) if setting["enable_layers"] is not None else None
+    args.am_compact_layer_stride = setting["layer_stride"]
+
+    cfg = llm.model_runner.config
+    cfg.am_compact_blocks = args.am_compact_blocks
+    cfg.am_compact_skip_first_layers = args.am_compact_skip_first_layers
+    cfg.am_compact_skip_last_layers = args.am_compact_skip_last_layers
+    cfg.am_compact_enable_layers = tuple(args.am_compact_enable_layers) if args.am_compact_enable_layers is not None else None
+    cfg.am_compact_layer_stride = args.am_compact_layer_stride
+
+    if cfg.am_compact_enable_layers is not None and any(x >= num_layers for x in cfg.am_compact_enable_layers):
+        raise ValueError(f"AM layer setting {setting['label']!r} 包含超过模型层数的 layer index")
+    enabled_layers = _am_compact_enabled_layers_for_context(cfg, num_layers)
+    if args.am_compact_blocks > 0 and not enabled_layers:
+        raise ValueError(f"AM layer setting {setting['label']!r} 没有启用任何层")
+    if args.am_compact_blocks <= 0:
+        print(f"[AM layers:{setting['label']}] disabled; using baseline FlashAttention", flush=True)
+    else:
+        print(
+            f"[AM layers:{setting['label']}] enabled={len(enabled_layers)}/{num_layers} "
+            f"layers={_format_layer_list(enabled_layers)}",
+            flush=True,
+        )
+    return enabled_layers
+
+
+def _summary_label(result: dict, cartridge_enabled: bool, is_c4: bool, args) -> str:
+    if "am_layer_setting" in result:
+        setting = result["am_layer_setting"]
+        enabled_count = result.get("enabled_am_layer_count", 0)
+        if setting["label"] == "off":
+            return "off/baseline"
+        prefix = "am_highest" if args.am_compact_selector == "highest" else "am_omp"
+        return f"{prefix}_{setting['label']}_L{enabled_count}"
+    label = result.get("label")
+    if label is not None:
+        return label
+    if cartridge_enabled:
+        return f"cartridge_b{args.kv_cartridge_blocks}"
+    if is_c4:
+        return "C4"
+    return "baseline" if result["top_k"] < 0 else f"top_k={result['top_k']}"
+
+
+def _print_best_am_layer_summary(results: list[dict], cartridge_enabled: bool, is_c4: bool, args):
+    if not any("am_layer_setting" in r for r in results):
+        return
+    off = next((r for r in results if r.get("am_layer_setting", {}).get("label") == "off"), None)
+    all_layer = next((r for r in results if r.get("am_layer_setting", {}).get("label") == "all"), None)
+    perfect = [r for r in results if r.get("overall_accuracy", 0.0) >= 0.999999]
+    if not perfect:
+        print("\n[AM sweep] 没有 100% recall 的 setting。", flush=True)
+        return
+    best = max(perfect, key=lambda r: r.get("throughput_tok_s", 0.0))
+    best_label = _summary_label(best, cartridge_enabled, is_c4, args)
+    best_tps = best.get("throughput_tok_s", 0.0)
+    parts = [f"global_best_100={best_label}", f"tok/s={best_tps:.2f}"]
+    if off is not None and off.get("throughput_tok_s", 0.0) > 0:
+        parts.append(f"vs_off={best_tps / off['throughput_tok_s']:.3f}x")
+    if all_layer is not None and all_layer.get("throughput_tok_s", 0.0) > 0:
+        parts.append(f"vs_all={best_tps / all_layer['throughput_tok_s']:.3f}x")
+    print("\n[AM sweep] " + "  ".join(parts), flush=True)
+
+    am_perfect = [
+        r for r in perfect
+        if r.get("am_layer_setting", {}).get("label") not in (None, "off")
+    ]
+    if not am_perfect:
+        print("[AM sweep] 没有 AM setting 达到 100% recall；若 off/baseline 已满足质量，应直接关闭 AM。", flush=True)
+        return
+    best_am = max(am_perfect, key=lambda r: r.get("throughput_tok_s", 0.0))
+    best_am_label = _summary_label(best_am, cartridge_enabled, is_c4, args)
+    best_am_tps = best_am.get("throughput_tok_s", 0.0)
+    am_parts = [f"am_best_100={best_am_label}", f"tok/s={best_am_tps:.2f}"]
+    if off is not None and off.get("throughput_tok_s", 0.0) > 0:
+        am_parts.append(f"vs_off={best_am_tps / off['throughput_tok_s']:.3f}x")
+    if all_layer is not None and all_layer.get("throughput_tok_s", 0.0) > 0:
+        am_parts.append(f"vs_all={best_am_tps / all_layer['throughput_tok_s']:.3f}x")
+    print("[AM sweep] " + "  ".join(am_parts), flush=True)
+
+
 def run_one_setting(llm, tokenizer, args, top_k: int):
     is_c4 = args.kv_quant_bits == 4
     if args.am_compact_blocks > 0:
         am_name = "AM-HighestAttnKeys" if args.am_compact_selector == "highest" else "AM-OMP"
-        label = f"{am_name} b={args.am_compact_blocks}"
+        cluster_suffix = f" c={args.am_compact_num_clusters}" if args.am_compact_num_clusters > 1 else ""
+        span_suffix = f" s={args.am_compact_num_key_spans}" if args.am_compact_num_key_spans > 1 else ""
+        route_suffix = f" rtop={args.am_compact_route_top_k}" if args.am_compact_route_top_k > 1 else ""
+        interval_suffix = (f"/{args.am_compact_decode_refit_interval}"
+                           if args.am_compact_decode_refit and args.am_compact_decode_refit_interval > 1 else "")
+        refit_suffix = f" refit={args.am_compact_decode_refit_mode}{interval_suffix}" if args.am_compact_decode_refit else ""
+        layer_parts = []
+        if args.am_compact_enable_layers is not None:
+            layer_parts.append("layers=" + ",".join(str(x) for x in args.am_compact_enable_layers))
+        else:
+            if args.am_compact_skip_first_layers > 0:
+                layer_parts.append(f"skip_first={args.am_compact_skip_first_layers}")
+            if args.am_compact_skip_last_layers > 0:
+                layer_parts.append(f"skip_last={args.am_compact_skip_last_layers}")
+            if args.am_compact_layer_stride > 1:
+                layer_parts.append(f"stride={args.am_compact_layer_stride}")
+        layer_suffix = (" " + " ".join(layer_parts)) if layer_parts else ""
+        label = f"{am_name} b={args.am_compact_blocks}{cluster_suffix}{span_suffix}{route_suffix}{refit_suffix}{layer_suffix}"
     elif args.kv_cartridge_blocks > 0:
         label = f"KV-Cartridge b={args.kv_cartridge_blocks}"
     elif is_c4:
@@ -254,6 +536,7 @@ def run_one_setting(llm, tokenizer, args, top_k: int):
     print(f"  overall_acc={overall*100:.1f}%  throughput={throughput:.2f} tok/s", flush=True)
 
     out = dict(
+        label=label,
         top_k=top_k,
         overall_accuracy=overall,
         throughput_tok_s=throughput,
@@ -288,6 +571,16 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
         am_omp_candidate_pool_size=args.am_omp_candidate_pool_size,
         am_compact_cache_refresh_interval=args.am_compact_cache_refresh_interval,
         am_prefill_cache_ref_query_stride=args.am_prefill_cache_ref_query_stride,
+        am_compact_num_clusters=args.am_compact_num_clusters,
+        am_compact_route_top_k=args.am_compact_route_top_k,
+        am_compact_num_key_spans=args.am_compact_num_key_spans,
+        am_compact_decode_refit=args.am_compact_decode_refit,
+        am_compact_decode_refit_mode=args.am_compact_decode_refit_mode,
+        am_compact_decode_refit_interval=args.am_compact_decode_refit_interval,
+        am_compact_skip_first_layers=args.am_compact_skip_first_layers,
+        am_compact_skip_last_layers=args.am_compact_skip_last_layers,
+        am_compact_enable_layers=args.am_compact_enable_layers,
+        am_compact_layer_stride=args.am_compact_layer_stride,
         quantization=args.quantization,
         quant_group_size=args.quant_group_size,
         act_quant_bits=args.act_quant_bits,
@@ -300,6 +593,22 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
 
 def main():
     args = parse_args()
+    args_for_json = vars(args).copy()
+    base_am_compact_blocks = args.am_compact_blocks
+
+    if args.am_layer_sweep_print_only:
+        # 不加载模型时无法读取真实层数；Qwen3-8B 为 32 层，足够用于检查 auto 展开。
+        num_layers = 32
+        settings = _build_am_layer_settings(args, num_layers)
+        _print_am_layer_settings(settings, num_layers)
+        return
+
+    if args.model is None:
+        raise ValueError("--model is required unless --am-layer-sweep-print-only is set")
+
+    global AutoTokenizer, LLM, SamplingParams
+    from transformers import AutoTokenizer
+    from tinyvllm import LLM, SamplingParams
 
     is_c4 = args.kv_quant_bits == 4
     cartridge_enabled = args.kv_cartridge_blocks > 0
@@ -332,36 +641,53 @@ def main():
         **build_llm_kwargs(args, init_top_k),
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
+    am_layer_settings = []
+    num_layers = 0
+    if am_enabled:
+        num_layers = llm.model_runner.config.hf_config.num_hidden_layers
+        am_layer_settings = _build_am_layer_settings(args, num_layers)
 
     # 给 LLM 预热一次，避免第一个 setting 测的是 cold-start
     llm.generate(["warmup"], SamplingParams(max_tokens=4), use_tqdm=False)
 
     all_results = []
-    for top_k in top_k_list:
-        if args.fixed_prompts:
-            cleared = clear_prefix_cache(llm)
-            if cleared:
-                print(f"[fixed-prompts] cleared prefix cache metadata for {cleared} free blocks", flush=True)
-        r = run_one_setting(llm, tokenizer, args, top_k)
-        all_results.append(r)
+    if am_enabled:
+        for idx, layer_setting in enumerate(am_layer_settings):
+            enabled_layers = _apply_am_layer_setting(args, llm, layer_setting, num_layers, base_am_compact_blocks)
+            # AM layer sweep 使用同一批 prompt 做质量归因；每个 setting 前清 prefix cache，避免吞吐虚高。
+            if args.fixed_prompts or len(am_layer_settings) > 1 or idx > 0:
+                cleared = clear_prefix_cache(llm)
+                if cleared:
+                    print(f"[prefix-cache] cleared metadata for {cleared} free blocks", flush=True)
+            r = run_one_setting(llm, tokenizer, args, -1)
+            r["am_layer_setting"] = layer_setting
+            r["enabled_am_layers"] = list(enabled_layers)
+            r["enabled_am_layer_count"] = len(enabled_layers)
+            r["label"] = _summary_label(r, cartridge_enabled, is_c4, args)
+            all_results.append(r)
+    else:
+        for top_k in top_k_list:
+            if args.fixed_prompts:
+                cleared = clear_prefix_cache(llm)
+                if cleared:
+                    print(f"[fixed-prompts] cleared prefix cache metadata for {cleared} free blocks", flush=True)
+            r = run_one_setting(llm, tokenizer, args, top_k)
+            all_results.append(r)
 
     print("\n========== SUMMARY ==========")
-    print(f"{'setting':>10} | {'acc':>7} | {'tok/s':>9}")
-    print("-" * 36)
+    off_result = next((r for r in all_results if r.get("am_layer_setting", {}).get("label") == "off"), None)
+    off_tps = off_result.get("throughput_tok_s", 0.0) if off_result is not None else 0.0
+    print(f"{'setting':>28} | {'acc':>7} | {'tok/s':>9} | {'vs_off':>7}")
+    print("-" * 67)
     for r in all_results:
-        if am_enabled:
-            prefix = "am_highest" if args.am_compact_selector == "highest" else "am_omp"
-            label = f"{prefix}_b{args.am_compact_blocks}"
-        elif cartridge_enabled:
-            label = f"cartridge_b{args.kv_cartridge_blocks}"
-        elif is_c4:
-            label = "C4"
-        else:
-            label = "baseline" if r["top_k"] < 0 else f"top_k={r['top_k']}"
-        print(f"{label:>10} | {r['overall_accuracy']*100:6.1f}% | {r['throughput_tok_s']:9.2f}")
+        label = _summary_label(r, cartridge_enabled, is_c4, args)
+        vs_off = (r["throughput_tok_s"] / off_tps) if off_tps > 0 else None
+        vs_off_s = f"{vs_off:.3f}x" if vs_off is not None else "-"
+        print(f"{label:>28} | {r['overall_accuracy']*100:6.1f}% | {r['throughput_tok_s']:9.2f} | {vs_off_s:>7}")
+    _print_best_am_layer_summary(all_results, cartridge_enabled, is_c4, args)
 
     with open(args.out_json, "w") as f:
-        json.dump(dict(args=vars(args), results=all_results), f, indent=2)
+        json.dump(dict(args=args_for_json, results=all_results), f, indent=2)
     print(f"\nDetails saved to {args.out_json}")
 
 

@@ -41,6 +41,16 @@ class Config:
     am_omp_candidate_pool_size: int = 0                 # 0 表示按 max(2*b, b+4) 自动选择 OMP 候选池
     am_compact_cache_refresh_interval: int = 0          # >0 时复用 compact KV N 个 decode step 后刷新
     am_prefill_cache_ref_query_stride: int = 8          # prefill 构建 compact cache 时每隔 N 个 query 取参考
+    am_compact_num_clusters: int = 1                    # prefill 持久 compact cache 的 query cluster 数
+    am_compact_route_top_k: int = 1                     # decode 时 ensemble 最近的 N 个 compact clusters
+    am_compact_num_key_spans: int = 1                   # prefill 按连续 key span 构建局部 compact bank 数
+    am_compact_decode_refit: bool = False               # decode 时用当前 query 重拟合 cached indices 的 beta/C_v
+    am_compact_decode_refit_mode: str = "full"          # full / direct / beta：decode refit 的 C_v 策略
+    am_compact_decode_refit_interval: int = 1           # decode refit 后复用 N 个 decode step；1 表示每步 refit
+    am_compact_skip_first_layers: int = 0               # 前 N 层不启用 AM，走 baseline FlashAttention
+    am_compact_skip_last_layers: int = 0                # 后 N 层不启用 AM，走 baseline FlashAttention
+    am_compact_enable_layers: list[int] | None = None   # 显式指定启用 AM 的层；None 表示按 skip/stride 规则
+    am_compact_layer_stride: int = 1                    # 每隔 N 层启用 AM；1 表示所有未 skip 的层启用
 
     # Chunked prefill：把长 prompt 的 prefill 拆成多个小步，避免单个超长 prefill 长时间占住调度器
     max_num_prefill_tokens_per_step: int = 0             # 0 表示关闭；>0 时每次 prefill step 最多处理这么多 prompt token
@@ -86,6 +96,17 @@ class Config:
         assert self.am_omp_candidate_pool_size >= 0
         assert self.am_compact_cache_refresh_interval >= 0
         assert self.am_prefill_cache_ref_query_stride > 0
+        assert self.am_compact_num_clusters > 0
+        assert self.am_compact_route_top_k > 0
+        assert self.am_compact_num_key_spans > 0
+        assert self.am_compact_decode_refit_mode in ("full", "direct", "beta", "anchor")
+        assert self.am_compact_decode_refit_interval > 0
+        assert self.am_compact_skip_first_layers >= 0
+        assert self.am_compact_skip_last_layers >= 0
+        assert self.am_compact_layer_stride > 0
+        if self.am_compact_enable_layers is not None:
+            self.am_compact_enable_layers = sorted(set(int(x) for x in self.am_compact_enable_layers))
+            assert all(x >= 0 for x in self.am_compact_enable_layers)
         assert not (self.am_compact_blocks > 0 and self.quest_top_k_blocks > 0), \
             "Attention Matching compact decode 和 Quest 请分开评测"
         assert not (self.am_compact_blocks > 0 and self.kv_cartridge_blocks > 0), \
@@ -107,5 +128,13 @@ class Config:
         if self.kv_quant_bits == 8:
             assert self.kv_quant_symmetric, "C8 仅实现对称量化"
         self.hf_config = AutoConfig.from_pretrained(self.model)
+        if self.am_compact_enable_layers is not None:
+            assert all(x < self.hf_config.num_hidden_layers for x in self.am_compact_enable_layers), \
+                "am_compact_enable_layers 中存在超过模型层数的 layer index"
+            assert len(self.am_compact_enable_layers) > 0 or self.am_compact_blocks == 0, \
+                "am_compact_enable_layers 为空会导致没有任何层启用 AM"
+        if self.am_compact_blocks > 0 and self.am_compact_enable_layers is None:
+            assert self.am_compact_skip_first_layers + self.am_compact_skip_last_layers < self.hf_config.num_hidden_layers, \
+                "am_compact_skip_first_layers + am_compact_skip_last_layers 覆盖了全部层"
         self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
         assert self.max_num_batched_tokens >= self.max_model_len

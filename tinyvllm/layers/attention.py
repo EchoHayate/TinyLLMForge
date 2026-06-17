@@ -5,7 +5,7 @@ import triton.language as tl
 from triton.language.extra import libdevice
 
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
-from tinyvllm.utils.context import get_context
+from tinyvllm.utils.context import am_compact_layer_enabled, get_context
 from tinyvllm.engine.attention_matching import (
     AttentionMatchingDecodeCache,
     attention_matching_decode,
@@ -533,6 +533,18 @@ class Attention(nn.Module):
         self.kv_quant_group_size = 128
         self.kv_quant_symmetric = True
         self.am_compact_cache = AttentionMatchingDecodeCache()
+
+        # model_runner.allocate_kv_cache() 注入；未注入时保持兼容：AM 默认按全层启用。
+        self.layer_idx = -1
+        self.num_hidden_layers = 0
+
+    def _am_compact_layer_enabled(self, context) -> bool:
+        return am_compact_layer_enabled(
+            context,
+            layer_idx=getattr(self, "layer_idx", -1),
+            num_hidden_layers=getattr(self, "num_hidden_layers", 0),
+        )
+
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)
@@ -606,7 +618,7 @@ class Attention(nn.Module):
                                            max_seqlen_q = context.max_seqlen_q, max_seqlen_k = context.max_seqlen_k, 
                                             softmax_scale = self.scale, causal = True, block_table = context.block_tables
                                            )
-            if (context.am_compact_blocks > 0
+            if (self._am_compact_layer_enabled(context)
                     and context.am_compact_cache_refresh_interval > 0
                     and k_cache.dim() >= 2
                     and context.block_tables is None
@@ -630,6 +642,8 @@ class Attention(nn.Module):
                     omp_candidate_pool_size=context.am_omp_candidate_pool_size,
                     cache_signatures=signatures,
                     ref_query_stride=context.am_prefill_cache_ref_query_stride,
+                    num_clusters=context.am_compact_num_clusters,
+                    num_key_spans=context.am_compact_num_key_spans,
                 )
         else:
             # decode阶段传入的 q = [batch_size, num_heads, head_dim]
@@ -645,7 +659,7 @@ class Attention(nn.Module):
                             and self.k_min is not None
                             and block_tables is not None
                             and cache_seqlens is not None)
-            am_active = (context.am_compact_blocks > 0
+            am_active = (self._am_compact_layer_enabled(context)
                          and block_tables is not None
                          and cache_seqlens is not None)
 
@@ -663,6 +677,9 @@ class Attention(nn.Module):
                     block_size = k_fp.shape[1]
                     k_dense = k_fp.reshape(B, max_blocks * block_size, self.num_kv_heads, self.head_dim)
                     v_dense = v_fp.reshape(B, max_blocks * block_size, self.num_kv_heads, self.head_dim)
+                    cache_signatures = (context.am_compact_cache_signatures
+                                        if context.am_compact_cache_signatures is not None
+                                        else _am_cache_signatures(block_tables))
                     o = attention_matching_decode(
                         q,
                         k_dense,
@@ -676,7 +693,13 @@ class Attention(nn.Module):
                         omp_candidate_pool_size=context.am_omp_candidate_pool_size,
                         cache=self.am_compact_cache,
                         cache_refresh_interval=context.am_compact_cache_refresh_interval,
-                        cache_signatures=_am_cache_signatures(block_tables),
+                        cache_signatures=cache_signatures,
+                        num_clusters=context.am_compact_num_clusters,
+                        cluster_route_top_k=context.am_compact_route_top_k,
+                        num_key_spans=context.am_compact_num_key_spans,
+                        decode_refit=context.am_compact_decode_refit,
+                        decode_refit_mode=context.am_compact_decode_refit_mode,
+                        decode_refit_interval=context.am_compact_decode_refit_interval,
                     )
                 elif quest_active:
                     # 1) 用未量化的 k_min/k_max（store 时维护，反量化前）算 criticality 选 top-k
@@ -713,6 +736,9 @@ class Attention(nn.Module):
                 return o
             if am_active:
                 k_dense, v_dense = gather_kv_cache_dense(k_cache, v_cache, block_tables)
+                cache_signatures = (context.am_compact_cache_signatures
+                                    if context.am_compact_cache_signatures is not None
+                                    else _am_cache_signatures(block_tables))
                 o = attention_matching_decode(
                     q,
                     k_dense,
@@ -726,7 +752,13 @@ class Attention(nn.Module):
                     omp_candidate_pool_size=context.am_omp_candidate_pool_size,
                     cache=self.am_compact_cache,
                     cache_refresh_interval=context.am_compact_cache_refresh_interval,
-                    cache_signatures=_am_cache_signatures(block_tables),
+                    cache_signatures=cache_signatures,
+                    num_clusters=context.am_compact_num_clusters,
+                    cluster_route_top_k=context.am_compact_route_top_k,
+                    num_key_spans=context.am_compact_num_key_spans,
+                    decode_refit=context.am_compact_decode_refit,
+                    decode_refit_mode=context.am_compact_decode_refit_mode,
+                    decode_refit_interval=context.am_compact_decode_refit_interval,
                 )
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o
