@@ -3687,4 +3687,53 @@ RuntimeError: one of the variables needed for gradient computation has been modi
 3. loss 直接对齐 answer-only token 序列，而不是只对齐首 token。
 4. 先在 Qwen3-0.6B 上验证 answer-only，再迁移到 8B。
 
+### 47.10 B1.3 HF teacher-forcing 路径（2026-06-17）
 
+已按 §47.9 落地一条 autograd-safe 训练路径：
+
+```text
+prompt -> HF forward(output_hidden_states=True) -> prompt_last_hidden
+prompt embeddings + projector(prompt_last_hidden) + answer_prefix embeddings
+  -> frozen HF CausalLM(inputs_embeds=..., attention_mask=..., use_cache=False)
+  -> CE(answer-only token sequence)
+```
+
+实现位置：`tools/train_latent_projector.py`
+
+关键点：
+
+- `--hf-teacher-forcing`：切到 HuggingFace 原生 forward，不走 TinyLLMForge KV-cache inference decode。
+- `collect_source_hidden_hf()`：批量收集 prompt 最后一个非 padding token 的 final hidden。
+- `_build_hf_teacher_batch()`：构造 `inputs_embeds = prompt_embeds + latent_embed + answer_prefix_embeds`，并把 causal logits 对齐到完整 answer token 序列。
+- `train_projector_hf_teacher_forcing()`：冻结 LLM，只更新 `TrainableRMSLinearProjector`。
+- `generate_hf_with_latent()`：评测时同样先插入 1 个 latent embed，再 greedy decode 可见 answer。
+
+第一轮 Qwen3-0.6B smoke：
+
+```text
+train_cases=64, eval_cases=16, epochs=50, batch_size=8, task=arithmetic
+loss: 6.14 -> 1.91
+eval: answer-only acc=0%, contains acc=0%
+现象：输出类似 "1414424"、"6424"、"14724532"，没有形成稳定 answer-only。
+```
+
+这个负结果不是 autograd 链路失败：loss 能下降，说明梯度确实穿过了 `inputs_embeds -> frozen transformer -> logits -> projector`。更可能的问题是训练/评测口径仍有错位：
+
+1. **padding side 错位**：部分 decoder-only tokenizer 默认 left padding，而训练 source hidden 是 batched/padded，eval source hidden 是 unpadded；如果直接用 `attention_mask.sum()-1` 取最后 hidden，left padding 时会取错 token。
+2. **answer 序列没有终止监督**：只监督数字 token 会让模型在 greedy decode 时继续补数字，导致 `1414424` 这类连续数字串；这不是严格的 answer-only 格式。
+
+已修正：
+
+- 新增 `_last_nonpad_indices()`，用 rightmost non-padding index，兼容 left/right padding。
+- HF teacher-forcing mode 强制 `tokenizer.padding_side = "right"`，与手写 `inputs_embeds` padding 保持一致。
+- `_answer_token_ids()` 默认把 `eos_token_id` 追加到 answer target，训练目标变成 `answer + EOS`，避免 answer 后继续生成数字。
+- 新增 `_patch_torch_custom_op_string_annotations()`，兼容远端 torch 2.4.x 与较新 Transformers custom-op 字符串 annotation 的 schema inference 冲突。
+
+修正后已完成远端 sanity smoke：
+
+```text
+Qwen3-0.6B, train_cases=2, context_len=64, epochs=1, batch_size=1, skip_eval
+结果：模型加载、HF inputs_embeds teacher-forcing forward、loss.backward()、checkpoint/json 保存均成功。
+```
+
+后续复跑建议先用同一组参数验证修正是否消除数字串；若仍为 0%，再扩大到 Qwen3-8B 或增加 train_cases。当前优先判定标准仍是 `answer-only acc`，`contains acc` 只作为 latent 是否携带任务信息的辅助指标。

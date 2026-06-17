@@ -18,11 +18,12 @@ import random
 import re
 import sys
 import time
+import typing
 from dataclasses import dataclass
 
 import torch
 from torch import nn
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -31,15 +32,24 @@ if _REPO_ROOT not in sys.path:
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
-from eval_latent_reinjection import (  # noqa: E402
-    HAYSTACK_SENTENCE,
-    _append_input_token,
-    _last_prefill_hidden,
-    generate_with_latent_steps,
-)
-from tinyvllm import LLM, SamplingParams  # noqa: E402
-from tinyvllm.engine.sequence import Sequence, SequenceStatus  # noqa: E402
-from tinyvllm.utils.context import reset_context  # noqa: E402
+try:  # noqa: E402
+    from eval_latent_reinjection import (
+        HAYSTACK_SENTENCE,
+        _append_input_token,
+        _last_prefill_hidden,
+        generate_with_latent_steps,
+    )
+    from tinyvllm import LLM, SamplingParams
+    from tinyvllm.engine.sequence import Sequence, SequenceStatus
+    from tinyvllm.utils.context import reset_context
+except Exception:  # pragma: no cover - HF teacher-forcing mode does not need TinyLLMForge.
+    HAYSTACK_SENTENCE = (
+        "The grass is green. The sky is blue. The sun is yellow. "
+        "Here we go. There and back again. "
+    )
+    LLM = object
+    SamplingParams = Sequence = SequenceStatus = None
+    _append_input_token = _last_prefill_hidden = generate_with_latent_steps = reset_context = None
 
 
 @dataclass
@@ -346,6 +356,332 @@ def train_projector_soft_step(
     return history
 
 
+def _hf_dtype(name: str) -> torch.dtype:
+    if name == "float32":
+        return torch.float32
+    if name == "float16":
+        return torch.float16
+    if name == "bfloat16":
+        return torch.bfloat16
+    raise ValueError(f"unknown dtype: {name}")
+
+
+def _patch_torch_custom_op_string_annotations() -> None:
+    """Compat for newer Transformers custom ops on older torch releases.
+
+    Transformers may define custom-op functions under ``from __future__ import
+    annotations``.  Older torch versions inspect ``fn.__annotations__`` directly
+    and reject string values like ``"torch.Tensor"`` while inferring schemas.
+    Resolve those strings just before registration so HF model import remains
+    usable without changing the environment.
+    """
+
+    original_custom_op = torch.library.custom_op
+    if getattr(original_custom_op, "_latent_string_annotation_patch", False):
+        return
+
+    def resolve_annotation(value):
+        if not isinstance(value, str):
+            return value
+        simple = {
+            "torch.Tensor": torch.Tensor,
+            "Tensor": torch.Tensor,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "str": str,
+            "torch.dtype": torch.dtype,
+            "torch.device": torch.device,
+        }
+        if value in simple:
+            return simple[value]
+        wrappers = (
+            ("Optional[", typing.Optional),
+            ("typing.Optional[", typing.Optional),
+            ("Sequence[", typing.Sequence),
+            ("typing.Sequence[", typing.Sequence),
+            ("List[", typing.List),
+            ("typing.List[", typing.List),
+        )
+        for prefix, wrapper in wrappers:
+            if value.startswith(prefix) and value.endswith("]"):
+                inner = value[len(prefix):-1]
+                resolved_inner = resolve_annotation(inner)
+                if not isinstance(resolved_inner, str):
+                    return wrapper[resolved_inner]
+        return value
+
+    def patch_fn(fn):
+        annotations = getattr(fn, "__annotations__", None)
+        if annotations and any(isinstance(v, str) for v in annotations.values()):
+            fn.__annotations__ = {k: resolve_annotation(v) for k, v in annotations.items()}
+        return fn
+
+    def custom_op_compat(name, fn=None, /, **kwargs):
+        if fn is None:
+            decorator = original_custom_op(name, **kwargs)
+
+            def wrapped_decorator(inner_fn):
+                return decorator(patch_fn(inner_fn))
+
+            return wrapped_decorator
+        return original_custom_op(name, patch_fn(fn), **kwargs)
+
+    custom_op_compat._latent_string_annotation_patch = True
+    torch.library.custom_op = custom_op_compat
+
+
+def _answer_token_ids(tokenizer, case: DistillCase, append_eos: bool = True) -> list[int]:
+    ids = tokenizer.encode(case.expected, add_special_tokens=False)
+    if not ids:
+        raise ValueError(f"empty answer tokens for expected={case.expected!r}")
+    if append_eos and tokenizer.eos_token_id is not None:
+        ids = ids + [int(tokenizer.eos_token_id)]
+    return ids
+
+
+def _last_nonpad_indices(attention_mask: torch.Tensor) -> torch.Tensor:
+    """Return the rightmost non-padding index for either left or right padding."""
+
+    if attention_mask.dim() != 2:
+        raise ValueError(f"expected 2D attention_mask, got shape={tuple(attention_mask.shape)}")
+    flipped = attention_mask.flip(dims=[1])
+    return attention_mask.size(1) - 1 - flipped.argmax(dim=1)
+
+
+@torch.no_grad()
+def collect_source_hidden_hf(model, tokenizer, prompts: list[str], device: torch.device) -> torch.Tensor:
+    batch = tokenizer(prompts, padding=True, add_special_tokens=False, return_tensors="pt")
+    input_ids = batch["input_ids"].to(device)
+    attention_mask = batch["attention_mask"].to(device)
+    out = model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        output_hidden_states=True,
+        use_cache=False,
+        return_dict=True,
+    )
+    last_idx = _last_nonpad_indices(attention_mask)
+    rows = torch.arange(input_ids.size(0), device=device)
+    return out.hidden_states[-1][rows, last_idx].detach().float()
+
+
+def _build_hf_teacher_batch(model, tokenizer, projector, cases: list[DistillCase], src: torch.Tensor, device: torch.device):
+    embed = model.get_input_embeddings()
+    model_dtype = next(model.parameters()).dtype
+    seq_embeds = []
+    answer_targets = []
+    answer_positions = []
+    max_len = 0
+    for i, case in enumerate(cases):
+        prompt_ids = torch.tensor(tokenizer.encode(case.prompt, add_special_tokens=False), device=device, dtype=torch.long)
+        answer_ids = torch.tensor(_answer_token_ids(tokenizer, case), device=device, dtype=torch.long)
+        prompt_embeds = embed(prompt_ids).detach()
+        latent = projector(src[i:i + 1].to(device=device, dtype=torch.float32)).to(dtype=model_dtype)
+        if answer_ids.numel() > 1:
+            answer_prefix = embed(answer_ids[:-1]).detach()
+            parts = [prompt_embeds, latent, answer_prefix]
+        else:
+            parts = [prompt_embeds, latent]
+        sample_embeds = torch.cat(parts, dim=0)
+        latent_pos = prompt_embeds.size(0)
+        positions = torch.arange(latent_pos, latent_pos + answer_ids.numel(), device=device, dtype=torch.long)
+        seq_embeds.append(sample_embeds)
+        answer_targets.append(answer_ids)
+        answer_positions.append(positions)
+        max_len = max(max_len, sample_embeds.size(0))
+
+    hidden_size = seq_embeds[0].size(-1)
+    inputs_embeds = torch.zeros(len(cases), max_len, hidden_size, device=device, dtype=model_dtype)
+    attention_mask = torch.zeros(len(cases), max_len, device=device, dtype=torch.long)
+    flat_positions = []
+    flat_targets = []
+    for i, sample_embeds in enumerate(seq_embeds):
+        n = sample_embeds.size(0)
+        inputs_embeds[i, :n] = sample_embeds
+        attention_mask[i, :n] = 1
+        flat_positions.append(answer_positions[i] + i * max_len)
+        flat_targets.append(answer_targets[i])
+    return inputs_embeds, attention_mask, torch.cat(flat_positions), torch.cat(flat_targets)
+
+
+def train_projector_hf_teacher_forcing(
+    model,
+    tokenizer,
+    projector: nn.Module,
+    cases: list[DistillCase],
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    weight_decay: float,
+    device: torch.device,
+) -> list[dict]:
+    for p in model.parameters():
+        p.requires_grad_(False)
+    model.eval()
+    projector.to(device=device, dtype=torch.float32).train()
+    opt = torch.optim.AdamW((p for p in projector.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay)
+    history = []
+    for epoch in range(1, epochs + 1):
+        rng = random.Random(epoch)
+        order = list(range(len(cases)))
+        rng.shuffle(order)
+        total = 0.0
+        total_tokens = 0
+        for start in range(0, len(order), batch_size):
+            idxs = order[start:start + batch_size]
+            batch_cases = [cases[i] for i in idxs]
+            prompts = [case.prompt for case in batch_cases]
+            with torch.no_grad():
+                src = collect_source_hidden_hf(model, tokenizer, prompts, device)
+            inputs_embeds, attention_mask, flat_positions, targets = _build_hf_teacher_batch(
+                model, tokenizer, projector, batch_cases, src, device
+            )
+            out = model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                use_cache=False,
+                return_dict=True,
+            )
+            logits = out.logits.reshape(-1, out.logits.size(-1))[flat_positions].float()
+            loss = torch.nn.functional.cross_entropy(logits, targets)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += float(loss.item()) * targets.numel()
+            total_tokens += int(targets.numel())
+        avg = total / max(1, total_tokens)
+        history.append({"epoch": epoch, "teacher_forcing_loss": avg})
+        print(f"  hf_epoch={epoch:03d} loss={avg:.6f}", flush=True)
+    return history
+
+
+@torch.no_grad()
+def generate_hf_with_latent(model, tokenizer, projector, case: DistillCase, max_new_tokens: int, device: torch.device) -> str:
+    model.eval()
+    projector.eval()
+    prompt_ids = torch.tensor(tokenizer.encode(case.prompt, add_special_tokens=False), device=device, dtype=torch.long).unsqueeze(0)
+    attention_mask = torch.ones_like(prompt_ids)
+    out = model(
+        input_ids=prompt_ids,
+        attention_mask=attention_mask,
+        output_hidden_states=True,
+        use_cache=False,
+        return_dict=True,
+    )
+    src = out.hidden_states[-1][:, -1].float()
+    embed = model.get_input_embeddings()
+    prompt_embeds = embed(prompt_ids).detach()
+    latent = projector(src).to(dtype=prompt_embeds.dtype).unsqueeze(1)
+    inputs_embeds = torch.cat([prompt_embeds, latent], dim=1)
+    attention_mask = torch.ones(inputs_embeds.shape[:2], device=device, dtype=torch.long)
+    generated = []
+    past = None
+    for step in range(max_new_tokens):
+        if step == 0:
+            out = model(inputs_embeds=inputs_embeds, attention_mask=attention_mask, use_cache=True, return_dict=True)
+        else:
+            out = model(input_ids=next_id, past_key_values=past, use_cache=True, return_dict=True)
+        past = out.past_key_values
+        next_id = torch.argmax(out.logits[:, -1, :], dim=-1, keepdim=True)
+        token = int(next_id.item())
+        generated.append(token)
+        if tokenizer.eos_token_id is not None and token == tokenizer.eos_token_id:
+            break
+    return tokenizer.decode(generated, skip_special_tokens=True)
+
+
+@torch.no_grad()
+def evaluate_hf_teacher_forcing(model, tokenizer, projector, cases: list[DistillCase], max_new_tokens: int, device: torch.device) -> dict:
+    details = []
+    for case in cases:
+        text = generate_hf_with_latent(model, tokenizer, projector, case, max_new_tokens, device)
+        answer_only = extract_answer_only(case.task, text)
+        contains_expected = contains_expected_answer(case.task, text, case.expected)
+        hit = answer_only == case.expected
+        details.append({
+            "expected": case.expected,
+            "answer_only": answer_only,
+            "contains_expected": contains_expected,
+            "hit": hit,
+            "raw": text[:160],
+            "meta": case.meta,
+        })
+        print(
+            f"  hf_eval expected={case.expected} answer_only={answer_only} "
+            f"contains={contains_expected} hit={hit} raw={text[:48]!r}",
+            flush=True,
+        )
+    acc = sum(int(x["hit"]) for x in details) / max(1, len(details))
+    contains_acc = sum(int(x["contains_expected"]) for x in details) / max(1, len(details))
+    return {"accuracy": acc, "contains_accuracy": contains_acc, "details": details}
+
+
+def run_hf_teacher_forcing(args) -> None:
+    device = torch.device(args.hf_device)
+    dtype = _hf_dtype(args.hf_dtype)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    # Keep HF source-hidden collection aligned with the manually right-padded
+    # inputs_embeds teacher-forcing batch below.  Some decoder-only tokenizers
+    # default to left padding for generation, which otherwise makes batched
+    # source hidden states differ from the unpadded eval path.
+    tokenizer.padding_side = "right"
+    _patch_torch_custom_op_string_annotations()
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=dtype,
+        trust_remote_code=True,
+    ).to(device)
+    hidden_size = int(model.config.hidden_size)
+    train_cases = build_distill_cases(args.task, tokenizer, args.train_cases, args.context_len, args.depth, args.seed)
+    eval_cases = build_distill_cases(args.task, tokenizer, args.eval_cases, args.context_len, args.depth, args.seed + 10_000)
+    projector = TrainableRMSLinearProjector(hidden_size)
+    t0 = time.time()
+    print("Training HF teacher-forcing latent projector...", flush=True)
+    history = train_projector_hf_teacher_forcing(
+        model,
+        tokenizer,
+        projector,
+        train_cases,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        device=device,
+    )
+    eval_result = None
+    if not args.skip_eval:
+        print("Evaluating HF latent projector...", flush=True)
+        eval_result = evaluate_hf_teacher_forcing(model, tokenizer, projector, eval_cases, args.max_new_tokens, device)
+        print(
+            f"hf_eval_acc={eval_result['accuracy'] * 100:.1f}% "
+            f"contains_acc={eval_result['contains_accuracy'] * 100:.1f}%",
+            flush=True,
+        )
+    os.makedirs(os.path.dirname(args.checkpoint) or ".", exist_ok=True)
+    torch.save({
+        "projector": projector.state_dict(),
+        "hidden_size": hidden_size,
+        "args": vars(args),
+        "history": history,
+    }, args.checkpoint)
+    result = {
+        "args": vars(args),
+        "hidden_size": hidden_size,
+        "history": history,
+        "eval": eval_result,
+        "elapsed_s": time.time() - t0,
+        "checkpoint": args.checkpoint,
+    }
+    os.makedirs(os.path.dirname(args.out_json) or ".", exist_ok=True)
+    with open(args.out_json, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"Saved checkpoint to {args.checkpoint}")
+    print(f"Saved results to {args.out_json}")
+
+
 def extract_distill_answer(task: str, text: str) -> str | None:
     if task == "arithmetic":
         nums = re.findall(r"-?\d+", text)
@@ -456,6 +792,9 @@ def parse_args():
     p.add_argument("--skip-eval", action="store_true")
     p.add_argument("--checkpoint", type=str, default="latent_projector.pt")
     p.add_argument("--out-json", type=str, default="latent_projector_train.json")
+    p.add_argument("--hf-teacher-forcing", action="store_true")
+    p.add_argument("--hf-device", type=str, default="cuda")
+    p.add_argument("--hf-dtype", choices=["float32", "float16", "bfloat16"], default="bfloat16")
     return p.parse_args()
 
 
@@ -463,6 +802,9 @@ def main():
     args = parse_args()
     random.seed(args.seed)
     torch.manual_seed(args.seed)
+    if args.hf_teacher_forcing:
+        run_hf_teacher_forcing(args)
+        return
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     llm = LLM(
         args.model,
