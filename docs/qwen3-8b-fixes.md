@@ -3457,3 +3457,234 @@ python tools/eval_latent_reinjection.py \
 | D1 | latent token cache policy | 把 latent step 作为特殊 KV entry 管理，避免污染 prefix cache | 多请求/复用场景下结果稳定。 |
 
 优先级建议：先做 **B1 teacher CoT distillation**。原因是 smoke 已说明通路稳定，瓶颈不是数值崩塌，而是没有训练信号；继续无训练扩 K 大概率只是在“保持/破坏 KV”之间摆动，不会凭空出现 reasoning。
+
+## 47. B1 teacher CoT distillation 最小原型（2026-06-17）
+
+### 47.1 目标
+
+§46 的 smoke 已经证明 hidden-state reinjection 的数值链路可用，但 arithmetic / tool_action 在无训练 projector 下仍是 0%。因此本轮不再继续无训练堆 K，而是实现一个最小 B1 原型：
+
+```text
+prompt last hidden  -> trainable projector -> teacher-CoT hidden
+```
+
+核心假设：如果一个 latent token 要替代一段 token CoT，它应该对齐“prompt + teacher CoT prefix”之后的 hidden state，而不是只把 prompt hidden 原样回灌。
+
+### 47.2 实现
+
+新增：`tools/train_latent_projector.py`
+
+关键设计：
+
+1. **LLM 冻结，只收集 hidden targets**：
+   - 对每条 synthetic case 收集 `prompt` 的最后 hidden，作为 source；
+   - 再收集 `prompt + teacher_prefix` 的最后 hidden，作为 target；
+   - 训练只对 projector 做 MSE / cosine loss，不反传进 LLM。
+2. **projector 结构**：
+   - `TrainableRMSLinearProjector = RMSNorm + Linear(hidden, hidden)`；
+   - linear 用 identity 初始化，避免一开始偏离 §46 中表现最稳的 RMSNorm 路径太远。
+3. **teacher prefix 构造**：
+   - arithmetic：显式写出 `a+b`、乘法、减法步骤，最后以 `Final integer:` 结束；latent token 之后的可见 decode 应该直接输出整数。
+   - tool_action：显式写出 “The best next tool is X.\nTool:”；latent token 之后的可见 decode 应该输出工具名。
+4. **评测方式**：
+   - 训练后直接复用 `tools/eval_latent_reinjection.py` 的 `generate_with_latent_steps()`；
+   - 用训练后的 projector 做 1 个 latent step，再正常 greedy decode。
+
+### 47.3 为什么不直接做端到端反传
+
+当前 TinyLLMForge 推理路径是 inference-first：
+
+- `ModelRunner.run_model()` 带 `@torch.inference_mode()`；
+- latent eval 的 `generate_with_latent_steps()` 也带 `@torch.inference_mode()`；
+- decode attention / KV cache 写入路径是推理式 direct-drive，不是训练图设计。
+
+所以第一版不改推理内核，不做“loss -> model -> input_embeds -> projector”的端到端梯度，而是先做更小的 offline hidden-target distillation。这样可以先回答：**仅靠 teacher hidden 对齐，latent token 是否能从 0% 拉起来**。
+
+### 47.4 运行命令
+
+远端 8B arithmetic smoke 建议先跑小规模：
+
+```bash
+CUDA_VISIBLE_DEVICES=1 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --task arithmetic \
+  --train-cases 64 --eval-cases 16 \
+  --context-len 512 --depth 0.5 \
+  --epochs 80 --batch-size 8 --lr 1e-4 \
+  --latent-steps 1 --max-new-tokens 16 \
+  --max-model-len 1024 --gpu-memory-utilization 0.7 \
+  --checkpoint needle_sq_results/latent_projector_arithmetic.pt \
+  --out-json needle_sq_results/latent_projector_arithmetic.json
+```
+
+如果 arithmetic 有提升，再跑 tool_action：
+
+```bash
+CUDA_VISIBLE_DEVICES=1 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --task tool_action \
+  --train-cases 64 --eval-cases 16 \
+  --context-len 512 --depth 0.5 \
+  --epochs 80 --batch-size 8 --lr 1e-4 \
+  --latent-steps 1 --max-new-tokens 8 \
+  --max-model-len 1024 --gpu-memory-utilization 0.7 \
+  --checkpoint needle_sq_results/latent_projector_tool_action.pt \
+  --out-json needle_sq_results/latent_projector_tool_action.json
+```
+
+### 47.5 当前验证状态
+
+本地和远端语法检查均通过：
+
+```bash
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+第一轮远端 smoke 先暴露了一个 prompt 构造问题：如果像 §46 的 arithmetic/tool_action 那样把任务 core 插入 haystack 中间，decode 时 prompt 末尾其实是 haystack filler，模型会继续输出 `The sky is blue...`，评测没有意义。因此 B1 脚本已改为 **prefix-only filler**：haystack 只放在任务前面，保证最后一个 token 仍是 `Reasoning:`。
+
+修正后跑 8B 小规模 arithmetic smoke：
+
+```text
+train_cases=8, eval_cases=4, context_len=512, epochs=3, latent_steps=1, max_new_tokens=64
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| train loss | 0.1418 → 0.0708 → 0.0598 |
+| strict last-int accuracy | 25.0% |
+| contains-expected accuracy | 100.0% |
+| throughput | 5.82 tok/s |
+
+四条 eval 都生成了完整算式，并包含正确 final answer：
+
+| expected | 生成摘要 |
+|---:|---|
+| 116 | `58 + 14 = 72. 72 * 3 = 216. 216 - 100 = 116. The answer is 116...` |
+| 85 | `23 + 10 = 33. 33 * 6 = 198. 198 - 113 = 85. Answer: 85...` |
+| 423 | `84 + 51 = 135. 135 * 4 = 540. 540 - 117 = 423. The answer is 423...` |
+| 63 | `33 + 58 = 91. 91 * 2 = 182. 182 - 119 = 63. The answer is 63...` |
+
+文件留痕：
+
+- `needle_sq_results/latent_projector_arithmetic_smoke.json`：旧 prompt 构造，0%，输出 haystack continuation。
+- `needle_sq_results/latent_projector_arithmetic_prefix_smoke.json`：prefix-only prompt，16 token 输出已有算式但未完整到答案。
+- `needle_sq_results/latent_projector_arithmetic_prefix_o64_final_smoke.json`：64 token 输出包含正确答案；旧 strict last-int metric 为 25%。
+
+解释：这是一个正向信号，但还不是最终目标。projector 已经学会把 latent token 推向 teacher reasoning manifold，所以可见输出变成了正确 CoT；但它还没有把 CoT 压缩成“不可见 latent 思考后直接输出 final answer”。后续 metric 需要同时记录：
+
+- `contains_expected`：latent 是否携带了正确任务信息；
+- `strict answer-only`：是否真的完成隐藏 CoT 压缩。
+
+
+### 47.6 判定标准
+
+§46 的无训练 baseline 是：
+
+| task | untrained latent projector |
+|---|---:|
+| arithmetic | 0% |
+| tool_action | 0% |
+
+B1 第一轮只要求证明趋势，不要求一次到位：
+
+| 结果 | 解释 |
+|---|---|
+| eval accuracy 仍为 0% | hidden-target MSE 不足以让 latent token 替代 CoT；下一步需要端到端 logits distillation 或多 latent step target。 |
+| accuracy 明显 >0% | 说明 teacher hidden 对齐能把 latent scratchpad 从“稳定但不会思考”推进到“带有任务信息”。 |
+| train loss 下降但 eval 仍 0% | projector 学到了 hidden target 的几何相似性，但该 hidden 作为 `input_embeds` 回灌后未形成正确可见 token，需要把 loss 改到“latent step 后 logits 对齐 answer token”。 |
+
+### 47.7 下一步
+
+1. 远端先跑 arithmetic 小规模 smoke，和 §46 的 0% 对比。
+2. 如果仍 0%，实现 B1.2：logits-level distillation，即对齐 latent step 后的 logits 到 teacher answer 首 token。
+3. 如果 arithmetic 有提升，再扩大到 `train_cases=256/1024`，并测试 `latent_steps=2/4`。
+4. tool_action 作为 agent 场景补验：如果 tool_action 能提升，说明 hidden-state 通信更接近 agent 内部决策格式。
+
+### 47.8 B1.2 logits-level distillation 负结果（2026-06-17）
+
+承接 §47.7，本轮把训练目标从纯 hidden target 扩展到 answer-token logits，希望把“可见 CoT”压成“latent 内部思考后直接输出 final answer”。
+
+实现改动：`tools/train_latent_projector.py`
+
+- `DistillCase.answer_token_id`：记录 expected answer 的首个 token id；注意这里必须用 `tokenizer.encode(str(expected))`，不能用带前导空格的 `" " + expected`，否则模型会先学输出空格/自然语言 continuation。
+- `--hidden-loss-weight` / `--logit-loss-weight`：支持 hidden MSE/cosine 与 LMHead CE 的加权组合。
+- eval 同时记录：
+  - `accuracy`：answer-only 命中，即输出开头就是 expected；
+  - `contains_accuracy`：输出中是否包含 expected。
+
+#### 47.8.1 direct LMHead logits loss
+
+先不反传穿过 transformer，只让 projector 输出在 LMHead 上直接预测 answer 首 token：
+
+```text
+logits = lm_head(projector(prompt_hidden))
+loss = CE(logits, first_answer_token)
+```
+
+远端 8B smoke：
+
+```text
+train_cases=8, eval_cases=4, epochs=20, train_device=cuda
+```
+
+结果：
+
+| setting | hidden_loss_weight | logit_loss_weight | answer-only acc | contains acc | 现象 |
+|---|---:|---:|---:|---:|---|
+| logits 主导 | 0.1 | 1.0 | 0% | 0% | 输出 `the answer is 100/127/...`，答案错误 |
+| hidden+logits 混合 | 1.0 | 0.1 | 0% | 0% | 输出回到泛化 reasoning 开头，但不含正确答案 |
+
+输出文件：
+
+- `needle_sq_results/latent_projector_arithmetic_b12_logits_smoke.json`：前导空格 target，0%。
+- `needle_sq_results/latent_projector_arithmetic_b12_logits_nospace_smoke.json`：无前导空格 target，0%。
+- `needle_sq_results/latent_projector_arithmetic_b12_h1_l01_smoke.json`：hidden/logit 混合，0%。
+
+结论：**直接 LMHead logits loss 不等价于 latent-step logits loss**。它训练的是“projector 输出作为最终 hidden 时能预测 answer”，但部署时 projector 输出会作为 `input_embeds` 再过一遍 transformer；这个空间错位会破坏答案，甚至比 §47.5 的 hidden-only 更差。
+
+#### 47.8.2 true one-step logits loss 尝试
+
+为了让训练目标匹配部署路径，进一步尝试：
+
+```text
+prompt prefill KV 固定
+projector(prompt_hidden) -> input_embeds
+frozen transformer decode 1 step
+CE(next-token logits, first_answer_token)
+```
+
+这个方向理论上更正确，但当前 TinyLLMForge 推理内核不是训练图设计，实际被两个问题卡住：
+
+1. `prepare_decode()` 复用的 host/GPU staging buffer 可能是在 inference mode 中创建的；离开 inference mode 后再 in-place copy 会触发：
+
+```text
+RuntimeError: Inplace update to inference tensor outside InferenceMode is not allowed
+```
+
+2. 把 `prepare_decode()` 包回 inference mode 后，继续反传 frozen transformer，又遇到 decoder 内部 in-place hidden/residual 更新导致 autograd version mismatch：
+
+```text
+RuntimeError: one of the variables needed for gradient computation has been modified by an inplace operation
+```
+
+因此 `--soft-step-epochs` 只作为实验入口保留；当前不能作为可用训练路径。要做真正的 B1.2，需要为 latent one-step training 单独实现一个 autograd-safe forward：不复用 inference staging buffer、不写 KV cache，或者复制一条 HuggingFace/torch 原生 forward 路径做 teacher forcing。
+
+### 47.9 当前结论
+
+- §47.5 的 hidden-only distillation 是目前最有效的正向信号：`contains_expected=100%`，说明 latent token 已经携带了正确 reasoning 信息，但仍会把 CoT 显式吐出来。
+- §47.8 的 direct logits loss 没有把输出压成 answer-only，反而破坏了正确 CoT。
+- 真正的 “latent 内部思考后直接输出 final answer” 不能只靠 LMHead loss；需要训练目标穿过 **同一条 latent input_embeds -> transformer -> logits** 路径。
+
+下一步建议改为 **B1.3 autograd-safe latent training path**：
+
+1. 不走 TinyLLMForge KV-cache inference decode；单独构造一个小 batch 的 `inputs_embeds` teacher-forcing forward。
+2. 冻结 LLM，只训练 projector。
+3. loss 直接对齐 answer-only token 序列，而不是只对齐首 token。
+4. 先在 Qwen3-0.6B 上验证 answer-only，再迁移到 8B。
+
+
