@@ -552,7 +552,14 @@ class ModelRunner:
     @torch.inference_mode()
     #只需要前向传播 禁用梯度计算（无需反向传播），节省内存；
     # 加速推理过程（跳过与训练相关的检查和操作）。
-    def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
+    def run_model(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        is_prefill: bool,
+        input_embeds: torch.Tensor | None = None,
+        return_hidden: bool = False,
+    ):
         # Quest 实际启用时（context 已确认）才走 eager；否则照常走 cuda graph
         quest_active = (not is_prefill) and (get_context().quest_top_k_blocks > 0)
         am_active = (not is_prefill) and (get_context().am_compact_blocks > 0)
@@ -561,8 +568,13 @@ class ModelRunner:
         # cpu_offload：init 阶段已跳过 capture，这里也必须走 eager（否则 self.graphs 不存在）
         offload_active = self.config.cpu_offload
         if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
-                or quest_active or am_active or c4_active or offload_active):     #动态执行 eager mode
-            return self.model.compute_logits(self.model(input_ids, positions))
+                or quest_active or am_active or c4_active or offload_active
+                or input_embeds is not None or return_hidden):     #动态执行 eager mode
+            hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
+            logits = self.model.compute_logits(hidden_states)
+            if return_hidden:
+                return logits, hidden_states
+            return logits
         else:           #静态执行  graph replay
             bs = input_ids.size(0)
             context = get_context()

@@ -191,8 +191,9 @@ class Qwen3Model(nn.Module):
         self, 
         input_ids: torch.Tensor,                            # [16384 = batch_size * seq_len], 记录 token 的 id
         positions: torch.Tensor,                            # [16384 = batch_size * seq_ken], 记录每个 token 在 seq 中的位置
+        input_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        hidden_states = self.embed_tokens(input_ids)
+        hidden_states = self.embed_tokens(input_ids) if input_embeds is None else input_embeds
         residual = None
         for layer in self.layers:
             hidden_states, residual = layer(positions, hidden_states, residual)
@@ -227,8 +228,9 @@ class Qwen3ForCausalLM(nn.Module):
         self, 
         input_ids: torch.Tensor, 
         positions: torch.Tensor, 
+        input_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids, positions)
+        hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
         return hidden_states
     
     def compute_logits(
@@ -237,7 +239,6 @@ class Qwen3ForCausalLM(nn.Module):
     ) -> torch.Tensor:
         logits = self.lm_head(hidden_states)
         return logits
-
 
 
 
