@@ -333,6 +333,107 @@ def build_tool_action_structured_distill_cases(
     return cases
 
 
+def build_tool_action_structured2_distill_cases(
+    tokenizer,
+    num_cases: int,
+    ctx_len: int,
+    depth: float,
+    seed: int,
+) -> list[DistillCase]:
+    rng = random.Random(seed)
+    files = [
+        "README.md",
+        "pyproject.toml",
+        "src/app.py",
+        "configs/prod.yaml",
+        "package.json",
+        "docs/usage.md",
+        "logs/server.log",
+        "tests/test_api.py",
+        "services/api/router.go",
+        "internal/auth/token.py",
+    ]
+    dirs = [
+        ".",
+        "src",
+        "configs",
+        "docs",
+        "tests",
+        "/data/project",
+        "/tmp/workspace",
+        "services/api",
+        "internal/auth",
+        "needle_sq_results",
+    ]
+    needles = [
+        "compute_score",
+        "TODO",
+        "ERROR",
+        "AuthToken",
+        "UserService",
+        "timeout_ms",
+        "handler_fn",
+        "ValueError",
+        "ModelRunner",
+        "latent_steps",
+    ]
+    cases: list[DistillCase] = []
+    for _ in range(num_cases):
+        action = rng.choice(["READ", "LS", "GREP"])
+        if action == "READ":
+            path = rng.choice(files)
+            expected = f"READ path={path}"
+            observation = rng.choice([
+                "Need to inspect file {path}; return a structured read action.",
+                "Open file {path} and load its contents.",
+                "The target is a known file path {path}, not a directory.",
+            ]).format(path=path)
+            meta = {"action": action, "path": path}
+        elif action == "LS":
+            path = rng.choice(dirs)
+            expected = f"LS path={path}"
+            observation = rng.choice([
+                "Need to list entries under directory {path}.",
+                "Inspect the children of folder {path} before choosing a file.",
+                "The target is a known directory {path}, so list it.",
+            ]).format(path=path)
+            meta = {"action": action, "path": path}
+        else:
+            pattern = rng.choice(needles)
+            path = rng.choice(dirs)
+            expected = f"GREP pattern={pattern} path={path}"
+            observation = rng.choice([
+                "Search for pattern {pattern} under {path}.",
+                "The query is {pattern}; restrict the search scope to {path}.",
+                "Find references matching {pattern} inside directory {path}.",
+            ]).format(pattern=pattern, path=path)
+            meta = {"action": action, "pattern": pattern, "path": path}
+        if rng.random() < 0.35:
+            observation += " Distractor: previous notes may mention other tools or paths."
+        prompt_core = (
+            "\n\nYou are choosing the next structured tool action for an agent.\n"
+            "Available action schemas:\n"
+            "- LS path=<directory>\n"
+            "- READ path=<file>\n"
+            "- GREP pattern=<query> path=<directory>\n"
+            "Return only one structured action in exactly one schema.\n"
+            f"Observation: {observation}\n"
+            "Reasoning:"
+        )
+        teacher_prefix = f" The correct structured action is {expected}.\nAction:"
+        prompt = _pad_to_context(tokenizer, prompt_core, ctx_len, depth)
+        answer_token_id = tokenizer.encode(expected, add_special_tokens=False)[0]
+        cases.append(DistillCase(
+            task="tool_action_structured2",
+            expected=expected,
+            prompt=prompt,
+            teacher_prefix=teacher_prefix,
+            answer_token_id=answer_token_id,
+            meta={"observation": observation, **meta},
+        ))
+    return cases
+
+
 def build_distill_cases(
     task: str,
     tokenizer,
@@ -347,6 +448,8 @@ def build_distill_cases(
         return build_tool_action_distill_cases(tokenizer, num_cases, ctx_len, depth, seed)
     if task == "tool_action_structured":
         return build_tool_action_structured_distill_cases(tokenizer, num_cases, ctx_len, depth, seed)
+    if task == "tool_action_structured2":
+        return build_tool_action_structured2_distill_cases(tokenizer, num_cases, ctx_len, depth, seed)
     raise ValueError(f"unknown task: {task}")
 
 
@@ -703,6 +806,7 @@ def _build_hf_teacher_batch(
     seq_embeds = []
     answer_targets = []
     answer_positions = []
+    latent_positions = []
     max_len = 0
     for i, case in enumerate(cases):
         prompt_ids = torch.tensor(tokenizer.encode(case.prompt, add_special_tokens=False), device=device, dtype=torch.long)
@@ -721,6 +825,12 @@ def _build_hf_teacher_batch(
             parts = [prompt_embeds, latents]
         sample_embeds = torch.cat(parts, dim=0)
         first_answer_position = prompt_embeds.size(0) + latent_steps - 1
+        sample_latent_positions = torch.arange(
+            prompt_embeds.size(0),
+            prompt_embeds.size(0) + latent_steps,
+            device=device,
+            dtype=torch.long,
+        )
         positions = torch.arange(
             first_answer_position,
             first_answer_position + answer_ids.numel(),
@@ -730,6 +840,7 @@ def _build_hf_teacher_batch(
         seq_embeds.append(sample_embeds)
         answer_targets.append(answer_ids)
         answer_positions.append(positions)
+        latent_positions.append(sample_latent_positions)
         max_len = max(max_len, sample_embeds.size(0))
 
     hidden_size = seq_embeds[0].size(-1)
@@ -737,18 +848,25 @@ def _build_hf_teacher_batch(
     attention_mask = torch.zeros(len(cases), max_len, device=device, dtype=torch.long)
     flat_positions = []
     flat_targets = []
+    flat_latent_positions = []
     latent_batch = []
     for i, sample_embeds in enumerate(seq_embeds):
         n = sample_embeds.size(0)
         inputs_embeds[i, :n] = sample_embeds
         attention_mask[i, :n] = 1
         flat_positions.append(answer_positions[i] + i * max_len)
+        flat_latent_positions.append(latent_positions[i] + i * max_len)
         flat_targets.append(answer_targets[i])
-        latent_start = n - answer_targets[i].numel() + 1 - latent_steps
-        if answer_targets[i].numel() == 1:
-            latent_start = n - latent_steps
+        latent_start = int(latent_positions[i][0].item())
         latent_batch.append(sample_embeds[latent_start:latent_start + latent_steps])
-    return inputs_embeds, attention_mask, torch.cat(flat_positions), torch.cat(flat_targets), torch.stack(latent_batch)
+    return (
+        inputs_embeds,
+        attention_mask,
+        torch.cat(flat_positions),
+        torch.cat(flat_targets),
+        torch.stack(latent_batch),
+        torch.cat(flat_latent_positions),
+    )
 
 
 def train_projector_hf_teacher_forcing(
@@ -763,7 +881,10 @@ def train_projector_hf_teacher_forcing(
     device: torch.device,
     latent_steps: int,
     step_hidden_loss_weight: float,
+    step_hidden_mode: str,
 ) -> list[dict]:
+    if step_hidden_mode not in ("input", "output"):
+        raise ValueError(f"unknown step_hidden_mode={step_hidden_mode!r}")
     for p in model.parameters():
         p.requires_grad_(False)
     model.eval()
@@ -791,12 +912,20 @@ def train_projector_hf_teacher_forcing(
                     )
                 else:
                     step_targets = step_mask = None
-            inputs_embeds, attention_mask, flat_positions, targets, latent_embeds = _build_hf_teacher_batch(
+            (
+                inputs_embeds,
+                attention_mask,
+                flat_positions,
+                targets,
+                latent_embeds,
+                flat_latent_positions,
+            ) = _build_hf_teacher_batch(
                 model, tokenizer, projector, batch_cases, src, device, latent_steps
             )
             out = model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
+                output_hidden_states=step_hidden_loss_weight > 0 and step_hidden_mode == "output",
                 use_cache=False,
                 return_dict=True,
             )
@@ -805,7 +934,13 @@ def train_projector_hf_teacher_forcing(
             loss = ce_loss
             step_hidden_loss_value = None
             if step_hidden_loss_weight > 0 and step_mask is not None and step_mask.any():
-                pred = _rms_norm_cpu(latent_embeds.float())
+                if step_hidden_mode == "output":
+                    output_hiddens = out.hidden_states[-1].reshape(-1, out.hidden_states[-1].size(-1))[
+                        flat_latent_positions
+                    ].view(len(batch_cases), latent_steps, -1)
+                    pred = _rms_norm_cpu(output_hiddens.float())
+                else:
+                    pred = _rms_norm_cpu(latent_embeds.float())
                 tgt = _rms_norm_cpu(step_targets.float())
                 mask = step_mask.unsqueeze(-1)
                 hidden_mse = ((pred - tgt).pow(2) * mask).sum() / (mask.sum().clamp_min(1) * pred.size(-1))
@@ -831,6 +966,7 @@ def train_projector_hf_teacher_forcing(
             "teacher_forcing_loss": avg,
             "ce_loss": avg_ce,
             "step_hidden_loss": avg_step_hidden,
+            "step_hidden_mode": step_hidden_mode,
         })
         print(
             f"  hf_epoch={epoch:03d} loss={avg:.6f} ce={avg_ce:.6f} step_hidden={avg_step_hidden:.6f}",
@@ -951,6 +1087,7 @@ def run_hf_teacher_forcing(args) -> None:
         device=device,
         latent_steps=args.latent_steps,
         step_hidden_loss_weight=args.step_hidden_loss_weight,
+        step_hidden_mode=args.step_hidden_mode,
     )
     eval_result = None
     if not args.skip_eval:
@@ -1001,7 +1138,7 @@ def extract_distill_answer(task: str, text: str) -> str | None:
             if re.search(rf"\b{tool}\b", upper):
                 return tool
         return None
-    if task == "tool_action_structured":
+    if task in ("tool_action_structured", "tool_action_structured2"):
         return _extract_structured_action(text)
     raise ValueError(f"unknown task: {task}")
 
@@ -1016,6 +1153,9 @@ def _normalize_structured_action(text: str | None) -> str | None:
     m = re.match(r"^GREP\s+pattern=([^\s]+)$", text, flags=re.IGNORECASE)
     if m:
         return f"GREP pattern={m.group(1)}"
+    m = re.match(r"^GREP\s+pattern=([^\s]+)\s+path=([^\s]+)$", text, flags=re.IGNORECASE)
+    if m:
+        return f"GREP pattern={m.group(1)} path={m.group(2)}"
     return None
 
 
@@ -1025,6 +1165,11 @@ def _extract_structured_action(text: str) -> str | None:
         return _normalize_structured_action(f"{m.group(1)} path={m.group(2)}")
     m = re.search(r"\bGREP\s+pattern=([^\s]+)", text, flags=re.IGNORECASE)
     if m:
+        maybe_two_slot = re.search(r"\bGREP\s+pattern=([^\s]+)\s+path=([^\s]+)", text, flags=re.IGNORECASE)
+        if maybe_two_slot:
+            return _normalize_structured_action(
+                f"GREP pattern={maybe_two_slot.group(1)} path={maybe_two_slot.group(2)}"
+            )
         return _normalize_structured_action(f"GREP pattern={m.group(1)}")
     return None
 
@@ -1032,7 +1177,7 @@ def _extract_structured_action(text: str) -> str | None:
 def contains_expected_answer(task: str, text: str, expected: str) -> bool:
     if task == "arithmetic":
         return expected in re.findall(r"-?\d+", text)
-    if task == "tool_action_structured":
+    if task in ("tool_action_structured", "tool_action_structured2"):
         return _extract_structured_action(text) == _normalize_structured_action(expected)
     return extract_distill_answer(task, text) == expected
 
@@ -1044,7 +1189,7 @@ def extract_answer_only(task: str, text: str) -> str | None:
     if task == "tool_action":
         m = re.match(r"\s*(READ|GREP|LS)\b", text.upper())
         return m.group(1) if m else None
-    if task == "tool_action_structured":
+    if task in ("tool_action_structured", "tool_action_structured2"):
         first_line = text.strip().splitlines()[0] if text.strip() else ""
         return _normalize_structured_action(first_line)
     raise ValueError(f"unknown task: {task}")
@@ -1109,7 +1254,11 @@ def evaluate_projector(
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True)
-    p.add_argument("--task", choices=["arithmetic", "tool_action", "tool_action_structured"], default="arithmetic")
+    p.add_argument(
+        "--task",
+        choices=["arithmetic", "tool_action", "tool_action_structured", "tool_action_structured2"],
+        default="arithmetic",
+    )
     p.add_argument("--train-cases", type=int, default=64)
     p.add_argument("--eval-cases", type=int, default=16)
     p.add_argument("--context-len", type=int, default=512)
@@ -1135,6 +1284,7 @@ def parse_args():
     p.add_argument("--hf-device", type=str, default="cuda")
     p.add_argument("--hf-dtype", choices=["float32", "float16", "bfloat16"], default="bfloat16")
     p.add_argument("--step-hidden-loss-weight", type=float, default=0.0)
+    p.add_argument("--step-hidden-mode", choices=["input", "output"], default="input")
     return p.parse_args()
 
 

@@ -4077,3 +4077,145 @@ latent_i as input_embeds
 ```
 
 这样对齐的是同一个空间：transformer output hidden vs teacher output hidden，而不是 input latent vs output hidden。
+
+### 47.14 C1.2 / B1.6 继续实验（2026-06-18）
+
+承接 §47.13，本轮继续验证两条路线：
+
+1. **C1.2 structured action 双参数槽位**：在 `GREP` action 中加入第二个参数 `path`，目标 schema 变为：
+
+```text
+READ path=<file>
+LS path=<directory>
+GREP pattern=<query> path=<directory>
+```
+
+2. **B1.6 transformer output-hidden supervision**：不再把 latent input embedding 直接对齐 teacher step hidden，而是在 HF teacher-forcing forward 中取 frozen transformer 最后一层在 latent token 位置的 output hidden，再与 teacher step hidden 对齐：
+
+```text
+prompt -> latent_i input_embeds -> frozen transformer -> output_hidden_i
+output_hidden_i ~= teacher_step_i_hidden
+loss = CE(answer tokens) + weight * hidden_loss(output_hidden_i, teacher_step_i_hidden)
+```
+
+#### 47.14.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `tool_action_structured2` task：
+  - `READ` / `LS` 仍为单 `path` 参数；
+  - `GREP` 扩展为 `pattern + path` 两个槽位，例如 `GREP pattern=UserService path=services/api`；
+  - structured action 解析/归一化支持 `GREP pattern=... path=...`。
+- 修复 `_build_hf_teacher_batch()` 的 latent position 返回，供 output-hidden supervision 精确定位 latent token 的 transformer 输出位置。
+- `train_projector_hf_teacher_forcing()` 新增 `--step-hidden-mode {input,output}`：
+  - `input`：旧 B1.5 行为，直接对齐 latent input；
+  - `output`：B1.6 行为，对齐 frozen transformer 的 latent output hidden。
+
+本地检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+```
+
+远端也同步后执行了同样的 `py_compile`。
+
+#### 47.14.2 C1.2 双参数 structured action 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=tool_action_structured2,
+train_cases=128, eval_cases=48, context_len=512,
+latent_steps=1, epochs=40, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| CE loss | 3.9997 -> 0.0025 |
+| answer-only acc | 93.8% |
+| contains acc | 93.8% |
+| elapsed | 204.1s |
+
+代表输出：
+
+```text
+GREP pattern=UserService path=.
+READ path=README.md
+GREP pattern=timeout_ms path=configs
+GREP pattern=handler_fn path=.
+LS path=internal/auth
+```
+
+主要错误样例：
+
+```text
+expected: GREP pattern=ERROR path=.
+output:   GREP pattern=ERROR path=Observation
+
+expected: GREP pattern=latent_steps path=/data/project
+output:   GREP pattern=latent_steps path=data/project
+
+expected: GREP pattern=latent_steps path=.
+output:   GREP pattern=latent_steps path=directory
+```
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_c12_structured2_action_k1.json`
+- `needle_sq_results/latent_projector_c12_structured2_action_k1.pt`
+
+结论：C1.2 仍然正向。相比 C1.1 的一个参数槽位，双参数 `GREP pattern + path` 让任务难度上升，准确率从 95.8% 降到 93.8%，但仍远高于随机且输出基本保持 schema。失败主要集中在 `path=.`、绝对路径 slash、以及从 prompt 中误拷贝普通词作为 path。
+
+#### 47.14.3 B1.6 output-hidden arithmetic 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic,
+train_cases=64, eval_cases=16, context_len=512,
+latent_steps=4, step_hidden_loss_weight=0.5, step_hidden_mode=output,
+epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total loss | 8.5325 -> 1.6473 |
+| CE loss | 8.3047 -> 1.4959 |
+| step output-hidden loss | 0.4565 -> 0.3029 |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 239.6s |
+
+代表输出：
+
+```text
+101
+101
+101
+101
+272
+```
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b16_arithmetic_k4_step_output_hidden_w05.json`
+- `needle_sq_results/latent_projector_b16_arithmetic_k4_step_output_hidden_w05.pt`
+
+#### 47.14.4 更新后的判断
+
+| 路线 | 结果 | 判断 |
+|---|---:|---|
+| C1.2 双参数 structured action | 93.8% | 继续成立；hidden-state channel 可以承载 agent action schema + 参数槽位。 |
+| B1.6 output-hidden arithmetic | 0.0% | 仍为负；空间对齐改善了 hidden loss，但没有形成可泛化 arithmetic reasoning。 |
+
+B1.6 相比 B1.5 有一个局部改善：step hidden loss 从 0.4565 降到 0.3029，说明 **output-hidden 对齐确实比 input-hidden 对齐更合理**。但它仍没有解决 arithmetic 泛化，模型最后退化为少数固定整数（主要是 `101`）。
+
+当前结论：
+
+1. hidden-state latent channel 用于 **低熵 agent action / tool policy** 是可行方向；从工具名到一个参数、再到两个参数槽位都能训练出较高泛化准确率。
+2. arithmetic 这类多步离散计算不能靠“共享线性 projector recurrent unroll + hidden MSE + answer CE”解决；即使 output-hidden supervision 也不够。
+3. 下一步如果继续 B 线，应换结构而不是继续调同一个 projector：例如 per-step 独立 transition、latent token type embedding、curriculum、或把 latent policy 训练成显式 state machine。
