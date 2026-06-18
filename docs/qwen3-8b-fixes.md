@@ -4219,3 +4219,123 @@ B1.6 相比 B1.5 有一个局部改善：step hidden loss 从 0.4565 降到 0.30
 1. hidden-state latent channel 用于 **低熵 agent action / tool policy** 是可行方向；从工具名到一个参数、再到两个参数槽位都能训练出较高泛化准确率。
 2. arithmetic 这类多步离散计算不能靠“共享线性 projector recurrent unroll + hidden MSE + answer CE”解决；即使 output-hidden supervision 也不够。
 3. 下一步如果继续 B 线，应换结构而不是继续调同一个 projector：例如 per-step 独立 transition、latent token type embedding、curriculum、或把 latent policy 训练成显式 state machine。
+
+### 47.15 B1.7 stepwise latent transition + curriculum（2026-06-18）
+
+承接 §47.14 的判断，本轮不再继续调共享线性 projector，而是换结构做一个最小 B1.7：
+
+```text
+prompt_hidden
+  -> latent_1 = transition_1(prompt_hidden + step_embed_1)
+  -> latent_2 = transition_2(output_or_hidden_1 + step_embed_2)
+  -> latent_3 = transition_3(output_or_hidden_2 + step_embed_3)
+  -> latent_4 = transition_4(output_or_hidden_3 + step_embed_4)
+  -> answer-only CE
+```
+
+实际实现仍沿用当前 teacher-forcing pipeline 的 recurrent latent 生成路径，但把共享 projector 换成：
+
+1. **per-step transition**：每个 latent step 一个独立 `RMSNorm + Linear` transition。
+2. **latent step embedding**：每一步都有一个可学习的 step embedding，加到该步 transition 输入上。
+3. **linear curriculum**：训练早期只用 1 个 latent step，然后逐步扩到 2/3/4 个 latent steps。
+4. **output-hidden supervision**：继续使用 B1.6 的 `step_hidden_mode=output`，即对齐 transformer output hidden，而不是 latent input。
+
+#### 47.15.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `StepwiseRMSLinearProjector`：
+
+```text
+step_embed[step_idx] + hidden -> per-step RMSNorm+Linear transition
+```
+
+- 新增 `build_trainable_projector(hidden_size, kind, max_steps)`：
+  - `--projector-kind shared`：旧共享 projector；
+  - `--projector-kind stepwise`：B1.7 per-step projector。
+- `_project_latent_sequence()` 支持 `projector.project_step(hidden, step_idx)`。
+- `train_projector_hf_teacher_forcing()` 新增 `--latent-step-curriculum {none,linear}`：
+  - `none`：全程使用 `--latent-steps`；
+  - `linear`：按 epoch 线性从 1 step 增长到目标 `latent_steps`。
+- 新增 `--max-latent-steps`，用于 stepwise projector 预分配 transition/step embedding。
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.15.2 B1.7 arithmetic smoke 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic,
+train_cases=64, eval_cases=16, context_len=512,
+latent_steps=4,
+projector_kind=stepwise, max_latent_steps=4,
+latent_step_curriculum=linear,
+step_hidden_loss_weight=0.5, step_hidden_mode=output,
+epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total loss | 8.2645 -> 1.5780 |
+| CE loss | 8.1214 -> 1.4186 |
+| step output-hidden loss | 0.2866 -> 0.3188 |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 197.2s |
+
+curriculum 过程：
+
+```text
+epoch 01-12: latent_steps=1
+epoch 13-25: latent_steps=2
+epoch 26-37: latent_steps=3
+epoch 38-50: latent_steps=4
+```
+
+代表输出：
+
+```text
+146
+101
+417
+201
+123
+421
+147
+697
+343
+275
+427
+```
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b17_arithmetic_k4_stepwise_output_w05_curriculum.json`
+- `needle_sq_results/latent_projector_b17_arithmetic_k4_stepwise_output_w05_curriculum.pt`
+
+#### 47.15.3 结论
+
+B1.7 仍是负结果：accuracy / contains accuracy 都是 0%。但和 B1.6 的退化模式不同：
+
+| 实验 | 输出退化形态 |
+|---|---|
+| B1.6 shared projector + output-hidden | 几乎全部坍缩到 `101`，只有少数 `272`。 |
+| B1.7 stepwise + step embedding + curriculum | 输出更分散，如 `146/417/201/421/697/...`，但仍不是正确计算。 |
+
+这说明 stepwise transition 和 curriculum 缓解了“单一固定答案坍缩”，但没有解决核心问题：当前 latent transition 没有被训练成可执行的算术状态机。
+
+更新后的判断：
+
+1. **结构替换是必要但不充分**：per-step transition 比共享 projector 有更强表达力，但没有自动产生可泛化算法。
+2. **hidden/CE 目标仍太弱**：teacher hidden MSE + answer CE 只能学到 answer-like 数字分布，无法稳定学到 `(a+b)*c-d` 的中间变量更新。
+3. 下一步如果继续 B 线，应该从“拟合 teacher hidden”转为更显式的 latent state machine：
+   - latent slot 显式监督中间变量 `sum/product/final`；
+   - 或把每步 transition 拆成 `read operands -> update state -> emit answer`；
+   - 或先用小 MLP/linear probe 证明 latent_i 中能读出中间变量，再接回 LLM decode。

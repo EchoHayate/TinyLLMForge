@@ -80,6 +80,43 @@ class TrainableRMSLinearProjector(nn.Module):
         return self.linear(self._norm(x))
 
 
+class StepwiseRMSLinearProjector(nn.Module):
+    """Per-step latent transition with a learned latent step embedding.
+
+    This is the B1.7 variant: instead of recurrently applying one shared
+    projector for every latent token, each latent position has its own
+    RMSNorm+Linear transition and a small learned step embedding.
+    """
+
+    def __init__(self, hidden_size: int, max_steps: int, eps: float = 1e-6):
+        super().__init__()
+        if max_steps < 1:
+            raise ValueError(f"max_steps must be >= 1, got {max_steps}")
+        self.max_steps = max_steps
+        self.step_embed = nn.Parameter(torch.zeros(max_steps, hidden_size))
+        self.transitions = nn.ModuleList([
+            TrainableRMSLinearProjector(hidden_size, eps=eps)
+            for _ in range(max_steps)
+        ])
+
+    def project_step(self, hidden: torch.Tensor, step_idx: int) -> torch.Tensor:
+        if step_idx < 0 or step_idx >= self.max_steps:
+            raise ValueError(f"step_idx={step_idx} outside max_steps={self.max_steps}")
+        step = self.step_embed[step_idx].to(device=hidden.device, dtype=hidden.dtype)
+        return self.transitions[step_idx](hidden + step)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.project_step(x, 0)
+
+
+def build_trainable_projector(hidden_size: int, kind: str, max_steps: int) -> nn.Module:
+    if kind == "shared":
+        return TrainableRMSLinearProjector(hidden_size)
+    if kind == "stepwise":
+        return StepwiseRMSLinearProjector(hidden_size, max_steps=max_steps)
+    raise ValueError(f"unknown projector kind: {kind}")
+
+
 def _pad_to_context(tokenizer, core_text: str, ctx_len_tok: int, depth: float) -> str:
     del depth  # B1 tasks must keep the answer prompt at the end of the context.
     core_ids = tokenizer.encode(core_text, add_special_tokens=False)
@@ -786,8 +823,11 @@ def _project_latent_sequence(
         raise ValueError(f"latent_steps must be >= 1, got {latent_steps}")
     latents = []
     hidden = src.to(dtype=torch.float32)
-    for _ in range(latent_steps):
-        hidden = projector(hidden)
+    for step_idx in range(latent_steps):
+        if hasattr(projector, "project_step"):
+            hidden = projector.project_step(hidden, step_idx)
+        else:
+            hidden = projector(hidden)
         latents.append(hidden.to(dtype=model_dtype))
     return torch.stack(latents, dim=1)
 
@@ -882,9 +922,12 @@ def train_projector_hf_teacher_forcing(
     latent_steps: int,
     step_hidden_loss_weight: float,
     step_hidden_mode: str,
+    latent_step_curriculum: str,
 ) -> list[dict]:
     if step_hidden_mode not in ("input", "output"):
         raise ValueError(f"unknown step_hidden_mode={step_hidden_mode!r}")
+    if latent_step_curriculum not in ("none", "linear"):
+        raise ValueError(f"unknown latent_step_curriculum={latent_step_curriculum!r}")
     for p in model.parameters():
         p.requires_grad_(False)
     model.eval()
@@ -892,6 +935,9 @@ def train_projector_hf_teacher_forcing(
     opt = torch.optim.AdamW((p for p in projector.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay)
     history = []
     for epoch in range(1, epochs + 1):
+        effective_latent_steps = latent_steps
+        if latent_step_curriculum == "linear":
+            effective_latent_steps = max(1, min(latent_steps, (latent_steps * epoch + epochs - 1) // epochs))
         rng = random.Random(epoch)
         order = list(range(len(cases)))
         rng.shuffle(order)
@@ -908,7 +954,7 @@ def train_projector_hf_teacher_forcing(
                 src = collect_source_hidden_hf(model, tokenizer, prompts, device)
                 if step_hidden_loss_weight > 0:
                     step_targets, step_mask = collect_step_teacher_hiddens_hf(
-                        model, tokenizer, batch_cases, device, latent_steps
+                        model, tokenizer, batch_cases, device, effective_latent_steps
                     )
                 else:
                     step_targets = step_mask = None
@@ -920,7 +966,7 @@ def train_projector_hf_teacher_forcing(
                 latent_embeds,
                 flat_latent_positions,
             ) = _build_hf_teacher_batch(
-                model, tokenizer, projector, batch_cases, src, device, latent_steps
+                model, tokenizer, projector, batch_cases, src, device, effective_latent_steps
             )
             out = model(
                 inputs_embeds=inputs_embeds,
@@ -937,7 +983,7 @@ def train_projector_hf_teacher_forcing(
                 if step_hidden_mode == "output":
                     output_hiddens = out.hidden_states[-1].reshape(-1, out.hidden_states[-1].size(-1))[
                         flat_latent_positions
-                    ].view(len(batch_cases), latent_steps, -1)
+                    ].view(len(batch_cases), effective_latent_steps, -1)
                     pred = _rms_norm_cpu(output_hiddens.float())
                 else:
                     pred = _rms_norm_cpu(latent_embeds.float())
@@ -967,9 +1013,12 @@ def train_projector_hf_teacher_forcing(
             "ce_loss": avg_ce,
             "step_hidden_loss": avg_step_hidden,
             "step_hidden_mode": step_hidden_mode,
+            "latent_steps": effective_latent_steps,
+            "latent_step_curriculum": latent_step_curriculum,
         })
         print(
-            f"  hf_epoch={epoch:03d} loss={avg:.6f} ce={avg_ce:.6f} step_hidden={avg_step_hidden:.6f}",
+            f"  hf_epoch={epoch:03d} latent_steps={effective_latent_steps} "
+            f"loss={avg:.6f} ce={avg_ce:.6f} step_hidden={avg_step_hidden:.6f}",
             flush=True,
         )
     return history
@@ -1072,7 +1121,11 @@ def run_hf_teacher_forcing(args) -> None:
     hidden_size = int(model.config.hidden_size)
     train_cases = build_distill_cases(args.task, tokenizer, args.train_cases, args.context_len, args.depth, args.seed)
     eval_cases = build_distill_cases(args.task, tokenizer, args.eval_cases, args.context_len, args.depth, args.seed + 10_000)
-    projector = TrainableRMSLinearProjector(hidden_size)
+    projector = build_trainable_projector(
+        hidden_size,
+        args.projector_kind,
+        max_steps=max(args.max_latent_steps, args.latent_steps),
+    )
     t0 = time.time()
     print("Training HF teacher-forcing latent projector...", flush=True)
     history = train_projector_hf_teacher_forcing(
@@ -1088,6 +1141,7 @@ def run_hf_teacher_forcing(args) -> None:
         latent_steps=args.latent_steps,
         step_hidden_loss_weight=args.step_hidden_loss_weight,
         step_hidden_mode=args.step_hidden_mode,
+        latent_step_curriculum=args.latent_step_curriculum,
     )
     eval_result = None
     if not args.skip_eval:
@@ -1285,6 +1339,9 @@ def parse_args():
     p.add_argument("--hf-dtype", choices=["float32", "float16", "bfloat16"], default="bfloat16")
     p.add_argument("--step-hidden-loss-weight", type=float, default=0.0)
     p.add_argument("--step-hidden-mode", choices=["input", "output"], default="input")
+    p.add_argument("--projector-kind", choices=["shared", "stepwise"], default="shared")
+    p.add_argument("--max-latent-steps", type=int, default=16)
+    p.add_argument("--latent-step-curriculum", choices=["none", "linear"], default="none")
     return p.parse_args()
 
 
@@ -1310,7 +1367,11 @@ def main():
     t0 = time.time()
     print("Collecting teacher hidden pairs...", flush=True)
     src, tgt, target_ids = collect_pairs(llm, tokenizer, train_cases)
-    projector = TrainableRMSLinearProjector(hidden_size)
+    projector = build_trainable_projector(
+        hidden_size,
+        args.projector_kind,
+        max_steps=max(args.max_latent_steps, args.latent_steps),
+    )
     print("Training projector...", flush=True)
     history = train_projector(
         projector,
