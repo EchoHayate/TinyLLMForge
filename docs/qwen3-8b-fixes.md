@@ -3737,3 +3737,99 @@ Qwen3-0.6B, train_cases=2, context_len=64, epochs=1, batch_size=1, skip_eval
 ```
 
 后续复跑建议先用同一组参数验证修正是否消除数字串；若仍为 0%，再扩大到 Qwen3-8B 或增加 train_cases。当前优先判定标准仍是 `answer-only acc`，`contains acc` 只作为 latent 是否携带任务信息的辅助指标。
+
+### 47.11 B1.3 修正版复跑结果（2026-06-18）
+
+本轮继续验证 §47.10 的三个修正：right padding 对齐、rightmost non-padding hidden、answer+EOS 终止监督。
+
+#### 47.11.1 Qwen3-0.6B arithmetic
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic, train_cases=64, eval_cases=16,
+context_len=512, epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| teacher-forcing loss | 8.0815 -> 1.5030 |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 117.4s |
+
+代表输出从上一轮的长数字串变成了较短 answer-like 数字，但仍是错误答案：`114`、`1146`、`144`、`1068` 等。说明 `answer+EOS` 终止监督确实减少了无限数字续写，但 **0.6B + 单 latent token + 线性 projector 仍没有学会 arithmetic reasoning 压缩**。
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_arithmetic_b13_hf_fixed.json`
+- `needle_sq_results/latent_projector_arithmetic_b13_hf_fixed.pt`
+
+#### 47.11.2 Qwen3-0.6B tool_action
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=tool_action, train_cases=64, eval_cases=16,
+context_len=512, epochs=50, batch_size=8, lr=1e-4, max_new_tokens=8
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| teacher-forcing loss | 11.8468 -> 0.0044 |
+| answer-only acc | 100.0% |
+| contains acc | 100.0% |
+| elapsed | 116.3s |
+
+全部 16 条 eval 都直接输出正确工具名：`READ` / `LS` / `GREP`，没有 visible CoT。这是当前最强正向结果：对于 agent action selection 这类低熵决策任务，**一个 latent token 可以承载内部决策并直接输出 action**。
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_tool_action_b13_hf_fixed.json`
+- `needle_sq_results/latent_projector_tool_action_b13_hf_fixed.pt`
+
+#### 47.11.3 Qwen3-8B arithmetic smoke
+
+命令参数：
+
+```text
+model=Qwen3-8B, task=arithmetic, train_cases=32, eval_cases=8,
+context_len=512, epochs=20, batch_size=2, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| teacher-forcing loss | 4.6471 -> 1.1375 |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 125.0s |
+
+代表输出：`124`、`127`、`177`、`125`、`174`，仍是 answer-like 但错误的整数。结论和 0.6B arithmetic 一致：单 latent token 的 answer-only 训练能学到“输出整数的格式”，但没有可靠承载多步算术的中间计算。
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_arithmetic_b13_hf_8b_smoke.json`
+- `needle_sq_results/latent_projector_arithmetic_b13_hf_8b_smoke.pt`
+
+#### 47.11.4 当前判断
+
+| 任务 | B1.3 修正版结果 | 解释 |
+|---|---:|---|
+| tool_action | 100% answer-only | hidden-state latent 通信对 agent 低熵动作选择是可行的。 |
+| arithmetic | 0% answer-only | 单 latent token + 线性 projector 不足以压缩多步符号计算。 |
+
+这说明用户的核心方向仍然成立，但需要区分任务类型：
+
+1. **agent action / routing / tool choice**：可以优先推进，latent hidden state 比自然语言 CoT 更接近模型内部决策格式。
+2. **多步 arithmetic / symbolic reasoning**：需要更强 latent scratchpad，例如多 latent token、非线性 projector/transition、多阶段 teacher CoT 对齐，或者先蒸馏到 visible CoT 再逐步减少可见 token。
+
+下一步建议不再把 arithmetic 当唯一判据，而是拆两条线：
+
+- **C1 agent-action latent policy**：扩大 tool/action 任务分布，加入更复杂 observation 和参数化 action，验证 hidden-state action channel 的泛化。
+- **B1.4 multi-latent arithmetic**：把 `inputs_embeds = prompt + K 个 latent + answer_prefix`，训练 K=2/4/8 的 latent scratchpad，而不是强迫 1 个 latent token 承载完整计算。
