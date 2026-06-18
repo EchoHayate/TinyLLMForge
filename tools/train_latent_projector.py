@@ -117,6 +117,58 @@ def build_trainable_projector(hidden_size: int, kind: str, max_steps: int) -> nn
     raise ValueError(f"unknown projector kind: {kind}")
 
 
+class ArithmeticStateProbe(nn.Module):
+    """Training-only probes for explicit arithmetic intermediate-state supervision."""
+
+    def __init__(self, hidden_size: int, max_steps: int, min_value: int, max_value: int):
+        super().__init__()
+        if max_steps < 1:
+            raise ValueError(f"max_steps must be >= 1, got {max_steps}")
+        if max_value < min_value:
+            raise ValueError(f"max_value={max_value} must be >= min_value={min_value}")
+        self.max_steps = max_steps
+        self.min_value = min_value
+        self.max_value = max_value
+        self.num_values = max_value - min_value + 1
+        self.heads = nn.ModuleList([
+            nn.Linear(hidden_size, self.num_values)
+            for _ in range(max_steps)
+        ])
+
+    def forward_step(self, hidden: torch.Tensor, step_idx: int) -> torch.Tensor:
+        if step_idx < 0 or step_idx >= self.max_steps:
+            raise ValueError(f"step_idx={step_idx} outside max_steps={self.max_steps}")
+        return self.heads[step_idx](hidden.float())
+
+
+def _build_arithmetic_state_targets(
+    cases: list[DistillCase],
+    latent_steps: int,
+    min_value: int,
+    max_value: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    targets = torch.zeros(len(cases), latent_steps, device=device, dtype=torch.long)
+    mask = torch.zeros(len(cases), latent_steps, device=device, dtype=torch.bool)
+    for case_idx, case in enumerate(cases):
+        if case.task != "arithmetic":
+            continue
+        a = int(case.meta["a"])
+        b = int(case.meta["b"])
+        c = int(case.meta["c"])
+        d = int(case.meta["d"])
+        sum_value = a + b
+        product_value = sum_value * c
+        final_value = product_value - d
+        step_values = [sum_value, product_value, final_value, final_value]
+        for step_idx in range(latent_steps):
+            value = step_values[min(step_idx, len(step_values) - 1)]
+            if min_value <= value <= max_value:
+                targets[case_idx, step_idx] = value - min_value
+                mask[case_idx, step_idx] = True
+    return targets, mask
+
+
 def _pad_to_context(tokenizer, core_text: str, ctx_len_tok: int, depth: float) -> str:
     del depth  # B1 tasks must keep the answer prompt at the end of the context.
     core_ids = tokenizer.encode(core_text, add_special_tokens=False)
@@ -913,6 +965,7 @@ def train_projector_hf_teacher_forcing(
     model,
     tokenizer,
     projector: nn.Module,
+    state_probe: ArithmeticStateProbe | None,
     cases: list[DistillCase],
     epochs: int,
     batch_size: int,
@@ -923,6 +976,9 @@ def train_projector_hf_teacher_forcing(
     step_hidden_loss_weight: float,
     step_hidden_mode: str,
     latent_step_curriculum: str,
+    state_supervision_weight: float,
+    state_min_value: int,
+    state_max_value: int,
 ) -> list[dict]:
     if step_hidden_mode not in ("input", "output"):
         raise ValueError(f"unknown step_hidden_mode={step_hidden_mode!r}")
@@ -932,7 +988,11 @@ def train_projector_hf_teacher_forcing(
         p.requires_grad_(False)
     model.eval()
     projector.to(device=device, dtype=torch.float32).train()
-    opt = torch.optim.AdamW((p for p in projector.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay)
+    trainable_params = list(p for p in projector.parameters() if p.requires_grad)
+    if state_probe is not None:
+        state_probe.to(device=device, dtype=torch.float32).train()
+        trainable_params.extend(p for p in state_probe.parameters() if p.requires_grad)
+    opt = torch.optim.AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
     history = []
     for epoch in range(1, epochs + 1):
         effective_latent_steps = latent_steps
@@ -944,6 +1004,9 @@ def train_projector_hf_teacher_forcing(
         total = 0.0
         total_ce = 0.0
         total_step_hidden = 0.0
+        total_state = 0.0
+        total_state_correct = 0
+        total_state_slots = 0
         total_tokens = 0
         total_step_slots = 0
         for start in range(0, len(order), batch_size):
@@ -971,7 +1034,10 @@ def train_projector_hf_teacher_forcing(
             out = model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
-                output_hidden_states=step_hidden_loss_weight > 0 and step_hidden_mode == "output",
+                output_hidden_states=(
+                    (step_hidden_loss_weight > 0 and step_hidden_mode == "output")
+                    or (state_supervision_weight > 0 and state_probe is not None)
+                ),
                 use_cache=False,
                 return_dict=True,
             )
@@ -979,11 +1045,15 @@ def train_projector_hf_teacher_forcing(
             ce_loss = torch.nn.functional.cross_entropy(logits, targets)
             loss = ce_loss
             step_hidden_loss_value = None
+            output_hiddens = None
+            if out.hidden_states is not None:
+                output_hiddens = out.hidden_states[-1].reshape(-1, out.hidden_states[-1].size(-1))[
+                    flat_latent_positions
+                ].view(len(batch_cases), effective_latent_steps, -1)
             if step_hidden_loss_weight > 0 and step_mask is not None and step_mask.any():
                 if step_hidden_mode == "output":
-                    output_hiddens = out.hidden_states[-1].reshape(-1, out.hidden_states[-1].size(-1))[
-                        flat_latent_positions
-                    ].view(len(batch_cases), effective_latent_steps, -1)
+                    if output_hiddens is None:
+                        raise RuntimeError("output hidden states are required for output hidden supervision")
                     pred = _rms_norm_cpu(output_hiddens.float())
                 else:
                     pred = _rms_norm_cpu(latent_embeds.float())
@@ -994,6 +1064,26 @@ def train_projector_hf_teacher_forcing(
                 hidden_cos = (hidden_cos_each * step_mask.float()).sum() / step_mask.float().sum().clamp_min(1)
                 step_hidden_loss_value = hidden_mse + 0.1 * hidden_cos
                 loss = loss + step_hidden_loss_weight * step_hidden_loss_value
+            state_loss_value = None
+            if state_supervision_weight > 0 and state_probe is not None:
+                if output_hiddens is None:
+                    raise RuntimeError("output hidden states are required for arithmetic state supervision")
+                state_targets, state_mask = _build_arithmetic_state_targets(
+                    batch_cases,
+                    effective_latent_steps,
+                    state_min_value,
+                    state_max_value,
+                    device,
+                )
+                if state_mask.any():
+                    state_logits = torch.stack([
+                        state_probe.forward_step(output_hiddens[:, step_idx], step_idx)
+                        for step_idx in range(effective_latent_steps)
+                    ], dim=1)
+                    flat_state_logits = state_logits[state_mask]
+                    flat_state_targets = state_targets[state_mask]
+                    state_loss_value = torch.nn.functional.cross_entropy(flat_state_logits, flat_state_targets)
+                    loss = loss + state_supervision_weight * state_loss_value
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -1003,10 +1093,17 @@ def train_projector_hf_teacher_forcing(
                 slots = int(step_mask.sum().item())
                 total_step_hidden += float(step_hidden_loss_value.item()) * slots
                 total_step_slots += slots
+            if state_loss_value is not None:
+                state_slots = int(state_mask.sum().item())
+                total_state += float(state_loss_value.item()) * state_slots
+                total_state_correct += int((flat_state_logits.argmax(dim=-1) == flat_state_targets).sum().item())
+                total_state_slots += state_slots
             total_tokens += int(targets.numel())
         avg = total / max(1, total_tokens)
         avg_ce = total_ce / max(1, total_tokens)
         avg_step_hidden = total_step_hidden / max(1, total_step_slots) if total_step_slots else 0.0
+        avg_state_loss = total_state / max(1, total_state_slots) if total_state_slots else 0.0
+        state_acc = total_state_correct / max(1, total_state_slots) if total_state_slots else 0.0
         history.append({
             "epoch": epoch,
             "teacher_forcing_loss": avg,
@@ -1015,10 +1112,13 @@ def train_projector_hf_teacher_forcing(
             "step_hidden_mode": step_hidden_mode,
             "latent_steps": effective_latent_steps,
             "latent_step_curriculum": latent_step_curriculum,
+            "state_loss": avg_state_loss,
+            "state_accuracy": state_acc,
         })
         print(
             f"  hf_epoch={epoch:03d} latent_steps={effective_latent_steps} "
-            f"loss={avg:.6f} ce={avg_ce:.6f} step_hidden={avg_step_hidden:.6f}",
+            f"loss={avg:.6f} ce={avg_ce:.6f} step_hidden={avg_step_hidden:.6f} "
+            f"state={avg_state_loss:.6f} state_acc={state_acc * 100:.1f}%",
             flush=True,
         )
     return history
@@ -1126,12 +1226,21 @@ def run_hf_teacher_forcing(args) -> None:
         args.projector_kind,
         max_steps=max(args.max_latent_steps, args.latent_steps),
     )
+    state_probe = None
+    if args.state_supervision_weight > 0:
+        state_probe = ArithmeticStateProbe(
+            hidden_size,
+            max_steps=max(args.max_latent_steps, args.latent_steps),
+            min_value=args.state_min_value,
+            max_value=args.state_max_value,
+        )
     t0 = time.time()
     print("Training HF teacher-forcing latent projector...", flush=True)
     history = train_projector_hf_teacher_forcing(
         model,
         tokenizer,
         projector,
+        state_probe,
         train_cases,
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -1142,6 +1251,9 @@ def run_hf_teacher_forcing(args) -> None:
         step_hidden_loss_weight=args.step_hidden_loss_weight,
         step_hidden_mode=args.step_hidden_mode,
         latent_step_curriculum=args.latent_step_curriculum,
+        state_supervision_weight=args.state_supervision_weight,
+        state_min_value=args.state_min_value,
+        state_max_value=args.state_max_value,
     )
     eval_result = None
     if not args.skip_eval:
@@ -1163,6 +1275,7 @@ def run_hf_teacher_forcing(args) -> None:
     os.makedirs(os.path.dirname(args.checkpoint) or ".", exist_ok=True)
     torch.save({
         "projector": projector.state_dict(),
+        "state_probe": state_probe.state_dict() if state_probe is not None else None,
         "hidden_size": hidden_size,
         "args": vars(args),
         "history": history,
@@ -1342,6 +1455,9 @@ def parse_args():
     p.add_argument("--projector-kind", choices=["shared", "stepwise"], default="shared")
     p.add_argument("--max-latent-steps", type=int, default=16)
     p.add_argument("--latent-step-curriculum", choices=["none", "linear"], default="none")
+    p.add_argument("--state-supervision-weight", type=float, default=0.0)
+    p.add_argument("--state-min-value", type=int, default=-256)
+    p.add_argument("--state-max-value", type=int, default=2048)
     return p.parse_args()
 
 

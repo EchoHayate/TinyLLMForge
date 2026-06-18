@@ -4339,3 +4339,124 @@ B1.7 仍是负结果：accuracy / contains accuracy 都是 0%。但和 B1.6 的�
    - latent slot 显式监督中间变量 `sum/product/final`；
    - 或把每步 transition 拆成 `read operands -> update state -> emit answer`；
    - 或先用小 MLP/linear probe 证明 latent_i 中能读出中间变量，再接回 LLM decode。
+
+### 47.16 B1.8 arithmetic latent state probe（2026-06-18）
+
+承接 §47.15，本轮开始把 B 线转向“显式 latent state machine / 中间变量监督”。先做最小可验证版本：不直接改变生成格式，而是在训练时给 latent output hidden 加一个辅助 probe，让每个 latent step 可读出 arithmetic 中间变量。
+
+目标监督：
+
+```text
+latent_1 output_hidden -> sum     = a + b
+latent_2 output_hidden -> product = sum * c
+latent_3 output_hidden -> final   = product - d
+latent_4 output_hidden -> final   = product - d  # answer-ready state
+```
+
+这里的 probe 只用于训练期 auxiliary loss，不参与最终生成；推理仍是：prompt -> latent tokens -> answer-only decode。
+
+#### 47.16.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `ArithmeticStateProbe`：每个 latent step 一个 linear head，把 latent output hidden 分类到整数值域。
+- 新增 `_build_arithmetic_state_targets()`：从 synthetic arithmetic case 的 `a/b/c/d` 构造 `sum/product/final/final` targets。
+- `train_projector_hf_teacher_forcing()` 新增 state auxiliary loss：
+
+```text
+loss = answer_CE
+     + step_hidden_loss_weight * output_hidden_MSE
+     + state_supervision_weight * CE(probe(output_hidden_i), intermediate_value_i)
+```
+
+- 新增 CLI：
+
+```text
+--state-supervision-weight
+--state-min-value
+--state-max-value
+```
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.16.2 B1.8 smoke 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic,
+train_cases=64, eval_cases=16, context_len=512,
+latent_steps=4,
+projector_kind=stepwise, max_latent_steps=4,
+latent_step_curriculum=linear,
+step_hidden_loss_weight=0.2, step_hidden_mode=output,
+state_supervision_weight=0.5, state_min_value=-256, state_max_value=2048,
+epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total loss | 13.0521 -> 3.2985 |
+| CE loss | 8.3586 -> 1.3883 |
+| step output-hidden loss | 0.3025 -> 0.6658 |
+| state probe loss | 9.2534 -> 3.5552 |
+| state probe acc | 0.0% -> 10.5% |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 198.9s |
+
+代表输出：
+
+```text
+103
+103
+127
+123
+127
+621
+201
+1066
+680
+830
+290
+204
+273
+240
+```
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b18_arithmetic_k4_state_probe_w05.json`
+- `needle_sq_results/latent_projector_b18_arithmetic_k4_state_probe_w05.pt`
+
+#### 47.16.3 结论
+
+B1.8 仍然没有让 answer decode 泛化，accuracy / contains accuracy 都是 0%。但它给出了一个更明确的诊断：
+
+1. state probe loss 明显下降，说明 latent output hidden 中确实开始携带一部分中间变量信息。
+2. 但 state probe acc 只有 10.5%，远不足以支持稳定算术状态更新。
+3. answer CE 下降到 1.3883，但输出仍是 answer-like 错误整数，说明最终 decode 仍主要学到数值分布，而不是计算规则。
+
+这说明“简单 probe 辅助监督”还不等于真正的 latent state machine。下一步 B 线如果继续，应该进一步显式化状态：
+
+```text
+方案 B1.9：latent state vector 直接监督中间变量 embedding
+  - 为 sum/product/final 构造可学习 numeric embedding table
+  - latent_i 不只被 probe 读出，还直接拉近到 numeric embedding(value_i)
+  - 再用 answer CE 检查能否把 final state decode 成答案
+
+或：
+方案 B2：把 arithmetic 拆成真实 state-machine trainer
+  - transition_1 专门预测 sum
+  - transition_2 接收 sum-state + c，预测 product
+  - transition_3 接收 product-state + d，预测 final
+  - 最后再接 LLM decode
+```
+
+当前判断：B 线还不能证明“hidden latent 自然会算术推理”，但现在已经能定位瓶颈：不是 token decode，而是 latent state 没有被训练成可读、可更新、可组合的中间变量状态。
