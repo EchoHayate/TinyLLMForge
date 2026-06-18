@@ -113,11 +113,19 @@ def build_arithmetic_distill_cases(
             "Reasoning:"
         )
         teacher_prefix = (
-            f" ({a} + {b}) = {a + b}; "
-            f"{a + b} * {c} = {(a + b) * c}; "
-            f"{(a + b) * c} - {d} = {expected}.\n"
-            "Final integer:"
+            "".join([
+                f" ({a} + {b}) = {a + b};",
+                f" {a + b} * {c} = {(a + b) * c};",
+                f" {(a + b) * c} - {d} = {expected}.",
+                "\nFinal integer:",
+            ])
         )
+        teacher_steps = [
+            f" ({a} + {b}) = {a + b};",
+            f" {a + b} * {c} = {(a + b) * c};",
+            f" {(a + b) * c} - {d} = {expected}.",
+            "\nFinal integer:",
+        ]
         prompt = _pad_to_context(tokenizer, prompt_core, ctx_len, depth)
         answer_token_id = tokenizer.encode(str(expected), add_special_tokens=False)[0]
         cases.append(DistillCase(
@@ -126,7 +134,7 @@ def build_arithmetic_distill_cases(
             prompt=prompt,
             teacher_prefix=teacher_prefix,
             answer_token_id=answer_token_id,
-            meta={"a": a, "b": b, "c": c, "d": d},
+            meta={"a": a, "b": b, "c": c, "d": d, "teacher_steps": teacher_steps},
         ))
     return cases
 
@@ -219,6 +227,112 @@ def build_tool_action_distill_cases(
     return cases
 
 
+def build_tool_action_structured_distill_cases(
+    tokenizer,
+    num_cases: int,
+    ctx_len: int,
+    depth: float,
+    seed: int,
+) -> list[DistillCase]:
+    rng = random.Random(seed)
+    files = [
+        "README.md",
+        "pyproject.toml",
+        "src/app.py",
+        "configs/prod.yaml",
+        "package.json",
+        "docs/usage.md",
+        "logs/server.log",
+        "tests/test_api.py",
+        "services/api/router.go",
+        "internal/auth/token.py",
+    ]
+    dirs = [
+        ".",
+        "src",
+        "configs",
+        "docs",
+        "tests",
+        "/data/project",
+        "/tmp/workspace",
+        "services/api",
+        "internal/auth",
+        "needle_sq_results",
+    ]
+    needles = [
+        "compute_score",
+        "TODO",
+        "ERROR",
+        "AuthToken",
+        "UserService",
+        "timeout_ms",
+        "handler_fn",
+        "ValueError",
+        "ModelRunner",
+        "latent_steps",
+    ]
+    read_templates = [
+        "Need to inspect the exact contents of file {path} before editing it.",
+        "Open {path}; the user needs the file content, not a directory listing.",
+        "We already know the target file path is {path}; read that single file.",
+        "The next operation should load source text from {path}.",
+    ]
+    ls_templates = [
+        "Need to see what entries are inside directory {path}.",
+        "List the children under {path} before choosing a file.",
+        "We need an overview of directory {path}; do not read a specific file yet.",
+        "The known path {path} is a folder; list it.",
+    ]
+    grep_templates = [
+        "Need to search across files for pattern {pattern}.",
+        "The file path is unknown; locate occurrences of {pattern}.",
+        "Find every reference matching {pattern} in the repository.",
+        "Search logs or code for the string {pattern}.",
+    ]
+    cases: list[DistillCase] = []
+    for _ in range(num_cases):
+        action = rng.choice(["READ", "LS", "GREP"])
+        if action == "READ":
+            path = rng.choice(files)
+            expected = f"READ path={path}"
+            observation = rng.choice(read_templates).format(path=path)
+            meta = {"action": action, "path": path}
+        elif action == "LS":
+            path = rng.choice(dirs)
+            expected = f"LS path={path}"
+            observation = rng.choice(ls_templates).format(path=path)
+            meta = {"action": action, "path": path}
+        else:
+            pattern = rng.choice(needles)
+            expected = f"GREP pattern={pattern}"
+            observation = rng.choice(grep_templates).format(pattern=pattern)
+            meta = {"action": action, "pattern": pattern}
+        if rng.random() < 0.35:
+            observation += " Previous notes may mention LS, READ, or GREP; ignore those distractors."
+        prompt_core = (
+            "\n\nYou are choosing the next structured tool action for an agent.\n"
+            "Available action schemas:\n"
+            "- LS path=<directory>\n"
+            "- READ path=<file>\n"
+            "- GREP pattern=<query>\n"
+            "Return only one structured action in exactly one of those schemas.\n"
+            f"Observation: {observation}\n"
+            "Reasoning:"
+        )
+        teacher_prefix = f" The correct structured action is {expected}.\nAction:"
+        prompt = _pad_to_context(tokenizer, prompt_core, ctx_len, depth)
+        answer_token_id = tokenizer.encode(expected, add_special_tokens=False)[0]
+        cases.append(DistillCase(
+            task="tool_action_structured",
+            expected=expected,
+            prompt=prompt,
+            teacher_prefix=teacher_prefix,
+            answer_token_id=answer_token_id,
+            meta={"observation": observation, **meta},
+        ))
+    return cases
+
+
 def build_distill_cases(
     task: str,
     tokenizer,
@@ -231,6 +345,8 @@ def build_distill_cases(
         return build_arithmetic_distill_cases(tokenizer, num_cases, ctx_len, depth, seed)
     if task == "tool_action":
         return build_tool_action_distill_cases(tokenizer, num_cases, ctx_len, depth, seed)
+    if task == "tool_action_structured":
+        return build_tool_action_structured_distill_cases(tokenizer, num_cases, ctx_len, depth, seed)
     raise ValueError(f"unknown task: {task}")
 
 
@@ -515,6 +631,48 @@ def collect_source_hidden_hf(model, tokenizer, prompts: list[str], device: torch
     return out.hidden_states[-1][rows, last_idx].detach().float()
 
 
+@torch.no_grad()
+def collect_last_hidden_texts_hf(model, tokenizer, texts: list[str], device: torch.device) -> torch.Tensor:
+    return collect_source_hidden_hf(model, tokenizer, texts, device)
+
+
+def _teacher_steps(case: DistillCase) -> list[str]:
+    steps = case.meta.get("teacher_steps")
+    if isinstance(steps, list) and steps:
+        return [str(x) for x in steps]
+    return [case.teacher_prefix]
+
+
+@torch.no_grad()
+def collect_step_teacher_hiddens_hf(
+    model,
+    tokenizer,
+    cases: list[DistillCase],
+    device: torch.device,
+    latent_steps: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    texts = []
+    slots = []
+    for case_idx, case in enumerate(cases):
+        prefix = ""
+        for step_idx, step_text in enumerate(_teacher_steps(case)[:latent_steps]):
+            prefix += step_text
+            texts.append(case.prompt + prefix)
+            slots.append((case_idx, step_idx))
+
+    hidden_size = int(model.config.hidden_size)
+    targets = torch.zeros(len(cases), latent_steps, hidden_size, device=device, dtype=torch.float32)
+    mask = torch.zeros(len(cases), latent_steps, device=device, dtype=torch.bool)
+    if not texts:
+        return targets, mask
+
+    hiddens = collect_last_hidden_texts_hf(model, tokenizer, texts, device)
+    for hidden, (case_idx, step_idx) in zip(hiddens, slots):
+        targets[case_idx, step_idx] = hidden
+        mask[case_idx, step_idx] = True
+    return targets, mask
+
+
 def _project_latent_sequence(
     projector: nn.Module,
     src: torch.Tensor,
@@ -579,13 +737,18 @@ def _build_hf_teacher_batch(
     attention_mask = torch.zeros(len(cases), max_len, device=device, dtype=torch.long)
     flat_positions = []
     flat_targets = []
+    latent_batch = []
     for i, sample_embeds in enumerate(seq_embeds):
         n = sample_embeds.size(0)
         inputs_embeds[i, :n] = sample_embeds
         attention_mask[i, :n] = 1
         flat_positions.append(answer_positions[i] + i * max_len)
         flat_targets.append(answer_targets[i])
-    return inputs_embeds, attention_mask, torch.cat(flat_positions), torch.cat(flat_targets)
+        latent_start = n - answer_targets[i].numel() + 1 - latent_steps
+        if answer_targets[i].numel() == 1:
+            latent_start = n - latent_steps
+        latent_batch.append(sample_embeds[latent_start:latent_start + latent_steps])
+    return inputs_embeds, attention_mask, torch.cat(flat_positions), torch.cat(flat_targets), torch.stack(latent_batch)
 
 
 def train_projector_hf_teacher_forcing(
@@ -599,6 +762,7 @@ def train_projector_hf_teacher_forcing(
     weight_decay: float,
     device: torch.device,
     latent_steps: int,
+    step_hidden_loss_weight: float,
 ) -> list[dict]:
     for p in model.parameters():
         p.requires_grad_(False)
@@ -611,14 +775,23 @@ def train_projector_hf_teacher_forcing(
         order = list(range(len(cases)))
         rng.shuffle(order)
         total = 0.0
+        total_ce = 0.0
+        total_step_hidden = 0.0
         total_tokens = 0
+        total_step_slots = 0
         for start in range(0, len(order), batch_size):
             idxs = order[start:start + batch_size]
             batch_cases = [cases[i] for i in idxs]
             prompts = [case.prompt for case in batch_cases]
             with torch.no_grad():
                 src = collect_source_hidden_hf(model, tokenizer, prompts, device)
-            inputs_embeds, attention_mask, flat_positions, targets = _build_hf_teacher_batch(
+                if step_hidden_loss_weight > 0:
+                    step_targets, step_mask = collect_step_teacher_hiddens_hf(
+                        model, tokenizer, batch_cases, device, latent_steps
+                    )
+                else:
+                    step_targets = step_mask = None
+            inputs_embeds, attention_mask, flat_positions, targets, latent_embeds = _build_hf_teacher_batch(
                 model, tokenizer, projector, batch_cases, src, device, latent_steps
             )
             out = model(
@@ -628,15 +801,41 @@ def train_projector_hf_teacher_forcing(
                 return_dict=True,
             )
             logits = out.logits.reshape(-1, out.logits.size(-1))[flat_positions].float()
-            loss = torch.nn.functional.cross_entropy(logits, targets)
+            ce_loss = torch.nn.functional.cross_entropy(logits, targets)
+            loss = ce_loss
+            step_hidden_loss_value = None
+            if step_hidden_loss_weight > 0 and step_mask is not None and step_mask.any():
+                pred = _rms_norm_cpu(latent_embeds.float())
+                tgt = _rms_norm_cpu(step_targets.float())
+                mask = step_mask.unsqueeze(-1)
+                hidden_mse = ((pred - tgt).pow(2) * mask).sum() / (mask.sum().clamp_min(1) * pred.size(-1))
+                hidden_cos_each = 1.0 - torch.nn.functional.cosine_similarity(pred, tgt, dim=-1)
+                hidden_cos = (hidden_cos_each * step_mask.float()).sum() / step_mask.float().sum().clamp_min(1)
+                step_hidden_loss_value = hidden_mse + 0.1 * hidden_cos
+                loss = loss + step_hidden_loss_weight * step_hidden_loss_value
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
             total += float(loss.item()) * targets.numel()
+            total_ce += float(ce_loss.item()) * targets.numel()
+            if step_hidden_loss_value is not None:
+                slots = int(step_mask.sum().item())
+                total_step_hidden += float(step_hidden_loss_value.item()) * slots
+                total_step_slots += slots
             total_tokens += int(targets.numel())
         avg = total / max(1, total_tokens)
-        history.append({"epoch": epoch, "teacher_forcing_loss": avg})
-        print(f"  hf_epoch={epoch:03d} loss={avg:.6f}", flush=True)
+        avg_ce = total_ce / max(1, total_tokens)
+        avg_step_hidden = total_step_hidden / max(1, total_step_slots) if total_step_slots else 0.0
+        history.append({
+            "epoch": epoch,
+            "teacher_forcing_loss": avg,
+            "ce_loss": avg_ce,
+            "step_hidden_loss": avg_step_hidden,
+        })
+        print(
+            f"  hf_epoch={epoch:03d} loss={avg:.6f} ce={avg_ce:.6f} step_hidden={avg_step_hidden:.6f}",
+            flush=True,
+        )
     return history
 
 
@@ -751,6 +950,7 @@ def run_hf_teacher_forcing(args) -> None:
         weight_decay=args.weight_decay,
         device=device,
         latent_steps=args.latent_steps,
+        step_hidden_loss_weight=args.step_hidden_loss_weight,
     )
     eval_result = None
     if not args.skip_eval:
@@ -801,12 +1001,39 @@ def extract_distill_answer(task: str, text: str) -> str | None:
             if re.search(rf"\b{tool}\b", upper):
                 return tool
         return None
+    if task == "tool_action_structured":
+        return _extract_structured_action(text)
     raise ValueError(f"unknown task: {task}")
+
+
+def _normalize_structured_action(text: str | None) -> str | None:
+    if text is None:
+        return None
+    text = " ".join(text.strip().split())
+    m = re.match(r"^(READ|LS)\s+path=([^\s]+)$", text, flags=re.IGNORECASE)
+    if m:
+        return f"{m.group(1).upper()} path={m.group(2)}"
+    m = re.match(r"^GREP\s+pattern=([^\s]+)$", text, flags=re.IGNORECASE)
+    if m:
+        return f"GREP pattern={m.group(1)}"
+    return None
+
+
+def _extract_structured_action(text: str) -> str | None:
+    m = re.search(r"\b(READ|LS)\s+path=([^\s]+)", text, flags=re.IGNORECASE)
+    if m:
+        return _normalize_structured_action(f"{m.group(1)} path={m.group(2)}")
+    m = re.search(r"\bGREP\s+pattern=([^\s]+)", text, flags=re.IGNORECASE)
+    if m:
+        return _normalize_structured_action(f"GREP pattern={m.group(1)}")
+    return None
 
 
 def contains_expected_answer(task: str, text: str, expected: str) -> bool:
     if task == "arithmetic":
         return expected in re.findall(r"-?\d+", text)
+    if task == "tool_action_structured":
+        return _extract_structured_action(text) == _normalize_structured_action(expected)
     return extract_distill_answer(task, text) == expected
 
 
@@ -817,6 +1044,9 @@ def extract_answer_only(task: str, text: str) -> str | None:
     if task == "tool_action":
         m = re.match(r"\s*(READ|GREP|LS)\b", text.upper())
         return m.group(1) if m else None
+    if task == "tool_action_structured":
+        first_line = text.strip().splitlines()[0] if text.strip() else ""
+        return _normalize_structured_action(first_line)
     raise ValueError(f"unknown task: {task}")
 
 
@@ -879,7 +1109,7 @@ def evaluate_projector(
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True)
-    p.add_argument("--task", choices=["arithmetic", "tool_action"], default="arithmetic")
+    p.add_argument("--task", choices=["arithmetic", "tool_action", "tool_action_structured"], default="arithmetic")
     p.add_argument("--train-cases", type=int, default=64)
     p.add_argument("--eval-cases", type=int, default=16)
     p.add_argument("--context-len", type=int, default=512)
@@ -904,6 +1134,7 @@ def parse_args():
     p.add_argument("--hf-teacher-forcing", action="store_true")
     p.add_argument("--hf-device", type=str, default="cuda")
     p.add_argument("--hf-dtype", choices=["float32", "float16", "bfloat16"], default="bfloat16")
+    p.add_argument("--step-hidden-loss-weight", type=float, default=0.0)
     return p.parse_args()
 
 

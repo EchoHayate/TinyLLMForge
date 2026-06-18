@@ -3945,3 +3945,135 @@ prompt -> latent_1 对齐 teacher step1 hidden
 ```
 
 也就是 **multi-latent + per-step teacher CoT hidden supervision**，而不是只在最后 answer token 上做 CE。
+
+### 47.13 C1.1 / B1.5 继续实验（2026-06-18）
+
+承接 §47.12，本轮继续做两件事：
+
+1. **C1.1 structured latent action**：从只输出工具名扩展到输出结构化 action：
+
+```text
+READ path=...
+GREP pattern=...
+LS path=...
+```
+
+2. **B1.5 per-step CoT hidden supervision**：不只在最终 answer token 上做 CE，同时让每个 latent_i 对齐 teacher CoT 第 i 步的 hidden state。
+
+#### 47.13.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `tool_action_structured` task：
+  - prompt 明确给出 action schema：`LS path=<directory>` / `READ path=<file>` / `GREP pattern=<query>`；
+  - synthetic observation 随机生成 file path / directory path / grep pattern；
+  - expected answer 是完整结构化动作，例如 `READ path=internal/auth/token.py`。
+- structured action 评测：
+  - `_extract_structured_action()` / `_normalize_structured_action()` 支持从 raw output 抽取并规范化结构化动作；
+  - `answer_only` 要求输出第一行就是完整结构化 action。
+- arithmetic case 新增 `meta["teacher_steps"]`：
+
+```text
+step1:  (a + b) = x;
+step2:  x * c = y;
+step3:  y - d = answer.
+step4:  Final integer:
+```
+
+- 新增 `collect_step_teacher_hiddens_hf()`：批量收集 `prompt + teacher_steps[:i]` 的最后 hidden，作为 latent_i 的监督目标。
+- `train_projector_hf_teacher_forcing()` 新增 `--step-hidden-loss-weight`：
+
+```text
+loss = CE(answer tokens) + weight * (MSE/RMSNorm + 0.1 * cosine_loss)(latent_i, teacher_step_i_hidden)
+```
+
+#### 47.13.2 C1.1 structured action 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=tool_action_structured,
+train_cases=128, eval_cases=48, context_len=512,
+latent_steps=1, epochs=40, batch_size=8, lr=1e-4, max_new_tokens=12
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| CE loss | 4.6886 -> 0.0030 |
+| answer-only acc | 95.8% |
+| contains acc | 95.8% |
+| elapsed | 202.1s |
+
+代表输出：
+
+```text
+GREP pattern=UserService
+GREP pattern=compute_score
+GREP pattern=timeout_ms
+READ path=internal/auth/token.py
+LS path=needle_sq_results
+```
+
+结论：C1.1 明显正向。模型不仅能通过 1 个 latent token 输出工具名，还能携带一个参数槽位（path/pattern）。这比 §47.12 的 `READ/GREP/LS` 更接近真实 agent action channel。
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_c11_structured_action_k1.json`
+- `needle_sq_results/latent_projector_c11_structured_action_k1.pt`
+
+#### 47.13.3 B1.5 per-step CoT hidden supervision 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic,
+train_cases=64, eval_cases=16, context_len=512,
+latent_steps=4, step_hidden_loss_weight=0.5,
+epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total loss | 8.5416 -> 1.8777 |
+| CE loss | 8.3481 -> 1.5715 |
+| step hidden loss | 0.3874 -> 0.6125 |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 240.2s |
+
+代表输出：`208`、`143`、`102` 等，仍是 answer-like 但错误的整数。
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b15_arithmetic_k4_step_hidden_w05.json`
+- `needle_sq_results/latent_projector_b15_arithmetic_k4_step_hidden_w05.pt`
+
+#### 47.13.4 结论
+
+| 路线 | 结果 | 解释 |
+|---|---:|---|
+| C1.1 structured action | 95.8% | hidden-state action channel 能承载工具名 + 一个参数槽位。 |
+| B1.5 per-step arithmetic | 0% | 简单 latent-output-to-teacher-hidden 对齐仍不够；step hidden loss 甚至没有稳定下降。 |
+
+B1.5 的负结果说明：把 projector 输出直接对齐 teacher step hidden 不是充分条件。原因可能是：
+
+1. teacher step hidden 是 transformer **输出空间**，但 latent token 作为下一步输入是 **embedding/input space**；二者仍有空间错位。
+2. 当前只有一个共享线性 projector recurrently unroll，表达力不足。
+3. hidden supervision 和 answer CE 的目标可能冲突：step hidden loss 没稳定下降，说明 latent 输入空间不容易直接拟合 teacher 输出 hidden。
+
+下一步建议：
+
+- C1.2：继续 structured action，加入两个参数槽位，例如 `GREP pattern=... path=...`，或 action JSON。
+- B1.6：不要直接用 teacher output hidden 监督 latent input；改成 **每个 latent_i 过 frozen transformer 后的 output hidden** 对齐 teacher step hidden：
+
+```text
+latent_i as input_embeds
+  -> frozen transformer
+  -> output_hidden_i 对齐 teacher_step_i_hidden
+```
+
+这样对齐的是同一个空间：transformer output hidden vs teacher output hidden，而不是 input latent vs output hidden。
