@@ -3833,3 +3833,115 @@ context_len=512, epochs=20, batch_size=2, lr=1e-4, max_new_tokens=16
 
 - **C1 agent-action latent policy**：扩大 tool/action 任务分布，加入更复杂 observation 和参数化 action，验证 hidden-state action channel 的泛化。
 - **B1.4 multi-latent arithmetic**：把 `inputs_embeds = prompt + K 个 latent + answer_prefix`，训练 K=2/4/8 的 latent scratchpad，而不是强迫 1 个 latent token 承载完整计算。
+
+### 47.12 C1 / B1.4 双线推进（2026-06-18）
+
+承接 §47.11，本轮把 latent scratchpad 拆成两条路线同时验证：
+
+1. **C1 agent-action latent policy**：扩大 tool/action 数据分布，测试 agent 内部 hidden channel 是否能泛化到更多 observation 模板。
+2. **B1.4 multi-latent arithmetic**：把 HF teacher-forcing 从 1 个 latent token 扩展到 K 个 latent token，测试 K=2/4/8 是否改善 arithmetic。
+
+#### 47.12.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- `build_tool_action_distill_cases()`：从固定 6 条 scenario 扩展为随机模板生成：
+  - `READ`：已知文件路径，需要读取单文件内容；
+  - `LS`：已知目录路径，需要列目录；
+  - `GREP`：未知文件路径，需要跨文件搜索符号/字符串/日志模式；
+  - 随机加入无关干扰句，避免模型只记固定表述。
+- `_project_latent_sequence()`：新增 K-step latent 生成：
+
+```text
+hidden_0 = prompt_last_hidden
+for step in 1..K:
+    latent_step = projector(hidden_{step-1})
+    hidden_step = latent_step
+```
+
+- `_build_hf_teacher_batch()`：训练输入从
+
+```text
+prompt_embeds + latent + answer_prefix
+```
+
+扩展为：
+
+```text
+prompt_embeds + latent_1 + ... + latent_K + answer_prefix
+```
+
+loss 对齐从最后一个 latent 位置开始：`logits[prompt_len + K - 1] -> answer_token_0`。
+
+- `generate_hf_with_latent()` / `evaluate_hf_teacher_forcing()`：评测同样使用 `--latent-steps K`。
+
+#### 47.12.2 C1 expanded tool_action 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=tool_action, train_cases=128, eval_cases=48,
+context_len=512, latent_steps=1, epochs=40, batch_size=8, lr=1e-4
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| teacher-forcing loss | 9.8890 -> 0.0018 |
+| answer-only acc | 100.0% |
+| contains acc | 100.0% |
+| elapsed | 190.9s |
+
+代表输出：`GREP`、`LS`、`READ`。48 条 eval 全部 answer-only 命中。少数 raw 会在正确首 token 后继续短句，例如 `GREP\nThe answer is: ...`，但 `answer_only` metric 仍命中；后续若要严格动作协议，可以把 eval 的 `max_new_tokens` 降到 1 或加入更强 EOS/stop 约束。
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_c1_tool_action_expanded_k1.json`
+- `needle_sq_results/latent_projector_c1_tool_action_expanded_k1.pt`
+
+结论：C1 方向继续成立。对 agent tool/action 低熵决策，1 个 latent token 足够承载内部状态并输出动作，即使 observation 模板扩展后仍能泛化。
+
+#### 47.12.3 B1.4 multi-latent arithmetic sweep
+
+命令参数统一为：
+
+```text
+model=Qwen3-0.6B, task=arithmetic, train_cases=64, eval_cases=16,
+context_len=512, epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+只改变 `latent_steps`：
+
+| latent_steps | teacher-forcing loss | answer-only acc | contains acc | 代表输出 |
+|---:|---:|---:|---:|---|
+| 2 | 7.6872 -> 1.4314 | 0.0% | 0.0% | `628`, `692`, `277`, `621` |
+| 4 | 8.3581 -> 1.4520 | 0.0% | 0.0% | `101`, `213`, `114`, `1014` |
+| 8 | 8.0733 -> 1.5883 | 0.0% | 0.0% | `144`, `147` |
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b14_arithmetic_k2.json`
+- `needle_sq_results/latent_projector_b14_arithmetic_k4.json`
+- `needle_sq_results/latent_projector_b14_arithmetic_k8.json`
+- 对应 `.pt` checkpoint 同名保存。
+
+结论：仅把同一个线性 projector recurrently unroll 成 K 个 latent token，没有改善 arithmetic。它仍然学到“输出整数”的格式，但没有学到可泛化的多步计算过程。K 越大也没有单调收益，说明瓶颈不只是 latent token 数量，而是 latent transition 的训练目标/结构不够强。
+
+#### 47.12.4 更新后的判断
+
+| 路线 | 当前状态 | 下一步建议 |
+|---|---|---|
+| C1 agent-action latent policy | 正向，expanded tool_action 仍 100% | 扩 action schema：不仅输出工具名，还输出结构化 action 参数，如 `READ path=...` / `GREP pattern=...`。 |
+| B1.4 multi-latent arithmetic | 负向，K=2/4/8 仍 0% | 不再只 unroll 同一个 projector；需要引入每步独立 latent transition、teacher CoT 分段监督或 curriculum。 |
+
+目前最有价值的推进方向是 C1：把 hidden-state channel 用在 agent 内部动作决策上，而不是先死磕多步算术。Arithmetic 可作为长期 reasoning benchmark，但短期应该换更强训练形式：
+
+```text
+prompt -> latent_1 对齐 teacher step1 hidden
+       -> latent_2 对齐 teacher step2 hidden
+       -> ...
+       -> answer
+```
+
+也就是 **multi-latent + per-step teacher CoT hidden supervision**，而不是只在最后 answer token 上做 CE。

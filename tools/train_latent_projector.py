@@ -138,21 +138,70 @@ def build_tool_action_distill_cases(
     depth: float,
     seed: int,
 ) -> list[DistillCase]:
-    scenarios = [
-        ("Need to inspect a specific file at /tmp/config.json.", "READ"),
-        ("Need to search all Python files for the function name compute_score.", "GREP"),
-        ("Need to see what files are inside the current directory.", "LS"),
-        ("Need to find occurrences of the word ERROR in logs.", "GREP"),
-        ("Need to open README.md and read its content.", "READ"),
-        ("Need to list the entries under /data/project.", "LS"),
-    ]
     rng = random.Random(seed)
+    files = [
+        "README.md",
+        "pyproject.toml",
+        "src/app.py",
+        "configs/prod.yaml",
+        "package.json",
+        "docs/usage.md",
+        "logs/server.log",
+        "tests/test_api.py",
+    ]
+    dirs = [
+        ".",
+        "src",
+        "configs",
+        "docs",
+        "tests",
+        "/data/project",
+        "/tmp/workspace",
+        "services/api",
+    ]
+    needles = [
+        "compute_score",
+        "TODO",
+        "ERROR",
+        "AuthToken",
+        "UserService",
+        "timeout_ms",
+        "def handler",
+        "raise ValueError",
+    ]
+    read_templates = [
+        "Need to inspect the exact contents of file {file} before editing.",
+        "The next step is to open {file} and read what it says.",
+        "A user asks for the content inside {file}, not for a directory listing.",
+        "We already know the path {file}; choose the tool that reads one file.",
+    ]
+    ls_templates = [
+        "Need to see what files are inside directory {dir}.",
+        "Before choosing a file, list the entries under {dir}.",
+        "We need an overview of the current directory tree at {dir}.",
+        "The path {dir} is a directory; choose the tool that lists its children.",
+    ]
+    grep_templates = [
+        "Need to search the repository for occurrences of {needle}.",
+        "The next step is to find all files containing the pattern {needle}.",
+        "We do not know the file path; search for symbol {needle} across files.",
+        "Need to locate log lines or code references matching {needle}.",
+    ]
     cases: list[DistillCase] = []
     for _ in range(num_cases):
-        observation, expected = scenarios[rng.randrange(len(scenarios))]
+        expected = rng.choice(["LS", "READ", "GREP"])
+        if expected == "READ":
+            observation = rng.choice(read_templates).format(file=rng.choice(files))
+        elif expected == "LS":
+            observation = rng.choice(ls_templates).format(dir=rng.choice(dirs))
+        else:
+            observation = rng.choice(grep_templates).format(needle=rng.choice(needles))
+        if rng.random() < 0.35:
+            observation += " Ignore unrelated tool names mentioned in previous notes."
         prompt_core = (
             "\n\nYou are choosing the next tool for an agent.\n"
             "Available tool names: LS, READ, GREP.\n"
+            "Return only the next tool name.\n"
             f"Observation: {observation}\n"
             "Reasoning:"
         )
@@ -466,7 +515,31 @@ def collect_source_hidden_hf(model, tokenizer, prompts: list[str], device: torch
     return out.hidden_states[-1][rows, last_idx].detach().float()
 
 
-def _build_hf_teacher_batch(model, tokenizer, projector, cases: list[DistillCase], src: torch.Tensor, device: torch.device):
+def _project_latent_sequence(
+    projector: nn.Module,
+    src: torch.Tensor,
+    latent_steps: int,
+    model_dtype: torch.dtype,
+) -> torch.Tensor:
+    if latent_steps < 1:
+        raise ValueError(f"latent_steps must be >= 1, got {latent_steps}")
+    latents = []
+    hidden = src.to(dtype=torch.float32)
+    for _ in range(latent_steps):
+        hidden = projector(hidden)
+        latents.append(hidden.to(dtype=model_dtype))
+    return torch.stack(latents, dim=1)
+
+
+def _build_hf_teacher_batch(
+    model,
+    tokenizer,
+    projector,
+    cases: list[DistillCase],
+    src: torch.Tensor,
+    device: torch.device,
+    latent_steps: int,
+):
     embed = model.get_input_embeddings()
     model_dtype = next(model.parameters()).dtype
     seq_embeds = []
@@ -477,15 +550,25 @@ def _build_hf_teacher_batch(model, tokenizer, projector, cases: list[DistillCase
         prompt_ids = torch.tensor(tokenizer.encode(case.prompt, add_special_tokens=False), device=device, dtype=torch.long)
         answer_ids = torch.tensor(_answer_token_ids(tokenizer, case), device=device, dtype=torch.long)
         prompt_embeds = embed(prompt_ids).detach()
-        latent = projector(src[i:i + 1].to(device=device, dtype=torch.float32)).to(dtype=model_dtype)
+        latents = _project_latent_sequence(
+            projector,
+            src[i:i + 1].to(device=device, dtype=torch.float32),
+            latent_steps,
+            model_dtype,
+        ).squeeze(0)
         if answer_ids.numel() > 1:
             answer_prefix = embed(answer_ids[:-1]).detach()
-            parts = [prompt_embeds, latent, answer_prefix]
+            parts = [prompt_embeds, latents, answer_prefix]
         else:
-            parts = [prompt_embeds, latent]
+            parts = [prompt_embeds, latents]
         sample_embeds = torch.cat(parts, dim=0)
-        latent_pos = prompt_embeds.size(0)
-        positions = torch.arange(latent_pos, latent_pos + answer_ids.numel(), device=device, dtype=torch.long)
+        first_answer_position = prompt_embeds.size(0) + latent_steps - 1
+        positions = torch.arange(
+            first_answer_position,
+            first_answer_position + answer_ids.numel(),
+            device=device,
+            dtype=torch.long,
+        )
         seq_embeds.append(sample_embeds)
         answer_targets.append(answer_ids)
         answer_positions.append(positions)
@@ -515,6 +598,7 @@ def train_projector_hf_teacher_forcing(
     lr: float,
     weight_decay: float,
     device: torch.device,
+    latent_steps: int,
 ) -> list[dict]:
     for p in model.parameters():
         p.requires_grad_(False)
@@ -535,7 +619,7 @@ def train_projector_hf_teacher_forcing(
             with torch.no_grad():
                 src = collect_source_hidden_hf(model, tokenizer, prompts, device)
             inputs_embeds, attention_mask, flat_positions, targets = _build_hf_teacher_batch(
-                model, tokenizer, projector, batch_cases, src, device
+                model, tokenizer, projector, batch_cases, src, device, latent_steps
             )
             out = model(
                 inputs_embeds=inputs_embeds,
@@ -557,7 +641,15 @@ def train_projector_hf_teacher_forcing(
 
 
 @torch.no_grad()
-def generate_hf_with_latent(model, tokenizer, projector, case: DistillCase, max_new_tokens: int, device: torch.device) -> str:
+def generate_hf_with_latent(
+    model,
+    tokenizer,
+    projector,
+    case: DistillCase,
+    max_new_tokens: int,
+    device: torch.device,
+    latent_steps: int,
+) -> str:
     model.eval()
     projector.eval()
     prompt_ids = torch.tensor(tokenizer.encode(case.prompt, add_special_tokens=False), device=device, dtype=torch.long).unsqueeze(0)
@@ -572,8 +664,8 @@ def generate_hf_with_latent(model, tokenizer, projector, case: DistillCase, max_
     src = out.hidden_states[-1][:, -1].float()
     embed = model.get_input_embeddings()
     prompt_embeds = embed(prompt_ids).detach()
-    latent = projector(src).to(dtype=prompt_embeds.dtype).unsqueeze(1)
-    inputs_embeds = torch.cat([prompt_embeds, latent], dim=1)
+    latents = _project_latent_sequence(projector, src, latent_steps, prompt_embeds.dtype)
+    inputs_embeds = torch.cat([prompt_embeds, latents], dim=1)
     attention_mask = torch.ones(inputs_embeds.shape[:2], device=device, dtype=torch.long)
     generated = []
     past = None
@@ -592,10 +684,18 @@ def generate_hf_with_latent(model, tokenizer, projector, case: DistillCase, max_
 
 
 @torch.no_grad()
-def evaluate_hf_teacher_forcing(model, tokenizer, projector, cases: list[DistillCase], max_new_tokens: int, device: torch.device) -> dict:
+def evaluate_hf_teacher_forcing(
+    model,
+    tokenizer,
+    projector,
+    cases: list[DistillCase],
+    max_new_tokens: int,
+    device: torch.device,
+    latent_steps: int,
+) -> dict:
     details = []
     for case in cases:
-        text = generate_hf_with_latent(model, tokenizer, projector, case, max_new_tokens, device)
+        text = generate_hf_with_latent(model, tokenizer, projector, case, max_new_tokens, device, latent_steps)
         answer_only = extract_answer_only(case.task, text)
         contains_expected = contains_expected_answer(case.task, text, case.expected)
         hit = answer_only == case.expected
@@ -650,11 +750,20 @@ def run_hf_teacher_forcing(args) -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         device=device,
+        latent_steps=args.latent_steps,
     )
     eval_result = None
     if not args.skip_eval:
         print("Evaluating HF latent projector...", flush=True)
-        eval_result = evaluate_hf_teacher_forcing(model, tokenizer, projector, eval_cases, args.max_new_tokens, device)
+        eval_result = evaluate_hf_teacher_forcing(
+            model,
+            tokenizer,
+            projector,
+            eval_cases,
+            args.max_new_tokens,
+            device,
+            args.latent_steps,
+        )
         print(
             f"hf_eval_acc={eval_result['accuracy'] * 100:.1f}% "
             f"contains_acc={eval_result['contains_accuracy'] * 100:.1f}%",
