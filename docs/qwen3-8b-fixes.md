@@ -4460,3 +4460,4177 @@ B1.8 仍然没有让 answer decode 泛化，accuracy / contains accuracy 都是 
 ```
 
 当前判断：B 线还不能证明“hidden latent 自然会算术推理”，但现在已经能定位瓶颈：不是 token decode，而是 latent state 没有被训练成可读、可更新、可组合的中间变量状态。
+
+### 47.17 B1.9 numeric state embedding 直接监督 latent state（2026-06-18）
+
+承接 §47.16，本轮把中间变量监督从“旁路 probe 读取 latent”改成“直接塑形 latent output hidden”：为整数值域建立 trainable numeric embedding table，并把每个 latent step 的 output hidden 拉近到对应中间变量的 embedding。
+
+目标监督仍是：
+
+```text
+latent_1 output_hidden -> embedding(sum)     where sum     = a + b
+latent_2 output_hidden -> embedding(product) where product = sum * c
+latent_3 output_hidden -> embedding(final)   where final   = product - d
+latent_4 output_hidden -> embedding(final)   # answer-ready state
+```
+
+#### 47.17.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `NumericStateEmbedding`：整数值域 `state_min_value..state_max_value` 对应一个可学习 embedding table。
+- 新增 `_numeric_state_embedding_loss()`：
+
+```text
+state_embedding_loss = CE(cosine(output_hidden_i, numeric_embedding_table) / temperature, value_i)
+                     + state_embedding_mse_weight * MSE(RMSNorm(output_hidden_i), RMSNorm(embedding(value_i)))
+```
+
+- `train_projector_hf_teacher_forcing()` 新增 numeric state embedding auxiliary loss：
+
+```text
+loss = answer_CE
+     + step_hidden_loss_weight * output_hidden_MSE
+     + state_embedding_loss_weight * state_embedding_loss
+```
+
+- 新增 CLI：
+
+```text
+--state-embedding-loss-weight
+--state-embedding-mse-weight
+```
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.17.2 B1.9 smoke 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic,
+train_cases=64, eval_cases=16, context_len=512,
+latent_steps=4,
+projector_kind=stepwise, max_latent_steps=4,
+latent_step_curriculum=linear,
+step_hidden_loss_weight=0.2, step_hidden_mode=output,
+state_embedding_loss_weight=0.5, state_embedding_mse_weight=0.1,
+state_min_value=-256, state_max_value=2048,
+epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total loss | 12.1663 -> 4.0014 |
+| CE loss | 8.1135 -> 1.3454 |
+| step output-hidden loss | 0.2930 -> 0.8245 |
+| state embedding loss | 7.9898 -> 4.9829 |
+| state embedding CE | 7.7891 -> 4.7971 |
+| state embedding MSE | 2.0072 -> 1.8583 |
+| state embedding acc | 0.0% -> 2.7% |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| elapsed | 198.9s |
+
+代表输出：
+
+```text
+142
+103
+427
+103
+127
+101
+103
+297
+103
+101
+103
+103
+595
+427
+201
+472
+```
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b19_arithmetic_k4_state_embed_w05.json`
+- `needle_sq_results/latent_projector_b19_arithmetic_k4_state_embed_w05.pt`
+
+#### 47.17.3 结论
+
+B1.9 仍是负结果：accuracy / contains accuracy 都是 0%。并且 numeric embedding 直接监督没有比 B1.8 probe 监督更强：
+
+1. state embedding loss 明显下降，但 state embedding acc 只有 2.7%，低于 B1.8 probe acc 的 10.5%。
+2. answer CE 继续下降到 1.3454，但输出仍是 `101/103/127/427/...` 这类 answer-like 错误整数，说明 decode 侧仍在拟合答案分布而不是执行算术。
+3. 直接拉近到 numeric embedding 并没有自动形成可组合状态机；当前 transition 仍缺少“从 operand 更新 state”的显式结构。
+
+下一步如果继续 B 线，不应再只增加 auxiliary loss，而应转向 B2：显式 state-machine trainer，把 transition 拆成 `read operands -> update sum -> update product -> update final -> decode`，并单独验证每个 transition 的数值更新准确率。
+
+### 47.18 B2 arithmetic state-machine trainer（2026-06-18）
+
+承接 §47.17，本轮不再继续给 `stepwise` projector 堆旁路辅助损失，而是新增一个显式 arithmetic state-machine projector：latent step 本身按 phase 组织为 `SUM -> PRODUCT -> FINAL`，并在 projector 内部挂 transition heads 来监督和度量每一步数值状态更新。
+
+目标：
+
+```text
+prompt hidden
+  -> transition_1(SUM phase)     -> latent_sum     -> value = a + b
+  -> transition_2(PRODUCT phase) -> latent_product -> value = (a + b) * c
+  -> transition_3(FINAL phase)   -> latent_final   -> value = (a + b) * c - d
+  -> answer-only decode
+```
+
+#### 47.18.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `ArithmeticStateMachineProjector`，作为新的 `--projector-kind arithmetic_state_machine`：
+  - 每步有独立 transition；
+  - 每步加 `step_embed`；
+  - 每步还加 phase embedding：`SUM / PRODUCT / FINAL`；
+  - projector 内部自带 `value_heads` 和 `phase_heads`，用于 transition trainer 和指标统计。
+- 新增 `ArithmeticTransitionTargets` / `_build_arithmetic_transition_targets()`：从 `a/b/c/d` 构造每步 `(phase, value)` target。
+- 新增 `_arithmetic_state_machine_loss_and_metrics()`：
+
+```text
+state_machine_loss = value_weight * CE(value_head(latent_i), value_i)
+                   + phase_weight * CE(phase_head(latent_i), phase_i)
+```
+
+- 新增 `evaluate_arithmetic_state_machine_hf()`，在 eval set 上单独报告：
+  - value accuracy
+  - phase accuracy
+  - transition accuracy
+  - sum/product/final accuracy
+  - full sequence accuracy
+- 新增 CLI：
+
+```text
+--projector-kind arithmetic_state_machine
+--arithmetic-state-machine-weight
+--arithmetic-state-machine-value-weight
+--arithmetic-state-machine-phase-weight
+--arithmetic-state-machine-source {input,output}
+--arithmetic-state-machine-no-repeat-final
+```
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.18.2 B2 smoke 结果
+
+命令参数：
+
+```text
+model=Qwen3-0.6B, task=arithmetic,
+train_cases=64, eval_cases=16, context_len=512,
+latent_steps=3,
+projector_kind=arithmetic_state_machine, max_latent_steps=3,
+latent_step_curriculum=linear,
+arithmetic_state_machine_weight=1.0,
+arithmetic_state_machine_value_weight=1.0,
+arithmetic_state_machine_phase_weight=0.2,
+arithmetic_state_machine_source=output,
+state_min_value=-256, state_max_value=2048,
+epochs=50, batch_size=8, lr=1e-4, max_new_tokens=16
+```
+
+训练结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total loss | 17.9845 -> 4.1787 |
+| CE loss | 8.5761 -> 1.5582 |
+| state-machine loss | 9.4030 -> 2.6222 |
+| value CE | 9.1767 -> 2.6220 |
+| phase CE | 1.1315 -> 0.0014 |
+| train transition acc | 0.0% -> 26.0% |
+| train sequence acc | 0.0% -> 3.1% |
+| train sum acc | 0.0% -> 14.1% |
+| train product acc | 0.0% -> 43.8% |
+| train final acc | 0.0% -> 20.3% |
+| answer-only acc | 0.0% |
+| contains acc | 0.0% |
+| eval transition acc | 0.0% |
+| eval sequence acc | 0.0% |
+| elapsed | 126.5s |
+
+代表输出：
+
+```text
+104
+103
+622
+145
+111
+427
+653
+214
+627
+1136
+1166
+624
+417
+347
+417
+652
+```
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b20_arithmetic_k3_state_machine_w1.json`
+- `needle_sq_results/latent_projector_b20_arithmetic_k3_state_machine_w1.pt`
+
+#### 47.18.3 结论
+
+B2 比 B1.9 更有诊断价值，但仍是负结果：
+
+1. **phase 学会了，value 没学会泛化**：eval phase acc = 100%，但 eval value / transition / sequence acc 都是 0%。说明模型能区分当前位置应该是 `SUM/PRODUCT/FINAL`，但没有学到数值更新规则。
+2. **训练集 transition acc 有上升**：train transition acc 到 26.0%，product step 到 43.8%，说明 explicit state-machine trainer 至少能把一部分训练样本的中间状态写进 latent。
+3. **泛化为 0**：eval transition acc 仍是 0%，answer-only acc 也仍是 0%。这说明当前 B2 仍主要是在拟合训练样本映射，而不是学习可组合 arithmetic update。
+4. **answer CE 下降仍不等于计算**：CE 到 1.5582，但输出仍是 answer-like 错误整数。
+
+更新后的判断：B2 证实了问题已经从“decode 失败”进一步定位到“value transition 没有泛化”。下一步如果继续，应该先脱离 LLM decode，做一个纯 latent arithmetic transition micro-benchmark：给定显式数值 code / operand code，要求 transition 模块在 held-out 数值组合上预测 sum/product/final；只有这个 micro-benchmark 过了，再接回 frozen LLM decode。
+
+### 47.19 B2.1 pure latent arithmetic transition micro-benchmark（2026-06-18）
+
+承接 §47.18，本轮先完全脱离 HF/LLM decode，只测试 latent transition 模块本身是否能在 held-out `(a,b,c,d)` 数值组合上学习：
+
+```text
+explicit operand codes(a,b,c,d)
+  -> tuple encoder -> initial latent
+  -> transition_1 -> predict sum     = a + b
+  -> transition_2 -> predict product = (a + b) * c
+  -> transition_3 -> predict final   = (a + b) * c - d
+```
+
+这个实验的目的不是生成答案文本，而是直接验证“latent state machine 是否具备数值更新泛化能力”。
+
+#### 47.19.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `PureArithmeticTuple`：纯数值 tuple，不依赖 tokenizer / prompt / LLM。
+- 新增 `PureArithmeticTupleEncoder`：把显式 operand code `(a,b,c,d)` 编码成初始 latent。
+- 新增 `PureLatentArithmeticTransitionModel`：`tuple_encoder + ArithmeticStateMachineProjector`。
+- 新增 `build_pure_arithmetic_tuples()`：生成唯一 held-out tuple 组合。
+- 新增 `_build_pure_arithmetic_transition_targets()`：构造 `sum/product/final` 三步 value targets。
+- 新增 `train_pure_latent_arithmetic_transition()` / `evaluate_pure_latent_arithmetic_transition()`。
+- 新增 `run_pure_latent_arithmetic_benchmark()`，通过 `--pure-latent-arithmetic` 直接绕开 HF/TinyLLM 路径。
+- `--model` 从 argparse required 改成运行时校验：pure micro-benchmark 不需要 model；非 pure 模式仍要求 `--model`。
+
+新增 CLI：
+
+```text
+--pure-latent-arithmetic
+--pure-hidden-size
+--pure-arith-a-min / --pure-arith-a-max
+--pure-arith-b-min / --pure-arith-b-max
+--pure-arith-c-min / --pure-arith-c-max
+--pure-arith-d-min / --pure-arith-d-max
+--pure-arith-value-weight
+--pure-arith-phase-weight
+```
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.19.2 B2.1 micro-benchmark 结果
+
+命令参数：
+
+```text
+pure_latent_arithmetic=true,
+train_cases=4096, eval_cases=1024,
+latent_steps=3,
+epochs=80, batch_size=256, lr=3e-4,
+pure_hidden_size=128,
+state_min_value=-256, state_max_value=2048,
+pure_arith_value_weight=1.0,
+pure_arith_phase_weight=0.0
+```
+
+训练集结果：
+
+| 指标 | 结果 |
+|---|---:|
+| loss / value CE | 7.6035 -> 1.3839 |
+| transition acc | 0.2% -> 32.2% |
+| sequence acc | 0.0% -> 4.4% |
+| sum acc | 0.5% -> 23.1% |
+| product acc | 0.1% -> 37.6% |
+| final acc | 0.1% -> 35.9% |
+
+held-out eval 结果：
+
+| 指标 | 结果 |
+|---|---:|
+| loss / value CE | 6.4072 |
+| value acc | 3.4% |
+| transition acc | 1.5% |
+| sequence acc | 0.0% |
+| sum acc | 2.3% |
+| product acc | 1.7% |
+| final acc | 0.4% |
+| value MAE | 45.65 |
+| elapsed | 69.9s |
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b21_pure_arithmetic_transition.json`
+- `needle_sq_results/latent_projector_b21_pure_arithmetic_transition.pt`
+
+#### 47.19.3 结论
+
+B2.1 结果说明：即使去掉 LLM decode，只保留显式 operand code + latent transition，当前 MLP/RMSLinear state machine 仍没有学到可泛化的算术更新规则。
+
+关键观察：
+
+1. **训练集能拟合一部分，但远未学透**：80 epoch 后训练 transition acc 只有 32.2%，sequence acc 只有 4.4%。
+2. **held-out 泛化几乎为零**：eval transition acc 1.5%，sequence acc 0.0%，final acc 0.4%。
+3. **这排除了 LLM decode 作为主瓶颈**：纯 latent micro-benchmark 都不过，说明问题在数值表示与 transition 算法本身。
+4. **当前 embedding classification 不适合学习组合算术**：随机/可学习离散 value embedding + MLP transition 更像查表/插值，不自然表示加法和乘法。
+
+更新后的判断：下一步不应继续接 frozen LLM，也不应继续扩大 hidden size 或 epoch。应先把 pure micro-benchmark 改成更算法化的数值表示，例如：
+
+```text
+B2.2: structured numeric representation
+  - 输入显式 scalar / normalized scalar / digit representation，而不是纯 learned value id embedding
+  - transition head 同时做 regression + digit classification
+  - 先要求 held-out sum/product/final sequence acc 明显非零，再回接 latent decode
+```
+
+### 47.20 B2.2 structured numeric representation（2026-06-22）
+
+承接 §47.19，本轮把 pure latent micro-benchmark 的数值表示从纯 learned value id embedding 改为更结构化的表示，并新增 regression + digit classification head。
+
+核心变化：
+
+```text
+operand value
+  -> normalized scalar feature
+  -> decimal digit one-hot feature
+  -> structured tuple encoder
+  -> latent transitions
+  -> value classification head      # 可选，保持 B2.1 可比
+  -> scalar regression head         # 新增
+  -> decimal digit classification   # 新增
+```
+
+#### 47.20.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `PureStructuredArithmeticTupleEncoder`：每个 operand 用 normalized scalar + decimal digit one-hot 表示，再按 `a/b/c/d` slot 聚合成 initial latent。
+- `PureLatentArithmeticTransitionModel` 新增：
+  - `numeric_representation={id_embedding, structured}`；
+  - 每个 latent step 的 `regression_heads`；
+  - 每个 latent step 的 `digit_heads`。
+- 新增 `_pure_structured_numeric_loss_and_metrics()`：
+
+```text
+structured_loss = regression_weight * SmoothL1(regressed_scalar, normalized_target_value)
+                + digit_weight * CE(predicted_digits, target_decimal_digits)
+```
+
+- 新增 structured metrics：
+  - digit accuracy；
+  - digit exact value accuracy；
+  - digit sequence accuracy；
+  - regression MAE；
+  - regression rounded exact accuracy。
+- 新增 CLI：
+
+```text
+--pure-numeric-representation {id_embedding,structured}
+--pure-arith-regression-weight
+--pure-arith-digit-weight
+```
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.20.2 B2.2 structured-only 结果
+
+命令参数：
+
+```text
+pure_latent_arithmetic=true,
+pure_numeric_representation=structured,
+train_cases=4096, eval_cases=1024,
+latent_steps=3,
+epochs=80, batch_size=256, lr=3e-4,
+pure_hidden_size=128,
+pure_arith_value_weight=0.0,
+pure_arith_phase_weight=0.0,
+pure_arith_regression_weight=1.0,
+pure_arith_digit_weight=1.0
+```
+
+训练集结果：
+
+| 指标 | 结果 |
+|---|---:|
+| structured loss | 1.8927 -> 0.9052 |
+| regression loss | 0.0562 -> 0.0024 |
+| digit CE | 1.8365 -> 0.9028 |
+| digit accuracy | 35.2% -> 66.3% |
+| digit exact value acc | 0.4% -> 14.2% |
+| digit sequence acc | 0.0% -> 0.1% |
+| regression MAE | 283.8 -> 61.7 |
+| regression rounded acc | 0.1% -> 0.6% |
+
+held-out eval：
+
+| 指标 | 结果 |
+|---|---:|
+| structured loss | 0.9669 |
+| digit accuracy | 61.7% |
+| digit exact value acc | 9.1% |
+| digit sequence acc | 0.0% |
+| regression MAE | 64.4 |
+| regression rounded acc | 0.5% |
+| elapsed | 61.5s |
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b22_pure_arithmetic_structured.json`
+- `needle_sq_results/latent_projector_b22_pure_arithmetic_structured.pt`
+
+#### 47.20.3 B2.2 structured + value CE 结果
+
+命令参数和上面相同，但打开 value CE：
+
+```text
+pure_arith_value_weight=1.0,
+pure_arith_regression_weight=1.0,
+pure_arith_digit_weight=1.0
+```
+
+训练集结果：
+
+| 指标 | 结果 |
+|---|---:|
+| total training loss | 9.5638 -> 4.1109 |
+| value CE | 7.6557 -> 3.0637 |
+| structured loss | 1.9080 -> 1.0472 |
+| value-head transition acc | 0.1% -> 10.7% |
+| digit exact value acc | 0.4% -> 8.2% |
+| sequence acc | 0.0% -> 0.0% |
+| regression MAE | 292.5 -> 81.5 |
+
+held-out eval：
+
+| 指标 | 结果 |
+|---|---:|
+| value-head transition acc | 3.0% |
+| sequence acc | 0.0% |
+| sum acc | 5.3% |
+| product acc | 3.4% |
+| final acc | 0.2% |
+| digit exact value acc | 5.6% |
+| digit sequence acc | 0.0% |
+| value-head MAE | 18.6 |
+| regression MAE | 83.3 |
+| regression rounded acc | 0.5% |
+| elapsed | 61.2s |
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b22_pure_arithmetic_structured_value.json`
+- `needle_sq_results/latent_projector_b22_pure_arithmetic_structured_value.pt`
+
+#### 47.20.4 结论
+
+B2.2 比 B2.1 有局部改善，但仍没有解决组合泛化：
+
+1. **structured digit 表示明显优于纯 value-id embedding 的部分指标**：structured-only eval digit exact value acc 达到 9.1%，高于 B2.1 的 eval transition acc 1.5%。说明 digit representation 的确比随机 learned id 更有结构。
+2. **sequence 仍为 0**：无论 structured-only 还是 structured + value CE，held-out sequence acc 都是 0.0%。这意味着三步 `sum/product/final` 组合更新仍没有成立。
+3. **regression 学到近似但不能精确**：regression MAE 从数百降到约 64/83，但 rounded exact acc 只有约 0.5%，不足以作为离散算术状态。
+4. **value CE 和 structured loss 会互相牵制**：打开 value CE 后 value-head eval transition acc 到 3.0%，但 digit exact value acc 从 9.1% 降到 5.6%。说明当前多头目标没有自然对齐成同一套可组合数值表示。
+
+更新后的判断：structured numeric representation 是正确方向，但“单个 latent 向量 + MLP transition + 多头监督”仍不够算法化。下一步如果继续，应把数值状态显式拆成 digit-wise state，并让 transition 按算术规则处理 carry / multiplication decomposition，而不是让一个 dense latent 自己发现十进制进位规则。
+
+### 47.21 B2.3 digit-wise state + carry/multiply/borrow decomposition（2026-06-22）
+
+承接 §47.20，本轮不再让 dense latent 自己发现十进制进位规则，而是先实现一个纯 digit-wise arithmetic state-machine harness：把数值状态拆成 LSD-first 十进制 digit slots，并显式执行：
+
+```text
+add:      a_i + b_i + carry_i -> sum_i, carry_{i+1}
+multiply: sum_i * c + carry_i -> product_i, carry_{i+1}
+subtract: lhs_i - rhs_i - borrow_i -> final_i, borrow_{i+1}
+sign:     product >= d ? positive : negative
+```
+
+这里 B2.3 先做 deterministic algorithmic baseline，目标是验证 digit-wise state / carry trace / metrics 本身是否正确；不是继续训练 dense MLP。
+
+#### 47.21.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `PureDigitArithmeticTrace`：保存 `sum_digits/product_digits/final_digits/final_sign/add_carry/mul_carry/sub_borrow/overflow_mask`。
+- 新增真实十进制 LSD-first helper：
+  - `_positive_values_to_lsd_digits()`；
+  - `_lsd_digits_to_positive_values()`；
+  - `_infer_pure_digit_num_digits()`。
+- 新增 direct target trace：`_build_direct_digit_arithmetic_trace()`。
+- 新增 algorithmic digit-wise trace：`_build_algorithmic_digit_arithmetic_trace()`。
+- 新增 `_pure_digit_trace_metrics()`，统计：
+  - sum/product/final value accuracy；
+  - sequence value accuracy；
+  - digit accuracy；
+  - add carry / multiply carry / subtract borrow accuracy；
+  - final sign accuracy；
+  - MAE / overflow cases。
+- 新增 `run_pure_digit_arithmetic_benchmark()`，通过 `--pure-digit-arithmetic` 直接运行 digit-wise deterministic baseline。
+- 新增 CLI：
+
+```text
+--pure-digit-arithmetic
+--pure-digit-mode deterministic
+--pure-digit-num-digits  # 0 表示自动推断
+```
+
+本地和远端检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+说明：本地 smoke 运行仍被 macOS `/usr/bin/python3` 缺少 torch 阻塞；远端 smoke 正常。
+
+#### 47.21.2 B2.3 deterministic digit-wise 结果
+
+命令参数：
+
+```text
+pure_digit_arithmetic=true,
+pure_digit_mode=deterministic,
+train_cases=4096,
+eval_cases=1024,
+batch_size=256,
+pure_digit_num_digits=0  # auto -> 4 digits
+```
+
+held-out eval：
+
+| 指标 | 结果 |
+|---|---:|
+| num digits | 4 |
+| valid cases | 1024 |
+| overflow cases | 0 |
+| sum value acc | 100.0% |
+| product value acc | 100.0% |
+| final value acc | 100.0% |
+| sequence value acc | 100.0% |
+| sum digit acc | 100.0% |
+| product digit acc | 100.0% |
+| final digit acc | 100.0% |
+| add carry acc | 100.0% |
+| multiply carry acc | 100.0% |
+| subtract borrow acc | 100.0% |
+| final sign acc | 100.0% |
+| sum/product/final MAE | 0.0 / 0.0 / 0.0 |
+| elapsed | 0.067s |
+
+落盘文件：
+
+- `needle_sq_results/latent_projector_b23_pure_digit_arithmetic.json`
+- `needle_sq_results/latent_projector_b23_pure_digit_arithmetic.pt`
+
+#### 47.21.3 结论
+
+B2.3 证明：一旦把状态显式拆成 digit slots，并显式建模 carry / multiplication carry / borrow，held-out `(a,b,c,d)` 上可以稳定达到 100% sequence accuracy。
+
+这和 B2.1/B2.2 的对比很明确：
+
+| 路线 | held-out sequence acc | 判断 |
+|---|---:|---|
+| B2.1 learned value-id latent | 0.0% | dense latent + value CE 不会自然学出组合算术。 |
+| B2.2 structured scalar/digit heads | 0.0% | digit 表示有帮助，但 dense transition 仍不会自动学 carry。 |
+| B2.3 explicit digit-wise state machine | 100.0% | 算法结构本身是关键。 |
+
+更新后的判断：后续如果要把这条线接回“hidden-state agent reasoning”，不应再尝试让单个 dense hidden 自发学习算术，而应把 latent state 设计成结构化 slots：
+
+```text
+latent_state = {digits[], sign, carry, borrow, phase, operands}
+transition = local digit operator + carry propagation
+```
+
+下一步可以做 B2.4：trainable digit-wise operator。即保持 B2.3 的 digit slots / carry trace 结构，但把每个局部算子 `digit_i, carry_i -> digit_out, carry_out` 改成小模型训练，检查它是否能在 held-out digit combinations 上泛化到 100%，再考虑接回 LLM decode。
+
+### 47.22 B2.4 trainable local digit operator（2026-06-22）
+
+承接 §47.21，本轮保持 B2.3 的显式 digit slots / carry trace / LSD-first 结构不变，但把局部十进制规则从 deterministic code 改成可训练小模型：
+
+```text
+add:      x_digit, y_digit, carry_in -> digit_out, carry_out
+multiply: x_digit, c,       carry_in -> digit_out, carry_out
+subtract: x_digit, y_digit, borrow_in -> digit_out, borrow_out
+```
+
+核心问题：如果只训练一部分 local digit combinations，小 MLP operator 能否在 held-out digit combinations 上泛化到 100%，并继续让完整 `(a,b,c,d)` tuple sequence 达到 100%。
+
+#### 47.22.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `DigitOperatorExample`：保存单个局部 digit transition 的 `op/x/y/carry_in/digit_out/carry_out`。
+- 新增 `TrainableDigitLocalOperator`：one-hot digit/carry/scalar feature + MLP，输出 `digit_head` 和 `carry_head`。
+- 新增 `TrainableDigitWiseOperator`：分别持有 add / multiply / subtract 三个 local operator。
+- 新增 `enumerate_digit_operator_examples()`：枚举完整 local truth table。
+- 新增 `split_digit_operator_examples()`：按 stable hash 把 `(op,x,y,carry_in)` 组合拆成 train / held-out。
+- 新增 `_build_trainable_digit_arithmetic_trace()`：用 trainable local operator 执行完整 B2.3 tuple trace。
+- 新增 `train_pure_digit_operator()` / `evaluate_trainable_digit_operator()` / `evaluate_trainable_digit_tuple_arithmetic()`。
+- `run_pure_digit_arithmetic_benchmark()` 新增 `--pure-digit-mode trainable` 分支。
+- 修正 `evaluate_trainable_digit_operator()`：digit-combination table 很小，最终 operator eval 改为一次性评估，避免 per-op metrics 被 batch total 加权后失真；overall transition metrics 不受这个显示问题影响。
+
+新增 CLI：
+
+```text
+--pure-digit-mode {deterministic,trainable,lookup}
+--pure-digit-operator-hidden-size
+--pure-digit-operator-depth
+--pure-digit-combo-heldout-frac
+--pure-digit-combo-split-seed
+--pure-digit-carry-loss-weight
+```
+
+本地检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.22.2 B2.4 trainable local operator 结果
+
+命令参数：
+
+```text
+pure_digit_arithmetic=true,
+pure_digit_mode=trainable,
+train_cases=4096,
+eval_cases=1024,
+num_digits=4,
+epochs=500,
+batch_size=128,
+lr=1e-3,
+weight_decay=0,
+pure_digit_operator_hidden_size=128,
+pure_digit_operator_depth=3,
+pure_digit_combo_heldout_frac=0.2,
+pure_digit_combo_split_seed=0,
+pure_digit_carry_loss_weight=1.0,
+pure_arith_c_min=2,
+pure_arith_c_max=9
+```
+
+local digit-combination split：
+
+| split | examples |
+|---|---:|
+| train | 904 |
+| held-out | 216 |
+
+训练过程最后一轮：
+
+```text
+digit_op_epoch=500 train_trans=100.0% heldout_trans=66.7% tuple_seq=67.6%
+```
+
+最终 operator-level 结果（per-op 指标用 checkpoint 重新按完整 split 一次性计算）：
+
+| 指标 | train local combos | held-out local combos |
+|---|---:|---:|
+| digit accuracy | 100.0% | 68.1% |
+| carry accuracy | 100.0% | 95.4% |
+| transition accuracy | 100.0% | 66.7% |
+| add transition accuracy | 100.0% | 93.2% |
+| multiply transition accuracy | 100.0% | 50.0% |
+| subtract transition accuracy | 100.0% | 97.2% |
+
+完整 tuple-level held-out eval：
+
+| 指标 | 结果 |
+|---|---:|
+| valid cases | 1024 |
+| overflow cases | 0 |
+| sum value acc | 97.9% |
+| product value acc | 71.7% |
+| final value acc | 67.6% |
+| sequence value acc | 67.6% |
+| sum digit acc | 99.5% |
+| product digit acc | 91.7% |
+| final digit acc | 88.3% |
+| add carry acc | 100.0% |
+| multiply carry acc | 99.6% |
+| subtract borrow acc | 98.4% |
+| final sign acc | 99.7% |
+| product MAE | 250.24 |
+| final MAE | 378.20 |
+| elapsed | 519.5s |
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b24_trainable_digit_operator.json`
+- `needle_sq_results/latent_projector_b24_trainable_digit_operator.pt`
+
+#### 47.22.3 结论
+
+B2.4 是负结果：**trainable local digit operator 没有在 held-out digit combinations 上泛化到 100%**。
+
+关键观察：
+
+1. **训练 local combos 被完全记住**：train transition accuracy 达到 100.0%，说明容量足够拟合局部 truth table。
+2. **held-out local combos 只到 66.7%**：carry/head 大多能学会，held-out carry accuracy 95.4%，但 digit_out 泛化只有 68.1%。
+3. **乘法是主要瓶颈**：held-out multiply transition accuracy 只有 50.0%，远低于 add 的 93.2% 和 subtract 的 97.2%。这说明 `x_digit * c + carry_in -> digit_out` 不是普通 MLP 从缺失组合中自然外推出来的规则。
+4. **tuple sequence 受局部错误累积限制**：held-out tuple sequence accuracy 为 67.6%，和 held-out local transition 66.7% 接近；product/final 的 MAE 很大，说明少数乘法 digit 错误会被位权放大。
+5. **B2.3 的 100% 来自算法结构，不只是 digit slot 表示**：显式 slots / carry trace 是必要条件，但如果 local transition 仍是无结构 MLP，并且 local truth table 有 held-out holes，就不能保证组合泛化。
+
+更新后的判断：如果目标是 agent hidden state 中的可靠算术，下一步不应只把 local operator 做得更大；更合理的是把 primitive digit operator 本身也算法化或加硬约束：
+
+```text
+latent_state = structured digit slots + carry trace
+local_operator = constrained modular arithmetic / complete primitive table / differentiable circuit
+```
+
+也就是说，B2.4 把结论从“需要 digit-wise state”推进到“还需要算法化的 local transition”。
+
+### 47.23 B2.5 primitive lookup local digit operator（2026-06-22）
+
+承接 §47.22，本轮不再训练普通 MLP local operator，而是把同一个 local digit operator API 换成完整 primitive lookup table：
+
+```text
+op, x_digit, y_or_multiplier, carry_in
+  -> lookup table
+  -> digit_out, carry_out
+```
+
+这不是为了证明“手写算术当然能算对”，而是为了做 B2.4 的对照：
+
+```text
+B2.4: structured digit slots + learned MLP local transition + held-out local combos -> 失败
+B2.5: structured digit slots + complete primitive local transition table          -> 是否恢复 100%
+```
+
+#### 47.23.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `PrimitiveLookupDigitWiseOperator`：
+  - 和 `TrainableDigitWiseOperator` 暴露同样的 `forward_op(op, x, y, carry_in)` 接口；
+  - 内部注册 add / multiply / subtract 的完整 lookup table；
+  - 输出 one-hot-like logits，便于复用现有 operator-level CE / accuracy metrics；
+  - 不需要训练。
+- `run_pure_digit_arithmetic_benchmark()` 新增 `--pure-digit-mode lookup` 分支：
+  - 复用 B2.4 的 local-combo split；
+  - 同时报告 train local combos、held-out local combos、完整 tuple train/eval。
+- 远端和本地检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+```
+
+#### 47.23.2 B2.5 primitive lookup 结果
+
+命令参数：
+
+```text
+pure_digit_arithmetic=true,
+pure_digit_mode=lookup,
+train_cases=4096,
+eval_cases=1024,
+batch_size=256,
+train_device=cpu,
+pure_digit_num_digits=0  # auto -> 4 digits
+pure_digit_combo_heldout_frac=0.2,
+pure_digit_combo_split_seed=0,
+pure_arith_c_min=2,
+pure_arith_c_max=9
+```
+
+local digit-combination split 与 B2.4 相同：
+
+| split | examples |
+|---|---:|
+| train | 904 |
+| held-out | 216 |
+
+最终 operator-level 结果：
+
+| 指标 | train local combos | held-out local combos |
+|---|---:|---:|
+| digit accuracy | 100.0% | 100.0% |
+| carry accuracy | 100.0% | 100.0% |
+| transition accuracy | 100.0% | 100.0% |
+| add transition accuracy | 100.0% | 100.0% |
+| multiply transition accuracy | 100.0% | 100.0% |
+| subtract transition accuracy | 100.0% | 100.0% |
+
+完整 tuple-level held-out eval：
+
+| 指标 | 结果 |
+|---|---:|
+| valid cases | 1024 |
+| overflow cases | 0 |
+| sum value acc | 100.0% |
+| product value acc | 100.0% |
+| final value acc | 100.0% |
+| sequence value acc | 100.0% |
+| sum digit acc | 100.0% |
+| product digit acc | 100.0% |
+| final digit acc | 100.0% |
+| add carry acc | 100.0% |
+| multiply carry acc | 100.0% |
+| subtract borrow acc | 100.0% |
+| final sign acc | 100.0% |
+| sum/product/final MAE | 0.0 / 0.0 / 0.0 |
+| elapsed | 0.246s |
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b25_primitive_lookup_digit_operator.json`
+- `needle_sq_results/latent_projector_b25_primitive_lookup_digit_operator.pt`
+
+#### 47.23.3 结论
+
+B2.5 是正向对照：**一旦 local primitive 完整覆盖 / 算法化，同一套 digit slots + carry trace 可以恢复 100% held-out tuple sequence accuracy**。
+
+与 B2.4 的差异很集中：
+
+| 路线 | local transition | held-out local transition | held-out tuple sequence |
+|---|---|---:|---:|
+| B2.4 | trainable MLP，held-out combos 缺失 | 66.7% | 67.6% |
+| B2.5 | complete primitive lookup table | 100.0% | 100.0% |
+
+这说明 B2.4 的失败不是 digit slots / carry trace 的失败，而是 **无结构 MLP local transition 对缺失 primitive combos 的外推失败**。
+
+更新后的判断：如果继续 hidden-state reasoning，下一步不应再问“MLP 能不能自己发现 digit rule”，而应测试更接近真实可用系统的结构：
+
+```text
+structured latent state
+  + primitive/constrained local transition
+  + LLM decode bridge
+```
+
+也就是把 B2.5 的 primitive operator 接回 hidden-state / answer decode 路径，验证结构化 latent state 是否能成为 LLM 内部 reasoning substrate，而不是继续训练无约束 MLP 去猜算术表。
+
+### 47.24 B2.6 oracle structured state -> LLM decode bridge（2026-06-22）
+
+承接 §47.23，本轮把算术 transition 固定为已经验证过的 oracle structured state，不再测试 digit operator，而是单独测试最后一段 bridge：
+
+```text
+prompt
+  + oracle structured arithmetic state
+  -> small decode bridge -> latent input embeddings
+  -> frozen Qwen3-0.6B
+  -> answer tokens
+```
+
+目标是把失败点从“算术 transition”进一步拆出来：即使 final structured state 已经包含正确答案 digit/sign/carry trace，LLM 是否能通过一个小 bridge 读出这个状态并稳定输出答案。
+
+#### 47.24.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `OracleStructuredDecodeBridge`：把结构化 feature 映射成 `latent_steps × hidden_size` 的 LLM input embeddings。
+- 新增 `_oracle_structured_decode_features()`：为 arithmetic case 构造 oracle state feature，包含：
+  - operands scalar；
+  - sum/product/final digit one-hot；
+  - final sign；
+  - add carry / multiply carry / subtract borrow trace；
+  - overflow bit。
+- 新增 `_build_oracle_decode_bridge_batch()`：拼接 `prompt_embeds + bridge_latents + answer_prefix`，做 answer token teacher forcing。
+- 新增 `train_oracle_decode_bridge()`：冻结 HF 模型，只训练 bridge。
+- 新增 `generate_hf_with_oracle_decode_bridge()` / `evaluate_oracle_decode_bridge()`：用 bridge latent 做 greedy decode。
+- 新增 `run_oracle_decode_bridge()` 和 CLI：
+
+```text
+--oracle-decode-bridge
+--decode-bridge-hidden-size
+--decode-bridge-depth
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+git diff --check
+```
+
+#### 47.24.2 B2.6 smoke：64 train / 16 eval
+
+命令参数：
+
+```text
+model=Qwen3-0.6B,
+oracle_decode_bridge=true,
+task=arithmetic,
+train_cases=64,
+eval_cases=16,
+context_len=512,
+epochs=80,
+batch_size=8,
+lr=5e-4,
+latent_steps=4,
+decode_bridge_hidden_size=1024,
+decode_bridge_depth=2,
+hf_dtype=bfloat16
+```
+
+训练 teacher-forcing 指标：
+
+| 指标 | 结果 |
+|---|---:|
+| loss | 5.0503 -> 0.0007 |
+| token accuracy | 6.2% -> 100.0% |
+
+held-out greedy decode：
+
+| 指标 | 结果 |
+|---|---:|
+| eval cases | 16 |
+| answer-only accuracy | 6.2% |
+| contains accuracy | 6.2% |
+| elapsed | 141.9s |
+
+代表错误输出：
+
+```text
+expected=116  answer=176
+expected=85   answer=676
+expected=423  answer=441
+expected=1221 answer=112
+expected=74   answer=74  # only hit
+```
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b26_oracle_decode_bridge.json`
+- `needle_sq_results/latent_projector_b26_oracle_decode_bridge.pt`
+- `needle_sq_results/latent_projector_b26_oracle_decode_bridge.log`
+
+#### 47.24.3 B2.6 medium：256 train / 64 eval
+
+命令参数差异：
+
+```text
+train_cases=256,
+eval_cases=64,
+context_len=256,
+epochs=12,
+batch_size=32
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| train loss | 4.7282 -> 0.8156 |
+| train token accuracy | 8.6% -> 72.3% |
+| eval answer-only accuracy | 7.8% |
+| eval contains accuracy | 7.8% |
+| elapsed | 46.7s |
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b26_oracle_decode_bridge_n256.json`
+- `needle_sq_results/latent_projector_b26_oracle_decode_bridge_n256.pt`
+
+#### 47.24.4 结论
+
+B2.6 当前是负结果：**oracle structured state 已经包含正确答案，但小 bridge + frozen LLM decode 仍不能在 held-out arithmetic cases 上稳定读出答案**。
+
+关键观察：
+
+1. **bridge 可以过拟合训练 token**：64-case smoke 中 teacher-forcing token accuracy 到 100%，说明 bridge 有能力把训练样本状态映射到 frozen LLM 可接受的 answer-token 前缀。
+2. **held-out decode 泛化很弱**：64/16 设置 eval 只有 6.2%，256/64 设置 eval 只有 7.8%。输出通常是“像答案的整数”，但数字不对。
+3. **这不是 arithmetic transition 的问题**：B2.5 已经证明 structured state + primitive transition 是 100%；B2.6 的失败点在 `structured state -> LLM embedding/decode` 这段 bridge。
+4. **直接 MLP bridge 仍像查表**：即使输入是显式 digit/sign/carry feature，直接映射到 LLM embedding 后，frozen LLM 不会自然把这些 latent embeddings 当成“可读数字状态”。
+
+更新后的判断：要把 structured state 接回 LLM，不应只训练一个自由 MLP 把 state 投进 embedding 空间。下一步更合理的是给 decode bridge 加更强的语义约束，例如：
+
+```text
+B2.7 candidate:
+  structured state -> canonical textual state tokens -> LLM decode
+  structured state -> numeric token embedding composition
+  structured state -> supervised hidden target of "Final integer: <answer>"
+  bridge latent -> auxiliary decoder/probe must reconstruct digits before LLM decode
+```
+
+也就是说，当前 B 线已经定位出三个层次：
+
+```text
+1. dense hidden transition 学算术：失败
+2. structured slots + primitive transition：成功
+3. structured state -> frozen LLM decode bridge：当前失败
+```
+
+后续如果继续，应集中解决第 3 段 bridge 的可读性/语义对齐，而不是再训练算术 transition。
+
+### 47.25 B2.7 textual oracle decode sanity checks（2026-06-22）
+
+承接 §47.24，B2.6 说明自由 MLP bridge 不能把 structured state 稳定投到 frozen LLM 可读 embedding。B2.7 先退一步，不训练 bridge，而是把 oracle state 写成 canonical text，让 frozen Qwen3-0.6B 直接读文本，做两个 sanity check：
+
+```text
+B2.7a: prompt + "Oracle computed final integer: <answer>\nFinal integer:"
+B2.7b: prompt + final_sign/final_digits_lsd textual schema + "Final integer:"
+```
+
+目标是区分：
+
+```text
+1. LLM 是否能从文本中复读/抽取 final answer；
+2. LLM 是否能读懂我们当前的 LSD-first digit schema。
+```
+
+#### 47.25.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `_textual_oracle_suffix()`：构造两种 textual oracle suffix：
+  - `final_answer`：直接给最终整数；
+  - `digit_state`：给 `sum_digits_lsd/product_digits_lsd/final_sign/final_digits_lsd`，并提示 LSD-first 需要 reverse/drop leading zeros。
+- 新增 `generate_hf_textual_oracle()` / `evaluate_textual_oracle()`。
+- 新增 `run_textual_oracle_eval()` 和 CLI：
+
+```text
+--textual-oracle-eval
+--textual-oracle-mode {final_answer,digit_state}
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+git diff --check
+```
+
+#### 47.25.2 B2.7a textual final-answer oracle
+
+命令参数：
+
+```text
+model=Qwen3-0.6B,
+textual_oracle_eval=true,
+textual_oracle_mode=final_answer,
+task=arithmetic,
+eval_cases=128,
+context_len=256,
+max_new_tokens=16,
+hf_dtype=bfloat16
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| eval cases | 128 |
+| answer-only accuracy | 100.0% |
+| contains accuracy | 100.0% |
+| elapsed | 71.25s |
+
+代表输出：
+
+```text
+Oracle computed final integer: 116
+Final integer: 116
+Answer: 116
+```
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b27_textual_final_answer_oracle.json`
+- `needle_sq_results/latent_projector_b27_textual_final_answer_oracle.pt`
+
+#### 47.25.3 B2.7b textual digit-state oracle
+
+命令参数：
+
+```text
+model=Qwen3-0.6B,
+textual_oracle_eval=true,
+textual_oracle_mode=digit_state,
+task=arithmetic,
+eval_cases=128,
+context_len=256,
+max_new_tokens=16,
+hf_dtype=bfloat16,
+num_digits=4
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| eval cases | 128 |
+| answer-only accuracy | 2.3% |
+| contains accuracy | 2.3% |
+| elapsed | 70.28s |
+
+典型错误非常稳定：模型经常直接输出 LSD 顺序或补零后的数字，而不是 reverse/drop leading zeros 后的整数。
+
+```text
+expected=116  final_digits_lsd=6,1,1,0  answer=6110
+expected=85   final_digits_lsd=5,8,0,0  answer=5800
+expected=423  final_digits_lsd=3,2,4,0  answer=3240
+expected=145  final_digits_lsd=5,4,1,0  answer=5410
+expected=1221 final_digits_lsd=1,2,2,1  answer=1221  # palindrome-like hit
+```
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b27_textual_digit_state_oracle.json`
+- `needle_sq_results/latent_projector_b27_textual_digit_state_oracle.pt`
+
+#### 47.25.4 结论
+
+B2.7 结果非常清晰：
+
+1. **final-answer textual oracle 是 100%**：如果直接把最终整数写进文本，frozen LLM 可以稳定复读/抽取。说明基本 prompt、decode、eval pipeline 没问题。
+2. **当前 LSD digit schema 几乎不可读**：即使明确说明 `least-significant digit first; reverse it and drop leading zeros`，模型仍大多输出 LSD 顺序加零，例如 `116 -> 6110`。这说明当前 structured state schema 对 LLM 不是自然语义。
+3. **B2.6 bridge 失败有合理解释**：自由 MLP bridge 试图把 LSD digit slots 投到 embedding 空间；但 B2.7b 证明就算把这些 slots 写成显式文本，LLM 也不稳定会读，更不用说从连续 embedding 中读。
+
+更新后的判断：下一步不要直接做 B2.7c 的“LSD canonical token embedding composition”，因为离散文本 LSD schema 本身已经失败。更合理的下一步是先换成 LLM 更自然的语义表示：
+
+```text
+B2.8 candidate:
+  structured state -> canonical MSD decimal text, e.g. final_digits_msd=1,1,6
+  structured state -> explicit equation text, e.g. final_abs = 116, sign = positive
+  structured state -> natural language summary, e.g. The computed final integer is 116.
+```
+
+只有当离散 textual schema 本身能被 LLM 稳定读懂，再去测试 token embedding composition / hidden target alignment 才有意义。
+
+### 47.26 B2.8 natural textual schemas for structured state（2026-06-23）
+
+承接 §47.25，B2.7b 证明 LSD-first digit schema 对 frozen LLM 很不自然。因此本轮不做 embedding composition，而是先测试三种更自然的 textual schema：
+
+```text
+B2.8a MSD digits:       final_digits_msd=1,1,6
+B2.8b final_abs KV:     final_abs=116, final_sign=positive
+B2.8c natural summary:  The computed final integer is 116.
+```
+
+核心问题：如果 structured state 写成更接近 LLM 预训练分布的文本，LLM 能否稳定读出答案。
+
+#### 47.26.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 扩展 `_textual_oracle_suffix()`，新增三种 mode：
+  - `msd_digits`：`final_digits_msd=<digits>`，MSD-first，不需要 reverse；
+  - `final_abs`：`final_sign=<sign>, final_abs=<int>`；
+  - `natural_summary`：`The computed final integer is <int>.`。
+- 扩展 CLI：
+
+```text
+--textual-oracle-mode {final_answer,digit_state,msd_digits,final_abs,natural_summary}
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+git diff --check
+```
+
+#### 47.26.2 B2.8 结果
+
+共同参数：
+
+```text
+model=Qwen3-0.6B,
+textual_oracle_eval=true,
+task=arithmetic,
+eval_cases=128,
+context_len=256,
+max_new_tokens=16,
+hf_dtype=bfloat16,
+num_digits=4
+```
+
+| schema | answer-only acc | contains acc | elapsed | 判断 |
+|---|---:|---:|---:|---|
+| B2.7b `final_digits_lsd=6,1,1,0` | 2.3% | 2.3% | 70.28s | LLM 基本不会 reverse/drop zeros。 |
+| B2.8a `final_digits_msd=1,1,6` | 66.4% | 66.4% | 61.85s | 明显改善，但 digit-list 拼接仍不稳定。 |
+| B2.8b `final_abs=116, final_sign=positive` | 100.0% | 100.0% | 67.01s | KV integer field 可稳定读取。 |
+| B2.8c natural summary | 100.0% | 100.0% | 67.78s | 接近 B2.7a final-answer oracle。 |
+
+B2.8a 典型错误：
+
+```text
+expected=423 final_digits_msd=4,2,3 answer=1234
+expected=63  final_digits_msd=6,3   answer=123
+expected=601 final_digits_msd=6,0,1 answer=61
+expected=306 final_digits_msd=3,0,6 answer=36
+expected=499 final_digits_msd=4,9,9 answer=9999
+```
+
+B2.8b / B2.8c 典型输出：
+
+```text
+final_abs=116, final_sign=positive -> 116
+The computed final integer is 116. -> 116
+```
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b28_textual_msd_digits_oracle.json`
+- `needle_sq_results/latent_projector_b28_textual_msd_digits_oracle.pt`
+- `needle_sq_results/latent_projector_b28_textual_final_abs_oracle.json`
+- `needle_sq_results/latent_projector_b28_textual_final_abs_oracle.pt`
+- `needle_sq_results/latent_projector_b28_textual_natural_summary_oracle.json`
+- `needle_sq_results/latent_projector_b28_textual_natural_summary_oracle.pt`
+
+#### 47.26.3 结论
+
+B2.8 给出明确分层：
+
+1. **LLM 能读 canonical integer field**：`final_abs=<int>, final_sign=<sign>` 达到 100%。这说明只要 schema 对 LLM 是自然的 key-value integer，decode 没问题。
+2. **LLM 能读自然语言 summary**：`The computed final integer is <int>.` 也是 100%，和 B2.7a 一致。
+3. **digit list 仍不是天然稳定接口**：MSD-first 从 LSD 的 2.3% 提升到 66.4%，但仍远不到 100%。错误说明模型有时会忽略给定 digits，退回输出 `123/1234`、漏掉 0，或重复 digit。
+4. **B2.6 的 bridge 目标应该换 schema**：如果连续 bridge 对齐的是 LSD/MSD digit slots，LLM 本身都不稳定会读；如果对齐的是 canonical integer field / natural summary hidden target，成功概率更高。
+
+更新后的判断：下一步可以做 B2.9，不再把 bridge latent 对齐到 raw digit slots，而是对齐到 LLM 已证明能读的 canonical textual state：
+
+```text
+B2.9 candidate:
+  structured state -> hidden target of "final_abs=<int>, final_sign=<sign>"
+  structured state -> token embedding composition of canonical KV text
+  structured state -> bridge latent, plus auxiliary decoder reconstructs final_abs/sign
+```
+
+这一步的目标是验证：离散 canonical text 100% 可读后，它的 token embeddings / hidden targets 是否也能作为连续 bridge 的监督目标。
+
+### 47.27 B2.9 canonical text token embeddings oracle（2026-06-23）
+
+承接 §47.26，本轮不训练 bridge，先验证 `inputs_embeds` 路径本身是否可靠：把 B2.8 中已经证明可读的 canonical text tokenized 后，直接查 LLM embedding table，再拼到 prompt embeddings 后面。
+
+流程：
+
+```text
+canonical_text_ids = tokenizer.encode("final_abs=116, final_sign=positive\nFinal integer:")
+canonical_embeds = model.get_input_embeddings()(canonical_text_ids)
+inputs_embeds = concat(prompt_embeds, canonical_embeds)
+frozen LLM greedy decode answer
+```
+
+这一步回答两个问题：
+
+1. 离散 canonical text 可读，换成它的原生 token embeddings 后是否仍可读；
+2. 如果可读，这就是后续 trainable bridge 的上界 / target manifold。
+
+#### 47.27.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `generate_hf_embedding_oracle()`：用 `prompt_embeds + suffix_token_embeds` 做 generation。
+- 新增 `evaluate_embedding_oracle()`。
+- 新增 `run_embedding_oracle_eval()` 和 CLI：
+
+```text
+--embedding-oracle-eval
+--embedding-oracle-mode {final_abs,natural_summary,msd_digits}
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+git diff --check
+```
+
+#### 47.27.2 B2.9 结果
+
+共同参数：
+
+```text
+model=Qwen3-0.6B,
+embedding_oracle_eval=true,
+task=arithmetic,
+eval_cases=128,
+context_len=256,
+max_new_tokens=16,
+hf_dtype=bfloat16,
+input path=inputs_embeds
+```
+
+| mode | 对应 B2.8 textual acc | B2.9 embedding acc | contains acc | elapsed | 判断 |
+|---|---:|---:|---:|---:|---|
+| `final_abs` | 100.0% | 100.0% | 100.0% | 62.39s | canonical KV token embeddings 可读。 |
+| `natural_summary` | 100.0% | 100.0% | 100.0% | 64.88s | natural summary token embeddings 可读。 |
+| `msd_digits` | 66.4% | 56.2% | 56.2% | 66.78s | digit-list schema 仍不稳定。 |
+
+B2.9 `final_abs` 代表输出：
+
+```text
+embedding("final_sign=positive\nfinal_abs=116\n...Final integer:") -> 116
+embedding("final_sign=positive\nfinal_abs=1221\n...Final integer:") -> 1221
+```
+
+B2.9 `msd_digits` 仍有和 B2.8a 类似的问题：
+
+```text
+expected=423  answer=123
+expected=601  answer=61
+expected=306  answer=36
+expected=1161 answer=116
+```
+
+落盘文件（远端）：
+
+- `needle_sq_results/latent_projector_b29_embedding_final_abs_oracle.json`
+- `needle_sq_results/latent_projector_b29_embedding_final_abs_oracle.pt`
+- `needle_sq_results/latent_projector_b29_embedding_natural_summary_oracle.json`
+- `needle_sq_results/latent_projector_b29_embedding_natural_summary_oracle.pt`
+- `needle_sq_results/latent_projector_b29_embedding_msd_digits_oracle.json`
+- `needle_sq_results/latent_projector_b29_embedding_msd_digits_oracle.pt`
+
+#### 47.27.3 结论
+
+B2.9 是正结果：**canonical KV text 的 token embeddings 可以 100% 被 frozen LLM decode 读取**。
+
+这排除了一个重要疑点：`inputs_embeds` 拼接、position、attention mask、dtype 路径没有根本问题。B2.6 失败不是因为 embeddings 输入机制不可用，而是因为自由 MLP bridge 没有落到 LLM 已知的 canonical text embedding manifold 上。
+
+更新后的判断：下一步应该做 B2.10：训练 bridge 对齐 canonical KV token embeddings，而不是直接用 answer CE。
+
+```text
+B2.10:
+  structured state features
+    -> bridge(latent token embeddings)
+    ~ MSE/cosine to embedding("final_abs=<int>, final_sign=<sign>\nFinal integer:")
+    -> frozen LLM decode
+```
+
+关键评估：
+
+```text
+1. bridge embedding MSE/cosine 是否收敛；
+2. auxiliary probe 能否从 bridge latent 重构 final_abs/sign；
+3. greedy decode 是否接近 B2.9 oracle 上界 100%。
+```
+
+### 47.28 B2.10 canonical embedding bridge（2026-06-23）
+
+承接 §47.27，本轮训练一个 bridge，把结构化 arithmetic state features 直接映射成 canonical text 的 token embedding 序列，而不是用 answer CE 端到端训练：
+
+```text
+structured arithmetic state features
+  -> bridge(latent token embeddings)
+  ~ MSE + cosine to embedding(canonical final_abs text)
+  -> frozen Qwen3-0.6B greedy decode
+```
+
+这一步检验：B2.6 的失败是否只是 bridge 没有落到 LLM 熟悉的 embedding manifold；如果显式监督到 canonical token embeddings，frozen LLM 是否能重新读出答案。
+
+#### 47.28.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 canonical suffix embedding target 构造：`_canonical_suffix_ids()`、`_max_canonical_suffix_len()`。
+- 新增 MSE/cosine 对齐训练：`train_canonical_embedding_bridge()`。
+- 新增 nearest-token retrieval 评估：`evaluate_canonical_embedding_retrieval()`。
+- 新增 bridge latent decode：`generate_hf_with_canonical_embedding_bridge()`、`evaluate_canonical_embedding_bridge_decode()`。
+- 新增 `run_canonical_embedding_bridge()` 和 CLI：
+
+```text
+--canonical-embedding-bridge
+--canonical-embedding-mode {final_abs,natural_summary,msd_digits}
+--canonical-embedding-cosine-weight 1.0
+--canonical-embedding-target-tokens 0
+--bridge-supervision-weight 1.0
+```
+
+本轮还补了两个入口问题：
+
+1. parser/main 未挂 `--canonical-embedding-bridge`；
+2. `args.canonical-embedding_target_tokens` 拼写会运行时失败，修为 `args.canonical_embedding_target_tokens`。
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help >/dev/null
+```
+
+#### 47.28.2 B2.10 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B
+canonical_embedding_bridge=true
+task=arithmetic
+train_cases=256
+eval_cases=64
+canonical_embedding_mode=final_abs
+bridge_supervision_weight=1.0
+epochs=500
+batch_size=16
+lr=1e-3
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=1
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_b210_canonical_embedding_bridge.json`
+- `needle_sq_results/latent_projector_b210_canonical_embedding_bridge.pt`
+
+#### 47.28.3 B2.10 结果
+
+训练收敛：
+
+| epoch | loss | MSE | cosine distance |
+|---:|---:|---:|---:|
+| 1 | 0.232238 | 0.030543 | 0.201695 |
+| 50 | 0.001938 | 0.000286 | 0.001652 |
+| 100 | 0.001159 | 0.000158 | 0.001000 |
+| 200 | 0.000852 | 0.000116 | 0.000737 |
+| 300 | 0.000706 | 0.000082 | 0.000623 |
+| 400 | 0.000371 | 0.000034 | 0.000337 |
+| 500 | 0.000365 | 0.000029 | 0.000336 |
+
+Embedding retrieval：
+
+| split | tokens | nearest-token acc | MSE | cosine distance |
+|---|---:|---:|---:|---:|
+| train | 7944 | 100.00% | 0.0000348 | 0.0002926 |
+| eval | 1984 | 99.40% | 0.0000401 | 0.0023991 |
+
+Frozen LLM decode：
+
+| setting | accuracy | contains accuracy | misses |
+|---|---:|---:|---:|
+| B2.6 oracle structured-state decode bridge | 6.25% | 6.25% | 60 / 64 |
+| B2.9 embedding oracle upper bound (`final_abs`) | 100.00% | 100.00% | 0 / 128 |
+| B2.10 canonical embedding bridge (`final_abs`) | 90.625% | 90.625% | 6 / 64 |
+
+B2.10 的 6 个 eval miss：
+
+```text
+expected=85    answer=58
+expected=63    answer=36
+expected=1221  answer=1216
+expected=1179  answer=1732
+expected=74    answer=87
+expected=1101  answer=1116
+```
+
+代表性正确输出：
+
+```text
+expected=116 answer=116 raw=' 116\nAnswer: 116\nAnswer:\n11'
+expected=423 answer=423 raw=' 423\nAnswer: 423\nAnswer:\n42'
+expected=794 answer=794 raw=' 794\nAnswer: 794\nAnswer:\n79'
+```
+
+#### 47.28.4 结论
+
+B2.10 是明显正结果：**把 structured state bridge 显式监督到 canonical token embedding manifold 后，frozen LLM decode 从 B2.6 的 6.25% 提升到 90.625%**。
+
+这说明：
+
+1. B2.6 的主要失败不是 `inputs_embeds` 路径，也不是 frozen LLM 不能读 state，而是自由 MLP bridge 没有稳定落到可读 embedding manifold。
+2. MSE/cosine 到 canonical token embeddings 能泛化到 eval：eval nearest-token retrieval 达到 99.40%。
+3. 但 decode 仍低于 B2.9 oracle 的 100%，说明即使 nearest-token 几乎正确，连续 embedding 的小偏差仍会在部分边界 case 上触发 digit substitution / transposition。
+4. 下一步不应回到 answer CE，而应继续收紧 bridge 的 manifold 约束，例如：nearest-token CE、embedding normalization / tying、先 decode bridge latent 到 nearest canonical tokens 再输入 LLM、或训练 discrete bottleneck。
+
+### 47.29 B2.11 nearest-token CE + discrete bottleneck（2026-06-23）
+
+承接 §47.28，本轮做两个收紧约束：
+
+```text
+B2.10 loss: MSE + cosine
+B2.11 loss: MSE + cosine + λ_ce * nearest-token CE
+
+B2.10 decode: prompt_embeds + continuous bridge latents
+B2.11 decode:
+  continuous: prompt_embeds + bridge latents
+  nearest:    prompt_embeds + embedding(argmax cosine(bridge latent, embedding table))
+```
+
+目标是区分两个失败源：
+
+1. 如果 `nearest` 明显优于 `continuous`，说明主要是连续 embedding 小偏差导致 LLM decode 不稳；
+2. 如果 `nearest` 仍不提升，说明 bridge 在 eval 上已经预测到了错误 canonical token，问题在 structured features -> token identity 的泛化。
+
+#### 47.29.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+- 新增 `_canonical_embedding_token_ce_loss()`：对 normalized bridge latent 与 normalized embedding table 做 cosine logits，再对 canonical target token ids 做 CE。
+- `train_canonical_embedding_bridge()` 增加：
+
+```text
+--canonical-embedding-token-ce-weight
+--canonical-embedding-token-ce-temperature
+```
+
+- `generate_hf_with_canonical_embedding_bridge()` 增加 discrete bottleneck：
+
+```text
+--canonical-embedding-decode-mode {continuous,nearest,both}
+```
+
+其中 `nearest` 会先把每个 latent slot snap 到最近 tokenizer embedding，再喂给 frozen LLM。
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help >/dev/null
+git diff --check
+```
+
+#### 47.29.2 B2.11 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B
+canonical_embedding_bridge=true
+task=arithmetic
+train_cases=256
+eval_cases=64
+canonical_embedding_mode=final_abs
+bridge_supervision_weight=1.0
+canonical_embedding_cosine_weight=1.0
+canonical_embedding_token_ce_weight=0.1
+canonical_embedding_token_ce_temperature=0.05
+canonical_embedding_decode_mode=both
+epochs=500
+batch_size=16
+lr=1e-3
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=1
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_b211_canonical_embedding_bridge_ce_nearest.json`
+- `needle_sq_results/latent_projector_b211_canonical_embedding_bridge_ce_nearest.pt`
+
+#### 47.29.3 B2.11 结果
+
+训练收敛：
+
+| epoch | loss | MSE | cosine distance | token CE | train token CE acc |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.466205 | 0.052134 | 0.225997 | 1.880732 | 80.84% |
+| 50 | 0.006670 | 0.000406 | 0.002315 | 0.039480 | 100.00% |
+| 100 | 0.006520 | 0.000290 | 0.002295 | 0.039345 | 100.00% |
+| 500 | 0.005092 | 0.000037 | 0.001153 | 0.039023 | 100.00% |
+
+Embedding retrieval：
+
+| split | tokens | nearest-token acc | MSE | cosine distance |
+|---|---:|---:|---:|---:|
+| train | 7944 | 100.00% | 0.0000348 | 0.0010868 |
+| eval | 1984 | 99.50% | 0.0000400 | 0.0033303 |
+
+Frozen LLM decode：
+
+| setting | accuracy | contains accuracy | misses |
+|---|---:|---:|---:|
+| B2.10 continuous | 90.625% | 90.625% | 6 / 64 |
+| B2.11 continuous + CE | 90.625% | 90.625% | 6 / 64 |
+| B2.11 nearest + CE | 90.625% | 90.625% | 6 / 64 |
+
+B2.11 continuous miss：
+
+```text
+expected=85    answer=88
+expected=63    answer=16
+expected=1221  answer=1214
+expected=1179  answer=1730
+expected=74    answer=87
+expected=1101  answer=1010
+```
+
+B2.11 nearest miss：
+
+```text
+expected=85    answer=88
+expected=63    answer=16
+expected=1221  answer=1216
+expected=1179  answer=1749
+expected=74    answer=77
+expected=1101  answer=1110
+```
+
+#### 47.29.4 结论
+
+B2.11 是负结果，但信息量很高：**nearest-token CE 和 discrete bottleneck 没有把 90.625% 推到 100%**。
+
+具体判断：
+
+1. 训练集 token CE acc 很快到 100%，说明训练集 canonical token identity 可以被 bridge 完全拟合。
+2. eval nearest-token retrieval 只从 B2.10 的 99.40% 小幅到 99.50%，decode 不变。
+3. `nearest` decode 没有优于 `continuous`，因此 B2.10 剩余错误不是单纯连续 embedding jitter；错误更像是 bridge 在少数 eval 样本上把数字 token identity 预测成了另一个合法数字 token。
+4. 这说明 canonical text embedding bridge 仍在做“从结构化 features 到文本 token identity 的插值/分类”，它不是算法式符号组合；对 held-out 数值组合仍会出现 digit substitution。
+
+下一步不应该继续只调 CE 权重。更合理的是 B2.12：把输出 token 化问题拆开，显式预测结构化 decimal digits / sign，再用 deterministic renderer 生成 canonical text token ids，最后喂 frozen LLM。这相当于把 bridge 的可学习部分限制在 slots 上，而不是直接学习整段 canonical text embedding。
+
+### 47.30 B2.12 explicit digit slots + deterministic renderer（2026-06-23）
+
+承接 §47.29，本轮先做 oracle upper-bound sanity check：不让 MLP 学整段 canonical token identity，而是从结构化 arithmetic state 得到明确的 decimal digit slots / sign，然后用 deterministic renderer 拼出 canonical text，再喂 frozen LLM。
+
+```text
+structured arithmetic state
+  -> final_sign + final_digits_msd/final_digits_lsd
+  -> deterministic renderer: final_abs=<digits>, final_sign=<sign>
+  -> tokenizer / embedding table
+  -> frozen Qwen3-0.6B decode
+```
+
+这一步回答：如果 slot 是正确的，deterministic renderer 是否能消除 B2.10/B2.11 的 90.625% 上限。
+
+#### 47.30.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `_final_digit_slots_from_case()`：把 arithmetic final value 拆成 explicit digit slots：
+
+```text
+final_sign
+final_digits_lsd
+final_digits_msd
+rendered_abs
+```
+
+- `_digit_slot_renderer_suffix()`：从 digit slots deterministic render 出 canonical suffix：
+
+```text
+Rendered structured digit slots:
+final_sign=positive
+final_abs=116
+The final_abs field was deterministically rendered from explicit MSD digit slots.
+Use final_abs as the magnitude and apply final_sign.
+Final integer:
+```
+
+- `generate_hf_digit_slot_renderer()` / `evaluate_digit_slot_renderer()`。
+- `run_digit_slot_renderer_eval()` 和 CLI：
+
+```text
+--digit-slot-renderer-eval
+--digit-slot-renderer-input-mode {input_ids,inputs_embeds,both}
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help >/dev/null
+git diff --check
+```
+
+#### 47.30.2 B2.12 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B
+digit_slot_renderer_eval=true
+digit_slot_renderer_input_mode=both
+task=arithmetic
+eval_cases=128
+num_digits=4
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=1
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_b212_digit_slot_renderer.json`
+- `needle_sq_results/latent_projector_b212_digit_slot_renderer.pt`
+
+#### 47.30.3 B2.12 结果
+
+| input mode | eval cases | accuracy | contains accuracy | misses |
+|---|---:|---:|---:|---:|
+| `input_ids` | 128 | 100.0% | 100.0% | 0 |
+| `inputs_embeds` | 128 | 100.0% | 100.0% | 0 |
+
+代表性 slot：
+
+```text
+expected=116
+final_value=116
+final_sign=positive
+final_digits_lsd=[6,1,1,0]
+final_digits_msd=[0,1,1,6]
+rendered_abs=116
+```
+
+#### 47.30.4 结论
+
+B2.12 是正结果：**explicit digit slots + deterministic renderer 可以在 `input_ids` 和 `inputs_embeds` 两条路径都达到 100%**。
+
+这说明 B2.10/B2.11 的 90.625% 缺口不在 frozen LLM，也不在 tokenizer/embedding path，而在 “MLP bridge 直接学习 canonical text token identity” 这个接口。只要把 token identity 交给 deterministic renderer，LLM decode 立即回到 100%。
+
+更新后的判断：下一步应该做 B2.13，不再训练 bridge 输出整段 text embedding，而是训练/约束 bridge 输出 explicit slots：
+
+```text
+structured state features
+  -> slot predictor: sign + fixed-width decimal digits
+  -> deterministic renderer
+  -> frozen LLM
+```
+
+评估重点：
+
+1. slot predictor 的 per-digit / exact-value 泛化；
+2. renderer 后 frozen LLM decode 是否跟随 slot exact accuracy；
+3. 如果 trainable slot predictor 仍在 held-out 数值组合失败，则需要回到 B2.5-style primitive lookup / algorithmic digit operators，而不是更大的 MLP。
+
+### 47.31 B2.13 trainable slot predictor + deterministic renderer（2026-06-23）
+
+承接 §47.30，本轮把 B2.12 的 oracle slots 换成 trainable slot predictor：
+
+```text
+oracle structured state features
+  -> DigitSlotPredictor(MLP)
+  -> final_sign + fixed-width final_digits_msd
+  -> deterministic renderer(final_abs=<digits>, final_sign=<sign>)
+  -> frozen Qwen3-0.6B decode
+```
+
+这一步检验：即使不让模型直接学习整段 text embedding/token identity，只让普通 MLP 学 explicit slots，它是否能在 held-out arithmetic cases 上稳定泛化。
+
+#### 47.31.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `DigitSlotPredictor`：从 `_oracle_structured_decode_features()` 输出 sign logits 和 fixed-width MSD digit logits。
+- `_digit_slot_targets()`：构造 `sign` 与 `final_digits_msd` 监督。
+- `train_digit_slot_predictor()`：slot CE 训练。
+- `evaluate_digit_slot_predictor()`：统计 sign accuracy、per-digit accuracy、exact slot accuracy。
+- `generate_hf_with_digit_slot_predictor()` / `evaluate_digit_slot_predictor_decode()`：用预测 slots deterministic render 后喂 frozen LLM。
+- `run_digit_slot_predictor()` 和 CLI：
+
+```text
+--digit-slot-predictor
+--digit-slot-predictor-hidden-size 256
+--digit-slot-predictor-depth 2
+--digit-slot-digit-loss-weight 1.0
+--digit-slot-decode-input-mode {input_ids,inputs_embeds,both}
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help >/dev/null
+git diff --check
+```
+
+#### 47.31.2 B2.13 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B
+digit_slot_predictor=true
+task=arithmetic
+train_cases=256
+eval_cases=64
+num_digits=4
+feature_dim=200
+digit_slot_predictor_hidden_size=256
+digit_slot_predictor_depth=2
+epochs=500
+batch_size=16
+lr=1e-3
+weight_decay=0.0
+digit_slot_decode_input_mode=both
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=1
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_b213_digit_slot_predictor.json`
+- `needle_sq_results/latent_projector_b213_digit_slot_predictor.pt`
+
+#### 47.31.3 B2.13 结果
+
+训练收敛：
+
+| epoch | loss | sign acc | per-digit acc | exact slot acc |
+|---:|---:|---:|---:|---:|
+| 1 | 2.348805 | 100.0% | 31.35% | 0.0% |
+| 50 | 0.001882 | 100.0% | 100.0% | 100.0% |
+| 500 | 0.000003 | 100.0% | 100.0% | 100.0% |
+
+Slot predictor：
+
+| split | sign acc | per-digit acc | exact slot acc | misses |
+|---|---:|---:|---:|---:|
+| train | 100.0% | 100.0% | 100.0% | 0 / 256 |
+| eval | 100.0% | 99.22% | 96.875% | 2 / 64 |
+
+Eval slot miss：
+
+```text
+expected=626 target_digits=[0,6,2,6] pred_digits=[0,6,4,6] pred_abs=646
+expected=857 target_digits=[0,8,5,7] pred_digits=[0,8,6,7] pred_abs=867
+```
+
+Renderer + frozen LLM decode：
+
+| input mode | slot exact | decode acc | contains acc | misses |
+|---|---:|---:|---:|---:|
+| `input_ids` | 96.875% | 96.875% | 96.875% | 2 / 64 |
+| `inputs_embeds` | 96.875% | 96.875% | 96.875% | 2 / 64 |
+
+Decode miss 完全跟随 slot miss：
+
+```text
+expected=626 pred_abs=646 answer=646
+expected=857 pred_abs=867 answer=867
+```
+
+#### 47.31.4 结论
+
+B2.13 是关键负结果：**即使把输出接口从 text embedding/token identity 收窄成 explicit digit slots，普通 MLP slot predictor 仍然不能在 held-out arithmetic cases 上稳定到 100%**。
+
+但它也确认了一个重要分解：
+
+1. deterministic renderer + frozen LLM 没有额外损失；decode accuracy 精确等于 slot exact accuracy。
+2. 剩余错误完全来自 trainable slot predictor 的 digit substitution。
+3. 这与 B2.4 的结论一致：普通 MLP 可以记住训练组合，但不会稳定学习算法式 digit/carry 规则。
+
+更新后的判断：这条 B 线的下一步不应该继续加大 MLP，而应该转向 B2.14：
+
+```text
+structured state / operands
+  -> algorithmic digit operators or primitive lookup
+  -> explicit slots
+  -> deterministic renderer
+  -> frozen LLM
+```
+
+也就是把 hidden-state reasoning 里的 transition 做成可组合的局部算法算子，而不是让通用 MLP 从样本中“归纳”十进制规则。
+
+### 47.32 B2.14 primitive digit operators + deterministic renderer（2026-06-23）
+
+承接 §47.31，本轮把 B2.13 的 trainable MLP slot predictor 换成 B2.5-style primitive digit operators：
+
+```text
+operands / structured state
+  -> primitive lookup digit operators: add / mul / sub with carry/borrow
+  -> explicit final_sign + final_digits_msd/final_digits_lsd
+  -> deterministic renderer(final_abs=<digits>, final_sign=<sign>)
+  -> frozen Qwen3-0.6B decode
+```
+
+这一步验证完整端到端路径：如果 transition 是算法式局部算子，而不是通用 MLP，slot 和 decode 是否都回到 100%。
+
+#### 47.32.1 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `_primitive_digit_operator_slots_from_case()`：调用 `PrimitiveLookupDigitWiseOperator`，经 `_build_trainable_digit_arithmetic_trace()` 生成 final slots。
+- `generate_hf_with_primitive_digit_renderer()`：把 primitive slots deterministic render 后喂给 frozen LLM。
+- `evaluate_primitive_digit_renderer()`：统计 slot exact、decode、contains、overflow。
+- `run_primitive_digit_renderer_eval()` 和 CLI：
+
+```text
+--primitive-digit-renderer-eval
+--primitive-digit-renderer-input-mode {input_ids,inputs_embeds,both}
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help >/dev/null
+git diff --check
+```
+
+#### 47.32.2 B2.14 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B
+primitive_digit_renderer_eval=true
+primitive_digit_renderer_input_mode=both
+task=arithmetic
+eval_cases=128
+num_digits=4
+operator=PrimitiveLookupDigitWiseOperator
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=1
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_b214_primitive_digit_renderer.json`
+- `needle_sq_results/latent_projector_b214_primitive_digit_renderer.pt`
+
+#### 47.32.3 B2.14 结果
+
+| input mode | eval cases | slot exact | decode acc | contains acc | overflow | misses |
+|---|---:|---:|---:|---:|---:|---:|
+| `input_ids` | 128 | 100.0% | 100.0% | 100.0% | 0 | 0 |
+| `inputs_embeds` | 128 | 100.0% | 100.0% | 100.0% | 0 | 0 |
+
+代表性 slot：
+
+```text
+expected=116
+final_sign=positive
+final_digits_lsd=[6,1,1,0]
+final_digits_msd=[0,1,1,6]
+rendered_abs=116
+overflow=False
+```
+
+#### 47.32.4 结论
+
+B2.14 是正结果：**primitive lookup digit operators + deterministic renderer + frozen LLM 完整路径达到 100%**。
+
+这把 B2.10-B2.14 的失败边界切清楚了：
+
+| variant | transition / state-to-output | eval decode |
+|---|---|---:|
+| B2.10 | MLP -> canonical embeddings | 90.625% |
+| B2.11 | MLP + nearest-token CE/discrete bottleneck | 90.625% |
+| B2.12 | oracle slots + deterministic renderer | 100.0% |
+| B2.13 | trainable MLP slot predictor + renderer | 96.875% |
+| B2.14 | primitive algorithmic digit operators + renderer | 100.0% |
+
+最终判断：这条 hidden-state reasoning 的关键不是“连续 latent 能不能喂给 LLM”，而是 latent transition 是否具备算法式组合结构。普通 MLP 在小样本/held-out 数值组合下会记忆或插值，不能稳定学会十进制规则；而 explicit carry/borrow slot + primitive local operator 可以稳定泛化。
+
+后续如果继续推进，应把研究方向从“训练一个大 MLP transition”改成：
+
+```text
+hidden state slots
+  + typed local operators
+  + deterministic / constrained renderer
+```
+
+也就是让模型在 hidden state 内部调用受约束的小算子，而不是让它自由生成下一步 hidden state。
+
+### 47.33 C1 arithmetic operator VM token-saving benchmark（2026-06-23）
+
+B 线已经证明 arithmetic hidden-state transition 的正确形态不是 free MLP，而是 typed local operator + slots + constrained renderer。本轮转向 C 线：不再继续做机制验证，而是直接量化这种结构化路径在推理侧能省多少 decode token / latency / KV growth。
+
+#### 47.33.1 设计
+
+对同一批 arithmetic prompts 比较两条路径：
+
+```text
+baseline:
+  prompt -> Qwen3-8B greedy decode visible CoT -> final answer
+
+operator_vm:
+  prompt -> oracle operands/parser -> primitive digit operators
+         -> deterministic slot renderer -> Qwen3-8B decode final answer only
+```
+
+这里 operator VM 复用 B2.14 的 `PrimitiveLookupDigitWiseOperator` 和 deterministic renderer；C1 只测试 inference acceleration，不把 parser 误差混进来。
+
+#### 47.33.2 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `_generate_hf_greedy_timed()`：HF greedy decode，统计 generated token 数和 latency，并在读到 expected final answer 后停止。
+- `evaluate_operator_vm_benchmark()`：逐 case 统计 baseline 与 operator VM 的 accuracy、generated tokens、latency、prefill/KV token 数、operator overhead。
+- `run_operator_vm_benchmark()` 和 CLI：
+
+```text
+--operator-vm-benchmark
+--operator-vm-input-mode {input_ids,inputs_embeds}
+--operator-vm-baseline-max-new-tokens N
+--operator-vm-final-max-new-tokens N
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help | grep operator-vm
+```
+
+#### 47.33.3 C1 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+task=arithmetic
+eval_cases=32
+context_len=512
+baseline_max_new_tokens=128
+operator_vm_final_max_new_tokens=8
+operator_vm_input_mode=inputs_embeds
+num_digits=4
+hf_dtype=bfloat16
+GPU=A100, CUDA_VISIBLE_DEVICES=7
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_c1_operator_vm_benchmark.json`
+- `needle_sq_results/latent_projector_c1_operator_vm_benchmark.pt`
+
+#### 47.33.4 C1 结果
+
+核心 JSON：
+
+```json
+{
+  "baseline": {
+    "accuracy": 1.0,
+    "avg_generated_tokens": 83.46875,
+    "avg_latency_s": 6.597350515425205,
+    "avg_total_kv_tokens": 594.6875
+  },
+  "operator_vm": {
+    "accuracy": 1.0,
+    "avg_generated_tokens": 4.0,
+    "avg_latency_s": 0.33683500438928604,
+    "operator_overhead_s": 0.011409908533096313,
+    "avg_total_kv_tokens": 562.21875
+  },
+  "speedup": {
+    "latency": 19.586297235902872,
+    "generated_tokens": 20.8671875,
+    "total_kv_tokens": 1.0577510977711078
+  },
+  "token_saving": {
+    "generated_token_reduction": 0.9520778734556345,
+    "total_kv_token_reduction": 0.05459800315291641
+  }
+}
+```
+
+表格：
+
+| path | accuracy | avg generated tokens | avg latency | avg total KV tokens |
+|---|---:|---:|---:|---:|
+| baseline CoT | 100.0% | 83.47 | 6.597s | 594.69 |
+| operator VM | 100.0% | 4.00 | 0.337s | 562.22 |
+
+相对收益：
+
+| metric | result |
+|---|---:|
+| generated token reduction | 95.21% |
+| generated-token speedup | 20.87× |
+| latency speedup | 19.59× |
+| LLM-only latency speedup | 20.27× |
+| total KV token reduction | 5.46% |
+| average operator overhead | 0.0114s |
+
+代表性 case：
+
+```text
+expected=116
+baseline: generated_tokens=90, latency=7.161s, answer=116
+operator_vm: generated_tokens=4, latency=0.452s, answer=116
+rendered_abs=116, final_digits_msd=[0,1,1,6]
+```
+
+#### 47.33.5 结论
+
+C1 是明确正结果：在相同 100% accuracy 下，operator VM 把 visible CoT 的平均 decode token 从 83.47 降到 4.00，decode-token 降幅 95.2%，端到端 latency 提升 19.6×。
+
+需要注意，当前 operator VM 把 deterministic rendered suffix 作为 prompt-side context 注入，因此总 KV token 只下降 5.46%；主要收益来自**不再逐 token decode 可见推理链**。这说明 C 线的直接价值是 latency / decode budget / decode KV growth，而下一步若要继续扩大 KV savings，应把 slot state 更紧凑地注入为 hidden slots 或 typed latent operators，而不是渲染成 47 个文本 token。
+
+### 47.34 C2.1 minimal embedding suffix upper bound（2026-06-23）
+
+C1 的瓶颈已经很明确：visible CoT decode 被省掉了，但 deterministic renderer 仍然把 slot state 渲染成约 47 个 prompt-side text tokens。C2.1 先做最便宜的 upper bound：不训练 bridge，只把 final_abs / sign / signed answer 这类 canonical token embeddings 作为极短 suffix 注入，验证 frozen Qwen3-8B 是否仍能 100% 输出最终答案。
+
+#### 47.34.1 设计
+
+同一批 arithmetic prompts 比较：
+
+```text
+baseline:
+  prompt -> Qwen3-8B greedy visible CoT -> final answer
+
+C1 text VM:
+  prompt -> primitive digit operators
+         -> 47-token deterministic textual renderer
+         -> Qwen3-8B final answer
+
+C2.1 minimal embedding suffix:
+  prompt -> primitive digit operators
+         -> short canonical token embeddings, e.g.
+            "\nfinal_abs=116\nFinal integer:"
+         -> Qwen3-8B final answer
+```
+
+测试的 minimal suffix modes：
+
+| mode | suffix template | avg injected tokens |
+|---|---|---:|
+| `final_abs` | `\nfinal_abs=<abs>\nFinal integer:` | 11.0 |
+| `sign_final_abs` | `\nfinal_sign=<sign>\nfinal_abs=<abs>\nFinal integer:` | 16.0 |
+| `signed_answer` | `\nanswer=<signed>\nFinal integer:` | 10.0 |
+| `digits_msd` | `\nsign=<sign>\ndigits_msd=<digits>\nFinal integer:` | 17.0 |
+
+#### 47.34.2 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `_minimal_embedding_suffix()`：把 primitive operator 的 final slots 压缩成短 canonical suffix。
+- `evaluate_minimal_embedding_suffix_benchmark()`：同时评测 baseline、C1 text VM、多个 C2.1 minimal suffix modes。
+- `run_minimal_embedding_suffix_benchmark()` 和 CLI：
+
+```text
+--minimal-embedding-suffix-benchmark
+--minimal-embedding-suffix-modes {final_abs,sign_final_abs,signed_answer,digits_msd} ...
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help | grep -E "minimal-embedding|operator-vm"
+```
+
+#### 47.34.3 C2.1 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+task=arithmetic
+eval_cases=32
+context_len=512
+baseline_max_new_tokens=128
+operator_vm_final_max_new_tokens=8
+operator_vm_input_mode=inputs_embeds
+minimal_embedding_suffix_modes=final_abs sign_final_abs signed_answer digits_msd
+num_digits=4
+hf_dtype=bfloat16
+GPU=A100, CUDA_VISIBLE_DEVICES=7
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_c21_minimal_embedding_suffix.json`
+- `needle_sq_results/latent_projector_c21_minimal_embedding_suffix.pt`
+
+#### 47.34.4 C2.1 结果
+
+核心 JSON：
+
+```json
+{
+  "baseline": {
+    "accuracy": 1.0,
+    "avg_generated_tokens": 83.46875,
+    "avg_total_kv_tokens": 594.6875
+  },
+  "operator_vm_text": {
+    "accuracy": 1.0,
+    "avg_generated_tokens": 4.0,
+    "avg_injected_tokens": 47.0,
+    "avg_total_kv_tokens": 562.21875
+  },
+  "minimal_embedding_suffix": {
+    "final_abs": {
+      "accuracy": 1.0,
+      "avg_generated_tokens": 4.0,
+      "avg_injected_tokens": 11.0,
+      "avg_total_kv_tokens": 526.21875
+    },
+    "sign_final_abs": {
+      "accuracy": 1.0,
+      "avg_generated_tokens": 4.0,
+      "avg_injected_tokens": 16.0,
+      "avg_total_kv_tokens": 531.21875
+    },
+    "signed_answer": {
+      "accuracy": 1.0,
+      "avg_generated_tokens": 4.0,
+      "avg_injected_tokens": 10.0,
+      "avg_total_kv_tokens": 525.21875
+    },
+    "digits_msd": {
+      "accuracy": 0.375,
+      "avg_generated_tokens": 5.125,
+      "avg_injected_tokens": 17.0,
+      "avg_total_kv_tokens": 533.34375
+    }
+  }
+}
+```
+
+表格：
+
+| path | accuracy | injected tokens | generated tokens | total KV tokens |
+|---|---:|---:|---:|---:|
+| baseline CoT | 100.0% | 0.0 | 83.47 | 594.69 |
+| C1 text VM | 100.0% | 47.0 | 4.00 | 562.22 |
+| C2.1 `final_abs` | 100.0% | 11.0 | 4.00 | 526.22 |
+| C2.1 `sign_final_abs` | 100.0% | 16.0 | 4.00 | 531.22 |
+| C2.1 `signed_answer` | 100.0% | 10.0 | 4.00 | 525.22 |
+| C2.1 `digits_msd` | 37.5% | 17.0 | 5.13 | 533.34 |
+
+相对 baseline：
+
+| mode | generated token reduction | total KV reduction | total KV speedup |
+|---|---:|---:|---:|
+| C1 text VM | 95.21% | 5.46% | 1.058× |
+| C2.1 `final_abs` | 95.21% | 11.51% | 1.130× |
+| C2.1 `sign_final_abs` | 95.21% | 10.67% | 1.119× |
+| C2.1 `signed_answer` | 95.21% | 11.68% | 1.132× |
+| C2.1 `digits_msd` | 93.86% | 10.32% | 1.115× |
+
+相对 C1 text VM：
+
+| mode | injected token reduction | total KV reduction |
+|---|---:|---:|
+| `final_abs` | 76.6% | 6.40% |
+| `sign_final_abs` | 66.0% | 5.51% |
+| `signed_answer` | 78.7% | 6.58% |
+| `digits_msd` | 63.8% | 5.14% |
+
+代表性 case：
+
+```text
+expected=116
+C1 text suffix: injected=47, answer=116
+C2.1 final_abs suffix: "\nfinal_abs=116\nFinal integer:", injected=11, answer=116
+C2.1 sign_final_abs suffix: injected=16, answer=116
+C2.1 signed_answer suffix: injected=10, answer=116
+```
+
+`digits_msd` 的失败具有诊断意义：直接给 `digits_msd=0085` / `digits_msd=0423` 这类 slot string，frozen LLM 不稳定理解“去 leading zero 后拼接”，会输出错误数字（例如 `85 -> 100`、`423 -> 1083`）。这说明仅给原始 digit slots 还不够；LLM 需要 final_abs 这种已经 deterministic rendered 的 compact value，或者后续需要 constrained renderer/slot-aware bridge。
+
+#### 47.34.5 结论
+
+C2.1 是正结果：**C1 的 47-token textual renderer 可以压缩到 10-11 个 canonical embedding tokens，并保持 100% accuracy**。
+
+这把 C 线下一步边界切得更清楚：
+
+1. 如果 bridge 直接产出 `final_abs` 或 `signed_answer` 风格的 compact latent record，frozen Qwen3-8B 可以稳定读出最终答案。
+2. 如果只暴露 raw digit slots（`digits_msd`），frozen LLM 不会自动稳定执行 leading-zero stripping / digit concatenation；这部分仍需要 deterministic/constrained renderer 或显式训练 slot-to-latent bridge。
+3. C2.2 因此应该训练的是：
+
+```text
+(final_sign, final_digits_msd)
+  -> compact final_abs / signed-answer latent embeddings
+  -> frozen LLM final answer
+```
+
+而不是让 MLP 重新学习 arithmetic transition。C2.2 的目标是压缩 renderer，不是学习算术。
+
+### 47.35 C2.2 learned compact renderer bridge（2026-06-23）
+
+C2.1 证明了一个 oracle upper bound：如果直接注入 canonical suffix token embeddings，`signed_answer` 只需要约 10 个 injected tokens 就能保持 100% accuracy。C2.2 继续验证：能否从 explicit slots 学出这个 compact renderer bridge。
+
+#### 47.35.1 设计
+
+C2.2 明确不是 arithmetic learner；arithmetic transition 仍由 primitive digit operators 完成，bridge 只做 renderer compression：
+
+```text
+final_sign + final_digits_msd
+  -> learned compact renderer bridge
+  -> latent embeddings
+  -> frozen Qwen3-8B final answer only
+```
+
+分两组：
+
+```text
+C2.2-a variable-length canonical bridge:
+  slots -> same length as "\nanswer=<signed_answer>\nFinal integer:"
+  objective = MSE/cosine/token-CE to canonical token embeddings
+
+C2.2-b fixed-K compressed bridge:
+  slots -> K latent embeddings, K ∈ {8,4,2,1}
+  objective = answer CE through frozen Qwen3-8B
+```
+
+成功标准沿用前面定义：
+
+```text
+accuracy = 100%
+avg injected slots < 10
+total KV < C2.1 signed_answer 的 525.22
+```
+
+#### 47.35.2 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `CompactRendererBridge`：从 one-hot `final_sign + final_digits_msd` 输出 latent embeddings。
+- `_compact_renderer_slot_features()`：构造 slot feature，维度为 `2 + num_digits * 10 = 42`。
+- `train_compact_renderer_bridge()`：支持 `alignment` 与 `answer_ce` 两类目标。
+- `evaluate_compact_renderer_bridge_decode()`：把 bridge 输出的 latent embeddings 注入 frozen LLM，统计 decode/latency/KV。
+- `run_compact_renderer_bridge()` 和 CLI：
+
+```text
+--compact-renderer-bridge
+--compact-renderer-run-variable
+--compact-renderer-fixed-ks 8 4 2 1
+--compact-renderer-hidden-size 1024
+--compact-renderer-token-ce-weight 0.1
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help | grep compact-renderer
+git diff --check
+```
+
+#### 47.35.3 C2.2-a variable bridge 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+train_cases=128
+eval_cases=32
+epochs=300
+batch_size=16
+lr=5e-4
+objective=alignment
+compact_renderer_token_ce_weight=0.1
+max_suffix_tokens=11
+feature_dim=42
+hidden_size=4096
+GPU=A100, CUDA_VISIBLE_DEVICES=7
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_c22_compact_renderer_bridge_variable.json`
+- `needle_sq_results/latent_projector_c22_compact_renderer_bridge_variable.pt`
+
+训练收敛：
+
+| epoch | loss | token CE acc |
+|---:|---:|---:|
+| 1 | 1.0281 | 61.6% |
+| 30 | 0.0108 | 99.9% |
+| 60 | 0.0033 | 100.0% |
+| 300 | 0.0009 | 100.0% |
+
+Eval：
+
+| path | accuracy | avg injected latent slots | avg generated tokens | avg total KV units |
+|---|---:|---:|---:|---:|
+| C2.1 `signed_answer` reference | 100.0% | 10.0 token embeddings | 4.00 | 525.22 |
+| C2.2-a variable bridge | 81.25% | 10.0 latent slots | 4.19 | 525.41 |
+
+代表性成功：
+
+```text
+expected=116 -> answer=116
+expected=423 -> answer=423
+expected=343 -> answer=343
+```
+
+代表性失败：
+
+```text
+expected=85   -> answer=87
+expected=63   -> answer=67
+expected=1221 -> answer=2115
+expected=1179 -> answer=1729
+expected=1101 -> answer=1015
+```
+
+诊断：训练集 token identity 已经接近/达到 100%，但 held-out eval 上仍出现 digit substitution。这说明当前 slot-to-embedding MLP 会学到 suffix token 的局部模式，但没有稳定泛化到所有 digit combination；这和 B2.13 的 slot predictor 负结果一致，只是错误从 slot prediction 转移到了 renderer embedding prediction。
+
+#### 47.35.4 C2.2-b fixed-K 运行参数与结果
+
+```text
+train_cases=64
+eval_cases=32
+fixed_K={8,4,2,1}
+fixed_epochs=5
+batch_size=4
+objective=answer CE through frozen Qwen3-8B
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_c22_compact_renderer_bridge_fixed.json`
+- `needle_sq_results/latent_projector_c22_compact_renderer_bridge_fixed.pt`
+
+结果：
+
+| K | eval accuracy | avg injected latent slots | avg generated tokens | avg total KV units |
+|---:|---:|---:|---:|---:|
+| 8 | 3.125% | 8.0 | 4.84 | 524.06 |
+| 4 | 3.125% | 4.0 | 6.41 | 521.63 |
+| 2 | 0.0% | 2.0 | 5.00 | 518.22 |
+| 1 | 3.125% | 1.0 | 5.03 | 517.25 |
+
+代表性 K=8 输出：
+
+```text
+expected=116 -> answer=104
+expected=85  -> answer=135
+expected=423 -> answer=435
+expected=108 -> answer=108  # 少量命中
+```
+
+固定 K 的 CE 训练在训练 token 上有下降（例如 K=8 answer CE acc 从 36.8% 到 61.6%），但远未形成可泛化的 compact latent protocol。
+
+#### 47.35.5 结论
+
+C2.2 当前是负结果：**learned compact renderer bridge 没有超过 C2.1 `signed_answer` upper bound**。
+
+更具体地说：
+
+1. C2.2-a 能把训练集 canonical token identity 学到 100%，但 eval 只有 81.25%，说明普通 MLP 从 `final_sign + final_digits_msd` 到 canonical embedding 仍会发生 held-out digit substitution。
+2. C2.2-b fixed-K 虽然满足 injected slots < 10、total KV < 525.22，但 accuracy 只有 0–3.125%，完全不满足成功标准。
+3. 因此 C2.1 的 100% 不是“任意 learned latent bridge 都能做到”，而是 canonical token embeddings 本身提供了强离散先验。
+
+更新后的判断：C2.2 不应该继续简单加大 MLP 或延长 CE 训练。下一步更合理的是引入**离散/约束 renderer bridge**：
+
+```text
+final_sign + final_digits_msd
+  -> deterministic final_abs / signed_answer token ids
+  -> canonical token embedding lookup 或 nearest-token constrained bridge
+  -> frozen LLM final answer
+```
+
+也就是保持 C2.1 的离散 token identity 先验，同时把文本长度继续压缩；如果要做 learned bridge，也应带 nearest-token / vocabulary bottleneck，而不是 free continuous latent slots。
+
+### 47.36 C2.3 deterministic discrete lookup renderer（2026-06-23）
+
+C2.2 的负结果说明：free continuous MLP bridge 即使在训练集学到 canonical suffix token identity，也不能稳定泛化到 held-out digit combination。C2.3 因此不再加大 MLP，而是把 C2.1 `signed_answer` 的离散 token identity 先验封装成可复用 renderer module。
+
+#### 47.36.1 设计
+
+```text
+primitive digit operators
+  -> final_sign + final_digits_msd
+  -> deterministic signed_answer string
+  -> tokenizer.encode("\nanswer=<signed_answer>\nFinal integer:")
+  -> embedding lookup
+  -> frozen Qwen3-8B final answer only
+```
+
+关键点：C2.3 不是 learned arithmetic model，也不是 learned continuous bridge；它是 deterministic discrete renderer。这样保留 C2.1 已验证的 canonical token identity，同时把 renderer 从一次性 benchmark 逻辑封装成独立模块。
+
+#### 47.36.2 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `DiscreteLookupRenderer`：提供 `render_suffix()`、`render_token_ids()`、`render_embeddings()`，执行 slot -> canonical suffix -> token IDs -> embedding lookup。
+- `evaluate_discrete_lookup_renderer()`：逐 case 统计 accuracy、slot exact、token identity、injected embedding tokens、generated tokens、KV tokens、operator/renderer/LLM latency。
+- `run_discrete_lookup_renderer()` 和 CLI：
+
+```text
+--discrete-lookup-renderer
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help | grep discrete-lookup-renderer
+```
+
+#### 47.36.3 C2.3 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+task=arithmetic
+eval_cases=32
+context_len=512
+operator_vm_final_max_new_tokens=8
+pure_digit_num_digits=4
+hf_dtype=bfloat16
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=7
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_c23_discrete_lookup_renderer.json`
+- `needle_sq_results/latent_projector_c23_discrete_lookup_renderer.pt`
+
+#### 47.36.4 C2.3 结果
+
+核心 JSON：
+
+```json
+{
+  "discrete_lookup_renderer": {
+    "accuracy": 1.0,
+    "contains_accuracy": 1.0,
+    "avg_generated_tokens": 4.0,
+    "avg_latency_s": 0.20503485202789307,
+    "avg_prefill_tokens": 521.21875,
+    "avg_total_kv_tokens": 525.21875,
+    "avg_llm_latency_s": 0.187911756336689,
+    "operator_overhead_s": 0.0075135305523872375,
+    "avg_injected_tokens": 10.0,
+    "avg_renderer_overhead_s": 0.009609565138816833,
+    "avg_non_llm_overhead_s": 0.01712309569120407,
+    "slot_exact_accuracy": 1.0,
+    "token_identity_accuracy": 1.0
+  },
+  "c21_signed_answer_equivalence": {
+    "canonical_suffix_mode": "signed_answer",
+    "uses_tokenizer_encode_plus_embedding_lookup": true,
+    "token_identity_accuracy": 1.0,
+    "avg_injected_tokens": 10.0
+  }
+}
+```
+
+对比 C2.1/C2.2：
+
+| path | accuracy | token identity | injected tokens / slots | generated tokens | total KV tokens / units |
+|---|---:|---:|---:|---:|---:|
+| C2.1 `signed_answer` canonical embeddings | 100.0% | 100.0% | 10.0 tokens | 4.00 | 525.22 |
+| C2.2-a variable learned bridge | 81.25% | eval 不稳定 | 10.0 latent slots | 4.19 | 525.41 |
+| C2.2-b fixed K=8 learned bridge | 3.125% | N/A | 8.0 latent slots | 4.84 | 524.06 |
+| C2.3 discrete lookup renderer | 100.0% | 100.0% | 10.0 tokens | 4.00 | 525.22 |
+
+代表性 case：
+
+```text
+expected=116
+suffix="\nanswer=116\nFinal integer:"
+suffix_token_ids=[198, 9217, 28, 16, 16, 21, 198, 19357, 7546, 25]
+slot_hit=True
+token_identity_hit=True
+answer=116
+```
+
+逐 case 结果中 32/32 都满足：
+
+```text
+slot_hit=True
+token_identity_hit=True
+answer == expected
+```
+
+#### 47.36.5 结论
+
+C2.3 是正结果：**把 C2.1 的 `signed_answer` canonical embedding path 封装为 deterministic discrete lookup renderer 后，仍保持 100% accuracy、100% token identity、平均 10 injected tokens、平均 total KV 525.22**。
+
+这验证了 C2.2 之后的判断：问题不在 arithmetic operator，而在 renderer bridge 的表示约束。free continuous MLP 会丢失离散 token identity；deterministic / constrained discrete renderer 可以稳定保留它。
+
+因此 C 线当前最稳结构是：
+
+```text
+hidden/typed slots
+  + primitive local operators
+  + deterministic discrete renderer / vocabulary-constrained bridge
+```
+
+如果继续压缩到 `<10` KV slots，下一步不应回到 free MLP，而应做 nearest-token / vocabulary bottleneck / typed latent operator 这类保留离散 identity 的受约束 bridge。
+
+### 47.37 C2.4 vocabulary-bottleneck renderer bridge（2026-06-24）
+
+C2.3 证明 deterministic discrete lookup renderer 可以保持 100% token identity。C2.4 继续测试更弱但更接近 learned bridge 的约束：不直接输出 free continuous embeddings，而是让 bridge 在一个小 vocabulary bottleneck 中预测 canonical suffix token ID，再做 embedding lookup。
+
+#### 47.37.1 设计
+
+```text
+primitive digit operators
+  -> final_sign + final_digits_msd
+  -> learned vocabulary-bottleneck bridge
+       token_logits[position, candidate_token]
+       length_logits
+  -> argmax token IDs
+  -> embedding lookup
+  -> frozen Qwen3-8B final answer only
+```
+
+candidate vocabulary 只包含 canonical renderer 需要的 17 个 token：数字 `0..9`、换行、`answer`、`=`、`Final`、` integer`、冒号，以及负号相关 token。
+
+和 C2.2 的区别：C2.4 的 bridge 输出离散 token distribution，不直接输出任意 hidden vectors；因此如果 token ID 预测正确，后续 embedding lookup 与 C2.3 完全一致。
+
+#### 47.37.2 代码改动
+
+文件：`tools/train_latent_projector.py`
+
+新增：
+
+- `_compact_renderer_slot_features_from_slots()`：支持从 primitive operator 输出 slots 构造 feature。
+- `VocabBottleneckRendererBridge`：从 `final_sign + final_digits_msd` 输出 per-position candidate-token logits 和 length logits。
+- `_vocab_renderer_candidate_token_ids()`：构造 17-token constrained renderer vocabulary。
+- `train_vocab_bottleneck_renderer_bridge()`：token CE + length CE 训练。
+- `evaluate_vocab_bottleneck_renderer_decode()`：argmax token IDs 后 embedding lookup，再让 frozen Qwen3-8B decode final answer。
+- `run_vocab_bottleneck_renderer_bridge()` 和 CLI：
+
+```text
+--vocab-bottleneck-renderer-bridge
+--vocab-renderer-hidden-size 256
+--vocab-renderer-depth 2
+--vocab-renderer-length-ce-weight 1.0
+```
+
+检查：
+
+```text
+python3 -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/train_latent_projector.py
+remote: /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/train_latent_projector.py --help | grep vocab-bottleneck-renderer
+```
+
+#### 47.37.3 C2.4 运行参数
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B
+task=arithmetic
+train_cases=512
+eval_cases=32
+context_len=512
+epochs=500
+batch_size=32
+lr=1e-3
+vocab_renderer_hidden_size=256
+vocab_renderer_depth=2
+operator_vm_final_max_new_tokens=8
+pure_digit_num_digits=4
+hf_dtype=bfloat16
+hf_device=cuda
+GPU=A100, CUDA_VISIBLE_DEVICES=7
+```
+
+输出文件：
+
+- `needle_sq_results/latent_projector_c24_vocab_bottleneck_renderer.json`
+- `needle_sq_results/latent_projector_c24_vocab_bottleneck_renderer.pt`
+
+#### 47.37.4 C2.4 结果
+
+训练集收敛到 100% token identity：
+
+```json
+{
+  "epoch": 500,
+  "loss": 0.0000042443,
+  "token_ce": 0.0000040992,
+  "length_ce": 0.0000001455,
+  "token_accuracy": 1.0,
+  "length_accuracy": 1.0,
+  "sequence_token_accuracy": 1.0,
+  "tokens": 5119,
+  "seqs": 512
+}
+```
+
+Eval 核心 JSON：
+
+```json
+{
+  "vocab_bottleneck_renderer": {
+    "accuracy": 0.875,
+    "contains_accuracy": 0.875,
+    "avg_generated_tokens": 4.125,
+    "avg_latency_s": 0.20081572979688644,
+    "avg_prefill_tokens": 521.21875,
+    "avg_total_kv_tokens": 525.34375,
+    "avg_llm_latency_s": 0.19534886628389359,
+    "operator_overhead_s": 0.004716977477073669,
+    "avg_injected_tokens": 10.0,
+    "avg_bridge_overhead_s": 0.0007498860359191895,
+    "slot_exact_accuracy": 1.0,
+    "length_accuracy": 1.0,
+    "token_identity_accuracy": 0.875,
+    "token_accuracy": 0.98125
+  }
+}
+```
+
+对比：
+
+| path | eval accuracy | token identity | token accuracy | injected tokens / slots | total KV |
+|---|---:|---:|---:|---:|---:|
+| C2.1 `signed_answer` canonical embeddings | 100.0% | 100.0% | 100.0% | 10.0 | 525.22 |
+| C2.2-a free continuous variable bridge | 81.25% | 不稳定 | N/A | 10.0 | 525.41 |
+| C2.3 deterministic discrete lookup | 100.0% | 100.0% | 100.0% | 10.0 | 525.22 |
+| C2.4 vocabulary bottleneck learned bridge | 87.5% | 87.5% | 98.125% | 10.0 | 525.34 |
+
+失败 case 都是 digit substitution；长度预测和 primitive slots 都正确：
+
+```text
+expected=63   -> predicted_suffix="\nanswer=66\nFinal integer:"   -> answer=66
+expected=1221 -> predicted_suffix="\nanswer=1219\nFinal integer:" -> answer=1219
+expected=1179 -> predicted_suffix="\nanswer=1029\nFinal integer:" -> answer=1029
+expected=74   -> predicted_suffix="\nanswer=77\nFinal integer:"   -> answer=77
+```
+
+代表性 `1221`：
+
+```text
+target_token_ids    = [198, 9217, 28, 16, 17, 17, 16, 198, 19357, 7546, 25]
+predicted_token_ids = [198, 9217, 28, 16, 17, 16, 24, 198, 19357, 7546, 25]
+target_suffix       = "\nanswer=1221\nFinal integer:"
+predicted_suffix    = "\nanswer=1219\nFinal integer:"
+slot_hit=True
+length_hit=True
+token_identity_hit=False
+```
+
+#### 47.37.5 结论
+
+C2.4 是部分正结果但没有达到 C2.3/C2.1：vocabulary bottleneck 明显优于 C2.2 free continuous bridge（87.5% vs 81.25%，并且 token accuracy 到 98.125%），但仍不能在 held-out digit combinations 上保持 100% token identity。
+
+关键诊断：
+
+1. 训练集 512 cases 已经 100% sequence token accuracy，但 eval 仍有 digit substitution。
+2. 所有失败 case 的 `slot_hit=True`、`length_hit=True`，错误只发生在 learned slot -> token-id renderer。
+3. 因此“离散 bottleneck”本身还不够；只要 digit copying / leading-zero stripping 仍由普通 MLP 学习，就仍会出现 combinatorial generalization error。
+
+更新后的 C 线判断：
+
+```text
+free continuous bridge          -> 失败：81.25%
+learned vocabulary bottleneck   -> 改善但失败：87.5%
+deterministic discrete renderer -> 成功：100%
+```
+
+下一步如果继续，方向应进一步收紧为 **compositional deterministic renderer** 或 **typed symbolic token operator**，而不是“MLP 预测 token ID”。也就是把 digit copying、leading-zero stripping、sign handling 这些 renderer 子步骤显式算法化，再研究是否能把最终 KV slots 压到 `<10`。
+
+### 47.38 Hidden-state reasoning 方向封档结论（2026-06-24）
+
+截至 C2.4，B/C 两条实验线对“用 hidden state 替代 token 做长上下文推理 / agent 内部通信”的判断已经足够清楚，因此暂时封住该方向，不再继续堆更大的 free MLP / bridge。
+
+#### 47.38.1 当前证据链
+
+实验结果可以压缩成三类：
+
+```text
+free continuous hidden transition / bridge  -> 不可靠
+learned discrete/vocab bottleneck bridge    -> 有改善但仍不可靠
+operator VM + deterministic discrete render -> 可靠
+```
+
+关键节点：
+
+| 实验 | 形式 | 结果 | 诊断 |
+|---|---|---:|---|
+| B2.x free hidden transition | hidden -> MLP -> hidden | 负结果 | 算法/组合状态转移不稳 |
+| B2.14 primitive digit operator | typed digit slots + local operator | 正结果 | 算法结构显式化后可靠 |
+| C1 operator VM | CoT decode -> operator VM | 100% accuracy，约 20× decode-token/latency speedup | 推理链可由 typed VM 替代 |
+| C2.1 canonical embedding suffix | 10-token `signed_answer` embedding | 100% accuracy | frozen LLM 能稳定读取 compact token record |
+| C2.2 free continuous renderer bridge | slots -> continuous embeddings | 81.25% / fixed-K 0–3.125% | train token identity 也不能保证 held-out 泛化 |
+| C2.3 deterministic discrete lookup renderer | slots -> token IDs -> embedding lookup | 100% accuracy，100% token identity | 离散 identity 保留后可靠 |
+| C2.4 vocabulary bottleneck bridge | slots -> candidate token logits -> IDs | 87.5% accuracy，98.125% token accuracy | 离散 bottleneck 改善但仍有 digit substitution |
+
+#### 47.38.2 为什么 continuous hidden state 不适合作为可靠长程推理介质
+
+核心问题不是 hidden state 没有信息，而是它不具备 token/symbolic state 作为通信协议所需的稳定性质。
+
+1. **没有稳定 identity**
+
+   Token ID 有稳定身份，例如 `16 -> "1"`；而一个 4096 维 hidden vector 在不同上下文、不同层、不同位置中没有全局稳定含义。若不引入码本/离散化，无法可靠表达 `digit=1`、`carry=1`、`sign=positive` 这类可复用状态。
+
+2. **连续小误差会变成离散大错**
+
+   在 embedding 空间里，MLP 输出只要稍微偏移，nearest token 就可能从 `3` 变成 `6`、从 `1` 变成 `9`。C2.2/C2.4 的失败正是这种 digit substitution：
+
+   ```text
+   63   -> 66
+   74   -> 77
+   1221 -> 1219
+   1179 -> 1029
+   ```
+
+   对语义任务这可能是小误差；对算法推理这是灾难性错误。
+
+3. **组合泛化弱**
+
+   算术、程序执行、变量绑定、leading-zero stripping、digit copy 都是组合规则。普通 MLP 容易在训练组合上达到 100%，但 held-out digit combination 仍失败，说明它学到的是统计映射，不是稳定算法。
+
+4. **预训练目标不把 hidden state 训练成外部 ABI**
+
+   LLM 的 hidden state 是 next-token prediction 的内部中间量，不是为 `read_state/write_state/compose_state/execute_operator` 这种外部可读写协议训练的。把 hidden state 直接持久化、传输、再注入，本质是在强行把激活当 API。
+
+5. **长链推理需要可校验状态**
+
+   Token / typed slots 可以 parse、compare、validate、rollback；continuous hidden state 很难判断“此刻是否真的表示 216”。长链越长，漂移和不可校验性越严重。
+
+#### 47.38.3 对原始假设的修正
+
+原始强假设：
+
+```text
+Agent 应该用 hidden states 替代 tokens，作为原生内部推理语言。
+```
+
+当前实验不支持这个强假设。更合理的改写是：
+
+```text
+Agent 不应只依赖 verbose natural-language CoT；
+但也不应把无约束 continuous hidden states 当作可靠推理介质。
+
+更稳的结构是：
+typed discrete/state slots
++ deterministic/typed local operators
++ compact token/embedding renderer
++ LLM controller / semantic interface
+```
+
+也就是说，应该替代的是 **verbose CoT**，而不是替代 token 的离散 identity。token 仍然是当前 LLM 体系里最成熟、最方便的离散通信协议。
+
+#### 47.38.4 封档判断
+
+暂时封住以下方向：
+
+```text
+hidden state as native long-context reasoning medium
+free continuous latent transition
+free MLP renderer bridge
+MLP-only slot -> token-id bridge
+```
+
+保留但不立即推进的方向：
+
+```text
+typed symbolic token operator
+compositional deterministic renderer
+vocabulary/grammar constrained rendering
+LLM fine-tune 后的原生 latent protocol
+```
+
+后续主线切回实际推理加速：
+
+```text
+decode token / latency reduction
+prefill/KV efficiency
+speculative decoding
+attention/KV cache optimization
+batching/scheduler/runtime profiling
+```
+
+当前 C 线可沉淀为一个负/正混合结论：**continuous hidden state 可以承载语义，但不可靠承载算法状态；可靠推理加速应优先使用 typed slots + deterministic operators + compact discrete renderer。**
+
+### 47.39 Mixed prefill admission policy：短 prompt 不进入 mixed batch（2026-06-24）
+
+hidden-state reasoning 方向封档后，主线切回实际 runtime 推理加速。本节先做一个小步、可回归的 scheduler 改动：mixed prefill+decode 已能降低长 prompt 插入时的 decode gap，但不应把短 prompt 也强行 mixed/chunked 化；短 prompt 更适合等 running decode 空闲后一次性 prefill。
+
+#### 47.39.1 问题
+
+当前 `chunked_prefill_mixed_batch=True` 时，只要存在 running decode，scheduler 会尝试把 waiting prompt 的 prefill chunk 和 decode 合到同一个 varlen prefill forward：
+
+```text
+running decode + waiting prefill -> mixed batch
+```
+
+这对长 prompt 有意义，因为可以避免长 prefill 阻塞 decode；但对短 prompt 不一定划算：短 prompt 本来一次 prefill 就能完成，把它混进 decode step 会制造一个很重的 mixed step，反而拉高 first-output latency / decode gap。
+
+#### 47.39.2 代码改动
+
+文件：
+
+- `tinyvllm/config.py`
+- `tinyvllm/engine/scheduler.py`
+- `tools/profile_chunked_prefill.py`
+- `tools/test_chunked_prefill.py`
+
+新增配置：
+
+```python
+chunked_prefill_mixed_min_prompt_tokens: int = 0
+```
+
+含义：
+
+```text
+0：保持旧行为，任何 waiting prompt 都可进入 mixed batch。
+>0：mixed 只接纳 remaining prompt tokens >= 阈值的新 waiting prompt；短 prompt 会被 defer，直到 running decode 空闲后再 prefill。
+```
+
+scheduler 逻辑：
+
+```text
+if mixed enabled and running:
+  if prefilling exists:
+    allow mixed drain
+  elif waiting[0].remaining_prompt_tokens >= threshold:
+    allow mixed
+  else:
+    schedule decode only
+```
+
+注意：阈值只控制**新 waiting prompt 接入**；已经进入 `prefilling` 的长 prompt 会继续允许 mixed drain，避免中途卡住。
+
+Profiler 新增参数：
+
+```text
+--mixed-min-prompt-tokens N
+--short-insert-prompt-tokens N
+--inject-short-after-decode-steps N
+```
+
+新增单测：
+
+- `test_mixed_min_prompt_tokens_defers_short_waiting_prompt_to_decode()`
+- `test_mixed_min_prompt_tokens_still_admits_long_waiting_prompt()`
+
+#### 47.39.3 校验
+
+本地：
+
+```text
+python3 -m py_compile tinyvllm/config.py tinyvllm/engine/scheduler.py tools/profile_chunked_prefill.py tools/test_chunked_prefill.py
+python3 tools/test_chunked_prefill.py
+python3 tools/test_profile_chunked_prefill.py
+git diff --check
+```
+
+远端：
+
+```text
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tinyvllm/config.py tinyvllm/engine/scheduler.py tools/profile_chunked_prefill.py tools/test_chunked_prefill.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_chunked_prefill.py
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_profile_chunked_prefill.py
+```
+
+均通过。
+
+#### 47.39.4 Benchmark
+
+使用 Qwen3-0.6B，模拟 4 个 running decode 请求，decode 2 step 后插入一个 64-token short prompt。比较：
+
+```text
+baseline mixed:
+  mixed_min_prompt_tokens=0
+
+admission policy:
+  mixed_min_prompt_tokens=128
+```
+
+公共参数：
+
+```text
+model=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B
+mode=mixed
+num_decode_seqs=4
+decode_prompt_tokens=64
+short_insert_prompt_tokens=64
+inject_short_after_decode_steps=2
+inject_long_after_decode_steps=100000
+max_num_prefill_tokens_per_step=128
+max_output_len=32
+max_model_len=2048
+max_num_batched_tokens=2048
+max_num_seqs=16
+enforce_eager=True
+GPU=A100, CUDA_VISIBLE_DEVICES=7
+```
+
+输出文件：
+
+- `profile_out/chunked_prefill_mixed_short_no_admission.json`
+- `profile_out/chunked_prefill_mixed_short_min128.json`
+
+结果：
+
+| mode | mixed steps | prefill steps | total ms | first output ms | max decode gap ms | decode p50 ms | decode p95 ms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| mixed, no admission | 1 | 1 | 2619.05 | 2325.76 | 373.92 | 45.48 | 137.68 |
+| mixed, min_prompt_tokens=128 | 0 | 2 | 3107.64 | 1386.50 | 183.60 | 40.41 | 82.13 |
+
+逐步行为变化：
+
+```text
+no admission:
+  step 3: mixed, tokens=68, dt=373.92ms
+
+min_prompt_tokens=128:
+  step 3..31: decode only
+  step 32: short prompt prefill, tokens=64, dt=57.69ms
+```
+
+#### 47.39.5 结论
+
+这是一个明确的 latency-policy tradeoff：
+
+1. `mixed_min_prompt_tokens=128` 成功避免了短 prompt 进入 mixed batch。
+2. first-output latency 从 `2325.76ms` 降到 `1386.50ms`，改善约 `40.4%`。
+3. max decode gap 从 `373.92ms` 降到 `183.60ms`，改善约 `50.9%`。
+4. decode p95 从 `137.68ms` 降到 `82.13ms`，改善约 `40.3%`。
+5. 总 wall time 从 `2619.05ms` 增加到 `3107.64ms`，因为短 prompt 被延后到 running decode 完成后才 prefill/decode。
+
+因此该策略适合 latency-sensitive / serving fairness 场景：优先保护已有 running decode 的 first-token / decode-gap；如果目标是最小整体 makespan，则可以保持阈值为 `0`。
+
+推荐默认仍保持 `0` 以兼容旧行为；serving 侧可按 workload 打开，例如：
+
+```text
+chunked_prefill_mixed_min_prompt_tokens = max_num_prefill_tokens_per_step
+```
+
+下一步推理加速建议继续沿 scheduler/runtime profiling 做：长 prompt 插入场景下比较 `mixed_min_prompt_tokens=0/128/256/512`，并和 decode-first / fair chunked policy 放在同一张 latency-vs-makespan 曲线上。
+
+### 47.40 S1 online n-gram speculative dry-run profiler（2026-06-24）
+
+上一节的 mixed prefill admission policy 属于 scheduler policy，收益依赖 workload 形状；更扎实的推理加速主线切到 speculative decoding。当前路线拆成四步：
+
+```text
+S1 online ngram speculative dry-run
+S2 KV-safe target verification
+S3 accepted-token KV commit
+S4 full online speculative decoding benchmark
+```
+
+本节完成 S1：只观察真实 TinyLLM decode loop 中的 token 流，在线提出 n-gram draft 并和后续真实 token 比较，但**不改变输出、不额外写 KV、不做 rollback/commit**。
+
+#### 47.40.1 代码改动
+
+文件：
+
+- `tinyvllm/speculative/ngram.py`
+- `tools/profile_ngram_online.py`
+- `tools/test_ngram_speculative.py`
+
+新增 online dry-run 状态：
+
+```python
+@dataclass
+class NGramOnlineDryRunState:
+    pending_tokens: list[int]
+    active_match_start: int = -1
+    active_drafted_tokens: int = 0
+
+@dataclass
+class NGramOnlineDryRunTotals:
+    decode_positions: int = 0
+    draft_events: int = 0
+    drafted_tokens: int = 0
+    accepted_tokens: int = 0
+    rejected_events: int = 0
+    completed_drafts: int = 0
+    no_draft_positions: int = 0
+```
+
+核心函数：
+
+```python
+def ngram_online_dry_run_step(
+    history_before_decode: list[int],
+    actual_next_token: int,
+    state: NGramOnlineDryRunState,
+    totals: NGramOnlineDryRunTotals,
+    ngram_size: int,
+    max_draft_tokens: int,
+) -> dict[str, int | bool | list[int]]:
+```
+
+行为：
+
+1. 若当前没有 pending draft，则从 `history_before_decode` 的末尾 n-gram 找历史最近匹配，并提出最多 `max_draft_tokens` 个 draft token。
+2. 用真实 decode 产生的 `actual_next_token` 检查 pending draft 的第一个 token。
+3. 命中则累计 accepted 并弹出 pending 前缀；不命中则累计 rejected 并清空 pending。
+4. 只更新 CPU 侧统计对象，不触碰 scheduler / model runner / KV cache。
+
+#### 47.40.2 profiler 设计
+
+`tools/profile_ngram_online.py` 直接驱动真实 `LLM.step()`：
+
+```text
+before = waiting + running 的 token_ids 快照
+llm.step()
+sampled_rows = scheduled seq 中 token_ids 比 before 增长的行
+对每个 sampled row 调 ngram_online_dry_run_step()
+```
+
+这里没有依赖 mixed batch 的 `step_is_decode` 标记，因为 mixed postprocess 后会重置该标记；更稳的判据是 scheduled `Sequence.token_ids` 是否相对 step 前增长。这样普通 decode、mixed decode，以及 final prefill 中采样首 token 的情况都能被统一观察到。
+
+输出 JSON 包括：
+
+- `summary`：总体 `decode_positions / draft_events / drafted_tokens / accepted_tokens / acceptance_rate / draft_coverage / theoretical_decode_step_reduction`。
+- `per_sequence`：每条 seq 的同类统计。
+- `events`：前 N 个 proposed/accepted/rejected 事件，便于人工检查 draft 行为。
+- `step_records`：每步 batch_kind、耗时、sampled rows、完成输出数。
+
+#### 47.40.3 本地校验
+
+本地语法和纯 token helper 测试已通过：
+
+```text
+python3 -m py_compile tinyvllm/speculative/ngram.py tools/profile_ngram_online.py tools/test_ngram_speculative.py
+python3 tools/test_ngram_speculative.py
+python3 tools/profile_ngram_online.py --help
+```
+
+结果：
+
+```text
+ngram speculative tests passed
+```
+
+补充了两个 online dry-run 单测：
+
+- `test_online_dry_run_accepts_pending_prefix_across_steps()`：验证一个 2-token draft 可以跨两个真实 decode step 累计 accepted 并 completed。
+- `test_online_dry_run_rejects_and_clears_pending_tokens()`：验证首 token 不匹配时会 rejected 并清空 pending。
+
+本机没有 TinyLLM 运行依赖（当前 `/usr/bin/python3` 缺少 `transformers`），实际模型 profiling 未在本机完成：
+
+```text
+ModuleNotFoundError: No module named 'transformers'
+```
+
+#### 47.40.4 远端 S1 smoke 结果
+
+远端环境：
+
+```text
+机器：sitian@10.232.195.203 / A100
+代码目录：/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+Python：/data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+GPU：CUDA_VISIBLE_DEVICES=7
+模型：Qwen3-0.6B fp16
+```
+
+先同步 S1 文件到远端，并做远端语法/单测校验：
+
+```text
+python -m py_compile tinyvllm/speculative/ngram.py tinyvllm/engine/llm_engine.py tools/profile_ngram_online.py tools/test_ngram_speculative.py
+python tools/test_ngram_speculative.py
+```
+
+结果：
+
+```text
+ngram speculative tests passed
+```
+
+运行命令：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_online.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_online_s1_06b.json
+```
+
+总体统计（3 条内置 prompt，每条 64 output token）：
+
+| metric | value |
+|---|---:|
+| decode_positions | 192 |
+| draft_events | 28 |
+| drafted_tokens | 112 |
+| accepted_tokens | 92 |
+| rejected_events | 5 |
+| completed_drafts | 21 |
+| no_draft_positions | 95 |
+| acceptance_rate | **82.1%** |
+| avg_draft_len | 4.0 |
+| draft_coverage | **14.6%** |
+| theoretical_decode_step_reduction | 32.4% |
+| decode_steps | 64 |
+| elapsed_s | 41.56s |
+
+分 sequence 看差异很明显：
+
+| seq | draft_events | accepted_tokens | acceptance_rate | draft_coverage | theoretical reduction |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 13 | 47 | 90.4% | 20.3% | 42.3% |
+| 5 | 3 | 4 | 33.3% | 4.7% | 5.9% |
+| 6 | 12 | 41 | 85.4% | 18.8% | 39.0% |
+
+注意：这次输出里的 `seq_id` 是 4/5/6，导致旧版 profiler 的 `prompt_tokens` 映射为空；原因是不能假设 `seq_id == prompt index`。已修正为 `prompt_lens_by_seq_id[seq.seq_id]` 映射，并同步到远端。该问题只影响 per-sequence 展示字段，不影响总体 speculative 统计。
+
+#### 47.40.5 8B 对齐命令
+
+若要和 §35 的 8B 量化离线 replay 对齐，则使用：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_online.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --quantization int4 \
+  --quant-group-size 32 \
+  --act-quant-bits 8 \
+  --act-quant-skip-last 4 \
+  --smoothquant-scale-path /tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt \
+  --kv-quant-bits 8 \
+  --kv-quant-group-size 32 \
+  --out-json profile_out/ngram_online_s1_8b_w4a8sqkv8.json
+```
+
+#### 47.40.6 当前判断
+
+S1 的代码路径已经具备三个安全边界：
+
+1. **输出不变**：仍然只使用原始 `LLM.step()` 产生的 token。
+2. **KV 不变**：没有 speculative token 写入、回滚或提交。
+3. **scheduler 不变**：只读取 `last_scheduled_seqs` 和 step 前后的 token_ids 差异。
+
+远端 online stats 给出两个信号：
+
+1. 一旦 n-gram 命中，接受率很高：总体 `acceptance_rate=82.1%`，两个重复/模板化样本超过 85%。
+2. 但触发覆盖率不高：总体 `draft_coverage=14.6%`，普通代码解释样本只有 4.7%。
+
+因此结论不是“直接做完整 speculative decoding”，而是：**进入 S2 是值得的，但范围必须收窄为 KV-safe target verification 原型**。S2 只验证：在不提交 speculative KV 的前提下，target 能否一次验证 draft tokens，并把 accepted prefix 与原逐 token decode 对齐。若 S2 验证成本/状态管理可控，再进入 S3 accepted-token KV commit；否则停在 S1 profiler。
+
+### 47.41 S2 KV-safe target verification 原型（2026-06-24）
+
+承接 §47.40，本节实现 S2 的最小安全原型：**不提交 speculative KV，只用 target model 对 n-gram draft 做一次性验证，并检查 target accepted prefix 是否与逐 token decode replay 对齐**。
+
+#### 47.41.1 设计边界
+
+S2 不做以下事情：
+
+```text
+不把 draft token append 到真实 Sequence
+不把 speculative KV 接到 live block_table
+不发布 prefix-cache hash
+不改变 scheduler 输出
+不跳过真实 decode step
+```
+
+S2 只做：
+
+```text
+history + draft[:-1] 作为临时 verifier prefill 输入
+一次 target forward 取 h[-1], d0, ..., d{n-2} 的 logits
+greedy argmax 得到 target continuation
+count_accepted_prefix(draft, target continuation)
+和原逐 token 输出 replay 的 accepted prefix 比较
+```
+
+也就是验证这个等价关系：
+
+```text
+target_verify_accept(draft | history)
+== replay_accept(draft, actual_future)
+```
+
+在 greedy decode 下，如果 verifier 的上下文和正常逐 token decode 对齐，二者在可比较范围内应完全一致。
+
+#### 47.41.2 代码改动
+
+文件：
+
+- `tinyvllm/engine/block_manager.py`
+- `tinyvllm/speculative/ngram.py`
+- `tools/profile_ngram_verify.py`
+- `tools/test_ngram_speculative.py`
+
+`BlockManager` 新增 scratch block 分配：
+
+```python
+def allocate_ephemeral(self, seq: Sequence):
+    """Allocate scratch KV blocks without prefix-cache lookup or publication."""
+```
+
+关键点：
+
+1. 不查 `hash_to_block_id`，避免 verifier 误复用 live prefix cache 后拿不到中间 logits。
+2. 不写 `hash_to_block_id`，避免 scratch KV 被 prefix cache 发现。
+3. verifier 结束后 `deallocate(seq)`，scratch KV 即不可达；底层显存内容可残留，但没有 block_table/hash 引用。
+
+`ngram.py` 新增：
+
+```python
+@dataclass
+class NGramTargetVerifyStats:
+    verify_events: int = 0
+    verified_tokens: int = 0
+    target_accepted_tokens: int = 0
+    replay_accepted_tokens: int = 0
+    mismatched_events: int = 0
+    truncated_future_events: int = 0
+
+def count_accepted_prefix(draft_tokens, target_tokens) -> int
+```
+
+`tools/profile_ngram_verify.py` 流程：
+
+1. 先正常 `LLM.generate()` 得到逐 token baseline 输出。
+2. replay prompt+output token stream，复用 S1 的 online dry-run state；只有 `event["proposed"]` 时触发 verifier。
+3. verifier 构造临时 `Sequence(history + draft[:-1])`，用 `allocate_ephemeral()` 分配 scratch KV。
+4. 调 `prepare_prefill()` 后显式设置 `get_context().logits_indices = [len(history)-1, ..., len(history)+len(draft)-2]`，因为 `ParallelLMHead` 默认 prefill 只保留最后一个 logit。
+5. 一次 target forward 得到 draft 每个位置的 greedy target token。
+6. 比较 `target_accepted` 与 `replay_accepted`。
+
+#### 47.41.3 本地校验
+
+```text
+python3 -m py_compile tinyvllm/engine/block_manager.py tinyvllm/speculative/ngram.py tools/profile_ngram_verify.py tools/test_ngram_speculative.py
+python3 tools/test_ngram_speculative.py
+python3 tools/profile_ngram_verify.py --help
+git diff --check
+```
+
+结果：
+
+```text
+ngram speculative tests passed
+```
+
+本地仍因缺少 `transformers` 不跑模型；模型 smoke 在远端跑。
+
+#### 47.41.4 远端 smoke
+
+远端先同步 S2 文件并校验：
+
+```text
+python -m py_compile tinyvllm/engine/block_manager.py tinyvllm/speculative/ngram.py tools/profile_ngram_verify.py tools/test_ngram_speculative.py
+python tools/test_ngram_speculative.py
+```
+
+结果通过。
+
+完整 64-token smoke：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_verify.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-verifications 128 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_verify_s2_06b.json
+```
+
+结果：
+
+| metric | value |
+|---|---:|
+| decode_positions | 192 |
+| draft_events / verify_events | 28 |
+| drafted / verified tokens | 112 |
+| replay accepted tokens | 92 |
+| target accepted tokens | 98 |
+| mismatched_events | **0** |
+| mismatch_rate | **0.0%** |
+| truncated_future_events | 2 |
+| replay_acceptance_rate | 82.1% |
+| target_acceptance_rate | 87.5% |
+| generation_elapsed_s | 40.60s |
+| verify_elapsed_s | 1.34s |
+
+分 prompt：
+
+| prompt | verify_events | replay accepted | target accepted | mismatch_rate |
+|---:|---:|---:|---:|---:|
+| 0 | 13 | 47 | 50 | 0.0% |
+| 1 | 3 | 4 | 4 | 0.0% |
+| 2 | 12 | 41 | 44 | 0.0% |
+
+`target_accepted_tokens > replay_accepted_tokens` 的原因是两个 proposal 出现在输出尾部，baseline future token 不足 4 个，因此 replay 只能比较已生成范围；target verifier 仍能继续验证完整 draft，所以记入 `truncated_future_events=2`。在可比较范围内 `mismatched_events=0`。
+
+#### 47.41.5 结论
+
+S2 原型验证了核心正确性：
+
+```text
+n-gram draft proposal
+-> target one-pass verification
+-> accepted prefix
+```
+
+在 greedy decode 下与逐 token baseline replay 完全对齐（可比较事件 mismatch=0）。这说明 target verification 的 logits 对齐和 scratch KV 隔离路径是可行的。
+
+但当前 verifier 是离线 full-prefill 原型，不是最终高效实现：每个 verify event 都用 `history + draft[:-1]` 重新 prefill，验证的是正确性/接口边界，不是速度。下一步 S3 才应处理：
+
+```text
+使用 live KV prefix + draft token verification
+只提交 accepted token 的 KV
+拒绝时丢弃 speculative KV / 或写入目标 token KV
+维护 block_table、num_tokens、last_token、prefix-cache hash 的一致性
+```
+
+进入 S3 的前置条件已经满足：S2 的 accepted-prefix 语义成立，且 scratch verifier 不污染 live KV/cache。
+
+### 47.42 S3 accepted-token KV commit 小范围原型（2026-06-25）
+
+承接 §47.41，S3 不直接进入完整 online speculative decoding，而是先做一个窄口径 smoke：同一 `LLM` 实例中跑两个相同 greedy request，一个保持 baseline，另一个最多触发一次 n-gram verify+commit；最终要求 candidate 输出 token 与 baseline 完全一致。
+
+#### 47.42.1 设计边界
+
+S3 只验证 accepted-token commit 的状态一致性：
+
+```text
+Sequence.token_ids
+Sequence.last_token
+Sequence.num_tokens / num_completion_tokens
+Sequence.block_table
+BlockManager.blocks[*].hash / token_ids
+BlockManager.hash_to_block_id prefix-cache 链
+reserved block 的释放
+```
+
+S3 仍不做完整加速调度：
+
+```text
+不改 scheduler policy
+不批量处理多个 speculative events
+不测吞吐提升
+不进入非 greedy sampling
+不把 unaccepted token 接入 live Sequence
+```
+
+#### 47.42.2 代码改动
+
+文件：
+
+- `tinyvllm/engine/block_manager.py`
+- `tools/profile_ngram_commit.py`
+- `tools/test_chunked_prefill.py`
+
+`BlockManager` 新增三类接口：
+
+```python
+def reserve_append_blocks(self, seq: Sequence, num_new_tokens: int) -> list[int]
+def release_reserved_blocks(self, block_ids: list[int])
+def commit_accepted_tokens(self, seq: Sequence, accepted_tokens: list[int], reserved_block_ids: list[int])
+```
+
+commit 顺序是：
+
+```text
+1. 先按 draft 长度 reserve 可能需要的新 block，但不加入 live seq.block_table
+2. verifier 用 live block_table + reserved blocks 的 proxy block_table 写 KV
+3. 根据 accepted_count 只把需要的新 block extend 到 seq.block_table
+4. 逐个 seq.append_token(token_id)，更新 token_ids / last_token / num_tokens
+5. publish_full_blocks(seq)，只给已经完整 materialized 的 block 发布 prefix-cache hash
+6. release_reserved_blocks(unused_blocks)
+```
+
+`tools/profile_ngram_commit.py` 的 verifier 使用 decode-style prefill context：
+
+```text
+input_tokens = [seq.last_token] + draft_tokens
+slot_positions = [history_len - 1, ..., history_len + len(draft_tokens) - 1]
+block_tables = [live block_table + reserved_blocks]
+logits_indices = [0, ..., len(draft_tokens) - 1]
+```
+
+这样每一行 logits 分别对应：
+
+```text
+h[-1] -> target d0
+d0    -> target d1
+...
+```
+
+接受前缀后只提交 `draft_tokens[:accepted]`；如果 accepted 里包含 EOS 或超过 `max_tokens`，先裁剪再 commit。
+
+#### 47.42.3 本地校验
+
+新增 block-manager 级测试覆盖三种边界：
+
+1. 接受部分 draft：append sequence，保留需要的新 block，释放 unused reserved block。
+2. 接受 0 个 token：不改 sequence，释放全部 reserved blocks。
+3. 接受 token 跨多个完整 block：发布多段 prefix-cache hash 链。
+
+本地命令：
+
+```bash
+python3 tools/test_chunked_prefill.py
+python3 tools/test_ngram_speculative.py
+python3 -m py_compile tools/profile_ngram_commit.py tinyvllm/engine/block_manager.py
+```
+
+结果：
+
+```text
+chunked prefill tests passed
+ngram speculative tests passed
+```
+
+#### 47.42.4 远端 smoke 结果
+
+远端 smoke 命令：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_commit_s3_06b.json
+```
+
+结果：
+
+| metric | value |
+|---|---:|
+| exit_code | 0 |
+| outputs_match | true |
+| committed | true |
+| accepted_count | 2 |
+| commit_attempts | 1 |
+| zero_accept_events | 0 |
+| no_draft_steps | 7 |
+| baseline_output_tokens | 64 |
+| candidate_output_tokens | 64 |
+| elapsed_s | 64.41 |
+| gate_pass | true |
+
+commit event：
+
+| field | value |
+|---|---:|
+| step | 8 |
+| history_len | 22 |
+| draft_len | 4 |
+| target accepted prefix | 2 |
+| reserved_blocks | 0 |
+| num_tokens_after | 24 |
+| last_token_after | 21619 |
+
+`draft_tokens=[13440, 21619, 13, 4710]`，target verifier 给出 `target_tokens=[13440, 21619, 1, 330]`，因此接受前两个 token 并只提交这两个 token。candidate 最终 64 个 output token 与 baseline 完全一致。
+
+这次修正了两个 S3 smoke 问题：
+
+1. commit 尝试必须发生在下一次 `llm.step()` 之前；如果放在 step 之后，会错过 online proposal 的时机，表现为 `committed=false`。
+2. verifier 使用 live KV prefix 时，`cu_seqlens_q=[0, query_len]`，但 `cu_seqlens_k` 必须是 `[0, history_len + len(draft_tokens)]`；否则 target attention 看不到完整 prefix，表现为 `commit_attempts>0` 但 `zero_accept_events` 全部为 0 接受。
+
+当前 S3 remote smoke gate 已通过：
+
+```text
+summary.outputs_match == true
+summary.committed == true
+summary.accepted_count > 0
+summary.gate_pass == true
+```
+
+#### 47.42.5 当前判断
+
+S3 的 CPU-side metadata commit 边界已经有本地测试覆盖，核心一致性约束成立：
+
+```text
+accepted tokens append 后，Sequence 与 block_table 长度匹配
+完整 block 才发布 prefix-cache hash
+未使用 reserved block 被释放
+zero-accept 不改变 live Sequence
+```
+
+S3 当前可以进入 S4，但 S4 仍应保持窄口径：先做完整 online speculative decoding benchmark 的 greedy 单 batch 版本，再扩到多 prompt / 量化 / 8B。
+
+### 47.43 S4 完整 online speculative decoding 窄口径 benchmark（2026-06-26）
+
+承接 §47.42，S4 先不扩范围，只在 greedy、单 prompt、单 batch、Qwen3-0.6B fp16 上跑完整 online n-gram speculative decoding benchmark。实现仍复用 `tools/profile_ngram_commit.py`，但通过 `--max-commit-events 0` 允许 candidate 在整个生成过程中持续触发 verify+commit。
+
+#### 47.43.1 实现边界
+
+S4 相比 S3 的变化：
+
+```text
+S3: 最多 1 次 accepted-token commit，只验证 commit path 正确性
+S4: 允许无限次 commit，直到 candidate finished，用 baseline request 校验最终输出
+```
+
+仍保持以下限制：
+
+```text
+greedy only: temperature=0.0
+single prompt pair: baseline + candidate
+single GPU / tensor_parallel_size=1
+不扩多 prompt
+不扩量化
+不扩 8B
+```
+
+`tools/profile_ngram_commit.py` 新增：
+
+```text
+--max-commit-events N
+  N=1: 默认 S3 smoke
+  N=0: S4 full online speculative benchmark，直到完成前不限制 commit 次数
+```
+
+summary 新增 benchmark 字段：
+
+```text
+commit_events
+drafted_tokens
+acceptance_rate
+candidate_autoregressive_steps_avoided
+candidate_step_reduction
+```
+
+#### 47.43.2 远端命令
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-commit-events 0 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_spec_s4_06b.json
+```
+
+#### 47.43.3 远端结果
+
+| metric | value |
+|---|---:|
+| exit_code | 0 |
+| outputs_match | true |
+| baseline_output_tokens | 64 |
+| candidate_output_tokens | 64 |
+| gate_pass | true |
+| commit_events | 10 |
+| commit_attempts | 10 |
+| zero_accept_events | 0 |
+| no_draft_steps | 15 |
+| drafted_tokens | 40 |
+| accepted_count | 38 |
+| acceptance_rate | 95.0% |
+| candidate_autoregressive_steps_avoided | 38 |
+| candidate_step_reduction | 59.4% |
+| elapsed_s | 52.48 |
+
+首个 commit event：
+
+```text
+step=8, history_len=22
+ draft_tokens  = [13440, 21619, 13, 4710]
+ target_tokens = [13440, 21619, 1, 330]
+ accepted      = [13440, 21619]
+ accepted_count= 2
+```
+
+最后一个 commit event：
+
+```text
+step=25, history_len=73
+ draft_tokens  = [13440, 21619, 1, 646]
+ target_tokens = [13440, 21619, 1, 646]
+ accepted_count= 4
+```
+
+#### 47.43.4 当前判断
+
+S4 窄口径 benchmark 通过：candidate 在多次 online verify+commit 后，最终 64 个 output token 与 baseline 完全一致。这说明从 S1/S2/S3 串起来的最小闭环已经成立：
+
+```text
+online n-gram proposal
+-> target one-pass verification over live KV prefix
+-> accepted-token KV/metadata commit
+-> subsequent normal decode continues from committed state
+-> final output matches baseline
+```
+
+但这还不是最终性能结论。当前结果只能说明窄口径正确性和理论 decode step reduction；elapsed_s 仍包含 baseline+candidate 同跑、Python 侧 profiler、额外 target verification forward 等开销，不能直接当作吞吐提升。
+
+下一步建议仍按范围递增：
+
+1. 多 prompt greedy benchmark：复用 S1 的 3 个 prompt，统计 per-prompt commit/acceptance/output match。
+2. 只跑 candidate-only 与 baseline-only 分离计时，避免同一 engine 里双请求互相影响。
+3. 再扩 8B fp16 / W4A8+KV8 量化组合。
+
+### 47.44 S4 多 prompt greedy benchmark（2026-06-26）
+
+承接 §47.43，本轮把 S4 从单 prompt 扩到多 prompt greedy benchmark，但仍不进入量化/8B，也不做 baseline-only / candidate-only 分离计时。
+
+#### 47.44.1 实现改动
+
+`tools/profile_ngram_commit.py` 的 `--prompt` 改为可重复传入：
+
+```text
+--prompt PROMPT_A --prompt PROMPT_B --prompt PROMPT_C
+```
+
+每个 prompt 在同一个 `LLM` 实例中创建一对请求：
+
+```text
+prompt_i -> baseline_seq_i + candidate_seq_i
+```
+
+profiler 对每个 candidate 独立维护：
+
+```text
+commit_events
+commit_attempts
+zero_accept_events
+drafted_tokens
+accepted_count
+outputs_match
+```
+
+`--max-commit-events` 语义改为 **per candidate**：
+
+```text
+--max-commit-events 1: 每个 candidate 最多 commit 1 次
+--max-commit-events 0: 每个 candidate 不限制 commit 次数
+```
+
+整体 gate 仍然是：
+
+```text
+所有 prompt outputs_match == true
+总 committed == true
+总 accepted_count > 0
+```
+
+#### 47.44.2 远端命令
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt 'Repeat the following phrase five times: alpha beta gamma alpha beta gamma.' \
+  --prompt 'Write a short Python function and then explain each line briefly.' \
+  --prompt 'The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. What color is the sky?' \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-commit-events 0 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_spec_s4_06b_multiprompt.json
+```
+
+#### 47.44.3 远端结果
+
+总体：
+
+| metric | value |
+|---|---:|
+| exit_code | 0 |
+| num_prompts | 3 |
+| outputs_match | true |
+| baseline_output_tokens | 192 |
+| candidate_output_tokens | 192 |
+| gate_pass | true |
+| commit_events | 14 |
+| commit_attempts | 15 |
+| zero_accept_events | 1 |
+| no_draft_steps | 132 |
+| drafted_tokens | 60 |
+| accepted_count | 43 |
+| acceptance_rate | 71.7% |
+| candidate_autoregressive_steps_avoided | 43 |
+| candidate_step_reduction | 22.4% |
+| elapsed_s | 40.31 |
+
+分 prompt：
+
+| prompt | outputs_match | commit_events | attempts | zero_accept | drafted | accepted | acceptance | step_reduction |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | true | 10 | 10 | 0 | 40 | 38 | 95.0% | 59.4% |
+| 1 | true | 3 | 3 | 0 | 12 | 4 | 33.3% | 6.2% |
+| 2 | true | 1 | 2 | 1 | 8 | 1 | 12.5% | 1.6% |
+
+#### 47.44.4 当前判断
+
+多 prompt greedy S4 gate 通过，说明完整 online verify+commit 在更混合的 greedy 文本场景下仍保持输出一致：三个 prompt 的 candidate output token 均与 baseline 完全一致。
+
+但覆盖率和收益高度依赖 prompt：重复模板 prompt 的 accepted/token reduction 明显，普通代码解释 prompt 和短重复事实 prompt 的收益很低。因此下一步不应直接扩 8B/量化，而应先做 **baseline-only / candidate-only 分离计时**：
+
+```text
+baseline-only: 正常 TinyLLM generate/step
+candidate-only: 单请求 online speculative generate/step
+```
+
+目标是区分：理论 step reduction 是否能抵消 target verification forward + Python profiler overhead。
+
+### 47.45 S4 baseline-only / candidate-only 分离计时（2026-06-26）
+
+承接 §47.44，本轮不扩 8B/量化，而是把同一批 3 个 greedy prompt 拆成两次独立运行：
+
+```text
+baseline-only: 只跑正常 TinyLLM decode
+candidate-only: 只跑 online speculative decode
+```
+
+这样避免 `baseline + candidate` 同一 engine 中互相影响调度和计时。
+
+#### 47.45.1 实现改动
+
+`tools/profile_ngram_commit.py` 新增模式：
+
+```text
+--mode paired          # 默认，baseline+candidate 同 engine，用于输出一致性 gate
+--mode baseline-only   # 只跑 baseline，输出 token_ids/text 和 wall-clock
+--mode candidate-only  # 只跑 speculative candidate，输出 token_ids/text、commit 统计和 wall-clock
+```
+
+candidate-only 仍使用同一条 S4 speculative 路径：
+
+```text
+online n-gram draft
+-> target verify over live KV prefix
+-> accepted-token commit
+-> normal decode continue
+```
+
+输出一致性通过读取两份 JSON 后离线比较 `per_prompt[*].token_ids`。
+
+#### 47.45.2 远端命令
+
+Baseline-only：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode baseline-only \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt 'Repeat the following phrase five times: alpha beta gamma alpha beta gamma.' \
+  --prompt 'Write a short Python function and then explain each line briefly.' \
+  --prompt 'The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. What color is the sky?' \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-commit-events 0 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_spec_s4_06b_baseline_only.json
+```
+
+Candidate-only：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt 'Repeat the following phrase five times: alpha beta gamma alpha beta gamma.' \
+  --prompt 'Write a short Python function and then explain each line briefly.' \
+  --prompt 'The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. The grass is green. The sky is blue. The sun is yellow. Here we go. What color is the sky?' \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 4 \
+  --max-commit-events 0 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_spec_s4_06b_candidate_only.json
+```
+
+#### 47.45.3 远端结果
+
+总体：
+
+| mode | output tokens | elapsed_s | tok/s | gate |
+|---|---:|---:|---:|---:|
+| baseline-only | 192 | 40.67 | 4.72 | true |
+| candidate-only | 192 | 71.52 | 2.68 | true |
+
+Candidate speculative 统计：
+
+| metric | value |
+|---|---:|
+| commit_events | 13 |
+| commit_attempts | 17 |
+| zero_accept_events | 4 |
+| no_draft_steps | 130 |
+| drafted_tokens | 68 |
+| accepted_count | 42 |
+| acceptance_rate | 61.8% |
+| candidate_step_reduction | 21.9% |
+
+离线 token 对齐：
+
+| prompt | outputs_match | candidate commits | candidate accepted | step_reduction |
+|---:|---:|---:|---:|---:|
+| 0 | true | 10 | 38 | 59.4% |
+| 1 | true | 3 | 4 | 6.2% |
+| 2 | true | 0 | 0 | 0.0% |
+
+总输出一致性：
+
+```text
+all_outputs_match = true
+```
+
+计时对比：
+
+```text
+candidate_elapsed / baseline_elapsed = 1.76x
+wallclock_speedup = 0.57x
+```
+
+#### 47.45.4 当前判断
+
+分离计时说明：当前 Python-level online speculative prototype **正确但不加速**。虽然 candidate-only 接受了 42 个 token，理论 step reduction 为 21.9%，但额外 target verification forward、Python 调度/统计开销、以及当前逐 event 验证方式超过了减少 decode step 的收益。
+
+因此下一步不应扩 8B/量化；应先做候选路径降开销：
+
+1. **减少 verifier 调用开销**：只在更高置信 n-gram 命中时触发，或提高最小 draft 长度/历史重复阈值。
+2. **批量 verify 多个 candidate**：把同一步多个 speculative events 合并到一次 target forward。
+3. **candidate-only 工程化路径**：从 profiler 迁到 engine/scheduler 内部，减少 Python 侧循环和 JSON 统计开销。
+4. 再复测 baseline-only / candidate-only；只有 candidate-only 接近或超过 baseline，才值得扩 8B/量化。
+
+### 47.46 S4 n-gram 触发策略 sweep（2026-06-26）
+
+承接 §47.45，本轮先不改 engine，而是在 candidate-only 分离计时框架下 sweep 更保守的触发策略，目标是验证“减少低置信 verifier 调用”能否抵消一部分 speculative overhead。
+
+固定条件：
+
+```text
+model=Qwen3-0.6B fp16
+temperature=0.0
+prompts=3
+max_output_len=64
+mode=candidate-only
+baseline-only elapsed_s=40.67, tok/s=4.72
+```
+
+#### 47.46.1 远端命令矩阵
+
+| tag | ngram_size | max_draft_tokens |
+|---|---:|---:|
+| n3d4 | 3 | 4 |
+| n4d4 | 4 | 4 |
+| n5d4 | 5 | 4 |
+| n3d8 | 3 | 8 |
+
+所有 candidate 输出均与 baseline-only 的 `token_ids` 离线逐 prompt 对齐：
+
+```text
+n3d4 all_outputs_match=true
+n4d4 all_outputs_match=true
+n5d4 all_outputs_match=true
+n3d8 all_outputs_match=true
+```
+
+#### 47.46.2 结果
+
+| tag | elapsed_s | tok/s | vs baseline elapsed | wallclock speedup | attempts | zero_accept | accepted | acceptance | step_reduction | gate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline | 40.67 | 4.72 | 1.00x | 1.00x | - | - | - | - | - | true |
+| n3d4 | 71.52 | 2.68 | 1.76x | 0.57x | 17 | 4 | 42 | 61.8% | 21.9% | true |
+| n4d4 | 59.61 | 3.22 | 1.47x | 0.68x | 13 | 2 | 38 | 73.1% | 19.8% | true |
+| n5d4 | 37.44 | 5.13 | 0.92x | 1.09x | 11 | 2 | 35 | 79.5% | 18.2% | true |
+| n3d8 | 64.06 | 3.00 | 1.58x | 0.63x | 13 | 4 | 46 | 44.2% | 24.0% | true |
+
+分 prompt 看，`n5d4` 的收益几乎全部来自重复模板 prompt：
+
+| prompt | commit_events | accepted | acceptance | step_reduction |
+|---:|---:|---:|---:|---:|
+| 0 | 9 | 35 | 87.5% | 54.7% |
+| 1 | 0 | 0 | 0.0% | 0.0% |
+| 2 | 0 | 0 | 0.0% | 0.0% |
+
+#### 47.46.3 当前判断
+
+触发策略比单纯扩大 draft 更重要：
+
+1. `n3d8` 虽然 accepted token 最多（46），但 verifier 输入更长且 acceptance 下降，整体仍慢于 baseline。
+2. `n4d4` 比 `n3d4` 少触发、少 zero-accept，耗时下降，但仍慢于 baseline。
+3. `n5d4` 是当前唯一超过 baseline 的配置：触发更保守，减少无效 verifier 调用，在这批 prompt 上达到 `1.09x` wall-clock speedup。
+
+但这个结论仍需谨慎：`n5d4` 的加速来自 prompt 0 的强重复模式，prompt 1/2 基本没有收益。因此下一步不是扩模型，而是继续做触发策略工程化：
+
+```text
+默认从 ngram_size=5, max_draft_tokens=4 作为 candidate 策略起点
+加入 min_acceptance/命中质量统计，避免普通 prompt 上频繁 verifier
+在 candidate-only 路径复测更多 prompt，确认 n5d4 不是样本偶然
+```
+
+### 47.47 KV offload blockwise decode：decode 不再要求全部 visible blocks 一次性 resident（2026-06-30）
+
+承接 KV offload MVP-1 的剩余限制，本轮把 exact blockwise/streaming attention 的 online-softmax merge 接进真实 decode attention 路径。目标不是性能优化，而是先验证：decode 阶段可以按 window staging KV blocks，并在窗口级 attention 后用 online softmax 合并结果，从而不再要求所有 visible logical blocks 一次性 resident 在 GPU staging slots 中。
+
+#### 47.47.1 实现边界
+
+当前实现仍是受控 correctness path：
+
+```text
+默认关闭，需要显式打开 --kv-offload-blockwise-decode
+仅 kv_offload_mvp0=True 时可用
+仅 fp16/bf16 KV；kv_quant_bits 必须为 0
+仅 decode path；prefill 仍走原路径
+不支持 Quest / KV-Cartridge / AM compact / KV4 / KV8
+不改 scheduler / BlockManager / attention kernel
+blockwise decode MVP 使用 PyTorch gather + online-softmax，性能不是最终形态
+```
+
+新增配置 / CLI：
+
+```bash
+--kv-offload-blockwise-decode
+--kv-offload-blockwise-blocks N
+--max-num-prefill-tokens-per-step N
+```
+
+#### 47.47.2 关键实现
+
+- `tinyvllm/config.py`
+  - 新增 `kv_offload_blockwise_decode`。
+  - 新增 `kv_offload_blockwise_blocks`。
+- `tinyvllm/utils/context.py`
+  - 在 attention context 中传入 `kv_offload_manager`、logical block tables、context lens、write blocks、blockwise window size。
+- `tinyvllm/engine/model_runner.py`
+  - `prepare_decode()` 在 blockwise 模式下只预先 stage 当前 write blocks。
+  - 不再要求 decode visible logical blocks 一次性全部 resident。
+  - logical block rows 传给 attention，由 attention layer 按 window 触发 staging。
+- `tinyvllm/layers/attention.py`
+  - decode 时若 `context.kv_offload_blockwise_decode=True`：
+    - 当前 token KV 先写入 staging slot；
+    - 标记 write block dirty，避免窗口 staging 时丢当前层 KV；
+    - 按 logical block window 调 `KVOffloadMVP0.ensure_resident()`；
+    - 从当前 layer 的 physical slot gather window K/V；
+    - 用 online softmax merge 每个 window 的 attention 结果。
+
+本地已通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/config.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/utils/context.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/layers/attention.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/engine/model_runner.py \
+  /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_chunked_prefill.py
+```
+
+远程已同步并通过静态检查。
+
+#### 47.47.3 blockwise attention 数学回归
+
+输出：`profile_out/blockwise_attn_online_softmax_regression_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| chunks | 16 |
+| streamed_tokens | 2048 |
+| max_abs_error | 2.98e-08 |
+| relative_error | 2.31e-07 |
+
+结论：online-softmax blockwise merge 与一次性 full attention 的数值误差在 smoke 范围内可接受，作为真实 decode path 的数学基线通过。
+
+#### 47.47.4 真实模型单请求 blockwise decode smoke
+
+Qwen3-0.6B，单条约 385-token prompt，`kv_offload_gpu_blocks=2`，`kv_offload_blockwise_blocks=1`。
+
+输出：`profile_out/kv_offload_blockwise_decode_real_smoke_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 2 |
+| decode_steps | 1 |
+| prefetch_plans | 58 |
+| prefetch_read_blocks | 56 |
+| prefetch_write_blocks | 3 |
+| d2h_copies | 3 |
+| h2d_copies | 0 |
+
+这里没有 H2D reload 是预期的：单请求 2 个 logical blocks 正好等于 staging slots，未触发驱逐。
+
+#### 47.47.5 真实模型两请求 blockwise decode thrash
+
+两条约 385-token prompt，`max_num_seqs=1`，`kv_offload_gpu_blocks=2`，`kv_offload_blockwise_blocks=1`。两个 request 交替 decode，跨 request 触发 staging eviction/reload。
+
+输出：`profile_out/kv_offload_blockwise_decode_real_two_request_thrash_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 4 |
+| decode_steps | 2 |
+| evictions | 6 |
+| h2d_copies | 4 |
+| d2h_copies | 6 |
+| h2d_batches | 4 |
+| d2h_batches | 4 |
+| prefetch_plans | 116 |
+| prefetch_read_blocks | 112 |
+| prefetch_write_blocks | 6 |
+
+#### 47.47.6 当前结论与剩余限制
+
+现在真实 decode attention 路径已经可以：
+
+```text
+按 window stage KV blocks
+局部 attention
+online softmax merge
+跨 request 触发 eviction/reload
+```
+
+也就是说，decode 阶段已经不再要求“全部 visible logical blocks 一次性 resident”。在当前中间态下，可以先采用更窄的端到端约束：
+
+```text
+prefill 时 gpu_blocks >= prompt blocks
+decode 时允许 visible blocks > staging slots
+```
+
+当前剩余限制仍在 prefill：prefill 仍走原路径。如果单条 prompt 本身超过 staging slots，prefill 阶段仍可能要求 prefix blocks 一次性可见。完整解除端到端限制的下一步是做 blockwise/chunked prefill attention。
+

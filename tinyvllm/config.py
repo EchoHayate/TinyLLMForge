@@ -57,11 +57,23 @@ class Config:
     chunked_prefill_decode_first: bool = True            # 已有 decode 请求时优先 decode，避免被新长 prompt prefill 阻塞
     chunked_prefill_max_consecutive_chunks: int = 0       # >0 时 prefill 连续 N 个 chunk 后若有 running decode，则让出 1 次 decode
     chunked_prefill_mixed_batch: bool = False             # True 时允许一个 prefill chunk 和 running decode 走同一次 varlen prefill forward
+    chunked_prefill_mixed_min_prompt_tokens: int = 0       # >0 时 mixed 只接纳剩余 prompt token >= 该阈值的 prefill，短 prompt 等 decode 空闲后再 prefill
 
     # KV cache 量化（C4 等）相关配置
     kv_quant_bits: int = 0                              # 0 / 4 / 8，KV cache 量化位宽，0 表示不量化
     kv_quant_group_size: int = 128                      # group-wise 量化的组大小，沿 head_dim 切
     kv_quant_symmetric: bool = True                     # True = 对称量化（仅 scale），False = 非对称（scale + zero）
+    # KV offload MVP-0：仅支持 fp16/bf16 KV + full attention + eager decode。
+    # seq.block_table 保持 logical block id；ModelRunner 在 prepare_* 中翻译到 GPU physical slot。
+    kv_offload_mvp0: bool = False
+    kv_offload_gpu_blocks: int = 0                      # >0 时限制 GPU staging slot 数；0 表示使用自动估算值
+    kv_offload_logical_blocks: int = 0                  # >0 时覆盖 logical block 总数；0 表示使用自动估算值
+    kv_offload_async_copy: bool = True                  # MVP-1：用独立 CUDA stream/event 做 H2D/D2H
+    kv_offload_batch_copy: bool = True                  # MVP-1：连续 logical/slot span 合并成批量 copy
+    kv_offload_writeback_on_evict: bool = False         # False 保持每次 forward 后写回；True 延迟到 eviction
+    kv_offload_evict_policy: str = "lru_cost"           # lru / lru_cost
+    kv_offload_blockwise_decode: bool = False           # 实验：decode attention 按 block window 流式扫描 KV
+    kv_offload_blockwise_blocks: int = 1                # 每个 attention window 最多处理多少 logical KV blocks
     # Activation 量化（A8 等）相关配置（W4A8 用）
     act_quant_bits: int = 0                             # 0 / 8
     # A8 首尾层跳过：长文 W4A8+SQ 复读塌方根因——首尾若干层 outlier 最严重，
@@ -81,6 +93,10 @@ class Config:
         assert 1 <= self.tensor_parallel_size <= 8
         assert self.quantization in (None, "int8", "int8_bnb", "int4", "int2")
         assert self.kv_quant_bits in (0, 4, 8), "kv_quant_bits 仅支持 0/4/8"
+        assert self.kv_offload_gpu_blocks >= 0
+        assert self.kv_offload_logical_blocks >= 0
+        assert self.kv_offload_evict_policy in ("lru", "lru_cost")
+        assert self.kv_offload_blockwise_blocks > 0
         assert self.kv_cartridge_blocks >= 0
         assert self.kv_cartridge_min_seq_len >= 0
         assert self.kv_cartridge_mode == "uniform", "KV-Cartridge v0 仅支持 uniform 模式"
@@ -113,10 +129,18 @@ class Config:
             "Attention Matching compact decode 和 KV-Cartridge uniform 请分开评测"
         assert not (self.am_compact_blocks > 0 and self.kv_quant_bits == 4), \
             "Attention Matching compact decode v0 仅支持 fp16 KV / KV8，暂不支持 KV4"
+        if self.kv_offload_mvp0:
+            assert self.kv_quant_bits == 0, "KV offload MVP-0 仅支持 fp16/bf16 KV，暂不支持 KV4/KV8"
+            assert self.quest_top_k_blocks <= 0, "KV offload MVP-0 先只支持 full attention，请关闭 Quest"
+            assert self.kv_cartridge_blocks == 0, "KV offload MVP-0 先只支持 full attention，请关闭 KV-Cartridge"
+            assert self.am_compact_blocks == 0, "KV offload MVP-0 先只支持 full attention，请关闭 AM compact"
+        assert not self.kv_offload_blockwise_decode or self.kv_offload_mvp0, \
+            "kv_offload_blockwise_decode 依赖 kv_offload_mvp0"
         assert self.act_quant_bits in (0, 8), "act_quant_bits 仅支持 0/8"
         assert self.act_quant_skip_first >= 0 and self.act_quant_skip_last >= 0
         assert self.max_num_prefill_tokens_per_step >= 0
         assert self.chunked_prefill_max_consecutive_chunks >= 0
+        assert self.chunked_prefill_mixed_min_prompt_tokens >= 0
         assert 0.0 <= self.smoothquant_alpha <= 1.0
         if self.smoothquant_scale_path is not None:
             assert os.path.isfile(self.smoothquant_scale_path), \

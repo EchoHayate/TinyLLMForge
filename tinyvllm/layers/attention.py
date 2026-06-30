@@ -53,6 +53,114 @@ def _am_prefill_dense_and_signatures(
     context_lens = torch.tensor(lengths, device=q.device, dtype=torch.int32)
     return q_dense, k_dense, v_dense, context_lens, tuple(signatures)
 
+
+def _repeat_kv_for_gqa(kv: torch.Tensor, num_heads: int) -> torch.Tensor:
+    if kv.shape[2] == num_heads:
+        return kv
+    assert num_heads % kv.shape[2] == 0
+    return kv.repeat_interleave(num_heads // kv.shape[2], dim=2)
+
+
+def _blockwise_online_decode_attention(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    context,
+    num_heads: int,
+    head_dim: int,
+    scale: float,
+) -> torch.Tensor:
+    """Exact decode attention over logical KV blocks staged window by window.
+
+    This is a correctness-first bridge for KV offload: it avoids requiring all
+    visible logical blocks to be resident in GPU staging slots simultaneously.
+    It intentionally uses PyTorch ops rather than FlashAttention because the
+    online softmax merge needs each window's unnormalized exp sums.
+    """
+    manager = context.kv_offload_manager
+    logical_rows = context.kv_offload_logical_block_tables
+    context_lens = context.kv_offload_context_lens
+    assert manager is not None and logical_rows is not None and context_lens is not None
+    window_blocks = max(1, int(context.kv_offload_blockwise_blocks))
+    block_size = int(k_cache.shape[1])
+    batch = len(logical_rows)
+    if window_blocks > manager.gpu_blocks:
+        raise RuntimeError(
+            f"kv_offload_blockwise_blocks={window_blocks} exceeds gpu staging blocks={manager.gpu_blocks}"
+        )
+
+    q_fp = q.to(torch.float32)
+    running_m = torch.full((batch, num_heads), float("-inf"), device=q.device, dtype=torch.float32)
+    running_l = torch.zeros((batch, num_heads), device=q.device, dtype=torch.float32)
+    running_o = torch.zeros((batch, num_heads, head_dim), device=q.device, dtype=torch.float32)
+    max_blocks = max(len([block for block in row if int(block) >= 0]) for row in logical_rows)
+    write_blocks = set(int(block) for block in (context.kv_offload_write_blocks or []))
+    if write_blocks:
+        manager.mark_dirty(list(write_blocks))
+
+    for start_block in range(0, max_blocks, window_blocks):
+        window_rows = []
+        window_lens = []
+        needed_blocks = []
+        for row_idx, row in enumerate(logical_rows):
+            row_blocks = [int(block) for block in row if int(block) >= 0]
+            window = row_blocks[start_block:start_block + window_blocks]
+            window_rows.append(window)
+            start_token = start_block * block_size
+            remaining = max(0, int(context_lens[row_idx]) - start_token)
+            window_lens.append(min(remaining, len(window) * block_size))
+            needed_blocks.extend(window)
+        if not needed_blocks or max(window_lens, default=0) <= 0:
+            continue
+        unique_blocks = set(int(block) for block in needed_blocks)
+        if len(unique_blocks) > manager.gpu_blocks:
+            raise RuntimeError(
+                "blockwise decode window has more unique logical blocks than GPU staging slots: "
+                f"required={len(unique_blocks)}, gpu_blocks={manager.gpu_blocks}"
+            )
+        manager.stats["prefetch_plans"] += 1
+        manager.stats["prefetch_read_blocks"] += len(unique_blocks)
+        manager.ensure_resident(list(unique_blocks), require_valid=True, future_logical_blocks=unique_blocks)
+        manager.wait_for_pending()
+
+        max_window_tokens = max(window_lens)
+        k_dense = q.new_zeros((batch, max_window_tokens, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
+        v_dense = q.new_zeros((batch, max_window_tokens, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
+        for row_idx, window in enumerate(window_rows):
+            copied = 0
+            for logical_block in window:
+                if copied >= window_lens[row_idx]:
+                    break
+                slot = manager.logical_to_slot[int(logical_block)]
+                take = min(block_size, window_lens[row_idx] - copied)
+                k_dense[row_idx, copied:copied + take] = k_cache[slot, :take]
+                v_dense[row_idx, copied:copied + take] = v_cache[slot, :take]
+                copied += take
+
+        k_dense = _repeat_kv_for_gqa(k_dense, num_heads).to(torch.float32)
+        v_dense = _repeat_kv_for_gqa(v_dense, num_heads).to(torch.float32)
+        scores = torch.einsum("bhd,bthd->bht", q_fp, k_dense) * scale
+        positions = torch.arange(max_window_tokens, device=q.device).view(1, 1, -1)
+        lens = torch.tensor(window_lens, device=q.device, dtype=torch.int64).view(batch, 1, 1)
+        mask = positions < lens
+        valid = mask.any(dim=-1)
+        scores = scores.masked_fill(~mask, float("-inf"))
+        chunk_m = scores.max(dim=-1).values
+        chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
+        exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
+        chunk_l = exp_scores.sum(dim=-1)
+        chunk_o = torch.einsum("bht,bthd->bhd", exp_scores, v_dense)
+
+        merged_m = torch.maximum(running_m, chunk_m)
+        merged_m = torch.where(valid, merged_m, running_m)
+        old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
+        new_weight = torch.exp(chunk_m - merged_m).masked_fill(~valid, 0.0)
+        running_l = old_weight * running_l + new_weight * chunk_l
+        running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
+        running_m = merged_m
+
+    return (running_o / running_l.clamp_min(1e-20).unsqueeze(-1)).to(q.dtype)
+
 @triton.jit
 def store_kvcache_kernel(
     key_ptr: torch.Tensor,
@@ -662,6 +770,13 @@ class Attention(nn.Module):
             am_active = (self._am_compact_layer_enabled(context)
                          and block_tables is not None
                          and cache_seqlens is not None)
+
+            if context.kv_offload_blockwise_decode:
+                assert self.kv_quant_bits == 0, "KV offload blockwise decode MVP 仅支持 fp16/bf16 KV"
+                o = _blockwise_online_decode_attention(
+                    q, k_cache, v_cache, context, self.num_heads, self.head_dim, self.scale)
+                o = o.view(-1, self.num_heads * self.head_dim)
+                return o
 
             if self.kv_quant_bits in (4, 8):
                 _dequant = dequant_kv_blocks if self.kv_quant_bits == 4 else dequant_kv_blocks_q8

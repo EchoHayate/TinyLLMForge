@@ -33,6 +33,7 @@ class LLMEngine:
         config.eos = self.tokenizer.eos_token_id
         self.scheduler = Scheduler(config)
         self.last_batch_kind = None
+        self.last_scheduled_seqs = []
         atexit.register(self.exit)
         
     def exit(self):
@@ -59,6 +60,7 @@ class LLMEngine:
             seqs, is_prefill, do_sample = scheduled
             batch_kind = None
         self.last_batch_kind = batch_kind
+        self.last_scheduled_seqs = seqs
         token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample, batch_kind)     
         if batch_kind == "mixed":
             prefill_tokens = sum(

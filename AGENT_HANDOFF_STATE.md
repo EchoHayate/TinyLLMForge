@@ -1,0 +1,730 @@
+# Agent Handoff State
+
+> 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
+
+## 必须优先使用远程环境
+
+- 远程机器：`sitian@10.232.195.203`
+- 远程项目目录：`/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge`
+- 远程 Python：`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`
+- Python 版本：`Python 3.11.15`
+- Torch：`2.4.1+cu121`
+- CUDA：远程 Python 下 `torch.cuda.is_available() == True`
+- 默认 GPU：`CUDA_VISIBLE_DEVICES=7`
+- Conda/Miniforge：`/data00/home/sitian/sitian-workspace01/tllm/miniforge/bin/conda`
+- Conda envs 中包含：
+  - `/data00/home/sitian/sitian-workspace01/tllm/env`
+  - `/data00/home/sitian/sitian-workspace01/tllm/miniforge`（base）
+  - `/data00/home/sitian/miniconda3`
+  - `/data00/home/sitian/miniconda3/envs/py311`
+
+本地桌面项目入口是 `/Users/bytedance/Desktop/TinyLLMForge`（用户口径：Tiny LLM Forge）。这个路径是后续 agent 应优先读取/进入的本地项目路径；涉及 GPU、torch CUDA、profile、needle、Qwen 模型时仍必须通过 SSH 在远程跑，不要用本地 `/opt/homebrew/bin/python3.12` 代替。
+
+## 本地路径
+
+- 本地桌面项目入口：`/Users/bytedance/Desktop/TinyLLMForge`（用户口径：Tiny LLM Forge）
+- 实际 symlink 指向：`/Users/bytedance/dev/TinyLLMForge`
+- 后续 agent 本地读文件时优先用桌面路径：`/Users/bytedance/Desktop/TinyLLMForge/AGENT_HANDOFF_STATE.md`
+- 本地分支：`feat/kv-sparse-attention`（本地 git 仓库）
+- 远程项目目录当前看起来不是 git worktree（`git status` 报 not a git repository），更像同步后的运行目录。
+
+## 常用远程命令模板
+
+```bash
+ssh sitian@10.232.195.203 'cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge && CUDA_VISIBLE_DEVICES=7 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python <script> <args>'
+```
+
+验证远程 Python/CUDA：
+
+```bash
+ssh sitian@10.232.195.203 'cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge && /data00/home/sitian/sitian-workspace01/tllm/env/bin/python - <<"PY"
+import torch, sys
+print(sys.executable)
+print(torch.__version__, torch.cuda.is_available())
+PY'
+```
+
+## 模型和重要产物路径
+
+- Qwen3-8B：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B`
+- Qwen3-0.6B：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B`
+- SQ scale 常用：
+  - `/tmp/sq_scales_qwen3_8b_a0.85.pt`
+  - `/tmp/sq_scales_qwen3_8b_layer_adaptive_floor085.pt`
+- 远程 profile 输出目录：`/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out`
+- 远程 needle 输出目录：`/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/needle_sq_results`
+
+## 当前任务主线
+
+最近主线是 TinyLLMForge 的 Qwen3/long-context runtime 实验，尤其：
+
+1. n-gram speculative decoding 原型：S1 online dry-run、S2 target verification、S3 accepted-token KV commit、S4 online benchmark。
+2. mixed prefill admission policy：短 prompt 不进入 mixed prefill+decode batch，保护 decode latency。
+3. hidden-state / latent projector 相关实验已经有大量脚本和结果，但当前更像封档/实验记录，不是 runtime 主线。
+
+本地最近相关文件：
+
+- `tinyvllm/speculative/ngram.py`
+- `tinyvllm/engine/block_manager.py`
+- `tinyvllm/engine/llm_engine.py`
+- `tinyvllm/engine/scheduler.py`
+- `tools/profile_ngram_online.py`
+- `tools/profile_ngram_verify.py`
+- `tools/profile_ngram_commit.py`
+- `tools/test_ngram_speculative.py`
+- `tools/test_chunked_prefill.py`
+- `tools/profile_chunked_prefill.py`
+- `tools/train_latent_projector.py`
+- `docs/qwen3-8b-fixes.md`
+
+## 当前已做的本地修复
+
+在本地 `/Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py` 已修两个边界：
+
+1. `_target_verify_and_commit()` 中 `commit_accepted_tokens()` 接管/释放 reserved blocks 后，把本地 `reserved_blocks` 清空，避免异常路径 double release。
+2. `run_paired_profile()` 和 `run_candidate_only_profile()` 中，commit 后如果 `llm.is_finished()`，直接 break，避免所有请求已结束后继续 `llm.step()` 触发 scheduler 空队列 assert。
+
+本地已通过：
+
+```bash
+git -C /Users/bytedance/dev/TinyLLMForge diff --check
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge python3 /Users/bytedance/dev/TinyLLMForge/tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge python3 /Users/bytedance/dev/TinyLLMForge/tools/test_ngram_speculative.py
+```
+
+注意：这些是本地 CPU/语法检查。GPU/profile/模型相关验证必须在远程跑。
+
+## 建议下一步
+
+1. 后续 agent 先读本文件：`/Users/bytedance/Desktop/TinyLLMForge/AGENT_HANDOFF_STATE.md`。
+2. 如果要继续 S4 n-gram speculative，先确认本地改动是否已同步到远程运行目录。
+3. 在远程用 Qwen3-0.6B 先跑最小 candidate-only / baseline-only smoke，再跑 8B。
+4. 不要把 `.agents/`、`.codex/`、`.pt` checkpoint 这类本地配置/产物默认提交。
+5. 然后读取 `docs/qwen3-8b-fixes.md` 最新章节。
+
+## 2026-06-29 远程 S4 smoke 结果
+
+已把本地 `tools/profile_ngram_commit.py` 的边界修复同步到远程运行目录，并在远程通过：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+PYTHONDONTWRITEBYTECODE=1 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py --help >/dev/null
+```
+
+Qwen3-0.6B / `max_output_len=32` / `n5d4` smoke：
+
+- candidate-only JSON：`profile_out/ngram_spec_s4_06b_candidate_n5d4_smoke_20260629.json`
+- candidate-only log：`profile_out/ngram_spec_s4_06b_candidate_n5d4_smoke_20260629.log`
+- baseline-only JSON：`profile_out/ngram_spec_s4_06b_baseline_n5d4_smoke_20260629.json`
+- baseline-only log：`profile_out/ngram_spec_s4_06b_baseline_n5d4_smoke_20260629.log`
+
+结果摘要：
+
+| mode | gate_pass | output_tokens | elapsed_s | tok/s | decode_steps | commit_events | accepted_count | drafted_tokens | acceptance_rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| candidate-only | true | 32 | 55.705 | 0.574 | 22 | 3 | 9 | 16 | 0.5625 |
+| baseline-only | true | 32 | 57.078 | 0.561 | 31 | - | - | - | - |
+
+纯 decode step 汇总：candidate 22 step / 22.875s，baseline 31 step / 24.044s。candidate 确实少跑 9 个 decode step，但单 step 平均更重；这个 smoke 只说明修复后正确性 gate 通过，性能结论还需要更长输出、多 prompt、热身后再判断。
+
+## 2026-06-29 warmup 后的 S4 smoke 结果
+
+结论：之前 55s 主要不是 decode 慢，而是冷启动/首次 shape 编译计入了测量。典型冷启动：prefill 约 32-33s，首个 decode 约 22s；warmup 后测量段恢复到约 1.1s。
+
+已给 `tools/profile_ngram_commit.py` 增加参数：
+
+```bash
+--warmup-output-len N
+```
+
+它会在正式计时前先用同一个 LLM 跑一个 untimed warmup request，避免把 CUDA / kernel / symbolic shape setup 计入 profile 时间。远程已同步并通过 `py_compile` / `--help`。
+
+Qwen3-0.6B / `max_output_len=32` / `warmup_output_len=4` / `n5d4`：
+
+| mode | gate_pass | warmup_s | measured_elapsed_s | tok/s | decode_steps | commit_events | accepted_count | drafted_tokens | acceptance_rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline-only | true | 55.045 | 1.171 | 27.33 | 31 | - | - | - | - |
+| candidate-only | true | 56.438 | 1.117 | 28.65 | 22 | 3 | 9 | 16 | 0.5625 |
+
+纯 decode 段：baseline 31 step / 1127ms，candidate 22 step / 833ms。candidate 少 9 个 decode step，warmup 后测得约 1.05x wall-clock speedup；样本太短，只能作为正确性/趋势 smoke。
+
+注意：不要在同一默认 `TINYVLLM_DIST_PORT=2333` 下并发跑多个 TinyLLM 进程，否则会报 `EADDRINUSE`。如必须并发，显式设置不同 `TINYVLLM_DIST_PORT`，但同一 GPU 并发会污染性能结果。
+
+## 2026-06-29 target verify 分段计时
+
+已给 `tools/profile_ngram_commit.py` 的 `_target_verify_and_commit()` 增加分段计时，并写入每个 commit event 的 `timing_ms`，summary 里聚合为 `verify_timing_ms`。字段包括：
+
+- `reserve_blocks_ms`
+- `verify_prepare_ms`
+- `target_forward_ms`
+- `accept_sample_ms`
+- `commit_metadata_ms`
+- `finish_check_ms`
+- `verify_commit_total_ms`
+
+远程已同步并通过 `py_compile` / `--help`。计时 smoke 输出：
+
+- JSON：`profile_out/ngram_spec_s4_06b_candidate_n5d4_timing_smoke_20260629.json`
+- log：`profile_out/ngram_spec_s4_06b_candidate_n5d4_timing_smoke_20260629.log`
+
+Qwen3-0.6B / `max_output_len=32` / `warmup_output_len=4` / `n5d4` / candidate-only：
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| elapsed_s | 1.062 |
+| output_tokens_per_s | 30.13 |
+| decode_steps | 22 |
+| commit_attempts | 4 |
+| commit_events | 3 |
+| accepted_count | 9 |
+| drafted_tokens | 16 |
+| acceptance_rate | 0.5625 |
+
+聚合 verify timing（包含 4 次 attempt，其中 1 次 zero-accept）：
+
+| timing | ms |
+|---|---:|
+| reserve_blocks_ms | 0.025 |
+| verify_prepare_ms | 1.848 |
+| target_forward_ms | 242.415 |
+| accept_sample_ms | 1.831 |
+| commit_metadata_ms | 0.064 |
+| finish_check_ms | 0.031 |
+| verify_commit_total_ms | 246.250 |
+
+接受事件每次约 40ms target forward；metadata commit 基本可忽略。当前主要额外成本在 target forward verify，而不是 block reservation / commit metadata。
+
+## 2026-06-29 长上下文下验证 KV 读取摊薄
+
+按“重点看 target verify forward 是否能在长 context/cache pressure 下摊薄 KV 读取”的口径，跑了 3593-token prompt（`alpha beta gamma ...` 重复 512 次），`max_model_len=8192`，`max_output_len=64`，`warmup_output_len=4`，Qwen3-0.6B，`n5d4`。
+
+输出文件：
+
+- baseline JSON：`profile_out/ngram_spec_s4_06b_baseline_n5d4_long3593_20260629.json`
+- baseline log：`profile_out/ngram_spec_s4_06b_baseline_n5d4_long3593_20260629.log`
+- candidate JSON：`profile_out/ngram_spec_s4_06b_candidate_n5d4_long3593_20260629.json`
+- candidate log：`profile_out/ngram_spec_s4_06b_candidate_n5d4_long3593_20260629.log`
+
+结果：
+
+| mode | gate_pass | output_tokens | elapsed_s | tok/s | decode_steps | accepted | drafted | acceptance_rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline-only | true | 64 | 2.531 | 25.29 | 63 | - | - | - |
+| candidate-only | true | 64 | 1.266 | 50.54 | 16 | 47 | 52 | 0.9038 |
+
+分解：
+
+| mode | prefill_ms | decode_steps | decode_ms | avg_decode_ms | verify_target_forward_ms | verify_total_ms |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline-only | 179.5 | 63 | 2350.8 | 37.3 | - | - |
+| candidate-only | 69.2 | 16 | 643.9 | 40.2 | 531.7 | 542.1 |
+
+关键结论：
+
+- candidate 把 decode step 从 63 降到 16，接受了 47 个 token。
+- target verify forward 总计 531.7ms，验证 52 个 draft token，平均约 10.2ms/draft token；baseline decode 平均约 37.3ms/token。
+- 在这种长上下文、重复 prompt、高 acceptance 的场景下，target verify 基本表现为“一次约 40ms verify 4 个 token”，确实摊薄了长 prefix KV 读取/attention 成本。
+- 这还不是 CPU→GPU KV offload/upload 压力测试；它验证的是 GPU KV 长上下文读取摊薄。若要验证“内存 upload”收益，需要再构造 KV offload/page migration 场景。
+
+## 2026-06-29 模拟 CPU→GPU KV upload pressure
+
+当前 TinyLLMForge 没有真正的 KV CPU offload/page migration；已有 `cpu_offload` 是 decoder layer weight offload，不是 KV offload。因此先给 `tools/profile_ngram_commit.py` 增加了一个可控模拟参数：
+
+```bash
+--simulate-kv-upload-mb 128
+```
+
+含义：每次 baseline decode step、candidate normal decode step、candidate target verify 前，额外做一次 pinned CPU → GPU copy，用来模拟每轮需要从 CPU/host memory upload KV pages 的成本。脚本会先做一次 upload warmup，避免首次 pin/copy 初始化污染计时。远程已同步并通过 `py_compile` / `--help`。
+
+测试口径：Qwen3-0.6B，3593-token repeated prompt，`max_model_len=8192`，`max_output_len=64`，`warmup_output_len=4`，`n5d4`，`simulate_kv_upload_mb=128`。
+
+输出：
+
+- baseline JSON：`profile_out/ngram_spec_s4_06b_baseline_n5d4_upload128_long3593_20260629.json`
+- baseline log：`profile_out/ngram_spec_s4_06b_baseline_n5d4_upload128_long3593_20260629.log`
+- candidate JSON：`profile_out/ngram_spec_s4_06b_candidate_n5d4_upload128_long3593_20260629.json`
+- candidate log：`profile_out/ngram_spec_s4_06b_candidate_n5d4_upload128_long3593_20260629.log`
+
+结果：
+
+| mode | gate_pass | output_tokens | elapsed_s | tok/s | decode_steps | commit_events | accepted | drafted | acceptance_rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline-only | true | 64 | 2.721 | 23.52 | 63 | - | - | - | - |
+| candidate-only | true | 64 | 1.334 | 47.97 | 16 | 13 | 47 | 52 | 0.9038 |
+
+upload 模拟成本分解：
+
+| mode | normal decode upload ms | verify upload ms | total simulated upload ms |
+|---|---:|---:|---:|
+| baseline-only | 334.5 | - | 334.5 |
+| candidate-only | 84.6 | 68.9 | 153.5 |
+
+关键结论：
+
+- baseline 需要 63 次 decode upload；candidate 只需要 16 次 normal decode upload + 13 次 verify upload。
+- 在每轮模拟 128MiB H2D upload 时，candidate 的 simulated upload 总成本从 334.5ms 降到 153.5ms，约减少 54%。
+- 总体 wall-clock：baseline 2.721s，candidate 1.334s，约 2.04x。
+- 这支持“draft + target verify 可以摊薄 KV upload/page migration 成本”的方向，但注意这仍是 copy 模拟；真正 KV offload 需要实现按 block/page 的 CPU resident KV + prefetch/upload + GPU staging cache。
+
+后续继续推进时，已给 `tools/profile_ngram_commit.py` 的 JSON `summary` 补充模拟 upload 聚合字段，避免每次手动从 `step_records` 和 `verify_timing_ms` 里加总：
+
+- `simulate_kv_upload_mb`
+- `normal_decode_simulated_kv_upload_ms`
+- `verify_simulated_kv_upload_ms`
+- `total_simulated_kv_upload_ms`
+- `normal_decode_simulated_kv_upload_events`
+- `verify_simulated_kv_upload_events`
+- `total_simulated_kv_upload_events`
+- `normal_decode_simulated_kv_upload_mib`
+- `verify_simulated_kv_upload_mib`
+- `total_simulated_kv_upload_mib`
+
+本地已通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+```
+
+远程已同步并通过：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+PYTHONDONTWRITEBYTECODE=1 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py --help >/dev/null
+```
+
+## 2026-06-30 KV offload MVP-0
+
+按“先做真实 KV offload 的最小闭环，不直接上完整 page migration”的口径，已增加默认关闭的 MVP-0：
+
+- `Config.kv_offload_mvp0`
+- `Config.kv_offload_gpu_blocks`
+- `Config.kv_offload_logical_blocks`
+- `tools/profile_ngram_commit.py` 参数：
+  - `--kv-offload-mvp0`
+  - `--kv-offload-gpu-blocks N`
+  - `--kv-offload-logical-blocks N`
+
+实现范围：
+
+- 仅支持 fp16/bf16 KV（`kv_quant_bits == 0`）。
+- 仅支持 full attention；启用时会拒绝 Quest / KV-Cartridge / AM compact。
+- 强制走 eager decode / 跳过 cuda graph。
+- `seq.block_table` 保持 logical block id。
+- `ModelRunner` 内新增 `KVOffloadMVP0`：
+  - GPU KV cache 按 `kv_offload_gpu_blocks` 分配为 staging slots。
+  - CPU pinned KV backing store 按 `kv_offload_logical_blocks` 分配。
+  - `prepare_prefill()` / `prepare_decode()` 在上传 metadata 前做 logical block id -> physical GPU slot id 翻译。
+  - 每次 forward 后把写过的 logical block 从 GPU slot writeback 到 CPU pinned store。
+  - `tools/profile_ngram_commit.py` 的 target verify 手工 context 路径也接入了同一套 remap/writeback。
+
+本地已通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/config.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/engine/model_runner.py \
+  /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_chunked_prefill.py
+```
+
+远程已同步并通过：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+PYTHONDONTWRITEBYTECODE=1 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python -m py_compile \
+  tinyvllm/config.py tinyvllm/engine/model_runner.py tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py --help >/dev/null
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_chunked_prefill.py
+```
+
+远程 Qwen3-0.6B smoke：
+
+- baseline JSON：`profile_out/ngram_spec_s4_06b_baseline_kvoffload_mvp0_smoke_20260630.json`
+- candidate JSON：`profile_out/ngram_spec_s4_06b_candidate_kvoffload_mvp0_smoke_20260630.json`
+
+baseline-only 参数：`max_output_len=8`，`max_model_len=2048`，`kv_offload_gpu_blocks=16`，`kv_offload_logical_blocks=32`。
+
+| mode | gate_pass | output_tokens | decode_steps | kv d2h copies | kv d2h MB | kv h2d copies |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline-only | true | 8 | 7 | 8 | 234.9 | 0 |
+
+candidate-only 参数：`max_output_len=16`，`ngram_size=3`，`max_draft_tokens=4`，`max_commit_events=0`，`max_model_len=2048`，`kv_offload_gpu_blocks=16`，`kv_offload_logical_blocks=32`。
+
+| mode | gate_pass | output_tokens | decode_steps | commit_events | accepted | drafted | kv d2h copies | kv d2h MB | kv h2d copies |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| candidate-only | true | 16 | 13 | 1 | 2 | 4 | 15 | 440.4 | 0 |
+
+注意：这只是 MVP-0 正确性闭环。由于 smoke prompt 只占 1 个 KV block，未触发 eviction/H2D reload，所以 `h2d_copies=0` 是预期现象。下一步若要验证 page migration，需要构造“active full-attention blocks <= gpu staging slots，但跨请求/跨阶段会驱逐再读回”的用例，或进入 MVP-1 做 prefetch/eviction policy。
+
+## 2026-06-30 KV offload MVP-0 page migration smoke
+
+为了先验证真实 page migration 语义，而不是直接改复杂 scheduler，已给 `tools/profile_ngram_commit.py` 增加 synthetic smoke：
+
+```bash
+--kv-offload-migration-smoke
+```
+
+这个 smoke 不加载模型，直接构造一个小型 `KVOffloadMVP0`：
+
+1. GPU staging slots = 2，logical blocks = 4。
+2. 写 logical block 0/1 并 D2H writeback 到 CPU pinned backing store。
+3. 访问 logical block 2/3，驱逐 0/1，并写回 2/3。
+4. 再访问 logical block 0/1，触发从 CPU pinned backing store H2D reload。
+5. 校验 reload 后 GPU slot 内容和原始写入内容一致。
+
+本地已通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/engine/model_runner.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+```
+
+远程已同步并通过静态检查。远程 smoke：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 PYTHONDONTWRITEBYTECODE=1 \
+  /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --kv-offload-migration-smoke \
+  --out-json profile_out/kv_offload_mvp0_page_migration_smoke_20260630.json
+```
+
+结果：
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| evictions | 4 |
+| h2d_copies | 2 |
+| d2h_copies | 4 |
+| h2d_bytes | 64 |
+| d2h_bytes | 128 |
+| resident_blocks | 2 |
+| dirty_blocks | 0 |
+
+输出文件：`profile_out/kv_offload_mvp0_page_migration_smoke_20260630.json`
+
+结论：MVP-0 的核心 page migration 语义已打通：GPU staging slot 可驱逐，dirty logical block 可写回 CPU pinned store，之后可 H2D reload，并且 reload 内容校验通过。下一步如果继续做 MVP-1，应把这个同步迁移原语升级为：prefetch plan、LRU/成本感知 eviction、异步 copy stream/event、批量 block copy，以及 profiler 中的真实模型长上下文 thrash 场景。
+
+## 2026-06-30 KV offload MVP-1
+
+在 MVP-0 基础上做了保守的 MVP-1 增强，仍保持默认关闭，不改 scheduler / attention kernel / BlockManager 语义：
+
+- `Config` 新增：
+  - `kv_offload_async_copy=True`
+  - `kv_offload_batch_copy=True`
+  - `kv_offload_writeback_on_evict=False`
+  - `kv_offload_evict_policy="lru_cost"`
+- `KVOffloadMVP0` 增强：
+  - 独立 CUDA copy stream + event。
+  - H2D/D2H 不再每块全局 `torch.cuda.synchronize()`；forward 前只等待 required H2D events。
+  - 连续 `(logical_block, gpu_slot)` span 合并成批量 copy。
+  - LRU + dirty/future reuse penalty 的成本感知 victim 选择。
+  - stats 增加：`copy_waits`、`h2d_batches`、`d2h_batches`、`h2d_batch_spans`、`d2h_batch_spans`、`evict_clean`、`evict_dirty`、`prefetch_plans`、`prefetch_read_blocks`、`prefetch_write_blocks`。
+- `ModelRunner.prepare_prefill()` / `prepare_decode()` 增加显式 prefetch plan 统计，仍把 attention metadata 翻译成 physical GPU slot id。
+- `tools/profile_ngram_commit.py` 的 target verify 手工 context 路径同步接入 `_kv_offload_before_forward()` 和 async writeback。
+- 新增 synthetic thrash smoke：
+  - `--kv-offload-thrash-smoke`
+  - `--thrash-gpu-blocks`
+  - `--thrash-logical-blocks`
+  - `--thrash-window-blocks`
+  - `--thrash-rounds`
+  - 以及调试开关 `--kv-offload-no-async-copy`、`--kv-offload-no-batch-copy`、`--kv-offload-writeback-on-evict`、`--kv-offload-evict-policy {lru,lru_cost}`。
+
+本地已通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/config.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/engine/model_runner.py \
+  /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_chunked_prefill.py
+```
+
+远程已同步并通过同样的静态检查和纯 Python 回归。
+
+### MVP-1 migration 回归 smoke
+
+输出：`profile_out/kv_offload_mvp1_migration_regression_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| evictions | 4 |
+| h2d_copies | 2 |
+| d2h_copies | 4 |
+| h2d_batches | 1 |
+| d2h_batches | 2 |
+| h2d_batch_spans | 1 |
+| d2h_batch_spans | 2 |
+| copy_waits | 6 |
+
+### MVP-1 synthetic thrash smoke
+
+命令口径：`thrash_gpu_blocks=3`，`thrash_logical_blocks=8`，`thrash_window_blocks=2`，`thrash_rounds=24`。
+
+输出：`profile_out/kv_offload_mvp1_thrash_smoke_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| evictions | 53 |
+| h2d_copies | 48 |
+| d2h_copies | 8 |
+| h2d_batches | 24 |
+| d2h_batches | 3 |
+| h2d_batch_spans | 32 |
+| d2h_batch_spans | 3 |
+| prefetch_plans | 24 |
+| prefetch_read_blocks | 48 |
+
+### 真实模型 two-request thrash smoke
+
+短 prompt 两请求，`max_num_seqs=1`，`kv_offload_gpu_blocks=1`，用于验证真实 LLM 路径中两个 request 交替 decode 触发 staging reload。
+
+输出：`profile_out/kv_offload_mvp1_real_two_request_thrash_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 8 |
+| evictions | 3 |
+| h2d_copies | 2 |
+| d2h_copies | 8 |
+| h2d_batches | 2 |
+| d2h_batches | 8 |
+| prefetch_plans | 8 |
+
+### 真实模型长上下文 thrash smoke
+
+两条约 385-token prompt，`max_num_seqs=1`，`kv_offload_gpu_blocks=2`，`kv_offload_logical_blocks=16`。每条 request 当前 full-attention 可见 blocks <= staging slots，但两个 request 交替时会驱逐/重载。
+
+输出：`profile_out/kv_offload_mvp1_real_longctx_thrash_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 4 |
+| evictions | 6 |
+| h2d_copies | 4 |
+| d2h_copies | 6 |
+| h2d_batches | 2 |
+| d2h_batches | 4 |
+| prefetch_plans | 4 |
+| prefetch_read_blocks | 4 |
+| prefetch_write_blocks | 6 |
+
+结论：MVP-1 的 prefetch plan / cost-aware LRU / async stream-event / batch copy / synthetic 和真实模型 thrash 场景都已打通。仍然保留 full attention 限制：单次 forward 的可见 logical blocks 必须 `<= kv_offload_gpu_blocks`；要支持单条超长上下文超过 staging slots，需要下一阶段做 streaming/blockwise attention，而不是仅靠 page migration。
+
+## 2026-06-30 Streaming/blockwise attention 数学 smoke
+
+为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
+
+```bash
+--blockwise-attn-smoke
+--blockwise-attn-batch N
+--blockwise-attn-heads N
+--blockwise-attn-kv-heads N
+--blockwise-attn-head-dim N
+--blockwise-attn-tokens N
+--blockwise-attn-window-tokens N
+```
+
+实现口径：
+
+- 构造 synthetic decode `q/k/v`。
+- full attention 一次性计算作为 reference。
+- blockwise 路径按 `window_tokens` 分块扫描 K/V。
+- 使用 online softmax merge：维护 running max、running denominator、running output。
+- 支持 GQA：`num_heads` 可大于 `num_kv_heads`，通过 KV head repeat 做对齐。
+- 校验 blockwise 输出与 full attention 输出误差。
+
+本地通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+```
+
+注意：本地无 torch，实际 smoke 在远程跑。
+
+远程 smoke：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 PYTHONDONTWRITEBYTECODE=1 \
+  /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --blockwise-attn-smoke \
+  --blockwise-attn-tokens 2048 \
+  --blockwise-attn-window-tokens 128 \
+  --blockwise-attn-batch 2 \
+  --blockwise-attn-heads 4 \
+  --blockwise-attn-kv-heads 2 \
+  --blockwise-attn-head-dim 32 \
+  --out-json profile_out/blockwise_attn_online_softmax_smoke_20260630.json
+```
+
+结果：
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| chunks | 16 |
+| streamed_tokens | 2048 |
+| max_abs_error | 2.98e-08 |
+| relative_error | 2.31e-07 |
+| context_lens | [2048, 1984] |
+
+输出文件：`profile_out/blockwise_attn_online_softmax_smoke_20260630.json`
+
+结论：exact blockwise/streaming decode attention 的数学闭环已验证；下一步若接真实 KV offload，需要把这个 online-softmax merge 放到真实 decode attention 路径，并让每个 block/window 触发 KV staging/prefetch，而不是要求一次性把所有 visible blocks staged 到 GPU。
+
+## 2026-06-30 真实 decode attention 接入 blockwise KV offload
+
+已把 blockwise online-softmax merge 接进真实 decode attention 路径，仍然默认关闭、仅覆盖受控范围：
+
+- 仅 `kv_offload_mvp0=True` 时可用。
+- 仅 fp16/bf16 KV（`kv_quant_bits == 0`）。
+- 仅 decode path；prefill 仍走原路径。
+- 不支持 Quest / KV-Cartridge / AM compact / KV4 / KV8。
+- 不改 scheduler / BlockManager / attention kernel；blockwise decode MVP 使用 PyTorch gather + online-softmax，正确性优先，性能不是最终形态。
+
+新增配置 / CLI：
+
+```bash
+--kv-offload-blockwise-decode
+--kv-offload-blockwise-blocks N
+--max-num-prefill-tokens-per-step N
+```
+
+关键实现：
+
+- `tinyvllm/config.py`
+  - `kv_offload_blockwise_decode`
+  - `kv_offload_blockwise_blocks`
+- `tinyvllm/utils/context.py`
+  - 在 context 中传入 `kv_offload_manager`、logical block tables、context lens、write blocks、blockwise window size。
+- `tinyvllm/engine/model_runner.py`
+  - `prepare_decode()` 在 blockwise 模式下只预先 stage 当前 write blocks。
+  - 不再要求 decode visible logical blocks 一次性全部 resident。
+  - logical block rows 传给 attention，由 attention layer 按 window 触发 staging。
+- `tinyvllm/layers/attention.py`
+  - decode 时若 `context.kv_offload_blockwise_decode=True`：
+    - 当前 token KV 先写入 staging slot。
+    - 标记 write block dirty，避免窗口 staging 时丢当前层 KV。
+    - 按 logical block window 调 `KVOffloadMVP0.ensure_resident()`。
+    - 从当前 layer 的 physical slot gather window K/V。
+    - 用 online softmax merge 每个 window 的 attention 结果。
+
+本地已通过：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/config.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/utils/context.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/layers/attention.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/engine/model_runner.py \
+  /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py --help >/dev/null
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_chunked_prefill.py
+```
+
+远程已同步并通过静态检查。
+
+### blockwise attention 数学回归
+
+输出：`profile_out/blockwise_attn_online_softmax_regression_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| chunks | 16 |
+| streamed_tokens | 2048 |
+| max_abs_error | 2.98e-08 |
+| relative_error | 2.31e-07 |
+
+### 真实模型单请求 blockwise decode smoke
+
+Qwen3-0.6B，单条约 385-token prompt，`kv_offload_gpu_blocks=2`，`kv_offload_blockwise_blocks=1`。
+
+输出：`profile_out/kv_offload_blockwise_decode_real_smoke_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 2 |
+| decode_steps | 1 |
+| prefetch_plans | 58 |
+| prefetch_read_blocks | 56 |
+| prefetch_write_blocks | 3 |
+| d2h_copies | 3 |
+| h2d_copies | 0 |
+
+这里没有 H2D reload 是预期的：单请求 2 个 logical blocks 正好等于 staging slots，未触发驱逐。
+
+### 真实模型两请求 blockwise decode thrash
+
+两条约 385-token prompt，`max_num_seqs=1`，`kv_offload_gpu_blocks=2`，`kv_offload_blockwise_blocks=1`，两个 request 交替触发 staging eviction/reload。
+
+输出：`profile_out/kv_offload_blockwise_decode_real_two_request_thrash_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 4 |
+| decode_steps | 2 |
+| evictions | 6 |
+| h2d_copies | 4 |
+| d2h_copies | 6 |
+| h2d_batches | 4 |
+| d2h_batches | 4 |
+| prefetch_plans | 116 |
+| prefetch_read_blocks | 112 |
+| prefetch_write_blocks | 6 |
+
+当前限制 / 下一步：
+
+- decode attention 已不再需要“一次性 stage 全部 visible logical blocks”；它按 window stage。
+- 但 prefill 仍是原路径。若要端到端支持“单条 prompt 本身超过 staging slots”，还需要继续做 blockwise/chunked prefill attention；否则长 prompt prefill 阶段仍可能要求 prefix blocks 一次性可见。
+- 当前 blockwise decode 是 PyTorch correctness path，性能版需要 Triton/FlashAttention 风格的 window kernel 或能返回 logsumexp 的 flash 分块接口。
+
+## 远程 S4 smoke 示例
+
+```bash
+ssh sitian@10.232.195.203 'cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge && CUDA_VISIBLE_DEVICES=7 /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --max-output-len 64 \
+  --temperature 0.0 \
+  --ngram-size 5 \
+  --max-draft-tokens 4 \
+  --max-commit-events 0 \
+  --mode candidate-only \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 16 \
+  --out-json profile_out/ngram_spec_s4_06b_candidate_n5d4_verify.json'
+```

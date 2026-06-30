@@ -21,6 +21,13 @@ _SPEC.loader.exec_module(ngram)
 propose_ngram_draft = ngram.propose_ngram_draft
 replay_ngram_acceptance = ngram.replay_ngram_acceptance
 summarize_replay_stats = ngram.summarize_replay_stats
+NGramOnlineDryRunState = ngram.NGramOnlineDryRunState
+NGramOnlineDryRunTotals = ngram.NGramOnlineDryRunTotals
+ngram_online_dry_run_step = ngram.ngram_online_dry_run_step
+summarize_online_dry_run_totals = ngram.summarize_online_dry_run_totals
+count_accepted_prefix = ngram.count_accepted_prefix
+NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
+summarize_target_verify_stats = ngram.summarize_target_verify_stats
 
 
 def test_propose_ngram_draft_uses_latest_matching_suffix():
@@ -73,12 +80,91 @@ def test_summarize_replay_stats_is_json_friendly():
     }
 
 
+def test_online_dry_run_accepts_pending_prefix_across_steps():
+    state = NGramOnlineDryRunState(pending_tokens=[])
+    totals = NGramOnlineDryRunTotals()
+
+    first = ngram_online_dry_run_step([1, 2, 3, 4, 1, 2], 3, state, totals, ngram_size=2, max_draft_tokens=2)
+    second = ngram_online_dry_run_step([1, 2, 3, 4, 1, 2, 3], 4, state, totals, ngram_size=2, max_draft_tokens=2)
+
+    assert first["proposed"] is True
+    assert first["draft_tokens"] == [3, 4]
+    assert first["accepted"] is True
+    assert first["pending_after"] == 1
+    assert second["proposed"] is False
+    assert second["accepted"] is True
+    assert second["completed"] is True
+    assert summarize_online_dry_run_totals(totals) == {
+        "decode_positions": 2,
+        "draft_events": 1,
+        "drafted_tokens": 2,
+        "accepted_tokens": 2,
+        "rejected_events": 0,
+        "completed_drafts": 1,
+        "no_draft_positions": 0,
+        "acceptance_rate": 1.0,
+        "avg_draft_len": 2.0,
+        "draft_coverage": 0.5,
+        "theoretical_decode_step_reduction": 0.5,
+    }
+
+
+def test_online_dry_run_rejects_and_clears_pending_tokens():
+    state = NGramOnlineDryRunState(pending_tokens=[])
+    totals = NGramOnlineDryRunTotals()
+
+    event = ngram_online_dry_run_step([1, 2, 3, 4, 1, 2], 9, state, totals, ngram_size=2, max_draft_tokens=2)
+
+    assert event["proposed"] is True
+    assert event["rejected"] is True
+    assert event["expected_token"] == 3
+    assert state.pending_tokens == []
+    assert totals.decode_positions == 1
+    assert totals.draft_events == 1
+    assert totals.drafted_tokens == 2
+    assert totals.accepted_tokens == 0
+    assert totals.rejected_events == 1
+
+
+def test_count_accepted_prefix_stops_at_first_mismatch():
+    assert count_accepted_prefix([1, 2, 3], [1, 2, 4]) == 2
+    assert count_accepted_prefix([1, 2, 3], [9, 2, 3]) == 0
+    assert count_accepted_prefix([1, 2, 3], [1]) == 1
+
+
+def test_summarize_target_verify_stats_is_json_friendly():
+    stats = NGramTargetVerifyStats(
+        verify_events=2,
+        verified_tokens=8,
+        target_accepted_tokens=5,
+        replay_accepted_tokens=5,
+        mismatched_events=0,
+        truncated_future_events=1,
+    )
+
+    assert summarize_target_verify_stats(stats) == {
+        "verify_events": 2,
+        "verified_tokens": 8,
+        "target_accepted_tokens": 5,
+        "replay_accepted_tokens": 5,
+        "mismatched_events": 0,
+        "truncated_future_events": 1,
+        "target_acceptance_rate": 0.625,
+        "replay_acceptance_rate": 0.625,
+        "mismatch_rate": 0.0,
+    }
+
+
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
     test_propose_ngram_draft_respects_max_draft_tokens()
     test_propose_ngram_draft_returns_empty_without_match()
     test_replay_ngram_acceptance_counts_accepted_prefix_only()
     test_summarize_replay_stats_is_json_friendly()
+    test_online_dry_run_accepts_pending_prefix_across_steps()
+    test_online_dry_run_rejects_and_clears_pending_tokens()
+    test_count_accepted_prefix_stops_at_first_mismatch()
+    test_summarize_target_verify_stats_is_json_friendly()
     print("ngram speculative tests passed")
 
 

@@ -87,11 +87,14 @@ def parse_args():
     p.add_argument("--num-decode-seqs", type=int, default=4)
     p.add_argument("--decode-prompt-tokens", type=int, default=64)
     p.add_argument("--long-prompt-tokens", type=int, default=1024)
+    p.add_argument("--short-insert-prompt-tokens", type=int, default=0)
     p.add_argument("--max-output-len", type=int, default=32)
     p.add_argument("--inject-long-after-decode-steps", type=int, default=2)
+    p.add_argument("--inject-short-after-decode-steps", type=int, default=2)
     p.add_argument("--max-num-prefill-tokens-per-step", type=int, default=256)
     p.add_argument("--chunked-decode-first", action="store_true", default=False)
     p.add_argument("--max-consecutive-prefill-chunks", type=int, default=0)
+    p.add_argument("--mixed-min-prompt-tokens", type=int, default=0)
     p.add_argument("--max-model-len", type=int, default=2048)
     p.add_argument("--max-num-batched-tokens", type=int, default=2048)
     p.add_argument("--max-num-seqs", type=int, default=16)
@@ -132,6 +135,7 @@ def run_profile(args) -> dict:
             chunked_prefill_decode_first=False if args.mode == "mixed" else args.chunked_decode_first,
             chunked_prefill_max_consecutive_chunks=args.max_consecutive_prefill_chunks,
             chunked_prefill_mixed_batch=(args.mode == "mixed"),
+            chunked_prefill_mixed_min_prompt_tokens=args.mixed_min_prompt_tokens,
         )
 
     llm = LLM(args.model, **engine_kwargs)
@@ -150,6 +154,7 @@ def run_profile(args) -> dict:
         llm.add_request(make_token_prompt(args.decode_prompt_tokens, i * 17), sp)
 
     long_added = False
+    short_added = False
     decode_steps_seen = 0
     outputs = {}
     records = []
@@ -160,6 +165,13 @@ def run_profile(args) -> dict:
         if (not long_added) and decode_steps_seen >= args.inject_long_after_decode_steps:
             llm.add_request(make_token_prompt(args.long_prompt_tokens, 777), sp)
             long_added = True
+        if (
+            args.short_insert_prompt_tokens > 0
+            and (not short_added)
+            and decode_steps_seen >= args.inject_short_after_decode_steps
+        ):
+            llm.add_request(make_token_prompt(args.short_insert_prompt_tokens, 1777), sp)
+            short_added = True
 
         t0 = time.perf_counter()
         out, num_tokens = llm.step()

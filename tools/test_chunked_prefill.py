@@ -67,7 +67,7 @@ sys.modules.setdefault("xxhash", xxhash_mod)
 sampling_mod = load_module("tinyvllm.sampling_params", "tinyvllm/sampling_params.py")
 context_mod = load_module("tinyvllm.utils.context", "tinyvllm/utils/context.py") if torch is not None else None
 sequence_mod = load_module("tinyvllm.engine.sequence", "tinyvllm/engine/sequence.py")
-load_module("tinyvllm.engine.block_manager", "tinyvllm/engine/block_manager.py")
+block_manager_mod = load_module("tinyvllm.engine.block_manager", "tinyvllm/engine/block_manager.py")
 scheduler_mod = load_module("tinyvllm.engine.scheduler", "tinyvllm/engine/scheduler.py")
 if dist is not None:
     dist.get_rank = lambda: 0
@@ -76,6 +76,7 @@ if dist is not None:
 else:
     embed_head_mod = None
 
+BlockManager = block_manager_mod.BlockManager
 Sequence = sequence_mod.Sequence
 SequenceStatus = sequence_mod.SequenceStatus
 Scheduler = scheduler_mod.Scheduler
@@ -262,6 +263,76 @@ def test_chunked_prefill_restores_reused_cached_block_metadata():
     assert seq.completion_token_ids == [77]
 
 
+def test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = make_seq([1, 2, 3])
+    block_manager.allocate(seq)
+    original_block = seq.block_table[0]
+
+    reserved = block_manager.reserve_append_blocks(seq, 6)
+    assert len(reserved) == 2
+
+    block_manager.commit_accepted_tokens(seq, [4, 5], reserved)
+
+    assert seq.token_ids == [1, 2, 3, 4, 5]
+    assert seq.last_token == 5
+    assert seq.num_tokens == 5
+    assert seq.block_table == [original_block, reserved[0]]
+    assert block_manager.blocks[reserved[0]].ref_count == 1
+    assert block_manager.blocks[reserved[0]].hash == -1
+    assert block_manager.blocks[reserved[1]].ref_count == 0
+    assert reserved[1] in block_manager.free_block_ids
+    h0 = block_manager.compute_hash([1, 2, 3, 4], -1)
+    assert block_manager.blocks[original_block].hash == h0
+    assert block_manager.blocks[original_block].token_ids == [1, 2, 3, 4]
+    assert block_manager.hash_to_block_id[h0] == original_block
+
+
+def test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = make_seq([1, 2, 3, 4])
+    block_manager.allocate(seq)
+    original_block_table = list(seq.block_table)
+    original_token_ids = list(seq.token_ids)
+
+    reserved = block_manager.reserve_append_blocks(seq, 5)
+    assert len(reserved) == 2
+
+    block_manager.commit_accepted_tokens(seq, [], reserved)
+
+    assert seq.token_ids == original_token_ids
+    assert seq.last_token == original_token_ids[-1]
+    assert seq.num_tokens == len(original_token_ids)
+    assert seq.block_table == original_block_table
+    for block_id in reserved:
+        assert block_manager.blocks[block_id].ref_count == 0
+        assert block_id in block_manager.free_block_ids
+
+
+def test_commit_accepted_tokens_publishes_multiple_full_block_hashes():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = make_seq([1, 2, 3])
+    block_manager.allocate(seq)
+
+    reserved = block_manager.reserve_append_blocks(seq, 9)
+    block_manager.commit_accepted_tokens(seq, [4, 5, 6, 7, 8, 9, 10, 11, 12], reserved)
+
+    h0 = block_manager.compute_hash([1, 2, 3, 4], -1)
+    h1 = block_manager.compute_hash([5, 6, 7, 8], h0)
+    h2 = block_manager.compute_hash([9, 10, 11, 12], h1)
+    assert seq.token_ids == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    assert len(seq.block_table) == 3
+    assert block_manager.hash_to_block_id[h0] == seq.block_table[0]
+    assert block_manager.hash_to_block_id[h1] == seq.block_table[1]
+    assert block_manager.hash_to_block_id[h2] == seq.block_table[2]
+    assert block_manager.blocks[seq.block_table[0]].token_ids == [1, 2, 3, 4]
+    assert block_manager.blocks[seq.block_table[1]].token_ids == [5, 6, 7, 8]
+    assert block_manager.blocks[seq.block_table[2]].token_ids == [9, 10, 11, 12]
+
+
 def test_max_consecutive_prefill_chunks_yields_to_decode():
     reset_sequence_state()
     scheduler = Scheduler(make_config(
@@ -361,6 +432,60 @@ def test_mixed_short_prefill_batching_reserves_slot_for_decode():
     assert seqs[-1] == running
     assert len([seq for seq in seqs if not seq.step_is_decode]) == 3
     assert list(scheduler.waiting) == [short_prompts[-1]]
+
+
+def test_mixed_min_prompt_tokens_defers_short_waiting_prompt_to_decode():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=4,
+        max_num_prefill_tokens_per_step=4,
+        chunked_prefill_decode_first=False,
+        chunked_prefill_mixed_batch=True,
+        chunked_prefill_mixed_min_prompt_tokens=8,
+    ))
+    running = make_seq([90, 91, 92, 93], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.append_token(94)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+    short_prefill = make_seq([1, 2, 3, 4], max_tokens=4)
+    scheduler.add(short_prefill)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [running]
+    assert is_prefill is False
+    assert do_sample is True
+    assert list(scheduler.waiting) == [short_prefill]
+
+
+def test_mixed_min_prompt_tokens_still_admits_long_waiting_prompt():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=4,
+        max_num_prefill_tokens_per_step=4,
+        chunked_prefill_decode_first=False,
+        chunked_prefill_mixed_batch=True,
+        chunked_prefill_mixed_min_prompt_tokens=8,
+    ))
+    running = make_seq([90, 91, 92, 93], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.append_token(94)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+    long_prefill = make_seq(range(10), max_tokens=4)
+    scheduler.add(long_prefill)
+
+    seqs, is_prefill, do_sample, batch_kind = scheduler.schedule()
+
+    assert seqs == [long_prefill, running]
+    assert is_prefill is True
+    assert do_sample is True
+    assert batch_kind == "mixed"
+    assert long_prefill.prefill_chunk_start == 0
+    assert long_prefill.prefill_chunk_end == 4
 
 
 def test_mixed_postprocess_commits_prefill_and_appends_decode_only_for_intermediate_chunk():
@@ -514,9 +639,14 @@ def main():
     test_decode_first_prioritizes_existing_running_sequence()
     test_chunked_prefill_does_not_publish_future_block_hashes()
     test_chunked_prefill_restores_reused_cached_block_metadata()
+    test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks()
+    test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks()
+    test_commit_accepted_tokens_publishes_multiple_full_block_hashes()
     test_max_consecutive_prefill_chunks_yields_to_decode()
     test_mixed_prefill_decode_schedules_prefill_chunk_with_decode()
     test_mixed_short_prefill_batching_reserves_slot_for_decode()
+    test_mixed_min_prompt_tokens_defers_short_waiting_prompt_to_decode()
+    test_mixed_min_prompt_tokens_still_admits_long_waiting_prompt()
     test_mixed_postprocess_commits_prefill_and_appends_decode_only_for_intermediate_chunk()
     test_mixed_final_prefill_chunk_and_decode_consume_tokens_in_sequence_order()
     test_mixed_prefill_fallback_counts_toward_consecutive_prefill_limit()

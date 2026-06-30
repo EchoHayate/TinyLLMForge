@@ -104,6 +104,90 @@ class BlockManager:
             seq.block_table.append(block_id)
         seq.num_computed_tokens = seq.num_cached_tokens
 
+    def allocate_ephemeral(self, seq: Sequence):
+        """Allocate scratch KV blocks without prefix-cache lookup or publication.
+
+        This is used by speculative target-verification dry-runs. The temporary
+        sequence may write KV into these blocks during a prefill forward, but the
+        blocks are not attached to any live request and no hash entry is
+        published, so deallocating the sequence makes the scratch KV unreachable.
+        """
+        assert not seq.block_table
+        assert len(self.free_block_ids) >= seq.num_blocks
+        for _ in range(seq.num_blocks):
+            block_id = self.free_block_ids[0]
+            self._allocate_block(block_id)
+            seq.block_table.append(block_id)
+        seq.num_cached_tokens = 0
+        seq.num_computed_tokens = 0
+
+    def reserve_append_blocks(self, seq: Sequence, num_new_tokens: int) -> list[int]:
+        """Reserve extra blocks needed to store speculative appended tokens.
+
+        The returned block ids are allocated but are not added to ``seq`` yet.
+        Callers may expose the ids through a temporary verifier Sequence; after
+        verification they must either pass them to ``commit_accepted_tokens`` or
+        release them with ``release_reserved_blocks``.
+        """
+        if num_new_tokens <= 0:
+            return []
+        final_len = len(seq) + num_new_tokens
+        needed_blocks = (final_len + self.block_size - 1) // self.block_size
+        missing_blocks = max(0, needed_blocks - len(seq.block_table))
+        assert len(self.free_block_ids) >= missing_blocks
+        reserved = []
+        for _ in range(missing_blocks):
+            block_id = self.free_block_ids[0]
+            self._allocate_block(block_id)
+            reserved.append(block_id)
+        return reserved
+
+    def release_reserved_blocks(self, block_ids: list[int]):
+        """Release scratch blocks that were reserved but not committed."""
+        for block_id in block_ids:
+            block = self.blocks[block_id]
+            assert block.ref_count == 1
+            assert block.hash == -1
+            block.ref_count = 0
+            self._deallocate_block(block_id)
+
+    def publish_full_blocks(self, seq: Sequence):
+        """Publish prefix-cache hashes for all fully materialized blocks."""
+        for i, block_id in enumerate(seq.block_table):
+            token_ids = seq.block(i)
+            if len(token_ids) != self.block_size:
+                continue
+            block = self.blocks[block_id]
+            if block.hash != -1:
+                continue
+            prefix = self.blocks[seq.block_table[i - 1]].hash if i > 0 else -1
+            h = self.compute_hash(token_ids, prefix)
+            block.update(h, token_ids)
+            self.hash_to_block_id[h] = block_id
+
+    def commit_accepted_tokens(self, seq: Sequence, accepted_tokens: list[int], reserved_block_ids: list[int]):
+        """Commit accepted speculative tokens and expose only needed blocks.
+
+        This updates Sequence metadata and prefix-cache hashes only. It assumes
+        the caller has already written KV for accepted token positions into the
+        corresponding current/reserved block slots.
+        """
+        if not accepted_tokens:
+            self.release_reserved_blocks(list(reserved_block_ids))
+            return
+
+        final_len = len(seq) + len(accepted_tokens)
+        needed_blocks = (final_len + self.block_size - 1) // self.block_size
+        missing_blocks = max(0, needed_blocks - len(seq.block_table))
+        assert missing_blocks <= len(reserved_block_ids)
+        committed_blocks = list(reserved_block_ids[:missing_blocks])
+        unused_blocks = list(reserved_block_ids[missing_blocks:])
+        seq.block_table.extend(committed_blocks)
+        for token_id in accepted_tokens:
+            seq.append_token(token_id)
+        self.publish_full_blocks(seq)
+        self.release_reserved_blocks(unused_blocks)
+
     def commit_prefill(self, seq: Sequence, old_end: int, new_end: int):
         """Publish prefix-cache hashes only for blocks whose KV has been computed.
 

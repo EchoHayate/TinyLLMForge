@@ -33,6 +33,66 @@ class NGramReplayStats:
         return self.drafted_tokens / self.draft_events if self.draft_events else 0.0
 
 
+@dataclass
+class NGramOnlineDryRunState:
+    """Per-sequence online dry-run state for n-gram speculative opportunities."""
+
+    pending_tokens: list[int]
+    active_match_start: int = -1
+    active_drafted_tokens: int = 0
+
+
+@dataclass
+class NGramOnlineDryRunTotals:
+    decode_positions: int = 0
+    draft_events: int = 0
+    drafted_tokens: int = 0
+    accepted_tokens: int = 0
+    rejected_events: int = 0
+    completed_drafts: int = 0
+    no_draft_positions: int = 0
+
+    @property
+    def acceptance_rate(self) -> float:
+        return self.accepted_tokens / self.drafted_tokens if self.drafted_tokens else 0.0
+
+    @property
+    def avg_draft_len(self) -> float:
+        return self.drafted_tokens / self.draft_events if self.draft_events else 0.0
+
+    @property
+    def draft_coverage(self) -> float:
+        return self.draft_events / self.decode_positions if self.decode_positions else 0.0
+
+    @property
+    def theoretical_decode_step_reduction(self) -> float:
+        # If accepted tokens were verified in one target pass, each accepted token
+        # beyond the first one in an event can remove one future autoregressive step.
+        return self.accepted_tokens / (self.decode_positions + self.accepted_tokens) if (self.decode_positions + self.accepted_tokens) else 0.0
+
+
+@dataclass
+class NGramTargetVerifyStats:
+    verify_events: int = 0
+    verified_tokens: int = 0
+    target_accepted_tokens: int = 0
+    replay_accepted_tokens: int = 0
+    mismatched_events: int = 0
+    truncated_future_events: int = 0
+
+    @property
+    def target_acceptance_rate(self) -> float:
+        return self.target_accepted_tokens / self.verified_tokens if self.verified_tokens else 0.0
+
+    @property
+    def replay_acceptance_rate(self) -> float:
+        return self.replay_accepted_tokens / self.verified_tokens if self.verified_tokens else 0.0
+
+    @property
+    def mismatch_rate(self) -> float:
+        return self.mismatched_events / self.verify_events if self.verify_events else 0.0
+
+
 def propose_ngram_draft(history: list[int], ngram_size: int, max_draft_tokens: int) -> NGramDraft:
     """Draft continuation tokens by finding the latest previous suffix match.
 
@@ -102,6 +162,81 @@ def replay_ngram_acceptance(
     )
 
 
+def count_accepted_prefix(draft_tokens: list[int], target_tokens: list[int]) -> int:
+    """Count how many draft tokens match the target continuation prefix."""
+    accepted = 0
+    for draft_token, target_token in zip(draft_tokens, target_tokens):
+        if int(draft_token) != int(target_token):
+            break
+        accepted += 1
+    return accepted
+
+
+def ngram_online_dry_run_step(
+    history_before_decode: list[int],
+    actual_next_token: int,
+    state: NGramOnlineDryRunState,
+    totals: NGramOnlineDryRunTotals,
+    ngram_size: int,
+    max_draft_tokens: int,
+) -> dict[str, int | bool | list[int]]:
+    """Advance online dry-run stats by one real decode token.
+
+    This is side-effect free with respect to model/engine state. It proposes a
+    draft when no draft is pending, then compares the next real token against the
+    pending draft prefix. Multi-token acceptance is accumulated across future
+    decode calls, which is enough to estimate online opportunity without KV
+    mutation or target verification.
+    """
+    totals.decode_positions += 1
+    proposed = False
+    draft_tokens: list[int] = []
+    if not state.pending_tokens:
+        draft = propose_ngram_draft(history_before_decode, ngram_size, max_draft_tokens)
+        if draft.tokens:
+            state.pending_tokens = list(draft.tokens)
+            state.active_match_start = draft.match_start
+            state.active_drafted_tokens = len(draft.tokens)
+            totals.draft_events += 1
+            totals.drafted_tokens += len(draft.tokens)
+            proposed = True
+            draft_tokens = list(draft.tokens)
+        else:
+            totals.no_draft_positions += 1
+
+    accepted = False
+    rejected = False
+    completed = False
+    expected_token = state.pending_tokens[0] if state.pending_tokens else None
+    if state.pending_tokens:
+        if int(actual_next_token) == int(state.pending_tokens[0]):
+            totals.accepted_tokens += 1
+            accepted = True
+            state.pending_tokens.pop(0)
+            if not state.pending_tokens:
+                totals.completed_drafts += 1
+                completed = True
+                state.active_match_start = -1
+                state.active_drafted_tokens = 0
+        else:
+            totals.rejected_events += 1
+            rejected = True
+            state.pending_tokens = []
+            state.active_match_start = -1
+            state.active_drafted_tokens = 0
+
+    return {
+        "proposed": proposed,
+        "draft_tokens": draft_tokens,
+        "accepted": accepted,
+        "rejected": rejected,
+        "completed": completed,
+        "expected_token": -1 if expected_token is None else int(expected_token),
+        "actual_token": int(actual_next_token),
+        "pending_after": len(state.pending_tokens),
+    }
+
+
 def summarize_replay_stats(stats: NGramReplayStats) -> dict[str, float | int]:
     return {
         "positions": stats.positions,
@@ -110,4 +245,34 @@ def summarize_replay_stats(stats: NGramReplayStats) -> dict[str, float | int]:
         "accepted_tokens": stats.accepted_tokens,
         "acceptance_rate": stats.acceptance_rate,
         "avg_draft_len": stats.avg_draft_len,
+    }
+
+
+def summarize_online_dry_run_totals(stats: NGramOnlineDryRunTotals) -> dict[str, float | int]:
+    return {
+        "decode_positions": stats.decode_positions,
+        "draft_events": stats.draft_events,
+        "drafted_tokens": stats.drafted_tokens,
+        "accepted_tokens": stats.accepted_tokens,
+        "rejected_events": stats.rejected_events,
+        "completed_drafts": stats.completed_drafts,
+        "no_draft_positions": stats.no_draft_positions,
+        "acceptance_rate": stats.acceptance_rate,
+        "avg_draft_len": stats.avg_draft_len,
+        "draft_coverage": stats.draft_coverage,
+        "theoretical_decode_step_reduction": stats.theoretical_decode_step_reduction,
+    }
+
+
+def summarize_target_verify_stats(stats: NGramTargetVerifyStats) -> dict[str, float | int]:
+    return {
+        "verify_events": stats.verify_events,
+        "verified_tokens": stats.verified_tokens,
+        "target_accepted_tokens": stats.target_accepted_tokens,
+        "replay_accepted_tokens": stats.replay_accepted_tokens,
+        "mismatched_events": stats.mismatched_events,
+        "truncated_future_events": stats.truncated_future_events,
+        "target_acceptance_rate": stats.target_acceptance_rate,
+        "replay_acceptance_rate": stats.replay_acceptance_rate,
+        "mismatch_rate": stats.mismatch_rate,
     }

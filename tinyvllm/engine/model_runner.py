@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 import pickle
 import os
+import time
 
 import torch.distributed as dist
 from tinyvllm.config import Config
@@ -17,6 +18,357 @@ from tinyvllm.engine.kv_cartridge import compress_decode_block_table_rows, shoul
 
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
+
+
+class KVOffloadMVP0:
+    """Minimal logical-block -> GPU-slot KV offload prototype.
+
+    Scope is intentionally narrow: fp16/bf16 KV cache, full attention, eager
+    execution. ``Sequence.block_table`` stays logical; this manager owns the
+    logical->physical slot mapping and a CPU pinned backing store.
+    """
+
+    def __init__(
+        self,
+        kv_cache: torch.Tensor,
+        logical_blocks: int,
+        block_size: int,
+        async_copy: bool = True,
+        batch_copy: bool = True,
+        writeback_on_evict: bool = False,
+        evict_policy: str = "lru_cost",
+    ):
+        self.kv_cache = kv_cache
+        self.logical_blocks = int(logical_blocks)
+        self.gpu_blocks = int(kv_cache.size(2))
+        self.block_size = int(block_size)
+        self.async_copy = bool(async_copy)
+        self.batch_copy = bool(batch_copy)
+        self.writeback_on_evict = bool(writeback_on_evict)
+        self.evict_policy = evict_policy
+        self.cpu_cache = torch.empty(
+            (kv_cache.size(0), kv_cache.size(1), self.logical_blocks, *kv_cache.shape[3:]),
+            dtype=kv_cache.dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        self.copy_stream = torch.cuda.Stream(device=kv_cache.device) if self.async_copy else None
+        self.h2d_done: dict[int, torch.cuda.Event] = {}
+        self.d2h_done: dict[int, torch.cuda.Event] = {}
+        self.pending_wait_blocks: set[int] = set()
+        self.cpu_valid = [False] * self.logical_blocks
+        self.logical_to_slot: dict[int, int] = {}
+        self.slot_to_logical: list[int | None] = [None] * self.gpu_blocks
+        self.slot_last_used = [0] * self.gpu_blocks
+        self.dirty_logical_blocks: set[int] = set()
+        self.clock = 0
+        self.stats = {
+            "h2d_copies": 0,
+            "d2h_copies": 0,
+            "evictions": 0,
+            "h2d_ms": 0.0,
+            "d2h_ms": 0.0,
+            "h2d_bytes": 0,
+            "d2h_bytes": 0,
+            "copy_waits": 0,
+            "h2d_batches": 0,
+            "d2h_batches": 0,
+            "h2d_batch_spans": 0,
+            "d2h_batch_spans": 0,
+            "evict_clean": 0,
+            "evict_dirty": 0,
+            "prefetch_plans": 0,
+            "prefetch_read_blocks": 0,
+            "prefetch_write_blocks": 0,
+        }
+        self.block_nbytes = self.kv_cache[:, :, 0].numel() * self.kv_cache.element_size()
+
+    def _check_logical_block(self, logical_block: int):
+        if logical_block < 0 or logical_block >= self.logical_blocks:
+            raise RuntimeError(
+                f"KV offload logical block id {logical_block} out of range [0, {self.logical_blocks})"
+            )
+
+    def _touch(self, slot: int):
+        self.clock += 1
+        self.slot_last_used[slot] = self.clock
+
+    def _coalesce_copy_pairs(self, pairs: list[tuple[int, int]]) -> list[tuple[int, int, int]]:
+        if not pairs:
+            return []
+        if not self.batch_copy:
+            return [(int(logical_block), int(slot), 1) for logical_block, slot in pairs]
+        ordered = sorted((int(logical_block), int(slot)) for logical_block, slot in pairs)
+        spans = []
+        start_logical, start_slot = ordered[0]
+        prev_logical, prev_slot = ordered[0]
+        span_len = 1
+        for logical_block, slot in ordered[1:]:
+            if logical_block == prev_logical + 1 and slot == prev_slot + 1:
+                prev_logical = logical_block
+                prev_slot = slot
+                span_len += 1
+                continue
+            spans.append((start_logical, start_slot, span_len))
+            start_logical = prev_logical = logical_block
+            start_slot = prev_slot = slot
+            span_len = 1
+        spans.append((start_logical, start_slot, span_len))
+        return spans
+
+    def _record_copy_event(self) -> torch.cuda.Event | None:
+        if self.copy_stream is None:
+            return None
+        event = torch.cuda.Event()
+        event.record(self.copy_stream)
+        return event
+
+    def _enqueue_h2d_pairs(self, pairs: list[tuple[int, int]]):
+        pairs = [(int(logical_block), int(slot)) for logical_block, slot in pairs if self.cpu_valid[int(logical_block)]]
+        if not pairs:
+            return
+        spans = self._coalesce_copy_pairs(pairs)
+        t0 = time.perf_counter()
+        if self.copy_stream is None:
+            for logical_start, slot_start, span_len in spans:
+                self.kv_cache[:, :, slot_start:slot_start + span_len].copy_(
+                    self.cpu_cache[:, :, logical_start:logical_start + span_len],
+                    non_blocking=True,
+                )
+            torch.cuda.synchronize()
+            event = None
+        else:
+            with torch.cuda.stream(self.copy_stream):
+                for logical_start, slot_start, span_len in spans:
+                    for logical_block in range(logical_start, logical_start + span_len):
+                        d2h_event = self.d2h_done.get(logical_block)
+                        if d2h_event is not None:
+                            self.copy_stream.wait_event(d2h_event)
+                    self.kv_cache[:, :, slot_start:slot_start + span_len].copy_(
+                        self.cpu_cache[:, :, logical_start:logical_start + span_len],
+                        non_blocking=True,
+                    )
+            event = self._record_copy_event()
+            self.pending_wait_blocks.update(logical_block for logical_block, _ in pairs)
+        for logical_block, _ in pairs:
+            if event is not None:
+                self.h2d_done[logical_block] = event
+        self.stats["h2d_copies"] += len(pairs)
+        self.stats["h2d_bytes"] += len(pairs) * self.block_nbytes
+        self.stats["h2d_batches"] += 1
+        self.stats["h2d_batch_spans"] += len(spans)
+        self.stats["h2d_ms"] += (time.perf_counter() - t0) * 1000.0
+
+    def _enqueue_d2h_pairs(self, pairs: list[tuple[int, int]]):
+        pairs = [(int(logical_block), int(slot)) for logical_block, slot in pairs]
+        if not pairs:
+            return
+        spans = self._coalesce_copy_pairs(pairs)
+        t0 = time.perf_counter()
+        if self.copy_stream is None:
+            for logical_start, slot_start, span_len in spans:
+                self.cpu_cache[:, :, logical_start:logical_start + span_len].copy_(
+                    self.kv_cache[:, :, slot_start:slot_start + span_len],
+                    non_blocking=True,
+                )
+            torch.cuda.synchronize()
+            event = None
+        else:
+            self.copy_stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(self.copy_stream):
+                for logical_start, slot_start, span_len in spans:
+                    self.cpu_cache[:, :, logical_start:logical_start + span_len].copy_(
+                        self.kv_cache[:, :, slot_start:slot_start + span_len],
+                        non_blocking=True,
+                    )
+            event = self._record_copy_event()
+        for logical_block, _ in pairs:
+            self.cpu_valid[logical_block] = True
+            if event is not None:
+                self.d2h_done[logical_block] = event
+        self.stats["d2h_copies"] += len(pairs)
+        self.stats["d2h_bytes"] += len(pairs) * self.block_nbytes
+        self.stats["d2h_batches"] += 1
+        self.stats["d2h_batch_spans"] += len(spans)
+        self.stats["d2h_ms"] += (time.perf_counter() - t0) * 1000.0
+
+    def _copy_h2d(self, logical_block: int, slot: int):
+        self._enqueue_h2d_pairs([(logical_block, slot)])
+
+    def _copy_d2h(self, logical_block: int, slot: int):
+        self._enqueue_d2h_pairs([(logical_block, slot)])
+
+    def _victim_score(self, slot: int, future_logical_blocks: set[int]) -> float:
+        logical_block = self.slot_to_logical[slot]
+        if logical_block is None:
+            return float("-inf")
+        if self.evict_policy == "lru":
+            return float(self.slot_last_used[slot])
+        dirty_penalty = self.block_nbytes * 4.0 if logical_block in self.dirty_logical_blocks else 0.0
+        reuse_penalty = self.block_nbytes * 8.0 if logical_block in future_logical_blocks else 0.0
+        return float(self.slot_last_used[slot]) + dirty_penalty + reuse_penalty
+
+    def _evict_slot(
+        self,
+        protected_logical_blocks: set[int],
+        future_logical_blocks: set[int] | None = None,
+    ) -> int:
+        future_logical_blocks = future_logical_blocks or set()
+        for slot, logical_block in enumerate(self.slot_to_logical):
+            if logical_block is None:
+                return slot
+
+        candidates = [
+            slot for slot, logical_block in enumerate(self.slot_to_logical)
+            if logical_block not in protected_logical_blocks
+        ]
+        if not candidates:
+            raise RuntimeError(
+                "KV offload GPU staging slots are insufficient for one full-attention batch: "
+                f"gpu_blocks={self.gpu_blocks}, required={len(protected_logical_blocks)}"
+            )
+        slot = min(candidates, key=lambda item: self._victim_score(item, future_logical_blocks))
+        old_logical = self.slot_to_logical[slot]
+        if old_logical is not None:
+            if old_logical in self.dirty_logical_blocks:
+                self._enqueue_d2h_pairs([(old_logical, slot)])
+                self.dirty_logical_blocks.discard(old_logical)
+                self.stats["evict_dirty"] += 1
+            else:
+                self.stats["evict_clean"] += 1
+            d2h_event = self.d2h_done.get(old_logical)
+            if d2h_event is not None:
+                torch.cuda.current_stream().wait_event(d2h_event)
+                if self.copy_stream is not None:
+                    self.copy_stream.wait_event(d2h_event)
+                self.stats["copy_waits"] += 1
+            self.logical_to_slot.pop(old_logical, None)
+            self.slot_to_logical[slot] = None
+            self.stats["evictions"] += 1
+        return slot
+
+    def ensure_resident(
+        self,
+        logical_blocks: list[int],
+        require_valid: bool,
+        future_logical_blocks: set[int] | None = None,
+        wait: bool = False,
+    ) -> dict[int, int]:
+        ordered = []
+        seen = set()
+        for block in logical_blocks:
+            block = int(block)
+            if block < 0 or block in seen:
+                continue
+            self._check_logical_block(block)
+            ordered.append(block)
+            seen.add(block)
+        if len(ordered) > self.gpu_blocks:
+            raise RuntimeError(
+                "KV offload MVP-0 uses full attention, so all visible logical blocks must fit in GPU staging: "
+                f"required={len(ordered)}, gpu_blocks={self.gpu_blocks}"
+            )
+
+        protected = set(ordered)
+        h2d_pairs = []
+        for logical_block in ordered:
+            slot = self.logical_to_slot.get(logical_block)
+            if slot is None:
+                if require_valid and not self.cpu_valid[logical_block]:
+                    raise RuntimeError(f"KV offload requested unreadable logical block {logical_block}")
+                slot = self._evict_slot(protected, future_logical_blocks=future_logical_blocks)
+                self.logical_to_slot[logical_block] = slot
+                self.slot_to_logical[slot] = logical_block
+                if self.cpu_valid[logical_block]:
+                    h2d_pairs.append((logical_block, slot))
+            self._touch(slot)
+        self._enqueue_h2d_pairs(h2d_pairs)
+        if wait:
+            self.wait_for_blocks([logical_block for logical_block, _ in h2d_pairs])
+        return {logical_block: self.logical_to_slot[logical_block] for logical_block in ordered}
+
+    def wait_for_blocks(self, logical_blocks: list[int]):
+        if self.copy_stream is None:
+            return
+        stream = torch.cuda.current_stream()
+        for logical_block in set(int(block) for block in logical_blocks):
+            event = self.h2d_done.get(logical_block)
+            if event is not None:
+                stream.wait_event(event)
+                self.stats["copy_waits"] += 1
+
+    def wait_for_pending(self):
+        if not self.pending_wait_blocks:
+            return
+        self.wait_for_blocks(list(self.pending_wait_blocks))
+        self.pending_wait_blocks.clear()
+
+    def synchronize_copies(self):
+        if self.copy_stream is not None:
+            self.copy_stream.synchronize()
+
+    def translate_block_rows(
+        self,
+        rows: list[list[int]],
+        require_valid: bool = True,
+        future_logical_blocks: set[int] | None = None,
+    ) -> list[list[int]]:
+        logical_blocks = [int(block) for row in rows for block in row if int(block) >= 0]
+        mapping = self.ensure_resident(
+            logical_blocks,
+            require_valid=require_valid,
+            future_logical_blocks=future_logical_blocks,
+        )
+        return [[mapping[int(block)] if int(block) >= 0 else -1 for block in row] for row in rows]
+
+    def translate_slots_for_positions(
+        self,
+        logical_block_table: list[int],
+        positions: list[int],
+        require_valid: bool = False,
+        future_logical_blocks: set[int] | None = None,
+    ) -> list[int]:
+        logical_blocks = [int(logical_block_table[pos // self.block_size]) for pos in positions]
+        mapping = self.ensure_resident(
+            logical_blocks,
+            require_valid=require_valid,
+            future_logical_blocks=future_logical_blocks,
+        )
+        return [
+            mapping[int(logical_block_table[pos // self.block_size])] * self.block_size + (pos % self.block_size)
+            for pos in positions
+        ]
+
+    def mark_dirty(self, logical_blocks: list[int]):
+        for logical_block in logical_blocks:
+            logical_block = int(logical_block)
+            if logical_block in self.logical_to_slot:
+                self.dirty_logical_blocks.add(logical_block)
+
+    def writeback_dirty(self, logical_blocks: list[int] | None = None):
+        targets = set(self.dirty_logical_blocks if logical_blocks is None else logical_blocks)
+        d2h_pairs = []
+        for logical_block in list(targets):
+            slot = self.logical_to_slot.get(int(logical_block))
+            if slot is None:
+                continue
+            d2h_pairs.append((int(logical_block), slot))
+            self.dirty_logical_blocks.discard(int(logical_block))
+        self._enqueue_d2h_pairs(d2h_pairs)
+
+    def summary(self) -> dict:
+        return {
+            **self.stats,
+            "logical_blocks": self.logical_blocks,
+            "gpu_blocks": self.gpu_blocks,
+            "resident_blocks": len(self.logical_to_slot),
+            "dirty_blocks": len(self.dirty_logical_blocks),
+            "block_nbytes": self.block_nbytes,
+            "async_copy": self.async_copy,
+            "batch_copy": self.batch_copy,
+            "writeback_on_evict": self.writeback_on_evict,
+            "evict_policy": self.evict_policy,
+        }
 
 class ModelRunner:
 
@@ -56,6 +408,8 @@ class ModelRunner:
         # prepare_prefill / prepare_decode 用的 pinned host buffer 池：按 (name, dtype) 复用，
         # 容量按需向上扩；避免每步 torch.tensor(list, pin_memory=True).cuda() 触发 host alloc + pin
         self._pinned_buf_cache: dict[tuple[str, torch.dtype], torch.Tensor] = {}
+        self.kv_offload: KVOffloadMVP0 | None = None
+        self._kv_offload_pending_dirty_blocks: list[int] = []
 
         self.warmup_model()                             #暂时跳过
 
@@ -70,6 +424,7 @@ class ModelRunner:
             or config.kv_quant_bits == 4
             or config.am_compact_blocks > 0
             or config.cpu_offload
+            or config.kv_offload_mvp0
         )
         if not skip_cudagraph:
             self.capture_cudagraph()
@@ -97,7 +452,7 @@ class ModelRunner:
             dist.barrier()              
             if self.rank == 0:
                 self.shm.unlink()              # 删除共享内存对象
-        if not self.enforce_eager:
+        if hasattr(self, "graphs"):
             del self.graphs, self.graph_pool
         torch.cuda.synchronize()
         dist.destroy_process_group()
@@ -195,10 +550,19 @@ class ModelRunner:
                          head_dim * elem_bytes) if quest_enabled else 0
 
         per_block = block_bytes + kv_scale_bytes_per_block + summary_bytes
-        config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // per_block
-        assert config.num_kvcache_blocks > 0
+        auto_num_blocks = int(total * config.gpu_memory_utilization - used - (peak - current)) // per_block
+        assert auto_num_blocks > 0
 
-        nb = config.num_kvcache_blocks
+        if config.kv_offload_mvp0:
+            gpu_nb = config.kv_offload_gpu_blocks or auto_num_blocks
+            logical_nb = config.kv_offload_logical_blocks or max(auto_num_blocks, gpu_nb)
+            assert gpu_nb > 0
+            assert logical_nb >= gpu_nb, "kv_offload_logical_blocks 必须 >= kv_offload_gpu_blocks"
+            config.num_kvcache_blocks = logical_nb
+            nb = gpu_nb
+        else:
+            config.num_kvcache_blocks = auto_num_blocks
+            nb = config.num_kvcache_blocks
         L = hf_config.num_hidden_layers
         if kvq_bits == 0:
             self.kv_cache = torch.zeros(2, L, nb, self.block_size, num_kv_heads, head_dim, dtype=dtype)
@@ -226,6 +590,17 @@ class ModelRunner:
             self.kv_summary[1].fill_(float("-inf"))
         else:
             self.kv_summary = None
+
+        if config.kv_offload_mvp0:
+            self.kv_offload = KVOffloadMVP0(
+                self.kv_cache,
+                config.num_kvcache_blocks,
+                self.block_size,
+                async_copy=config.kv_offload_async_copy,
+                batch_copy=config.kv_offload_batch_copy,
+                writeback_on_evict=config.kv_offload_writeback_on_evict,
+                evict_policy=config.kv_offload_evict_policy,
+            )
 
         layer_id = 0
         for module in self.model.modules():
@@ -270,10 +645,70 @@ class ModelRunner:
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
         block_tables_data = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]  #用-1补齐
+        if self.kv_offload is not None:
+            block_tables_data = self.kv_offload.translate_block_rows(block_tables_data, require_valid=True)
         return self.prepare_block_tables_from_rows(block_tables_data)
 
     def prepare_block_tables_from_rows(self, rows: list[list[int]], name: str = "block_tables"):
         return self._list_to_cuda_2d(rows, name, torch.int32)
+
+    def _kv_offload_translate_block_rows(
+        self,
+        rows: list[list[int]],
+        require_valid: bool = True,
+        future_logical_blocks: set[int] | None = None,
+    ) -> list[list[int]]:
+        if self.kv_offload is None:
+            return rows
+        return self.kv_offload.translate_block_rows(
+            rows,
+            require_valid=require_valid,
+            future_logical_blocks=future_logical_blocks,
+        )
+
+    def _kv_offload_translate_slots_for_positions(
+        self,
+        block_table: list[int],
+        positions: list[int],
+        require_valid: bool = False,
+        future_logical_blocks: set[int] | None = None,
+    ) -> list[int]:
+        if self.kv_offload is None:
+            return [
+                block_table[pos // self.block_size] * self.block_size + (pos % self.block_size)
+                for pos in positions
+            ]
+        return self.kv_offload.translate_slots_for_positions(
+            block_table,
+            positions,
+            require_valid=require_valid,
+            future_logical_blocks=future_logical_blocks,
+        )
+
+    def _kv_offload_mark_pending_dirty(self, block_table: list[int], positions: list[int]):
+        if self.kv_offload is None:
+            return
+        for pos in positions:
+            self._kv_offload_pending_dirty_blocks.append(block_table[pos // self.block_size])
+
+    def _kv_offload_after_forward(self):
+        if self.kv_offload is None:
+            return
+        if self._kv_offload_pending_dirty_blocks:
+            self.kv_offload.mark_dirty(self._kv_offload_pending_dirty_blocks)
+            if not self.kv_offload.writeback_on_evict:
+                self.kv_offload.writeback_dirty(self._kv_offload_pending_dirty_blocks)
+            self._kv_offload_pending_dirty_blocks = []
+
+    def _kv_offload_before_forward(self):
+        if self.kv_offload is None:
+            return
+        self.kv_offload.wait_for_pending()
+
+    def kv_offload_summary(self) -> dict | None:
+        if self.kv_offload is None:
+            return None
+        return self.kv_offload.summary()
 
     # ---- pinned host buffer 池：把多次小 H2D 改成 buffer 复用 + non_blocking copy ----
     def _get_pinned(self, name: str, n: int, dtype: torch.dtype) -> torch.Tensor:
@@ -307,6 +742,7 @@ class ModelRunner:
 
 # 收集新token输入（input_ids/positions） → 划分多序列边界（cu_seqlens） → 适配内存需求（max_seqlen） → 管理缓存块（block_tables） → 映射块内槽位（slot_mapping） → 将所有数据送GPU并设置上下文
     def prepare_prefill(self, seqs: list[Sequence]):        #输入数据收集、序列边界划分、缓存映射、内存适配
+        self._kv_offload_pending_dirty_blocks = []
         input_ids = []          # 记录每个 seq 的 所有输入token id，一维[] 
         positions = []          # 记录每个 seq中 输入的 token的位置，一维[]
         cu_seqlens_q = [0]       # 以前缀和的形式，记录每个seq的长度，如 [0, 3, 5] 表示有两个seq, 一个长度为 3 = 3 - 0， 另一个长度为 2 = 5-3
@@ -335,12 +771,38 @@ class ModelRunner:
             if not seq.block_table:
                 continue
             
-            for pos in range(chunk_start, chunk_end):
-                block_id = seq.block_table[pos // self.block_size]
-                slot_mapping.append(block_id * self.block_size + (pos % self.block_size))
+            write_positions = list(range(chunk_start, chunk_end))
+            future_blocks = set(int(block_id) for block_id in seq.block_table)
+            if self.kv_offload is not None:
+                self.kv_offload.stats["prefetch_plans"] += 1
+                self.kv_offload.stats["prefetch_write_blocks"] += len(set(
+                    int(seq.block_table[pos // self.block_size]) for pos in write_positions
+                ))
+            slot_mapping.extend(self._kv_offload_translate_slots_for_positions(
+                seq.block_table,
+                write_positions,
+                future_logical_blocks=future_blocks,
+            ))
+            self._kv_offload_mark_pending_dirty(seq.block_table, write_positions)
         
         if cu_seqlens_k[-1] > cu_seqlens_q[-1]:      # 正常情况下二者是相等的，大于则说明有前缀缓存, 因此取出seq中的block_table, 拼成 blocktables表
-            block_tables = self.prepare_block_tables(seqs)
+            if self.kv_offload is not None:
+                for seq in seqs:
+                    chunk_start = getattr(seq, "prefill_chunk_start", seq.num_cached_tokens)
+                    if chunk_start > 0:
+                        self.kv_offload.translate_slots_for_positions(
+                            seq.block_table, list(range(0, chunk_start)), require_valid=True)
+                max_len = max(len(seq.block_table) for seq in seqs)
+                block_table_rows = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
+                future_blocks = set(int(block_id) for row in block_table_rows for block_id in row if int(block_id) >= 0)
+                block_table_rows = self._kv_offload_translate_block_rows(
+                    block_table_rows,
+                    require_valid=False,
+                    future_logical_blocks=future_blocks,
+                )
+                block_tables = self.prepare_block_tables_from_rows(block_table_rows)
+            else:
+                block_tables = self.prepare_block_tables(seqs)
         
         # 将准备好的数据传输到GPU上
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
@@ -381,6 +843,8 @@ class ModelRunner:
         Decode rows are represented as query length 1, so they can share the
         same FlashAttention varlen prefill path with prefill chunks.
         """
+        if self.kv_offload is not None:
+            raise NotImplementedError("KV offload MVP-0 暂不支持 mixed prefill+decode batch")
         input_ids = []
         positions = []
         cu_seqlens_q = [0]
@@ -437,11 +901,14 @@ class ModelRunner:
 
     # decode阶段单token输出
     def prepare_decode(self, seqs: list[Sequence]):         #暂时跳过
+        self._kv_offload_pending_dirty_blocks = []
         input_ids = []
         positions = []
         slot_mapping = []
         context_lens = []
         num_blocks_host = []
+        decode_write_blocks = []
+        decode_write_offsets = []
         for seq in seqs:
             # 上一次输出的最后token
             input_ids.append(seq.last_token)
@@ -449,7 +916,8 @@ class ModelRunner:
             positions.append(len(seq))
             context_lens.append(len(seq))
             num_blocks_host.append(seq.num_blocks)
-            slot_mapping.append(seq.block_table[-1] * seq.block_size + seq.last_block_num_tokens - 1)   #
+            decode_write_blocks.append(seq.block_table[-1])
+            decode_write_offsets.append(seq.last_block_num_tokens - 1)
 
         max_blocks = max(len(seq.block_table) for seq in seqs)
         block_table_rows = [seq.block_table + [-1] * (max_blocks - len(seq.block_table)) for seq in seqs]
@@ -479,6 +947,78 @@ class ModelRunner:
                 tuple(int(block_id) for block_id in row if int(block_id) >= 0)
                 for row in block_table_rows
             )
+
+        logical_block_table_rows = [list(row) for row in block_table_rows]
+        context_lens_host = list(context_lens)
+        if self.kv_offload is not None:
+            if self.config.kv_offload_blockwise_decode:
+                # Streaming/blockwise decode only stages the current write blocks
+                # here. Attention.forward will stage logical read windows layer by
+                # layer, so visible blocks may exceed GPU staging slots.
+                valid_write_blocks = [
+                    int(block) for block, offset in zip(decode_write_blocks, decode_write_offsets)
+                    if int(offset) > 0
+                ]
+                fresh_write_blocks = [
+                    int(block) for block, offset in zip(decode_write_blocks, decode_write_offsets)
+                    if int(offset) == 0
+                ]
+                future_blocks = set(int(block) for block in decode_write_blocks)
+                self.kv_offload.stats["prefetch_plans"] += 1
+                self.kv_offload.stats["prefetch_write_blocks"] += len(future_blocks)
+                self.kv_offload.ensure_resident(
+                    valid_write_blocks,
+                    require_valid=True,
+                    future_logical_blocks=future_blocks,
+                )
+                self.kv_offload.ensure_resident(
+                    fresh_write_blocks,
+                    require_valid=False,
+                    future_logical_blocks=future_blocks,
+                )
+            else:
+                # Full attention MVP-0/MVP-1: all visible logical blocks are staged
+                # on GPU before the forward.
+                future_blocks = set(int(block) for row in block_table_rows for block in row if int(block) >= 0)
+                future_blocks.update(int(block) for block in decode_write_blocks)
+                valid_read_blocks = []
+                for row, write_block, write_offset in zip(block_table_rows, decode_write_blocks, decode_write_offsets):
+                    for block in row:
+                        block = int(block)
+                        if block < 0:
+                            continue
+                        if block == int(write_block) and int(write_offset) == 0:
+                            continue
+                        valid_read_blocks.append(block)
+                self.kv_offload.stats["prefetch_plans"] += 1
+                self.kv_offload.stats["prefetch_read_blocks"] += len(set(valid_read_blocks))
+                self.kv_offload.stats["prefetch_write_blocks"] += len(set(int(block) for block in decode_write_blocks))
+                self.kv_offload.ensure_resident(
+                    valid_read_blocks,
+                    require_valid=True,
+                    future_logical_blocks=future_blocks,
+                )
+                self.kv_offload.ensure_resident(
+                    decode_write_blocks,
+                    require_valid=False,
+                    future_logical_blocks=future_blocks,
+                )
+                physical_block_table_rows = self._kv_offload_translate_block_rows(
+                    block_table_rows,
+                    require_valid=False,
+                    future_logical_blocks=future_blocks,
+                )
+                block_table_rows = physical_block_table_rows
+            slot_mapping = [
+                self.kv_offload.logical_to_slot[int(block)] * self.block_size + int(offset)
+                for block, offset in zip(decode_write_blocks, decode_write_offsets)
+            ]
+            self._kv_offload_pending_dirty_blocks.extend(decode_write_blocks)
+        else:
+            slot_mapping = [
+                int(block) * self.block_size + int(offset)
+                for block, offset in zip(decode_write_blocks, decode_write_offsets)
+            ]
 
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
@@ -527,7 +1067,13 @@ class ModelRunner:
                     am_compact_skip_last_layers=self.config.am_compact_skip_last_layers,
                     am_compact_enable_layers=self.config.am_compact_enable_layers,
                     am_compact_layer_stride=self.config.am_compact_layer_stride,
-                    am_compact_cache_signatures=am_compact_cache_signatures)
+                    am_compact_cache_signatures=am_compact_cache_signatures,
+                    kv_offload_manager=self.kv_offload,
+                    kv_offload_blockwise_decode=(self.kv_offload is not None and self.config.kv_offload_blockwise_decode),
+                    kv_offload_blockwise_blocks=self.config.kv_offload_blockwise_blocks,
+                    kv_offload_logical_block_tables=logical_block_table_rows,
+                    kv_offload_context_lens=context_lens_host,
+                    kv_offload_write_blocks=[int(block) for block in decode_write_blocks])
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上
@@ -567,8 +1113,9 @@ class ModelRunner:
         c4_active = self.config.kv_quant_bits == 4
         # cpu_offload：init 阶段已跳过 capture，这里也必须走 eager（否则 self.graphs 不存在）
         offload_active = self.config.cpu_offload
+        kv_offload_active = self.config.kv_offload_mvp0
         if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
-                or quest_active or am_active or c4_active or offload_active
+                or quest_active or am_active or c4_active or offload_active or kv_offload_active
                 or input_embeds is not None or return_hidden):     #动态执行 eager mode
             hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
             logits = self.model.compute_logits(hidden_states)
@@ -598,7 +1145,9 @@ class ModelRunner:
             input_ids, positions = self.prepare_mixed(seqs)
         else:
             input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+        self._kv_offload_before_forward()
         logits = self.run_model(input_ids, positions, is_prefill)
+        self._kv_offload_after_forward()
         if not do_sample:
             reset_context()
             return None

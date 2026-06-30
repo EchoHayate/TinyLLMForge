@@ -15,6 +15,7 @@ class Scheduler:
         self.chunked_prefill_decode_first = getattr(config, "chunked_prefill_decode_first", True)
         self.chunked_prefill_max_consecutive_chunks = getattr(config, "chunked_prefill_max_consecutive_chunks", 0)
         self.chunked_prefill_mixed_batch = getattr(config, "chunked_prefill_mixed_batch", False)
+        self.chunked_prefill_mixed_min_prompt_tokens = getattr(config, "chunked_prefill_mixed_min_prompt_tokens", 0)
         self._consecutive_prefill_chunks = 0
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
@@ -43,6 +44,9 @@ class Scheduler:
                 self._consecutive_prefill_chunks = 0
                 return (*self._schedule_decode(), True)
             if self.chunked_prefill_mixed_batch and self.running:
+                if not self._mixed_prefill_admission_allowed():
+                    self._consecutive_prefill_chunks = 0
+                    return (*self._schedule_decode(), True)
                 mixed = self._schedule_mixed_prefill_decode()
                 if mixed is not None:
                     if len(mixed) == 4:
@@ -101,6 +105,18 @@ class Scheduler:
         assert scheduled_seqs
         self.running.extendleft(reversed(scheduled_seqs))       #当前step结束 但未到达终止条件 所以需要在返回running队列
         return scheduled_seqs, False
+
+    def _mixed_prefill_admission_allowed(self) -> bool:
+        if self.chunked_prefill_mixed_min_prompt_tokens <= 0:
+            return True
+        if self.prefilling:
+            # 已经进入 chunked prefill 的请求继续允许 mixed drain；阈值只控制新请求接入。
+            return True
+        if not self.waiting:
+            return True
+        candidate = self.waiting[0]
+        remaining_prompt_tokens = max(0, len(candidate) - getattr(candidate, "num_computed_tokens", 0))
+        return remaining_prompt_tokens >= self.chunked_prefill_mixed_min_prompt_tokens
 
     def _schedule_chunked_prefill(self, max_prefill_seqs: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
         max_prefill_seqs = self.max_num_seqs if max_prefill_seqs is None else max_prefill_seqs
