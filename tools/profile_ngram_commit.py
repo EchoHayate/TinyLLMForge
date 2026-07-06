@@ -47,6 +47,8 @@ def parse_args():
                    help="Run a synthetic KV offload thrash smoke with repeated batched eviction/reload windows.")
     p.add_argument("--blockwise-attn-smoke", action="store_true", default=False,
                    help="Run an exact streaming/blockwise attention online-softmax smoke without loading a model.")
+    p.add_argument("--blockwise-prefill-attn-smoke", action="store_true", default=False,
+                   help="Run an exact streaming/blockwise chunked-prefill attention smoke without loading a model.")
     p.add_argument("--thrash-rounds", type=int, default=16)
     p.add_argument("--thrash-window-blocks", type=int, default=2)
     p.add_argument("--thrash-logical-blocks", type=int, default=8)
@@ -57,6 +59,8 @@ def parse_args():
     p.add_argument("--blockwise-attn-head-dim", type=int, default=32)
     p.add_argument("--blockwise-attn-tokens", type=int, default=1024)
     p.add_argument("--blockwise-attn-window-tokens", type=int, default=128)
+    p.add_argument("--blockwise-prefill-prefix-tokens", type=int, default=1024)
+    p.add_argument("--blockwise-prefill-chunk-tokens", type=int, default=128)
     p.add_argument("--prompt", action="append", default=None,
                    help="Prompt to benchmark. Can be passed multiple times. Defaults to the S3/S4 single prompt.")
     p.add_argument("--max-output-len", type=int, default=64)
@@ -103,8 +107,10 @@ def parse_args():
     p.add_argument("--kv-offload-evict-policy", type=str, default="lru_cost", choices=["lru", "lru_cost"])
     p.add_argument("--kv-offload-blockwise-decode", action="store_true", default=False,
                    help="Use exact blockwise decode attention for KV offload so visible blocks may exceed staging slots.")
+    p.add_argument("--kv-offload-blockwise-prefill", action="store_true", default=False,
+                   help="Use exact blockwise chunked prefill attention for KV offload so prefix blocks may exceed staging slots.")
     p.add_argument("--kv-offload-blockwise-blocks", type=int, default=1,
-                   help="Logical KV blocks per blockwise decode attention window.")
+                   help="Logical KV blocks per blockwise KV offload attention window.")
     p.add_argument("--quest-top-k-blocks", type=int, default=-1)
     p.add_argument("--quest-min-seq-len", type=int, default=512)
     return p.parse_args()
@@ -315,6 +321,7 @@ def _create_llm(args):
         kv_offload_writeback_on_evict=args.kv_offload_writeback_on_evict,
         kv_offload_evict_policy=args.kv_offload_evict_policy,
         kv_offload_blockwise_decode=args.kv_offload_blockwise_decode,
+        kv_offload_blockwise_prefill=args.kv_offload_blockwise_prefill,
         kv_offload_blockwise_blocks=args.kv_offload_blockwise_blocks,
         quest_top_k_blocks=args.quest_top_k_blocks,
         quest_min_seq_len=args.quest_min_seq_len,
@@ -638,6 +645,89 @@ def _blockwise_decode_attention(q, k, v, context_lens, scale: float, window_toke
     return running_o / running_l.clamp_min(1e-20).unsqueeze(-1), chunks, streamed_tokens
 
 
+def _full_prefill_attention(q, k, v, chunk_starts, chunk_lens, scale: float):
+    import torch
+
+    k = _repeat_kv_heads_for_gqa(k, q.size(2)).to(torch.float32)
+    v = _repeat_kv_heads_for_gqa(v, q.size(2)).to(torch.float32)
+    q = q.to(torch.float32)
+    batch, max_q, num_heads, _ = q.shape
+    max_k = k.size(1)
+    out = torch.zeros_like(q)
+    key_positions = torch.arange(max_k, device=q.device).view(1, 1, max_k)
+    for b in range(batch):
+        q_len = int(chunk_lens[b])
+        chunk_start = int(chunk_starts[b])
+        if q_len <= 0:
+            continue
+        scores = torch.einsum("qhd,thd->qht", q[b, :q_len], k[b]) * scale
+        query_positions = torch.arange(chunk_start, chunk_start + q_len, device=q.device).view(q_len, 1, 1)
+        mask = (key_positions[:, :, :max_k] <= query_positions) & (key_positions[:, :, :max_k] < chunk_start + q_len)
+        scores = scores.masked_fill(~mask, float("-inf"))
+        probs = torch.softmax(scores, dim=-1)
+        out[b, :q_len] = torch.einsum("qht,thd->qhd", probs, v[b])
+    return out
+
+
+def _blockwise_prefill_attention(q, k, v, chunk_starts, chunk_lens, scale: float, window_tokens: int):
+    import torch
+
+    k = _repeat_kv_heads_for_gqa(k, q.size(2)).to(torch.float32)
+    v = _repeat_kv_heads_for_gqa(v, q.size(2)).to(torch.float32)
+    q = q.to(torch.float32)
+    batch, max_q, num_heads, head_dim = q.shape
+    out = torch.zeros_like(q)
+    chunks = 0
+    streamed_tokens = 0
+
+    def merge(running_m, running_l, running_o, scores, values, mask):
+        valid = mask.any(dim=-1)
+        scores = scores.masked_fill(~mask, float("-inf"))
+        chunk_m = scores.max(dim=-1).values
+        chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
+        exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
+        chunk_l = exp_scores.sum(dim=-1)
+        chunk_o = torch.einsum("qht,thd->qhd", exp_scores, values)
+        merged_m = torch.maximum(running_m, chunk_m)
+        merged_m = torch.where(valid, merged_m, running_m)
+        old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
+        new_weight = torch.exp(chunk_m - merged_m).masked_fill(~valid, 0.0)
+        running_l = old_weight * running_l + new_weight * chunk_l
+        running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
+        running_m = merged_m
+        return running_m, running_l, running_o
+
+    for b in range(batch):
+        q_len = int(chunk_lens[b])
+        chunk_start = int(chunk_starts[b])
+        chunk_end = chunk_start + q_len
+        if q_len <= 0:
+            continue
+        running_m = torch.full((q_len, num_heads), float("-inf"), device=q.device, dtype=torch.float32)
+        running_l = torch.zeros((q_len, num_heads), device=q.device, dtype=torch.float32)
+        running_o = torch.zeros((q_len, num_heads, head_dim), device=q.device, dtype=torch.float32)
+        for start in range(0, chunk_start, window_tokens):
+            end = min(start + window_tokens, chunk_start)
+            k_window = k[b, start:end]
+            v_window = v[b, start:end]
+            scores = torch.einsum("qhd,thd->qht", q[b, :q_len], k_window) * scale
+            mask = torch.ones((q_len, 1, end - start), device=q.device, dtype=torch.bool)
+            running_m, running_l, running_o = merge(running_m, running_l, running_o, scores, v_window, mask)
+            chunks += 1
+            streamed_tokens += end - start
+        k_local = k[b, chunk_start:chunk_end]
+        v_local = v[b, chunk_start:chunk_end]
+        scores = torch.einsum("qhd,thd->qht", q[b, :q_len], k_local) * scale
+        q_pos = torch.arange(q_len, device=q.device).view(q_len, 1, 1)
+        k_pos = torch.arange(q_len, device=q.device).view(1, 1, q_len)
+        mask = k_pos <= q_pos
+        running_m, running_l, running_o = merge(running_m, running_l, running_o, scores, v_local, mask)
+        chunks += 1
+        streamed_tokens += q_len
+        out[b, :q_len] = running_o / running_l.clamp_min(1e-20).unsqueeze(-1)
+    return out, chunks, streamed_tokens
+
+
 def run_blockwise_attn_smoke(args) -> dict:
     """Validate exact streaming/blockwise decode attention via online softmax."""
     import math
@@ -697,6 +787,77 @@ def run_blockwise_attn_smoke(args) -> dict:
             "max_abs_error": max_abs,
             "relative_error": rel,
             "context_lens": [int(x) for x in context_lens.cpu().tolist()],
+        },
+    }
+
+
+def run_blockwise_prefill_attn_smoke(args) -> dict:
+    """Validate exact blockwise/chunked prefill attention via online softmax."""
+    import math
+    import torch
+
+    if args.blockwise_attn_window_tokens <= 0:
+        raise ValueError("--blockwise-attn-window-tokens must be > 0")
+    if args.blockwise_prefill_prefix_tokens <= 0:
+        raise ValueError("--blockwise-prefill-prefix-tokens must be > 0")
+    if args.blockwise_prefill_chunk_tokens <= 0:
+        raise ValueError("--blockwise-prefill-chunk-tokens must be > 0")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        torch.cuda.set_device(0)
+    torch.manual_seed(20260630)
+
+    batch = args.blockwise_attn_batch
+    num_heads = args.blockwise_attn_heads
+    num_kv_heads = args.blockwise_attn_kv_heads
+    head_dim = args.blockwise_attn_head_dim
+    prefix = args.blockwise_prefill_prefix_tokens
+    chunk = args.blockwise_prefill_chunk_tokens
+    window = args.blockwise_attn_window_tokens
+    max_tokens = prefix + chunk
+    q = torch.randn(batch, chunk, num_heads, head_dim, device=device, dtype=torch.float32)
+    k = torch.randn(batch, max_tokens, num_kv_heads, head_dim, device=device, dtype=torch.float32)
+    v = torch.randn(batch, max_tokens, num_kv_heads, head_dim, device=device, dtype=torch.float32)
+    chunk_starts = torch.full((batch,), prefix, device=device, dtype=torch.int64)
+    chunk_lens = torch.full((batch,), chunk, device=device, dtype=torch.int64)
+    if batch > 1:
+        chunk_starts[-1] = max(1, prefix - window // 2)
+    scale = 1.0 / math.sqrt(head_dim)
+
+    full = _full_prefill_attention(q, k, v, chunk_starts, chunk_lens, scale)
+    blockwise, chunks, streamed_tokens = _blockwise_prefill_attention(
+        q, k, v, chunk_starts, chunk_lens, scale, window)
+    diff = (full - blockwise).abs()
+    max_abs = float(diff.max().item())
+    max_ref = float(full.abs().max().item())
+    rel = max_abs / max(max_ref, 1e-12)
+    tolerance = 2e-5
+    gate_fail_reasons = []
+    if max_abs > tolerance and rel > tolerance:
+        gate_fail_reasons.append(f"prefill_attention_mismatch max_abs={max_abs:.3e} rel={rel:.3e}")
+    if chunks <= batch:
+        gate_fail_reasons.append("prefix_chunks<=0")
+    return {
+        "mode": "blockwise-prefill-attn-smoke",
+        "args": {
+            "batch": batch,
+            "num_heads": num_heads,
+            "num_kv_heads": num_kv_heads,
+            "head_dim": head_dim,
+            "prefix_tokens": prefix,
+            "chunk_tokens": chunk,
+            "window_tokens": window,
+            "device": device,
+        },
+        "summary": {
+            "gate_pass": not gate_fail_reasons,
+            "gate_fail_reasons": gate_fail_reasons,
+            "chunks": chunks,
+            "streamed_tokens": streamed_tokens,
+            "max_abs_error": max_abs,
+            "relative_error": rel,
+            "chunk_starts": [int(x) for x in chunk_starts.cpu().tolist()],
+            "chunk_lens": [int(x) for x in chunk_lens.cpu().tolist()],
         },
     }
 
@@ -1103,6 +1264,8 @@ def run_profile(args) -> dict:
         return run_kv_offload_thrash_smoke(args)
     if args.blockwise_attn_smoke:
         return run_blockwise_attn_smoke(args)
+    if args.blockwise_prefill_attn_smoke:
+        return run_blockwise_prefill_attn_smoke(args)
 
     if args.model is None:
         raise ValueError("--model is required unless a KV offload synthetic smoke flag is set")

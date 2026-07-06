@@ -120,7 +120,12 @@ def _blockwise_online_decode_attention(
             )
         manager.stats["prefetch_plans"] += 1
         manager.stats["prefetch_read_blocks"] += len(unique_blocks)
-        manager.ensure_resident(list(unique_blocks), require_valid=True, future_logical_blocks=unique_blocks)
+        manager.ensure_resident(
+            list(unique_blocks),
+            require_valid=True,
+            future_logical_blocks=unique_blocks | write_blocks,
+            protected_logical_blocks=write_blocks,
+        )
         manager.wait_for_pending()
 
         max_window_tokens = max(window_lens)
@@ -160,6 +165,134 @@ def _blockwise_online_decode_attention(
         running_m = merged_m
 
     return (running_o / running_l.clamp_min(1e-20).unsqueeze(-1)).to(q.dtype)
+
+
+def _blockwise_online_prefill_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    context,
+    num_heads: int,
+    head_dim: int,
+    scale: float,
+) -> torch.Tensor:
+    """Exact chunked-prefill attention over offloaded logical KV blocks.
+
+    The current prefill chunk uses fresh in-forward K/V tensors for local causal
+    attention. Historical prefix KV is streamed from logical block windows via
+    the KV offload manager and merged with online softmax, so prefix blocks do
+    not need to be resident in GPU staging slots all at once.
+    """
+    manager = context.kv_offload_manager
+    logical_rows = context.kv_offload_logical_block_tables
+    chunk_starts = context.kv_offload_prefill_chunk_starts
+    chunk_ends = context.kv_offload_prefill_chunk_ends
+    assert manager is not None and logical_rows is not None
+    assert chunk_starts is not None and chunk_ends is not None
+    window_blocks = max(1, int(context.kv_offload_blockwise_blocks))
+    block_size = int(k_cache.shape[1])
+    write_blocks = set(int(block) for block in (context.kv_offload_write_blocks or []))
+    if window_blocks > manager.gpu_blocks:
+        raise RuntimeError(
+            f"kv_offload_blockwise_blocks={window_blocks} exceeds gpu staging blocks={manager.gpu_blocks}"
+        )
+    if write_blocks:
+        manager.mark_dirty(list(write_blocks))
+
+    cu_q = context.cu_seqlens_q.detach().to("cpu").tolist()
+    out = torch.empty_like(q)
+    q_fp = q.to(torch.float32)
+
+    def merge_window(running_m, running_l, running_o, scores, value_dense, mask):
+        valid = mask.any(dim=-1)
+        scores = scores.masked_fill(~mask, float("-inf"))
+        chunk_m = scores.max(dim=-1).values
+        chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
+        exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
+        chunk_l = exp_scores.sum(dim=-1)
+        chunk_o = torch.einsum("qht,thd->qhd", exp_scores, value_dense)
+
+        merged_m = torch.maximum(running_m, chunk_m)
+        merged_m = torch.where(valid, merged_m, running_m)
+        old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
+        new_weight = torch.exp(chunk_m - merged_m).masked_fill(~valid, 0.0)
+        running_l = old_weight * running_l + new_weight * chunk_l
+        running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
+        running_m = merged_m
+        return running_m, running_l, running_o
+
+    for row_idx, row in enumerate(logical_rows):
+        q_start = int(cu_q[row_idx])
+        q_end = int(cu_q[row_idx + 1])
+        q_len = q_end - q_start
+        if q_len <= 0:
+            continue
+        chunk_start = int(chunk_starts[row_idx])
+        chunk_end = int(chunk_ends[row_idx])
+        if chunk_end - chunk_start != q_len:
+            raise RuntimeError(
+                "blockwise prefill context mismatch: "
+                f"q_len={q_len}, chunk_start={chunk_start}, chunk_end={chunk_end}"
+            )
+        row_blocks = [int(block) for block in row if int(block) >= 0]
+        q_row = q_fp[q_start:q_end]
+        running_m = torch.full((q_len, num_heads), float("-inf"), device=q.device, dtype=torch.float32)
+        running_l = torch.zeros((q_len, num_heads), device=q.device, dtype=torch.float32)
+        running_o = torch.zeros((q_len, num_heads, head_dim), device=q.device, dtype=torch.float32)
+
+        prefix_blocks = (chunk_start + block_size - 1) // block_size
+        for start_block in range(0, prefix_blocks, window_blocks):
+            window = row_blocks[start_block:start_block + window_blocks]
+            window_start_token = start_block * block_size
+            window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
+            if not window or window_len <= 0:
+                continue
+            unique_blocks = set(int(block) for block in window)
+            protected = unique_blocks | write_blocks
+            if len(protected) > manager.gpu_blocks:
+                raise RuntimeError(
+                    "blockwise prefill window plus current write blocks exceed GPU staging slots: "
+                    f"required={len(protected)}, gpu_blocks={manager.gpu_blocks}"
+                )
+            manager.stats["prefetch_plans"] += 1
+            manager.stats["prefetch_read_blocks"] += len(unique_blocks)
+            manager.ensure_resident(
+                list(unique_blocks),
+                require_valid=True,
+                future_logical_blocks=protected,
+                protected_logical_blocks=write_blocks,
+            )
+            manager.wait_for_pending()
+
+            k_dense = q.new_zeros((window_len, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
+            v_dense = q.new_zeros((window_len, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
+            copied = 0
+            for logical_block in window:
+                if copied >= window_len:
+                    break
+                slot = manager.logical_to_slot[int(logical_block)]
+                take = min(block_size, window_len - copied)
+                k_dense[copied:copied + take] = k_cache[slot, :take]
+                v_dense[copied:copied + take] = v_cache[slot, :take]
+                copied += take
+            k_dense = _repeat_kv_for_gqa(k_dense.unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
+            v_dense = _repeat_kv_for_gqa(v_dense.unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
+            scores = torch.einsum("qhd,thd->qht", q_row, k_dense) * scale
+            mask = torch.ones((q_len, 1, window_len), device=q.device, dtype=torch.bool)
+            running_m, running_l, running_o = merge_window(running_m, running_l, running_o, scores, v_dense, mask)
+
+        k_local = _repeat_kv_for_gqa(k[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
+        v_local = _repeat_kv_for_gqa(v[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
+        scores = torch.einsum("qhd,thd->qht", q_row, k_local) * scale
+        q_pos = torch.arange(q_len, device=q.device).view(q_len, 1, 1)
+        k_pos = torch.arange(q_len, device=q.device).view(1, 1, q_len)
+        local_mask = k_pos <= q_pos
+        running_m, running_l, running_o = merge_window(running_m, running_l, running_o, scores, v_local, local_mask)
+        out[q_start:q_end] = (running_o / running_l.clamp_min(1e-20).unsqueeze(-1)).to(q.dtype)
+
+    return out
 
 @triton.jit
 def store_kvcache_kernel(
@@ -694,6 +827,12 @@ class Attention(nn.Module):
         if context.is_prefill:
             # prefill传入的 q = [batch_size, seq_len, num_heads, head_dim]
             # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
+            if context.kv_offload_blockwise_prefill:
+                assert self.kv_quant_bits == 0, "KV offload blockwise prefill MVP 仅支持 fp16/bf16 KV"
+                o = _blockwise_online_prefill_attention(
+                    q, k, v, k_cache, v_cache, context, self.num_heads, self.head_dim, self.scale)
+                o = o.view(-1, self.num_heads * self.head_dim)
+                return o
             if self.kv_quant_bits in (4, 8):
                 # C4/C8 prefill：
                 #   - 无 prefix-cache：cache 里只有当前刚写入的 token；为避免再读一次量化后掉精度，

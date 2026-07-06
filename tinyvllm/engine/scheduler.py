@@ -11,6 +11,7 @@ class Scheduler:
     def __init__(self, config: Config):
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
+        self.max_model_len = getattr(config, "max_model_len", 0) or 0
         self.max_num_prefill_tokens_per_step = getattr(config, "max_num_prefill_tokens_per_step", 0)
         self.chunked_prefill_decode_first = getattr(config, "chunked_prefill_decode_first", True)
         self.chunked_prefill_max_consecutive_chunks = getattr(config, "chunked_prefill_max_consecutive_chunks", 0)
@@ -31,7 +32,32 @@ class Scheduler:
         return not self.waiting and not self.prefilling and not self.running
 
     def add(self, seq: Sequence):
+        self._validate_admission(seq)
         self.waiting.append(seq)
+
+    def _validate_admission(self, seq: Sequence):
+        max_tokens = max(0, getattr(seq, "max_tokens", 0))
+        total_tokens = len(seq) + max_tokens
+        if self.max_model_len > 0 and total_tokens > self.max_model_len:
+            raise ValueError(
+                "request length exceeds max_model_len: "
+                f"prompt_tokens={len(seq)}, max_tokens={max_tokens}, "
+                f"total_tokens={total_tokens}, max_model_len={self.max_model_len}"
+            )
+
+        # KV cache stores prompt tokens plus generated tokens that are needed as
+        # context for later decode steps. The last requested output token is not
+        # decoded again, so it does not need its own KV slot.
+        kv_tokens = len(seq) + max(0, max_tokens - 1)
+        required_blocks = (kv_tokens + self.block_manager.block_size - 1) // self.block_manager.block_size
+        available_blocks = len(self.block_manager.blocks)
+        if required_blocks > available_blocks:
+            raise ValueError(
+                "request length exceeds KV cache capacity: "
+                f"prompt_tokens={len(seq)}, max_tokens={max_tokens}, "
+                f"kv_tokens={kv_tokens}, required_blocks={required_blocks}, "
+                f"available_blocks={available_blocks}, block_size={self.block_manager.block_size}"
+            )
 
     def schedule(self) -> tuple[list[Sequence], bool, bool]:
         if self.chunked_prefill_enabled:

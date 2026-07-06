@@ -73,6 +73,7 @@ class Config:
     kv_offload_writeback_on_evict: bool = False         # False 保持每次 forward 后写回；True 延迟到 eviction
     kv_offload_evict_policy: str = "lru_cost"           # lru / lru_cost
     kv_offload_blockwise_decode: bool = False           # 实验：decode attention 按 block window 流式扫描 KV
+    kv_offload_blockwise_prefill: bool = False          # 实验：chunked prefill attention 按 block window 流式扫描 prefix KV
     kv_offload_blockwise_blocks: int = 1                # 每个 attention window 最多处理多少 logical KV blocks
     # Activation 量化（A8 等）相关配置（W4A8 用）
     act_quant_bits: int = 0                             # 0 / 8
@@ -136,6 +137,12 @@ class Config:
             assert self.am_compact_blocks == 0, "KV offload MVP-0 先只支持 full attention，请关闭 AM compact"
         assert not self.kv_offload_blockwise_decode or self.kv_offload_mvp0, \
             "kv_offload_blockwise_decode 依赖 kv_offload_mvp0"
+        assert not self.kv_offload_blockwise_prefill or self.kv_offload_mvp0, \
+            "kv_offload_blockwise_prefill 依赖 kv_offload_mvp0"
+        assert not self.kv_offload_blockwise_prefill or self.max_num_prefill_tokens_per_step > 0, \
+            "kv_offload_blockwise_prefill 需要开启 chunked prefill: max_num_prefill_tokens_per_step > 0"
+        assert not (self.kv_offload_mvp0 and self.chunked_prefill_mixed_batch), \
+            "KV offload MVP-0 暂不支持 mixed prefill+decode batch，请关闭 chunked_prefill_mixed_batch"
         assert self.act_quant_bits in (0, 8), "act_quant_bits 仅支持 0/8"
         assert self.act_quant_skip_first >= 0 and self.act_quant_skip_last >= 0
         assert self.max_num_prefill_tokens_per_step >= 0

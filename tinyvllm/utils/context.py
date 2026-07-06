@@ -39,10 +39,13 @@ class Context:
     # KV offload blockwise decode：attention 层按 logical block window 触发 staging。
     kv_offload_manager: object | None = None
     kv_offload_blockwise_decode: bool = False
+    kv_offload_blockwise_prefill: bool = False
     kv_offload_blockwise_blocks: int = 1
     kv_offload_logical_block_tables: list[list[int]] | None = None
     kv_offload_context_lens: list[int] | None = None
     kv_offload_write_blocks: list[int] | None = None
+    kv_offload_prefill_chunk_starts: list[int] | None = None
+    kv_offload_prefill_chunk_ends: list[int] | None = None
 
 _CONTEXT = Context()
 
@@ -107,10 +110,13 @@ def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0
                 am_compact_cache_signatures: tuple | None = None,
                 kv_offload_manager: object | None = None,
                 kv_offload_blockwise_decode: bool = False,
+                kv_offload_blockwise_prefill: bool = False,
                 kv_offload_blockwise_blocks: int = 1,
                 kv_offload_logical_block_tables: list[list[int]] | None = None,
                 kv_offload_context_lens: list[int] | None = None,
-                kv_offload_write_blocks: list[int] | None = None):
+                kv_offload_write_blocks: list[int] | None = None,
+                kv_offload_prefill_chunk_starts: list[int] | None = None,
+                kv_offload_prefill_chunk_ends: list[int] | None = None):
     global _CONTEXT
     if am_compact_enable_layers is not None and not isinstance(am_compact_enable_layers, tuple):
         am_compact_enable_layers = tuple(int(x) for x in am_compact_enable_layers)
@@ -147,10 +153,13 @@ def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0
         am_compact_cache_signatures=am_compact_cache_signatures,
         kv_offload_manager=kv_offload_manager,
         kv_offload_blockwise_decode=kv_offload_blockwise_decode,
+        kv_offload_blockwise_prefill=kv_offload_blockwise_prefill,
         kv_offload_blockwise_blocks=kv_offload_blockwise_blocks,
         kv_offload_logical_block_tables=kv_offload_logical_block_tables,
         kv_offload_context_lens=kv_offload_context_lens,
         kv_offload_write_blocks=kv_offload_write_blocks,
+        kv_offload_prefill_chunk_starts=kv_offload_prefill_chunk_starts,
+        kv_offload_prefill_chunk_ends=kv_offload_prefill_chunk_ends,
     )
 
 def reset_context():

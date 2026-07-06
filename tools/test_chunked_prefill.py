@@ -90,6 +90,7 @@ def make_config(**overrides):
     cfg = dict(
         max_num_seqs=4,
         max_num_batched_tokens=64,
+        max_model_len=64,
         eos=-1,
         num_kvcache_blocks=32,
         kvcache_block_size=4,
@@ -210,6 +211,149 @@ def test_decode_first_prioritizes_existing_running_sequence():
     assert is_prefill is False
     assert do_sample is True
     assert list(scheduler.waiting) == [waiting]
+
+
+def test_add_rejects_request_beyond_max_model_len():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(max_model_len=8))
+    seq = make_seq(range(8), max_tokens=1)
+
+    try:
+        scheduler.add(seq)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        assert False, "expected max_model_len admission failure"
+
+    assert "max_model_len" in message
+    assert "prompt_tokens=8" in message
+    assert "max_tokens=1" in message
+    assert list(scheduler.waiting) == []
+
+
+def test_add_rejects_prompt_beyond_logical_kv_capacity():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_model_len=64,
+        num_kvcache_blocks=2,
+        kvcache_block_size=4,
+    ))
+    seq = make_seq(range(9), max_tokens=1)
+
+    try:
+        scheduler.add(seq)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        assert False, "expected KV capacity admission failure"
+
+    assert "KV cache capacity" in message
+    assert "required_blocks=3" in message
+    assert "available_blocks=2" in message
+    assert list(scheduler.waiting) == []
+
+
+def test_add_accounts_for_decode_kv_capacity_boundary():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_model_len=64,
+        num_kvcache_blocks=2,
+        kvcache_block_size=4,
+    ))
+    fits = make_seq(range(7), max_tokens=2)
+    scheduler.add(fits)
+    assert list(scheduler.waiting) == [fits]
+
+    too_many_decode_tokens = make_seq(range(7), max_tokens=3)
+    try:
+        scheduler.add(too_many_decode_tokens)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        assert False, "expected decode KV capacity admission failure"
+
+    assert "KV cache capacity" in message
+    assert "kv_tokens=9" in message
+    assert "required_blocks=3" in message
+    assert list(scheduler.waiting) == [fits]
+
+
+def test_add_capacity_boundary_for_multiple_logical_block_counts():
+    for num_blocks in (1, 2, 4):
+        reset_sequence_state()
+        scheduler = Scheduler(make_config(
+            max_model_len=64,
+            num_kvcache_blocks=num_blocks,
+            kvcache_block_size=4,
+        ))
+        capacity_tokens = num_blocks * 4
+        fits = make_seq(range(capacity_tokens), max_tokens=1)
+        scheduler.add(fits)
+        assert list(scheduler.waiting) == [fits]
+
+        too_long = make_seq(range(capacity_tokens + 1), max_tokens=1)
+        try:
+            scheduler.add(too_long)
+        except ValueError as exc:
+            message = str(exc)
+        else:
+            assert False, f"expected KV capacity failure for num_blocks={num_blocks}"
+
+        assert "KV cache capacity" in message
+        assert f"available_blocks={num_blocks}" in message
+        assert list(scheduler.waiting) == [fits]
+
+
+def test_chunked_prefill_progresses_with_varied_chunk_sizes():
+    for chunk_tokens in (1, 2, 4):
+        reset_sequence_state()
+        scheduler = Scheduler(make_config(max_num_prefill_tokens_per_step=chunk_tokens))
+        prompt_tokens = 9
+        seq = make_seq(range(prompt_tokens), max_tokens=2)
+        scheduler.add(seq)
+
+        expected_start = 0
+        while expected_start < prompt_tokens:
+            seqs, is_prefill, do_sample = scheduler.schedule()
+            expected_end = min(expected_start + chunk_tokens, prompt_tokens)
+
+            assert seqs == [seq]
+            assert is_prefill is True
+            assert seq.prefill_chunk_start == expected_start
+            assert seq.prefill_chunk_end == expected_end
+            assert do_sample is (expected_end == prompt_tokens)
+            scheduler.postprocess(seqs, [700 + chunk_tokens] if do_sample else None, is_prefill, do_sample)
+            expected_start = expected_end
+
+        assert seq.completion_token_ids == [700 + chunk_tokens]
+        assert seq.num_computed_tokens == prompt_tokens
+        assert list(scheduler.prefilling) == []
+        assert list(scheduler.running) == [seq]
+
+
+def test_short_prefill_batch_respects_sequence_and_token_limits():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=2,
+        max_num_batched_tokens=8,
+        max_num_prefill_tokens_per_step=4,
+    ))
+    seq_a = make_seq([1, 2, 3, 4], max_tokens=2)
+    seq_b = make_seq([5, 6, 7, 8], max_tokens=2)
+    seq_c = make_seq([9, 10, 11, 12], max_tokens=2)
+    for seq in (seq_a, seq_b, seq_c):
+        scheduler.add(seq)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [seq_a, seq_b]
+    assert is_prefill is True
+    assert do_sample is True
+    scheduler.postprocess(seqs, [101, 102], is_prefill, do_sample)
+    assert seq_a.completion_token_ids == [101]
+    assert seq_b.completion_token_ids == [102]
+    assert list(scheduler.waiting) == [seq_c]
+    assert list(scheduler.running) == [seq_a, seq_b]
 
 
 def test_chunked_prefill_does_not_publish_future_block_hashes():
@@ -637,6 +781,12 @@ def main():
     test_final_chunk_samples_once_and_moves_to_running()
     test_chunked_prefill_batches_multiple_short_final_prompts()
     test_decode_first_prioritizes_existing_running_sequence()
+    test_add_rejects_request_beyond_max_model_len()
+    test_add_rejects_prompt_beyond_logical_kv_capacity()
+    test_add_accounts_for_decode_kv_capacity_boundary()
+    test_add_capacity_boundary_for_multiple_logical_block_counts()
+    test_chunked_prefill_progresses_with_varied_chunk_sizes()
+    test_short_prefill_batch_respects_sequence_and_token_limits()
     test_chunked_prefill_does_not_publish_future_block_hashes()
     test_chunked_prefill_restores_reused_cached_block_metadata()
     test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks()

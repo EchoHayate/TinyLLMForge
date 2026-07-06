@@ -8634,3 +8634,198 @@ decode 时允许 visible blocks > staging slots
 
 当前剩余限制仍在 prefill：prefill 仍走原路径。如果单条 prompt 本身超过 staging slots，prefill 阶段仍可能要求 prefix blocks 一次性可见。完整解除端到端限制的下一步是做 blockwise/chunked prefill attention。
 
+### 47.48 KV offload blockwise/chunked prefill correctness path（2026-06-30）
+
+承接 §47.47，本轮开始解除 prefill 的剩余限制：在 chunked prefill 场景下，非首个 prefill chunk 的 query 需要 attend 到历史 prefix KV。旧路径会在 `prepare_prefill()` 阶段把所有 prefix logical blocks 一次性翻译成 physical staging slots，因此当 `prefix blocks > kv_offload_gpu_blocks` 时仍会失败。
+
+本轮新增一个受控 correctness path：prefill chunk 只在 `prepare_prefill()` 里 stage 当前 chunk 的 write blocks；prefix read blocks 保持 logical rows 传给 attention layer，由 attention 按 block window 触发 staging，并用 online softmax 合并 prefix window attention 与当前 chunk local causal attention。
+
+#### 47.48.1 实现边界
+
+```text
+默认关闭，需要显式打开 --kv-offload-blockwise-prefill
+依赖 kv_offload_mvp0=True
+依赖 chunked prefill：max_num_prefill_tokens_per_step > 0
+仅 fp16/bf16 KV；kv_quant_bits 必须为 0
+仍不支持 mixed prefill+decode + KV offload
+不支持 Quest / KV-Cartridge / AM compact / KV4 / KV8
+Correctness-first PyTorch gather + online-softmax；不是性能版 kernel
+```
+
+当前 staging slot 需求变为：
+
+```text
+当前 prefix window logical blocks + 当前 prefill chunk write blocks <= kv_offload_gpu_blocks
+```
+
+也就是说，本轮解除的是 prefix read blocks 一次性 resident 限制；当前 chunk 的 write blocks 仍必须可保护在 staging 中，避免后续 layer 使用 stale slot mapping。
+
+#### 47.48.2 关键实现
+
+- `tinyvllm/config.py`
+  - 新增 `kv_offload_blockwise_prefill`。
+  - 约束 `kv_offload_blockwise_prefill` 必须依赖 `kv_offload_mvp0` 和 chunked prefill。
+  - 显式禁止 `kv_offload_mvp0 + chunked_prefill_mixed_batch`。
+- `tinyvllm/utils/context.py`
+  - 新增 `kv_offload_blockwise_prefill`。
+  - 新增 `kv_offload_prefill_chunk_starts` / `kv_offload_prefill_chunk_ends`。
+  - 复用 logical block rows、context lens、write blocks、window blocks。
+- `tinyvllm/engine/model_runner.py`
+  - `KVOffloadMVP0.ensure_resident()` 新增 `protected_logical_blocks`，用于保护当前 write blocks 不被 read-window staging 驱逐。
+  - `prepare_prefill()` 在 blockwise prefill 模式下：
+    - 只 stage 当前 chunk write blocks；
+    - 对 partial write block 使用 `require_valid=True`，避免覆盖已写入的 prefix token KV；
+    - 不再对 prefix read blocks 做全量 `translate_block_rows()`；
+    - 把 visible logical rows 和 chunk 边界传入 context。
+- `tinyvllm/layers/attention.py`
+  - 新增 `_blockwise_online_prefill_attention()`：
+    - prefix `[0, chunk_start)` 按 logical block window 扫描；
+    - 每个 window 调 `ensure_resident(..., protected_logical_blocks=write_blocks)`；
+    - 从当前 physical slot gather prefix K/V；
+    - 当前 chunk `[chunk_start, chunk_end)` 直接使用本 forward 的 `k/v`，并加 local causal mask；
+    - prefix windows 与 local causal chunk 通过 online softmax exact merge。
+  - blockwise decode 也同步在 window staging 时保护当前 write blocks，降低 slot stale 风险。
+- `tools/profile_ngram_commit.py`
+  - 新增 CLI：
+
+```bash
+--kv-offload-blockwise-prefill
+--blockwise-prefill-attn-smoke
+--blockwise-prefill-prefix-tokens N
+--blockwise-prefill-chunk-tokens N
+```
+
+#### 47.48.3 本地检查
+
+本地无 torch，不能运行 synthetic attention smoke；已完成可在本地执行的静态和纯 Python 回归：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/config.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/utils/context.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/engine/model_runner.py \
+  /Users/bytedance/dev/TinyLLMForge/tinyvllm/layers/attention.py \
+  /Users/bytedance/dev/TinyLLMForge/tools/profile_ngram_commit.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
+  python3 /Users/bytedance/dev/TinyLLMForge/tools/test_ngram_speculative.py
+git -C /Users/bytedance/dev/TinyLLMForge diff --check
+```
+
+结果：
+
+```text
+py_compile passed
+chunked prefill tests passed
+ngram speculative tests passed
+diff --check passed
+```
+
+#### 47.48.4 远程 smoke 结果
+
+2026-07-02 已把本轮 7 个改动文件同步到远程运行目录 `/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge`，并在远程 torch/CUDA 环境完成验证。
+
+远程基础回归：
+
+```text
+py_compile passed
+chunked prefill tests passed
+ngram speculative tests passed
+```
+
+数学 smoke：
+
+```bash
+cd /data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+CUDA_VISIBLE_DEVICES=7 PYTHONDONTWRITEBYTECODE=1 \
+  /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --blockwise-prefill-attn-smoke \
+  --blockwise-prefill-prefix-tokens 1024 \
+  --blockwise-prefill-chunk-tokens 128 \
+  --blockwise-attn-window-tokens 128 \
+  --out-json profile_out/blockwise_prefill_attn_online_softmax_smoke_20260630.json
+```
+
+输出：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| chunks | 18 |
+| streamed_tokens | 2240 |
+| max_abs_error | 2.5331974029541016e-07 |
+| relative_error | 1.0576243517384856e-06 |
+
+真实模型长 prompt smoke：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode baseline-only \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt '<约 1381 tokens，超过 2 个 KV blocks 且不超过 8 个 logical blocks 的长 prompt>' \
+  --max-output-len 1 \
+  --temperature 0.0 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 1 \
+  --max-num-prefill-tokens-per-step 256 \
+  --kv-offload-mvp0 \
+  --kv-offload-gpu-blocks 2 \
+  --kv-offload-logical-blocks 8 \
+  --kv-offload-blockwise-prefill \
+  --kv-offload-blockwise-decode \
+  --kv-offload-blockwise-blocks 1 \
+  --out-json profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260630.json
+```
+
+输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260630.json`
+
+| metric | value |
+|---|---:|
+| gate_pass | true |
+| output_tokens | 1 |
+| decode_steps | 0 |
+| elapsed_s | 36.93855146318674 |
+| prefill chunks | 6 |
+| chunk token sizes | 256, 256, 256, 256, 256, 101 |
+| h2d_copies | 391 |
+| d2h_copies | 6 |
+| evictions | 395 |
+| prefetch_plans | 426 |
+| prefetch_read_blocks | 420 |
+| prefetch_write_blocks | 6 |
+| logical_blocks | 8 |
+| gpu_blocks | 2 |
+| resident_blocks | 2 |
+
+执行备注：一次无效尝试使用了约 4141-token prompt，超过 `max_model_len=4096` 且超过 `kv_offload_logical_blocks=8` 可覆盖容量，触发 scheduler 空 decode assert；不是 blockwise prefill correctness 失败。另一次复跑遇到端口占用，后续显式设置 `TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567` 后通过。
+
+#### 47.48.5 当前判断
+
+代码路径已经从“prefill 必须一次性 stage 全部 prefix blocks”改成“chunked prefill 的 prefix read blocks 由 attention layer 按 window staging”。这使端到端目标进入可验证状态：
+
+```text
+prefill: prefix read blocks > staging slots 可按 window 扫描
+prefill: current chunk write blocks 仍需留在 staging slots 中
+说明：需要通过 max_num_prefill_tokens_per_step 控制当前 chunk 不跨太多 write blocks
+```
+
+远程 torch/GPU smoke 已确认：
+
+1. blockwise prefill online-softmax 与 full prefill attention 数值对齐；
+2. 单条 prompt 的 prefix blocks 超过 staging slots 时，prefill 不再触发 full-resident 限制；
+3. decode 继续沿用 §47.47 的 blockwise path。
+
+#### 47.48.6 后续改进机会与当前落地状态
+
+1. 已落地：在 `Scheduler.add()` 增加 admission 前置校验，提前拒绝 `prompt_tokens + max_tokens > max_model_len`，以及最大 KV footprint 超过 logical KV blocks 的请求，避免无效 prompt 后续退化成 scheduler 空 decode assert。
+2. 已落地：在 `tools/test_chunked_prefill.py` 增加 max_model_len、prompt 超 logical KV 容量、decode KV 容量边界测试，并补充 `num_kvcache_blocks=1/2/4`、`max_num_prefill_tokens_per_step=1/2/4`、短 prompt batch 受 `max_num_seqs/max_num_batched_tokens` 限制的本地系统边界测试。
+   - 2026-07-03 本地验证：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge python3 tools/test_chunked_prefill.py` 通过；`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tools/test_chunked_prefill.py tinyvllm/engine/scheduler.py` 通过；`git diff --check` 通过。
+3. 已落地：新增 `tools/smoke_blockwise_prefill_remote.sh`，默认封装远程 Python、`CUDA_VISIBLE_DEVICES=7`、`TINYVLLM_DIST_PORT=34567`、`MASTER_PORT=34567`、`PYTHONPATH`、数学 smoke 和真实模型长 prompt smoke；远程运行目录下直接执行 `tools/smoke_blockwise_prefill_remote.sh` 即可，常用覆盖如 `RUN_REAL_SMOKE=0`、`CUDA_VISIBLE_DEVICES=0`、`MODEL_PATH=/path/to/model`。
+   - 2026-07-03 已在远程用 `SMOKE_TAG=20260703_script tools/smoke_blockwise_prefill_remote.sh` 完整验证入口：preflight 通过，数学 smoke `gate_pass=true`，真实模型长 prompt smoke `gate_pass=true`。
+   - 输出：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260703_script.json`、`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260703_script.json`；对应 log 写到同名 `.log`，避免长 prompt JSON 全量刷终端。
+4. 待做：远程/GPU 侧继续补 `gpu_blocks=1/2/4` 真实模型矩阵和多 prompt batch smoke；本次已覆盖 logical blocks/chunk size/batch scheduler 边界，并在远程运行 `tools/test_chunked_prefill.py` 通过。
+5. 待做：性能路径优化，包括合并 H2D/D2H copy、合并连续 prefetch plan、降低 clean eviction 抖动，以及后续引入 Triton/FlashAttention 风格 window kernel。
+6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。

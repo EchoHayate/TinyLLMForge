@@ -252,6 +252,7 @@ class KVOffloadMVP0:
         logical_blocks: list[int],
         require_valid: bool,
         future_logical_blocks: set[int] | None = None,
+        protected_logical_blocks: set[int] | None = None,
         wait: bool = False,
     ) -> dict[int, int]:
         ordered = []
@@ -270,6 +271,8 @@ class KVOffloadMVP0:
             )
 
         protected = set(ordered)
+        if protected_logical_blocks:
+            protected.update(int(block) for block in protected_logical_blocks if int(block) >= 0)
         h2d_pairs = []
         for logical_block in ordered:
             slot = self.logical_to_slot.get(logical_block)
@@ -751,6 +754,11 @@ class ModelRunner:
         max_seqlen_k = 0        # 记录seqs(包含缓存长度)的最大长度
         slot_mapping = []       # 记录所有seqs每个block中的token_id 在kvcache中的位置，[token_id1, token_id2, ...token_id]
         block_tables = None     # 有前缀和的时候，才会初始化该块表
+        prefill_chunk_starts = []
+        prefill_chunk_ends = []
+        logical_block_table_rows = []
+        kv_offload_write_blocks = []
+        blockwise_prefill_enabled = self.kv_offload is not None and self.config.kv_offload_blockwise_prefill
         for seq in seqs:
             seq_len = len(seq)
             chunk_start = getattr(seq, "prefill_chunk_start", seq.num_cached_tokens)
@@ -759,6 +767,8 @@ class ModelRunner:
                 # warmup_model() calls ModelRunner.run() directly with fresh Sequence
                 # objects, bypassing Scheduler's chunk boundary initialization.
                 chunk_end = seq_len
+            prefill_chunk_starts.append(int(chunk_start))
+            prefill_chunk_ends.append(int(chunk_end))
             input_ids.extend(seq[chunk_start:chunk_end])       #从已有的cache/chunk进度开始计数
             positions.extend(list(range(chunk_start, chunk_end)))   
             seqlen_q = chunk_end - chunk_start
@@ -769,38 +779,94 @@ class ModelRunner:
             max_seqlen_q = max(max_seqlen_q, seqlen_q)
             max_seqlen_k = max(max_seqlen_k, seqlen_k)
             if not seq.block_table:
+                logical_block_table_rows.append([])
                 continue
+            visible_blocks = (chunk_end + self.block_size - 1) // self.block_size
+            logical_block_table_rows.append(list(seq.block_table[:visible_blocks]))
             
             write_positions = list(range(chunk_start, chunk_end))
             future_blocks = set(int(block_id) for block_id in seq.block_table)
-            if self.kv_offload is not None:
+            if self.kv_offload is not None and blockwise_prefill_enabled:
+                write_blocks = []
+                first_write_offset_by_block = {}
+                for pos in write_positions:
+                    block_id = int(seq.block_table[pos // self.block_size])
+                    if block_id not in first_write_offset_by_block:
+                        write_blocks.append(block_id)
+                        first_write_offset_by_block[block_id] = pos % self.block_size
+                    else:
+                        first_write_offset_by_block[block_id] = min(
+                            first_write_offset_by_block[block_id], pos % self.block_size)
+                valid_write_blocks = [
+                    block_id for block_id in write_blocks
+                    if int(first_write_offset_by_block[block_id]) > 0
+                ]
+                fresh_write_blocks = [
+                    block_id for block_id in write_blocks
+                    if int(first_write_offset_by_block[block_id]) == 0
+                ]
                 self.kv_offload.stats["prefetch_plans"] += 1
-                self.kv_offload.stats["prefetch_write_blocks"] += len(set(
-                    int(seq.block_table[pos // self.block_size]) for pos in write_positions
-                ))
-            slot_mapping.extend(self._kv_offload_translate_slots_for_positions(
-                seq.block_table,
-                write_positions,
-                future_logical_blocks=future_blocks,
-            ))
-            self._kv_offload_mark_pending_dirty(seq.block_table, write_positions)
-        
-        if cu_seqlens_k[-1] > cu_seqlens_q[-1]:      # 正常情况下二者是相等的，大于则说明有前缀缓存, 因此取出seq中的block_table, 拼成 blocktables表
-            if self.kv_offload is not None:
-                for seq in seqs:
-                    chunk_start = getattr(seq, "prefill_chunk_start", seq.num_cached_tokens)
-                    if chunk_start > 0:
-                        self.kv_offload.translate_slots_for_positions(
-                            seq.block_table, list(range(0, chunk_start)), require_valid=True)
-                max_len = max(len(seq.block_table) for seq in seqs)
-                block_table_rows = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
-                future_blocks = set(int(block_id) for row in block_table_rows for block_id in row if int(block_id) >= 0)
-                block_table_rows = self._kv_offload_translate_block_rows(
-                    block_table_rows,
+                self.kv_offload.stats["prefetch_write_blocks"] += len(set(write_blocks))
+                protected_write_blocks = set(write_blocks)
+                self.kv_offload.ensure_resident(
+                    valid_write_blocks,
+                    require_valid=True,
+                    future_logical_blocks=future_blocks,
+                    protected_logical_blocks=protected_write_blocks,
+                )
+                self.kv_offload.ensure_resident(
+                    fresh_write_blocks,
                     require_valid=False,
                     future_logical_blocks=future_blocks,
+                    protected_logical_blocks=protected_write_blocks,
                 )
-                block_tables = self.prepare_block_tables_from_rows(block_table_rows)
+                slot_mapping.extend([
+                    self.kv_offload.logical_to_slot[int(seq.block_table[pos // self.block_size])] * self.block_size
+                    + (pos % self.block_size)
+                    for pos in write_positions
+                ])
+                kv_offload_write_blocks.extend(write_blocks)
+            else:
+                if self.kv_offload is not None:
+                    self.kv_offload.stats["prefetch_plans"] += 1
+                    self.kv_offload.stats["prefetch_write_blocks"] += len(set(
+                        int(seq.block_table[pos // self.block_size]) for pos in write_positions
+                    ))
+                slot_mapping.extend(self._kv_offload_translate_slots_for_positions(
+                    seq.block_table,
+                    write_positions,
+                    future_logical_blocks=future_blocks,
+                ))
+            self._kv_offload_mark_pending_dirty(seq.block_table, write_positions)
+        
+        blockwise_prefill_active = bool(blockwise_prefill_enabled and cu_seqlens_k[-1] > cu_seqlens_q[-1])
+        if cu_seqlens_k[-1] > cu_seqlens_q[-1]:      # 正常情况下二者是相等的，大于则说明有前缀缓存, 因此取出seq中的block_table, 拼成 blocktables表
+            if self.kv_offload is not None:
+                if blockwise_prefill_active:
+                    max_len = max(len(row) for row in logical_block_table_rows)
+                    logical_block_table_rows = [
+                        row + [-1] * (max_len - len(row))
+                        for row in logical_block_table_rows
+                    ]
+                    # blockwise prefill keeps logical rows on host. Attention.forward
+                    # stages prefix windows layer-by-layer and therefore does not need
+                    # a full physical block_table here.
+                    block_tables = None
+                else:
+                    for seq in seqs:
+                        chunk_start = getattr(seq, "prefill_chunk_start", seq.num_cached_tokens)
+                        if chunk_start > 0:
+                            self.kv_offload.translate_slots_for_positions(
+                                seq.block_table, list(range(0, chunk_start)), require_valid=True)
+                    max_len = max(len(seq.block_table) for seq in seqs)
+                    block_table_rows = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
+                    future_blocks = set(int(block_id) for row in block_table_rows for block_id in row if int(block_id) >= 0)
+                    block_table_rows = self._kv_offload_translate_block_rows(
+                        block_table_rows,
+                        require_valid=False,
+                        future_logical_blocks=future_blocks,
+                    )
+                    block_tables = self.prepare_block_tables_from_rows(block_table_rows)
             else:
                 block_tables = self.prepare_block_tables(seqs)
         
@@ -834,7 +900,15 @@ class ModelRunner:
                     am_compact_skip_first_layers=self.config.am_compact_skip_first_layers,
                     am_compact_skip_last_layers=self.config.am_compact_skip_last_layers,
                     am_compact_enable_layers=self.config.am_compact_enable_layers,
-                    am_compact_layer_stride=self.config.am_compact_layer_stride)
+                    am_compact_layer_stride=self.config.am_compact_layer_stride,
+                    kv_offload_manager=self.kv_offload,
+                    kv_offload_blockwise_prefill=blockwise_prefill_active,
+                    kv_offload_blockwise_blocks=self.config.kv_offload_blockwise_blocks,
+                    kv_offload_logical_block_tables=logical_block_table_rows,
+                    kv_offload_context_lens=prefill_chunk_ends,
+                    kv_offload_write_blocks=[int(block) for block in kv_offload_write_blocks],
+                    kv_offload_prefill_chunk_starts=prefill_chunk_starts,
+                    kv_offload_prefill_chunk_ends=prefill_chunk_ends)
         return input_ids, positions
 
     def prepare_mixed(self, seqs: list[Sequence]):
@@ -964,17 +1038,20 @@ class ModelRunner:
                     if int(offset) == 0
                 ]
                 future_blocks = set(int(block) for block in decode_write_blocks)
+                protected_write_blocks = set(int(block) for block in decode_write_blocks)
                 self.kv_offload.stats["prefetch_plans"] += 1
                 self.kv_offload.stats["prefetch_write_blocks"] += len(future_blocks)
                 self.kv_offload.ensure_resident(
                     valid_write_blocks,
                     require_valid=True,
                     future_logical_blocks=future_blocks,
+                    protected_logical_blocks=protected_write_blocks,
                 )
                 self.kv_offload.ensure_resident(
                     fresh_write_blocks,
                     require_valid=False,
                     future_logical_blocks=future_blocks,
+                    protected_logical_blocks=protected_write_blocks,
                 )
             else:
                 # Full attention MVP-0/MVP-1: all visible logical blocks are staged
