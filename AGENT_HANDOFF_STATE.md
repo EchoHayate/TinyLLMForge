@@ -822,9 +822,10 @@ CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
    - `gpu_blocks=1`：预期容量失败，log 中报 `blockwise prefill window plus current write blocks exceed GPU staging slots: required=2, gpu_blocks=1`；这是当前实现边界，不是 correctness mismatch。
    - `gpu_blocks=2`：`gate_pass=true`，`elapsed_s=60.20214011892676`，`h2d_copies=391`，`d2h_copies=6`，`evictions=395`，`resident_blocks=2`。
    - `gpu_blocks=4`：`gate_pass=true`，`elapsed_s=55.02894039079547`，`h2d_copies=249`，`d2h_copies=6`，`evictions=251`，`resident_blocks=4`。
-   - 待做：继续补多 prompt batch smoke。
+   - 2026-07-06 已补多 prompt batch smoke：`SMOKE_TAG=20260706_multiprompt_len2048 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_REAL_SMOKE=0 RUN_MULTI_PROMPT_SMOKE=1 MAX_MODEL_LEN=2048 GPU_MEMORY_UTILIZATION=0.85 KV_OFFLOAD_LOGICAL_BLOCKS=8 MULTI_PROMPT_REPEAT=24 tools/smoke_blockwise_prefill_remote.sh`，`num_prompts=2`、`gate_pass=true`、`elapsed_s=32.339650828391314`、`output_tokens=2`、`h2d_copies=786`、`d2h_copies=12`、`evictions=792`、`resident_blocks=2`。
 5. 待做：性能路径优化，包括合并 H2D/D2H copy、合并连续 prefetch plan、降低 clean eviction 抖动，以及后续引入 Triton/FlashAttention 风格 window kernel。
 6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
+7. 待做：DFlash feasibility spike，只做接口/接入点预研，不直接实现完整 DFlash；重点确认 target hidden state 暴露、block draft/verify API、与现有 speculative commit profiler 的关系。
 
 ## 远程 S4 smoke 示例
 

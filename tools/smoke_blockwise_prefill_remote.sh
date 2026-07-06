@@ -8,6 +8,7 @@
 #   CUDA_VISIBLE_DEVICES=0 MODEL_PATH=/path/to/model tools/smoke_blockwise_prefill_remote.sh
 #   RUN_REAL_SMOKE=0 tools/smoke_blockwise_prefill_remote.sh
 #   RUN_GPU_BLOCKS_MATRIX=1 tools/smoke_blockwise_prefill_remote.sh
+#   RUN_MULTI_PROMPT_SMOKE=1 tools/smoke_blockwise_prefill_remote.sh
 
 set -euo pipefail
 
@@ -34,6 +35,7 @@ RUN_PREFLIGHT="${RUN_PREFLIGHT:-1}"
 RUN_MATH_SMOKE="${RUN_MATH_SMOKE:-1}"
 RUN_REAL_SMOKE="${RUN_REAL_SMOKE:-1}"
 RUN_GPU_BLOCKS_MATRIX="${RUN_GPU_BLOCKS_MATRIX:-0}"
+RUN_MULTI_PROMPT_SMOKE="${RUN_MULTI_PROMPT_SMOKE:-0}"
 
 MODEL_PATH="${MODEL_PATH:-/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B}"
 SMOKE_TAG="${SMOKE_TAG:-$(date +%Y%m%d)}"
@@ -41,8 +43,10 @@ OUT_DIR="${OUT_DIR:-profile_out}"
 LOG_DIR="${LOG_DIR:-${OUT_DIR}}"
 MATH_OUT="${MATH_OUT:-${OUT_DIR}/blockwise_prefill_attn_online_softmax_smoke_${SMOKE_TAG}.json}"
 REAL_OUT="${REAL_OUT:-${OUT_DIR}/kv_offload_blockwise_prefill_real_longctx_smoke_${SMOKE_TAG}.json}"
+MULTI_PROMPT_OUT="${MULTI_PROMPT_OUT:-${OUT_DIR}/kv_offload_blockwise_prefill_real_multiprompt_smoke_${SMOKE_TAG}.json}"
 MATH_LOG="${MATH_LOG:-${LOG_DIR}/blockwise_prefill_attn_online_softmax_smoke_${SMOKE_TAG}.log}"
 REAL_LOG="${REAL_LOG:-${LOG_DIR}/kv_offload_blockwise_prefill_real_longctx_smoke_${SMOKE_TAG}.log}"
+MULTI_PROMPT_LOG="${MULTI_PROMPT_LOG:-${LOG_DIR}/kv_offload_blockwise_prefill_real_multiprompt_smoke_${SMOKE_TAG}.log}"
 
 BLOCKWISE_PREFILL_PREFIX_TOKENS="${BLOCKWISE_PREFILL_PREFIX_TOKENS:-2176}"
 BLOCKWISE_PREFILL_CHUNK_TOKENS="${BLOCKWISE_PREFILL_CHUNK_TOKENS:-128}"
@@ -50,12 +54,15 @@ MAX_OUTPUT_LEN="${MAX_OUTPUT_LEN:-1}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.7}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"
+MULTI_PROMPT_MAX_NUM_SEQS="${MULTI_PROMPT_MAX_NUM_SEQS:-2}"
+MULTI_PROMPT_COUNT="${MULTI_PROMPT_COUNT:-2}"
 MAX_NUM_PREFILL_TOKENS_PER_STEP="${MAX_NUM_PREFILL_TOKENS_PER_STEP:-256}"
 KV_OFFLOAD_GPU_BLOCKS="${KV_OFFLOAD_GPU_BLOCKS:-2}"
 KV_OFFLOAD_GPU_BLOCKS_MATRIX="${KV_OFFLOAD_GPU_BLOCKS_MATRIX:-1 2 4}"
 KV_OFFLOAD_LOGICAL_BLOCKS="${KV_OFFLOAD_LOGICAL_BLOCKS:-8}"
 KV_OFFLOAD_BLOCKWISE_BLOCKS="${KV_OFFLOAD_BLOCKWISE_BLOCKS:-1}"
 PROMPT_REPEAT="${PROMPT_REPEAT:-64}"
+MULTI_PROMPT_REPEAT="${MULTI_PROMPT_REPEAT:-40}"
 MATRIX_REQUIRE_PASS="${MATRIX_REQUIRE_PASS:-1}"
 
 mkdir -p "${OUT_DIR}"
@@ -73,6 +80,29 @@ print(sentence * repeat, end="")
 PY
 )"
 fi
+
+build_prompt_args() {
+  local prompt_count="${1:-1}"
+  local prompt_repeat="${2:-${PROMPT_REPEAT}}"
+  local prompt_prefix="${3:-${PROMPT:-}}"
+  "${PYTHON_BIN}" - "${prompt_count}" "${prompt_repeat}" "${prompt_prefix}" <<'PY'
+import sys
+
+count = int(sys.argv[1])
+repeat = int(sys.argv[2])
+prefix = sys.argv[3]
+base = (
+    "TinyLLMForge blockwise prefill remote smoke verifies a long context prompt "
+    "with repeated stable tokens and deterministic decoding. "
+)
+for idx in range(count):
+    prompt = prefix if prefix else f"Prompt {idx}: " + base * repeat
+    if prefix and count > 1:
+        prompt = f"Prompt {idx}: " + prompt
+    print("--prompt")
+    print(prompt)
+PY
+}
 
 run_preflight() {
   "${PYTHON_BIN}" -m py_compile \
@@ -124,15 +154,24 @@ run_real_smoke() {
   local gpu_blocks="${1:-${KV_OFFLOAD_GPU_BLOCKS}}"
   local out_path="${2:-${REAL_OUT}}"
   local log_path="${3:-${REAL_LOG}}"
-  run_with_log "${log_path}" "${PYTHON_BIN}" tools/profile_ngram_commit.py \
+  local prompt_count="${4:-1}"
+  local max_num_seqs="${5:-${MAX_NUM_SEQS}}"
+  local prompt_repeat="${6:-${PROMPT_REPEAT}}"
+  local prompt_prefix="${7:-${PROMPT:-}}"
+  local prompt_args=()
+  while IFS= read -r line; do
+    prompt_args+=("${line}")
+  done < <(build_prompt_args "${prompt_count}" "${prompt_repeat}" "${prompt_prefix}")
+  local cmd=(
+    "${PYTHON_BIN}" tools/profile_ngram_commit.py
     --mode baseline-only \
     --model "${MODEL_PATH}" \
-    --prompt "${PROMPT}" \
+    "${prompt_args[@]}" \
     --max-output-len "${MAX_OUTPUT_LEN}" \
     --temperature 0.0 \
     --max-model-len "${MAX_MODEL_LEN}" \
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
-    --max-num-seqs "${MAX_NUM_SEQS}" \
+    --max-num-seqs "${max_num_seqs}" \
     --max-num-prefill-tokens-per-step "${MAX_NUM_PREFILL_TOKENS_PER_STEP}" \
     --kv-offload-mvp0 \
     --kv-offload-gpu-blocks "${gpu_blocks}" \
@@ -141,6 +180,21 @@ run_real_smoke() {
     --kv-offload-blockwise-decode \
     --kv-offload-blockwise-blocks "${KV_OFFLOAD_BLOCKWISE_BLOCKS}" \
     --out-json "${out_path}"
+  )
+  run_with_log "${log_path}" "${cmd[@]}"
+}
+
+run_multi_prompt_smoke() {
+  echo "[smoke] running real-model multi-prompt smoke -> ${MULTI_PROMPT_OUT}"
+  echo "[smoke] multi-prompt log -> ${MULTI_PROMPT_LOG}"
+  run_real_smoke \
+    "${KV_OFFLOAD_GPU_BLOCKS}" \
+    "${MULTI_PROMPT_OUT}" \
+    "${MULTI_PROMPT_LOG}" \
+    "${MULTI_PROMPT_COUNT}" \
+    "${MULTI_PROMPT_MAX_NUM_SEQS}" \
+    "${MULTI_PROMPT_REPEAT}" \
+    ""
 }
 
 print_summary() {
@@ -236,6 +290,7 @@ echo "[smoke] python=${PYTHON_BIN}"
 echo "[smoke] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 echo "[smoke] TINYVLLM_DIST_PORT=${TINYVLLM_DIST_PORT} MASTER_PORT=${MASTER_PORT}"
 echo "[smoke] RUN_GPU_BLOCKS_MATRIX=${RUN_GPU_BLOCKS_MATRIX} KV_OFFLOAD_GPU_BLOCKS_MATRIX=${KV_OFFLOAD_GPU_BLOCKS_MATRIX}"
+echo "[smoke] RUN_MULTI_PROMPT_SMOKE=${RUN_MULTI_PROMPT_SMOKE} MULTI_PROMPT_COUNT=${MULTI_PROMPT_COUNT} MULTI_PROMPT_MAX_NUM_SEQS=${MULTI_PROMPT_MAX_NUM_SEQS}"
 
 if [[ "${RUN_PREFLIGHT}" == "1" ]]; then
   echo "[smoke] running preflight checks"
@@ -256,6 +311,11 @@ elif [[ "${RUN_REAL_SMOKE}" == "1" ]]; then
   echo "[smoke] real log -> ${REAL_LOG}"
   run_real_smoke "${KV_OFFLOAD_GPU_BLOCKS}" "${REAL_OUT}" "${REAL_LOG}"
   summary_paths+=("${REAL_OUT}")
+fi
+
+if [[ "${RUN_MULTI_PROMPT_SMOKE}" == "1" ]]; then
+  run_multi_prompt_smoke
+  summary_paths+=("${MULTI_PROMPT_OUT}")
 fi
 
 if (( ${#summary_paths[@]} > 0 )); then
