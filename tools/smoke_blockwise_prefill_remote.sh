@@ -7,6 +7,7 @@
 # Common overrides:
 #   CUDA_VISIBLE_DEVICES=0 MODEL_PATH=/path/to/model tools/smoke_blockwise_prefill_remote.sh
 #   RUN_REAL_SMOKE=0 tools/smoke_blockwise_prefill_remote.sh
+#   RUN_GPU_BLOCKS_MATRIX=1 tools/smoke_blockwise_prefill_remote.sh
 
 set -euo pipefail
 
@@ -32,6 +33,7 @@ export MASTER_PORT="${MASTER_PORT:-${TINYVLLM_DIST_PORT}}"
 RUN_PREFLIGHT="${RUN_PREFLIGHT:-1}"
 RUN_MATH_SMOKE="${RUN_MATH_SMOKE:-1}"
 RUN_REAL_SMOKE="${RUN_REAL_SMOKE:-1}"
+RUN_GPU_BLOCKS_MATRIX="${RUN_GPU_BLOCKS_MATRIX:-0}"
 
 MODEL_PATH="${MODEL_PATH:-/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B}"
 SMOKE_TAG="${SMOKE_TAG:-$(date +%Y%m%d)}"
@@ -50,9 +52,11 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.7}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"
 MAX_NUM_PREFILL_TOKENS_PER_STEP="${MAX_NUM_PREFILL_TOKENS_PER_STEP:-256}"
 KV_OFFLOAD_GPU_BLOCKS="${KV_OFFLOAD_GPU_BLOCKS:-2}"
+KV_OFFLOAD_GPU_BLOCKS_MATRIX="${KV_OFFLOAD_GPU_BLOCKS_MATRIX:-1 2 4}"
 KV_OFFLOAD_LOGICAL_BLOCKS="${KV_OFFLOAD_LOGICAL_BLOCKS:-8}"
 KV_OFFLOAD_BLOCKWISE_BLOCKS="${KV_OFFLOAD_BLOCKWISE_BLOCKS:-1}"
 PROMPT_REPEAT="${PROMPT_REPEAT:-64}"
+MATRIX_REQUIRE_PASS="${MATRIX_REQUIRE_PASS:-1}"
 
 mkdir -p "${OUT_DIR}"
 mkdir -p "${LOG_DIR}"
@@ -117,7 +121,10 @@ run_math_smoke() {
 }
 
 run_real_smoke() {
-  run_with_log "${REAL_LOG}" "${PYTHON_BIN}" tools/profile_ngram_commit.py \
+  local gpu_blocks="${1:-${KV_OFFLOAD_GPU_BLOCKS}}"
+  local out_path="${2:-${REAL_OUT}}"
+  local log_path="${3:-${REAL_LOG}}"
+  run_with_log "${log_path}" "${PYTHON_BIN}" tools/profile_ngram_commit.py \
     --mode baseline-only \
     --model "${MODEL_PATH}" \
     --prompt "${PROMPT}" \
@@ -128,12 +135,12 @@ run_real_smoke() {
     --max-num-seqs "${MAX_NUM_SEQS}" \
     --max-num-prefill-tokens-per-step "${MAX_NUM_PREFILL_TOKENS_PER_STEP}" \
     --kv-offload-mvp0 \
-    --kv-offload-gpu-blocks "${KV_OFFLOAD_GPU_BLOCKS}" \
+    --kv-offload-gpu-blocks "${gpu_blocks}" \
     --kv-offload-logical-blocks "${KV_OFFLOAD_LOGICAL_BLOCKS}" \
     --kv-offload-blockwise-prefill \
     --kv-offload-blockwise-decode \
     --kv-offload-blockwise-blocks "${KV_OFFLOAD_BLOCKWISE_BLOCKS}" \
-    --out-json "${REAL_OUT}"
+    --out-json "${out_path}"
 }
 
 print_summary() {
@@ -155,12 +162,80 @@ if failed:
 PY
 }
 
+print_matrix_summary() {
+  "${PYTHON_BIN}" - "$@" <<'PY'
+import json
+import os
+import sys
+
+failed = []
+headers = [
+    "path",
+    "gate_pass",
+    "elapsed_s",
+    "h2d_copies",
+    "d2h_copies",
+    "evictions",
+    "resident_blocks",
+]
+print("\t".join(headers))
+for path in sys.argv[1:]:
+    if not os.path.exists(path):
+        print("\t".join([path, "missing", "", "", "", "", ""]))
+        failed.append(path)
+        continue
+    with open(path) as f:
+        data = json.load(f)
+    summary = data.get("summary", {})
+    stats = data.get("kv_offload", summary.get("kv_offload_stats", {}))
+    row = [
+        path,
+        str(summary.get("gate_pass")),
+        str(summary.get("elapsed_s", "")),
+        str(stats.get("h2d_copies", summary.get("h2d_copies", ""))),
+        str(stats.get("d2h_copies", summary.get("d2h_copies", ""))),
+        str(stats.get("evictions", summary.get("evictions", ""))),
+        str(stats.get("resident_blocks", summary.get("resident_blocks", ""))),
+    ]
+    print("\t".join(row))
+    if summary.get("gate_pass") is not True:
+        failed.append(path)
+if failed and os.environ.get("MATRIX_REQUIRE_PASS", "1") == "1":
+    raise SystemExit("matrix gate_pass failed for: " + ", ".join(failed))
+PY
+}
+
+run_real_smoke_matrix() {
+  local matrix_paths=()
+  local failed_runs=()
+  local gpu_blocks
+  for gpu_blocks in ${KV_OFFLOAD_GPU_BLOCKS_MATRIX}; do
+    local matrix_out="${REAL_OUT%.json}_gpu${gpu_blocks}.json"
+    local matrix_log="${REAL_LOG%.log}_gpu${gpu_blocks}.log"
+    echo "[smoke] running real-model long-context matrix gpu_blocks=${gpu_blocks} -> ${matrix_out}"
+    echo "[smoke] real matrix log -> ${matrix_log}"
+    if run_real_smoke "${gpu_blocks}" "${matrix_out}" "${matrix_log}"; then
+      matrix_paths+=("${matrix_out}")
+    else
+      failed_runs+=("gpu${gpu_blocks}")
+      matrix_paths+=("${matrix_out}")
+    fi
+  done
+  echo "[smoke] matrix summary"
+  print_matrix_summary "${matrix_paths[@]}"
+  if (( ${#failed_runs[@]} > 0 )) && [[ "${MATRIX_REQUIRE_PASS}" == "1" ]]; then
+    echo "[smoke] failed matrix commands: ${failed_runs[*]}" >&2
+    return 1
+  fi
+}
+
 summary_paths=()
 
 echo "[smoke] repo=${REPO_ROOT}"
 echo "[smoke] python=${PYTHON_BIN}"
 echo "[smoke] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 echo "[smoke] TINYVLLM_DIST_PORT=${TINYVLLM_DIST_PORT} MASTER_PORT=${MASTER_PORT}"
+echo "[smoke] RUN_GPU_BLOCKS_MATRIX=${RUN_GPU_BLOCKS_MATRIX} KV_OFFLOAD_GPU_BLOCKS_MATRIX=${KV_OFFLOAD_GPU_BLOCKS_MATRIX}"
 
 if [[ "${RUN_PREFLIGHT}" == "1" ]]; then
   echo "[smoke] running preflight checks"
@@ -174,10 +249,12 @@ if [[ "${RUN_MATH_SMOKE}" == "1" ]]; then
   summary_paths+=("${MATH_OUT}")
 fi
 
-if [[ "${RUN_REAL_SMOKE}" == "1" ]]; then
+if [[ "${RUN_REAL_SMOKE}" == "1" && "${RUN_GPU_BLOCKS_MATRIX}" == "1" ]]; then
+  run_real_smoke_matrix
+elif [[ "${RUN_REAL_SMOKE}" == "1" ]]; then
   echo "[smoke] running real-model long-context smoke -> ${REAL_OUT}"
   echo "[smoke] real log -> ${REAL_LOG}"
-  run_real_smoke
+  run_real_smoke "${KV_OFFLOAD_GPU_BLOCKS}" "${REAL_OUT}" "${REAL_LOG}"
   summary_paths+=("${REAL_OUT}")
 fi
 

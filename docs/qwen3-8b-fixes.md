@@ -8826,6 +8826,11 @@ prefill: current chunk write blocks 仍需留在 staging slots 中
 3. 已落地：新增 `tools/smoke_blockwise_prefill_remote.sh`，默认封装远程 Python、`CUDA_VISIBLE_DEVICES=7`、`TINYVLLM_DIST_PORT=34567`、`MASTER_PORT=34567`、`PYTHONPATH`、数学 smoke 和真实模型长 prompt smoke；远程运行目录下直接执行 `tools/smoke_blockwise_prefill_remote.sh` 即可，常用覆盖如 `RUN_REAL_SMOKE=0`、`CUDA_VISIBLE_DEVICES=0`、`MODEL_PATH=/path/to/model`。
    - 2026-07-03 已在远程用 `SMOKE_TAG=20260703_script tools/smoke_blockwise_prefill_remote.sh` 完整验证入口：preflight 通过，数学 smoke `gate_pass=true`，真实模型长 prompt smoke `gate_pass=true`。
    - 输出：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260703_script.json`、`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260703_script.json`；对应 log 写到同名 `.log`，避免长 prompt JSON 全量刷终端。
-4. 待做：远程/GPU 侧继续补 `gpu_blocks=1/2/4` 真实模型矩阵和多 prompt batch smoke；本次已覆盖 logical blocks/chunk size/batch scheduler 边界，并在远程运行 `tools/test_chunked_prefill.py` 通过。
+   - 2026-07-06 已扩展轻量 GPU blocks matrix 模式：`RUN_GPU_BLOCKS_MATRIX=1`，默认 `KV_OFFLOAD_GPU_BLOCKS_MATRIX="1 2 4"`，每组输出带 `_gpuN` 后缀的 JSON/log，并汇总 `gate_pass`、`elapsed_s`、`h2d_copies`、`d2h_copies`、`evictions`、`resident_blocks`。
+4. 远程/GPU 单 prompt 矩阵已验证：`SMOKE_TAG=20260706_gpu_matrix RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_GPU_BLOCKS_MATRIX=1 MATRIX_REQUIRE_PASS=0 tools/smoke_blockwise_prefill_remote.sh`。
+   - `gpu_blocks=1`：预期容量失败，log 中报 `blockwise prefill window plus current write blocks exceed GPU staging slots: required=2, gpu_blocks=1`；这是当前实现边界，不是 correctness mismatch。
+   - `gpu_blocks=2`：`gate_pass=true`，`elapsed_s=60.20214011892676`，`h2d_copies=391`，`d2h_copies=6`，`evictions=395`，`resident_blocks=2`。
+   - `gpu_blocks=4`：`gate_pass=true`，`elapsed_s=55.02894039079547`，`h2d_copies=249`，`d2h_copies=6`，`evictions=251`，`resident_blocks=4`。
+   - 待做：继续补多 prompt batch smoke。
 5. 待做：性能路径优化，包括合并 H2D/D2H copy、合并连续 prefetch plan、降低 clean eviction 抖动，以及后续引入 Triton/FlashAttention 风格 window kernel。
 6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
