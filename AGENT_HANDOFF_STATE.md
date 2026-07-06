@@ -827,6 +827,28 @@ CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
 6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
 7. 待做：DFlash feasibility spike，只做接口/接入点预研，不直接实现完整 DFlash；重点确认 target hidden state 暴露、block draft/verify API、与现有 speculative commit profiler 的关系。
 
+2026-07-06 尝试记录 / 排坑记录：
+
+1. 远程 SSH / Kerberos：
+   - 裸 `ssh sitian@10.232.195.203` 在 TRAE 进程里曾报 `Connection closed by UNKNOWN port 65535`，根因不是目标机 22 端口不可达，而是当前进程看不到 macOS API Kerberos cache。
+   - `nc -vz 10.232.195.203 22` 成功，说明目标端口可达；`klist` 在 TRAE 进程里报 `Cache not found: API:11111111-...`，而用户外部 Terminal 里 `klist` 显示 `sitian@BYTEDANCE.COM` 可用。
+   - `jump-proxy-hl` 不允许普通 session，`ssh sitian@jump-proxy-hl 'echo jump-ok'` 会报 `unknown channel type: session`；正确验证方式是直连目标 `ssh sitian@10.232.195.203 'echo remote-ok'` 或用 `-W` 作为 ProxyCommand。
+   - 已把 `~/.ssh/config` 的 `jump-proxy-hl` / `jump-proxy-hla` / `jump-proxy-lf` 用户显式改为 `sitian`，避免 ProxyCommand 默认用本机用户 `bytedance`。
+   - 稳定方案：使用 file cache `KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian` 建 ControlMaster，例如 `ssh -MNf -o ControlMaster=yes -o ControlPath=/tmp/ssh-sitian-10.232.195.203-new -o ControlPersist=2h sitian@10.232.195.203`；后续 rsync/ssh 使用 `ssh -S /tmp/ssh-sitian-10.232.195.203-new ...`。
+   - 老 socket `/tmp/ssh-sitian-10.232.195.203` 偶发 `Connection closed by UNKNOWN port 65535`；遇到时重新建新 ControlMaster 即可。
+2. rsync 同步：
+   - 第一次多源 rsync 没用 `--relative`，曾把 `qwen3-8b-fixes.md`、`test_chunked_prefill.py` 临时同步到远程 repo 根目录；已删除这两个误同步副本。
+   - 正确同步方式：`rsync -av -e 'ssh -S /tmp/ssh-sitian-10.232.195.203-new -o BatchMode=yes' --relative <files> sitian@10.232.195.203:/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/`。
+3. GPU blocks matrix：
+   - `gpu_blocks=1` 失败是当前实现边界：`required=2, gpu_blocks=1`，因为 blockwise prefill 需要 `prefix window blocks + 当前 chunk write blocks <= gpu staging slots`；不要把它当 correctness mismatch。
+   - `gpu_blocks=2/4` 已通过；`gpu_blocks=4` 的 H2D/eviction 次数比 2 少，符合 staging slots 增多的预期。
+4. Multi-prompt batch smoke：
+   - 默认 `MAX_MODEL_LEN=4096`、`GPU_MEMORY_UTILIZATION=0.7`、`MULTI_PROMPT_COUNT=2` 初次失败在模型初始化阶段：`allocate_kv_cache()` 里 `assert auto_num_blocks > 0`，不是 attention correctness 失败。
+   - 可用参数是降低 `MAX_MODEL_LEN=2048`、提高 `GPU_MEMORY_UTILIZATION=0.85`、缩短 `MULTI_PROMPT_REPEAT=24`，最终 `num_prompts=2` 通过。
+5. 本地验证注意：
+   - 本地 `python3 -m py_compile` 若写 macOS 系统 pyc cache 失败，可用 `PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache`。
+   - 当前未跟踪的 `.agents/`、`.codex/`、`needle_sq_results/` 是无关本地/实验产物，之前提交均未纳入。
+
 ## 远程 S4 smoke 示例
 
 ```bash
