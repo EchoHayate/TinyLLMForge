@@ -92,6 +92,8 @@ def parse_args():
                    help="Profiler-only debug: capture target hidden shape/dtype/device during verify+commit.")
     p.add_argument("--debug-hidden-to-draft-stub", action="store_true", default=False,
                    help="Profiler-only debug: attach a target-hidden-to-top-k draft adapter stub preview to verify events.")
+    p.add_argument("--hidden-to-draft-adapter", type=str, default="topk-stub", choices=["topk-stub", "linear-stub"],
+                   help="Profiler-only hidden-to-draft adapter stub to report when --debug-hidden-to-draft-stub is set.")
     p.add_argument("--debug-hidden-to-draft-top-k", type=int, default=3,
                    help="Top-k token count for --debug-hidden-to-draft-stub previews.")
     p.add_argument("--mode", type=str, default="paired",
@@ -194,7 +196,7 @@ def propose_draft(history: list[int], args) -> DraftProposal:
     raise ValueError(f"unsupported draft_source={args.draft_source}")
 
 
-def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dict:
+def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapter: str = "topk-stub") -> dict:
     """Return a JSON-friendly hidden-to-draft adapter interface preview.
 
     This does not sample or alter runtime behavior. It only records what a
@@ -204,6 +206,8 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dic
     """
     total_t0 = time.perf_counter()
     top_k = max(1, int(top_k))
+    if adapter not in ("topk-stub", "linear-stub"):
+        raise ValueError(f"unsupported hidden-to-draft adapter={adapter}")
     t0 = time.perf_counter()
     if hasattr(logits, "detach"):
         rows = logits.detach().float().cpu().tolist()
@@ -220,6 +224,12 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dic
             "scores": [float(score) for _, score in ranked],
         })
     topk_ms = (time.perf_counter() - t0) * 1000.0
+    linear_projection_ms = 0.0
+    adapter_name = "target_hidden_topk_stub"
+    if adapter == "linear-stub":
+        t0 = time.perf_counter()
+        linear_projection_ms = (time.perf_counter() - t0) * 1000.0
+        adapter_name = "target_hidden_linear_stub"
     first_tokens = [item["token_ids"][0] for item in preview if item["token_ids"]]
     first_scores = [item["scores"][0] for item in preview if item["scores"]]
     row_count = len(rows)
@@ -231,7 +241,7 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dic
     }
     return {
         "interface_version": 1,
-        "adapter": "target_hidden_topk_stub",
+        "adapter": adapter_name,
         "runtime_mutation": False,
         "input_schema": {
             "hidden_states": hidden_schema,
@@ -240,6 +250,7 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dic
                 "dtype": "float32_preview",
                 "device": "cpu_preview",
             },
+            "adapter": adapter,
             "top_k": top_k,
         },
         "output_schema": {
@@ -247,16 +258,18 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dic
             "draft_scores": "list[float]",
             "num_rows": "int",
             "source": "profiler_only_hidden_to_draft_adapter",
+            "projection": "deterministic_placeholder" if adapter == "linear-stub" else "logits_topk",
         },
         "output": {
             "draft_token_ids": first_tokens,
             "draft_scores": first_scores,
             "num_rows": row_count,
-            "source": "target_hidden_topk_stub",
+            "source": adapter_name,
         },
         "timing_ms": {
             "adapter_total_ms": (time.perf_counter() - total_t0) * 1000.0,
             "logits_to_cpu_ms": logits_to_cpu_ms,
+            **({"linear_projection_ms": linear_projection_ms} if adapter == "linear-stub" else {}),
             "topk_ms": topk_ms,
         },
         "shape": hidden_schema["shape"],
@@ -319,6 +332,7 @@ def verify_and_commit_block(
     simulate_kv_upload_mb: float = 0.0,
     debug_target_hidden: bool = False,
     debug_hidden_to_draft_stub: bool = False,
+    hidden_to_draft_adapter: str = "topk-stub",
     debug_hidden_to_draft_top_k: int = 3,
 ) -> dict:
     """Verify a speculative draft block with the target model and commit accepted tokens.
@@ -416,7 +430,7 @@ def verify_and_commit_block(
             }
             if debug_hidden_to_draft_stub:
                 hidden_to_draft_stub = summarize_hidden_to_draft_stub(
-                    hidden_states, logits, debug_hidden_to_draft_top_k)
+                    hidden_states, logits, debug_hidden_to_draft_top_k, hidden_to_draft_adapter)
         else:
             logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
         cuda_sync_if_available()
@@ -1109,6 +1123,7 @@ def run_paired_profile(args) -> dict:
                 simulate_kv_upload_mb=args.simulate_kv_upload_mb,
                 debug_target_hidden=args.debug_target_hidden,
                 debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
+                hidden_to_draft_adapter=args.hidden_to_draft_adapter,
                 debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
             )
             event["draft_metadata"] = draft.metadata
@@ -1364,6 +1379,7 @@ def run_candidate_only_profile(args) -> dict:
                 simulate_kv_upload_mb=args.simulate_kv_upload_mb,
                 debug_target_hidden=args.debug_target_hidden,
                 debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
+                hidden_to_draft_adapter=args.hidden_to_draft_adapter,
                 debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
             )
             event["draft_metadata"] = draft.metadata

@@ -368,6 +368,38 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 结果：`gate_pass=true`，`accepted_count=2`，`hidden_to_draft_stub.interface_version=1`，`runtime_mutation=false`，`input_schema.hidden_states.shape=[3, 1024]`，`input_schema.logits.shape=[2, 151936]`，`output_schema` 定义 `draft_token_ids` / `draft_scores` / `num_rows` / `source`，`output.draft_token_ids=[13440, 21619]`，`output.num_rows=2`。新增 timing 字段：`adapter_total_ms=142.16194674372673`，`logits_to_cpu_ms=8.412063121795654`，`topk_ms=133.64192843437195`。注意当前 timing 是 Python profiler preview 成本，尤其 top-k 走 Python sort，不代表未来优化后的 adapter latency；它的价值是先固定 profiler-only ABI 和计时字段。
 
+2026-07-07 可替换 hidden-to-draft adapter 入口与 `linear-stub` skeleton 已落地：
+
+- 新增 `--hidden-to-draft-adapter {topk-stub,linear-stub}`，默认 `topk-stub`；
+- `linear-stub` 只改变 profiler JSON 中的 adapter/source/projection/timing 字段，不参与 draft proposal、不替换 accepted tokens、不改 runtime；
+- `linear-stub` 当前仍复用 logits top-1 作为 deterministic placeholder output，并额外记录 `linear_projection_ms`，为后续真实 hidden linear projection 预留 ABI。
+
+远程第一次尝试使用 `TINYVLLM_DIST_PORT=34574 MASTER_PORT=34574` 失败，报 `RuntimeError: ... EADDRINUSE, address already in use`。这仍是已知端口占用问题，不是 adapter 代码失败；重跑时换到 `34674` 通过：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34674 MASTER_PORT=34674 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --draft-source dflash-toy-ngram-or-repeat \
+  --debug-hidden-to-draft-stub \
+  --hidden-to-draft-adapter linear-stub \
+  --debug-hidden-to-draft-top-k 2 \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma" \
+  --max-output-len 4 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 2 \
+  --max-commit-events 1 \
+  --max-model-len 512 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-seqs 1 \
+  --out-json profile_out/dflash_phase3_linear_stub_interface_smoke_20260707.json
+```
+
+结果：`gate_pass=true`，`accepted_count=2`，`hidden_to_draft_adapter="linear-stub"`，`hidden_to_draft_stub.adapter="target_hidden_linear_stub"`，`input_schema.adapter="linear-stub"`，`output_schema.projection="deterministic_placeholder"`，`output.source="target_hidden_linear_stub"`，`output.draft_token_ids=[13440, 21619]`。新增/确认 timing：`adapter_total_ms=126.10501796007156`，`logits_to_cpu_ms=8.051183074712753`，`linear_projection_ms=0.0002868473529815674`，`topk_ms=117.97097697854042`。当前 `linear_projection_ms` 是 no-op placeholder 边界计时，下一步可替换成真实 deterministic linear projection skeleton。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -401,6 +433,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 1. `--draft-source dflash-toy-ngram-or-repeat` 远程通过，确认有 accepted tokens 且 `draft_source` 字段保留 toy source；
 2. `--debug-target-hidden` 远程通过，确认 `target_hidden_debug` 记录 shape/dtype/device；
 3. `--debug-hidden-to-draft-stub` 远程通过，确认 profiler 能把 target hidden metadata、输入/输出 schema、adapter timing 和 verify logits top-k preview 写入 `hidden_to_draft_stub`；
-4. 后续若继续 DFlash，应先做真实 draft model stub / hidden-to-draft adapter 的 profiler-only 实验，再考虑完整 diffusion checkpoint。
+4. `--hidden-to-draft-adapter linear-stub` 远程通过，确认 adapter selector、linear-stub output schema 和 `linear_projection_ms` 已进入 profiler JSON；
+5. 后续若继续 DFlash，应把 `linear-stub` 的 no-op projection 替换成 deterministic hidden projection skeleton，再考虑真实 draft model 或完整 diffusion checkpoint。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。

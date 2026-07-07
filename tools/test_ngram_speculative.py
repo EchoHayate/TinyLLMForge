@@ -271,24 +271,24 @@ def test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing():
 
     assert summary["interface_version"] == 1
     assert summary["runtime_mutation"] is False
-    assert summary["input_schema"] == {
-        "hidden_states": {
-            "shape": [2, 1024],
-            "dtype": "torch.bfloat16",
-            "device": "cuda:0",
-        },
-        "logits": {
-            "shape": [2, 2],
-            "dtype": "float32_preview",
-            "device": "cpu_preview",
-        },
-        "top_k": 1,
+    assert summary["input_schema"]["hidden_states"] == {
+        "shape": [2, 1024],
+        "dtype": "torch.bfloat16",
+        "device": "cuda:0",
     }
+    assert summary["input_schema"]["logits"] == {
+        "shape": [2, 2],
+        "dtype": "float32_preview",
+        "device": "cpu_preview",
+    }
+    assert summary["input_schema"]["adapter"] == "topk-stub"
+    assert summary["input_schema"]["top_k"] == 1
     assert summary["output_schema"] == {
         "draft_token_ids": "list[int]",
         "draft_scores": "list[float]",
         "num_rows": "int",
         "source": "profiler_only_hidden_to_draft_adapter",
+        "projection": "logits_topk",
     }
     assert summary["output"] == {
         "draft_token_ids": [1, 0],
@@ -298,6 +298,34 @@ def test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing():
     }
     assert set(summary["timing_ms"]) == {"adapter_total_ms", "logits_to_cpu_ms", "topk_ms"}
     assert all(isinstance(value, float) and value >= 0.0 for value in summary["timing_ms"].values())
+
+
+def test_summarize_hidden_to_draft_stub_supports_linear_stub_interface():
+    class FakeTensor:
+        shape = (2, 1024)
+        dtype = "torch.bfloat16"
+        device = "cuda:0"
+
+    summary = summarize_hidden_to_draft_stub(
+        FakeTensor(),
+        [[0.0, 1.0, 3.0], [2.0, 0.0, 1.0]],
+        top_k=1,
+        adapter="linear-stub",
+    )
+
+    assert summary["adapter"] == "target_hidden_linear_stub"
+    assert summary["runtime_mutation"] is False
+    assert summary["input_schema"]["adapter"] == "linear-stub"
+    assert summary["output"]["source"] == "target_hidden_linear_stub"
+    assert summary["output"]["draft_token_ids"] == [2, 0]
+    assert summary["output_schema"]["projection"] == "deterministic_placeholder"
+    assert set(summary["timing_ms"]) == {
+        "adapter_total_ms",
+        "logits_to_cpu_ms",
+        "linear_projection_ms",
+        "topk_ms",
+    }
+    assert summary["timing_ms"]["linear_projection_ms"] >= 0.0
 
 
 def main():
@@ -317,6 +345,7 @@ def main():
     test_propose_draft_dflash_toy_ngram_or_repeat_falls_back_to_repeat()
     test_summarize_hidden_to_draft_stub_returns_json_friendly_topk_preview()
     test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing()
+    test_summarize_hidden_to_draft_stub_supports_linear_stub_interface()
     print("ngram speculative tests passed")
 
 
