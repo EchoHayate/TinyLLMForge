@@ -18,6 +18,12 @@ ngram = importlib.util.module_from_spec(_SPEC)
 sys.modules["ngram_under_test"] = ngram
 _SPEC.loader.exec_module(ngram)
 
+_PROFILE_PATH = os.path.join(_REPO_ROOT, "tools", "profile_ngram_commit.py")
+_PROFILE_SPEC = importlib.util.spec_from_file_location("profile_ngram_under_test", _PROFILE_PATH)
+profile_ngram = importlib.util.module_from_spec(_PROFILE_SPEC)
+sys.modules["profile_ngram_under_test"] = profile_ngram
+_PROFILE_SPEC.loader.exec_module(profile_ngram)
+
 propose_ngram_draft = ngram.propose_ngram_draft
 replay_ngram_acceptance = ngram.replay_ngram_acceptance
 summarize_replay_stats = ngram.summarize_replay_stats
@@ -28,6 +34,7 @@ summarize_online_dry_run_totals = ngram.summarize_online_dry_run_totals
 count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
+propose_draft = profile_ngram.propose_draft
 
 
 def test_propose_ngram_draft_uses_latest_matching_suffix():
@@ -155,6 +162,47 @@ def test_summarize_target_verify_stats_is_json_friendly():
     }
 
 
+def test_propose_draft_dispatches_ngram_source():
+    class Args:
+        draft_source = "ngram"
+        ngram_size = 2
+        max_draft_tokens = 2
+
+    draft = propose_draft([1, 2, 3, 1, 2, 4, 1, 2], Args())
+
+    assert draft.source == "ngram"
+    assert draft.tokens == [4, 1]
+    assert draft.metadata == {"match_start": 3, "ngram_size": 2}
+
+
+def test_propose_draft_dflash_toy_repeats_recent_window():
+    class Args:
+        draft_source = "dflash-toy"
+        max_draft_tokens = 5
+        dflash_toy_context_tokens = 2
+
+    draft = propose_draft([10, 11, 12], Args())
+
+    assert draft.source == "dflash-toy"
+    assert draft.tokens == [10, 11, 12, 10, 11]
+    assert draft.metadata["toy_strategy"] == "repeat_recent_tokens"
+    assert draft.metadata["context_tokens"] == 2
+    assert draft.metadata["window_tokens"] == 3
+
+
+def test_propose_draft_dflash_toy_waits_for_context():
+    class Args:
+        draft_source = "dflash-toy"
+        max_draft_tokens = 2
+        dflash_toy_context_tokens = 4
+
+    draft = propose_draft([10, 11], Args())
+
+    assert draft.source == "dflash-toy"
+    assert draft.tokens == []
+    assert draft.metadata["reason"] == "insufficient_history"
+
+
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
     test_propose_ngram_draft_respects_max_draft_tokens()
@@ -165,6 +213,9 @@ def main():
     test_online_dry_run_rejects_and_clears_pending_tokens()
     test_count_accepted_prefix_stops_at_first_mismatch()
     test_summarize_target_verify_stats_is_json_friendly()
+    test_propose_draft_dispatches_ngram_source()
+    test_propose_draft_dflash_toy_repeats_recent_window()
+    test_propose_draft_dflash_toy_waits_for_context()
     print("ngram speculative tests passed")
 
 

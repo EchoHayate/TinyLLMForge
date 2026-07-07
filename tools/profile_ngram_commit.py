@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass, field
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -36,6 +37,13 @@ propose_ngram_draft = ngram.propose_ngram_draft
 DEFAULT_PROMPTS = [
     "Repeat the following phrase five times: alpha beta gamma alpha beta gamma.",
 ]
+
+
+@dataclass
+class DraftProposal:
+    tokens: list[int]
+    source: str
+    metadata: dict = field(default_factory=dict)
 
 
 def parse_args():
@@ -70,10 +78,16 @@ def parse_args():
                    help="Simulate CPU->GPU KV page upload cost per decode/verify target forward by copying this many MiB.")
     p.add_argument("--temperature", type=float, default=0.0,
                    help="S3 commit smoke currently requires greedy decoding, so this must be 0.0.")
+    p.add_argument("--draft-source", type=str, default="ngram", choices=["ngram", "dflash-toy"],
+                   help="Draft source for candidate-only/paired speculative verify+commit experiments.")
     p.add_argument("--ngram-size", type=int, default=3)
+    p.add_argument("--dflash-toy-context-tokens", type=int, default=1,
+                   help="Minimum trailing context tokens required before dflash-toy proposes a block.")
     p.add_argument("--max-draft-tokens", type=int, default=4)
     p.add_argument("--max-commit-events", type=int, default=1,
                    help="Maximum accepted commit events per candidate. Use 0 for unlimited S4 online benchmark.")
+    p.add_argument("--allow-zero-accept", action="store_true", default=False,
+                   help="Allow speculative plumbing smokes to pass even if no draft tokens are accepted.")
     p.add_argument("--mode", type=str, default="paired",
                    choices=["paired", "baseline-only", "candidate-only"],
                    help="paired compares baseline+candidate in one engine; baseline-only/candidate-only are for separated timing.")
@@ -123,6 +137,41 @@ def cuda_sync_if_available():
             torch.cuda.synchronize()
     except Exception:
         return
+
+
+def propose_draft(history: list[int], args) -> DraftProposal:
+    if args.draft_source == "ngram":
+        draft = propose_ngram_draft(history, args.ngram_size, args.max_draft_tokens)
+        return DraftProposal(
+            tokens=list(draft.tokens),
+            source="ngram",
+            metadata={
+                "match_start": draft.match_start,
+                "ngram_size": draft.ngram_size,
+            },
+        )
+    if args.draft_source == "dflash-toy":
+        context_tokens = max(1, int(args.dflash_toy_context_tokens))
+        if args.max_draft_tokens <= 0 or len(history) < context_tokens:
+            return DraftProposal(
+                tokens=[],
+                source="dflash-toy",
+                metadata={"reason": "insufficient_history", "context_tokens": context_tokens},
+            )
+        window = list(history[-max(1, min(len(history), args.max_draft_tokens)):])
+        tokens = []
+        while len(tokens) < args.max_draft_tokens:
+            tokens.extend(window)
+        return DraftProposal(
+            tokens=tokens[:args.max_draft_tokens],
+            source="dflash-toy",
+            metadata={
+                "toy_strategy": "repeat_recent_tokens",
+                "context_tokens": context_tokens,
+                "window_tokens": len(window),
+            },
+        )
+    raise ValueError(f"unsupported draft_source={args.draft_source}")
 
 
 def _simulate_kv_upload(llm, mb: float) -> float:
@@ -916,6 +965,7 @@ def run_paired_profile(args) -> dict:
             "accepted_count": 0,
             "verify_timing_ms": {},
             "events": [],
+            "verify_events": [],
         }
 
     outputs = {}
@@ -931,20 +981,21 @@ def run_paired_profile(args) -> dict:
             candidate = _find_running_seq(llm, candidate_id)
             if not can_commit_more or candidate is None:
                 continue
-            draft = propose_ngram_draft(candidate.token_ids, args.ngram_size, args.max_draft_tokens)
+            draft = propose_draft(candidate.token_ids, args)
             if not draft.tokens:
                 stats["no_draft_steps"] += 1
                 continue
 
             stats["commit_attempts"] += 1
             stats["drafted_tokens"] += len(draft.tokens)
-            event = _target_verify_and_commit(llm, candidate, draft.tokens, args.simulate_kv_upload_mb)
-            stats["accepted_count"] += event["accepted_count"]
-            _accumulate_timing_ms(stats["verify_timing_ms"], event)
-            if event["accepted_count"] <= 0:
-                stats["zero_accept_events"] += 1
-                continue
-
+            event = verify_and_commit_block(
+                llm,
+                candidate,
+                draft.tokens,
+                draft_source=draft.source,
+                simulate_kv_upload_mb=args.simulate_kv_upload_mb,
+            )
+            event["draft_metadata"] = draft.metadata
             event_record = {
                 "step": step_idx,
                 "prompt_index": stats["prompt_index"],
@@ -952,6 +1003,13 @@ def run_paired_profile(args) -> dict:
                 "candidate_seq_id": candidate_id,
                 **event,
             }
+            stats["verify_events"].append(event_record)
+            stats["accepted_count"] += event["accepted_count"]
+            _accumulate_timing_ms(stats["verify_timing_ms"], event)
+            if event["accepted_count"] <= 0:
+                stats["zero_accept_events"] += 1
+                continue
+
             stats["commit_events"] += 1
             stats["events"].append(event_record)
             commit_events.append(event_record)
@@ -1002,6 +1060,7 @@ def run_paired_profile(args) -> dict:
             "drafted_tokens": stats["drafted_tokens"],
             "accepted_count": stats["accepted_count"],
             "verify_timing_ms": stats["verify_timing_ms"],
+            "verify_events": stats["verify_events"],
             "acceptance_rate": stats["accepted_count"] / stats["drafted_tokens"] if stats["drafted_tokens"] else 0.0,
             "candidate_autoregressive_steps_avoided": stats["accepted_count"],
             "candidate_step_reduction": stats["accepted_count"] / len(candidate) if candidate else 0.0,
@@ -1046,6 +1105,11 @@ def run_paired_profile(args) -> dict:
         gate_fail_reasons.append("committed=false")
     if summary["accepted_count"] <= 0:
         gate_fail_reasons.append("accepted_count<=0")
+    if args.allow_zero_accept:
+        gate_fail_reasons = [
+            reason for reason in gate_fail_reasons
+            if reason not in ("committed=false", "accepted_count<=0")
+        ]
     summary["gate_pass"] = not gate_fail_reasons
     summary["gate_fail_reasons"] = gate_fail_reasons
     first_baseline = outputs.get(pairs[0]["baseline_seq_id"], []) if pairs else []
@@ -1056,6 +1120,9 @@ def run_paired_profile(args) -> dict:
         "per_prompt": per_prompt,
         "commit_event": commit_events[0] if commit_events else None,
         "commit_events": commit_events,
+        "verify_events": [
+            event for item in per_prompt for event in item.get("verify_events", [])
+        ],
         "baseline_text": llm.tokenizer.decode(first_baseline),
         "candidate_text": llm.tokenizer.decode(first_candidate),
         "step_records": step_records,
@@ -1151,6 +1218,7 @@ def run_candidate_only_profile(args) -> dict:
             "accepted_count": 0,
             "verify_timing_ms": {},
             "events": [],
+            "verify_events": [],
         }
 
     outputs = {}
@@ -1166,19 +1234,27 @@ def run_candidate_only_profile(args) -> dict:
             candidate = _find_running_seq(llm, candidate_id)
             if not can_commit_more or candidate is None:
                 continue
-            draft = propose_ngram_draft(candidate.token_ids, args.ngram_size, args.max_draft_tokens)
+            draft = propose_draft(candidate.token_ids, args)
             if not draft.tokens:
                 stats["no_draft_steps"] += 1
                 continue
             stats["commit_attempts"] += 1
             stats["drafted_tokens"] += len(draft.tokens)
-            event = _target_verify_and_commit(llm, candidate, draft.tokens, args.simulate_kv_upload_mb)
+            event = verify_and_commit_block(
+                llm,
+                candidate,
+                draft.tokens,
+                draft_source=draft.source,
+                simulate_kv_upload_mb=args.simulate_kv_upload_mb,
+            )
+            event["draft_metadata"] = draft.metadata
+            event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}
+            stats["verify_events"].append(event_record)
             stats["accepted_count"] += event["accepted_count"]
             _accumulate_timing_ms(stats["verify_timing_ms"], event)
             if event["accepted_count"] <= 0:
                 stats["zero_accept_events"] += 1
                 continue
-            event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}
             stats["commit_events"] += 1
             stats["events"].append(event_record)
             commit_events.append(event_record)
@@ -1228,6 +1304,7 @@ def run_candidate_only_profile(args) -> dict:
             "drafted_tokens": stats["drafted_tokens"],
             "accepted_count": stats["accepted_count"],
             "verify_timing_ms": stats["verify_timing_ms"],
+            "verify_events": stats["verify_events"],
             "acceptance_rate": stats["accepted_count"] / stats["drafted_tokens"] if stats["drafted_tokens"] else 0.0,
             "candidate_step_reduction": stats["accepted_count"] / len(token_ids) if token_ids else 0.0,
         })
@@ -1266,6 +1343,11 @@ def run_candidate_only_profile(args) -> dict:
         gate_fail_reasons.append("committed=false")
     if summary["accepted_count"] <= 0:
         gate_fail_reasons.append("accepted_count<=0")
+    if args.allow_zero_accept:
+        gate_fail_reasons = [
+            reason for reason in gate_fail_reasons
+            if reason not in ("committed=false", "accepted_count<=0")
+        ]
     summary["gate_pass"] = not gate_fail_reasons
     summary["gate_fail_reasons"] = gate_fail_reasons
     return {
@@ -1274,6 +1356,9 @@ def run_candidate_only_profile(args) -> dict:
         "per_prompt": per_prompt,
         "commit_event": commit_events[0] if commit_events else None,
         "commit_events": commit_events,
+        "verify_events": [
+            event for item in per_prompt for event in item.get("verify_events", [])
+        ],
         "step_records": step_records,
         "warmup": warmup,
         "simulated_upload_warmup_ms": simulated_upload_warmup_ms,

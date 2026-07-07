@@ -825,7 +825,7 @@ CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
    - 2026-07-06 已补多 prompt batch smoke：`SMOKE_TAG=20260706_multiprompt_len2048 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_REAL_SMOKE=0 RUN_MULTI_PROMPT_SMOKE=1 MAX_MODEL_LEN=2048 GPU_MEMORY_UTILIZATION=0.85 KV_OFFLOAD_LOGICAL_BLOCKS=8 MULTI_PROMPT_REPEAT=24 tools/smoke_blockwise_prefill_remote.sh`，`num_prompts=2`、`gate_pass=true`、`elapsed_s=32.339650828391314`、`output_tokens=2`、`h2d_copies=786`、`d2h_copies=12`、`evictions=792`、`resident_blocks=2`。
 5. 待做：性能路径优化，包括合并 H2D/D2H copy、合并连续 prefetch plan、降低 clean eviction 抖动，以及后续引入 Triton/FlashAttention 风格 window kernel。
 6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
-7. 已落地：DFlash feasibility spike 已写入 `docs/dflash-feasibility.md`，只做接口/接入点预研，不直接实现完整 DFlash；已完成 Phase 1，把 n-gram target verify/commit 包装为通用 `verify_and_commit_block()` 并保留 n-gram 行为不变。远程 Qwen3-0.6B candidate-only smoke 已验证 `commit_event.draft_source="ngram"`。下一步是 Phase 2：`--draft-source {ngram,dflash-toy}` 和 toy block draft model。
+7. 已落地：DFlash feasibility spike 已写入 `docs/dflash-feasibility.md`，只做接口/接入点预研，不直接实现完整 DFlash；已完成 Phase 1，把 n-gram target verify/commit 包装为通用 `verify_and_commit_block()` 并保留 n-gram 行为不变。远程 Qwen3-0.6B candidate-only smoke 已验证 `commit_event.draft_source="ngram"`。Phase 2 plumbing 已验证：新增 `--draft-source {ngram,dflash-toy}`、`--allow-zero-accept`、deterministic `repeat_recent_tokens` toy block draft model，以及记录 zero-accept attempts 的 `verify_events`；远程 `dflash-toy` smoke `gate_pass=true`、`zero_accept_events=3`、`verify_events[].draft_source="dflash-toy"`。下一步可设计更容易 accepted 的 toy strategy 或进入 profiler-only target hidden state extraction。
 
 2026-07-06 尝试记录 / 排坑记录：
 

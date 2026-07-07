@@ -222,6 +222,39 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_chunked_prefill.py
 - 复用同一个 `verify_and_commit_block()`；
 - 只支持 `temperature=0.0`。
 
+2026-07-07 已开始落地：
+
+- `tools/profile_ngram_commit.py` 新增 `--draft-source {ngram,dflash-toy}`；
+- `ngram` 继续走原 n-gram helper；
+- `dflash-toy` 使用 deterministic `repeat_recent_tokens` toy strategy，只验证 block draft plumbing，不代表真实 DFlash diffusion draft quality；
+- commit event 的 `draft_source` 会随 draft source 变化；
+- verify event 增加 `draft_metadata`，用于记录 toy strategy 或 n-gram match 信息；
+- 新增 `verify_events` 记录所有 target verify attempts，包括 `accepted_count=0` 的 zero-accept plumbing 事件；
+- 新增 `--allow-zero-accept`，只供 toy/plumbing smoke 使用，允许没有 accepted tokens 时 gate 通过。
+
+远程 plumbing smoke 已通过：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34569 MASTER_PORT=34569 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --draft-source dflash-toy \
+  --allow-zero-accept \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma" \
+  --max-output-len 4 \
+  --temperature 0.0 \
+  --max-draft-tokens 2 \
+  --max-commit-events 1 \
+  --max-model-len 512 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-seqs 1 \
+  --out-json profile_out/dflash_phase2_toy_candidate_smoke_20260707_allow_zero.json
+```
+
+结果：`gate_pass=true`，`commit_attempts=3`，`zero_accept_events=3`，`accepted_count=0`，`verify_events` 中包含 `draft_source="dflash-toy"` 和 `draft_metadata.toy_strategy="repeat_recent_tokens"`。这只证明 toy block draft plumbing 和 target verify path 可用，不代表真实 DFlash 接受率。
+
 验证：
 
 - 本地纯 Python helper tests；
@@ -264,12 +297,10 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_chunked_prefill.py
 
 ## 下一步建议
 
-下一步做 Phase 2：
+下一步继续 Phase 2：
 
-1. 新增 `--draft-source {ngram,dflash-toy}`；
-2. 实现最小 toy block draft model；
-3. 复用 `verify_and_commit_block()`；
-4. 只支持 `temperature=0.0`；
-5. 先跑本地 helper tests，再跑远程短 candidate-only smoke。
+1. 设计更容易 accepted 的 toy strategy，或进入 target hidden state extraction；
+2. 若继续 toy strategy，建议新增 `dflash-toy-ngram-or-repeat`，优先 n-gram 可接受 block，fallback repeat recent tokens；
+3. 若进入 hidden extraction，保持 `world_size=1`、greedy、profiler-only，不改 `LLMEngine.step()`。
 
 Phase 2 完成后，再决定是否进入 target hidden state extraction。
