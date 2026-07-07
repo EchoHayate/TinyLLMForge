@@ -8834,7 +8834,7 @@ prefill: current chunk write blocks 仍需留在 staging slots 中
    - 2026-07-06 已补多 prompt batch smoke：`SMOKE_TAG=20260706_multiprompt_len2048 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_REAL_SMOKE=0 RUN_MULTI_PROMPT_SMOKE=1 MAX_MODEL_LEN=2048 GPU_MEMORY_UTILIZATION=0.85 KV_OFFLOAD_LOGICAL_BLOCKS=8 MULTI_PROMPT_REPEAT=24 tools/smoke_blockwise_prefill_remote.sh`，`num_prompts=2`、`gate_pass=true`、`elapsed_s=32.339650828391314`、`output_tokens=2`、`h2d_copies=786`、`d2h_copies=12`、`evictions=792`、`resident_blocks=2`。
 5. 待做：性能路径优化，包括合并 H2D/D2H copy、合并连续 prefetch plan、降低 clean eviction 抖动，以及后续引入 Triton/FlashAttention 风格 window kernel。
 6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
-7. 待做：DFlash feasibility spike，只做接口/接入点预研，不直接实现完整 DFlash；重点确认 target hidden state 暴露、block draft/verify API、与现有 speculative commit profiler 的关系。
+7. 已落地：DFlash feasibility spike 已写入 `docs/dflash-feasibility.md`，只做接口/接入点预研，不直接实现完整 DFlash；结论是先抽象通用 `verify_and_commit_block()`，保持 n-gram 行为不变，再考虑 toy block draft model。
 
 #### 47.48.7 尝试记录 / 排坑记录（2026-07-06）
 
