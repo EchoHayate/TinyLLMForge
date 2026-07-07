@@ -343,6 +343,31 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 结果：`gate_pass=true`，`commit_events=1`，`accepted_count=2`，`acceptance_rate=1.0`，`hidden_to_draft_stub.adapter="target_hidden_topk_stub"`，`hidden_to_draft_stub.shape=[3, 1024]`，`hidden_to_draft_stub.dtype="torch.bfloat16"`，`hidden_to_draft_stub.device="cuda:0"`，`hidden_to_draft_stub.top_k=2`，`hidden_to_draft_stub.rows=2`。stub 只记录 target hidden metadata 和 verify logits top-k preview，例如 row 0 top tokens `[13440, 8287]`、row 1 top tokens `[21619, 13440]`；它不采样、不替换 draft tokens、不改变 acceptance rule，也不修改 runtime。
 
+2026-07-07 hidden-to-draft adapter interface schema/timing 已落地并远程验证：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34573 MASTER_PORT=34573 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --draft-source dflash-toy-ngram-or-repeat \
+  --debug-hidden-to-draft-stub \
+  --debug-hidden-to-draft-top-k 2 \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma" \
+  --max-output-len 4 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 2 \
+  --max-commit-events 1 \
+  --max-model-len 512 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-seqs 1 \
+  --out-json profile_out/dflash_phase3_adapter_interface_smoke_20260707.json
+```
+
+结果：`gate_pass=true`，`accepted_count=2`，`hidden_to_draft_stub.interface_version=1`，`runtime_mutation=false`，`input_schema.hidden_states.shape=[3, 1024]`，`input_schema.logits.shape=[2, 151936]`，`output_schema` 定义 `draft_token_ids` / `draft_scores` / `num_rows` / `source`，`output.draft_token_ids=[13440, 21619]`，`output.num_rows=2`。新增 timing 字段：`adapter_total_ms=142.16194674372673`，`logits_to_cpu_ms=8.412063121795654`，`topk_ms=133.64192843437195`。注意当前 timing 是 Python profiler preview 成本，尤其 top-k 走 Python sort，不代表未来优化后的 adapter latency；它的价值是先固定 profiler-only ABI 和计时字段。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -375,7 +400,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 1. `--draft-source dflash-toy-ngram-or-repeat` 远程通过，确认有 accepted tokens 且 `draft_source` 字段保留 toy source；
 2. `--debug-target-hidden` 远程通过，确认 `target_hidden_debug` 记录 shape/dtype/device；
-3. `--debug-hidden-to-draft-stub` 远程通过，确认 profiler 能把 target hidden metadata 和 verify logits top-k preview 写入 `hidden_to_draft_stub`；
+3. `--debug-hidden-to-draft-stub` 远程通过，确认 profiler 能把 target hidden metadata、输入/输出 schema、adapter timing 和 verify logits top-k preview 写入 `hidden_to_draft_stub`；
 4. 后续若继续 DFlash，应先做真实 draft model stub / hidden-to-draft adapter 的 profiler-only 实验，再考虑完整 diffusion checkpoint。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。

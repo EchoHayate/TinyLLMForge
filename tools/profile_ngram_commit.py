@@ -195,18 +195,23 @@ def propose_draft(history: list[int], args) -> DraftProposal:
 
 
 def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dict:
-    """Return a JSON-friendly hidden-to-draft adapter stub preview.
+    """Return a JSON-friendly hidden-to-draft adapter interface preview.
 
     This does not sample or alter runtime behavior. It only records what a
-    future hidden-to-draft adapter could inspect: target hidden metadata plus a
-    top-k logits preview for each verify row.
+    future hidden-to-draft adapter could inspect and return: target hidden
+    metadata, explicit input/output schema, adapter timing, and a top-k logits
+    preview for each verify row.
     """
+    total_t0 = time.perf_counter()
     top_k = max(1, int(top_k))
+    t0 = time.perf_counter()
     if hasattr(logits, "detach"):
         rows = logits.detach().float().cpu().tolist()
     else:
         rows = [[float(value) for value in row] for row in logits]
+    logits_to_cpu_ms = (time.perf_counter() - t0) * 1000.0
     preview = []
+    t0 = time.perf_counter()
     for row_index, row in enumerate(rows):
         ranked = sorted(enumerate(row), key=lambda item: item[1], reverse=True)[:top_k]
         preview.append({
@@ -214,13 +219,51 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dic
             "token_ids": [int(token_id) for token_id, _ in ranked],
             "scores": [float(score) for _, score in ranked],
         })
-    return {
-        "adapter": "target_hidden_topk_stub",
+    topk_ms = (time.perf_counter() - t0) * 1000.0
+    first_tokens = [item["token_ids"][0] for item in preview if item["token_ids"]]
+    first_scores = [item["scores"][0] for item in preview if item["scores"]]
+    row_count = len(rows)
+    vocab_preview = len(rows[0]) if rows else 0
+    hidden_schema = {
         "shape": [int(dim) for dim in hidden_states.shape],
         "dtype": str(hidden_states.dtype),
         "device": str(hidden_states.device),
+    }
+    return {
+        "interface_version": 1,
+        "adapter": "target_hidden_topk_stub",
+        "runtime_mutation": False,
+        "input_schema": {
+            "hidden_states": hidden_schema,
+            "logits": {
+                "shape": [row_count, vocab_preview],
+                "dtype": "float32_preview",
+                "device": "cpu_preview",
+            },
+            "top_k": top_k,
+        },
+        "output_schema": {
+            "draft_token_ids": "list[int]",
+            "draft_scores": "list[float]",
+            "num_rows": "int",
+            "source": "profiler_only_hidden_to_draft_adapter",
+        },
+        "output": {
+            "draft_token_ids": first_tokens,
+            "draft_scores": first_scores,
+            "num_rows": row_count,
+            "source": "target_hidden_topk_stub",
+        },
+        "timing_ms": {
+            "adapter_total_ms": (time.perf_counter() - total_t0) * 1000.0,
+            "logits_to_cpu_ms": logits_to_cpu_ms,
+            "topk_ms": topk_ms,
+        },
+        "shape": hidden_schema["shape"],
+        "dtype": hidden_schema["dtype"],
+        "device": hidden_schema["device"],
         "top_k": top_k,
-        "rows": len(rows),
+        "rows": row_count,
         "preview": preview,
     }
 

@@ -248,19 +248,56 @@ def test_summarize_hidden_to_draft_stub_returns_json_friendly_topk_preview():
 
     summary = summarize_hidden_to_draft_stub(FakeTensor(), logits, top_k=2)
 
-    assert summary == {
-        "adapter": "target_hidden_topk_stub",
-        "shape": [3, 1024],
-        "dtype": "torch.bfloat16",
-        "device": "cuda:0",
-        "top_k": 2,
-        "rows": 3,
-        "preview": [
-            {"row": 0, "token_ids": [1, 2], "scores": [2.0, 1.0]},
-            {"row": 1, "token_ids": [0, 3], "scores": [3.0, 2.0]},
-            {"row": 2, "token_ids": [3, 2], "scores": [0.3, 0.2]},
-        ],
+    assert summary["adapter"] == "target_hidden_topk_stub"
+    assert summary["shape"] == [3, 1024]
+    assert summary["dtype"] == "torch.bfloat16"
+    assert summary["device"] == "cuda:0"
+    assert summary["top_k"] == 2
+    assert summary["rows"] == 3
+    assert summary["preview"] == [
+        {"row": 0, "token_ids": [1, 2], "scores": [2.0, 1.0]},
+        {"row": 1, "token_ids": [0, 3], "scores": [3.0, 2.0]},
+        {"row": 2, "token_ids": [3, 2], "scores": [0.3, 0.2]},
+    ]
+
+
+def test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing():
+    class FakeTensor:
+        shape = (2, 1024)
+        dtype = "torch.bfloat16"
+        device = "cuda:0"
+
+    summary = summarize_hidden_to_draft_stub(FakeTensor(), [[0.0, 1.0], [2.0, 0.0]], top_k=1)
+
+    assert summary["interface_version"] == 1
+    assert summary["runtime_mutation"] is False
+    assert summary["input_schema"] == {
+        "hidden_states": {
+            "shape": [2, 1024],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0",
+        },
+        "logits": {
+            "shape": [2, 2],
+            "dtype": "float32_preview",
+            "device": "cpu_preview",
+        },
+        "top_k": 1,
     }
+    assert summary["output_schema"] == {
+        "draft_token_ids": "list[int]",
+        "draft_scores": "list[float]",
+        "num_rows": "int",
+        "source": "profiler_only_hidden_to_draft_adapter",
+    }
+    assert summary["output"] == {
+        "draft_token_ids": [1, 0],
+        "draft_scores": [1.0, 2.0],
+        "num_rows": 2,
+        "source": "target_hidden_topk_stub",
+    }
+    assert set(summary["timing_ms"]) == {"adapter_total_ms", "logits_to_cpu_ms", "topk_ms"}
+    assert all(isinstance(value, float) and value >= 0.0 for value in summary["timing_ms"].values())
 
 
 def main():
@@ -279,6 +316,7 @@ def main():
     test_propose_draft_dflash_toy_ngram_or_repeat_prefers_ngram()
     test_propose_draft_dflash_toy_ngram_or_repeat_falls_back_to_repeat()
     test_summarize_hidden_to_draft_stub_returns_json_friendly_topk_preview()
+    test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing()
     print("ngram speculative tests passed")
 
 
