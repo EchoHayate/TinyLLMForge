@@ -440,6 +440,22 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 结果：`gate_pass=true`，`accepted_count=2`，`hidden_to_draft_stub.adapter="target_hidden_linear_stub"`，`output_schema.projection="deterministic_hidden_linear_stub"`，`projection_metadata.seed=17`，`projection_metadata.candidate_token_ids=[0,1,2,3,4,5,6,7]`，`projection_metadata.hidden_dim=1024`，`projection_metadata.candidate_count=8`，`output.draft_token_ids=[0,0,7]`，`output.num_rows=3`，`rows=3`，`input_schema.hidden_states.shape=[3,1024]`，`input_schema.logits.shape=[3,151936]`。timing：`adapter_total_ms=12.286126613616943`，`logits_to_cpu_ms=8.55349749326706`，`hidden_to_cpu_ms=0.17523393034934998`，`linear_projection_ms=3.5200342535972595`，`topk_ms=3.5200342535972595`。这些数字仍是 Python profiler skeleton 成本，只用于 ABI/数据流验证，不代表未来 optimized adapter latency。
 
+2026-07-07 已补 `topk-stub` vs `linear-stub` 3x3 remote compare，用同一 Qwen3-0.6B、同一 prompt、`--draft-source dflash-toy-ngram-or-repeat`、`--debug-hidden-to-draft-top-k 2`。第一次复用固定端口序列时第二个进程仍遇到 `EADDRINUSE`；随后改为每次远程动态探测空闲端口并把 stdout/stderr 写入同名 `.log`，6 次 JSON 均成功输出：
+
+- `profile_out/dflash_phase3_adapter_compare_topk-stub_r{1,2,3}_20260707_cmp2.json`
+- `profile_out/dflash_phase3_adapter_compare_linear-stub_r{1,2,3}_20260707_cmp2.json`
+
+结果概览：
+
+| adapter | runs | gate | output rows | draft ids | projection | adapter_total_ms mean/stdev | key timing |
+| --- | ---: | --- | ---: | --- | --- | ---: | --- |
+| `topk-stub` | 3 | all `gate_pass=true` | 2 | `[13440,21619]` | `logits_topk` | `124.903983 / 1.449532` | `logits_to_cpu_ms=8.816361±0.275745`, `topk_ms=116.005514±1.719655` |
+| `linear-stub` | 3 | all `gate_pass=true` | 3 | `[0,0,7]` | `deterministic_hidden_linear_stub` | `12.578132 / 0.081115` | `logits_to_cpu_ms=8.753903±0.075491`, `hidden_to_cpu_ms=0.191076±0.019228`, `linear_projection_ms=3.593331±0.057019` |
+
+ABI 结论：当前 `hidden_to_draft_stub` 已足够支撑下一步真实 draft model stub 的 profiler-only 接入：`interface_version`、`runtime_mutation=false`、`input_schema.hidden_states`、`input_schema.logits`、`input_schema.adapter`、`output_schema`、`output`、`timing_ms` 都稳定存在；`linear-stub` 额外有 `projection_metadata`，能表达 seed、candidate token set、hidden dim 和 candidate count。注意两条路径的 `rows` 语义目前不同：`topk-stub` 预览 verify logits rows，因此为 2；`linear-stub` 预览 target hidden rows，因此为 3。这不是 correctness failure，但真实 draft model stub 前最好把字段命名进一步显式化，例如增加 `input_schema.hidden_rows` / `input_schema.logit_rows` / `output.projected_rows`，避免后续读 JSON 时误解。
+
+Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 adapter latency。`topk-stub` 的 `topk_ms` 是对完整 vocab logits 做 Python sort，主要用于 baseline preview，成本约 116ms；`linear-stub` 的 `linear_projection_ms` 只投影 3x1024 到 8 个 candidate，成本约 3.59ms，且当前实现把 `topk_ms` 复用为 projection 排序耗时。下一步如果接真实 draft model stub，建议把 timing 拆成 `hidden_to_cpu_ms`、`draft_model_forward_ms`、`candidate_select_ms`、`adapter_total_ms`，并保留 `runtime_mutation=false` 作为 profiler-only 安全闸。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -475,6 +491,6 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 3. `--debug-hidden-to-draft-stub` 远程通过，确认 profiler 能把 target hidden metadata、输入/输出 schema、adapter timing 和 verify logits top-k preview 写入 `hidden_to_draft_stub`；
 4. `--hidden-to-draft-adapter linear-stub` 远程通过，确认 adapter selector、linear-stub output schema 和 `linear_projection_ms` 已进入 profiler JSON；
 5. deterministic hidden projection skeleton 远程通过，确认 `linear-stub` 可以从 hidden rows 投影到小 vocab candidate set，并记录 projection metadata / hidden copy timing / projection timing，且仍不参与 acceptance/runtime；
-6. 后续若继续 DFlash，应先比较 `topk-stub` 与 `linear-stub` 的 profiler JSON/latency稳定性，再考虑真实 draft model 或完整 diffusion checkpoint。
+6. `topk-stub` vs `linear-stub` 3x remote compare 已通过，确认 ABI 字段稳定、timing 字段足够继续 profiler-only 真实 draft model stub；后续应先显式化 row-count 字段和拆分 draft-model timing，再考虑完整 diffusion checkpoint。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。
