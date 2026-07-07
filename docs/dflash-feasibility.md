@@ -164,7 +164,7 @@ DFlash target verify 一次 forward 的 query 长度是 `1 + len(draft_tokens)`�
 
 已完成本文。
 
-### Phase 1：抽象 verify/commit，不改行为
+### Phase 1：抽象 verify/commit，不改行为（已完成）
 
 目标：
 
@@ -172,6 +172,39 @@ DFlash target verify 一次 forward 的 query 长度是 `1 + len(draft_tokens)`�
 - n-gram profiler 继续通过；
 - JSON event 增加 `draft_source="ngram"`；
 - 不引入 DFlash draft model。
+
+2026-07-07 已落地：
+
+- 新增 draft-source agnostic `verify_and_commit_block()`；
+- 保留 `_target_verify_and_commit()` 作为 n-gram 兼容 wrapper；
+- target verify event 增加 `draft_source` 字段，当前 n-gram 路径固定为 `"ngram"`；
+- 未改 scheduler / runtime 行为。
+
+验证：
+
+- 本地 `tools/test_ngram_speculative.py` 通过；
+- 本地 `tools/test_chunked_prefill.py` 通过；
+- 远程 Qwen3-0.6B 短 candidate-only smoke 通过：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34568 MASTER_PORT=34568 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma" \
+  --max-output-len 4 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 2 \
+  --max-commit-events 1 \
+  --max-model-len 512 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-seqs 1 \
+  --out-json profile_out/dflash_phase1_ngram_candidate_smoke_20260707.json
+```
+
+结果：`gate_pass=true`，`commit_events=1`，`accepted_count=2`，`acceptance_rate=1.0`，`commit_event.draft_source="ngram"`。
 
 验证：
 
@@ -231,12 +264,12 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_chunked_prefill.py
 
 ## 下一步建议
 
-下一步只做 Phase 1：
+下一步做 Phase 2：
 
-1. 把 `_target_verify_and_commit()` 包装为通用 `verify_and_commit_block()`；
-2. 保持 n-gram 行为完全不变；
-3. 增加最小事件字段 `draft_source`；
-4. 跑本地 n-gram/chunked tests；
-5. 远程跑一个短 candidate-only smoke。
+1. 新增 `--draft-source {ngram,dflash-toy}`；
+2. 实现最小 toy block draft model；
+3. 复用 `verify_and_commit_block()`；
+4. 只支持 `temperature=0.0`；
+5. 先跑本地 helper tests，再跑远程短 candidate-only smoke。
 
-这一步完成后，再决定是否进入 toy DFlash draft model。
+Phase 2 完成后，再决定是否进入 target hidden state extraction。

@@ -167,7 +167,20 @@ def _finish_if_needed(llm, seq, committed_tokens: list[int]) -> bool:
     return False
 
 
-def _target_verify_and_commit(llm, seq, draft_tokens: list[int], simulate_kv_upload_mb: float = 0.0) -> dict:
+def verify_and_commit_block(
+    llm,
+    seq,
+    draft_tokens: list[int],
+    *,
+    draft_source: str = "unknown",
+    simulate_kv_upload_mb: float = 0.0,
+) -> dict:
+    """Verify a speculative draft block with the target model and commit accepted tokens.
+
+    This is intentionally draft-source agnostic so n-gram, toy DFlash-style
+    block drafts, or a future real DFlash draft model can share the same target
+    verification and KV metadata path.
+    """
     import torch
     from tinyvllm.utils.context import reset_context, set_context
 
@@ -275,6 +288,7 @@ def _target_verify_and_commit(llm, seq, draft_tokens: list[int], simulate_kv_upl
         timing_ms["finish_check_ms"] = (time.perf_counter() - t0) * 1000.0
         timing_ms["verify_commit_total_ms"] = (time.perf_counter() - total_t0) * 1000.0
         return {
+            "draft_source": draft_source,
             "history_len": history_len,
             "draft_tokens": list(draft_tokens),
             "target_tokens": target_tokens,
@@ -292,6 +306,16 @@ def _target_verify_and_commit(llm, seq, draft_tokens: list[int], simulate_kv_upl
         raise
     finally:
         reset_context()
+
+
+def _target_verify_and_commit(llm, seq, draft_tokens: list[int], simulate_kv_upload_mb: float = 0.0) -> dict:
+    return verify_and_commit_block(
+        llm,
+        seq,
+        draft_tokens,
+        draft_source="ngram",
+        simulate_kv_upload_mb=simulate_kv_upload_mb,
+    )
 
 
 def _create_llm(args):
