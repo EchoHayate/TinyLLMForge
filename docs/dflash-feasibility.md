@@ -465,6 +465,16 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 
 远程同步后已用 `profile_out/dflash_phase3_adapter_abi_fields_smoke_20260707.json` 验证：`gate_pass=true`、`accepted_count=2`、`hidden_rows=3`、`logit_rows=2`、`projected_rows=3`、`input_schema.logits.shape=[2,151936]`、`output.projected_rows=3`，`timing_ms` 包含 `candidate_select_ms` 与 `draft_model_forward_ms`。实测 timing：`adapter_total_ms=12.19320297241211`、`logits_to_cpu_ms=8.414741605520248`、`hidden_to_cpu_ms=0.17217546701431274`、`linear_projection_ms=3.570154309272766`、`candidate_select_ms=3.570154309272766`、`draft_model_forward_ms=0.0`。
 
+2026-07-07 已新增 profiler-only `draft-model-stub` adapter：
+
+- CLI 新增 `--hidden-to-draft-adapter draft-model-stub`；
+- `hidden_to_draft_stub.adapter="target_hidden_draft_model_stub"`，`runtime_mutation=false`，`output_schema.projection="deterministic_draft_model_stub"`；
+- stub 从 target hidden rows 生成 deterministic candidate logits / candidate token ids，并写入 `output.candidate_token_ids`、`output.candidate_logits`、`draft_model_metadata`；
+- `timing_ms.draft_model_forward_ms` 被真实占用为 pseudo draft model forward 计时，`candidate_select_ms` 记录候选排序/选择阶段；
+- 仍然不把 stub 输出接入 draft proposal、target verify、acceptance 或 commit；远程 smoke 中 `commit_event.draft_tokens` 与 `accepted_tokens` 仍来自 `dflash-toy-ngram-or-repeat`。
+
+远程验证记录：第一次在 `CUDA_VISIBLE_DEVICES=7` 上失败于模型初始化 `assert auto_num_blocks > 0`，根因是 GPU7 当时显存占用约 69GiB/80GiB，不是 adapter 代码失败。改用空闲 GPU3 后通过：`profile_out/dflash_phase3_draft_model_stub_smoke_20260707_gpu3.json`，`gate_pass=true`、`accepted_count=2`、`adapter="target_hidden_draft_model_stub"`、`projection="deterministic_draft_model_stub"`、`hidden_rows=3`、`logit_rows=2`、`projected_rows=3`、`output.projected_rows=3`、`output.draft_token_ids=[7,7,7]`、第一行 candidate token ids `[7,1]`。metadata：`seed=23`、`candidate_token_ids=[0,1,2,3,4,5,6,7]`、`hidden_dim=1024`、`candidate_count=8`、`stub_version=1`。timing：`adapter_total_ms=12.383360415697098`、`logits_to_cpu_ms=8.444327861070633`、`hidden_to_cpu_ms=0.26154518127441406`、`draft_model_forward_ms=3.5831667482852936`、`candidate_select_ms=0.021237879991531372`、`topk_ms=3.6189667880535126`。
+
 风险：
 
 - 可能触发额外 KV write；

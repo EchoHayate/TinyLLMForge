@@ -92,7 +92,7 @@ def parse_args():
                    help="Profiler-only debug: capture target hidden shape/dtype/device during verify+commit.")
     p.add_argument("--debug-hidden-to-draft-stub", action="store_true", default=False,
                    help="Profiler-only debug: attach a target-hidden-to-top-k draft adapter stub preview to verify events.")
-    p.add_argument("--hidden-to-draft-adapter", type=str, default="topk-stub", choices=["topk-stub", "linear-stub"],
+    p.add_argument("--hidden-to-draft-adapter", type=str, default="topk-stub", choices=["topk-stub", "linear-stub", "draft-model-stub"],
                    help="Profiler-only hidden-to-draft adapter stub to report when --debug-hidden-to-draft-stub is set.")
     p.add_argument("--debug-hidden-to-draft-top-k", type=int, default=3,
                    help="Top-k token count for --debug-hidden-to-draft-stub previews.")
@@ -206,7 +206,7 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
     """
     total_t0 = time.perf_counter()
     top_k = max(1, int(top_k))
-    if adapter not in ("topk-stub", "linear-stub"):
+    if adapter not in ("topk-stub", "linear-stub", "draft-model-stub"):
         raise ValueError(f"unsupported hidden-to-draft adapter={adapter}")
     hidden_shape = [int(dim) for dim in hidden_states.shape]
     hidden_row_count = hidden_shape[0] if hidden_shape else 0
@@ -218,7 +218,7 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
     logits_to_cpu_ms = (time.perf_counter() - t0) * 1000.0
     hidden_rows = None
     hidden_to_cpu_ms = 0.0
-    if adapter == "linear-stub":
+    if adapter in ("linear-stub", "draft-model-stub"):
         t0 = time.perf_counter()
         if hasattr(hidden_states, "detach"):
             hidden_rows = hidden_states.detach().float().cpu().tolist()
@@ -230,6 +230,10 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
     preview = []
     t0 = time.perf_counter()
     projection_metadata = None
+    draft_model_metadata = None
+    candidate_token_ids_by_row = None
+    candidate_logits_by_row = None
+    draft_model_forward_ms = 0.0
     if adapter == "linear-stub":
         hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
         candidate_count = min(8, len(rows[0]) if rows else hidden_dim)
@@ -254,6 +258,44 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
                 "token_ids": [int(token_id) for token_id, _ in ranked],
                 "scores": [float(score) for _, score in ranked],
             })
+    elif adapter == "draft-model-stub":
+        hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
+        candidate_count = min(8, len(rows[0]) if rows else hidden_dim)
+        candidate_token_ids = list(range(max(0, candidate_count)))
+        draft_model_metadata = {
+            "seed": 23,
+            "candidate_token_ids": candidate_token_ids,
+            "hidden_dim": hidden_dim,
+            "candidate_count": candidate_count,
+            "stub_version": 1,
+        }
+        forward_t0 = time.perf_counter()
+        model_rows = []
+        for row_index, hidden_row in enumerate(hidden_rows or []):
+            row_logits = []
+            for candidate_index, token_id in enumerate(candidate_token_ids):
+                score = 0.0
+                for dim_index, value in enumerate(hidden_row):
+                    weight = (((dim_index + 2) * (candidate_index + 5) + 23) % 13 - 6) / 3.0
+                    score += float(value) * weight
+                row_logits.append((token_id, score))
+            model_rows.append(row_logits)
+        draft_model_forward_ms = (time.perf_counter() - forward_t0) * 1000.0
+        select_t0 = time.perf_counter()
+        candidate_token_ids_by_row = []
+        candidate_logits_by_row = []
+        for row_index, row_logits in enumerate(model_rows):
+            ranked = sorted(row_logits, key=lambda item: item[1], reverse=True)[:top_k]
+            token_ids = [int(token_id) for token_id, _ in ranked]
+            scores = [float(score) for _, score in ranked]
+            candidate_token_ids_by_row.append(token_ids)
+            candidate_logits_by_row.append(scores)
+            preview.append({
+                "row": int(row_index),
+                "token_ids": token_ids,
+                "scores": scores,
+            })
+        candidate_select_ms = (time.perf_counter() - select_t0) * 1000.0
     else:
         for row_index, row in enumerate(rows):
             ranked = sorted(enumerate(row), key=lambda item: item[1], reverse=True)[:top_k]
@@ -262,12 +304,17 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
                 "token_ids": [int(token_id) for token_id, _ in ranked],
                 "scores": [float(score) for _, score in ranked],
             })
+        candidate_select_ms = time.perf_counter() - t0
     topk_ms = (time.perf_counter() - t0) * 1000.0
+    if adapter != "draft-model-stub":
+        candidate_select_ms = topk_ms
     linear_projection_ms = 0.0
     adapter_name = "target_hidden_topk_stub"
     if adapter == "linear-stub":
         linear_projection_ms = topk_ms
         adapter_name = "target_hidden_linear_stub"
+    elif adapter == "draft-model-stub":
+        adapter_name = "target_hidden_draft_model_stub"
     first_tokens = [item["token_ids"][0] for item in preview if item["token_ids"]]
     first_scores = [item["scores"][0] for item in preview if item["scores"]]
     row_count = len(preview)
@@ -279,8 +326,22 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
         "dtype": str(hidden_states.dtype),
         "device": str(hidden_states.device),
     }
-    candidate_select_ms = topk_ms
-    draft_model_forward_ms = 0.0
+    projection_name = "logits_topk"
+    if adapter == "linear-stub":
+        projection_name = "deterministic_hidden_linear_stub"
+    elif adapter == "draft-model-stub":
+        projection_name = "deterministic_draft_model_stub"
+    output = {
+        "draft_token_ids": first_tokens,
+        "draft_scores": first_scores,
+        "num_rows": row_count,
+        "projected_rows": projected_row_count,
+        "source": adapter_name,
+    }
+    if candidate_token_ids_by_row is not None:
+        output["candidate_token_ids"] = candidate_token_ids_by_row
+    if candidate_logits_by_row is not None:
+        output["candidate_logits"] = candidate_logits_by_row
     return {
         "interface_version": 1,
         "adapter": adapter_name,
@@ -304,24 +365,21 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
             "num_rows": "int",
             "projected_rows": "int",
             "source": "profiler_only_hidden_to_draft_adapter",
-            "projection": "deterministic_hidden_linear_stub" if adapter == "linear-stub" else "logits_topk",
+            "projection": projection_name,
+            **({"candidate_token_ids": "list[list[int]]", "candidate_logits": "list[list[float]]"} if adapter == "draft-model-stub" else {}),
         },
-        "output": {
-            "draft_token_ids": first_tokens,
-            "draft_scores": first_scores,
-            "num_rows": row_count,
-            "projected_rows": projected_row_count,
-            "source": adapter_name,
-        },
+        "output": output,
         "timing_ms": {
             "adapter_total_ms": (time.perf_counter() - total_t0) * 1000.0,
             "candidate_select_ms": candidate_select_ms,
             "draft_model_forward_ms": draft_model_forward_ms,
             "logits_to_cpu_ms": logits_to_cpu_ms,
             **({"hidden_to_cpu_ms": hidden_to_cpu_ms, "linear_projection_ms": linear_projection_ms} if adapter == "linear-stub" else {}),
+            **({"hidden_to_cpu_ms": hidden_to_cpu_ms} if adapter == "draft-model-stub" else {}),
             "topk_ms": topk_ms,
         },
         **({"projection_metadata": projection_metadata} if projection_metadata is not None else {}),
+        **({"draft_model_metadata": draft_model_metadata} if draft_model_metadata is not None else {}),
         "shape": hidden_schema["shape"],
         "dtype": hidden_schema["dtype"],
         "device": hidden_schema["device"],
