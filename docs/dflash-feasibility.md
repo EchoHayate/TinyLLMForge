@@ -456,6 +456,15 @@ ABI 结论：当前 `hidden_to_draft_stub` 已足够支撑下一步真实 draft 
 
 Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 adapter latency。`topk-stub` 的 `topk_ms` 是对完整 vocab logits 做 Python sort，主要用于 baseline preview，成本约 116ms；`linear-stub` 的 `linear_projection_ms` 只投影 3x1024 到 8 个 candidate，成本约 3.59ms，且当前实现把 `topk_ms` 复用为 projection 排序耗时。下一步如果接真实 draft model stub，建议把 timing 拆成 `hidden_to_cpu_ms`、`draft_model_forward_ms`、`candidate_select_ms`、`adapter_total_ms`，并保留 `runtime_mutation=false` 作为 profiler-only 安全闸。
 
+2026-07-07 已继续显式化 adapter ABI/timing 字段：
+
+- `input_schema` 新增 `hidden_rows`、`logit_rows`、`projected_rows`，并修正 `input_schema.logits.shape` 始终表达真实 logits preview shape，不再被 `linear-stub` 的 hidden projected rows 覆盖；
+- `output_schema` / `output` 新增 `projected_rows`，保留旧的 `rows` / `num_rows` 兼容现有分析脚本；
+- `timing_ms` 新增 `draft_model_forward_ms` 与 `candidate_select_ms`，当前 profiler stub 中 `draft_model_forward_ms=0.0`；`candidate_select_ms` 先等价于当前候选选择/排序阶段耗时，后续真实 draft model stub 可把模型 forward 与候选选择分开记录；
+- 本地测试覆盖了 `linear-stub` 在 hidden rows 与 logits rows 不一致时的 schema：`hidden_rows=3`、`logit_rows=2`、`projected_rows=3`、`input_schema.logits.shape=[2,3]`。
+
+远程同步后已用 `profile_out/dflash_phase3_adapter_abi_fields_smoke_20260707.json` 验证：`gate_pass=true`、`accepted_count=2`、`hidden_rows=3`、`logit_rows=2`、`projected_rows=3`、`input_schema.logits.shape=[2,151936]`、`output.projected_rows=3`，`timing_ms` 包含 `candidate_select_ms` 与 `draft_model_forward_ms`。实测 timing：`adapter_total_ms=12.19320297241211`、`logits_to_cpu_ms=8.414741605520248`、`hidden_to_cpu_ms=0.17217546701431274`、`linear_projection_ms=3.570154309272766`、`candidate_select_ms=3.570154309272766`、`draft_model_forward_ms=0.0`。
+
 风险：
 
 - 可能触发额外 KV write；

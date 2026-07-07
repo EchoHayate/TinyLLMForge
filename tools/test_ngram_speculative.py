@@ -287,10 +287,14 @@ def test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing():
     }
     assert summary["input_schema"]["adapter"] == "topk-stub"
     assert summary["input_schema"]["top_k"] == 1
+    assert summary["input_schema"]["hidden_rows"] == 2
+    assert summary["input_schema"]["logit_rows"] == 2
+    assert summary["input_schema"]["projected_rows"] == 2
     assert summary["output_schema"] == {
         "draft_token_ids": "list[int]",
         "draft_scores": "list[float]",
         "num_rows": "int",
+        "projected_rows": "int",
         "source": "profiler_only_hidden_to_draft_adapter",
         "projection": "logits_topk",
     }
@@ -298,9 +302,16 @@ def test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing():
         "draft_token_ids": [1, 0],
         "draft_scores": [1.0, 2.0],
         "num_rows": 2,
+        "projected_rows": 2,
         "source": "target_hidden_topk_stub",
     }
-    assert set(summary["timing_ms"]) == {"adapter_total_ms", "logits_to_cpu_ms", "topk_ms"}
+    assert set(summary["timing_ms"]) == {
+        "adapter_total_ms",
+        "candidate_select_ms",
+        "draft_model_forward_ms",
+        "logits_to_cpu_ms",
+        "topk_ms",
+    }
     assert all(isinstance(value, float) and value >= 0.0 for value in summary["timing_ms"].values())
 
 
@@ -329,6 +340,8 @@ def test_summarize_hidden_to_draft_stub_supports_linear_stub_interface():
     assert summary["output_schema"]["projection"] == "deterministic_hidden_linear_stub"
     assert set(summary["timing_ms"]) == {
         "adapter_total_ms",
+        "candidate_select_ms",
+        "draft_model_forward_ms",
         "hidden_to_cpu_ms",
         "logits_to_cpu_ms",
         "linear_projection_ms",
@@ -398,6 +411,11 @@ def test_summarize_hidden_to_draft_stub_linear_stub_counts_hidden_rows_not_logit
 
     assert summary["rows"] == 3
     assert summary["output"]["num_rows"] == 3
+    assert summary["output"]["projected_rows"] == 3
+    assert summary["input_schema"]["hidden_rows"] == 3
+    assert summary["input_schema"]["logit_rows"] == 2
+    assert summary["input_schema"]["projected_rows"] == 3
+    assert summary["input_schema"]["logits"]["shape"] == [2, 3]
     assert len(summary["preview"]) == 3
     assert len(summary["output"]["draft_token_ids"]) == 3
 
