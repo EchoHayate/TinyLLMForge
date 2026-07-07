@@ -318,6 +318,31 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 结果：`gate_pass=true`，`commit_events=1`，`accepted_count=2`，`acceptance_rate=1.0`，`target_hidden_debug.shape=[3, 1024]`，`target_hidden_debug.dtype="torch.bfloat16"`，`target_hidden_debug.device="cuda:0"`。这只在 profiler verify path 中调用 `run_model(..., return_hidden=True)`，不修改 `LLMEngine.step()` 或核心 runtime。
 
+2026-07-07 hidden-to-draft adapter stub 已落地并远程验证：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34572 MASTER_PORT=34572 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --draft-source dflash-toy-ngram-or-repeat \
+  --debug-hidden-to-draft-stub \
+  --debug-hidden-to-draft-top-k 2 \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma" \
+  --max-output-len 4 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 2 \
+  --max-commit-events 1 \
+  --max-model-len 512 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-seqs 1 \
+  --out-json profile_out/dflash_phase3_hidden_to_draft_stub_smoke_20260707.json
+```
+
+结果：`gate_pass=true`，`commit_events=1`，`accepted_count=2`，`acceptance_rate=1.0`，`hidden_to_draft_stub.adapter="target_hidden_topk_stub"`，`hidden_to_draft_stub.shape=[3, 1024]`，`hidden_to_draft_stub.dtype="torch.bfloat16"`，`hidden_to_draft_stub.device="cuda:0"`，`hidden_to_draft_stub.top_k=2`，`hidden_to_draft_stub.rows=2`。stub 只记录 target hidden metadata 和 verify logits top-k preview，例如 row 0 top tokens `[13440, 8287]`、row 1 top tokens `[21619, 13440]`；它不采样、不替换 draft tokens、不改变 acceptance rule，也不修改 runtime。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -346,10 +371,11 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 ## 下一步建议
 
-当前 Phase 2 / profiler-only hidden extraction 已完成最小可验证闭环：
+当前 Phase 2 / Phase 3 profiler-only 路径已完成最小可验证闭环：
 
 1. `--draft-source dflash-toy-ngram-or-repeat` 远程通过，确认有 accepted tokens 且 `draft_source` 字段保留 toy source；
 2. `--debug-target-hidden` 远程通过，确认 `target_hidden_debug` 记录 shape/dtype/device；
-3. 后续若继续 DFlash，应先做真实 draft model stub / hidden-to-draft adapter 的 profiler-only 实验，再考虑完整 diffusion checkpoint。
+3. `--debug-hidden-to-draft-stub` 远程通过，确认 profiler 能把 target hidden metadata 和 verify logits top-k preview 写入 `hidden_to_draft_stub`；
+4. 后续若继续 DFlash，应先做真实 draft model stub / hidden-to-draft adapter 的 profiler-only 实验，再考虑完整 diffusion checkpoint。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。

@@ -35,6 +35,7 @@ count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
 propose_draft = profile_ngram.propose_draft
+summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
 
 
 def test_propose_ngram_draft_uses_latest_matching_suffix():
@@ -233,6 +234,35 @@ def test_propose_draft_dflash_toy_ngram_or_repeat_falls_back_to_repeat():
     assert draft.metadata["selected_strategy"] == "repeat_recent_tokens"
 
 
+def test_summarize_hidden_to_draft_stub_returns_json_friendly_topk_preview():
+    class FakeTensor:
+        shape = (3, 1024)
+        dtype = "torch.bfloat16"
+        device = "cuda:0"
+
+    logits = [
+        [0.1, 2.0, 1.0, 0.0],
+        [3.0, 0.5, 0.0, 2.0],
+        [0.0, 0.1, 0.2, 0.3],
+    ]
+
+    summary = summarize_hidden_to_draft_stub(FakeTensor(), logits, top_k=2)
+
+    assert summary == {
+        "adapter": "target_hidden_topk_stub",
+        "shape": [3, 1024],
+        "dtype": "torch.bfloat16",
+        "device": "cuda:0",
+        "top_k": 2,
+        "rows": 3,
+        "preview": [
+            {"row": 0, "token_ids": [1, 2], "scores": [2.0, 1.0]},
+            {"row": 1, "token_ids": [0, 3], "scores": [3.0, 2.0]},
+            {"row": 2, "token_ids": [3, 2], "scores": [0.3, 0.2]},
+        ],
+    }
+
+
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
     test_propose_ngram_draft_respects_max_draft_tokens()
@@ -248,6 +278,7 @@ def main():
     test_propose_draft_dflash_toy_waits_for_context()
     test_propose_draft_dflash_toy_ngram_or_repeat_prefers_ngram()
     test_propose_draft_dflash_toy_ngram_or_repeat_falls_back_to_repeat()
+    test_summarize_hidden_to_draft_stub_returns_json_friendly_topk_preview()
     print("ngram speculative tests passed")
 
 

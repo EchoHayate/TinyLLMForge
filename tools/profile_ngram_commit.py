@@ -90,6 +90,10 @@ def parse_args():
                    help="Allow speculative plumbing smokes to pass even if no draft tokens are accepted.")
     p.add_argument("--debug-target-hidden", action="store_true", default=False,
                    help="Profiler-only debug: capture target hidden shape/dtype/device during verify+commit.")
+    p.add_argument("--debug-hidden-to-draft-stub", action="store_true", default=False,
+                   help="Profiler-only debug: attach a target-hidden-to-top-k draft adapter stub preview to verify events.")
+    p.add_argument("--debug-hidden-to-draft-top-k", type=int, default=3,
+                   help="Top-k token count for --debug-hidden-to-draft-stub previews.")
     p.add_argument("--mode", type=str, default="paired",
                    choices=["paired", "baseline-only", "candidate-only"],
                    help="paired compares baseline+candidate in one engine; baseline-only/candidate-only are for separated timing.")
@@ -190,6 +194,37 @@ def propose_draft(history: list[int], args) -> DraftProposal:
     raise ValueError(f"unsupported draft_source={args.draft_source}")
 
 
+def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3) -> dict:
+    """Return a JSON-friendly hidden-to-draft adapter stub preview.
+
+    This does not sample or alter runtime behavior. It only records what a
+    future hidden-to-draft adapter could inspect: target hidden metadata plus a
+    top-k logits preview for each verify row.
+    """
+    top_k = max(1, int(top_k))
+    if hasattr(logits, "detach"):
+        rows = logits.detach().float().cpu().tolist()
+    else:
+        rows = [[float(value) for value in row] for row in logits]
+    preview = []
+    for row_index, row in enumerate(rows):
+        ranked = sorted(enumerate(row), key=lambda item: item[1], reverse=True)[:top_k]
+        preview.append({
+            "row": int(row_index),
+            "token_ids": [int(token_id) for token_id, _ in ranked],
+            "scores": [float(score) for _, score in ranked],
+        })
+    return {
+        "adapter": "target_hidden_topk_stub",
+        "shape": [int(dim) for dim in hidden_states.shape],
+        "dtype": str(hidden_states.dtype),
+        "device": str(hidden_states.device),
+        "top_k": top_k,
+        "rows": len(rows),
+        "preview": preview,
+    }
+
+
 def _simulate_kv_upload(llm, mb: float) -> float:
     if mb <= 0:
         return 0.0
@@ -240,6 +275,8 @@ def verify_and_commit_block(
     draft_source: str = "unknown",
     simulate_kv_upload_mb: float = 0.0,
     debug_target_hidden: bool = False,
+    debug_hidden_to_draft_stub: bool = False,
+    debug_hidden_to_draft_top_k: int = 3,
 ) -> dict:
     """Verify a speculative draft block with the target model and commit accepted tokens.
 
@@ -323,9 +360,10 @@ def verify_and_commit_block(
 
         t0 = time.perf_counter()
         hidden_debug = None
+        hidden_to_draft_stub = None
         if getattr(llm.model_runner, "kv_offload", None) is not None:
             llm.model_runner._kv_offload_before_forward()
-        if debug_target_hidden:
+        if debug_target_hidden or debug_hidden_to_draft_stub:
             logits, hidden_states = llm.model_runner.run_model(
                 input_ids, positions, is_prefill=True, return_hidden=True)
             hidden_debug = {
@@ -333,6 +371,9 @@ def verify_and_commit_block(
                 "dtype": str(hidden_states.dtype),
                 "device": str(hidden_states.device),
             }
+            if debug_hidden_to_draft_stub:
+                hidden_to_draft_stub = summarize_hidden_to_draft_stub(
+                    hidden_states, logits, debug_hidden_to_draft_top_k)
         else:
             logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
         cuda_sync_if_available()
@@ -377,6 +418,7 @@ def verify_and_commit_block(
             "finished": finished,
             "timing_ms": timing_ms,
             "target_hidden_debug": hidden_debug,
+            "hidden_to_draft_stub": hidden_to_draft_stub,
         }
     except Exception:
         block_manager.release_reserved_blocks(reserved_blocks)
@@ -1023,6 +1065,8 @@ def run_paired_profile(args) -> dict:
                 draft_source=draft.source,
                 simulate_kv_upload_mb=args.simulate_kv_upload_mb,
                 debug_target_hidden=args.debug_target_hidden,
+                debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
+                debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
             )
             event["draft_metadata"] = draft.metadata
             event_record = {
@@ -1276,6 +1320,8 @@ def run_candidate_only_profile(args) -> dict:
                 draft_source=draft.source,
                 simulate_kv_upload_mb=args.simulate_kv_upload_mb,
                 debug_target_hidden=args.debug_target_hidden,
+                debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
+                debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
             )
             event["draft_metadata"] = draft.metadata
             event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}
