@@ -78,7 +78,7 @@ def parse_args():
                    help="Simulate CPU->GPU KV page upload cost per decode/verify target forward by copying this many MiB.")
     p.add_argument("--temperature", type=float, default=0.0,
                    help="S3 commit smoke currently requires greedy decoding, so this must be 0.0.")
-    p.add_argument("--draft-source", type=str, default="ngram", choices=["ngram", "dflash-toy"],
+    p.add_argument("--draft-source", type=str, default="ngram", choices=["ngram", "dflash-toy", "dflash-toy-ngram-or-repeat"],
                    help="Draft source for candidate-only/paired speculative verify+commit experiments.")
     p.add_argument("--ngram-size", type=int, default=3)
     p.add_argument("--dflash-toy-context-tokens", type=int, default=1,
@@ -88,6 +88,8 @@ def parse_args():
                    help="Maximum accepted commit events per candidate. Use 0 for unlimited S4 online benchmark.")
     p.add_argument("--allow-zero-accept", action="store_true", default=False,
                    help="Allow speculative plumbing smokes to pass even if no draft tokens are accepted.")
+    p.add_argument("--debug-target-hidden", action="store_true", default=False,
+                   help="Profiler-only debug: capture target hidden shape/dtype/device during verify+commit.")
     p.add_argument("--mode", type=str, default="paired",
                    choices=["paired", "baseline-only", "candidate-only"],
                    help="paired compares baseline+candidate in one engine; baseline-only/candidate-only are for separated timing.")
@@ -150,12 +152,25 @@ def propose_draft(history: list[int], args) -> DraftProposal:
                 "ngram_size": draft.ngram_size,
             },
         )
-    if args.draft_source == "dflash-toy":
+    if args.draft_source == "dflash-toy-ngram-or-repeat":
+        draft = propose_ngram_draft(history, args.ngram_size, args.max_draft_tokens)
+        if draft.tokens:
+            return DraftProposal(
+                tokens=list(draft.tokens),
+                source="dflash-toy-ngram-or-repeat",
+                metadata={
+                    "toy_strategy": "ngram_or_repeat",
+                    "selected_strategy": "ngram",
+                    "match_start": draft.match_start,
+                    "ngram_size": draft.ngram_size,
+                },
+            )
+    if args.draft_source in ("dflash-toy", "dflash-toy-ngram-or-repeat"):
         context_tokens = max(1, int(args.dflash_toy_context_tokens))
         if args.max_draft_tokens <= 0 or len(history) < context_tokens:
             return DraftProposal(
                 tokens=[],
-                source="dflash-toy",
+                source=args.draft_source,
                 metadata={"reason": "insufficient_history", "context_tokens": context_tokens},
             )
         window = list(history[-max(1, min(len(history), args.max_draft_tokens)):])
@@ -164,9 +179,10 @@ def propose_draft(history: list[int], args) -> DraftProposal:
             tokens.extend(window)
         return DraftProposal(
             tokens=tokens[:args.max_draft_tokens],
-            source="dflash-toy",
+            source=args.draft_source,
             metadata={
-                "toy_strategy": "repeat_recent_tokens",
+                "toy_strategy": "repeat_recent_tokens" if args.draft_source == "dflash-toy" else "ngram_or_repeat",
+                "selected_strategy": "repeat_recent_tokens",
                 "context_tokens": context_tokens,
                 "window_tokens": len(window),
             },
@@ -223,6 +239,7 @@ def verify_and_commit_block(
     *,
     draft_source: str = "unknown",
     simulate_kv_upload_mb: float = 0.0,
+    debug_target_hidden: bool = False,
 ) -> dict:
     """Verify a speculative draft block with the target model and commit accepted tokens.
 
@@ -305,9 +322,19 @@ def verify_and_commit_block(
         timing_ms["simulated_kv_upload_ms"] = _simulate_kv_upload(llm, simulate_kv_upload_mb)
 
         t0 = time.perf_counter()
+        hidden_debug = None
         if getattr(llm.model_runner, "kv_offload", None) is not None:
             llm.model_runner._kv_offload_before_forward()
-        logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
+        if debug_target_hidden:
+            logits, hidden_states = llm.model_runner.run_model(
+                input_ids, positions, is_prefill=True, return_hidden=True)
+            hidden_debug = {
+                "shape": [int(dim) for dim in hidden_states.shape],
+                "dtype": str(hidden_states.dtype),
+                "device": str(hidden_states.device),
+            }
+        else:
+            logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
         cuda_sync_if_available()
         if getattr(llm.model_runner, "kv_offload", None) is not None:
             llm.model_runner.kv_offload.mark_dirty(dirty_blocks)
@@ -349,6 +376,7 @@ def verify_and_commit_block(
             "last_token_after": int(seq.last_token),
             "finished": finished,
             "timing_ms": timing_ms,
+            "target_hidden_debug": hidden_debug,
         }
     except Exception:
         block_manager.release_reserved_blocks(reserved_blocks)
@@ -994,6 +1022,7 @@ def run_paired_profile(args) -> dict:
                 draft.tokens,
                 draft_source=draft.source,
                 simulate_kv_upload_mb=args.simulate_kv_upload_mb,
+                debug_target_hidden=args.debug_target_hidden,
             )
             event["draft_metadata"] = draft.metadata
             event_record = {
@@ -1246,6 +1275,7 @@ def run_candidate_only_profile(args) -> dict:
                 draft.tokens,
                 draft_source=draft.source,
                 simulate_kv_upload_mb=args.simulate_kv_upload_mb,
+                debug_target_hidden=args.debug_target_hidden,
             )
             event["draft_metadata"] = draft.metadata
             event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}

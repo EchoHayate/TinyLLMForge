@@ -203,6 +203,36 @@ def test_propose_draft_dflash_toy_waits_for_context():
     assert draft.metadata["reason"] == "insufficient_history"
 
 
+def test_propose_draft_dflash_toy_ngram_or_repeat_prefers_ngram():
+    class Args:
+        draft_source = "dflash-toy-ngram-or-repeat"
+        ngram_size = 2
+        max_draft_tokens = 2
+        dflash_toy_context_tokens = 1
+
+    draft = propose_draft([1, 2, 3, 1, 2, 4, 1, 2], Args())
+
+    assert draft.source == "dflash-toy-ngram-or-repeat"
+    assert draft.tokens == [4, 1]
+    assert draft.metadata["toy_strategy"] == "ngram_or_repeat"
+    assert draft.metadata["selected_strategy"] == "ngram"
+
+
+def test_propose_draft_dflash_toy_ngram_or_repeat_falls_back_to_repeat():
+    class Args:
+        draft_source = "dflash-toy-ngram-or-repeat"
+        ngram_size = 3
+        max_draft_tokens = 3
+        dflash_toy_context_tokens = 1
+
+    draft = propose_draft([5, 6], Args())
+
+    assert draft.source == "dflash-toy-ngram-or-repeat"
+    assert draft.tokens == [5, 6, 5]
+    assert draft.metadata["toy_strategy"] == "ngram_or_repeat"
+    assert draft.metadata["selected_strategy"] == "repeat_recent_tokens"
+
+
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
     test_propose_ngram_draft_respects_max_draft_tokens()
@@ -216,6 +246,8 @@ def main():
     test_propose_draft_dispatches_ngram_source()
     test_propose_draft_dflash_toy_repeats_recent_window()
     test_propose_draft_dflash_toy_waits_for_context()
+    test_propose_draft_dflash_toy_ngram_or_repeat_prefers_ngram()
+    test_propose_draft_dflash_toy_ngram_or_repeat_falls_back_to_repeat()
     print("ngram speculative tests passed")
 
 
