@@ -475,6 +475,20 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 
 远程验证记录：第一次在 `CUDA_VISIBLE_DEVICES=7` 上失败于模型初始化 `assert auto_num_blocks > 0`，根因是 GPU7 当时显存占用约 69GiB/80GiB，不是 adapter 代码失败。改用空闲 GPU3 后通过：`profile_out/dflash_phase3_draft_model_stub_smoke_20260707_gpu3.json`，`gate_pass=true`、`accepted_count=2`、`adapter="target_hidden_draft_model_stub"`、`projection="deterministic_draft_model_stub"`、`hidden_rows=3`、`logit_rows=2`、`projected_rows=3`、`output.projected_rows=3`、`output.draft_token_ids=[7,7,7]`、第一行 candidate token ids `[7,1]`。metadata：`seed=23`、`candidate_token_ids=[0,1,2,3,4,5,6,7]`、`hidden_dim=1024`、`candidate_count=8`、`stub_version=1`。timing：`adapter_total_ms=12.383360415697098`、`logits_to_cpu_ms=8.444327861070633`、`hidden_to_cpu_ms=0.26154518127441406`、`draft_model_forward_ms=3.5831667482852936`、`candidate_select_ms=0.021237879991531372`、`topk_ms=3.6189667880535126`。
 
+2026-07-07 已补 3-way adapter compare（GPU4，Qwen3-0.6B，同一 prompt，3 runs/adapter）：
+
+- 输出：`profile_out/dflash_phase3_adapter_3way_compare_{topk-stub,linear-stub,draft-model-stub}_r{1,2,3}_20260707_cmp3.json`；
+- 9 次均 `gate_pass=true`、`accepted_count=2`，commit 的 `draft_tokens` / `accepted_tokens` 均为 `[13440,21619]`，说明三个 profiler stub 都未改变 acceptance/runtime；
+- `draft-model-stub` 的 `candidate_token_ids`、`candidate_logits`、`draft_token_ids`、`draft_model_metadata` 三次完全稳定：`draft_token_ids=[7,7,7]`、每行 candidate ids 均 `[7,1]`，metadata 为 `seed=23`、candidate set `[0,1,2,3,4,5,6,7]`、`hidden_dim=1024`、`candidate_count=8`、`stub_version=1`。
+
+| adapter | stable output | adapter_total_ms mean/stdev | key timing mean/stdev |
+| --- | --- | ---: | --- |
+| `topk-stub` | `draft_token_ids=[13440,21619]` | `131.355740 / 6.488973` | `candidate_select_ms=122.164890±6.773997`, `logits_to_cpu_ms=9.093589±0.297199` |
+| `linear-stub` | `draft_token_ids=[0,0,7]` | `12.964208 / 0.502438` | `candidate_select_ms=3.640130±0.087377`, `hidden_to_cpu_ms=0.357489±0.036887` |
+| `draft-model-stub` | `draft_token_ids=[7,7,7]`, candidate ids/logits stable | `13.104054 / 0.257300` | `draft_model_forward_ms=3.721040±0.024405`, `candidate_select_ms=0.021578±0.001956`, `hidden_to_cpu_ms=0.349854±0.030066` |
+
+结论：当前 `draft-model-stub` 的 ABI 和输出稳定性足够继续向“真实 draft model 接口”抽象，但还不应接入 runtime。下一步若继续，应把 deterministic pseudo forward 的输入/输出边界抽成独立函数或类，例如 `run_draft_model_stub(hidden_rows, candidate_token_ids, top_k) -> {candidate_logits, candidate_token_ids, timing}`，再替换为真实 draft model forward 时只改该边界；同时保持 profiler-only `runtime_mutation=false` gate。
+
 风险：
 
 - 可能触发额外 KV write；
