@@ -400,6 +400,46 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 
 结果：`gate_pass=true`，`accepted_count=2`，`hidden_to_draft_adapter="linear-stub"`，`hidden_to_draft_stub.adapter="target_hidden_linear_stub"`，`input_schema.adapter="linear-stub"`，`output_schema.projection="deterministic_placeholder"`，`output.source="target_hidden_linear_stub"`，`output.draft_token_ids=[13440, 21619]`。新增/确认 timing：`adapter_total_ms=126.10501796007156`，`logits_to_cpu_ms=8.051183074712753`，`linear_projection_ms=0.0002868473529815674`，`topk_ms=117.97097697854042`。当前 `linear_projection_ms` 是 no-op placeholder 边界计时，下一步可替换成真实 deterministic linear projection skeleton。
 
+2026-07-07 `linear-stub` 已从 no-op placeholder 替换为 deterministic hidden projection skeleton：
+
+- 仍然只在 profiler-only `hidden_to_draft_stub` 中记录，不参与 draft proposal、不替换 accepted tokens、不改变 acceptance/commit 行为，也不接入 `LLMEngine.step()`；
+- 先把 target hidden rows 搬到 CPU，再用固定 seed 公式对一个小 vocab candidate set 做 deterministic pseudo linear projection；
+- candidate set 当前取前 8 个 token id，即 `[0,1,2,3,4,5,6,7]`；伪权重公式为 `(((dim_index + 1) * (candidate_index + 3) + 17) % 11 - 5) / 4.0`；
+- 输出 schema 从 `deterministic_placeholder` 改为 `deterministic_hidden_linear_stub`，并新增 `projection_metadata`、`hidden_to_cpu_ms`、`linear_projection_ms`；
+- 修复了 hidden rows 与 logits rows 不一致时 `rows` / `output.num_rows` 仍按 logits rows 计数的问题；现在 `linear-stub` 以 hidden projection preview 行数为准。
+
+远程第一次用 `TINYVLLM_DIST_PORT=34676 MASTER_PORT=34676` 运行 Qwen3 smoke 失败，报：
+
+```text
+RuntimeError: The server socket has failed to listen on any local network address. useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+```
+
+这仍是远程端口占用，不是 deterministic projection 代码失败；换到 `35676` 后通过：
+
+```bash
+CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=35676 MASTER_PORT=35676 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
+/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_ngram_commit.py \
+  --mode candidate-only \
+  --draft-source dflash-toy-ngram-or-repeat \
+  --debug-hidden-to-draft-stub \
+  --hidden-to-draft-adapter linear-stub \
+  --debug-hidden-to-draft-top-k 2 \
+  --model /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B \
+  --prompt "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma" \
+  --max-output-len 4 \
+  --temperature 0.0 \
+  --ngram-size 3 \
+  --max-draft-tokens 2 \
+  --max-commit-events 1 \
+  --max-model-len 512 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-seqs 1 \
+  --out-json profile_out/dflash_phase3_linear_projection_stub_smoke_20260707_r2.json
+```
+
+结果：`gate_pass=true`，`accepted_count=2`，`hidden_to_draft_stub.adapter="target_hidden_linear_stub"`，`output_schema.projection="deterministic_hidden_linear_stub"`，`projection_metadata.seed=17`，`projection_metadata.candidate_token_ids=[0,1,2,3,4,5,6,7]`，`projection_metadata.hidden_dim=1024`，`projection_metadata.candidate_count=8`，`output.draft_token_ids=[0,0,7]`，`output.num_rows=3`，`rows=3`，`input_schema.hidden_states.shape=[3,1024]`，`input_schema.logits.shape=[3,151936]`。timing：`adapter_total_ms=12.286126613616943`，`logits_to_cpu_ms=8.55349749326706`，`hidden_to_cpu_ms=0.17523393034934998`，`linear_projection_ms=3.5200342535972595`，`topk_ms=3.5200342535972595`。这些数字仍是 Python profiler skeleton 成本，只用于 ABI/数据流验证，不代表未来 optimized adapter latency。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -434,6 +474,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
 2. `--debug-target-hidden` 远程通过，确认 `target_hidden_debug` 记录 shape/dtype/device；
 3. `--debug-hidden-to-draft-stub` 远程通过，确认 profiler 能把 target hidden metadata、输入/输出 schema、adapter timing 和 verify logits top-k preview 写入 `hidden_to_draft_stub`；
 4. `--hidden-to-draft-adapter linear-stub` 远程通过，确认 adapter selector、linear-stub output schema 和 `linear_projection_ms` 已进入 profiler JSON；
-5. 后续若继续 DFlash，应把 `linear-stub` 的 no-op projection 替换成 deterministic hidden projection skeleton，再考虑真实 draft model 或完整 diffusion checkpoint。
+5. deterministic hidden projection skeleton 远程通过，确认 `linear-stub` 可以从 hidden rows 投影到小 vocab candidate set，并记录 projection metadata / hidden copy timing / projection timing，且仍不参与 acceptance/runtime；
+6. 后续若继续 DFlash，应先比较 `topk-stub` 与 `linear-stub` 的 profiler JSON/latency稳定性，再考虑真实 draft model 或完整 diffusion checkpoint。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。

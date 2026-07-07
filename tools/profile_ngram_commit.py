@@ -214,25 +214,61 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
     else:
         rows = [[float(value) for value in row] for row in logits]
     logits_to_cpu_ms = (time.perf_counter() - t0) * 1000.0
+    hidden_rows = None
+    hidden_to_cpu_ms = 0.0
+    if adapter == "linear-stub":
+        t0 = time.perf_counter()
+        if hasattr(hidden_states, "detach"):
+            hidden_rows = hidden_states.detach().float().cpu().tolist()
+        elif hasattr(hidden_states, "values"):
+            hidden_rows = [[float(value) for value in row] for row in hidden_states.values]
+        else:
+            hidden_rows = [[float(value) for value in row] for row in hidden_states]
+        hidden_to_cpu_ms = (time.perf_counter() - t0) * 1000.0
     preview = []
     t0 = time.perf_counter()
-    for row_index, row in enumerate(rows):
-        ranked = sorted(enumerate(row), key=lambda item: item[1], reverse=True)[:top_k]
-        preview.append({
-            "row": int(row_index),
-            "token_ids": [int(token_id) for token_id, _ in ranked],
-            "scores": [float(score) for _, score in ranked],
-        })
+    projection_metadata = None
+    if adapter == "linear-stub":
+        hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
+        candidate_count = min(8, len(rows[0]) if rows else hidden_dim)
+        candidate_token_ids = list(range(max(0, candidate_count)))
+        projection_metadata = {
+            "seed": 17,
+            "candidate_token_ids": candidate_token_ids,
+            "hidden_dim": hidden_dim,
+            "candidate_count": candidate_count,
+        }
+        for row_index, hidden_row in enumerate(hidden_rows or []):
+            scores = []
+            for candidate_index, token_id in enumerate(candidate_token_ids):
+                score = 0.0
+                for dim_index, value in enumerate(hidden_row):
+                    weight = (((dim_index + 1) * (candidate_index + 3) + 17) % 11 - 5) / 4.0
+                    score += float(value) * weight
+                scores.append((token_id, score))
+            ranked = sorted(scores, key=lambda item: item[1], reverse=True)[:top_k]
+            preview.append({
+                "row": int(row_index),
+                "token_ids": [int(token_id) for token_id, _ in ranked],
+                "scores": [float(score) for _, score in ranked],
+            })
+    else:
+        for row_index, row in enumerate(rows):
+            ranked = sorted(enumerate(row), key=lambda item: item[1], reverse=True)[:top_k]
+            preview.append({
+                "row": int(row_index),
+                "token_ids": [int(token_id) for token_id, _ in ranked],
+                "scores": [float(score) for _, score in ranked],
+            })
     topk_ms = (time.perf_counter() - t0) * 1000.0
     linear_projection_ms = 0.0
     adapter_name = "target_hidden_topk_stub"
     if adapter == "linear-stub":
-        t0 = time.perf_counter()
-        linear_projection_ms = (time.perf_counter() - t0) * 1000.0
+        linear_projection_ms = topk_ms
         adapter_name = "target_hidden_linear_stub"
     first_tokens = [item["token_ids"][0] for item in preview if item["token_ids"]]
     first_scores = [item["scores"][0] for item in preview if item["scores"]]
-    row_count = len(rows)
+    row_count = len(preview)
     vocab_preview = len(rows[0]) if rows else 0
     hidden_schema = {
         "shape": [int(dim) for dim in hidden_states.shape],
@@ -258,7 +294,7 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
             "draft_scores": "list[float]",
             "num_rows": "int",
             "source": "profiler_only_hidden_to_draft_adapter",
-            "projection": "deterministic_placeholder" if adapter == "linear-stub" else "logits_topk",
+            "projection": "deterministic_hidden_linear_stub" if adapter == "linear-stub" else "logits_topk",
         },
         "output": {
             "draft_token_ids": first_tokens,
@@ -269,9 +305,10 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
         "timing_ms": {
             "adapter_total_ms": (time.perf_counter() - total_t0) * 1000.0,
             "logits_to_cpu_ms": logits_to_cpu_ms,
-            **({"linear_projection_ms": linear_projection_ms} if adapter == "linear-stub" else {}),
+            **({"hidden_to_cpu_ms": hidden_to_cpu_ms, "linear_projection_ms": linear_projection_ms} if adapter == "linear-stub" else {}),
             "topk_ms": topk_ms,
         },
+        **({"projection_metadata": projection_metadata} if projection_metadata is not None else {}),
         "shape": hidden_schema["shape"],
         "dtype": hidden_schema["dtype"],
         "device": hidden_schema["device"],

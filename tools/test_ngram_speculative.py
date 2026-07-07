@@ -266,6 +266,10 @@ def test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing():
         shape = (2, 1024)
         dtype = "torch.bfloat16"
         device = "cuda:0"
+        values = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ]
 
     summary = summarize_hidden_to_draft_stub(FakeTensor(), [[0.0, 1.0], [2.0, 0.0]], top_k=1)
 
@@ -305,6 +309,10 @@ def test_summarize_hidden_to_draft_stub_supports_linear_stub_interface():
         shape = (2, 1024)
         dtype = "torch.bfloat16"
         device = "cuda:0"
+        values = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ]
 
     summary = summarize_hidden_to_draft_stub(
         FakeTensor(),
@@ -317,15 +325,81 @@ def test_summarize_hidden_to_draft_stub_supports_linear_stub_interface():
     assert summary["runtime_mutation"] is False
     assert summary["input_schema"]["adapter"] == "linear-stub"
     assert summary["output"]["source"] == "target_hidden_linear_stub"
-    assert summary["output"]["draft_token_ids"] == [2, 0]
-    assert summary["output_schema"]["projection"] == "deterministic_placeholder"
+    assert summary["output"]["draft_token_ids"] == [1, 2]
+    assert summary["output_schema"]["projection"] == "deterministic_hidden_linear_stub"
     assert set(summary["timing_ms"]) == {
         "adapter_total_ms",
+        "hidden_to_cpu_ms",
         "logits_to_cpu_ms",
         "linear_projection_ms",
         "topk_ms",
     }
     assert summary["timing_ms"]["linear_projection_ms"] >= 0.0
+
+
+def test_summarize_hidden_to_draft_stub_linear_stub_uses_hidden_projection_candidates():
+    class FakeTensor:
+        shape = (2, 4)
+        dtype = "torch.float32"
+        device = "cpu"
+
+        def __init__(self):
+            self.values = [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+
+    logits = [
+        [10.0, 0.0, 0.0, 0.0],
+        [0.0, 10.0, 0.0, 0.0],
+    ]
+
+    summary = summarize_hidden_to_draft_stub(
+        FakeTensor(),
+        logits,
+        top_k=1,
+        adapter="linear-stub",
+    )
+
+    assert summary["output_schema"]["projection"] == "deterministic_hidden_linear_stub"
+    assert summary["projection_metadata"] == {
+        "seed": 17,
+        "candidate_token_ids": [0, 1, 2, 3],
+        "hidden_dim": 4,
+        "candidate_count": 4,
+    }
+    assert summary["rows"] == 2
+    assert summary["output"]["num_rows"] == 2
+    assert len(summary["preview"]) == 2
+    assert summary["output"]["draft_token_ids"] == [1, 3]
+    assert summary["preview"] == [
+        {"row": 0, "token_ids": [1], "scores": [1.25]},
+        {"row": 1, "token_ids": [3], "scores": [0.75]},
+    ]
+
+
+def test_summarize_hidden_to_draft_stub_linear_stub_counts_hidden_rows_not_logits_rows():
+    class FakeTensor:
+        shape = (3, 4)
+        dtype = "torch.float32"
+        device = "cpu"
+        values = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+
+    summary = summarize_hidden_to_draft_stub(
+        FakeTensor(),
+        [[0.0, 1.0, 3.0], [2.0, 0.0, 1.0]],
+        top_k=1,
+        adapter="linear-stub",
+    )
+
+    assert summary["rows"] == 3
+    assert summary["output"]["num_rows"] == 3
+    assert len(summary["preview"]) == 3
+    assert len(summary["output"]["draft_token_ids"]) == 3
 
 
 def main():
@@ -346,6 +420,8 @@ def main():
     test_summarize_hidden_to_draft_stub_returns_json_friendly_topk_preview()
     test_summarize_hidden_to_draft_stub_defines_interface_schema_and_timing()
     test_summarize_hidden_to_draft_stub_supports_linear_stub_interface()
+    test_summarize_hidden_to_draft_stub_linear_stub_uses_hidden_projection_candidates()
+    test_summarize_hidden_to_draft_stub_linear_stub_counts_hidden_rows_not_logits_rows()
     print("ngram speculative tests passed")
 
 
