@@ -304,12 +304,14 @@ class KVOffloadMVP0:
                     h2d_pairs.append((logical_block, slot))
             self._touch(slot)
         self._enqueue_d2h_pairs(deferred_d2h_pairs)
+        waited_d2h_event_ids = set()
         for old_logical in deferred_wait_blocks:
             d2h_event = self.d2h_done.get(old_logical)
-            if d2h_event is not None:
+            if d2h_event is not None and id(d2h_event) not in waited_d2h_event_ids:
                 torch.cuda.current_stream().wait_event(d2h_event)
                 if self.copy_stream is not None:
                     self.copy_stream.wait_event(d2h_event)
+                waited_d2h_event_ids.add(id(d2h_event))
                 self.stats["copy_waits"] += 1
         self._enqueue_h2d_pairs(h2d_pairs)
         if wait:
@@ -320,10 +322,12 @@ class KVOffloadMVP0:
         if self.copy_stream is None:
             return
         stream = torch.cuda.current_stream()
+        waited_event_ids = set()
         for logical_block in set(int(block) for block in logical_blocks):
             event = self.h2d_done.get(logical_block)
-            if event is not None:
+            if event is not None and id(event) not in waited_event_ids:
                 stream.wait_event(event)
+                waited_event_ids.add(id(event))
                 self.stats["copy_waits"] += 1
 
     def wait_for_pending(self):

@@ -555,6 +555,20 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
 - 远程 migration smoke：`profile_out/kv_offload_batched_dirty_evict_migration_20260708_r2.json`，`gate_pass=true`、`h2d_copies=2`、`d2h_copies=4`、`h2d_batches=1`、`d2h_batches=2`、`d2h_batch_spans=2`、`copy_waits=6`。
 - 远程 thrash smoke：`profile_out/kv_offload_batched_dirty_evict_thrash_20260708_r2.json`，`gate_pass=true`、`h2d_copies=8`、`d2h_copies=6`、`h2d_batches=4`、`d2h_batches=2`、`d2h_batch_spans=2`、`prefetch_plans=4`。
 
+### 2026-07-08 KV offload copy event wait coalescing
+
+继续减少 copy/wait 调度开销：batched H2D/D2H 会给多个 logical blocks 记录同一个 CUDA event，旧 `wait_for_blocks()` 和 deferred eviction wait 会对同一个 event 重复 `wait_event()` 并重复累计 `copy_waits`。
+
+- `wait_for_blocks()` 现在按 `id(event)` 去重，同一个 H2D event 只 wait/统计一次。
+- `ensure_resident()` 的 deferred D2H wait 同样按 event 去重；clean eviction 仍会在复用 slot 前等待 pending D2H，但同一 batched D2H event 只等待一次。
+- 新增测试：
+  - `test_wait_for_blocks_coalesces_identical_h2d_events()`
+  - `test_deferred_eviction_waits_once_per_identical_d2h_event()`
+- 本地：`py_compile tinyvllm/engine/model_runner.py tools/test_kv_offload.py`、`git diff --check` 通过。
+- 远程 GPU4：`tools/test_kv_offload.py` 通过。
+- 远程 migration smoke：`profile_out/kv_offload_wait_coalesce_migration_20260708.json`，`gate_pass=true`、`copy_waits=4`（上一轮同口径 dirty eviction batching 后为 6）。
+- 远程 thrash smoke：`profile_out/kv_offload_wait_coalesce_thrash_20260708.json`，`gate_pass=true`、`copy_waits=10`（上一轮同口径为 19）、`h2d_batches=4`、`d2h_batches=2`、`prefetch_plans=4`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
