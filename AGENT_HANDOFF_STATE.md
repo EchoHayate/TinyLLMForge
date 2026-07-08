@@ -607,6 +607,20 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_prefill_window_wait_clear_20260708.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 - 远程真实模型 smoke：`SMOKE_TAG=20260708_window_wait_clear RUN_PREFLIGHT=0 CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34687 MASTER_PORT=34687 tools/smoke_blockwise_prefill_remote.sh` 通过；真实长 prompt 输出 `profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260708_window_wait_clear.json`，`gate_pass=true`、`elapsed_s=29.39703532680869`、`output_tokens=1`。
 
+### 2026-07-08 Blockwise attention ordered read windows
+
+继续降低 blockwise window planning 的不确定性：旧逻辑先把 window blocks 放进 `set`，再 `list(unique_blocks)` 传给 `ensure_resident()` / `wait_for_blocks()`。这会丢掉跨 batch row 的 first-seen 顺序，使 H2D request / LRU touch / victim 决策顺序依赖 set 迭代，后续更难稳定优化 prefetch plan。
+
+- 新增 `_unique_blocks_in_order()`，对 read window 逻辑块做 first-seen 去重，保留窗口内访问顺序。
+- blockwise decode/prefill read window 都改成用 `unique_block_list` 调 `ensure_resident()` 和 `wait_for_blocks()`；`unique_blocks` 只保留给容量检查和 future/protected set。
+- 新增 `tools/test_blockwise_attention_planning.py`，用 fake manager 验证 decode window `[2,0] + [1,2]` 的 staging/wait 顺序必须是 `[2,0,1]`。
+- TDD RED：旧 set 路径下远程测试失败于 `assert manager.ensure_calls == [[2, 0, 1]]`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_ordered_windows_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_ordered_windows_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

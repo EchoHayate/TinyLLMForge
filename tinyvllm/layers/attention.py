@@ -61,6 +61,18 @@ def _repeat_kv_for_gqa(kv: torch.Tensor, num_heads: int) -> torch.Tensor:
     return kv.repeat_interleave(num_heads // kv.shape[2], dim=2)
 
 
+def _unique_blocks_in_order(blocks) -> list[int]:
+    ordered = []
+    seen = set()
+    for block in blocks:
+        block = int(block)
+        if block < 0 or block in seen:
+            continue
+        ordered.append(block)
+        seen.add(block)
+    return ordered
+
+
 def _blockwise_online_decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -112,7 +124,8 @@ def _blockwise_online_decode_attention(
             needed_blocks.extend(window)
         if not needed_blocks or max(window_lens, default=0) <= 0:
             continue
-        unique_blocks = set(int(block) for block in needed_blocks)
+        unique_block_list = _unique_blocks_in_order(needed_blocks)
+        unique_blocks = set(unique_block_list)
         if len(unique_blocks) > manager.gpu_blocks:
             raise RuntimeError(
                 "blockwise decode window has more unique logical blocks than GPU staging slots: "
@@ -121,12 +134,12 @@ def _blockwise_online_decode_attention(
         manager.stats["prefetch_plans"] += 1
         manager.stats["prefetch_read_blocks"] += len(unique_blocks)
         manager.ensure_resident(
-            list(unique_blocks),
+            unique_block_list,
             require_valid=True,
             future_logical_blocks=unique_blocks | write_blocks,
             protected_logical_blocks=write_blocks,
         )
-        manager.wait_for_blocks(list(unique_blocks), clear_pending=True)
+        manager.wait_for_blocks(unique_block_list, clear_pending=True)
 
         max_window_tokens = max(window_lens)
         k_dense = q.new_zeros((batch, max_window_tokens, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
@@ -249,7 +262,8 @@ def _blockwise_online_prefill_attention(
             window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
             if not window or window_len <= 0:
                 continue
-            unique_blocks = set(int(block) for block in window)
+            unique_block_list = _unique_blocks_in_order(window)
+            unique_blocks = set(unique_block_list)
             protected = unique_blocks | write_blocks
             if len(protected) > manager.gpu_blocks:
                 raise RuntimeError(
@@ -259,12 +273,12 @@ def _blockwise_online_prefill_attention(
             manager.stats["prefetch_plans"] += 1
             manager.stats["prefetch_read_blocks"] += len(unique_blocks)
             manager.ensure_resident(
-                list(unique_blocks),
+                unique_block_list,
                 require_valid=True,
                 future_logical_blocks=protected,
                 protected_logical_blocks=write_blocks,
             )
-            manager.wait_for_blocks(list(unique_blocks), clear_pending=True)
+            manager.wait_for_blocks(unique_block_list, clear_pending=True)
 
             k_dense = q.new_zeros((window_len, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
             v_dense = q.new_zeros((window_len, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
