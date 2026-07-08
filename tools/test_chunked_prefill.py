@@ -642,6 +642,36 @@ def test_mixed_decode_rows_respect_remaining_token_budget():
     assert list(scheduler.running) == [running_seqs[1]]
 
 
+def test_mixed_first_prefill_chunk_shrinks_to_leave_decode_budget():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=4,
+        max_num_batched_tokens=5,
+        max_num_prefill_tokens_per_step=8,
+        chunked_prefill_decode_first=False,
+        chunked_prefill_mixed_batch=True,
+    ))
+    running = make_seq([90, 91, 92, 93], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.append_token(94)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+    long_prefill = make_seq(range(12), max_tokens=4)
+    scheduler.add(long_prefill)
+
+    seqs, is_prefill, do_sample, batch_kind = scheduler.schedule()
+
+    assert is_prefill is True
+    assert do_sample is True
+    assert batch_kind == "mixed"
+    assert seqs == [long_prefill, running]
+    assert long_prefill.prefill_chunk_start == 0
+    assert long_prefill.prefill_chunk_end == 4
+    assert long_prefill.step_do_sample is False
+    assert running.step_is_decode is True
+
+
 def test_mixed_min_prompt_tokens_defers_short_waiting_prompt_to_decode():
     reset_sequence_state()
     scheduler = Scheduler(make_config(
@@ -861,6 +891,7 @@ def main():
     test_mixed_short_prefill_batching_reserves_slot_for_decode()
     test_mixed_prefill_reserves_token_budget_for_decode_queries()
     test_mixed_decode_rows_respect_remaining_token_budget()
+    test_mixed_first_prefill_chunk_shrinks_to_leave_decode_budget()
     test_mixed_min_prompt_tokens_defers_short_waiting_prompt_to_decode()
     test_mixed_min_prompt_tokens_still_admits_long_waiting_prompt()
     test_mixed_postprocess_commits_prefill_and_appends_decode_only_for_intermediate_chunk()

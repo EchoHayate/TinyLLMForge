@@ -7555,6 +7555,38 @@ COMMAND=/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile
 2. 它让 mixed batch 的实际 query token 数与 `max_num_batched_tokens` 语义一致，避免 tight-budget serving 下意外超配。
 3. 当前已用本地和远程纯 Python 测试覆盖行为；GPU benchmark 需等远程 GPU/driver 状态恢复后重跑。
 
+### 47.39.7 Mixed first-chunk budget clamp：首个 prefill chunk 也给 decode 留预算（2026-07-08）
+
+继续检查 §47.39.6 后发现一个相邻边界：当 `max_num_prefill_tokens_per_step > mixed 剩余 token budget` 时，首个 prefill chunk 会先按 `max_num_prefill_tokens_per_step` 切块，随后因为没有剩余 budget 追加 decode row，整个 step 退化成普通 prefill。这与 mixed batch 的目标不一致：既然已有 running decode，tight budget 下也应缩小 prefill chunk，至少保留 1 个 decode query row。
+
+改动：
+
+- `_schedule_chunked_prefill(max_prefill_tokens=...)` 会把 `max_prefill_tokens` 传给首个 waiting seq 和已有 `prefilling` seq。
+- `_schedule_one_prefill_chunk(seq, max_chunk_tokens=...)` 在 `max_num_prefill_tokens_per_step`、`max_chunk_tokens`、剩余 prompt tokens 三者中取最小值。
+- short prompt batching 的后续 seq 也按剩余 `max_prefill_tokens - num_batched_tokens` 计算，避免后续 chunk 挤占 decode 预算。
+
+新增回归测试：
+
+- `test_mixed_first_prefill_chunk_shrinks_to_leave_decode_budget()`：`max_num_batched_tokens=5`、`max_num_prefill_tokens_per_step=8`、已有 1 条 running decode 和 12-token waiting prompt 时，scheduler 应返回 mixed batch，prefill chunk 从 8 缩到 4，并保留 1 个 decode row。
+
+验证：
+
+```text
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_profile_chunked_prefill.py
+PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/scheduler.py tools/test_chunked_prefill.py tools/profile_chunked_prefill.py
+git diff --check
+```
+
+本地通过；同步到远程后，远程：
+
+```text
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_profile_chunked_prefill.py
+```
+
+也通过。
+
 ### 47.40 S1 online n-gram speculative dry-run profiler（2026-06-24）
 
 上一节的 mixed prefill admission policy 属于 scheduler policy，收益依赖 workload 形状；更扎实的推理加速主线切到 speculative decoding。当前路线拆成四步：

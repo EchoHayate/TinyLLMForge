@@ -149,9 +149,10 @@ class Scheduler:
             max_prefill_seqs: int | None = None,
             max_prefill_tokens: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
         max_prefill_seqs = self.max_num_seqs if max_prefill_seqs is None else max_prefill_seqs
+        max_prefill_tokens = self.max_num_batched_tokens if max_prefill_tokens is None else max_prefill_tokens
         if self.prefilling:
             seq = self.prefilling.popleft()
-            return self._schedule_one_prefill_chunk(seq)
+            return self._schedule_one_prefill_chunk(seq, max_chunk_tokens=max_prefill_tokens)
 
         if not self.waiting:
             return None
@@ -162,7 +163,7 @@ class Scheduler:
         seq = self.waiting.popleft()
         self.block_manager.allocate(seq, publish_hashes=False)
         seq.status = SequenceStatus.PREFILLING
-        first = self._schedule_one_prefill_chunk(seq)
+        first = self._schedule_one_prefill_chunk(seq, max_chunk_tokens=max_prefill_tokens)
         if first is None:
             return None
         scheduled, is_prefill, do_sample = first
@@ -170,7 +171,6 @@ class Scheduler:
             return first
 
         num_batched_tokens = scheduled[0].prefill_chunk_end - scheduled[0].prefill_chunk_start
-        max_prefill_tokens = self.max_num_batched_tokens if max_prefill_tokens is None else max_prefill_tokens
         while self.waiting and len(scheduled) < max_prefill_seqs:
             candidate = self.waiting[0]
             # Conservative short-prompt batching: only admit prompts that finish
@@ -184,7 +184,7 @@ class Scheduler:
             seq = self.waiting.popleft()
             self.block_manager.allocate(seq, publish_hashes=False)
             seq.status = SequenceStatus.PREFILLING
-            one = self._schedule_one_prefill_chunk(seq)
+            one = self._schedule_one_prefill_chunk(seq, max_chunk_tokens=max_prefill_tokens - num_batched_tokens)
             if one is None or not one[2]:
                 self.prefilling.appendleft(seq)
                 break
@@ -192,7 +192,10 @@ class Scheduler:
             num_batched_tokens += seq.prefill_chunk_end - seq.prefill_chunk_start
         return scheduled, is_prefill, do_sample
 
-    def _schedule_one_prefill_chunk(self, seq: Sequence) -> tuple[list[Sequence], bool, bool] | None:
+    def _schedule_one_prefill_chunk(
+            self,
+            seq: Sequence,
+            max_chunk_tokens: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
         if seq.num_computed_tokens >= len(seq):
             # 全 prompt 命中 prefix cache 时仍需重算最后一个 prompt token 拿 logits，采样首个输出 token。
             seq.prefill_chunk_start = max(0, len(seq) - 1)
@@ -201,7 +204,8 @@ class Scheduler:
             return [seq], True, True
 
         start = seq.num_computed_tokens
-        chunk_len = min(self.max_num_prefill_tokens_per_step, len(seq) - start)
+        max_chunk_tokens = self.max_num_prefill_tokens_per_step if max_chunk_tokens is None else max_chunk_tokens
+        chunk_len = min(self.max_num_prefill_tokens_per_step, max_chunk_tokens, len(seq) - start)
         end = start + chunk_len
         seq.prefill_chunk_start = start
         seq.prefill_chunk_end = end

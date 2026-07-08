@@ -854,6 +854,14 @@ CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
 5. GPU profiler smoke 暂未形成性能数字：远程 `tools/profile_chunked_prefill.py --mode mixed ... --max-num-batched-tokens 129` 启动后 log 为 0 字节，进程进入 D-state（`STAT=D`、`WCHAN=os_acquire_rwlock_write`），`kill -9` 后仍需等待内核态返回；同时 SSH 偶发 `Connection closed by UNKNOWN port 65535`。这次应记录为远程 GPU/driver/链路环境阻塞，不作为代码回归。
 6. 文档：`docs/qwen3-8b-fixes.md` 已追加 `47.39.6 Mixed token-budget reserve`。
 
+2026-07-08 mixed first-chunk budget clamp 已落地：
+
+1. 问题：`max_num_prefill_tokens_per_step > mixed 剩余 token budget` 时，首个 prefill chunk 会过大，导致 decode row 无法追加，mixed 退化成普通 prefill。
+2. 改动：`_schedule_chunked_prefill(max_prefill_tokens=...)` 把 token budget 传给首个 waiting seq、已有 `prefilling` seq 和后续 short prompt batching；`_schedule_one_prefill_chunk(..., max_chunk_tokens=...)` 按 `max_num_prefill_tokens_per_step`、`max_chunk_tokens`、剩余 prompt tokens 三者取最小值。
+3. 新增测试：`test_mixed_first_prefill_chunk_shrinks_to_leave_decode_budget()`，覆盖 `max_num_batched_tokens=5`、`max_num_prefill_tokens_per_step=8` 下 prefill chunk 缩到 4 并保留 decode row。
+4. 本地与远程纯测试均通过：`tools/test_chunked_prefill.py`、`tools/test_profile_chunked_prefill.py`；本地 `py_compile` 与 `git diff --check` 通过。
+5. 文档：`docs/qwen3-8b-fixes.md` 已追加 `47.39.7 Mixed first-chunk budget clamp`。
+
 1. 远程 SSH / Kerberos：
    - 裸 `ssh sitian@10.232.195.203` 在 TRAE 进程里曾报 `Connection closed by UNKNOWN port 65535`，根因不是目标机 22 端口不可达，而是当前进程看不到 macOS API Kerberos cache。
    - `nc -vz 10.232.195.203 22` 成功，说明目标端口可达；`klist` 在 TRAE 进程里报 `Cache not found: API:11111111-...`，而用户外部 Terminal 里 `klist` 显示 `sitian@BYTEDANCE.COM` 可用。
