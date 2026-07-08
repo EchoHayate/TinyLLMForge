@@ -20,6 +20,7 @@ import torch
 from tinyvllm.layers.attention import (
     _blockwise_online_decode_attention,
     _decode_window_mask,
+    _local_causal_mask,
     _normalize_logical_block_rows,
     _stage_blockwise_read_window,
 )
@@ -130,11 +131,29 @@ def test_decode_window_mask_reuses_position_template():
     assert torch.equal(mask, expected)
 
 
+def test_local_causal_mask_reuses_position_templates():
+    q_positions = torch.arange(4).view(4, 1, 1)
+    k_positions = torch.arange(4).view(1, 1, 4)
+    mask = _local_causal_mask(
+        q_len=3,
+        q_positions_template=q_positions,
+        k_positions_template=k_positions,
+    )
+
+    expected = torch.tensor([
+        [[True, False, False]],
+        [[True, True, False]],
+        [[True, True, True]],
+    ])
+    assert torch.equal(mask, expected)
+
+
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
     test_decode_window_mask_reuses_position_template()
+    test_local_causal_mask_reuses_position_templates()
     print("blockwise attention planning tests passed")
 
 

@@ -122,6 +122,14 @@ def _decode_window_mask(
     return positions < lens
 
 
+def _local_causal_mask(
+    q_len: int,
+    q_positions_template: torch.Tensor,
+    k_positions_template: torch.Tensor,
+) -> torch.Tensor:
+    return k_positions_template[:, :, :q_len] <= q_positions_template[:q_len]
+
+
 def _blockwise_online_decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -257,6 +265,9 @@ def _blockwise_online_prefill_attention(
     block_rows, _ = _normalize_logical_block_rows(logical_rows)
     out = torch.empty_like(q)
     q_fp = q.to(torch.float32)
+    max_chunk_tokens = max((int(end) - int(start) for start, end in zip(chunk_starts, chunk_ends)), default=0)
+    q_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(max_chunk_tokens, 1, 1)
+    k_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(1, 1, max_chunk_tokens)
 
     def merge_window(running_m, running_l, running_o, scores, value_dense, mask):
         valid = mask.any(dim=-1)
@@ -330,9 +341,7 @@ def _blockwise_online_prefill_attention(
         k_local = _repeat_kv_for_gqa(k[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
         v_local = _repeat_kv_for_gqa(v[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
         scores = torch.einsum("qhd,thd->qht", q_row, k_local) * scale
-        q_pos = torch.arange(q_len, device=q.device).view(q_len, 1, 1)
-        k_pos = torch.arange(q_len, device=q.device).view(1, 1, q_len)
-        local_mask = k_pos <= q_pos
+        local_mask = _local_causal_mask(q_len, q_pos_template, k_pos_template)
         running_m, running_l, running_o = merge_window(running_m, running_l, running_o, scores, v_local, local_mask)
         out[q_start:q_end] = (running_o / running_l.clamp_min(1e-20).unsqueeze(-1)).to(q.dtype)
 

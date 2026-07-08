@@ -679,6 +679,19 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_mask_template_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_mask_template_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise prefill local causal mask template reuse
+
+继续减少 prefill row 内小张量分配：旧 `_blockwise_online_prefill_attention()` 在每个 row 的 local causal attention 都新建 `torch.arange(q_len)` 和 `torch.arange(q_len)`。现在在函数入口按最大 chunk 长度预建 query/key position templates，每个 row 只切片复用。
+
+- 新增 `_local_causal_mask()`，统一从预建 q/k position templates 构造 local causal mask。
+- 新增 `test_local_causal_mask_reuses_position_templates()`。
+- TDD RED：远程测试在 helper 缺失时按预期 `ImportError: cannot import name '_local_causal_mask'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_local_mask_template_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_local_mask_template_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
