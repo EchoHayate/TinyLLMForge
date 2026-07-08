@@ -653,6 +653,19 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_normalize_rows_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_normalize_rows_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise read-window unique-once staging
+
+继续减少 window planning 重复工作：`_stage_blockwise_read_window()` 之前的调用点会先 `_unique_blocks_in_order(...)` / `set(...)` 做容量和 future/protected set，helper 内部又再做一次 first-seen 去重。现在 helper API 改为接收 `future_extra_blocks` / `protected_extra_blocks` / `capacity_extra_blocks`，由 helper 单入口完成 unique list、unique set、future/protected/capacity set 构造。
+
+- decode/prefill 调用点不再重复构造 `unique_blocks` 和 `protected`。
+- helper 内部仍返回 first-seen `unique_block_list`，并保持 stats、`ensure_resident()`、`wait_for_blocks(..., clear_pending=True)` 语义。
+- TDD RED：远程旧 helper 签名下按预期失败：`TypeError: _stage_blockwise_read_window() got an unexpected keyword argument 'future_extra_blocks'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_unique_once_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_unique_once_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

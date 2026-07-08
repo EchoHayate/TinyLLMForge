@@ -85,12 +85,16 @@ def _normalize_logical_block_rows(logical_rows) -> tuple[list[list[int]], int]:
 def _stage_blockwise_read_window(
     manager,
     logical_blocks,
-    future_logical_blocks: set[int],
-    protected_logical_blocks: set[int],
-    capacity_blocks: set[int],
+    future_extra_blocks: set[int],
+    protected_extra_blocks: set[int],
+    capacity_extra_blocks: set[int],
     capacity_error_prefix: str,
 ) -> list[int]:
     unique_block_list = _unique_blocks_in_order(logical_blocks)
+    unique_blocks = set(unique_block_list)
+    future_logical_blocks = unique_blocks | future_extra_blocks
+    protected_logical_blocks = set(protected_extra_blocks)
+    capacity_blocks = unique_blocks | capacity_extra_blocks
     if len(capacity_blocks) > manager.gpu_blocks:
         raise RuntimeError(
             f"{capacity_error_prefix}: required={len(capacity_blocks)}, gpu_blocks={manager.gpu_blocks}"
@@ -157,18 +161,12 @@ def _blockwise_online_decode_attention(
             needed_blocks.extend(window)
         if not needed_blocks or max(window_lens, default=0) <= 0:
             continue
-        unique_blocks = set(_unique_blocks_in_order(needed_blocks))
-        if len(unique_blocks) > manager.gpu_blocks:
-            raise RuntimeError(
-                "blockwise decode window has more unique logical blocks than GPU staging slots: "
-                f"required={len(unique_blocks)}, gpu_blocks={manager.gpu_blocks}"
-            )
         _stage_blockwise_read_window(
             manager,
             needed_blocks,
-            future_logical_blocks=unique_blocks | write_blocks,
-            protected_logical_blocks=write_blocks,
-            capacity_blocks=unique_blocks,
+            future_extra_blocks=write_blocks,
+            protected_extra_blocks=write_blocks,
+            capacity_extra_blocks=set(),
             capacity_error_prefix="blockwise decode window has more unique logical blocks than GPU staging slots",
         )
 
@@ -293,19 +291,12 @@ def _blockwise_online_prefill_attention(
             window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
             if not window or window_len <= 0:
                 continue
-            unique_blocks = set(_unique_blocks_in_order(window))
-            protected = unique_blocks | write_blocks
-            if len(protected) > manager.gpu_blocks:
-                raise RuntimeError(
-                    "blockwise prefill window plus current write blocks exceed GPU staging slots: "
-                    f"required={len(protected)}, gpu_blocks={manager.gpu_blocks}"
-                )
             _stage_blockwise_read_window(
                 manager,
                 window,
-                future_logical_blocks=protected,
-                protected_logical_blocks=write_blocks,
-                capacity_blocks=protected,
+                future_extra_blocks=write_blocks,
+                protected_extra_blocks=write_blocks,
+                capacity_extra_blocks=write_blocks,
                 capacity_error_prefix="blockwise prefill window plus current write blocks exceed GPU staging slots",
             )
 

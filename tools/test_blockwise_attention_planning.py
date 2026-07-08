@@ -89,9 +89,9 @@ def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks(
     unique_blocks = _stage_blockwise_read_window(
         manager,
         logical_blocks=[2, 0, 2, 1],
-        future_logical_blocks={0, 1, 2, 3},
-        protected_logical_blocks={3},
-        capacity_blocks={0, 1, 2, 3},
+        future_extra_blocks={3},
+        protected_extra_blocks={3},
+        capacity_extra_blocks={3},
         capacity_error_prefix="test read window",
     )
 
