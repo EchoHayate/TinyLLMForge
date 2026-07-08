@@ -845,6 +845,15 @@ CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
 
 2026-07-06 尝试记录 / 排坑记录：
 
+2026-07-08 mixed scheduler token-budget reserve 已落地：
+
+1. 改动：`Scheduler._schedule_chunked_prefill()` 增加内部 `max_prefill_tokens` 参数，`_schedule_mixed_prefill_decode()` 给 decode query row 预留并持续检查 `max_num_batched_tokens`，避免 mixed batch 实际 `prefill_tokens + decode_rows` 超过 token budget。
+2. 新增测试：`test_mixed_prefill_reserves_token_budget_for_decode_queries()`、`test_mixed_decode_rows_respect_remaining_token_budget()`，覆盖 tight-budget 下 short prompt batching 与多 decode rows。
+3. 本地验证通过：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_chunked_prefill.py`、`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_profile_chunked_prefill.py`、`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/scheduler.py tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine.py tinyvllm/engine/sequence.py tinyvllm/config.py tools/profile_chunked_prefill.py tools/test_chunked_prefill.py`、`git diff --check`。
+4. 远程纯测试通过：同步 `tinyvllm/engine/scheduler.py`、`tools/test_chunked_prefill.py` 后，远程 `/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_chunked_prefill.py` 与 `tools/test_profile_chunked_prefill.py` 均通过。
+5. GPU profiler smoke 暂未形成性能数字：远程 `tools/profile_chunked_prefill.py --mode mixed ... --max-num-batched-tokens 129` 启动后 log 为 0 字节，进程进入 D-state（`STAT=D`、`WCHAN=os_acquire_rwlock_write`），`kill -9` 后仍需等待内核态返回；同时 SSH 偶发 `Connection closed by UNKNOWN port 65535`。这次应记录为远程 GPU/driver/链路环境阻塞，不作为代码回归。
+6. 文档：`docs/qwen3-8b-fixes.md` 已追加 `47.39.6 Mixed token-budget reserve`。
+
 1. 远程 SSH / Kerberos：
    - 裸 `ssh sitian@10.232.195.203` 在 TRAE 进程里曾报 `Connection closed by UNKNOWN port 65535`，根因不是目标机 22 端口不可达，而是当前进程看不到 macOS API Kerberos cache。
    - `nc -vz 10.232.195.203 22` 成功，说明目标端口可达；`klist` 在 TRAE 进程里报 `Cache not found: API:11111111-...`，而用户外部 Terminal 里 `klist` 显示 `sitian@BYTEDANCE.COM` 可用。

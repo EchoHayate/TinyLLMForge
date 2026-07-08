@@ -7503,6 +7503,58 @@ chunked_prefill_mixed_min_prompt_tokens = max_num_prefill_tokens_per_step
 
 下一步推理加速建议继续沿 scheduler/runtime profiling 做：长 prompt 插入场景下比较 `mixed_min_prompt_tokens=0/128/256/512`，并和 decode-first / fair chunked policy 放在同一张 latency-vs-makespan 曲线上。
 
+### 47.39.6 Mixed token-budget reserve：decode query 也计入 `max_num_batched_tokens`（2026-07-08）
+
+本轮继续沿 scheduler/runtime profiling 做一个小步修正：mixed prefill+decode batch 复用 varlen prefill path，decode row 在 `prepare_mixed()` 中也是 query length = 1。旧 scheduler 只用 `max_num_batched_tokens` 限制 prefill chunk tokens，再追加 decode rows；因此在 tight token budget 下可能实际送入 `prefill_tokens + decode_rows > max_num_batched_tokens` 的 mixed batch。
+
+改动：
+
+- `Scheduler._schedule_chunked_prefill()` 增加内部参数 `max_prefill_tokens`，默认仍等于 `max_num_batched_tokens`，保持非 mixed 行为不变。
+- `Scheduler._schedule_mixed_prefill_decode()` 在拉取 prefill chunk 时先为至少 1 个 decode query token 预留 token budget。
+- mixed 追加 decode rows 时继续检查 `prefill_tokens + len(decode_seqs) < max_num_batched_tokens`，避免多条 decode row 把总 query tokens 撑过预算。
+
+新增回归测试：
+
+- `test_mixed_prefill_reserves_token_budget_for_decode_queries()`：`max_num_batched_tokens=12`、3 个 4-token short prompt + 1 条 running decode 时，mixed batch 只接纳 2 个 short prompt + 1 个 decode row，保留第 3 个 waiting prompt。
+- `test_mixed_decode_rows_respect_remaining_token_budget()`：`max_num_batched_tokens=9`、2 个 4-token short prompt + 2 条 running decode 时，只追加 1 条 decode row，保证 `prefill_tokens + decode_rows <= max_num_batched_tokens`。
+
+本地验证：
+
+```text
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD python3 tools/test_profile_chunked_prefill.py
+PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/scheduler.py tinyvllm/engine/model_runner.py tinyvllm/engine/llm_engine.py tinyvllm/engine/sequence.py tinyvllm/config.py tools/profile_chunked_prefill.py tools/test_chunked_prefill.py
+git diff --check
+```
+
+均通过。
+
+远程验证：
+
+```text
+rsync tinyvllm/engine/scheduler.py tools/test_chunked_prefill.py -> sitian@10.232.195.203:/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_profile_chunked_prefill.py
+```
+
+均通过。
+
+GPU profiler smoke 这次没有形成可用性能数字：`tools/profile_chunked_prefill.py --mode mixed ... --max-num-batched-tokens 129` 在远程启动后 log 保持 0 字节，进程进入 D-state：
+
+```text
+STAT=D
+WCHAN=os_acquire_rwlock_write
+COMMAND=/data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/profile_chunked_prefill.py ...
+```
+
+同时 SSH 偶发 `Connection closed by UNKNOWN port 65535`，`klist`、目标 `nc`、`ssh ... 'echo remote-ok'` 一度正常，说明当前 GPU profile 阻塞更像远程 GPU/driver/内核等待或链路状态问题，不应作为代码回归结论。该进程 `kill -9` 后仍短时间处于 D-state，需等内核态返回或由远程环境回收。
+
+结论：
+
+1. 这是一个 correctness/fairness-oriented 的 scheduler budget 修正，不声称 throughput 提升。
+2. 它让 mixed batch 的实际 query token 数与 `max_num_batched_tokens` 语义一致，避免 tight-budget serving 下意外超配。
+3. 当前已用本地和远程纯 Python 测试覆盖行为；GPU benchmark 需等远程 GPU/driver 状态恢复后重跑。
+
 ### 47.40 S1 online n-gram speculative dry-run profiler（2026-06-24）
 
 上一节的 mixed prefill admission policy 属于 scheduler policy，收益依赖 workload 形状；更扎实的推理加速主线切到 speculative decoding。当前路线拆成四步：

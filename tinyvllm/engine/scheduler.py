@@ -144,7 +144,10 @@ class Scheduler:
         remaining_prompt_tokens = max(0, len(candidate) - getattr(candidate, "num_computed_tokens", 0))
         return remaining_prompt_tokens >= self.chunked_prefill_mixed_min_prompt_tokens
 
-    def _schedule_chunked_prefill(self, max_prefill_seqs: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
+    def _schedule_chunked_prefill(
+            self,
+            max_prefill_seqs: int | None = None,
+            max_prefill_tokens: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
         max_prefill_seqs = self.max_num_seqs if max_prefill_seqs is None else max_prefill_seqs
         if self.prefilling:
             seq = self.prefilling.popleft()
@@ -167,13 +170,14 @@ class Scheduler:
             return first
 
         num_batched_tokens = scheduled[0].prefill_chunk_end - scheduled[0].prefill_chunk_start
+        max_prefill_tokens = self.max_num_batched_tokens if max_prefill_tokens is None else max_prefill_tokens
         while self.waiting and len(scheduled) < max_prefill_seqs:
             candidate = self.waiting[0]
             # Conservative short-prompt batching: only admit prompts that finish
             # in one chunk without relying on prefix-cache state discovered after allocation.
             if len(candidate) > self.max_num_prefill_tokens_per_step:
                 break
-            if num_batched_tokens + len(candidate) > self.max_num_batched_tokens:
+            if num_batched_tokens + len(candidate) > max_prefill_tokens:
                 break
             if not self.block_manager.can_allocate(candidate):
                 break
@@ -206,13 +210,21 @@ class Scheduler:
 
     def _schedule_mixed_prefill_decode(self) -> tuple[list[Sequence], bool, bool, str] | None:
         prefill_slots = max(1, self.max_num_seqs - 1)
-        prefill = self._schedule_chunked_prefill(max_prefill_seqs=prefill_slots)
+        decode_query_tokens = 1 if self.running else 0
+        max_prefill_tokens = max(1, self.max_num_batched_tokens - decode_query_tokens)
+        prefill = self._schedule_chunked_prefill(
+            max_prefill_seqs=prefill_slots,
+            max_prefill_tokens=max_prefill_tokens,
+        )
         if prefill is None:
             return None
         prefill_seqs, is_prefill, prefill_do_sample = prefill
         assert is_prefill
+        prefill_tokens = sum(seq.prefill_chunk_end - seq.prefill_chunk_start for seq in prefill_seqs)
         decode_seqs = []
-        while self.running and len(prefill_seqs) + len(decode_seqs) < self.max_num_seqs:
+        while (self.running
+               and len(prefill_seqs) + len(decode_seqs) < self.max_num_seqs
+               and prefill_tokens + len(decode_seqs) < self.max_num_batched_tokens):
             seq = self.running.popleft()
             while not self.block_manager.can_append(seq):
                 if self.running:
