@@ -212,6 +212,7 @@ class KVOffloadMVP0:
         self,
         protected_logical_blocks: set[int],
         future_logical_blocks: set[int] | None = None,
+        defer_dirty_writeback: bool = False,
     ) -> int:
         future_logical_blocks = future_logical_blocks or set()
         for slot, logical_block in enumerate(self.slot_to_logical):
@@ -231,19 +232,22 @@ class KVOffloadMVP0:
         old_logical = self.slot_to_logical[slot]
         if old_logical is not None:
             if old_logical in self.dirty_logical_blocks:
-                self._enqueue_d2h_pairs([(old_logical, slot)])
-                self.dirty_logical_blocks.discard(old_logical)
+                if not defer_dirty_writeback:
+                    self._enqueue_d2h_pairs([(old_logical, slot)])
+                    self.dirty_logical_blocks.discard(old_logical)
                 self.stats["evict_dirty"] += 1
             else:
                 self.stats["evict_clean"] += 1
-            d2h_event = self.d2h_done.get(old_logical)
-            if d2h_event is not None:
-                torch.cuda.current_stream().wait_event(d2h_event)
-                if self.copy_stream is not None:
-                    self.copy_stream.wait_event(d2h_event)
-                self.stats["copy_waits"] += 1
-            self.logical_to_slot.pop(old_logical, None)
-            self.slot_to_logical[slot] = None
+            if not defer_dirty_writeback:
+                d2h_event = self.d2h_done.get(old_logical)
+                if d2h_event is not None:
+                    torch.cuda.current_stream().wait_event(d2h_event)
+                    if self.copy_stream is not None:
+                        self.copy_stream.wait_event(d2h_event)
+                    self.stats["copy_waits"] += 1
+            if not defer_dirty_writeback:
+                self.logical_to_slot.pop(old_logical, None)
+                self.slot_to_logical[slot] = None
             self.stats["evictions"] += 1
         return slot
 
@@ -274,17 +278,39 @@ class KVOffloadMVP0:
         if protected_logical_blocks:
             protected.update(int(block) for block in protected_logical_blocks if int(block) >= 0)
         h2d_pairs = []
+        deferred_d2h_pairs = []
+        deferred_wait_blocks = []
         for logical_block in ordered:
             slot = self.logical_to_slot.get(logical_block)
             if slot is None:
                 if require_valid and not self.cpu_valid[logical_block]:
                     raise RuntimeError(f"KV offload requested unreadable logical block {logical_block}")
-                slot = self._evict_slot(protected, future_logical_blocks=future_logical_blocks)
+                slot = self._evict_slot(
+                    protected,
+                    future_logical_blocks=future_logical_blocks,
+                    defer_dirty_writeback=True,
+                )
+                old_logical = self.slot_to_logical[slot]
+                if old_logical is not None and old_logical in self.dirty_logical_blocks:
+                    deferred_d2h_pairs.append((old_logical, slot))
+                    self.dirty_logical_blocks.discard(old_logical)
+                if old_logical is not None:
+                    deferred_wait_blocks.append(old_logical)
+                    self.logical_to_slot.pop(old_logical, None)
+                    self.slot_to_logical[slot] = None
                 self.logical_to_slot[logical_block] = slot
                 self.slot_to_logical[slot] = logical_block
                 if self.cpu_valid[logical_block]:
                     h2d_pairs.append((logical_block, slot))
             self._touch(slot)
+        self._enqueue_d2h_pairs(deferred_d2h_pairs)
+        for old_logical in deferred_wait_blocks:
+            d2h_event = self.d2h_done.get(old_logical)
+            if d2h_event is not None:
+                torch.cuda.current_stream().wait_event(d2h_event)
+                if self.copy_stream is not None:
+                    self.copy_stream.wait_event(d2h_event)
+                self.stats["copy_waits"] += 1
         self._enqueue_h2d_pairs(h2d_pairs)
         if wait:
             self.wait_for_blocks([logical_block for logical_block, _ in h2d_pairs])

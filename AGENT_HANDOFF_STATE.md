@@ -535,6 +535,26 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
 
 结论：MVP-1 的 prefetch plan / cost-aware LRU / async stream-event / batch copy / synthetic 和真实模型 thrash 场景都已打通。仍然保留 full attention 限制：单次 forward 的可见 logical blocks 必须 `<= kv_offload_gpu_blocks`；要支持单条超长上下文超过 staging slots，需要下一阶段做 streaming/blockwise attention，而不是仅靠 page migration。
 
+### 2026-07-08 KV offload dirty eviction D2H batching
+
+本轮继续性能主线，把 `ensure_resident()` 同一轮加载多个新 logical blocks 时触发的 dirty evictions 从逐 slot D2H 改成 deferred batched D2H：
+
+- `_evict_slot(..., defer_dirty_writeback=True)` 只选择 victim 并统计 eviction，不立即 copy/wait/清映射。
+- `ensure_resident()` 收集本轮被驱逐的 dirty `(logical_block, slot)`，统一调用一次 `_enqueue_d2h_pairs()`；连续 logical/slot pair 仍由 `_coalesce_copy_pairs()` 合并 span。
+- clean eviction 如果已有 pending D2H event，也会在复用 slot 前等待，避免复用还在写回的 GPU slot。
+
+新增 `tools/test_kv_offload.py`：
+
+- `test_dirty_evictions_are_batched_when_loading_multiple_blocks()`：2 个 dirty resident blocks 被同一轮 `[2,3]` 加载驱逐时，要求 `d2h_copies=2`、`d2h_batches=1`、`d2h_batch_spans=1`。
+- `test_deferred_clean_eviction_waits_for_pending_d2h_event()`：先手动 `writeback_dirty([0,1])`，再驱逐 clean blocks，要求 `copy_waits` 至少增加 2，证明复用 slot 前等待 pending D2H event。
+
+验证：
+
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/model_runner.py tools/test_kv_offload.py`、`git diff --check` 通过。
+- 远程 GPU4：`CUDA_VISIBLE_DEVICES=4 PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_kv_offload.py` 通过。
+- 远程 migration smoke：`profile_out/kv_offload_batched_dirty_evict_migration_20260708_r2.json`，`gate_pass=true`、`h2d_copies=2`、`d2h_copies=4`、`h2d_batches=1`、`d2h_batches=2`、`d2h_batch_spans=2`、`copy_waits=6`。
+- 远程 thrash smoke：`profile_out/kv_offload_batched_dirty_evict_thrash_20260708_r2.json`，`gate_pass=true`、`h2d_copies=8`、`d2h_copies=6`、`h2d_batches=4`、`d2h_batches=2`、`d2h_batch_spans=2`、`prefetch_plans=4`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
