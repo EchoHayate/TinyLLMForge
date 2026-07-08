@@ -692,6 +692,20 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_local_mask_template_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_local_mask_template_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise prefill all-valid prefix merge
+
+继续减少 prefix window 内无效小张量/掩码开销：historical prefix window 对当前 chunk 所有 query 都可见，旧代码仍每个 prefix window 创建全 `True` mask，并在 merge 中执行 `masked_fill`。现在抽出 `_merge_attention_window()`，支持 `mask=None` 表示 all-valid prefix window，跳过全 True mask 分配和 masked fill。
+
+- prefix window 调 `_merge_attention_window(..., mask=None)`。
+- local causal chunk 继续传 `_local_causal_mask(...)`，保持 causal 语义。
+- 新增 `test_merge_attention_window_accepts_none_mask_as_all_valid()`。
+- TDD RED：远程测试在 helper 缺失时按预期 `ImportError: cannot import name '_merge_attention_window'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_merge_helper_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_merge_helper_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

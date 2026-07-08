@@ -130,6 +130,30 @@ def _local_causal_mask(
     return k_positions_template[:, :, :q_len] <= q_positions_template[:q_len]
 
 
+def _merge_attention_window(running_m, running_l, running_o, scores, value_dense, mask):
+    if mask is None:
+        valid = torch.ones(scores.shape[:-1], device=scores.device, dtype=torch.bool)
+        chunk_m = scores.max(dim=-1).values
+        exp_scores = torch.exp(scores - chunk_m.unsqueeze(-1))
+    else:
+        valid = mask.any(dim=-1)
+        scores = scores.masked_fill(~mask, float("-inf"))
+        chunk_m = scores.max(dim=-1).values
+        chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
+        exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
+    chunk_l = exp_scores.sum(dim=-1)
+    chunk_o = torch.einsum("qht,thd->qhd", exp_scores, value_dense)
+
+    merged_m = torch.maximum(running_m, chunk_m)
+    merged_m = torch.where(valid, merged_m, running_m)
+    old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
+    new_weight = torch.exp(chunk_m - merged_m).masked_fill(~valid, 0.0)
+    running_l = old_weight * running_l + new_weight * chunk_l
+    running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
+    running_m = merged_m
+    return running_m, running_l, running_o
+
+
 def _blockwise_online_decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -269,24 +293,6 @@ def _blockwise_online_prefill_attention(
     q_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(max_chunk_tokens, 1, 1)
     k_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(1, 1, max_chunk_tokens)
 
-    def merge_window(running_m, running_l, running_o, scores, value_dense, mask):
-        valid = mask.any(dim=-1)
-        scores = scores.masked_fill(~mask, float("-inf"))
-        chunk_m = scores.max(dim=-1).values
-        chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
-        exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
-        chunk_l = exp_scores.sum(dim=-1)
-        chunk_o = torch.einsum("qht,thd->qhd", exp_scores, value_dense)
-
-        merged_m = torch.maximum(running_m, chunk_m)
-        merged_m = torch.where(valid, merged_m, running_m)
-        old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
-        new_weight = torch.exp(chunk_m - merged_m).masked_fill(~valid, 0.0)
-        running_l = old_weight * running_l + new_weight * chunk_l
-        running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
-        running_m = merged_m
-        return running_m, running_l, running_o
-
     for row_idx, row_blocks in enumerate(block_rows):
         q_start = int(cu_q[row_idx])
         q_end = int(cu_q[row_idx + 1])
@@ -335,14 +341,15 @@ def _blockwise_online_prefill_attention(
             k_dense = _repeat_kv_for_gqa(k_dense.unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
             v_dense = _repeat_kv_for_gqa(v_dense.unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
             scores = torch.einsum("qhd,thd->qht", q_row, k_dense) * scale
-            mask = torch.ones((q_len, 1, window_len), device=q.device, dtype=torch.bool)
-            running_m, running_l, running_o = merge_window(running_m, running_l, running_o, scores, v_dense, mask)
+            running_m, running_l, running_o = _merge_attention_window(
+                running_m, running_l, running_o, scores, v_dense, mask=None)
 
         k_local = _repeat_kv_for_gqa(k[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
         v_local = _repeat_kv_for_gqa(v[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
         scores = torch.einsum("qhd,thd->qht", q_row, k_local) * scale
         local_mask = _local_causal_mask(q_len, q_pos_template, k_pos_template)
-        running_m, running_l, running_o = merge_window(running_m, running_l, running_o, scores, v_local, local_mask)
+        running_m, running_l, running_o = _merge_attention_window(
+            running_m, running_l, running_o, scores, v_local, local_mask)
         out[q_start:q_end] = (running_o / running_l.clamp_min(1e-20).unsqueeze(-1)).to(q.dtype)
 
     return out

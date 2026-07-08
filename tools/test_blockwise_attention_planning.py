@@ -21,6 +21,7 @@ from tinyvllm.layers.attention import (
     _blockwise_online_decode_attention,
     _decode_window_mask,
     _local_causal_mask,
+    _merge_attention_window,
     _normalize_logical_block_rows,
     _stage_blockwise_read_window,
 )
@@ -148,12 +149,35 @@ def test_local_causal_mask_reuses_position_templates():
     assert torch.equal(mask, expected)
 
 
+def test_merge_attention_window_accepts_none_mask_as_all_valid():
+    running_m = torch.full((1, 1), float("-inf"))
+    running_l = torch.zeros((1, 1))
+    running_o = torch.zeros((1, 1, 1))
+    scores = torch.tensor([[[1.0, 2.0]]])
+    values = torch.tensor([[[3.0]], [[5.0]]])
+
+    merged_m, merged_l, merged_o = _merge_attention_window(
+        running_m,
+        running_l,
+        running_o,
+        scores,
+        values,
+        mask=None,
+    )
+
+    expected_weights = torch.exp(scores - torch.tensor([[[2.0]]]))
+    assert torch.equal(merged_m, torch.tensor([[2.0]]))
+    assert torch.allclose(merged_l, expected_weights.sum(dim=-1))
+    assert torch.allclose(merged_o, torch.einsum("qht,thd->qhd", expected_weights, values))
+
+
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
     test_decode_window_mask_reuses_position_template()
     test_local_causal_mask_reuses_position_templates()
+    test_merge_attention_window_accepts_none_mask_as_all_valid()
     print("blockwise attention planning tests passed")
 
 
