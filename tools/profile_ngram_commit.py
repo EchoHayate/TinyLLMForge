@@ -196,6 +196,63 @@ def propose_draft(history: list[int], args) -> DraftProposal:
     raise ValueError(f"unsupported draft_source={args.draft_source}")
 
 
+def run_draft_model_stub(hidden_rows, candidate_token_ids, top_k: int = 3) -> dict:
+    """Profiler-only deterministic hidden-to-candidate draft model boundary."""
+    top_k = max(1, int(top_k))
+    candidate_token_ids = [int(token_id) for token_id in candidate_token_ids]
+    hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
+    metadata = {
+        "seed": 23,
+        "candidate_token_ids": candidate_token_ids,
+        "hidden_dim": hidden_dim,
+        "candidate_count": len(candidate_token_ids),
+        "stub_version": 1,
+    }
+
+    forward_t0 = time.perf_counter()
+    model_rows = []
+    for hidden_row in hidden_rows or []:
+        row_logits = []
+        for candidate_index, token_id in enumerate(candidate_token_ids):
+            score = 0.0
+            for dim_index, value in enumerate(hidden_row):
+                weight = (((dim_index + 2) * (candidate_index + 5) + 23) % 13 - 6) / 3.0
+                score += float(value) * weight
+            row_logits.append((token_id, score))
+        model_rows.append(row_logits)
+    draft_model_forward_ms = (time.perf_counter() - forward_t0) * 1000.0
+
+    select_t0 = time.perf_counter()
+    candidate_token_ids_by_row = []
+    candidate_logits_by_row = []
+    preview = []
+    for row_index, row_logits in enumerate(model_rows):
+        ranked = sorted(row_logits, key=lambda item: item[1], reverse=True)[:top_k]
+        token_ids = [int(token_id) for token_id, _ in ranked]
+        scores = [float(score) for _, score in ranked]
+        candidate_token_ids_by_row.append(token_ids)
+        candidate_logits_by_row.append(scores)
+        preview.append({
+            "row": int(row_index),
+            "token_ids": token_ids,
+            "scores": scores,
+        })
+    candidate_select_ms = (time.perf_counter() - select_t0) * 1000.0
+
+    return {
+        "candidate_token_ids": candidate_token_ids_by_row,
+        "candidate_logits": candidate_logits_by_row,
+        "draft_token_ids": [item["token_ids"][0] for item in preview if item["token_ids"]],
+        "draft_scores": [item["scores"][0] for item in preview if item["scores"]],
+        "preview": preview,
+        "metadata": metadata,
+        "timing_ms": {
+            "draft_model_forward_ms": draft_model_forward_ms,
+            "candidate_select_ms": candidate_select_ms,
+        },
+    }
+
+
 def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapter: str = "topk-stub") -> dict:
     """Return a JSON-friendly hidden-to-draft adapter interface preview.
 
@@ -262,40 +319,13 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
         hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
         candidate_count = min(8, len(rows[0]) if rows else hidden_dim)
         candidate_token_ids = list(range(max(0, candidate_count)))
-        draft_model_metadata = {
-            "seed": 23,
-            "candidate_token_ids": candidate_token_ids,
-            "hidden_dim": hidden_dim,
-            "candidate_count": candidate_count,
-            "stub_version": 1,
-        }
-        forward_t0 = time.perf_counter()
-        model_rows = []
-        for row_index, hidden_row in enumerate(hidden_rows or []):
-            row_logits = []
-            for candidate_index, token_id in enumerate(candidate_token_ids):
-                score = 0.0
-                for dim_index, value in enumerate(hidden_row):
-                    weight = (((dim_index + 2) * (candidate_index + 5) + 23) % 13 - 6) / 3.0
-                    score += float(value) * weight
-                row_logits.append((token_id, score))
-            model_rows.append(row_logits)
-        draft_model_forward_ms = (time.perf_counter() - forward_t0) * 1000.0
-        select_t0 = time.perf_counter()
-        candidate_token_ids_by_row = []
-        candidate_logits_by_row = []
-        for row_index, row_logits in enumerate(model_rows):
-            ranked = sorted(row_logits, key=lambda item: item[1], reverse=True)[:top_k]
-            token_ids = [int(token_id) for token_id, _ in ranked]
-            scores = [float(score) for _, score in ranked]
-            candidate_token_ids_by_row.append(token_ids)
-            candidate_logits_by_row.append(scores)
-            preview.append({
-                "row": int(row_index),
-                "token_ids": token_ids,
-                "scores": scores,
-            })
-        candidate_select_ms = (time.perf_counter() - select_t0) * 1000.0
+        draft_model_result = run_draft_model_stub(hidden_rows or [], candidate_token_ids, top_k=top_k)
+        draft_model_metadata = draft_model_result["metadata"]
+        candidate_token_ids_by_row = draft_model_result["candidate_token_ids"]
+        candidate_logits_by_row = draft_model_result["candidate_logits"]
+        preview = draft_model_result["preview"]
+        draft_model_forward_ms = draft_model_result["timing_ms"]["draft_model_forward_ms"]
+        candidate_select_ms = draft_model_result["timing_ms"]["candidate_select_ms"]
     else:
         for row_index, row in enumerate(rows):
             ranked = sorted(enumerate(row), key=lambda item: item[1], reverse=True)[:top_k]

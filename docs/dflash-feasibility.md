@@ -489,6 +489,13 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 
 结论：当前 `draft-model-stub` 的 ABI 和输出稳定性足够继续向“真实 draft model 接口”抽象，但还不应接入 runtime。下一步若继续，应把 deterministic pseudo forward 的输入/输出边界抽成独立函数或类，例如 `run_draft_model_stub(hidden_rows, candidate_token_ids, top_k) -> {candidate_logits, candidate_token_ids, timing}`，再替换为真实 draft model forward 时只改该边界；同时保持 profiler-only `runtime_mutation=false` gate。
 
+2026-07-08 已把 deterministic pseudo forward 抽成 `run_draft_model_stub(hidden_rows, candidate_token_ids, top_k)`：
+
+- 输出边界固定为 `candidate_token_ids`、`candidate_logits`、`draft_token_ids`、`draft_scores`、`preview`、`metadata`、`timing_ms.{draft_model_forward_ms,candidate_select_ms}`；
+- `summarize_hidden_to_draft_stub(..., adapter="draft-model-stub")` 复用该 helper 输出，保持原 profiler JSON schema 不变；
+- 本地测试直接覆盖 helper 的 deterministic output，并验证 summarize 路径复用同一 candidate ids/logits/metadata；
+- 远程 `profile_out/dflash_phase3_draft_model_stub_boundary_smoke_20260708.json` 通过：`gate_pass=true`、`accepted_count=2`、`draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`、`draft_model_forward_ms=3.5160109400749207`、`candidate_select_ms=0.015269964933395386`；commit `draft_tokens`/`accepted_tokens` 仍为 `[13440,21619]`，确认抽象后仍不影响 runtime。
+
 风险：
 
 - 可能触发额外 KV write；

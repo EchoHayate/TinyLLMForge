@@ -35,6 +35,7 @@ count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
 propose_draft = profile_ngram.propose_draft
+run_draft_model_stub = profile_ngram.run_draft_model_stub
 summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
 
 
@@ -470,6 +471,56 @@ def test_summarize_hidden_to_draft_stub_draft_model_stub_reports_candidate_logit
     assert summary["timing_ms"]["candidate_select_ms"] >= 0.0
 
 
+def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
+    result = run_draft_model_stub(
+        hidden_rows=[
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        candidate_token_ids=[0, 1, 2, 3],
+        top_k=2,
+    )
+
+    assert result["candidate_token_ids"] == [[2, 1], [3, 0]]
+    assert result["candidate_logits"] == [[1.6666666666666667, 1.0], [1.6666666666666667, 1.0]]
+    assert result["draft_token_ids"] == [2, 3]
+    assert result["draft_scores"] == [1.6666666666666667, 1.6666666666666667]
+    assert result["preview"] == [
+        {"row": 0, "token_ids": [2, 1], "scores": [1.6666666666666667, 1.0]},
+        {"row": 1, "token_ids": [3, 0], "scores": [1.6666666666666667, 1.0]},
+    ]
+    assert result["metadata"] == {
+        "seed": 23,
+        "candidate_token_ids": [0, 1, 2, 3],
+        "hidden_dim": 4,
+        "candidate_count": 4,
+        "stub_version": 1,
+    }
+    assert set(result["timing_ms"]) == {"draft_model_forward_ms", "candidate_select_ms"}
+    assert result["timing_ms"]["draft_model_forward_ms"] >= 0.0
+    assert result["timing_ms"]["candidate_select_ms"] >= 0.0
+
+    class FakeTensor:
+        shape = (2, 4)
+        dtype = "torch.float32"
+        device = "cpu"
+        values = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+
+    summary = summarize_hidden_to_draft_stub(
+        FakeTensor(),
+        [[10.0, 0.0, 0.0, 0.0], [0.0, 10.0, 0.0, 0.0]],
+        top_k=2,
+        adapter="draft-model-stub",
+    )
+
+    assert summary["output"]["candidate_token_ids"] == result["candidate_token_ids"]
+    assert summary["output"]["candidate_logits"] == result["candidate_logits"]
+    assert summary["draft_model_metadata"] == result["metadata"]
+
+
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
     test_propose_ngram_draft_respects_max_draft_tokens()
@@ -491,6 +542,7 @@ def main():
     test_summarize_hidden_to_draft_stub_linear_stub_uses_hidden_projection_candidates()
     test_summarize_hidden_to_draft_stub_linear_stub_counts_hidden_rows_not_logits_rows()
     test_summarize_hidden_to_draft_stub_draft_model_stub_reports_candidate_logits()
+    test_run_draft_model_stub_exposes_replaceable_forward_boundary()
     print("ngram speculative tests passed")
 
 
