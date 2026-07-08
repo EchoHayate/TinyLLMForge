@@ -589,6 +589,24 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
 - 远程 GPU4 `tools/test_kv_offload.py` 通过。
 - 远程 thrash smoke：`profile_out/kv_offload_pending_h2d_penalty_thrash_20260708.json`，`gate_pass=true`、`copy_waits=10`、`h2d_copies=8`、`d2h_copies=6`、`evictions=11`、`prefetch_plans=4`。
 
+### 2026-07-08 Blockwise attention window-specific H2D waits
+
+继续降低 blockwise decode/prefill 的窗口级同步面：旧 `_blockwise_online_decode_attention()` 和 `_blockwise_online_prefill_attention()` 每个 read window 都调用 `manager.wait_for_pending()`，会 drain 全局 `pending_wait_blocks`。如果 prepare 阶段或其他窗口已经发起了尚未被当前窗口消费的 H2D，这会提前等待无关 copy，削弱 copy/compute overlap。
+
+- `KVOffloadMVP0.wait_for_blocks()` 新增 `clear_pending=False` 参数；调用方可只等待指定 logical blocks，并只从 `pending_wait_blocks` 移除这些 blocks。
+- `wait_for_pending()` 仍保留 drain-all 语义，内部复用 `wait_for_blocks(..., clear_pending=True)`。
+- blockwise decode/prefill read window 现在改成 `manager.wait_for_blocks(list(unique_blocks), clear_pending=True)`，只等待当前窗口真正要读的 H2D。
+- 新增测试：
+  - `test_wait_for_blocks_clear_pending_api_without_cuda()`：用 fake stream 覆盖 API 语义，证明只清理请求的 pending blocks。
+  - `test_wait_for_blocks_can_clear_only_requested_pending_h2d_waits()`：CUDA 场景下要求 `[0]` 被等待/清理后，未请求的 pending block `[1]` 仍保留。
+- TDD RED：远程临时回退旧 `wait_for_blocks(self, logical_blocks)` 签名后，新增测试按预期失败：`TypeError: KVOffloadMVP0.wait_for_blocks() got an unexpected keyword argument 'clear_pending'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/test_kv_offload.py`、`git diff --check` 通过。
+- 远程 GPU4：`CUDA_VISIBLE_DEVICES=4 PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_window_wait_clear_20260708.json`，`gate_pass=true`、`chunks=8`、`streamed_tokens=1024`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_window_wait_clear_20260708.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+- 远程真实模型 smoke：`SMOKE_TAG=20260708_window_wait_clear RUN_PREFLIGHT=0 CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34687 MASTER_PORT=34687 tools/smoke_blockwise_prefill_remote.sh` 通过；真实长 prompt 输出 `profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260708_window_wait_clear.json`，`gate_pass=true`、`elapsed_s=29.39703532680869`、`output_tokens=1`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

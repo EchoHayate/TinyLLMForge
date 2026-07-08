@@ -126,7 +126,7 @@ def _blockwise_online_decode_attention(
             future_logical_blocks=unique_blocks | write_blocks,
             protected_logical_blocks=write_blocks,
         )
-        manager.wait_for_pending()
+        manager.wait_for_blocks(list(unique_blocks), clear_pending=True)
 
         max_window_tokens = max(window_lens)
         k_dense = q.new_zeros((batch, max_window_tokens, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
@@ -264,7 +264,7 @@ def _blockwise_online_prefill_attention(
                 future_logical_blocks=protected,
                 protected_logical_blocks=write_blocks,
             )
-            manager.wait_for_pending()
+            manager.wait_for_blocks(list(unique_blocks), clear_pending=True)
 
             k_dense = q.new_zeros((window_len, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
             v_dense = q.new_zeros((window_len, v_cache.shape[2], head_dim), dtype=v_cache.dtype)

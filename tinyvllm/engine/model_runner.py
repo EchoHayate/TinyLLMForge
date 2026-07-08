@@ -321,22 +321,25 @@ class KVOffloadMVP0:
             self.pending_wait_blocks.difference_update(int(block) for block in waited_h2d_blocks)
         return {logical_block: self.logical_to_slot[logical_block] for logical_block in ordered}
 
-    def wait_for_blocks(self, logical_blocks: list[int]):
+    def wait_for_blocks(self, logical_blocks: list[int], clear_pending: bool = False):
         if self.copy_stream is None:
             return
+        blocks = set(int(block) for block in logical_blocks)
         stream = torch.cuda.current_stream()
         waited_event_ids = set()
-        for logical_block in set(int(block) for block in logical_blocks):
+        for logical_block in blocks:
             event = self.h2d_done.get(logical_block)
             if event is not None and id(event) not in waited_event_ids:
                 stream.wait_event(event)
                 waited_event_ids.add(id(event))
                 self.stats["copy_waits"] += 1
+        if clear_pending:
+            self.pending_wait_blocks.difference_update(blocks)
 
     def wait_for_pending(self):
         if not self.pending_wait_blocks:
             return
-        self.wait_for_blocks(list(self.pending_wait_blocks))
+        self.wait_for_blocks(list(self.pending_wait_blocks), clear_pending=True)
         self.pending_wait_blocks.clear()
 
     def synchronize_copies(self):
