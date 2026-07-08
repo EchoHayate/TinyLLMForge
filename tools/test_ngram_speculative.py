@@ -35,6 +35,7 @@ count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
 propose_draft = profile_ngram.propose_draft
+DraftModelInput = profile_ngram.DraftModelInput
 DraftModelResult = profile_ngram.DraftModelResult
 DraftModelStubConfig = profile_ngram.DraftModelStubConfig
 run_draft_model_stub = profile_ngram.run_draft_model_stub
@@ -454,7 +455,16 @@ def test_summarize_hidden_to_draft_stub_draft_model_stub_reports_candidate_logit
     assert summary["output"]["candidate_token_ids"] == [[2, 1], [3, 0]]
     assert summary["output"]["candidate_logits"] == [[1.6666666666666667, 1.0], [1.6666666666666667, 1.0]]
     assert summary["output"]["draft_token_ids"] == [2, 3]
-    assert summary["draft_model_metadata"] == {
+    assert summary["draft_model_metadata"]["input_schema"] == {
+        "hidden_rows": 2,
+        "hidden_dim": 4,
+        "candidate_count": 4,
+        "top_k": 2,
+        "source_shape": [2, 4],
+        "source_dtype": "torch.float32",
+        "source_device": "cpu",
+    }
+    assert {key: value for key, value in summary["draft_model_metadata"].items() if key != "input_schema"} == {
         "seed": 23,
         "candidate_token_ids": [0, 1, 2, 3],
         "hidden_dim": 4,
@@ -493,7 +503,16 @@ def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
         {"row": 0, "token_ids": [2, 1], "scores": [1.6666666666666667, 1.0]},
         {"row": 1, "token_ids": [3, 0], "scores": [1.6666666666666667, 1.0]},
     ]
-    assert result_json["metadata"] == {
+    assert result_json["metadata"]["input_schema"] == {
+        "hidden_rows": 2,
+        "hidden_dim": 4,
+        "candidate_count": 4,
+        "top_k": 2,
+        "source_shape": None,
+        "source_dtype": None,
+        "source_device": None,
+    }
+    assert {key: value for key, value in result_json["metadata"].items() if key != "input_schema"} == {
         "seed": 23,
         "candidate_token_ids": [0, 1, 2, 3],
         "hidden_dim": 4,
@@ -522,7 +541,9 @@ def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
 
     assert summary["output"]["candidate_token_ids"] == result_json["candidate_token_ids"]
     assert summary["output"]["candidate_logits"] == result_json["candidate_logits"]
-    assert summary["draft_model_metadata"] == result_json["metadata"]
+    assert {key: value for key, value in summary["draft_model_metadata"].items() if key != "input_schema"} == {
+        key: value for key, value in result_json["metadata"].items() if key != "input_schema"
+    }
 
 
 def test_run_draft_model_stub_accepts_config_and_validates_boundaries():
@@ -554,6 +575,45 @@ def test_run_draft_model_stub_accepts_config_and_validates_boundaries():
         raise AssertionError("ragged hidden rows should fail")
 
 
+def test_draft_model_input_makes_profiler_boundary_explicit():
+    draft_input = DraftModelInput.from_rows(
+        hidden_rows=[
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        candidate_token_ids=[0, 1, 2, 3],
+        top_k=2,
+        source_shape=[2, 4],
+        source_dtype="torch.float32",
+        source_device="cpu",
+    )
+
+    assert draft_input.to_dict() == {
+        "hidden_rows": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        "candidate_token_ids": [0, 1, 2, 3],
+        "top_k": 2,
+        "source_shape": [2, 4],
+        "source_dtype": "torch.float32",
+        "source_device": "cpu",
+    }
+
+    result = run_draft_model_stub(draft_input)
+
+    assert result.draft_token_ids == [2, 3]
+    assert result.metadata["input_schema"] == {
+        "hidden_rows": 2,
+        "hidden_dim": 4,
+        "candidate_count": 4,
+        "top_k": 2,
+        "source_shape": [2, 4],
+        "source_dtype": "torch.float32",
+        "source_device": "cpu",
+    }
+
+
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
     test_propose_ngram_draft_respects_max_draft_tokens()
@@ -577,6 +637,7 @@ def main():
     test_summarize_hidden_to_draft_stub_draft_model_stub_reports_candidate_logits()
     test_run_draft_model_stub_exposes_replaceable_forward_boundary()
     test_run_draft_model_stub_accepts_config_and_validates_boundaries()
+    test_draft_model_input_makes_profiler_boundary_explicit()
     print("ngram speculative tests passed")
 
 

@@ -53,6 +53,50 @@ class DraftModelStubConfig:
 
 
 @dataclass
+class DraftModelInput:
+    hidden_rows: list[list[float]]
+    candidate_token_ids: list[int]
+    top_k: int
+    source_shape: list[int] | None = None
+    source_dtype: str | None = None
+    source_device: str | None = None
+
+    @classmethod
+    def from_rows(cls, hidden_rows, candidate_token_ids, top_k: int = 3,
+                  source_shape=None, source_dtype=None, source_device=None) -> "DraftModelInput":
+        return cls(
+            hidden_rows=[[float(value) for value in row] for row in hidden_rows or []],
+            candidate_token_ids=[int(token_id) for token_id in candidate_token_ids],
+            top_k=max(1, int(top_k)),
+            source_shape=[int(dim) for dim in source_shape] if source_shape is not None else None,
+            source_dtype=str(source_dtype) if source_dtype is not None else None,
+            source_device=str(source_device) if source_device is not None else None,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "hidden_rows": self.hidden_rows,
+            "candidate_token_ids": self.candidate_token_ids,
+            "top_k": self.top_k,
+            "source_shape": self.source_shape,
+            "source_dtype": self.source_dtype,
+            "source_device": self.source_device,
+        }
+
+    def schema(self) -> dict:
+        hidden_dim = len(self.hidden_rows[0]) if self.hidden_rows else 0
+        return {
+            "hidden_rows": len(self.hidden_rows),
+            "hidden_dim": hidden_dim,
+            "candidate_count": len(self.candidate_token_ids),
+            "top_k": self.top_k,
+            "source_shape": self.source_shape,
+            "source_dtype": self.source_dtype,
+            "source_device": self.source_device,
+        }
+
+
+@dataclass
 class DraftModelResult:
     candidate_token_ids: list[list[int]]
     candidate_logits: list[list[float]]
@@ -224,16 +268,24 @@ def propose_draft(history: list[int], args) -> DraftProposal:
     raise ValueError(f"unsupported draft_source={args.draft_source}")
 
 
-def run_draft_model_stub(hidden_rows, candidate_token_ids, top_k: int = 3,
+def run_draft_model_stub(hidden_rows, candidate_token_ids=None, top_k: int = 3,
                          config: DraftModelStubConfig | None = None) -> DraftModelResult:
     """Profiler-only deterministic hidden-to-candidate draft model boundary."""
     config = config or DraftModelStubConfig()
-    top_k = max(1, int(top_k))
-    candidate_token_ids = [int(token_id) for token_id in candidate_token_ids]
+    if isinstance(hidden_rows, DraftModelInput):
+        draft_input = hidden_rows
+    else:
+        draft_input = DraftModelInput.from_rows(
+            hidden_rows=hidden_rows,
+            candidate_token_ids=candidate_token_ids or [],
+            top_k=top_k,
+        )
+    top_k = draft_input.top_k
+    candidate_token_ids = draft_input.candidate_token_ids
     if not candidate_token_ids:
         raise ValueError("candidate_token_ids must not be empty")
-    hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
-    if any(len(row) != hidden_dim for row in hidden_rows or []):
+    hidden_dim = len(draft_input.hidden_rows[0]) if draft_input.hidden_rows else 0
+    if any(len(row) != hidden_dim for row in draft_input.hidden_rows or []):
         raise ValueError("hidden_rows must have a consistent width")
     metadata = {
         "seed": int(config.seed),
@@ -241,11 +293,12 @@ def run_draft_model_stub(hidden_rows, candidate_token_ids, top_k: int = 3,
         "hidden_dim": hidden_dim,
         "candidate_count": len(candidate_token_ids),
         "stub_version": int(config.stub_version),
+        "input_schema": draft_input.schema(),
     }
 
     forward_t0 = time.perf_counter()
     model_rows = []
-    for hidden_row in hidden_rows or []:
+    for hidden_row in draft_input.hidden_rows or []:
         row_logits = []
         for candidate_index, token_id in enumerate(candidate_token_ids):
             score = 0.0
@@ -301,6 +354,11 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
         raise ValueError(f"unsupported hidden-to-draft adapter={adapter}")
     hidden_shape = [int(dim) for dim in hidden_states.shape]
     hidden_row_count = hidden_shape[0] if hidden_shape else 0
+    hidden_schema = {
+        "shape": hidden_shape,
+        "dtype": str(hidden_states.dtype),
+        "device": str(hidden_states.device),
+    }
     t0 = time.perf_counter()
     if hasattr(logits, "detach"):
         rows = logits.detach().float().cpu().tolist()
@@ -353,7 +411,15 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
         hidden_dim = len(hidden_rows[0]) if hidden_rows else 0
         candidate_count = min(8, len(rows[0]) if rows else hidden_dim)
         candidate_token_ids = list(range(max(0, candidate_count)))
-        draft_model_result = run_draft_model_stub(hidden_rows or [], candidate_token_ids, top_k=top_k)
+        draft_model_input = DraftModelInput.from_rows(
+            hidden_rows=hidden_rows or [],
+            candidate_token_ids=candidate_token_ids,
+            top_k=top_k,
+            source_shape=hidden_shape,
+            source_dtype=hidden_schema["dtype"],
+            source_device=hidden_schema["device"],
+        )
+        draft_model_result = run_draft_model_stub(draft_model_input)
         draft_model_metadata = draft_model_result.metadata
         candidate_token_ids_by_row = draft_model_result.candidate_token_ids
         candidate_logits_by_row = draft_model_result.candidate_logits
@@ -385,11 +451,6 @@ def summarize_hidden_to_draft_stub(hidden_states, logits, top_k: int = 3, adapte
     logit_row_count = len(rows)
     projected_row_count = row_count
     vocab_preview = len(rows[0]) if rows else 0
-    hidden_schema = {
-        "shape": hidden_shape,
-        "dtype": str(hidden_states.dtype),
-        "device": str(hidden_states.device),
-    }
     projection_name = "logits_topk"
     if adapter == "linear-stub":
         projection_name = "deterministic_hidden_linear_stub"
