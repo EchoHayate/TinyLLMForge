@@ -171,6 +171,21 @@ def test_merge_attention_window_accepts_none_mask_as_all_valid():
     assert torch.allclose(merged_o, torch.einsum("qht,thd->qhd", expected_weights, values))
 
 
+def test_merge_attention_window_none_mask_does_not_allocate_valid_mask():
+    running_m = torch.full((1, 1), float("-inf"))
+    running_l = torch.zeros((1, 1))
+    running_o = torch.zeros((1, 1, 1))
+    scores = torch.tensor([[[1.0, 2.0]]])
+    values = torch.tensor([[[3.0]], [[5.0]]])
+
+    original_ones = torch.ones
+    torch.ones = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("torch.ones called"))
+    try:
+        _merge_attention_window(running_m, running_l, running_o, scores, values, mask=None)
+    finally:
+        torch.ones = original_ones
+
+
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
@@ -178,6 +193,7 @@ def main():
     test_decode_window_mask_reuses_position_template()
     test_local_causal_mask_reuses_position_templates()
     test_merge_attention_window_accepts_none_mask_as_all_valid()
+    test_merge_attention_window_none_mask_does_not_allocate_valid_mask()
     print("blockwise attention planning tests passed")
 
 

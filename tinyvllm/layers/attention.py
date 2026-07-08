@@ -132,9 +132,17 @@ def _local_causal_mask(
 
 def _merge_attention_window(running_m, running_l, running_o, scores, value_dense, mask):
     if mask is None:
-        valid = torch.ones(scores.shape[:-1], device=scores.device, dtype=torch.bool)
         chunk_m = scores.max(dim=-1).values
         exp_scores = torch.exp(scores - chunk_m.unsqueeze(-1))
+        chunk_l = exp_scores.sum(dim=-1)
+        chunk_o = torch.einsum("qht,thd->qhd", exp_scores, value_dense)
+        merged_m = torch.maximum(running_m, chunk_m)
+        old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
+        new_weight = torch.exp(chunk_m - merged_m)
+        running_l = old_weight * running_l + new_weight * chunk_l
+        running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
+        running_m = merged_m
+        return running_m, running_l, running_o
     else:
         valid = mask.any(dim=-1)
         scores = scores.masked_fill(~mask, float("-inf"))

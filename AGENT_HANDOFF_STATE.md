@@ -706,6 +706,18 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_merge_helper_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_merge_helper_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise prefix merge no-valid allocation
+
+继续收紧 all-valid prefix merge 分支：上一轮 `mask=None` 虽然跳过了全 True mask 和 masked fill，但仍会创建 `torch.ones(scores.shape[:-1])` 作为 `valid`。现在 all-valid 分支不再创建 bool valid tensor，直接执行 merge；只保留对历史 `running_m=-inf` 的 old_weight 防护。
+
+- 新增 `test_merge_attention_window_none_mask_does_not_allocate_valid_mask()`，monkeypatch `torch.ones` 抛错，确保 `mask=None` 分支不分配 valid mask。
+- TDD RED：旧实现按预期失败：`AssertionError: torch.ones called`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_no_valid_alloc_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_no_valid_alloc_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
