@@ -44,10 +44,19 @@ NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
 propose_draft = profile_ngram.propose_draft
 DraftModelInput = draft_model_schema.DraftModelInput
+DraftModelContract = draft_model_schema.DraftModelContract
 DraftModelResult = draft_model_schema.DraftModelResult
 DraftModelStubConfig = draft_model_schema.DraftModelStubConfig
+validate_draft_model_contract = draft_model_schema.validate_draft_model_contract
 run_draft_model_stub = profile_ngram.run_draft_model_stub
 summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
+
+
+def _base_draft_model_metadata(metadata: dict) -> dict:
+    return {
+        key: value for key, value in metadata.items()
+        if key not in ("input_schema", "contract")
+    }
 
 
 def test_propose_ngram_draft_uses_latest_matching_suffix():
@@ -472,7 +481,8 @@ def test_summarize_hidden_to_draft_stub_draft_model_stub_reports_candidate_logit
         "source_dtype": "torch.float32",
         "source_device": "cpu",
     }
-    assert {key: value for key, value in summary["draft_model_metadata"].items() if key != "input_schema"} == {
+    assert summary["draft_model_metadata"]["contract"]["compatible"] is True
+    assert _base_draft_model_metadata(summary["draft_model_metadata"]) == {
         "seed": 23,
         "candidate_token_ids": [0, 1, 2, 3],
         "hidden_dim": 4,
@@ -520,7 +530,8 @@ def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
         "source_dtype": None,
         "source_device": None,
     }
-    assert {key: value for key, value in result_json["metadata"].items() if key != "input_schema"} == {
+    assert result_json["metadata"]["contract"]["compatible"] is True
+    assert _base_draft_model_metadata(result_json["metadata"]) == {
         "seed": 23,
         "candidate_token_ids": [0, 1, 2, 3],
         "hidden_dim": 4,
@@ -549,9 +560,9 @@ def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
 
     assert summary["output"]["candidate_token_ids"] == result_json["candidate_token_ids"]
     assert summary["output"]["candidate_logits"] == result_json["candidate_logits"]
-    assert {key: value for key, value in summary["draft_model_metadata"].items() if key != "input_schema"} == {
-        key: value for key, value in result_json["metadata"].items() if key != "input_schema"
-    }
+    assert _base_draft_model_metadata(summary["draft_model_metadata"]) == _base_draft_model_metadata(
+        result_json["metadata"]
+    )
 
 
 def test_run_draft_model_stub_accepts_config_and_validates_boundaries():
@@ -567,6 +578,7 @@ def test_run_draft_model_stub_accepts_config_and_validates_boundaries():
     assert result["metadata"]["stub_version"] == 7
     assert result["metadata"]["candidate_count"] == 4
     assert result["draft_token_ids"] == [2]
+    assert result["metadata"]["contract"]["compatible"] is True
 
     try:
         run_draft_model_stub([[1.0]], [], top_k=1)
@@ -621,6 +633,85 @@ def test_draft_model_input_makes_profiler_boundary_explicit():
         "source_device": "cpu",
     }
 
+    checked = run_draft_model_stub(
+        draft_input,
+        contract=DraftModelContract(
+            expected_hidden_dim=4,
+            target_vocab_size=8,
+            draft_vocab_size=8,
+            tokenizer_family="qwen3",
+            draft_tokenizer_family="qwen3",
+        ),
+    )
+
+    assert checked.metadata["contract"] == {
+        "expected_hidden_dim": 4,
+        "actual_hidden_dim": 4,
+        "target_vocab_size": 8,
+        "draft_vocab_size": 8,
+        "tokenizer_family": "qwen3",
+        "draft_tokenizer_family": "qwen3",
+        "candidate_id_min": 0,
+        "candidate_id_max": 3,
+        "compatible": True,
+    }
+
+
+def test_draft_model_contract_validates_hidden_vocab_and_tokenizer_boundaries():
+    draft_input = DraftModelInput.from_rows(
+        hidden_rows=[[1.0, 0.0, 0.0, 0.0]],
+        candidate_token_ids=[0, 3],
+        top_k=2,
+        source_shape=[1, 4],
+        source_dtype="torch.float32",
+        source_device="cpu",
+    )
+    contract = DraftModelContract(
+        expected_hidden_dim=4,
+        target_vocab_size=8,
+        draft_vocab_size=8,
+        tokenizer_family="qwen3",
+        draft_tokenizer_family="qwen3",
+    )
+
+    metadata = validate_draft_model_contract(draft_input, contract)
+
+    assert metadata == {
+        "expected_hidden_dim": 4,
+        "actual_hidden_dim": 4,
+        "target_vocab_size": 8,
+        "draft_vocab_size": 8,
+        "tokenizer_family": "qwen3",
+        "draft_tokenizer_family": "qwen3",
+        "candidate_id_min": 0,
+        "candidate_id_max": 3,
+        "compatible": True,
+    }
+
+    try:
+        validate_draft_model_contract(draft_input, DraftModelContract(expected_hidden_dim=5))
+    except ValueError as exc:
+        assert "hidden_dim mismatch" in str(exc)
+    else:
+        raise AssertionError("hidden_dim mismatch should fail")
+
+    try:
+        validate_draft_model_contract(draft_input, DraftModelContract(target_vocab_size=3))
+    except ValueError as exc:
+        assert "candidate token id out of target vocab" in str(exc)
+    else:
+        raise AssertionError("target vocab overflow should fail")
+
+    try:
+        validate_draft_model_contract(
+            draft_input,
+            DraftModelContract(tokenizer_family="qwen3", draft_tokenizer_family="llama"),
+        )
+    except ValueError as exc:
+        assert "tokenizer family mismatch" in str(exc)
+    else:
+        raise AssertionError("tokenizer mismatch should fail")
+
 
 def main():
     test_propose_ngram_draft_uses_latest_matching_suffix()
@@ -646,6 +737,7 @@ def main():
     test_run_draft_model_stub_exposes_replaceable_forward_boundary()
     test_run_draft_model_stub_accepts_config_and_validates_boundaries()
     test_draft_model_input_makes_profiler_boundary_explicit()
+    test_draft_model_contract_validates_hidden_vocab_and_tokenizer_boundaries()
     print("ngram speculative tests passed")
 
 

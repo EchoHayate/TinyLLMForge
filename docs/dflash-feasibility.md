@@ -522,6 +522,12 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 - 本地 `tools/test_ngram_speculative.py` 直接加载 `draft_model_schema`，验证模块 API 与 profiler 使用的是同一组 dataclass；
 - 远程 `profile_out/dflash_phase3_draft_model_schema_module_smoke_20260708.json` 通过：`gate_pass=true`、`accepted_count=2`、`runtime_mutation=false`、`DraftModelInput` schema 仍为 `source_shape=[3,1024]`、`source_dtype="torch.bfloat16"`、`source_device="cuda:0"`，commit `draft_tokens/accepted_tokens=[13440,21619]` 不变。
 
+2026-07-08 已补真实 draft model 接入前置 contract 检查：
+
+- 新增 `DraftModelContract` 与 `validate_draft_model_contract()`，在 profiler-only schema 层显式校验 `expected_hidden_dim`、`target_vocab_size`、`draft_vocab_size`、`tokenizer_family` / `draft_tokenizer_family`，并记录 candidate token id 范围；
+- 本地测试覆盖 hidden_dim mismatch、candidate id 超 target vocab、tokenizer family mismatch 三类失败边界，以及 compatible contract 的 metadata；
+- `run_draft_model_stub()` 默认记录宽松 contract metadata，也支持传入显式 contract；远程第一次 smoke 失败于 `EADDRINUSE`，换动态高端口后 `profile_out/dflash_phase3_draft_model_contract_smoke_20260708.json` 通过：`gate_pass=true`、`accepted_count=2`、`runtime_mutation=false`、`contract.compatible=true`、`actual_hidden_dim=1024`、`candidate_id_min=0`、`candidate_id_max=7`，commit `draft_tokens/accepted_tokens=[13440,21619]` 不变。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -560,6 +566,7 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 6. `topk-stub` vs `linear-stub` 3x remote compare 已通过，确认 ABI 字段稳定、timing 字段足够继续 profiler-only 真实 draft model stub；后续应先显式化 row-count 字段和拆分 draft-model timing，再考虑完整 diffusion checkpoint。
 7. `draft-model-stub` 已完成 profiler-only dataclass/config shell：真实 draft model 未来需要返回的 candidate ids/logits、draft tokens/scores、metadata、timing 都已经在 `DraftModelResult` 中显式化，并有本地错误边界测试与远程 Qwen3 smoke 验证。
 8. `DraftModelInput` 已补齐输入侧 contract，并通过多 prompt / batch shape smoke 证明 event 级 schema 不混淆。
-9. profiler-only draft model schema 已抽成 `tools/draft_model_schema.py` 小模块，下一步若继续 Phase 3，最有价值的是补更多形状覆盖或做真实 draft model 接入前置检查（vocab/tokenizer/hidden_dim contract），仍不应接入真实 checkpoint 或 runtime。
+9. profiler-only draft model schema 已抽成 `tools/draft_model_schema.py` 小模块。
+10. 真实 draft model 接入前置 contract 检查已落地，能在 profiler-only 层校验 hidden_dim、vocab candidate 范围和 tokenizer family。下一步若继续 Phase 3，最有价值的是补更多形状覆盖，仍不应接入真实 checkpoint 或 runtime。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。

@@ -19,7 +19,13 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-from draft_model_schema import DraftModelInput, DraftModelResult, DraftModelStubConfig
+from draft_model_schema import (
+    DraftModelContract,
+    DraftModelInput,
+    DraftModelResult,
+    DraftModelStubConfig,
+    validate_draft_model_contract,
+)
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -199,7 +205,8 @@ def propose_draft(history: list[int], args) -> DraftProposal:
 
 
 def run_draft_model_stub(hidden_rows, candidate_token_ids=None, top_k: int = 3,
-                         config: DraftModelStubConfig | None = None) -> DraftModelResult:
+                         config: DraftModelStubConfig | None = None,
+                         contract: DraftModelContract | None = None) -> DraftModelResult:
     """Profiler-only deterministic hidden-to-candidate draft model boundary."""
     config = config or DraftModelStubConfig()
     if isinstance(hidden_rows, DraftModelInput):
@@ -217,6 +224,7 @@ def run_draft_model_stub(hidden_rows, candidate_token_ids=None, top_k: int = 3,
     hidden_dim = len(draft_input.hidden_rows[0]) if draft_input.hidden_rows else 0
     if any(len(row) != hidden_dim for row in draft_input.hidden_rows or []):
         raise ValueError("hidden_rows must have a consistent width")
+    contract_metadata = validate_draft_model_contract(draft_input, contract)
     metadata = {
         "seed": int(config.seed),
         "candidate_token_ids": candidate_token_ids,
@@ -224,6 +232,7 @@ def run_draft_model_stub(hidden_rows, candidate_token_ids=None, top_k: int = 3,
         "candidate_count": len(candidate_token_ids),
         "stub_version": int(config.stub_version),
         "input_schema": draft_input.schema(),
+        "contract": contract_metadata,
     }
 
     forward_t0 = time.perf_counter()
