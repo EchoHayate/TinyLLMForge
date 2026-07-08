@@ -73,6 +73,31 @@ def _unique_blocks_in_order(blocks) -> list[int]:
     return ordered
 
 
+def _stage_blockwise_read_window(
+    manager,
+    logical_blocks,
+    future_logical_blocks: set[int],
+    protected_logical_blocks: set[int],
+    capacity_blocks: set[int],
+    capacity_error_prefix: str,
+) -> list[int]:
+    unique_block_list = _unique_blocks_in_order(logical_blocks)
+    if len(capacity_blocks) > manager.gpu_blocks:
+        raise RuntimeError(
+            f"{capacity_error_prefix}: required={len(capacity_blocks)}, gpu_blocks={manager.gpu_blocks}"
+        )
+    manager.stats["prefetch_plans"] += 1
+    manager.stats["prefetch_read_blocks"] += len(unique_block_list)
+    manager.ensure_resident(
+        unique_block_list,
+        require_valid=True,
+        future_logical_blocks=future_logical_blocks,
+        protected_logical_blocks=protected_logical_blocks,
+    )
+    manager.wait_for_blocks(unique_block_list, clear_pending=True)
+    return unique_block_list
+
+
 def _blockwise_online_decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -124,22 +149,20 @@ def _blockwise_online_decode_attention(
             needed_blocks.extend(window)
         if not needed_blocks or max(window_lens, default=0) <= 0:
             continue
-        unique_block_list = _unique_blocks_in_order(needed_blocks)
-        unique_blocks = set(unique_block_list)
+        unique_blocks = set(_unique_blocks_in_order(needed_blocks))
         if len(unique_blocks) > manager.gpu_blocks:
             raise RuntimeError(
                 "blockwise decode window has more unique logical blocks than GPU staging slots: "
                 f"required={len(unique_blocks)}, gpu_blocks={manager.gpu_blocks}"
             )
-        manager.stats["prefetch_plans"] += 1
-        manager.stats["prefetch_read_blocks"] += len(unique_blocks)
-        manager.ensure_resident(
-            unique_block_list,
-            require_valid=True,
+        _stage_blockwise_read_window(
+            manager,
+            needed_blocks,
             future_logical_blocks=unique_blocks | write_blocks,
             protected_logical_blocks=write_blocks,
+            capacity_blocks=unique_blocks,
+            capacity_error_prefix="blockwise decode window has more unique logical blocks than GPU staging slots",
         )
-        manager.wait_for_blocks(unique_block_list, clear_pending=True)
 
         max_window_tokens = max(window_lens)
         k_dense = q.new_zeros((batch, max_window_tokens, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
@@ -262,23 +285,21 @@ def _blockwise_online_prefill_attention(
             window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
             if not window or window_len <= 0:
                 continue
-            unique_block_list = _unique_blocks_in_order(window)
-            unique_blocks = set(unique_block_list)
+            unique_blocks = set(_unique_blocks_in_order(window))
             protected = unique_blocks | write_blocks
             if len(protected) > manager.gpu_blocks:
                 raise RuntimeError(
                     "blockwise prefill window plus current write blocks exceed GPU staging slots: "
                     f"required={len(protected)}, gpu_blocks={manager.gpu_blocks}"
                 )
-            manager.stats["prefetch_plans"] += 1
-            manager.stats["prefetch_read_blocks"] += len(unique_blocks)
-            manager.ensure_resident(
-                unique_block_list,
-                require_valid=True,
+            _stage_blockwise_read_window(
+                manager,
+                window,
                 future_logical_blocks=protected,
                 protected_logical_blocks=write_blocks,
+                capacity_blocks=protected,
+                capacity_error_prefix="blockwise prefill window plus current write blocks exceed GPU staging slots",
             )
-            manager.wait_for_blocks(unique_block_list, clear_pending=True)
 
             k_dense = q.new_zeros((window_len, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
             v_dense = q.new_zeros((window_len, v_cache.shape[2], head_dim), dtype=v_cache.dtype)

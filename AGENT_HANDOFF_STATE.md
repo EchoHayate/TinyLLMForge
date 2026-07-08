@@ -621,6 +621,24 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_ordered_windows_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_ordered_windows_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise read-window staging helper
+
+继续为后续 prefetch plan 合并做结构整理：decode/prefill read window 原本各自重复执行 first-seen 去重、容量检查、`prefetch_*` stats、`ensure_resident()`、`wait_for_blocks(..., clear_pending=True)`。这些语义现在收敛到 `_stage_blockwise_read_window()`，保持行为不变，但让后续实现跨窗口/跨 row planner 时只需要改一个入口。
+
+- `_stage_blockwise_read_window()` 返回 first-seen `unique_block_list`，统一负责：
+  - capacity guard；
+  - `prefetch_plans` / `prefetch_read_blocks` 统计；
+  - `ensure_resident(require_valid=True)`；
+  - 只等待并清理当前窗口 read blocks 的 pending H2D。
+- decode/prefill blockwise attention 都改为复用 helper。
+- 新增 `test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()`。
+- TDD RED：远程测试在 helper 缺失时按预期 `ImportError: cannot import name '_stage_blockwise_read_window'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_stage_helper_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_stage_helper_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

@@ -17,7 +17,7 @@ if _REPO_ROOT not in sys.path:
 
 import torch
 
-from tinyvllm.layers.attention import _blockwise_online_decode_attention
+from tinyvllm.layers.attention import _blockwise_online_decode_attention, _stage_blockwise_read_window
 
 
 class _PlanOnlyManager:
@@ -79,8 +79,28 @@ def test_blockwise_decode_stages_read_window_in_first_seen_order():
     assert manager.wait_calls == [([2, 0, 1], True)]
 
 
+def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks():
+    manager = _PlanOnlyManager()
+
+    unique_blocks = _stage_blockwise_read_window(
+        manager,
+        logical_blocks=[2, 0, 2, 1],
+        future_logical_blocks={0, 1, 2, 3},
+        protected_logical_blocks={3},
+        capacity_blocks={0, 1, 2, 3},
+        capacity_error_prefix="test read window",
+    )
+
+    assert unique_blocks == [2, 0, 1]
+    assert manager.stats["prefetch_plans"] == 1
+    assert manager.stats["prefetch_read_blocks"] == 3
+    assert manager.ensure_calls == [[2, 0, 1]]
+    assert manager.wait_calls == [([2, 0, 1], True)]
+
+
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
+    test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
     print("blockwise attention planning tests passed")
 
 
