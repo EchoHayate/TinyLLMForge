@@ -666,6 +666,19 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_unique_once_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_unique_once_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise decode mask template reuse
+
+继续减少 decode window 内的小张量分配：旧 `_blockwise_online_decode_attention()` 在每个 read window 都新建 `torch.arange(max_window_tokens)` 作为 positions mask。现在在 decode 函数入口预建 `position_template = torch.arange(block_size * window_blocks)`，每个 window 只切片复用。
+
+- 新增 `_decode_window_mask()`，统一从 positions template 和 `window_lens` 构造 decode read-window mask。
+- 新增 `test_decode_window_mask_reuses_position_template()`。
+- TDD RED：远程测试在 helper 缺失时按预期 `ImportError: cannot import name '_decode_window_mask'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_mask_template_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_mask_template_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

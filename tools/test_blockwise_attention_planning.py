@@ -19,6 +19,7 @@ import torch
 
 from tinyvllm.layers.attention import (
     _blockwise_online_decode_attention,
+    _decode_window_mask,
     _normalize_logical_block_rows,
     _stage_blockwise_read_window,
 )
@@ -113,10 +114,27 @@ def test_normalize_logical_block_rows_filters_once_and_reports_max_blocks():
     assert max_blocks == 2
 
 
+def test_decode_window_mask_reuses_position_template():
+    positions = torch.arange(4).view(1, 1, -1)
+    mask = _decode_window_mask(
+        window_lens=[2, 4],
+        max_window_tokens=3,
+        positions_template=positions,
+        device=torch.device("cpu"),
+    )
+
+    expected = torch.tensor([
+        [[True, True, False]],
+        [[True, True, True]],
+    ])
+    assert torch.equal(mask, expected)
+
+
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
+    test_decode_window_mask_reuses_position_template()
     print("blockwise attention planning tests passed")
 
 

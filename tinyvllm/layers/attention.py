@@ -111,6 +111,17 @@ def _stage_blockwise_read_window(
     return unique_block_list
 
 
+def _decode_window_mask(
+    window_lens,
+    max_window_tokens: int,
+    positions_template: torch.Tensor,
+    device,
+) -> torch.Tensor:
+    positions = positions_template[:, :, :max_window_tokens].to(device=device)
+    lens = torch.tensor(window_lens, device=device, dtype=torch.int64).view(len(window_lens), 1, 1)
+    return positions < lens
+
+
 def _blockwise_online_decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -147,6 +158,7 @@ def _blockwise_online_decode_attention(
     write_blocks = set(int(block) for block in (context.kv_offload_write_blocks or []))
     if write_blocks:
         manager.mark_dirty(list(write_blocks))
+    position_template = torch.arange(block_size * window_blocks, device=q.device).view(1, 1, -1)
 
     for start_block in range(0, max_blocks, window_blocks):
         window_rows = []
@@ -187,9 +199,7 @@ def _blockwise_online_decode_attention(
         k_dense = _repeat_kv_for_gqa(k_dense, num_heads).to(torch.float32)
         v_dense = _repeat_kv_for_gqa(v_dense, num_heads).to(torch.float32)
         scores = torch.einsum("bhd,bthd->bht", q_fp, k_dense) * scale
-        positions = torch.arange(max_window_tokens, device=q.device).view(1, 1, -1)
-        lens = torch.tensor(window_lens, device=q.device, dtype=torch.int64).view(batch, 1, 1)
-        mask = positions < lens
+        mask = _decode_window_mask(window_lens, max_window_tokens, position_template, q.device)
         valid = mask.any(dim=-1)
         scores = scores.masked_fill(~mask, float("-inf"))
         chunk_m = scores.max(dim=-1).values
