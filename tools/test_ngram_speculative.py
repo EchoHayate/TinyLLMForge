@@ -11,12 +11,20 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
 _NGRAM_PATH = os.path.join(_REPO_ROOT, "tinyvllm", "speculative", "ngram.py")
 _SPEC = importlib.util.spec_from_file_location("ngram_under_test", _NGRAM_PATH)
 ngram = importlib.util.module_from_spec(_SPEC)
 sys.modules["ngram_under_test"] = ngram
 _SPEC.loader.exec_module(ngram)
+
+_DRAFT_SCHEMA_PATH = os.path.join(_REPO_ROOT, "tools", "draft_model_schema.py")
+_DRAFT_SCHEMA_SPEC = importlib.util.spec_from_file_location("draft_model_schema", _DRAFT_SCHEMA_PATH)
+draft_model_schema = importlib.util.module_from_spec(_DRAFT_SCHEMA_SPEC)
+sys.modules["draft_model_schema"] = draft_model_schema
+_DRAFT_SCHEMA_SPEC.loader.exec_module(draft_model_schema)
 
 _PROFILE_PATH = os.path.join(_REPO_ROOT, "tools", "profile_ngram_commit.py")
 _PROFILE_SPEC = importlib.util.spec_from_file_location("profile_ngram_under_test", _PROFILE_PATH)
@@ -35,9 +43,9 @@ count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
 propose_draft = profile_ngram.propose_draft
-DraftModelInput = profile_ngram.DraftModelInput
-DraftModelResult = profile_ngram.DraftModelResult
-DraftModelStubConfig = profile_ngram.DraftModelStubConfig
+DraftModelInput = draft_model_schema.DraftModelInput
+DraftModelResult = draft_model_schema.DraftModelResult
+DraftModelStubConfig = draft_model_schema.DraftModelStubConfig
 run_draft_model_stub = profile_ngram.run_draft_model_stub
 summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
 
