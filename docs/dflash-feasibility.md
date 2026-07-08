@@ -496,6 +496,13 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 - 本地测试直接覆盖 helper 的 deterministic output，并验证 summarize 路径复用同一 candidate ids/logits/metadata；
 - 远程 `profile_out/dflash_phase3_draft_model_stub_boundary_smoke_20260708.json` 通过：`gate_pass=true`、`accepted_count=2`、`draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`、`draft_model_forward_ms=3.5160109400749207`、`candidate_select_ms=0.015269964933395386`；commit `draft_tokens`/`accepted_tokens` 仍为 `[13440,21619]`，确认抽象后仍不影响 runtime。
 
+2026-07-08 继续把 helper 边界包成更接近真实 draft model 的 dataclass/config shell：
+
+- 新增 `DraftModelStubConfig(seed=23, stub_version=1)` 和 `DraftModelResult(candidate_token_ids, candidate_logits, draft_token_ids, draft_scores, preview, metadata, timing_ms).to_dict()`；
+- `run_draft_model_stub(..., config=None) -> DraftModelResult`，并在边界层显式校验 empty candidate set 与 ragged hidden rows，未来替换真实 draft model forward 时可复用同一错误边界；
+- 本地测试覆盖 dataclass `to_dict()`、config metadata propagation、边界错误，以及 `summarize_hidden_to_draft_stub(..., adapter="draft-model-stub")` 继续读取 result 字段；
+- 远程 `profile_out/dflash_phase3_draft_model_dataclass_shell_smoke_20260708.json` 通过：`gate_pass=true`、`accepted_count=2`、`runtime_mutation=false`、`input_schema.adapter="draft-model-stub"`、`output.draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`、`draft_model_metadata.stub_version=1`、`draft_model_forward_ms=4.899017512798309`、`candidate_select_ms=0.01652538776397705`；commit `draft_tokens`/`accepted_tokens` 仍为 `[13440,21619]`，确认 dataclass shell 仍只是 profiler-only ABI，不参与 proposal/acceptance/runtime。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -532,5 +539,6 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 4. `--hidden-to-draft-adapter linear-stub` 远程通过，确认 adapter selector、linear-stub output schema 和 `linear_projection_ms` 已进入 profiler JSON；
 5. deterministic hidden projection skeleton 远程通过，确认 `linear-stub` 可以从 hidden rows 投影到小 vocab candidate set，并记录 projection metadata / hidden copy timing / projection timing，且仍不参与 acceptance/runtime；
 6. `topk-stub` vs `linear-stub` 3x remote compare 已通过，确认 ABI 字段稳定、timing 字段足够继续 profiler-only 真实 draft model stub；后续应先显式化 row-count 字段和拆分 draft-model timing，再考虑完整 diffusion checkpoint。
+7. `draft-model-stub` 已完成 profiler-only dataclass/config shell：真实 draft model 未来需要返回的 candidate ids/logits、draft tokens/scores、metadata、timing 都已经在 `DraftModelResult` 中显式化，并有本地错误边界测试与远程 Qwen3 smoke 验证。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。

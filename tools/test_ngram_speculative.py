@@ -35,6 +35,8 @@ count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
 propose_draft = profile_ngram.propose_draft
+DraftModelResult = profile_ngram.DraftModelResult
+DraftModelStubConfig = profile_ngram.DraftModelStubConfig
 run_draft_model_stub = profile_ngram.run_draft_model_stub
 summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
 
@@ -480,25 +482,27 @@ def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
         candidate_token_ids=[0, 1, 2, 3],
         top_k=2,
     )
+    result_json = result.to_dict()
 
-    assert result["candidate_token_ids"] == [[2, 1], [3, 0]]
-    assert result["candidate_logits"] == [[1.6666666666666667, 1.0], [1.6666666666666667, 1.0]]
-    assert result["draft_token_ids"] == [2, 3]
-    assert result["draft_scores"] == [1.6666666666666667, 1.6666666666666667]
-    assert result["preview"] == [
+    assert isinstance(result, DraftModelResult)
+    assert result_json["candidate_token_ids"] == [[2, 1], [3, 0]]
+    assert result_json["candidate_logits"] == [[1.6666666666666667, 1.0], [1.6666666666666667, 1.0]]
+    assert result_json["draft_token_ids"] == [2, 3]
+    assert result_json["draft_scores"] == [1.6666666666666667, 1.6666666666666667]
+    assert result_json["preview"] == [
         {"row": 0, "token_ids": [2, 1], "scores": [1.6666666666666667, 1.0]},
         {"row": 1, "token_ids": [3, 0], "scores": [1.6666666666666667, 1.0]},
     ]
-    assert result["metadata"] == {
+    assert result_json["metadata"] == {
         "seed": 23,
         "candidate_token_ids": [0, 1, 2, 3],
         "hidden_dim": 4,
         "candidate_count": 4,
         "stub_version": 1,
     }
-    assert set(result["timing_ms"]) == {"draft_model_forward_ms", "candidate_select_ms"}
-    assert result["timing_ms"]["draft_model_forward_ms"] >= 0.0
-    assert result["timing_ms"]["candidate_select_ms"] >= 0.0
+    assert set(result_json["timing_ms"]) == {"draft_model_forward_ms", "candidate_select_ms"}
+    assert result_json["timing_ms"]["draft_model_forward_ms"] >= 0.0
+    assert result_json["timing_ms"]["candidate_select_ms"] >= 0.0
 
     class FakeTensor:
         shape = (2, 4)
@@ -516,9 +520,38 @@ def test_run_draft_model_stub_exposes_replaceable_forward_boundary():
         adapter="draft-model-stub",
     )
 
-    assert summary["output"]["candidate_token_ids"] == result["candidate_token_ids"]
-    assert summary["output"]["candidate_logits"] == result["candidate_logits"]
-    assert summary["draft_model_metadata"] == result["metadata"]
+    assert summary["output"]["candidate_token_ids"] == result_json["candidate_token_ids"]
+    assert summary["output"]["candidate_logits"] == result_json["candidate_logits"]
+    assert summary["draft_model_metadata"] == result_json["metadata"]
+
+
+def test_run_draft_model_stub_accepts_config_and_validates_boundaries():
+    config = DraftModelStubConfig(seed=23, stub_version=7)
+    result = run_draft_model_stub(
+        hidden_rows=[[1.0, 0.0, 0.0, 0.0]],
+        candidate_token_ids=[0, 1, 2, 3],
+        top_k=2,
+        config=config,
+    ).to_dict()
+
+    assert result["metadata"]["seed"] == 23
+    assert result["metadata"]["stub_version"] == 7
+    assert result["metadata"]["candidate_count"] == 4
+    assert result["draft_token_ids"] == [2]
+
+    try:
+        run_draft_model_stub([[1.0]], [], top_k=1)
+    except ValueError as exc:
+        assert "candidate_token_ids must not be empty" in str(exc)
+    else:
+        raise AssertionError("empty candidate set should fail")
+
+    try:
+        run_draft_model_stub([[1.0], [1.0, 2.0]], [0, 1], top_k=1)
+    except ValueError as exc:
+        assert "hidden_rows must have a consistent width" in str(exc)
+    else:
+        raise AssertionError("ragged hidden rows should fail")
 
 
 def main():
@@ -543,6 +576,7 @@ def main():
     test_summarize_hidden_to_draft_stub_linear_stub_counts_hidden_rows_not_logits_rows()
     test_summarize_hidden_to_draft_stub_draft_model_stub_reports_candidate_logits()
     test_run_draft_model_stub_exposes_replaceable_forward_boundary()
+    test_run_draft_model_stub_accepts_config_and_validates_boundaries()
     print("ngram speculative tests passed")
 
 
