@@ -509,6 +509,13 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 - `run_draft_model_stub()` 保持旧签名兼容，同时可直接接收 `DraftModelInput`；`draft_model_metadata.input_schema` 记录输入边界，便于未来真实 draft model forward 检查 hidden 来源和 top-k/candidate contract；
 - 远程 `profile_out/dflash_phase3_draft_model_input_contract_smoke_20260708.json` 通过：`gate_pass=true`、`accepted_count=2`、`runtime_mutation=false`、`draft_model_metadata.input_schema={hidden_rows=3, hidden_dim=1024, candidate_count=8, top_k=2, source_shape=[3,1024], source_dtype="torch.bfloat16", source_device="cuda:0"}`、`output.draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`、`draft_model_forward_ms=5.126491189002991`、`candidate_select_ms=0.02197548747062683`；commit `draft_tokens`/`accepted_tokens` 仍为 `[13440,21619]`。
 
+2026-07-08 多 prompt / batch shape smoke 已验证：
+
+- 远程 `profile_out/dflash_phase3_draft_model_batch_shape_smoke_20260708.json` 使用两个 prompt、`--max-num-seqs 2`、`draft-model-stub`、`top_k=2`；
+- `gate_pass=true`、`num_prompts=2`、`commit_events=2`、`accepted_count=4`，每个 prompt 各 `commit_events=1`、`verify_events=1`、`accepted_count=2`；
+- 两个 event 的 `draft_model_metadata.input_schema` 都独立记录 `hidden_rows=3`、`hidden_dim=1024`、`candidate_count=8`、`top_k=2`、`source_shape=[3,1024]`、`source_dtype="torch.bfloat16"`、`source_device="cuda:0"`；
+- prompt 0 的 commit `draft_tokens/accepted_tokens=[13440,21619]`、`output.draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`；prompt 1 的 commit `draft_tokens/accepted_tokens=[6303,6176]`、`output.draft_token_ids=[1,2,2]`、第一行 candidate ids `[1,2]`。这确认 batch 场景下 event 级 DraftModelInput schema 没有 prompt 之间串写，且仍保持 `runtime_mutation=false`。
+
 风险：
 
 - 可能触发额外 KV write；
@@ -546,6 +553,6 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 5. deterministic hidden projection skeleton 远程通过，确认 `linear-stub` 可以从 hidden rows 投影到小 vocab candidate set，并记录 projection metadata / hidden copy timing / projection timing，且仍不参与 acceptance/runtime；
 6. `topk-stub` vs `linear-stub` 3x remote compare 已通过，确认 ABI 字段稳定、timing 字段足够继续 profiler-only 真实 draft model stub；后续应先显式化 row-count 字段和拆分 draft-model timing，再考虑完整 diffusion checkpoint。
 7. `draft-model-stub` 已完成 profiler-only dataclass/config shell：真实 draft model 未来需要返回的 candidate ids/logits、draft tokens/scores、metadata、timing 都已经在 `DraftModelResult` 中显式化，并有本地错误边界测试与远程 Qwen3 smoke 验证。
-8. `DraftModelInput` 已补齐输入侧 contract，下一步若继续 Phase 3，最有价值的是做多 prompt / batch shape smoke 或把 profiler JSON 中的 draft-model 输入/输出 schema 单独沉淀成可复用小模块；仍不应接入真实 checkpoint 或 runtime。
+8. `DraftModelInput` 已补齐输入侧 contract，并通过多 prompt / batch shape smoke 证明 event 级 schema 不混淆。下一步若继续 Phase 3，最有价值的是把 profiler JSON 中的 draft-model 输入/输出 schema 单独沉淀成可复用小模块，或补更多形状覆盖；仍不应接入真实 checkpoint 或 runtime。
 
 仍不建议直接接入 `LLMEngine.step()`；真实 DFlash draft model 接入前，应继续保持 profiler-only、greedy、`world_size=1` 范围。
