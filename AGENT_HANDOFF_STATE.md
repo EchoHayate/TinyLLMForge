@@ -569,6 +569,17 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
 - 远程 migration smoke：`profile_out/kv_offload_wait_coalesce_migration_20260708.json`，`gate_pass=true`、`copy_waits=4`（上一轮同口径 dirty eviction batching 后为 6）。
 - 远程 thrash smoke：`profile_out/kv_offload_wait_coalesce_thrash_20260708.json`，`gate_pass=true`、`copy_waits=10`（上一轮同口径为 19）、`h2d_batches=4`、`d2h_batches=2`、`prefetch_plans=4`。
 
+### 2026-07-08 KV offload pending wait cleanup
+
+继续消除重复 wait：`ensure_resident(..., wait=True)` 已同步等待本轮 H2D blocks，但旧逻辑仍把这些 logical blocks 留在 `pending_wait_blocks`，后续 `wait_for_pending()` 会再次等待同一批 H2D event。
+
+- `ensure_resident(wait=True)` 现在在 `wait_for_blocks()` 后从 `pending_wait_blocks` 移除已等待的 H2D blocks。
+- 新增 `test_ensure_resident_wait_clears_pending_h2d_waits()`：要求 wait=True 后 `{0,1}` 不再残留 pending，并且后续 `wait_for_pending()` 不增加 `copy_waits`。
+- 本地 `py_compile tinyvllm/engine/model_runner.py tools/test_kv_offload.py`、`git diff --check` 通过。
+- 远程 GPU4 `tools/test_kv_offload.py` 通过。
+- 远程 migration smoke：`profile_out/kv_offload_pending_wait_clear_migration_20260708.json`，`gate_pass=true`、`copy_waits=4`。
+- 远程 thrash smoke：`profile_out/kv_offload_pending_wait_clear_thrash_20260708.json`，`gate_pass=true`、`copy_waits=10`、`h2d_batches=4`、`d2h_batches=2`、`prefetch_plans=4`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

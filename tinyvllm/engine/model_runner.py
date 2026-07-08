@@ -315,7 +315,9 @@ class KVOffloadMVP0:
                 self.stats["copy_waits"] += 1
         self._enqueue_h2d_pairs(h2d_pairs)
         if wait:
-            self.wait_for_blocks([logical_block for logical_block, _ in h2d_pairs])
+            waited_h2d_blocks = [logical_block for logical_block, _ in h2d_pairs]
+            self.wait_for_blocks(waited_h2d_blocks)
+            self.pending_wait_blocks.difference_update(int(block) for block in waited_h2d_blocks)
         return {logical_block: self.logical_to_slot[logical_block] for logical_block in ordered}
 
     def wait_for_blocks(self, logical_blocks: list[int]):

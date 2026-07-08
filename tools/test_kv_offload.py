@@ -109,11 +109,35 @@ def test_deferred_eviction_waits_once_per_identical_d2h_event():
     assert after_waits == before_waits + 1
 
 
+def test_ensure_resident_wait_clears_pending_h2d_waits():
+    if not torch.cuda.is_available():
+        print("skipping CUDA-only KV offload test")
+        return
+    torch.cuda.set_device(0)
+    kv_cache = torch.empty(2, 1, 2, 4, 1, 2, dtype=torch.float16, device="cuda")
+    manager = KVOffloadMVP0(kv_cache, logical_blocks=4, block_size=4, async_copy=True, batch_copy=True)
+
+    manager.ensure_resident([0, 1], require_valid=False, future_logical_blocks={0, 1}, wait=True)
+    for logical_block in (0, 1):
+        kv_cache[:, :, manager.logical_to_slot[logical_block]].fill_(float(logical_block + 1))
+    manager.mark_dirty([0, 1])
+    manager.writeback_dirty([0, 1])
+    manager.ensure_resident([2, 3], require_valid=False, future_logical_blocks={2, 3}, wait=True)
+    manager.ensure_resident([0, 1], require_valid=True, future_logical_blocks={0, 1}, wait=True)
+
+    assert manager.pending_wait_blocks.isdisjoint({0, 1})
+    before_waits = manager.summary()["copy_waits"]
+    manager.wait_for_pending()
+    after_waits = manager.summary()["copy_waits"]
+    assert after_waits == before_waits
+
+
 def main():
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
     test_deferred_clean_eviction_waits_for_pending_d2h_event()
     test_wait_for_blocks_coalesces_identical_h2d_events()
     test_deferred_eviction_waits_once_per_identical_d2h_event()
+    test_ensure_resident_wait_clears_pending_h2d_waits()
     print("kv offload tests passed")
 
 
