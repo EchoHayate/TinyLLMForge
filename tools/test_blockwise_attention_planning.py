@@ -17,7 +17,11 @@ if _REPO_ROOT not in sys.path:
 
 import torch
 
-from tinyvllm.layers.attention import _blockwise_online_decode_attention, _stage_blockwise_read_window
+from tinyvllm.layers.attention import (
+    _blockwise_online_decode_attention,
+    _normalize_logical_block_rows,
+    _stage_blockwise_read_window,
+)
 
 
 class _PlanOnlyManager:
@@ -98,9 +102,21 @@ def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks(
     assert manager.wait_calls == [([2, 0, 1], True)]
 
 
+def test_normalize_logical_block_rows_filters_once_and_reports_max_blocks():
+    rows, max_blocks = _normalize_logical_block_rows([
+        [2, -1, "3"],
+        [],
+        [4, 5, -1],
+    ])
+
+    assert rows == [[2, 3], [], [4, 5]]
+    assert max_blocks == 2
+
+
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
+    test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
     print("blockwise attention planning tests passed")
 
 

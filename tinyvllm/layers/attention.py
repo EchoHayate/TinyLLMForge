@@ -73,6 +73,15 @@ def _unique_blocks_in_order(blocks) -> list[int]:
     return ordered
 
 
+def _normalize_logical_block_rows(logical_rows) -> tuple[list[list[int]], int]:
+    block_rows = [
+        [int(block) for block in row if int(block) >= 0]
+        for row in logical_rows
+    ]
+    max_blocks = max((len(row) for row in block_rows), default=0)
+    return block_rows, max_blocks
+
+
 def _stage_blockwise_read_window(
     manager,
     logical_blocks,
@@ -130,7 +139,7 @@ def _blockwise_online_decode_attention(
     running_m = torch.full((batch, num_heads), float("-inf"), device=q.device, dtype=torch.float32)
     running_l = torch.zeros((batch, num_heads), device=q.device, dtype=torch.float32)
     running_o = torch.zeros((batch, num_heads, head_dim), device=q.device, dtype=torch.float32)
-    max_blocks = max(len([block for block in row if int(block) >= 0]) for row in logical_rows)
+    block_rows, max_blocks = _normalize_logical_block_rows(logical_rows)
     write_blocks = set(int(block) for block in (context.kv_offload_write_blocks or []))
     if write_blocks:
         manager.mark_dirty(list(write_blocks))
@@ -139,8 +148,7 @@ def _blockwise_online_decode_attention(
         window_rows = []
         window_lens = []
         needed_blocks = []
-        for row_idx, row in enumerate(logical_rows):
-            row_blocks = [int(block) for block in row if int(block) >= 0]
+        for row_idx, row_blocks in enumerate(block_rows):
             window = row_blocks[start_block:start_block + window_blocks]
             window_rows.append(window)
             start_token = start_block * block_size
@@ -238,6 +246,7 @@ def _blockwise_online_prefill_attention(
         manager.mark_dirty(list(write_blocks))
 
     cu_q = context.cu_seqlens_q.detach().to("cpu").tolist()
+    block_rows, _ = _normalize_logical_block_rows(logical_rows)
     out = torch.empty_like(q)
     q_fp = q.to(torch.float32)
 
@@ -259,7 +268,7 @@ def _blockwise_online_prefill_attention(
         running_m = merged_m
         return running_m, running_l, running_o
 
-    for row_idx, row in enumerate(logical_rows):
+    for row_idx, row_blocks in enumerate(block_rows):
         q_start = int(cu_q[row_idx])
         q_end = int(cu_q[row_idx + 1])
         q_len = q_end - q_start
@@ -272,7 +281,6 @@ def _blockwise_online_prefill_attention(
                 "blockwise prefill context mismatch: "
                 f"q_len={q_len}, chunk_start={chunk_start}, chunk_end={chunk_end}"
             )
-        row_blocks = [int(block) for block in row if int(block) >= 0]
         q_row = q_fp[q_start:q_end]
         running_m = torch.full((q_len, num_heads), float("-inf"), device=q.device, dtype=torch.float32)
         running_l = torch.zeros((q_len, num_heads), device=q.device, dtype=torch.float32)

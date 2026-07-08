@@ -639,6 +639,20 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_stage_helper_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_stage_helper_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise logical row normalization
+
+继续减少 blockwise attention host-side Python planning 开销：decode 路径旧逻辑在每个 read window、每个 row 内重复执行 `[int(block) for block in row if int(block) >= 0]`；prefill 路径也在每个 row 单独重复过滤/转 int。现在新增 `_normalize_logical_block_rows()`，在函数入口一次性完成 logical row 规范化并返回 `max_blocks`。
+
+- decode：入口处一次性生成 `block_rows, max_blocks`，窗口循环直接切片，不再每个窗口重新过滤同一行。
+- prefill：入口处一次性生成 `block_rows`，row 循环直接复用。
+- 新增 `test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()`。
+- TDD RED：远程测试在 helper 缺失时按预期 `ImportError: cannot import name '_normalize_logical_block_rows'`。
+- 本地：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check` 通过。
+- 远程：`tools/test_blockwise_attention_planning.py` 通过，`tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_normalize_rows_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
+  - `profile_out/blockwise_prefill_normalize_rows_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
