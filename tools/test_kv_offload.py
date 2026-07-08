@@ -132,12 +132,37 @@ def test_ensure_resident_wait_clears_pending_h2d_waits():
     assert after_waits == before_waits
 
 
+def test_evict_policy_avoids_pending_h2d_block_when_possible():
+    if not torch.cuda.is_available():
+        print("skipping CUDA-only KV offload test")
+        return
+    torch.cuda.set_device(0)
+    kv_cache = torch.empty(2, 1, 2, 4, 1, 2, dtype=torch.float16, device="cuda")
+    manager = KVOffloadMVP0(kv_cache, logical_blocks=4, block_size=4, async_copy=True, batch_copy=True)
+
+    manager.ensure_resident([0, 1], require_valid=False, future_logical_blocks={0, 1}, wait=True)
+    for logical_block in (0, 1):
+        kv_cache[:, :, manager.logical_to_slot[logical_block]].fill_(float(logical_block + 1))
+    manager.mark_dirty([0, 1])
+    manager.writeback_dirty([0, 1])
+    manager.ensure_resident([2], require_valid=False, future_logical_blocks={2}, wait=True)
+    manager.ensure_resident([0], require_valid=True, future_logical_blocks={0}, wait=False)
+
+    assert 0 in manager.pending_wait_blocks
+    assert 2 in manager.logical_to_slot
+    manager.slot_last_used[manager.logical_to_slot[0]] = 0
+    manager.ensure_resident([3], require_valid=False, future_logical_blocks={3}, wait=True)
+    assert 0 in manager.logical_to_slot
+    assert 2 not in manager.logical_to_slot
+
+
 def main():
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
     test_deferred_clean_eviction_waits_for_pending_d2h_event()
     test_wait_for_blocks_coalesces_identical_h2d_events()
     test_deferred_eviction_waits_once_per_identical_d2h_event()
     test_ensure_resident_wait_clears_pending_h2d_waits()
+    test_evict_policy_avoids_pending_h2d_block_when_possible()
     print("kv offload tests passed")
 
 

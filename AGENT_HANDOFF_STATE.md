@@ -580,6 +580,15 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
 - 远程 migration smoke：`profile_out/kv_offload_pending_wait_clear_migration_20260708.json`，`gate_pass=true`、`copy_waits=4`。
 - 远程 thrash smoke：`profile_out/kv_offload_pending_wait_clear_thrash_20260708.json`，`gate_pass=true`、`copy_waits=10`、`h2d_batches=4`、`d2h_batches=2`、`prefetch_plans=4`。
 
+### 2026-07-08 KV offload pending H2D anti-thrash
+
+继续降低 clean eviction 抖动：batched H2D 发起后，logical block 会留在 `pending_wait_blocks`。如果该 block 还没被 forward 等待/消费，就被 victim policy 选中驱逐，会浪费一次 in-flight H2D copy。`lru_cost` 的 victim score 现在对 `logical_block in pending_wait_blocks` 增加 `pending_h2d_penalty = block_nbytes * 6.0`，在有其他候选时避免驱逐刚发起 H2D 的 block。
+
+- 新增 `test_evict_policy_avoids_pending_h2d_block_when_possible()`，手动构造 pending H2D block 是最老 slot 的场景，要求仍保留 pending block、优先驱逐非 pending clean block。
+- 本地 `py_compile tinyvllm/engine/model_runner.py tools/test_kv_offload.py`、`git diff --check` 通过。
+- 远程 GPU4 `tools/test_kv_offload.py` 通过。
+- 远程 thrash smoke：`profile_out/kv_offload_pending_h2d_penalty_thrash_20260708.json`，`gate_pass=true`、`copy_waits=10`、`h2d_copies=8`、`d2h_copies=6`、`evictions=11`、`prefetch_plans=4`。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

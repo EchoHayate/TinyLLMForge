@@ -206,7 +206,8 @@ class KVOffloadMVP0:
             return float(self.slot_last_used[slot])
         dirty_penalty = self.block_nbytes * 4.0 if logical_block in self.dirty_logical_blocks else 0.0
         reuse_penalty = self.block_nbytes * 8.0 if logical_block in future_logical_blocks else 0.0
-        return float(self.slot_last_used[slot]) + dirty_penalty + reuse_penalty
+        pending_h2d_penalty = self.block_nbytes * 6.0 if logical_block in self.pending_wait_blocks else 0.0
+        return float(self.slot_last_used[slot]) + dirty_penalty + reuse_penalty + pending_h2d_penalty
 
     def _evict_slot(
         self,
