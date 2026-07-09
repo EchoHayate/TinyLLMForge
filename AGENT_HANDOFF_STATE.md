@@ -859,6 +859,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_no_event_wait_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：read window / staging 命中已 resident 或无 pending event 的 blocks 时，少走一次 CUDA stream 查询；有真实 H2D event 的 wait 语义和 event 去重逻辑保持不变。
 
+### 2026-07-09 KV offload clean-fresh eviction no-op enqueue skip
+
+继续减少 no-op copy hook：`ensure_resident()` 在 clean block 被 fresh write block 驱逐、且没有 dirty D2H、没有 CPU-valid H2D、没有 deferred wait 时，现在不会调用空 `_enqueue_d2h_pairs()`、空 `_enqueue_h2d_pairs()` 或空 `wait_for_blocks()`。
+
+- 新增 `test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()`，构造 `gpu_blocks=1`、clean resident block 被 fresh block 替换的无 CUDA 场景，要求只更新 mapping/eviction stats，不调用空 copy/wait hooks。
+- TDD RED：远程旧实现按预期失败：`AssertionError`，因为 clean fresh eviction 路径仍调用了空 D2H enqueue hook。
+- 远程 GREEN：`tools/test_kv_offload.py` 与 `tools/test_kv_write_staging.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_clean_fresh_noop_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_clean_fresh_noop_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：fresh write block 覆盖 clean resident block 的常见路径少走空 enqueue/wait 调度；dirty eviction、H2D reload、pending D2H wait 路径不变。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

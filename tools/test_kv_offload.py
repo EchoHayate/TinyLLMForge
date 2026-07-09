@@ -137,6 +137,33 @@ def test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks():
     assert manager.wait_for_blocks_calls == 0
 
 
+def test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks():
+    manager = _NoopKVOffload()
+    manager.gpu_blocks = 1
+    manager.logical_to_slot = {1: 0}
+    manager.slot_to_logical = [1]
+    manager.slot_last_used = [0]
+    manager.evict_policy = "lru"
+    manager.block_nbytes = 1
+    manager.d2h_done = {}
+    manager.stats = {
+        "evict_clean": 0,
+        "evictions": 0,
+        "copy_waits": 0,
+    }
+
+    mapping = manager.ensure_resident([2], require_valid=False, wait=True)
+
+    assert mapping == {2: 0}
+    assert manager.logical_to_slot == {2: 0}
+    assert manager.slot_to_logical == [2]
+    assert manager.stats["evict_clean"] == 1
+    assert manager.stats["evictions"] == 1
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+    assert manager.wait_for_blocks_calls == 0
+
+
 def test_map_block_rows_uses_existing_resident_slots_without_staging():
     manager = _NoopKVOffload()
     manager.block_size = 8
@@ -331,6 +358,7 @@ def main():
     test_wait_for_blocks_without_events_clears_pending_without_cuda_stream()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
+    test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()
     test_map_block_rows_uses_existing_resident_slots_without_staging()
     test_map_slots_for_positions_uses_existing_resident_slots_without_staging()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()

@@ -308,7 +308,8 @@ class KVOffloadMVP0:
             self._touch(slot)
         if not h2d_pairs and not deferred_d2h_pairs and not deferred_wait_blocks:
             return {logical_block: self.logical_to_slot[logical_block] for logical_block in ordered}
-        self._enqueue_d2h_pairs(deferred_d2h_pairs)
+        if deferred_d2h_pairs:
+            self._enqueue_d2h_pairs(deferred_d2h_pairs)
         waited_d2h_event_ids = set()
         for old_logical in deferred_wait_blocks:
             d2h_event = self.d2h_done.get(old_logical)
@@ -318,8 +319,9 @@ class KVOffloadMVP0:
                     self.copy_stream.wait_event(d2h_event)
                 waited_d2h_event_ids.add(id(d2h_event))
                 self.stats["copy_waits"] += 1
-        self._enqueue_h2d_pairs(h2d_pairs)
-        if wait:
+        if h2d_pairs:
+            self._enqueue_h2d_pairs(h2d_pairs)
+        if wait and h2d_pairs:
             waited_h2d_blocks = [logical_block for logical_block, _ in h2d_pairs]
             self.wait_for_blocks(waited_h2d_blocks)
             self.pending_wait_blocks.difference_update(int(block) for block in waited_h2d_blocks)
