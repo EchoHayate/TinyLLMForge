@@ -190,6 +190,51 @@ def _blockwise_prefill_future_hint_blocks(
     )
 
 
+def _build_blockwise_decode_window_plan(
+    block_rows: list[list[int]],
+    context_lens: list[int],
+    max_blocks: int,
+    block_size: int,
+    window_blocks: int,
+    write_blocks: set[int],
+    gpu_blocks: int,
+):
+    plans = []
+    for start_block in range(0, max_blocks, window_blocks):
+        window_rows = []
+        window_lens = []
+        needed_blocks = []
+        for row_idx, row_blocks in enumerate(block_rows):
+            window = row_blocks[start_block:start_block + window_blocks]
+            window_rows.append(window)
+            start_token = start_block * block_size
+            remaining = max(0, int(context_lens[row_idx]) - start_token)
+            window_lens.append(min(remaining, len(window) * block_size))
+            needed_blocks.extend(window)
+        if not needed_blocks or max(window_lens, default=0) <= 0:
+            continue
+        future_hint_blocks = set(write_blocks)
+        for row_blocks in block_rows:
+            future_hint_blocks.update(
+                _blockwise_read_window_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    max_blocks,
+                    window_blocks,
+                    write_blocks,
+                    gpu_blocks,
+                )
+            )
+        plans.append({
+            "window_rows": window_rows,
+            "window_lens": window_lens,
+            "needed_blocks": needed_blocks,
+            "future_hint_blocks": future_hint_blocks,
+            "max_window_tokens": max(window_lens),
+        })
+    return plans
+
+
 def _decode_window_mask(
     window_lens,
     max_window_tokens: int,
@@ -279,41 +324,33 @@ def _blockwise_online_decode_attention(
         manager.mark_dirty(list(write_blocks))
     position_template = torch.arange(block_size * window_blocks, device=q.device).view(1, 1, -1)
 
-    for start_block in range(0, max_blocks, window_blocks):
-        window_rows = []
-        window_lens = []
-        needed_blocks = []
-        for row_idx, row_blocks in enumerate(block_rows):
-            window = row_blocks[start_block:start_block + window_blocks]
-            window_rows.append(window)
-            start_token = start_block * block_size
-            remaining = max(0, int(context_lens[row_idx]) - start_token)
-            window_lens.append(min(remaining, len(window) * block_size))
-            needed_blocks.extend(window)
-        if not needed_blocks or max(window_lens, default=0) <= 0:
-            continue
-        future_hint_blocks = set(write_blocks)
-        for row_blocks in block_rows:
-            future_hint_blocks.update(
-                _blockwise_read_window_future_hint_blocks(
-                    row_blocks,
-                    start_block,
-                    max_blocks,
-                    window_blocks,
-                    write_blocks,
-                    manager.gpu_blocks,
-                )
-            )
+    plan_cache = getattr(context, "kv_offload_decode_window_plan_cache", None)
+    if plan_cache is None:
+        plan_cache = _build_blockwise_decode_window_plan(
+            block_rows,
+            context_lens,
+            max_blocks,
+            block_size,
+            window_blocks,
+            write_blocks,
+            manager.gpu_blocks,
+        )
+        context.kv_offload_decode_window_plan_cache = plan_cache
+
+    for window_plan in plan_cache:
+        window_rows = window_plan["window_rows"]
+        window_lens = window_plan["window_lens"]
+        needed_blocks = window_plan["needed_blocks"]
         _stage_blockwise_read_window(
             manager,
             needed_blocks,
-            future_extra_blocks=future_hint_blocks,
+            future_extra_blocks=window_plan["future_hint_blocks"],
             protected_extra_blocks=write_blocks,
             capacity_extra_blocks=set(),
             capacity_error_prefix="blockwise decode window has more unique logical blocks than GPU staging slots",
         )
 
-        max_window_tokens = max(window_lens)
+        max_window_tokens = window_plan["max_window_tokens"]
         k_dense = q.new_zeros((batch, max_window_tokens, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
         v_dense = q.new_zeros((batch, max_window_tokens, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
         for row_idx, window in enumerate(window_rows):

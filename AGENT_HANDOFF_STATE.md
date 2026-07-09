@@ -1005,6 +1005,21 @@ TDD/验证：
 
 结论：这是一个低风险内存带宽/allocator 微优化，不改变 KV offload staging counters；价值是 prefix window 每次少做 K/V dense buffer 清零。后续类似优化可以继续检查“完全覆盖写入”的临时张量，但不要动 decode padded dense buffer。
 
+## 2026-07-09 Decode read-window plan cache across layers
+
+继续减少 host-side 重复规划：blockwise decode 的 logical block rows、context lens、window size、write blocks 在一次 forward 的所有 decoder layers 中相同；旧实现每层都重算 `window_rows/window_lens/needed_blocks/future_hint_blocks`。新增 `_build_blockwise_decode_window_plan()`，并把计划缓存到 `Context.kv_offload_decode_window_plan_cache`，同一次 `set_context()` 生命周期内后续层复用该 plan；`reset_context()` 会自然清空。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_decode_reuses_cached_read_window_plan_across_layers`，第二次调用同一 context 时 monkeypatch `_blockwise_read_window_future_hint_blocks`，远程旧实现按预期触发 `AssertionError("decode read-window plan recomputed")`。
+- GREEN：远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34821 MASTER_PORT=34821 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260709_decode_plan_cache tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_decode_plan_cache.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=52.10690261051059`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=811`、`d2h_copies=9`、`evictions=815`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1626`。
+
+结论：该优化不改变 staging/copy 行为，主要减少每层重复 Python/list planning，为后续把 prefill/decode read-window planner 统一成显式 planner 做准备。真正降低 H2D reload 仍需要继续优化 staging capacity/reuse 策略。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
