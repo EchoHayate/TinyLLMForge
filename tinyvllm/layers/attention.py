@@ -235,6 +235,69 @@ def _build_blockwise_decode_window_plan(
     return plans
 
 
+def _build_blockwise_prefill_window_plan(
+    block_rows: list[list[int]],
+    chunk_starts: list[int],
+    chunk_ends: list[int],
+    cu_q: list[int],
+    block_size: int,
+    window_blocks: int,
+    write_blocks: set[int],
+    gpu_blocks: int,
+):
+    row_plans = []
+    for row_idx, row_blocks in enumerate(block_rows):
+        q_start = int(cu_q[row_idx])
+        q_end = int(cu_q[row_idx + 1])
+        q_len = q_end - q_start
+        chunk_start = int(chunk_starts[row_idx])
+        chunk_end = int(chunk_ends[row_idx])
+        if q_len <= 0:
+            row_plans.append({
+                "q_start": q_start,
+                "q_end": q_end,
+                "q_len": q_len,
+                "chunk_start": chunk_start,
+                "chunk_end": chunk_end,
+                "windows": [],
+            })
+            continue
+        if chunk_end - chunk_start != q_len:
+            raise RuntimeError(
+                "blockwise prefill context mismatch: "
+                f"q_len={q_len}, chunk_start={chunk_start}, chunk_end={chunk_end}"
+            )
+        prefix_blocks = (chunk_start + block_size - 1) // block_size
+        windows = []
+        for start_block in range(0, prefix_blocks, window_blocks):
+            window = row_blocks[start_block:start_block + window_blocks]
+            window_start_token = start_block * block_size
+            window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
+            if not window or window_len <= 0:
+                continue
+            windows.append({
+                "window": window,
+                "window_len": window_len,
+                "future_hint_blocks": _blockwise_prefill_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    prefix_blocks,
+                    window_blocks,
+                    write_blocks,
+                    gpu_blocks,
+                ),
+            })
+        row_plans.append({
+            "q_start": q_start,
+            "q_end": q_end,
+            "q_len": q_len,
+            "chunk_start": chunk_start,
+            "chunk_end": chunk_end,
+            "windows": windows,
+        })
+    return row_plans
+
+
 def _decode_window_mask(
     window_lens,
     max_window_tokens: int,
@@ -429,42 +492,38 @@ def _blockwise_online_prefill_attention(
     q_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(max_chunk_tokens, 1, 1)
     k_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(1, 1, max_chunk_tokens)
 
-    for row_idx, row_blocks in enumerate(block_rows):
-        q_start = int(cu_q[row_idx])
-        q_end = int(cu_q[row_idx + 1])
-        q_len = q_end - q_start
+    prefill_plan_cache = getattr(context, "kv_offload_prefill_window_plan_cache", None)
+    if prefill_plan_cache is None:
+        prefill_plan_cache = _build_blockwise_prefill_window_plan(
+            block_rows,
+            chunk_starts,
+            chunk_ends,
+            cu_q,
+            block_size,
+            window_blocks,
+            write_blocks,
+            manager.gpu_blocks,
+        )
+        context.kv_offload_prefill_window_plan_cache = prefill_plan_cache
+
+    for row_plan in prefill_plan_cache:
+        q_start = row_plan["q_start"]
+        q_end = row_plan["q_end"]
+        q_len = row_plan["q_len"]
         if q_len <= 0:
             continue
-        chunk_start = int(chunk_starts[row_idx])
-        chunk_end = int(chunk_ends[row_idx])
-        if chunk_end - chunk_start != q_len:
-            raise RuntimeError(
-                "blockwise prefill context mismatch: "
-                f"q_len={q_len}, chunk_start={chunk_start}, chunk_end={chunk_end}"
-            )
         q_row = q_fp[q_start:q_end]
         running_m = torch.full((q_len, num_heads), float("-inf"), device=q.device, dtype=torch.float32)
         running_l = torch.zeros((q_len, num_heads), device=q.device, dtype=torch.float32)
         running_o = torch.zeros((q_len, num_heads, head_dim), device=q.device, dtype=torch.float32)
 
-        prefix_blocks = (chunk_start + block_size - 1) // block_size
-        for start_block in range(0, prefix_blocks, window_blocks):
-            window = row_blocks[start_block:start_block + window_blocks]
-            window_start_token = start_block * block_size
-            window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
-            if not window or window_len <= 0:
-                continue
+        for window_plan in row_plan["windows"]:
+            window = window_plan["window"]
+            window_len = window_plan["window_len"]
             _stage_blockwise_read_window(
                 manager,
                 window,
-                future_extra_blocks=_blockwise_prefill_future_hint_blocks(
-                    row_blocks,
-                    start_block,
-                    prefix_blocks,
-                    window_blocks,
-                    write_blocks,
-                    manager.gpu_blocks,
-                ),
+                future_extra_blocks=window_plan["future_hint_blocks"],
                 protected_extra_blocks=write_blocks,
                 capacity_extra_blocks=write_blocks,
                 capacity_error_prefix="blockwise prefill window plus current write blocks exceed GPU staging slots",

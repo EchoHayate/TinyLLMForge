@@ -378,6 +378,56 @@ def test_blockwise_prefill_read_windows_hint_capacity_bounded_future_prefix_bloc
     assert manager.protected_calls == [{4}, {4}, {4}, {4}, {4}]
 
 
+def test_blockwise_prefill_reuses_cached_prefix_window_plan_across_layers():
+    manager = _PlanOnlyManager()
+    manager.gpu_blocks = 4
+    manager.logical_to_slot.update({3: 3, 4: 4})
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1, 2, 3, 4]],
+        kv_offload_prefill_chunk_starts=[5],
+        kv_offload_prefill_chunk_ends=[6],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[4],
+        kv_offload_prefill_window_plan_cache=None,
+        cu_seqlens_q=torch.tensor([0, 1], dtype=torch.int32),
+    )
+    q = torch.ones(1, 4, 1, dtype=torch.float32)
+    k = torch.ones(1, 2, 1, dtype=torch.float32)
+    v = torch.ones(1, 2, 1, dtype=torch.float32)
+    k_cache = torch.ones(5, 1, 2, 1, dtype=torch.float32)
+    v_cache = torch.ones(5, 1, 2, 1, dtype=torch.float32)
+
+    attention_mod._blockwise_online_prefill_attention(
+        q,
+        k,
+        v,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=4,
+        head_dim=1,
+        scale=1.0,
+    )
+
+    with patch.object(
+        attention_mod,
+        "_blockwise_prefill_future_hint_blocks",
+        side_effect=AssertionError("prefill prefix-window plan recomputed"),
+    ):
+        attention_mod._blockwise_online_prefill_attention(
+            q,
+            k,
+            v,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=4,
+            head_dim=1,
+            scale=1.0,
+        )
+
+
 def test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads():
     manager = _PlanOnlyManager()
     context = SimpleNamespace(
@@ -542,6 +592,7 @@ def main():
     test_blockwise_prefill_future_hint_blocks_fill_only_spare_capacity()
     test_blockwise_prefill_read_windows_hint_next_prefix_blocks()
     test_blockwise_prefill_read_windows_hint_capacity_bounded_future_prefix_blocks()
+    test_blockwise_prefill_reuses_cached_prefix_window_plan_across_layers()
     test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads()
     test_blockwise_prefill_prefix_windows_do_not_zero_fill_dense_buffers()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()

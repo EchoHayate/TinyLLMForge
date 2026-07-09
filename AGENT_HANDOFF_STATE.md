@@ -1020,6 +1020,21 @@ TDD/验证：
 
 结论：该优化不改变 staging/copy 行为，主要减少每层重复 Python/list planning，为后续把 prefill/decode read-window planner 统一成显式 planner 做准备。真正降低 H2D reload 仍需要继续优化 staging capacity/reuse 策略。
 
+## 2026-07-09 Prefill prefix-window plan cache across layers
+
+继续减少 host-side 重复规划：blockwise prefill 的 logical block rows、chunk starts/ends、window size、write blocks 在一次 forward 的所有 decoder layers 中相同；旧实现每层都重算 prefix `window/window_len/future_hint_blocks`。新增 `_build_blockwise_prefill_window_plan()`，并把计划缓存到 `Context.kv_offload_prefill_window_plan_cache`，同一次 `set_context()` 生命周期内后续层复用该 plan；`reset_context()` 会自然清空。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_prefill_reuses_cached_prefix_window_plan_across_layers`，第二次调用同一 context 时 monkeypatch `_blockwise_prefill_future_hint_blocks`，远程旧实现按预期触发 `AssertionError("prefill prefix-window plan recomputed")`。
+- GREEN：远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34831 MASTER_PORT=34831 RUN_PREFLIGHT=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260709_prefill_plan_cache tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 数学 smoke：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260709_prefill_plan_cache.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+  - 真实模型长 prompt + decode smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_prefill_plan_cache.json`，`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=75.38668528944254`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=811`、`d2h_copies=9`、`evictions=815`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1626`。
+
+结论：该优化不改变 staging/copy 行为，主要减少每层重复 prefix-window Python/list planning，并让 prefill/decode 都具备 per-forward read-window plan cache。后续更值得继续做的是把两个 plan builder 收敛为统一 planner，并继续降低低 staging 容量下的 H2D reload/clean eviction。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
