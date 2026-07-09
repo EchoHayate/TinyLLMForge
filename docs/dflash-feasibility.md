@@ -516,6 +516,13 @@ Timing 结论：字段足够继续做趋势对比，但仍不能代表真实 ada
 - 两个 event 的 `draft_model_metadata.input_schema` 都独立记录 `hidden_rows=3`、`hidden_dim=1024`、`candidate_count=8`、`top_k=2`、`source_shape=[3,1024]`、`source_dtype="torch.bfloat16"`、`source_device="cuda:0"`；
 - prompt 0 的 commit `draft_tokens/accepted_tokens=[13440,21619]`、`output.draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`；prompt 1 的 commit `draft_tokens/accepted_tokens=[6303,6176]`、`output.draft_token_ids=[1,2,2]`、第一行 candidate ids `[1,2]`。这确认 batch 场景下 event 级 DraftModelInput schema 没有 prompt 之间串写，且仍保持 `runtime_mutation=false`。
 
+2026-07-09 在当前 `feat/kv-sparse-attention` 分支上重新跑 fresh 多 prompt / batch shape smoke：
+
+- 首次使用两个短自然语言 prompt 失败，原因是 `ngram` 没有可用 draft，`verify_events=[]`、`committed=false`、`gate_pass=false`；这是 prompt/draft-source 选择问题，不是 DraftModelInput schema 混淆。
+- 换回 accepted-friendly 重复 prompt 与 `--draft-source dflash-toy-ngram-or-repeat` 后，动态端口 `27641` 上输出 `profile_out/dflash_phase3_draft_model_batch_shape_smoke_20260709_fresh_r2.json`，`gate_pass=true`、`num_prompts=2`、`commit_events=2`、`accepted_count=4`、`acceptance_rate=1.0`。
+- 独立 JSON 断言通过 `SCHEMA_VERIFY_OK`：每个 prompt 各 `commit_events=1`、`verify_events=1`、`accepted_count=2`；两个 event 均保持 `runtime_mutation=false`、`adapter="target_hidden_draft_model_stub"`、`input_schema.hidden_rows=3`、`logit_rows=2`、`projected_rows=3`、`draft_model_metadata.input_schema={hidden_rows=3, hidden_dim=1024, candidate_count=8, top_k=2, source_shape=[3,1024], source_dtype="torch.bfloat16", source_device="cuda:0"}`。
+- prompt 0 事件：`accepted_tokens=[13440,21619]`、`output.draft_token_ids=[7,7,7]`、第一行 candidate ids `[7,1]`、`block_table_after=[0]`；prompt 1 事件：`accepted_tokens=[6303,6176]`、`output.draft_token_ids=[1,2,2]`、第一行 candidate ids `[1,2]`、`block_table_after=[1]`。两组 output/source 明显不同，确认当前分支上 batch 场景 event 级 DraftModelInput schema 未发生 prompt 间串写，且仍只保持 profiler-only。
+
 2026-07-08 已把 profiler-only draft model schema 抽成小模块：
 
 - 新增 `tools/draft_model_schema.py`，承载 `DraftModelInput`、`DraftModelResult`、`DraftModelStubConfig`；`tools/profile_ngram_commit.py` 只导入这些 schema/dataclass，避免继续在大 profiler 文件里堆接口定义；
