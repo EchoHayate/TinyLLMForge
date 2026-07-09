@@ -428,6 +428,55 @@ def test_blockwise_prefill_reuses_cached_prefix_window_plan_across_layers():
         )
 
 
+def test_blockwise_prefill_reuses_cached_local_position_templates_across_layers():
+    manager = _PlanOnlyManager()
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1]],
+        kv_offload_prefill_chunk_starts=[1],
+        kv_offload_prefill_chunk_ends=[3],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[],
+        kv_offload_prefill_window_plan_cache=None,
+        kv_offload_prefill_position_template_cache=None,
+        cu_seqlens_q=torch.tensor([0, 2], dtype=torch.int32),
+    )
+    q = torch.ones(2, 2, 1, dtype=torch.float32)
+    k = torch.ones(2, 1, 1, dtype=torch.float32)
+    v = torch.ones(2, 1, 1, dtype=torch.float32)
+    k_cache = torch.ones(2, 1, 1, 1, dtype=torch.float32)
+    v_cache = torch.ones(2, 1, 1, 1, dtype=torch.float32)
+
+    attention_mod._blockwise_online_prefill_attention(
+        q,
+        k,
+        v,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=2,
+        head_dim=1,
+        scale=1.0,
+    )
+
+    with patch.object(
+        attention_mod.torch,
+        "arange",
+        side_effect=AssertionError("prefill local position templates recomputed"),
+    ):
+        attention_mod._blockwise_online_prefill_attention(
+            q,
+            k,
+            v,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=2,
+            head_dim=1,
+            scale=1.0,
+        )
+
+
 def test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads():
     manager = _PlanOnlyManager()
     context = SimpleNamespace(
@@ -593,6 +642,7 @@ def main():
     test_blockwise_prefill_read_windows_hint_next_prefix_blocks()
     test_blockwise_prefill_read_windows_hint_capacity_bounded_future_prefix_blocks()
     test_blockwise_prefill_reuses_cached_prefix_window_plan_across_layers()
+    test_blockwise_prefill_reuses_cached_local_position_templates_across_layers()
     test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads()
     test_blockwise_prefill_prefix_windows_do_not_zero_fill_dense_buffers()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()

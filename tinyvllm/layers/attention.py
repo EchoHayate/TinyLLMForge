@@ -489,8 +489,21 @@ def _blockwise_online_prefill_attention(
     out = torch.empty_like(q)
     q_fp = q.to(torch.float32)
     max_chunk_tokens = max((int(end) - int(start) for start, end in zip(chunk_starts, chunk_ends)), default=0)
-    q_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(max_chunk_tokens, 1, 1)
-    k_pos_template = torch.arange(max_chunk_tokens, device=q.device).view(1, 1, max_chunk_tokens)
+    position_template_cache = getattr(context, "kv_offload_prefill_position_template_cache", None)
+    if (
+        position_template_cache is None
+        or position_template_cache[0] != max_chunk_tokens
+        or position_template_cache[1] != q.device
+    ):
+        position_template_cache = (
+            max_chunk_tokens,
+            q.device,
+            torch.arange(max_chunk_tokens, device=q.device).view(max_chunk_tokens, 1, 1),
+            torch.arange(max_chunk_tokens, device=q.device).view(1, 1, max_chunk_tokens),
+        )
+        context.kv_offload_prefill_position_template_cache = position_template_cache
+    q_pos_template = position_template_cache[2]
+    k_pos_template = position_template_cache[3]
 
     prefill_plan_cache = getattr(context, "kv_offload_prefill_window_plan_cache", None)
     if prefill_plan_cache is None:
