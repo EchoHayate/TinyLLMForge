@@ -820,6 +820,21 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_resident_fastpath_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：重复 staging 命中已 resident blocks 时少走一层空 copy/wait 调度；非 resident、dirty eviction、H2D reload 路径不变。
 
+### 2026-07-09 KV planner helper stack integrated smoke
+
+在 block-row/slot map-only helper、write-position helper、full-decode staging helper、resident fast path 全部推送后，补跑脚本级远程集成 smoke：
+
+```bash
+CUDA_VISIBLE_DEVICES=4 \
+TINYVLLM_DIST_PORT=34731 MASTER_PORT=34731 \
+RUN_PREFLIGHT=0 SMOKE_TAG=20260709_kv_planner_helpers \
+tools/smoke_blockwise_prefill_remote.sh
+```
+
+- 数学 smoke：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260709_kv_planner_helpers.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+- 真实模型长 prompt smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_kv_planner_helpers.json`，`gate_pass=true`、`elapsed_s=30.003381814807653`、`output_tokens=1`。
+- 结论：这一组 KV planner/helper 小优化在脚本级数学路径与真实模型 blockwise prefill 集成路径均未回归；`elapsed_s` 只作为本次环境下 smoke 观测，不作为严格性能结论。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
