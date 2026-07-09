@@ -433,8 +433,8 @@ def _blockwise_online_prefill_attention(
                 capacity_error_prefix="blockwise prefill window plus current write blocks exceed GPU staging slots",
             )
 
-            k_dense = q.new_zeros((window_len, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
-            v_dense = q.new_zeros((window_len, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
+            k_dense = q.new_empty((window_len, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
+            v_dense = q.new_empty((window_len, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
             copied = 0
             for logical_block in window:
                 if copied >= window_len:

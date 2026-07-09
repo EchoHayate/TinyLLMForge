@@ -991,6 +991,20 @@ TDD/验证：
 
 结论：GQA no-repeat 没有改变 copy/evict counters，这是预期；收益点是减少每个 blockwise window 的 K/V head-expanded临时张量和对应 `repeat_interleave`。wall-clock 单次不作为严格性能结论，但 correctness、decode 覆盖和 matrix counters 都未回归。后续更大的收益仍在 read-window planner/减少 H2D reload，或进一步把 grouped GQA helper 下沉为更高效 kernel。
 
+## 2026-07-09 Blockwise prefill prefix dense buffer no-zero-fill
+
+继续减少 window 内临时张量开销：`_blockwise_online_prefill_attention()` 的 prefix read window 会按 `window_len` 完整从 staged KV cache copy K/V，因此原来的 `q.new_zeros(...)` 会先清零再被全量覆盖。已改为 `q.new_empty(...)`，只影响 prefix historical KV window；decode batch window 仍保留 `new_zeros`，因为 batch padding/不同 `window_lens` 需要安全填充。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_prefill_prefix_windows_do_not_zero_fill_dense_buffers`，远程旧实现按预期触发 `AssertionError("new_zeros called for fully-copied prefix window")`。
+- GREEN：远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34811 MASTER_PORT=34811 RUN_PREFLIGHT=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260709_prefill_empty_buffers tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 数学 smoke：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260709_prefill_empty_buffers.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+  - 真实模型长 prompt + decode smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_prefill_empty_buffers.json`，`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=51.531816590577364`。
+
+结论：这是一个低风险内存带宽/allocator 微优化，不改变 KV offload staging counters；价值是 prefix window 每次少做 K/V dense buffer 清零。后续类似优化可以继续检查“完全覆盖写入”的临时张量，但不要动 decode padded dense buffer。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
