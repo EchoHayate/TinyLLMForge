@@ -480,6 +480,32 @@ def _stage_kv_offload_write_blocks(
         )
 
 
+def _stage_kv_offload_write_positions(
+    manager,
+    block_table: list[int],
+    positions: list[int],
+    block_size: int,
+    future_blocks: set[int],
+) -> tuple[list[int], list[int]]:
+    write_blocks = []
+    first_write_offset_by_block = {}
+    for pos in positions:
+        block_id = int(block_table[pos // block_size])
+        if block_id not in first_write_offset_by_block:
+            write_blocks.append(block_id)
+            first_write_offset_by_block[block_id] = pos % block_size
+        else:
+            first_write_offset_by_block[block_id] = min(
+                first_write_offset_by_block[block_id], pos % block_size)
+    _stage_kv_offload_write_blocks(
+        manager,
+        write_blocks,
+        first_write_offset_by_block,
+        future_blocks,
+    )
+    return manager.map_slots_for_positions(block_table, positions), write_blocks
+
+
 class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event]):
@@ -894,27 +920,14 @@ class ModelRunner:
             write_positions = list(range(chunk_start, chunk_end))
             future_blocks = set(int(block_id) for block_id in seq.block_table)
             if self.kv_offload is not None and blockwise_prefill_enabled:
-                write_blocks = []
-                first_write_offset_by_block = {}
-                for pos in write_positions:
-                    block_id = int(seq.block_table[pos // self.block_size])
-                    if block_id not in first_write_offset_by_block:
-                        write_blocks.append(block_id)
-                        first_write_offset_by_block[block_id] = pos % self.block_size
-                    else:
-                        first_write_offset_by_block[block_id] = min(
-                            first_write_offset_by_block[block_id], pos % self.block_size)
-                _stage_kv_offload_write_blocks(
+                mapped_slots, write_blocks = _stage_kv_offload_write_positions(
                     self.kv_offload,
-                    write_blocks,
-                    first_write_offset_by_block,
+                    seq.block_table,
+                    write_positions,
+                    self.block_size,
                     future_blocks,
                 )
-                slot_mapping.extend([
-                    self.kv_offload.logical_to_slot[int(seq.block_table[pos // self.block_size])] * self.block_size
-                    + (pos % self.block_size)
-                    for pos in write_positions
-                ])
+                slot_mapping.extend(mapped_slots)
                 kv_offload_write_blocks.extend(write_blocks)
             else:
                 if self.kv_offload is not None:

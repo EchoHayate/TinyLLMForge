@@ -784,6 +784,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_map_slots_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：KV manager 现在同时有 block-row 与 slot-position 两个 map-only helper，为后续把已 stage 的 prefill/decode slot mapping 统一到 planner helper 做准备；现有 `translate_slots_for_positions()` 外部语义不变。
 
+### 2026-07-09 KV offload write-position staging helper
+
+继续把 blockwise prefill 热路径里的手写逻辑收敛：新增 `_stage_kv_offload_write_positions()`，负责从 write positions 计算 first-write offsets、调用 `_stage_kv_offload_write_blocks()`、再通过 `map_slots_for_positions()` 生成 physical slot ids。`prepare_prefill()` 的 blockwise prefill 分支不再手写 slot list。
+
+- 新增 `test_stage_kv_offload_write_positions_stages_once_then_maps_slots()`，验证 helper 只产生一次 write staging plan，并复用 `map_slots_for_positions()` 输出 slots。
+- TDD RED：远程旧实现按预期失败：`ImportError: cannot import name '_stage_kv_offload_write_positions'`。
+- 远程 GREEN：`tools/test_kv_write_staging.py` 与 `tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_write_positions_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_write_positions_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：blockwise prefill write staging、write-block 统计和 slot mapping 已经进入单一 helper，减少后续优化 write/read planner 时需要维护的手写分支。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
