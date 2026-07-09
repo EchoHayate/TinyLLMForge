@@ -360,6 +360,14 @@ class KVOffloadMVP0:
             require_valid=require_valid,
             future_logical_blocks=future_logical_blocks,
         )
+        return self.map_block_rows(rows, mapping=mapping)
+
+    def map_block_rows(
+        self,
+        rows: list[list[int]],
+        mapping: dict[int, int] | None = None,
+    ) -> list[list[int]]:
+        mapping = self.logical_to_slot if mapping is None else mapping
         return [[mapping[int(block)] if int(block) >= 0 else -1 for block in row] for row in rows]
 
     def translate_slots_for_positions(
@@ -1136,11 +1144,7 @@ class ModelRunner:
                     require_valid=False,
                     future_logical_blocks=future_blocks,
                 )
-                physical_block_table_rows = self._kv_offload_translate_block_rows(
-                    block_table_rows,
-                    require_valid=False,
-                    future_logical_blocks=future_blocks,
-                )
+                physical_block_table_rows = self.kv_offload.map_block_rows(block_table_rows)
                 block_table_rows = physical_block_table_rows
             slot_mapping = [
                 self.kv_offload.logical_to_slot[int(block)] * self.block_size + int(offset)

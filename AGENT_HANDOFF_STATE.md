@@ -760,6 +760,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_empty_ensure_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：空 block staging 现在是根部 no-op，减少下游 copy/wait helper 的无效调用；这是小优化，不改变任何非空 staging 语义。
 
+### 2026-07-09 KV offload block-row map-only helper
+
+继续减少重复 staging：`KVOffloadMVP0.translate_block_rows()` 仍负责 stage+translate；新增 `map_block_rows()` 只把已 resident logical block rows 映射为 physical slot rows，不再触发 `ensure_resident()`。full-attention decode 分支在已经完成 read/write staging 后，改用 `map_block_rows()` 构造 physical block table，避免同一 forward 内再跑一次 translate/staging 计划。
+
+- 新增 `test_map_block_rows_uses_existing_resident_slots_without_staging()`，用无 CUDA fake manager 验证 map-only 不调用 `_enqueue_d2h_pairs()`、`_enqueue_h2d_pairs()`、`wait_for_blocks()`。
+- TDD RED：远程旧实现按预期失败：`AttributeError: '_NoopKVOffload' object has no attribute 'map_block_rows'`。
+- 远程 GREEN：`tools/test_kv_offload.py` 通过，输出 `kv offload tests passed`。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_map_rows_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_map_rows_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：full-attention decode 的 block-table 构造现在可以复用已 resident mapping，减少一次无必要的 staging/translation 入口调用；非 decode 调用方仍可继续使用 `translate_block_rows()` 保持原 stage+translate 语义。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

@@ -86,6 +86,18 @@ def test_ensure_resident_empty_blocks_is_noop_without_copy_hooks():
     assert manager.wait_for_blocks_calls == 0
 
 
+def test_map_block_rows_uses_existing_resident_slots_without_staging():
+    manager = _NoopKVOffload()
+    manager.logical_to_slot = {3: 1, 5: 0}
+
+    rows = manager.map_block_rows([[3, -1, 5], [5, 3, -1]])
+
+    assert rows == [[1, -1, 0], [0, 1, -1]]
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+    assert manager.wait_for_blocks_calls == 0
+
+
 def test_dirty_evictions_are_batched_when_loading_multiple_blocks():
     if not torch.cuda.is_available():
         print("skipping CUDA-only KV offload test")
@@ -251,6 +263,7 @@ def test_evict_policy_avoids_pending_h2d_block_when_possible():
 def main():
     test_wait_for_blocks_clear_pending_api_without_cuda()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
+    test_map_block_rows_uses_existing_resident_slots_without_staging()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
     test_deferred_clean_eviction_waits_for_pending_d2h_event()
     test_wait_for_blocks_coalesces_identical_h2d_events()
