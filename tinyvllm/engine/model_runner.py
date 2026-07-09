@@ -306,6 +306,8 @@ class KVOffloadMVP0:
                 if self.cpu_valid[logical_block]:
                     h2d_pairs.append((logical_block, slot))
             self._touch(slot)
+        if not h2d_pairs and not deferred_d2h_pairs and not deferred_wait_blocks:
+            return {logical_block: self.logical_to_slot[logical_block] for logical_block in ordered}
         self._enqueue_d2h_pairs(deferred_d2h_pairs)
         waited_d2h_event_ids = set()
         for old_logical in deferred_wait_blocks:

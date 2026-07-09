@@ -808,6 +808,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_full_decode_helper_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：full-attention decode staging 的 read/write planning 进入单一 helper，行为与旧路径一致，但后续合并连续 prefetch plan / 降低 clean eviction 抖动时只需改一个入口。
 
+### 2026-07-09 KV offload resident ensure_resident fast path
+
+继续降低热路径调度开销：`KVOffloadMVP0.ensure_resident()` 在所有请求块已经 resident、没有 H2D、没有 D2H、没有 deferred wait 时，直接返回 mapping，不再调用空 `_enqueue_d2h_pairs()`、空 `_enqueue_h2d_pairs()` 或空 `wait_for_blocks()`。
+
+- 新增 `test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()`，覆盖已 resident + `wait=True` 仍应跳过空 copy/wait hooks。
+- TDD RED：远程旧实现按预期失败：`AssertionError`，因为已 resident 路径仍调用了空 enqueue hook；过程中补齐 fake manager 的 LRU 字段 `clock/slot_last_used`。
+- 远程 GREEN：`tools/test_kv_offload.py` 与 `tools/test_kv_write_staging.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_resident_fastpath_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_resident_fastpath_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：重复 staging 命中已 resident blocks 时少走一层空 copy/wait 调度；非 resident、dirty eviction、H2D reload 路径不变。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

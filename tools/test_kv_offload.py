@@ -25,6 +25,8 @@ class _NoopKVOffload(KVOffloadMVP0):
         self.logical_blocks = 4
         self.logical_to_slot = {}
         self.slot_to_logical = [None, None]
+        self.slot_last_used = [0, 0]
+        self.clock = 0
         self.cpu_valid = [False] * 4
         self.dirty_logical_blocks = set()
         self.pending_wait_blocks = set()
@@ -81,6 +83,19 @@ def test_ensure_resident_empty_blocks_is_noop_without_copy_hooks():
     mapping = manager.ensure_resident([], require_valid=True, wait=True)
 
     assert mapping == {}
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+    assert manager.wait_for_blocks_calls == 0
+
+
+def test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks():
+    manager = _NoopKVOffload()
+    manager.logical_to_slot = {1: 0, 2: 1}
+    manager.slot_to_logical = [1, 2]
+
+    mapping = manager.ensure_resident([1, 2, 1], require_valid=True, wait=True)
+
+    assert mapping == {1: 0, 2: 1}
     assert manager.enqueue_d2h_calls == 0
     assert manager.enqueue_h2d_calls == 0
     assert manager.wait_for_blocks_calls == 0
@@ -277,6 +292,7 @@ def test_evict_policy_avoids_pending_h2d_block_when_possible():
 def main():
     test_wait_for_blocks_clear_pending_api_without_cuda()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
+    test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
     test_map_block_rows_uses_existing_resident_slots_without_staging()
     test_map_slots_for_positions_uses_existing_resident_slots_without_staging()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
