@@ -796,6 +796,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_write_positions_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：blockwise prefill write staging、write-block 统计和 slot mapping 已经进入单一 helper，减少后续优化 write/read planner 时需要维护的手写分支。
 
+### 2026-07-09 KV offload full-decode staging helper
+
+继续收敛 full-attention decode 的 read/write staging：新增 `_stage_kv_offload_full_decode_blocks()`，把 future block 集合、valid read blocks 过滤、`prefetch_*` 统计以及 read/write 两次 `ensure_resident()` 统一到单一 helper；`prepare_decode()` 非 blockwise 分支只保留 helper 调用和 map-only block-table 构造。
+
+- 新增 `test_stage_kv_offload_full_decode_blocks_matches_existing_plan_shape()`，锁住旧逻辑的 read/write 统计与两次 `ensure_resident()` 调用形状。
+- TDD RED：远程旧实现按预期失败：`ImportError: cannot import name '_stage_kv_offload_full_decode_blocks'`。
+- GREEN 过程中修正测试 fake 缺失 `prefetch_read_blocks` 字段后，远程 `tools/test_kv_write_staging.py` 与 `tools/test_kv_offload.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_full_decode_helper_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_full_decode_helper_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：full-attention decode staging 的 read/write planning 进入单一 helper，行为与旧路径一致，但后续合并连续 prefetch plan / 降低 clean eviction 抖动时只需改一个入口。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

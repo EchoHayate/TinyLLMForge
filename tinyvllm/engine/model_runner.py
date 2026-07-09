@@ -506,6 +506,39 @@ def _stage_kv_offload_write_positions(
     return manager.map_slots_for_positions(block_table, positions), write_blocks
 
 
+def _stage_kv_offload_full_decode_blocks(
+    manager,
+    block_table_rows: list[list[int]],
+    decode_write_blocks: list[int],
+    decode_write_offsets: list[int],
+) -> set[int]:
+    future_blocks = set(int(block) for row in block_table_rows for block in row if int(block) >= 0)
+    future_blocks.update(int(block) for block in decode_write_blocks)
+    valid_read_blocks = []
+    for row, write_block, write_offset in zip(block_table_rows, decode_write_blocks, decode_write_offsets):
+        for block in row:
+            block = int(block)
+            if block < 0:
+                continue
+            if block == int(write_block) and int(write_offset) == 0:
+                continue
+            valid_read_blocks.append(block)
+    manager.stats["prefetch_plans"] += 1
+    manager.stats["prefetch_read_blocks"] += len(set(valid_read_blocks))
+    manager.stats["prefetch_write_blocks"] += len(set(int(block) for block in decode_write_blocks))
+    manager.ensure_resident(
+        valid_read_blocks,
+        require_valid=True,
+        future_logical_blocks=future_blocks,
+    )
+    manager.ensure_resident(
+        decode_write_blocks,
+        require_valid=False,
+        future_logical_blocks=future_blocks,
+    )
+    return future_blocks
+
+
 class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event]):
@@ -1146,29 +1179,11 @@ class ModelRunner:
             else:
                 # Full attention MVP-0/MVP-1: all visible logical blocks are staged
                 # on GPU before the forward.
-                future_blocks = set(int(block) for row in block_table_rows for block in row if int(block) >= 0)
-                future_blocks.update(int(block) for block in decode_write_blocks)
-                valid_read_blocks = []
-                for row, write_block, write_offset in zip(block_table_rows, decode_write_blocks, decode_write_offsets):
-                    for block in row:
-                        block = int(block)
-                        if block < 0:
-                            continue
-                        if block == int(write_block) and int(write_offset) == 0:
-                            continue
-                        valid_read_blocks.append(block)
-                self.kv_offload.stats["prefetch_plans"] += 1
-                self.kv_offload.stats["prefetch_read_blocks"] += len(set(valid_read_blocks))
-                self.kv_offload.stats["prefetch_write_blocks"] += len(set(int(block) for block in decode_write_blocks))
-                self.kv_offload.ensure_resident(
-                    valid_read_blocks,
-                    require_valid=True,
-                    future_logical_blocks=future_blocks,
-                )
-                self.kv_offload.ensure_resident(
+                _stage_kv_offload_full_decode_blocks(
+                    self.kv_offload,
+                    block_table_rows,
                     decode_write_blocks,
-                    require_valid=False,
-                    future_logical_blocks=future_blocks,
+                    decode_write_offsets,
                 )
                 physical_block_table_rows = self.kv_offload.map_block_rows(block_table_rows)
                 block_table_rows = physical_block_table_rows

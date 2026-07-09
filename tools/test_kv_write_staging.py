@@ -15,6 +15,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from tinyvllm.engine.model_runner import (
+    _stage_kv_offload_full_decode_blocks,
     _stage_kv_offload_write_blocks,
     _stage_kv_offload_write_positions,
 )
@@ -24,6 +25,7 @@ class _FakeKVOffload:
     def __init__(self):
         self.stats = {
             "prefetch_plans": 0,
+            "prefetch_read_blocks": 0,
             "prefetch_write_blocks": 0,
         }
         self.block_size = 8
@@ -110,10 +112,31 @@ def test_stage_kv_offload_write_positions_stages_once_then_maps_slots():
     assert manager.map_calls == [([5, 6], [2, 8, 9, 10])]
 
 
+def test_stage_kv_offload_full_decode_blocks_matches_existing_plan_shape():
+    manager = _FakeKVOffload()
+
+    future_blocks = _stage_kv_offload_full_decode_blocks(
+        manager,
+        block_table_rows=[[5, 6], [6, 5]],
+        decode_write_blocks=[6, 5],
+        decode_write_offsets=[0, 3],
+    )
+
+    assert future_blocks == {5, 6}
+    assert manager.stats["prefetch_plans"] == 1
+    assert manager.stats["prefetch_read_blocks"] == 2
+    assert manager.stats["prefetch_write_blocks"] == 2
+    assert manager.calls == [
+        ([5, 6, 5], True, {5, 6}, set()),
+        ([6, 5], False, {5, 6}, set()),
+    ]
+
+
 def main():
     test_stage_kv_offload_write_blocks_splits_valid_and_fresh_without_empty_calls()
     test_stage_kv_offload_write_blocks_skips_empty_valid_side()
     test_stage_kv_offload_write_positions_stages_once_then_maps_slots()
+    test_stage_kv_offload_full_decode_blocks_matches_existing_plan_shape()
     print("kv write staging tests passed")
 
 
