@@ -331,9 +331,14 @@ class KVOffloadMVP0:
         blocks = set(int(block) for block in logical_blocks)
         if not blocks:
             return
+        event_blocks = [logical_block for logical_block in blocks if self.h2d_done.get(logical_block) is not None]
+        if not event_blocks:
+            if clear_pending:
+                self.pending_wait_blocks.difference_update(blocks)
+            return
         stream = torch.cuda.current_stream()
         waited_event_ids = set()
-        for logical_block in blocks:
+        for logical_block in event_blocks:
             event = self.h2d_done.get(logical_block)
             if event is not None and id(event) not in waited_event_ids:
                 stream.wait_event(event)

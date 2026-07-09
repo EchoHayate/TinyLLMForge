@@ -847,6 +847,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_empty_wait_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：空 wait list 不再进入 CUDA stream 查询路径；非空 H2D wait / clear_pending 语义不变。
 
+### 2026-07-09 KV offload no-event wait_for_blocks fast path
+
+继续减少 blockwise read window 的空 wait 开销：`KVOffloadMVP0.wait_for_blocks(blocks)` 现在先筛出实际存在 H2D event 的 blocks；如果请求 blocks 没有任何 pending H2D event，则只在 `clear_pending=True` 时清理 pending set，并直接返回，不再获取 `torch.cuda.current_stream()`。
+
+- 新增 `test_wait_for_blocks_without_events_clears_pending_without_cuda_stream()`，monkeypatch `torch.cuda.current_stream` 抛错，确保无 event 的 wait 只清理 pending、不触碰 CUDA stream。
+- TDD RED：远程旧实现按预期失败：`AssertionError: current_stream called`。
+- 远程 GREEN：`tools/test_kv_offload.py` 与 `tools/test_kv_write_staging.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_no_event_wait_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_no_event_wait_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：read window / staging 命中已 resident 或无 pending event 的 blocks 时，少走一次 CUDA stream 查询；有真实 H2D event 的 wait 语义和 event 去重逻辑保持不变。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
