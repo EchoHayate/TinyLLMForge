@@ -718,6 +718,21 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/Users/bytedance/dev/TinyLLMForge \
   - `profile_out/blockwise_decode_no_valid_alloc_20260708.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`、`relative_error=1.853052561279985e-07`。
   - `profile_out/blockwise_prefill_no_valid_alloc_20260708.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
 
+### 2026-07-08 Blockwise planning stack integrated smoke
+
+在上述 window wait、ordered planning、staging helper、row normalize、mask template、all-valid merge 优化全部推送后，补跑一次远程脚本级集成验证：
+
+```bash
+CUDA_VISIBLE_DEVICES=4 \
+TINYVLLM_DIST_PORT=34721 MASTER_PORT=34721 \
+RUN_PREFLIGHT=0 SMOKE_TAG=20260708_blockwise_planning_stack \
+tools/smoke_blockwise_prefill_remote.sh
+```
+
+- 数学 smoke：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260708_blockwise_planning_stack.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+- 真实模型长 prompt smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260708_blockwise_planning_stack.json`，`gate_pass=true`、`elapsed_s=41.34747215360403`、`output_tokens=1`。
+- 结论：当前 blockwise planning 小优化栈在数学路径与真实模型 blockwise prefill 集成路径均未回归；`elapsed_s` 仍受远程 GPU/负载波动影响，不把单次 wall-clock 当作性能结论。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
