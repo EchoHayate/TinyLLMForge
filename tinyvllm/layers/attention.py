@@ -326,10 +326,14 @@ def _blockwise_online_prefill_attention(
             window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
             if not window or window_len <= 0:
                 continue
+            next_window = row_blocks[
+                start_block + window_blocks:
+                min(start_block + 2 * window_blocks, prefix_blocks)
+            ]
             _stage_blockwise_read_window(
                 manager,
                 window,
-                future_extra_blocks=write_blocks,
+                future_extra_blocks=write_blocks | set(next_window),
                 protected_extra_blocks=write_blocks,
                 capacity_extra_blocks=write_blocks,
                 capacity_error_prefix="blockwise prefill window plus current write blocks exceed GPU staging slots",

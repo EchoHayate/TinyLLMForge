@@ -909,6 +909,27 @@ tools/smoke_blockwise_prefill_remote.sh
 
 结论：`gpu_blocks=1` 仍是当前 blockwise prefill 的容量边界，不是 correctness mismatch；`gpu_blocks=4` 相比 `2` 明显减少 H2D/eviction 计数（391→249、395→251），说明当前主要开销仍来自 staging slot 容量导致的反复 H2D/evict，下一步更值得做的是减少跨 window 的重复 staging / 合并连续 prefetch，而不是继续只消除 Python 空调用。
 
+## 2026-07-09 Blockwise prefill next-window future hint
+
+基于上一轮 GPU blocks matrix，先做一个低风险 read-window planner 改动：`_blockwise_online_prefill_attention()` 在 stage 当前 prefix window 时，把紧邻的下一个 prefix window 加进 `future_logical_blocks` hint。该 hint 不进入 protected/capacity 集合，因此不会放宽 correctness 边界，也不会要求额外 staging slots；只影响 `lru_cost` eviction 评分，让 manager 更倾向保留下个窗口即将读取的 clean resident block，降低 `gpu_blocks` 稍宽时的重复 H2D/evict。
+
+TDD/验证：
+
+- RED：新增 `tools/test_blockwise_attention_planning.py::test_blockwise_prefill_read_windows_hint_next_prefix_blocks`，远程旧实现按预期 `AssertionError`，因为 prefill read-window caller 只把当前窗口传入 future hint。
+- GREEN：`tinyvllm/layers/attention.py` 只在 prefill path 增加 `next_window` future hint；远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34761 MASTER_PORT=34761 RUN_PREFLIGHT=0 SMOKE_TAG=20260709_prefill_next_window_hint tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 数学 smoke：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260709_prefill_next_window_hint.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+  - 真实模型长 prompt smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_prefill_next_window_hint.json`，`gate_pass=true`、`elapsed_s=30.453897550702095`、`output_tokens=1`。
+- GPU blocks matrix：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34762 MASTER_PORT=34762 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_REAL_SMOKE=1 RUN_GPU_BLOCKS_MATRIX=1 MATRIX_REQUIRE_PASS=0 SMOKE_TAG=20260709_prefill_next_window_hint_matrix tools/smoke_blockwise_prefill_remote.sh`。
+
+| gpu_blocks | gate_pass | elapsed_s | h2d_copies | d2h_copies | evictions | resident_blocks | note |
+|---:|---|---:|---:|---:|---:|---:|---|
+| 1 | expected fail | - | - | - | - | - | `blockwise prefill window plus current write blocks exceed GPU staging slots: required=2, gpu_blocks=1` |
+| 2 | true | 29.297932274639606 | 391 | 6 | 395 | 2 | unchanged copy pressure vs previous matrix |
+| 4 | true | 28.453177761286497 | 193 | 6 | 195 | 4 | H2D 249→193、evict 251→195 |
+
+结论：next-window future hint 对 `gpu_blocks=2` 无改善，因为只有一个 spare/none spare slot 时当前 window + write block 已基本决定 eviction；对 `gpu_blocks=4` 明显减少重复 staging（H2D 约 -22.5%、eviction 约 -22.3%）。wall-clock 单次波动不作严格结论，但 copy/evict counter 改善稳定指向后续方向：继续做多窗口 lookahead / 连续 prefetch plan 合并，同时保持 protected/capacity 语义保守。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

@@ -37,6 +37,8 @@ class _PlanOnlyManager:
             "prefetch_write_blocks": 0,
         }
         self.ensure_calls = []
+        self.future_calls = []
+        self.protected_calls = []
         self.wait_calls = []
 
     def mark_dirty(self, blocks):
@@ -50,6 +52,8 @@ class _PlanOnlyManager:
         protected_logical_blocks=None,
     ):
         self.ensure_calls.append(list(logical_blocks))
+        self.future_calls.append(set(future_logical_blocks or set()))
+        self.protected_calls.append(set(protected_logical_blocks or set()))
         return {int(block): self.logical_to_slot[int(block)] for block in logical_blocks}
 
     def wait_for_blocks(self, logical_blocks, clear_pending=False):
@@ -102,7 +106,51 @@ def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks(
     assert manager.stats["prefetch_plans"] == 1
     assert manager.stats["prefetch_read_blocks"] == 3
     assert manager.ensure_calls == [[2, 0, 1]]
+    assert manager.future_calls == [{0, 1, 2, 3}]
+    assert manager.protected_calls == [{3}]
     assert manager.wait_calls == [([2, 0, 1], True)]
+
+
+def test_blockwise_prefill_read_windows_hint_next_prefix_blocks():
+    manager = _PlanOnlyManager()
+    manager.logical_to_slot.update({3: 3})
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1, 2, 3]],
+        kv_offload_prefill_chunk_starts=[4],
+        kv_offload_prefill_chunk_ends=[5],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[],
+        cu_seqlens_q=torch.tensor([0, 1], dtype=torch.int32),
+    )
+    q = torch.ones(1, 1, 1, dtype=torch.float32)
+    k = torch.ones(1, 1, 1, dtype=torch.float32)
+    v = torch.ones(1, 1, 1, dtype=torch.float32)
+    k_cache = torch.ones(4, 1, 1, 1, dtype=torch.float32)
+    v_cache = torch.ones(4, 1, 1, 1, dtype=torch.float32)
+
+    from tinyvllm.layers.attention import _blockwise_online_prefill_attention
+
+    _blockwise_online_prefill_attention(
+        q,
+        k,
+        v,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=1,
+        head_dim=1,
+        scale=1.0,
+    )
+
+    assert manager.ensure_calls == [[0], [1], [2], [3]]
+    assert manager.future_calls == [
+        {0, 1},
+        {1, 2},
+        {2, 3},
+        {3},
+    ]
+    assert manager.protected_calls == [set(), set(), set(), set()]
 
 
 def test_normalize_logical_block_rows_filters_once_and_reports_max_blocks():
@@ -189,6 +237,7 @@ def test_merge_attention_window_none_mask_does_not_allocate_valid_mask():
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
+    test_blockwise_prefill_read_windows_hint_next_prefix_blocks()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
     test_decode_window_mask_reuses_position_template()
     test_local_causal_mask_reuses_position_templates()
