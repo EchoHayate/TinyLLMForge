@@ -19,6 +19,34 @@ import torch
 from tinyvllm.engine.model_runner import KVOffloadMVP0
 
 
+class _NoopKVOffload(KVOffloadMVP0):
+    def __init__(self):
+        self.gpu_blocks = 2
+        self.logical_blocks = 4
+        self.logical_to_slot = {}
+        self.slot_to_logical = [None, None]
+        self.cpu_valid = [False] * 4
+        self.dirty_logical_blocks = set()
+        self.pending_wait_blocks = set()
+        self.stats = {}
+        self.enqueue_d2h_calls = 0
+        self.enqueue_h2d_calls = 0
+        self.wait_for_blocks_calls = 0
+
+    def _check_logical_block(self, logical_block: int):
+        if logical_block < 0 or logical_block >= self.logical_blocks:
+            raise IndexError(logical_block)
+
+    def _enqueue_d2h_pairs(self, pairs):
+        self.enqueue_d2h_calls += 1
+
+    def _enqueue_h2d_pairs(self, pairs):
+        self.enqueue_h2d_calls += 1
+
+    def wait_for_blocks(self, logical_blocks, clear_pending: bool = False):
+        self.wait_for_blocks_calls += 1
+
+
 class _DummyStream:
     def __init__(self):
         self.waited = []
@@ -45,6 +73,17 @@ def test_wait_for_blocks_clear_pending_api_without_cuda():
     assert manager.stats["copy_waits"] == 2
     assert manager.pending_wait_blocks == {2}
     assert stream.waited == [manager.h2d_done[0], manager.h2d_done[1]]
+
+
+def test_ensure_resident_empty_blocks_is_noop_without_copy_hooks():
+    manager = _NoopKVOffload()
+
+    mapping = manager.ensure_resident([], require_valid=True, wait=True)
+
+    assert mapping == {}
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+    assert manager.wait_for_blocks_calls == 0
 
 
 def test_dirty_evictions_are_batched_when_loading_multiple_blocks():
@@ -211,6 +250,7 @@ def test_evict_policy_avoids_pending_h2d_block_when_possible():
 
 def main():
     test_wait_for_blocks_clear_pending_api_without_cuda()
+    test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
     test_deferred_clean_eviction_waits_for_pending_d2h_event()
     test_wait_for_blocks_coalesces_identical_h2d_events()

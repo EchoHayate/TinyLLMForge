@@ -269,6 +269,8 @@ class KVOffloadMVP0:
             self._check_logical_block(block)
             ordered.append(block)
             seen.add(block)
+        if not ordered:
+            return {}
         if len(ordered) > self.gpu_blocks:
             raise RuntimeError(
                 "KV offload MVP-0 uses full attention, so all visible logical blocks must fit in GPU staging: "

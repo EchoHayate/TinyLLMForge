@@ -748,6 +748,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_write_staging_20260709_final.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：write-block staging 的 prefill/decode 行为已统一，重复 block 统计按 unique block 计数，且不再为空 valid/fresh 分组制造无意义 `ensure_resident()` 调用；这是统一 KV access planner 的一个低风险中间步骤。
 
+### 2026-07-09 KV offload empty ensure_resident fast path
+
+继续收紧空 staging 调用：`KVOffloadMVP0.ensure_resident([])` 现在在去重后直接返回 `{}`，不再触发空 D2H/H2D enqueue、空 wait 或后续 mapping 构造。
+
+- 新增 `test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()`，用无 CUDA fake manager 覆盖空输入应返回空 mapping，且不调用 `_enqueue_d2h_pairs()`、`_enqueue_h2d_pairs()`、`wait_for_blocks()`。
+- TDD RED：远程旧实现按预期失败：`AssertionError`，因为空输入仍调用了 enqueue hook。
+- 远程 GREEN：`tools/test_kv_offload.py` 通过，输出 `kv offload tests passed`。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_empty_ensure_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_empty_ensure_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：空 block staging 现在是根部 no-op，减少下游 copy/wait helper 的无效调用；这是小优化，不改变任何非空 staging 语义。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
