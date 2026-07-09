@@ -835,6 +835,18 @@ tools/smoke_blockwise_prefill_remote.sh
 - 真实模型长 prompt smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_kv_planner_helpers.json`，`gate_pass=true`、`elapsed_s=30.003381814807653`、`output_tokens=1`。
 - 结论：这一组 KV planner/helper 小优化在脚本级数学路径与真实模型 blockwise prefill 集成路径均未回归；`elapsed_s` 只作为本次环境下 smoke 观测，不作为严格性能结论。
 
+### 2026-07-09 KV offload empty wait_for_blocks fast path
+
+继续减少空 wait 调度：`KVOffloadMVP0.wait_for_blocks([])` 现在在计算空 block set 后直接返回，不再获取 `torch.cuda.current_stream()`。这覆盖 `ensure_resident(wait=True)` 但本轮无 H2D blocks、以及上层偶发空 wait list 的情况。
+
+- 新增 `test_wait_for_blocks_empty_is_noop_without_cuda_stream()`，monkeypatch `torch.cuda.current_stream` 抛错，确保空 wait 不触碰 CUDA stream。
+- TDD RED：远程旧实现按预期失败：`AssertionError: current_stream called`。
+- 远程 GREEN：`tools/test_kv_offload.py` 与 `tools/test_kv_write_staging.py` 通过。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_empty_wait_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_empty_wait_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：空 wait list 不再进入 CUDA stream 查询路径；非空 H2D wait / clear_pending 语义不变。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

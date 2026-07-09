@@ -329,6 +329,8 @@ class KVOffloadMVP0:
         if self.copy_stream is None:
             return
         blocks = set(int(block) for block in logical_blocks)
+        if not blocks:
+            return
         stream = torch.cuda.current_stream()
         waited_event_ids = set()
         for logical_block in blocks:
