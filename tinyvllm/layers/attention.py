@@ -111,6 +111,23 @@ def _stage_blockwise_read_window(
     return unique_block_list
 
 
+def _blockwise_read_window_future_hint_blocks(
+    row_blocks: list[int],
+    start_block: int,
+    stop_block: int,
+    window_blocks: int,
+    extra_future_blocks: set[int],
+    gpu_blocks: int,
+) -> set[int]:
+    current_window = row_blocks[start_block:start_block + window_blocks]
+    future_hint_blocks = set(extra_future_blocks)
+    future_budget = max(0, int(gpu_blocks) - len(set(current_window)) - len(set(extra_future_blocks)))
+    lookahead_start = start_block + window_blocks
+    lookahead_end = min(stop_block, lookahead_start + future_budget)
+    future_hint_blocks.update(row_blocks[lookahead_start:lookahead_end])
+    return future_hint_blocks
+
+
 def _blockwise_prefill_future_hint_blocks(
     row_blocks: list[int],
     start_block: int,
@@ -119,13 +136,14 @@ def _blockwise_prefill_future_hint_blocks(
     write_blocks: set[int],
     gpu_blocks: int,
 ) -> set[int]:
-    current_window = row_blocks[start_block:start_block + window_blocks]
-    future_hint_blocks = set(write_blocks)
-    future_budget = max(0, int(gpu_blocks) - len(set(current_window)) - len(set(write_blocks)))
-    lookahead_start = start_block + window_blocks
-    lookahead_end = min(prefix_blocks, lookahead_start + future_budget)
-    future_hint_blocks.update(row_blocks[lookahead_start:lookahead_end])
-    return future_hint_blocks
+    return _blockwise_read_window_future_hint_blocks(
+        row_blocks,
+        start_block,
+        prefix_blocks,
+        window_blocks,
+        write_blocks,
+        gpu_blocks,
+    )
 
 
 def _decode_window_mask(
@@ -230,10 +248,22 @@ def _blockwise_online_decode_attention(
             needed_blocks.extend(window)
         if not needed_blocks or max(window_lens, default=0) <= 0:
             continue
+        future_hint_blocks = set(write_blocks)
+        for row_blocks in block_rows:
+            future_hint_blocks.update(
+                _blockwise_read_window_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    max_blocks,
+                    window_blocks,
+                    write_blocks,
+                    manager.gpu_blocks,
+                )
+            )
         _stage_blockwise_read_window(
             manager,
             needed_blocks,
-            future_extra_blocks=write_blocks,
+            future_extra_blocks=future_hint_blocks,
             protected_extra_blocks=write_blocks,
             capacity_extra_blocks=set(),
             capacity_error_prefix="blockwise decode window has more unique logical blocks than GPU staging slots",

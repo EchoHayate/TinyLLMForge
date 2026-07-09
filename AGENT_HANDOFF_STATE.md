@@ -951,6 +951,21 @@ TDD/验证：
 
 结论：capacity-bounded multi-window hint 继续降低 `gpu_blocks=4` 的重复 staging：相对 next-window hint H2D 约 -14.0%、eviction 约 -13.8%；相对 wait/enqueue fast-path matrix H2D 约 -33.3%、eviction 约 -33.1%。`gpu_blocks=2` 仍无改善，符合容量没有 spare lookahead 的预期。后续若继续做 copy/evict，优先考虑把这种 future hint 与更显式的 read-window planner 合并，而不是扩大 protected 集合。
 
+## 2026-07-09 Decode read-window capacity-bounded future hint
+
+把 prefill 的 capacity-bounded hint helper 泛化为 `_blockwise_read_window_future_hint_blocks()`，并接入 `_blockwise_online_decode_attention()`。decode 每个 read window 现在也会把后续可容纳的 logical blocks 加进 `future_logical_blocks`，但仍只等待当前窗口 blocks，且不扩大 protected/capacity 集合。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks`，远程旧实现按预期 `AssertionError`，因为 decode caller 只把当前窗口/写块作为 future hint。
+- GREEN：远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34781 MASTER_PORT=34781 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260709_decode_read_window_hint tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_decode_read_window_hint.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=51.44479962438345`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=811`、`d2h_copies=9`、`evictions=815`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1626`。
+
+结论：decode path 已覆盖到真实模型多步 decode，无 correctness 回归。当前 `gpu_blocks=2` 的 decode KV counters 仍很高，说明 read-window hint 本身不解决低 staging 容量下的反复 reload；下一步更值得做的是把 read-window planner 显式化，复用 future hint 并减少 per-layer/per-step 重复 plan 开销，或在更宽 `gpu_blocks` 下做 decode matrix 观察。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

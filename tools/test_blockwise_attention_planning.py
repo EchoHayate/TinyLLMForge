@@ -20,6 +20,7 @@ import torch
 from tinyvllm.layers.attention import (
     _blockwise_online_decode_attention,
     _blockwise_prefill_future_hint_blocks,
+    _blockwise_read_window_future_hint_blocks,
     _decode_window_mask,
     _local_causal_mask,
     _merge_attention_window,
@@ -91,6 +92,50 @@ def test_blockwise_decode_stages_read_window_in_first_seen_order():
     assert manager.wait_calls == [([2, 0, 1], True)]
 
 
+def test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks():
+    manager = _PlanOnlyManager()
+    manager.logical_to_slot.update({3: 3, 4: 4})
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[
+            [0, 1, 2, 3, 4],
+        ],
+        kv_offload_context_lens=[5],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[],
+    )
+    q = torch.ones(1, 1, 1, dtype=torch.float32)
+    k_cache = torch.zeros(5, 1, 1, 1, dtype=torch.float32)
+    v_cache = torch.zeros(5, 1, 1, 1, dtype=torch.float32)
+
+    _blockwise_online_decode_attention(
+        q,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=1,
+        head_dim=1,
+        scale=1.0,
+    )
+
+    assert manager.ensure_calls == [[0], [1], [2], [3], [4]]
+    assert manager.future_calls == [
+        {0, 1, 2, 3},
+        {1, 2, 3, 4},
+        {2, 3, 4},
+        {3, 4},
+        {4},
+    ]
+    assert manager.protected_calls == [set(), set(), set(), set(), set()]
+    assert manager.wait_calls == [
+        ([0], True),
+        ([1], True),
+        ([2], True),
+        ([3], True),
+        ([4], True),
+    ]
+
+
 def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks():
     manager = _PlanOnlyManager()
 
@@ -113,16 +158,25 @@ def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks(
 
 
 def test_blockwise_prefill_future_hint_blocks_fill_only_spare_capacity():
-    future_blocks = _blockwise_prefill_future_hint_blocks(
+    future_blocks = _blockwise_read_window_future_hint_blocks(
+        row_blocks=[0, 1, 2, 3, 4],
+        start_block=0,
+        stop_block=5,
+        window_blocks=1,
+        extra_future_blocks={4},
+        gpu_blocks=4,
+    )
+
+    assert future_blocks == {1, 2, 4}
+
+    assert _blockwise_prefill_future_hint_blocks(
         row_blocks=[0, 1, 2, 3, 4],
         start_block=0,
         prefix_blocks=5,
         window_blocks=1,
         write_blocks={4},
         gpu_blocks=4,
-    )
-
-    assert future_blocks == {1, 2, 4}
+    ) == {1, 2, 4}
 
 
 def test_blockwise_prefill_read_windows_hint_next_prefix_blocks():
@@ -294,6 +348,7 @@ def test_merge_attention_window_none_mask_does_not_allocate_valid_mask():
 
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
+    test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
     test_blockwise_prefill_future_hint_blocks_fill_only_spare_capacity()
     test_blockwise_prefill_read_windows_hint_next_prefix_blocks()
