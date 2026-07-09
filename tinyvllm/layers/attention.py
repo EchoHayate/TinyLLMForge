@@ -111,6 +111,23 @@ def _stage_blockwise_read_window(
     return unique_block_list
 
 
+def _blockwise_prefill_future_hint_blocks(
+    row_blocks: list[int],
+    start_block: int,
+    prefix_blocks: int,
+    window_blocks: int,
+    write_blocks: set[int],
+    gpu_blocks: int,
+) -> set[int]:
+    current_window = row_blocks[start_block:start_block + window_blocks]
+    future_hint_blocks = set(write_blocks)
+    future_budget = max(0, int(gpu_blocks) - len(set(current_window)) - len(set(write_blocks)))
+    lookahead_start = start_block + window_blocks
+    lookahead_end = min(prefix_blocks, lookahead_start + future_budget)
+    future_hint_blocks.update(row_blocks[lookahead_start:lookahead_end])
+    return future_hint_blocks
+
+
 def _decode_window_mask(
     window_lens,
     max_window_tokens: int,
@@ -326,14 +343,17 @@ def _blockwise_online_prefill_attention(
             window_len = min(max(0, chunk_start - window_start_token), len(window) * block_size)
             if not window or window_len <= 0:
                 continue
-            next_window = row_blocks[
-                start_block + window_blocks:
-                min(start_block + 2 * window_blocks, prefix_blocks)
-            ]
             _stage_blockwise_read_window(
                 manager,
                 window,
-                future_extra_blocks=write_blocks | set(next_window),
+                future_extra_blocks=_blockwise_prefill_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    prefix_blocks,
+                    window_blocks,
+                    write_blocks,
+                    manager.gpu_blocks,
+                ),
                 protected_extra_blocks=write_blocks,
                 capacity_extra_blocks=write_blocks,
                 capacity_error_prefix="blockwise prefill window plus current write blocks exceed GPU staging slots",
