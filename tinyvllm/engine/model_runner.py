@@ -409,6 +409,54 @@ class KVOffloadMVP0:
             "evict_policy": self.evict_policy,
         }
 
+def _unique_ints_in_order(values) -> list[int]:
+    ordered = []
+    seen = set()
+    for value in values:
+        value = int(value)
+        if value in seen:
+            continue
+        ordered.append(value)
+        seen.add(value)
+    return ordered
+
+
+def _stage_kv_offload_write_blocks(
+    manager,
+    write_blocks,
+    first_write_offset_by_block: dict[int, int],
+    future_blocks: set[int],
+):
+    write_blocks = _unique_ints_in_order(write_blocks)
+    if not write_blocks:
+        return
+    protected_write_blocks = set(write_blocks)
+    valid_write_blocks = [
+        block_id for block_id in write_blocks
+        if int(first_write_offset_by_block[block_id]) > 0
+    ]
+    fresh_write_blocks = [
+        block_id for block_id in write_blocks
+        if int(first_write_offset_by_block[block_id]) == 0
+    ]
+    manager.stats["prefetch_plans"] += 1
+    manager.stats["prefetch_write_blocks"] += len(protected_write_blocks)
+    if valid_write_blocks:
+        manager.ensure_resident(
+            valid_write_blocks,
+            require_valid=True,
+            future_logical_blocks=future_blocks,
+            protected_logical_blocks=protected_write_blocks,
+        )
+    if fresh_write_blocks:
+        manager.ensure_resident(
+            fresh_write_blocks,
+            require_valid=False,
+            future_logical_blocks=future_blocks,
+            protected_logical_blocks=protected_write_blocks,
+        )
+
+
 class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event]):
@@ -833,28 +881,11 @@ class ModelRunner:
                     else:
                         first_write_offset_by_block[block_id] = min(
                             first_write_offset_by_block[block_id], pos % self.block_size)
-                valid_write_blocks = [
-                    block_id for block_id in write_blocks
-                    if int(first_write_offset_by_block[block_id]) > 0
-                ]
-                fresh_write_blocks = [
-                    block_id for block_id in write_blocks
-                    if int(first_write_offset_by_block[block_id]) == 0
-                ]
-                self.kv_offload.stats["prefetch_plans"] += 1
-                self.kv_offload.stats["prefetch_write_blocks"] += len(set(write_blocks))
-                protected_write_blocks = set(write_blocks)
-                self.kv_offload.ensure_resident(
-                    valid_write_blocks,
-                    require_valid=True,
-                    future_logical_blocks=future_blocks,
-                    protected_logical_blocks=protected_write_blocks,
-                )
-                self.kv_offload.ensure_resident(
-                    fresh_write_blocks,
-                    require_valid=False,
-                    future_logical_blocks=future_blocks,
-                    protected_logical_blocks=protected_write_blocks,
+                _stage_kv_offload_write_blocks(
+                    self.kv_offload,
+                    write_blocks,
+                    first_write_offset_by_block,
+                    future_blocks,
                 )
                 slot_mapping.extend([
                     self.kv_offload.logical_to_slot[int(seq.block_table[pos // self.block_size])] * self.block_size
@@ -1065,29 +1096,16 @@ class ModelRunner:
                 # Streaming/blockwise decode only stages the current write blocks
                 # here. Attention.forward will stage logical read windows layer by
                 # layer, so visible blocks may exceed GPU staging slots.
-                valid_write_blocks = [
-                    int(block) for block, offset in zip(decode_write_blocks, decode_write_offsets)
-                    if int(offset) > 0
-                ]
-                fresh_write_blocks = [
-                    int(block) for block, offset in zip(decode_write_blocks, decode_write_offsets)
-                    if int(offset) == 0
-                ]
                 future_blocks = set(int(block) for block in decode_write_blocks)
-                protected_write_blocks = set(int(block) for block in decode_write_blocks)
-                self.kv_offload.stats["prefetch_plans"] += 1
-                self.kv_offload.stats["prefetch_write_blocks"] += len(future_blocks)
-                self.kv_offload.ensure_resident(
-                    valid_write_blocks,
-                    require_valid=True,
-                    future_logical_blocks=future_blocks,
-                    protected_logical_blocks=protected_write_blocks,
-                )
-                self.kv_offload.ensure_resident(
-                    fresh_write_blocks,
-                    require_valid=False,
-                    future_logical_blocks=future_blocks,
-                    protected_logical_blocks=protected_write_blocks,
+                first_write_offset_by_block = {
+                    int(block): int(offset)
+                    for block, offset in zip(decode_write_blocks, decode_write_offsets)
+                }
+                _stage_kv_offload_write_blocks(
+                    self.kv_offload,
+                    decode_write_blocks,
+                    first_write_offset_by_block,
+                    future_blocks,
                 )
             else:
                 # Full attention MVP-0/MVP-1: all visible logical blocks are staged

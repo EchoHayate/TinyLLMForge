@@ -733,6 +733,21 @@ tools/smoke_blockwise_prefill_remote.sh
 - 真实模型长 prompt smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260708_blockwise_planning_stack.json`，`gate_pass=true`、`elapsed_s=41.34747215360403`、`output_tokens=1`。
 - 结论：当前 blockwise planning 小优化栈在数学路径与真实模型 blockwise prefill 集成路径均未回归；`elapsed_s` 仍受远程 GPU/负载波动影响，不把单次 wall-clock 当作性能结论。
 
+### 2026-07-09 KV offload write-block staging helper
+
+继续把 prefill/decode 两条路径里重复的 write-block staging 逻辑收敛到 `_stage_kv_offload_write_blocks()`：先按出现顺序去重，再按首写 offset 拆成 valid write blocks 与 fresh write blocks，只对非空分组调用 `ensure_resident()`，避免空列表也进入 copy/staging 计划。
+
+- 新增 `_unique_ints_in_order()` 与 `_stage_kv_offload_write_blocks(manager, write_blocks, first_write_offset_by_block, future_blocks)`。
+- `prepare_prefill()` blockwise prefill 路径复用该 helper；`prepare_decode()` blockwise decode 路径也复用同一 helper。
+- 新增 `tools/test_kv_write_staging.py`，覆盖 valid/fresh 分组、重复 block 去重，以及空分组不调用 `ensure_resident()`。
+- TDD RED：远程测试在 helper 缺失时按预期失败：`ImportError: cannot import name '_stage_kv_offload_write_blocks' from 'tinyvllm.engine.model_runner'`。
+- 远程 GREEN：`PYTHONPATH=$PWD /data00/home/sitian/sitian-workspace01/tllm/env/bin/python tools/test_kv_write_staging.py` 通过，输出 `kv write staging tests passed`。
+- 远程回归：GPU4 上 `tools/test_kv_offload.py` 通过，输出 `kv offload tests passed`。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_write_staging_20260709_final.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_write_staging_20260709_final.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：write-block staging 的 prefill/decode 行为已统一，重复 block 统计按 unique block 计数，且不再为空 valid/fresh 分组制造无意义 `ensure_resident()` 调用；这是统一 KV access planner 的一个低风险中间步骤。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
@@ -1022,7 +1037,7 @@ CUDA_VISIBLE_DEVICES=7 TINYVLLM_DIST_PORT=34567 MASTER_PORT=34567 \
    - `gpu_blocks=4`：`gate_pass=true`，`elapsed_s=55.02894039079547`，`h2d_copies=249`，`d2h_copies=6`，`evictions=251`，`resident_blocks=4`。
    - 2026-07-06 已补多 prompt batch smoke：`SMOKE_TAG=20260706_multiprompt_len2048 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_REAL_SMOKE=0 RUN_MULTI_PROMPT_SMOKE=1 MAX_MODEL_LEN=2048 GPU_MEMORY_UTILIZATION=0.85 KV_OFFLOAD_LOGICAL_BLOCKS=8 MULTI_PROMPT_REPEAT=24 tools/smoke_blockwise_prefill_remote.sh`，`num_prompts=2`、`gate_pass=true`、`elapsed_s=32.339650828391314`、`output_tokens=2`、`h2d_copies=786`、`d2h_copies=12`、`evictions=792`、`resident_blocks=2`。
 5. 待做：性能路径优化，包括合并 H2D/D2H copy、合并连续 prefetch plan、降低 clean eviction 抖动，以及后续引入 Triton/FlashAttention 风格 window kernel。
-6. 待做：进一步抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
+6. 部分落地：write-block staging 已抽成 `_stage_kv_offload_write_blocks()` 并同时复用于 blockwise prefill/decode；下一步继续抽象统一的 KV block access planner，让 prefill/decode 共享 `plan_read_blocks()`、`stage_blocks()`、`evict_blocks()`、`commit_write_blocks()` 语义。
 7. 已落地：DFlash feasibility spike 已写入 `docs/dflash-feasibility.md`，只做接口/接入点预研，不直接实现完整 DFlash；已完成 Phase 1，把 n-gram target verify/commit 包装为通用 `verify_and_commit_block()` 并保留 n-gram 行为不变。远程 Qwen3-0.6B candidate-only smoke 已验证 `commit_event.draft_source="ngram"`。Phase 2 plumbing 已验证：新增 `--draft-source {ngram,dflash-toy,dflash-toy-ngram-or-repeat}`、`--allow-zero-accept`、deterministic `repeat_recent_tokens` toy block draft model，以及记录 zero-accept attempts 的 `verify_events`；远程 `dflash-toy` smoke `gate_pass=true`、`zero_accept_events=3`、`verify_events[].draft_source="dflash-toy"`。
    - 2026-07-07 accepted-friendly toy smoke 已通过：`--draft-source dflash-toy-ngram-or-repeat` 输出 `profile_out/dflash_phase2_toy_hybrid_candidate_smoke_20260707.json`，`gate_pass=true`、`commit_events=1`、`accepted_count=2`、`acceptance_rate=1.0`、`draft_metadata.toy_strategy="ngram_or_repeat"`、`draft_metadata.selected_strategy="ngram"`、`match_start=7`、`ngram_size=3`。
    - 2026-07-07 profiler-only hidden debug 已通过：`--debug-target-hidden` 输出 `profile_out/dflash_phase2_hidden_debug_smoke_20260707.json`，`gate_pass=true`、`accepted_count=2`、`target_hidden_debug.shape=[3, 1024]`、`target_hidden_debug.dtype="torch.bfloat16"`、`target_hidden_debug.device="cuda:0"`。该路径只在 profiler verify hook 调 `run_model(..., return_hidden=True)`，不改 `LLMEngine.step()` 或核心 runtime。下一步若继续 DFlash，应先做真实 draft model stub / hidden-to-draft adapter 的 profiler-only 实验。
