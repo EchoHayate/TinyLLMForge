@@ -772,6 +772,18 @@ tools/smoke_blockwise_prefill_remote.sh
   - `profile_out/blockwise_prefill_map_rows_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
 - 结论：full-attention decode 的 block-table 构造现在可以复用已 resident mapping，减少一次无必要的 staging/translation 入口调用；非 decode 调用方仍可继续使用 `translate_block_rows()` 保持原 stage+translate 语义。
 
+### 2026-07-09 KV offload slot-position map-only helper
+
+继续把 stage+translate 与 map-only 语义拆开：`KVOffloadMVP0.translate_slots_for_positions()` 仍负责 ensure+translate；新增 `map_slots_for_positions()` 只基于已 resident mapping 计算 physical slot ids，方便已完成 write staging 的路径复用同一映射逻辑而不再次进入 `ensure_resident()`。
+
+- 新增 `test_map_slots_for_positions_uses_existing_resident_slots_without_staging()`，用无 CUDA fake manager 验证 map-only slot 计算不调用 `_enqueue_d2h_pairs()`、`_enqueue_h2d_pairs()`、`wait_for_blocks()`。
+- TDD RED：远程旧实现按预期失败：`AttributeError: '_NoopKVOffload' object has no attribute 'map_slots_for_positions'`。
+- 远程 GREEN：`tools/test_kv_offload.py` 通过，输出 `kv offload tests passed`。
+- 远程数学 smoke：
+  - `profile_out/blockwise_decode_map_slots_20260709.json`，`gate_pass=true`、`chunks=8`、`max_abs_error=2.9802322387695312e-08`。
+  - `profile_out/blockwise_prefill_map_slots_20260709.json`，`gate_pass=true`、`chunks=36`、`max_abs_error=2.4586915969848633e-07`。
+- 结论：KV manager 现在同时有 block-row 与 slot-position 两个 map-only helper，为后续把已 stage 的 prefill/decode slot mapping 统一到 planner helper 做准备；现有 `translate_slots_for_positions()` 外部语义不变。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

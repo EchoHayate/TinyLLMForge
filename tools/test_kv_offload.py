@@ -88,11 +88,25 @@ def test_ensure_resident_empty_blocks_is_noop_without_copy_hooks():
 
 def test_map_block_rows_uses_existing_resident_slots_without_staging():
     manager = _NoopKVOffload()
+    manager.block_size = 8
     manager.logical_to_slot = {3: 1, 5: 0}
 
     rows = manager.map_block_rows([[3, -1, 5], [5, 3, -1]])
 
     assert rows == [[1, -1, 0], [0, 1, -1]]
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+    assert manager.wait_for_blocks_calls == 0
+
+
+def test_map_slots_for_positions_uses_existing_resident_slots_without_staging():
+    manager = _NoopKVOffload()
+    manager.block_size = 8
+    manager.logical_to_slot = {3: 1, 5: 0}
+
+    slots = manager.map_slots_for_positions([3, 5], [0, 7, 8, 15])
+
+    assert slots == [8, 15, 0, 7]
     assert manager.enqueue_d2h_calls == 0
     assert manager.enqueue_h2d_calls == 0
     assert manager.wait_for_blocks_calls == 0
@@ -264,6 +278,7 @@ def main():
     test_wait_for_blocks_clear_pending_api_without_cuda()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_map_block_rows_uses_existing_resident_slots_without_staging()
+    test_map_slots_for_positions_uses_existing_resident_slots_without_staging()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
     test_deferred_clean_eviction_waits_for_pending_d2h_event()
     test_wait_for_blocks_coalesces_identical_h2d_events()

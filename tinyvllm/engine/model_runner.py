@@ -383,6 +383,19 @@ class KVOffloadMVP0:
             require_valid=require_valid,
             future_logical_blocks=future_logical_blocks,
         )
+        return self.map_slots_for_positions(
+            logical_block_table,
+            positions,
+            mapping=mapping,
+        )
+
+    def map_slots_for_positions(
+        self,
+        logical_block_table: list[int],
+        positions: list[int],
+        mapping: dict[int, int] | None = None,
+    ) -> list[int]:
+        mapping = self.logical_to_slot if mapping is None else mapping
         return [
             mapping[int(logical_block_table[pos // self.block_size])] * self.block_size + (pos % self.block_size)
             for pos in positions
