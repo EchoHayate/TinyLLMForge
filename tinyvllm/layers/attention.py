@@ -61,6 +61,50 @@ def _repeat_kv_for_gqa(kv: torch.Tensor, num_heads: int) -> torch.Tensor:
     return kv.repeat_interleave(num_heads // kv.shape[2], dim=2)
 
 
+def _gqa_scores_decode(q: torch.Tensor, k_dense: torch.Tensor, num_heads: int, scale: float) -> torch.Tensor:
+    num_kv_heads = int(k_dense.shape[2])
+    if num_kv_heads == num_heads:
+        return torch.einsum("bhd,bthd->bht", q, k_dense) * scale
+    assert num_heads % num_kv_heads == 0
+    group_size = num_heads // num_kv_heads
+    q_grouped = q.reshape(q.shape[0], num_kv_heads, group_size, q.shape[-1])
+    return torch.einsum("bkgd,btkd->bkgt", q_grouped, k_dense).reshape(
+        q.shape[0], num_heads, k_dense.shape[1]) * scale
+
+
+def _gqa_weighted_values_decode(exp_scores: torch.Tensor, v_dense: torch.Tensor, num_heads: int) -> torch.Tensor:
+    num_kv_heads = int(v_dense.shape[2])
+    if num_kv_heads == num_heads:
+        return torch.einsum("bht,bthd->bhd", exp_scores, v_dense)
+    assert num_heads % num_kv_heads == 0
+    group_size = num_heads // num_kv_heads
+    weights = exp_scores.reshape(exp_scores.shape[0], num_kv_heads, group_size, exp_scores.shape[-1])
+    return torch.einsum("bkgt,btkd->bkgd", weights, v_dense).reshape(
+        exp_scores.shape[0], num_heads, v_dense.shape[-1])
+
+
+def _gqa_scores_prefill(q: torch.Tensor, k_dense: torch.Tensor, num_heads: int, scale: float) -> torch.Tensor:
+    num_kv_heads = int(k_dense.shape[1])
+    if num_kv_heads == num_heads:
+        return torch.einsum("qhd,thd->qht", q, k_dense) * scale
+    assert num_heads % num_kv_heads == 0
+    group_size = num_heads // num_kv_heads
+    q_grouped = q.reshape(q.shape[0], num_kv_heads, group_size, q.shape[-1])
+    return torch.einsum("qkgd,tkd->qkgt", q_grouped, k_dense).reshape(
+        q.shape[0], num_heads, k_dense.shape[0]) * scale
+
+
+def _gqa_weighted_values_prefill(exp_scores: torch.Tensor, v_dense: torch.Tensor, num_heads: int) -> torch.Tensor:
+    num_kv_heads = int(v_dense.shape[1])
+    if num_kv_heads == num_heads:
+        return torch.einsum("qht,thd->qhd", exp_scores, v_dense)
+    assert num_heads % num_kv_heads == 0
+    group_size = num_heads // num_kv_heads
+    weights = exp_scores.reshape(exp_scores.shape[0], num_kv_heads, group_size, exp_scores.shape[-1])
+    return torch.einsum("qkgt,tkd->qkgd", weights, v_dense).reshape(
+        exp_scores.shape[0], num_heads, v_dense.shape[-1])
+
+
 def _unique_blocks_in_order(blocks) -> list[int]:
     ordered = []
     seen = set()
@@ -170,7 +214,7 @@ def _merge_attention_window(running_m, running_l, running_o, scores, value_dense
         chunk_m = scores.max(dim=-1).values
         exp_scores = torch.exp(scores - chunk_m.unsqueeze(-1))
         chunk_l = exp_scores.sum(dim=-1)
-        chunk_o = torch.einsum("qht,thd->qhd", exp_scores, value_dense)
+        chunk_o = _gqa_weighted_values_prefill(exp_scores, value_dense, running_o.shape[1])
         merged_m = torch.maximum(running_m, chunk_m)
         old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
         new_weight = torch.exp(chunk_m - merged_m)
@@ -185,7 +229,7 @@ def _merge_attention_window(running_m, running_l, running_o, scores, value_dense
         chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
         exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
     chunk_l = exp_scores.sum(dim=-1)
-    chunk_o = torch.einsum("qht,thd->qhd", exp_scores, value_dense)
+    chunk_o = _gqa_weighted_values_prefill(exp_scores, value_dense, running_o.shape[1])
 
     merged_m = torch.maximum(running_m, chunk_m)
     merged_m = torch.where(valid, merged_m, running_m)
@@ -283,9 +327,9 @@ def _blockwise_online_decode_attention(
                 v_dense[row_idx, copied:copied + take] = v_cache[slot, :take]
                 copied += take
 
-        k_dense = _repeat_kv_for_gqa(k_dense, num_heads).to(torch.float32)
-        v_dense = _repeat_kv_for_gqa(v_dense, num_heads).to(torch.float32)
-        scores = torch.einsum("bhd,bthd->bht", q_fp, k_dense) * scale
+        k_dense = k_dense.to(torch.float32)
+        v_dense = v_dense.to(torch.float32)
+        scores = _gqa_scores_decode(q_fp, k_dense, num_heads, scale)
         mask = _decode_window_mask(window_lens, max_window_tokens, position_template, q.device)
         valid = mask.any(dim=-1)
         scores = scores.masked_fill(~mask, float("-inf"))
@@ -293,7 +337,7 @@ def _blockwise_online_decode_attention(
         chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
         exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
         chunk_l = exp_scores.sum(dim=-1)
-        chunk_o = torch.einsum("bht,bthd->bhd", exp_scores, v_dense)
+        chunk_o = _gqa_weighted_values_decode(exp_scores, v_dense, num_heads)
 
         merged_m = torch.maximum(running_m, chunk_m)
         merged_m = torch.where(valid, merged_m, running_m)
@@ -400,15 +444,15 @@ def _blockwise_online_prefill_attention(
                 k_dense[copied:copied + take] = k_cache[slot, :take]
                 v_dense[copied:copied + take] = v_cache[slot, :take]
                 copied += take
-            k_dense = _repeat_kv_for_gqa(k_dense.unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
-            v_dense = _repeat_kv_for_gqa(v_dense.unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
-            scores = torch.einsum("qhd,thd->qht", q_row, k_dense) * scale
+            k_dense = k_dense.to(torch.float32)
+            v_dense = v_dense.to(torch.float32)
+            scores = _gqa_scores_prefill(q_row, k_dense, num_heads, scale)
             running_m, running_l, running_o = _merge_attention_window(
                 running_m, running_l, running_o, scores, v_dense, mask=None)
 
-        k_local = _repeat_kv_for_gqa(k[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
-        v_local = _repeat_kv_for_gqa(v[q_start:q_end].unsqueeze(0), num_heads).squeeze(0).to(torch.float32)
-        scores = torch.einsum("qhd,thd->qht", q_row, k_local) * scale
+        k_local = k[q_start:q_end].to(torch.float32)
+        v_local = v[q_start:q_end].to(torch.float32)
+        scores = _gqa_scores_prefill(q_row, k_local, num_heads, scale)
         local_mask = _local_causal_mask(q_len, q_pos_template, k_pos_template)
         running_m, running_l, running_o = _merge_attention_window(
             running_m, running_l, running_o, scores, v_local, local_mask)

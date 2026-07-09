@@ -966,6 +966,31 @@ TDD/验证：
 
 结论：decode path 已覆盖到真实模型多步 decode，无 correctness 回归。当前 `gpu_blocks=2` 的 decode KV counters 仍很高，说明 read-window hint 本身不解决低 staging 容量下的反复 reload；下一步更值得做的是把 read-window planner 显式化，复用 future hint 并减少 per-layer/per-step 重复 plan 开销，或在更宽 `gpu_blocks` 下做 decode matrix 观察。
 
+## 2026-07-09 Blockwise GQA no-repeat window attention
+
+继续做 window 内部内存/算子开销优化：blockwise decode/prefill 旧路径在每个 window 上用 `_repeat_kv_for_gqa()` 把 `[num_kv_heads]` K/V materialize 到 `[num_heads]`，Qwen3 这类 GQA 模型会放大 window K/V 临时张量。新增 grouped GQA score/value helpers：
+
+- `_gqa_scores_decode()` / `_gqa_weighted_values_decode()`
+- `_gqa_scores_prefill()` / `_gqa_weighted_values_prefill()`
+
+这些 helper 通过 reshape 成 `(num_kv_heads, group_size)` 直接算 grouped attention，不再 materialize repeated K/V heads；`num_kv_heads == num_heads` 时仍走原 einsum fast path。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_decode_gqa_does_not_materialize_repeated_kv_heads` 和 `test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads`，远程旧实现按预期触发 `AssertionError("repeat_kv_for_gqa called")`。
+- 新增等价性测试 `test_gqa_grouped_helpers_match_repeated_kv_reference`，确认 grouped helpers 与旧 `repeat_interleave + einsum` 数值一致。
+- 远程目标测试通过：`tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py`。
+- 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34791 MASTER_PORT=34791 RUN_PREFLIGHT=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260709_gqa_no_repeat_window tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 数学 smoke：`profile_out/blockwise_prefill_attn_online_softmax_smoke_20260709_gqa_no_repeat_window.json`，`gate_pass=true`、`chunks=36`、`streamed_tokens=4544`、`max_abs_error=2.4586915969848633e-07`、`relative_error=1.4178931585709836e-06`。
+  - 真实模型长 prompt + decode smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_gqa_no_repeat_window.json`，`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=52.595071755349636`。
+  - KV counters 与上一轮 decode smoke 基本一致：`gpu_blocks=2`、`h2d_copies=811`、`d2h_copies=9`、`evictions=815`、`prefetch_plans=933`，符合该优化不改变 KV offload staging 计划、只减少 window 内 repeated K/V materialization 的预期。
+- GPU blocks matrix：第一次 `SMOKE_TAG=20260709_gqa_no_repeat_matrix` 遇到 `EADDRINUSE`，换端口重跑 `SMOKE_TAG=20260709_gqa_no_repeat_matrix_r2` 通过。
+  - `gpu_blocks=1`：预期容量失败，仍报 `required=2, gpu_blocks=1`。
+  - `gpu_blocks=2`：`gate_pass=true`、`elapsed_s=29.652997620403767`、`h2d_copies=391`、`d2h_copies=6`、`evictions=395`、`resident_blocks=2`。
+  - `gpu_blocks=4`：`gate_pass=true`、`elapsed_s=29.608206927776337`、`h2d_copies=166`、`d2h_copies=6`、`evictions=168`、`resident_blocks=4`。
+
+结论：GQA no-repeat 没有改变 copy/evict counters，这是预期；收益点是减少每个 blockwise window 的 K/V head-expanded临时张量和对应 `repeat_interleave`。wall-clock 单次不作为严格性能结论，但 correctness、decode 覆盖和 matrix counters 都未回归。后续更大的收益仍在 read-window planner/减少 H2D reload，或进一步把 grouped GQA helper 下沉为更高效 kernel。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

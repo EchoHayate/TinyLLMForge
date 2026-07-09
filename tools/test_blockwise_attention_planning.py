@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from types import SimpleNamespace
+from unittest.mock import patch
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -16,12 +17,17 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 import torch
+import tinyvllm.layers.attention as attention_mod
 
 from tinyvllm.layers.attention import (
     _blockwise_online_decode_attention,
     _blockwise_prefill_future_hint_blocks,
     _blockwise_read_window_future_hint_blocks,
     _decode_window_mask,
+    _gqa_scores_decode,
+    _gqa_scores_prefill,
+    _gqa_weighted_values_decode,
+    _gqa_weighted_values_prefill,
     _local_causal_mask,
     _merge_attention_window,
     _normalize_logical_block_rows,
@@ -134,6 +140,70 @@ def test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks():
         ([3], True),
         ([4], True),
     ]
+
+
+def test_blockwise_decode_gqa_does_not_materialize_repeated_kv_heads():
+    manager = _PlanOnlyManager()
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1]],
+        kv_offload_context_lens=[2],
+        kv_offload_blockwise_blocks=2,
+        kv_offload_write_blocks=[],
+    )
+    q = torch.ones(1, 4, 1, dtype=torch.float32)
+    k_cache = torch.ones(2, 1, 2, 1, dtype=torch.float32)
+    v_cache = torch.ones(2, 1, 2, 1, dtype=torch.float32)
+
+    with patch.object(
+        attention_mod,
+        "_repeat_kv_for_gqa",
+        side_effect=AssertionError("repeat_kv_for_gqa called"),
+    ):
+        out = attention_mod._blockwise_online_decode_attention(
+            q,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=4,
+            head_dim=1,
+            scale=1.0,
+        )
+
+    assert out.shape == (1, 4, 1)
+
+
+def test_gqa_grouped_helpers_match_repeated_kv_reference():
+    q_decode = torch.arange(8, dtype=torch.float32).view(1, 4, 2)
+    k_decode = torch.arange(12, dtype=torch.float32).view(1, 3, 2, 2) / 10.0
+    weights_decode = torch.arange(12, dtype=torch.float32).view(1, 4, 3) / 7.0
+    v_decode = torch.arange(12, dtype=torch.float32).view(1, 3, 2, 2) / 5.0
+
+    repeated_k_decode = k_decode.repeat_interleave(2, dim=2)
+    repeated_v_decode = v_decode.repeat_interleave(2, dim=2)
+    assert torch.allclose(
+        _gqa_scores_decode(q_decode, k_decode, num_heads=4, scale=0.5),
+        torch.einsum("bhd,bthd->bht", q_decode, repeated_k_decode) * 0.5,
+    )
+    assert torch.allclose(
+        _gqa_weighted_values_decode(weights_decode, v_decode, num_heads=4),
+        torch.einsum("bht,bthd->bhd", weights_decode, repeated_v_decode),
+    )
+
+    q_prefill = torch.arange(8, dtype=torch.float32).view(2, 4, 1)
+    k_prefill = torch.arange(6, dtype=torch.float32).view(3, 2, 1) / 10.0
+    weights_prefill = torch.arange(24, dtype=torch.float32).view(2, 4, 3) / 7.0
+    v_prefill = torch.arange(6, dtype=torch.float32).view(3, 2, 1) / 5.0
+    repeated_k_prefill = k_prefill.repeat_interleave(2, dim=1)
+    repeated_v_prefill = v_prefill.repeat_interleave(2, dim=1)
+    assert torch.allclose(
+        _gqa_scores_prefill(q_prefill, k_prefill, num_heads=4, scale=0.5),
+        torch.einsum("qhd,thd->qht", q_prefill, repeated_k_prefill) * 0.5,
+    )
+    assert torch.allclose(
+        _gqa_weighted_values_prefill(weights_prefill, v_prefill, num_heads=4),
+        torch.einsum("qht,thd->qhd", weights_prefill, repeated_v_prefill),
+    )
 
 
 def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks():
@@ -265,6 +335,43 @@ def test_blockwise_prefill_read_windows_hint_capacity_bounded_future_prefix_bloc
     assert manager.protected_calls == [{4}, {4}, {4}, {4}, {4}]
 
 
+def test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads():
+    manager = _PlanOnlyManager()
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1]],
+        kv_offload_prefill_chunk_starts=[2],
+        kv_offload_prefill_chunk_ends=[3],
+        kv_offload_blockwise_blocks=2,
+        kv_offload_write_blocks=[],
+        cu_seqlens_q=torch.tensor([0, 1], dtype=torch.int32),
+    )
+    q = torch.ones(1, 4, 1, dtype=torch.float32)
+    k = torch.ones(1, 2, 1, dtype=torch.float32)
+    v = torch.ones(1, 2, 1, dtype=torch.float32)
+    k_cache = torch.ones(2, 1, 2, 1, dtype=torch.float32)
+    v_cache = torch.ones(2, 1, 2, 1, dtype=torch.float32)
+
+    with patch.object(
+        attention_mod,
+        "_repeat_kv_for_gqa",
+        side_effect=AssertionError("repeat_kv_for_gqa called"),
+    ):
+        out = attention_mod._blockwise_online_prefill_attention(
+            q,
+            k,
+            v,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=4,
+            head_dim=1,
+            scale=1.0,
+        )
+
+    assert out.shape == (1, 4, 1)
+
+
 def test_normalize_logical_block_rows_filters_once_and_reports_max_blocks():
     rows, max_blocks = _normalize_logical_block_rows([
         [2, -1, "3"],
@@ -349,10 +456,13 @@ def test_merge_attention_window_none_mask_does_not_allocate_valid_mask():
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks()
+    test_blockwise_decode_gqa_does_not_materialize_repeated_kv_heads()
+    test_gqa_grouped_helpers_match_repeated_kv_reference()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
     test_blockwise_prefill_future_hint_blocks_fill_only_spare_capacity()
     test_blockwise_prefill_read_windows_hint_next_prefix_blocks()
     test_blockwise_prefill_read_windows_hint_capacity_bounded_future_prefix_blocks()
+    test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
     test_decode_window_mask_reuses_position_template()
     test_local_causal_mask_reuses_position_templates()
