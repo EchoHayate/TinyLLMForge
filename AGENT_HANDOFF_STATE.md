@@ -886,6 +886,29 @@ tools/smoke_blockwise_prefill_remote.sh
 - 真实模型长 prompt smoke：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260709_kv_wait_enqueue_fastpaths.json`，`gate_pass=true`、`elapsed_s=30.008230686187744`、`output_tokens=1`。
 - 结论：copy/wait fast-path 小优化栈在脚本级数学路径与真实模型 blockwise prefill 集成路径均未回归；`elapsed_s` 仅作本次 smoke 环境观测，不作为严格性能结论。
 
+### 2026-07-09 Fast-path stack GPU blocks matrix
+
+为观察 wait/enqueue fast-path 栈在不同 GPU staging 容量下的真实模型行为，补跑 GPU blocks matrix：
+
+```bash
+CUDA_VISIBLE_DEVICES=4 \
+TINYVLLM_DIST_PORT=34751 MASTER_PORT=34751 \
+RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 RUN_REAL_SMOKE=1 \
+RUN_GPU_BLOCKS_MATRIX=1 MATRIX_REQUIRE_PASS=0 \
+SMOKE_TAG=20260709_fastpath_gpu_matrix \
+tools/smoke_blockwise_prefill_remote.sh
+```
+
+结果：
+
+| gpu_blocks | gate_pass | elapsed_s | h2d_copies | d2h_copies | evictions | resident_blocks | note |
+|---:|---|---:|---:|---:|---:|---:|---|
+| 1 | expected fail | - | - | - | - | - | `blockwise prefill window plus current write blocks exceed GPU staging slots: required=2, gpu_blocks=1` |
+| 2 | true | 29.56653244420886 | 391 | 6 | 395 | 2 | pass |
+| 4 | true | 28.152612544596195 | 249 | 6 | 251 | 4 | pass |
+
+结论：`gpu_blocks=1` 仍是当前 blockwise prefill 的容量边界，不是 correctness mismatch；`gpu_blocks=4` 相比 `2` 明显减少 H2D/eviction 计数（391→249、395→251），说明当前主要开销仍来自 staging slot 容量导致的反复 H2D/evict，下一步更值得做的是减少跨 window 的重复 staging / 合并连续 prefetch，而不是继续只消除 Python 空调用。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
