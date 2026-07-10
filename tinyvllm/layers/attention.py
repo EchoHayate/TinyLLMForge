@@ -427,8 +427,14 @@ def _blockwise_online_decode_attention(
         )
 
         max_window_tokens = window_plan["max_window_tokens"]
-        k_dense = q.new_zeros((batch, max_window_tokens, k_cache.shape[2], head_dim), dtype=k_cache.dtype)
-        v_dense = q.new_zeros((batch, max_window_tokens, v_cache.shape[2], head_dim), dtype=v_cache.dtype)
+        dense_shape = (batch, max_window_tokens, k_cache.shape[2], head_dim)
+        full_window = all(int(window_len) == max_window_tokens for window_len in window_lens)
+        if full_window:
+            k_dense = q.new_empty(dense_shape, dtype=k_cache.dtype)
+            v_dense = q.new_empty(dense_shape, dtype=v_cache.dtype)
+        else:
+            k_dense = q.new_zeros(dense_shape, dtype=k_cache.dtype)
+            v_dense = q.new_zeros(dense_shape, dtype=v_cache.dtype)
         for row_idx, window in enumerate(window_rows):
             copied = 0
             for logical_block in window:

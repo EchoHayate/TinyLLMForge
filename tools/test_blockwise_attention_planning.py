@@ -593,6 +593,38 @@ def test_blockwise_prefill_prefix_windows_do_not_zero_fill_dense_buffers():
     assert out.shape == (1, 4, 1)
 
 
+def test_blockwise_decode_full_windows_do_not_zero_fill_dense_buffers():
+    manager = _PlanOnlyManager()
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1]],
+        kv_offload_context_lens=[2],
+        kv_offload_blockwise_blocks=2,
+        kv_offload_write_blocks=[],
+        kv_offload_decode_window_plan_cache=None,
+        kv_offload_decode_position_template_cache=None,
+    )
+    q = torch.ones(1, 4, 1, dtype=torch.float32)
+    k_cache = torch.ones(2, 1, 2, 1, dtype=torch.float32)
+    v_cache = torch.ones(2, 1, 2, 1, dtype=torch.float32)
+
+    def fail_new_zeros(*args, **kwargs):
+        raise AssertionError("new_zeros called for fully-copied decode window")
+
+    with patch.object(q, "new_zeros", side_effect=fail_new_zeros):
+        out = attention_mod._blockwise_online_decode_attention(
+            q,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=4,
+            head_dim=1,
+            scale=1.0,
+        )
+
+    assert out.shape == (1, 4, 1)
+
+
 def test_normalize_logical_block_rows_filters_once_and_reports_max_blocks():
     rows, max_blocks = _normalize_logical_block_rows([
         [2, -1, "3"],
@@ -689,6 +721,7 @@ def main():
     test_blockwise_prefill_reuses_cached_local_position_templates_across_layers()
     test_blockwise_prefill_gqa_does_not_materialize_repeated_kv_heads()
     test_blockwise_prefill_prefix_windows_do_not_zero_fill_dense_buffers()
+    test_blockwise_decode_full_windows_do_not_zero_fill_dense_buffers()
     test_normalize_logical_block_rows_filters_once_and_reports_max_blocks()
     test_decode_window_mask_reuses_position_template()
     test_local_causal_mask_reuses_position_templates()

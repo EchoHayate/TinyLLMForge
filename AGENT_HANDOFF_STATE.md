@@ -1065,6 +1065,21 @@ TDD/验证：
 
 结论：该优化不改变 staging/copy 行为，主要减少每层重复 decode mask position template 创建；KV counters 与上一轮 decode smoke 一致，符合预期。下一步更高收益仍在降低低 staging 容量下的 H2D reload/eviction，或做统一 read-window planner 后再跑稳定 benchmark。
 
+## 2026-07-10 Decode full-window dense buffer no-zero-fill
+
+继续减少 window 内临时张量开销：blockwise decode 的 dense K/V buffer 旧路径始终用 `q.new_zeros(...)` 分配；当当前 window 对所有 batch row 都是完整覆盖写入时，清零会被随后的 `k_cache/v_cache` copy 全量覆盖。现在只在 `all(window_len == max_window_tokens)` 的完整窗口使用 `q.new_empty(...)`，partial/padded window 继续保守使用 `new_zeros(...)`。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_decode_full_windows_do_not_zero_fill_dense_buffers`，完整 decode window 下 monkeypatch `q.new_zeros`，远程旧实现按预期触发 `AssertionError("new_zeros called for fully-copied decode window")`。
+- GREEN：远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34861 MASTER_PORT=34861 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_decode_empty_buffers tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_decode_empty_buffers.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=51.456428956240416`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=811`、`d2h_copies=9`、`evictions=815`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1626`。
+
+结论：这是低风险内存带宽/allocator 微优化，不改变 KV staging/copy 计划；收益点是完整 decode window 每层少做 K/V dense buffer 清零。更大收益仍需继续处理低 `gpu_blocks=2` 下的 repeated reload。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
