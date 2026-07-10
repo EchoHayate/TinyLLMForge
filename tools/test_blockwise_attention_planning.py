@@ -38,7 +38,7 @@ from tinyvllm.layers.attention import (
 class _PlanOnlyManager:
     def __init__(self):
         self.gpu_blocks = 4
-        self.logical_to_slot = {0: 0, 1: 1, 2: 2}
+        self.logical_to_slot = {}
         self.stats = {
             "prefetch_plans": 0,
             "prefetch_read_blocks": 0,
@@ -48,6 +48,9 @@ class _PlanOnlyManager:
         self.future_calls = []
         self.protected_calls = []
         self.wait_calls = []
+        self.pending_wait_blocks = set(range(128))
+        self.clock = 0
+        self.slot_last_used = [0] * 128
 
     def mark_dirty(self, blocks):
         pass
@@ -62,10 +65,30 @@ class _PlanOnlyManager:
         self.ensure_calls.append(list(logical_blocks))
         self.future_calls.append(set(future_logical_blocks or set()))
         self.protected_calls.append(set(protected_logical_blocks or set()))
-        return {int(block): self.logical_to_slot[int(block)] for block in logical_blocks}
+        mapping = {}
+        for block in logical_blocks:
+            block = int(block)
+            self.logical_to_slot.setdefault(block, block)
+            mapping[block] = self.logical_to_slot[block]
+        return mapping
 
     def wait_for_blocks(self, logical_blocks, clear_pending=False):
         self.wait_calls.append((list(logical_blocks), bool(clear_pending)))
+        if clear_pending:
+            self.pending_wait_blocks.difference_update(int(block) for block in logical_blocks)
+
+    def _touch(self, slot: int):
+        self.clock += 1
+        if int(slot) >= len(self.slot_last_used):
+            self.slot_last_used.extend([0] * (int(slot) + 1 - len(self.slot_last_used)))
+        self.slot_last_used[int(slot)] = self.clock
+
+
+class _ResidentPlanOnlyManager(_PlanOnlyManager):
+    def __init__(self):
+        super().__init__()
+        self.logical_to_slot = {0: 0, 1: 1, 2: 2}
+        self.pending_wait_blocks = set()
 
 
 def test_blockwise_decode_stages_read_window_in_first_seen_order():
@@ -465,6 +488,29 @@ def test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks(
     assert manager.future_calls == [{0, 1, 2, 3}]
     assert manager.protected_calls == [{3}]
     assert manager.wait_calls == [([2, 0, 1], True)]
+
+
+def test_stage_blockwise_read_window_skips_resident_non_pending_window():
+    manager = _ResidentPlanOnlyManager()
+    before_clock = manager.clock
+
+    unique_blocks = _stage_blockwise_read_window(
+        manager,
+        logical_blocks=[0, 1, 0],
+        future_extra_blocks={2},
+        protected_extra_blocks=set(),
+        capacity_extra_blocks=set(),
+        capacity_error_prefix="unused",
+    )
+
+    assert unique_blocks == [0, 1]
+    assert manager.stats["prefetch_plans"] == 0
+    assert manager.stats["prefetch_read_blocks"] == 0
+    assert manager.ensure_calls == []
+    assert manager.wait_calls == []
+    assert manager.clock == before_clock + 2
+    assert manager.slot_last_used[0] == before_clock + 1
+    assert manager.slot_last_used[1] == before_clock + 2
 
 
 def test_blockwise_prefill_future_hint_blocks_fill_only_spare_capacity():
@@ -872,6 +918,7 @@ def main():
     test_blockwise_decode_gqa_does_not_materialize_repeated_kv_heads()
     test_gqa_grouped_helpers_match_repeated_kv_reference()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()
+    test_stage_blockwise_read_window_skips_resident_non_pending_window()
     test_blockwise_prefill_future_hint_blocks_fill_only_spare_capacity()
     test_blockwise_prefill_read_windows_hint_next_prefix_blocks()
     test_blockwise_prefill_read_windows_hint_capacity_bounded_future_prefix_blocks()

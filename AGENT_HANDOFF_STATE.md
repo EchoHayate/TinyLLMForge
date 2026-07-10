@@ -1147,6 +1147,24 @@ TDD/验证：
 
 结论：相对 `20260710_decode_alternating_window_order`，本轮不改变 H2D/eviction 行为，但把 `copy_waits` 从 `1543 -> 1460`，约减少 5.4% wait_event 次数；这是 wait-path 去重收益，不应解读为稳定 wall-clock 提升。下一步更有价值的是继续减少 `prefetch_plans=933`，例如把相邻窗口/跨层 planner 合并为一次计划，而不是额外增加 prefetch 调用。
 
+## 2026-07-10 Skip resident read-window staging
+
+继续减少 blockwise decode 的 planner/staging 开销：`_stage_blockwise_read_window()` 现在遇到“当前 read window 的所有 logical blocks 已经 resident，且不在 `pending_wait_blocks`”时直接走 fast-path，不再增加 `prefetch_plans/prefetch_read_blocks`，也不再调用 `ensure_resident()` 和 `wait_for_blocks()`。为避免 fast-path 让 resident blocks 的 LRU recency 变旧，仍会对每个 unique resident block 调 `_touch(slot)`。
+
+TDD/验证：
+
+- RED：新增 `test_stage_blockwise_read_window_skips_resident_non_pending_window`，旧实现会把 already-resident window 仍计入 `prefetch_plans` 并调用 `ensure_resident()/wait_for_blocks()`，按预期失败。
+- GREEN：新增 resident fast-path，并在测试中验证返回 unique blocks、不增加 prefetch counters、不调用 staging/wait hooks，同时更新 slot touch 顺序。
+- 中间负分支：第一次 fast-path 没有 `_touch()`，真实 smoke correctness 通过但 H2D `728 -> 729`、evictions `732 -> 733`，说明 resident blocks 没刷新 LRU 会轻微恶化 eviction；已补 `_touch()` 后复测。
+- 本地验证通过：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check`。
+- 远程目标测试通过：`tools/test_blockwise_attention_planning.py`、`tools/test_kv_offload.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py`。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34921 MASTER_PORT=34921 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_skip_resident_read_stage_touch tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_skip_resident_read_stage_touch.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=52.374693654477596`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=728`、`d2h_copies=9`、`evictions=732`、`prefetch_plans=737`、`prefetch_read_blocks=728`、`prefetch_write_blocks=9`、`copy_waits=1460`。
+
+结论：相对 `20260710_skip_stale_h2d_waits`，H2D/eviction/copy_waits 不劣化，同时 `prefetch_plans 933 -> 737`、`prefetch_read_blocks 924 -> 728`，约减少 21% read-window staging plan/hook 次数。这是 Python/planner 和无效 wait hook 降噪，不单独宣称稳定 wall-clock 提升。下一步若继续，应重点看剩余 737 个真实 staging windows 是否可由跨层 planner 合并，或把 `prefetch_read_blocks` 进一步降到接近 H2D copies 下界。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

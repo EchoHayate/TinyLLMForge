@@ -135,6 +135,14 @@ def _stage_blockwise_read_window(
     capacity_error_prefix: str,
 ) -> list[int]:
     unique_block_list = _unique_blocks_in_order(logical_blocks)
+    pending_wait_blocks = getattr(manager, "pending_wait_blocks", set())
+    if all(
+        int(block) in manager.logical_to_slot and int(block) not in pending_wait_blocks
+        for block in unique_block_list
+    ):
+        for block in unique_block_list:
+            manager._touch(manager.logical_to_slot[int(block)])
+        return unique_block_list
     unique_blocks = set(unique_block_list)
     future_logical_blocks = unique_blocks | future_extra_blocks
     protected_logical_blocks = set(protected_extra_blocks)
