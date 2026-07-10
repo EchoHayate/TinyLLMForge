@@ -449,8 +449,19 @@ def _blockwise_online_decode_attention(
         k_dense = k_dense.to(torch.float32)
         v_dense = v_dense.to(torch.float32)
         scores = _gqa_scores_decode(q_fp, k_dense, num_heads, scale)
-        mask = _decode_window_mask(window_lens, max_window_tokens, position_template, q.device)
-        valid = mask.any(dim=-1)
+        window_mask_cache = getattr(context, "kv_offload_decode_window_mask_cache", None)
+        cache_key = (tuple(int(x) for x in window_lens), int(max_window_tokens), q.device)
+        if window_mask_cache is None:
+            window_mask_cache = {}
+            context.kv_offload_decode_window_mask_cache = window_mask_cache
+        mask_and_valid = window_mask_cache.get(cache_key)
+        if mask_and_valid is None:
+            mask = _decode_window_mask(window_lens, max_window_tokens, position_template, q.device)
+            valid = mask.any(dim=-1)
+            mask_and_valid = (mask, valid)
+            window_mask_cache[cache_key] = mask_and_valid
+        else:
+            mask, valid = mask_and_valid
         scores = scores.masked_fill(~mask, float("-inf"))
         chunk_m = scores.max(dim=-1).values
         chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
