@@ -1129,6 +1129,24 @@ TDD/验证：
 
 结论：这次终于改变了 decode staging 行为，不只是 mask/小张量微优化。相对上一轮 `20260710_decode_full_window_mask_skip` 的 `gpu_blocks=2` counters，H2D `811 -> 728`、evictions `815 -> 732`、copy waits `1626 -> 1543`，约减少 10% 重复 reload/eviction；wall-clock 仍按远程单次 smoke 噪声处理，不单独宣称稳定 tok/s 提升。下一步更值得继续做的是把相邻 window 的 H2D/D2H batch 合并、或让 planner 直接输出跨层 alternating order + future hints 的统一结构，进一步减少 `prefetch_plans=933` 和 copy waits。
 
+## 2026-07-10 Skip stale H2D waits
+
+继续降低 decode KV offload 的同步等待开销：`wait_for_blocks(..., clear_pending=True)` 现在只等待仍在 `pending_wait_blocks` 的 blocks。旧逻辑会对传入 block 里任何有 `h2d_done` event 的 block 调 `current_stream.wait_event()`，即使该 block 的 pending 状态已经在前序窗口清掉；在 blockwise decode 反复 staging/reuse 时会造成 stale event 重复 wait 和 `copy_waits` 计数偏高。
+
+TDD/验证：
+
+- RED：新增 `test_wait_for_blocks_clear_pending_skips_non_pending_stale_events_without_cuda_stream`，构造 `h2d_done={0,1}` 但 `pending_wait_blocks={1}`，调用 `wait_for_blocks([0], clear_pending=True)`；旧实现会触发 `torch.cuda.current_stream()`，按预期失败。
+- GREEN：`wait_for_blocks()` 在 `clear_pending=True` 时先做 `blocks &= self.pending_wait_blocks`，空集合直接返回，不触碰 CUDA stream。
+- 本地验证通过：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/model_runner.py tinyvllm/layers/attention.py tools/test_kv_offload.py tools/test_blockwise_attention_planning.py`、`git diff --check`。
+- 远程目标测试通过：`tools/test_kv_offload.py`、`tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py`。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34901 MASTER_PORT=34901 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_skip_stale_h2d_waits tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_skip_stale_h2d_waits.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=62.47536563873291`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=728`、`d2h_copies=9`、`evictions=732`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1460`。
+- 负分支记录：尝试过“当前 window 后立即 prefetch 下一 read window 不 wait”的实现，`SMOKE_TAG=20260710_decode_next_window_prefetch` correctness 通过，但 counters 显示 `h2d_copies=728`、`evictions=732`、`copy_waits=1543` 不优于 alternating-order baseline，且 `prefetch_plans` 从 `933` 增到 `1017`；该实现已回滚，不提交。
+
+结论：相对 `20260710_decode_alternating_window_order`，本轮不改变 H2D/eviction 行为，但把 `copy_waits` 从 `1543 -> 1460`，约减少 5.4% wait_event 次数；这是 wait-path 去重收益，不应解读为稳定 wall-clock 提升。下一步更有价值的是继续减少 `prefetch_plans=933`，例如把相邻窗口/跨层 planner 合并为一次计划，而不是额外增加 prefetch 调用。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

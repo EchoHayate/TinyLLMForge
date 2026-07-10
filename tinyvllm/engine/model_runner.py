@@ -331,6 +331,8 @@ class KVOffloadMVP0:
         if self.copy_stream is None:
             return
         blocks = set(int(block) for block in logical_blocks)
+        if clear_pending:
+            blocks &= self.pending_wait_blocks
         if not blocks:
             return
         event_blocks = [logical_block for logical_block in blocks if self.h2d_done.get(logical_block) is not None]

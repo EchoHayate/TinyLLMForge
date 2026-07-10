@@ -113,6 +113,24 @@ def test_wait_for_blocks_without_events_clears_pending_without_cuda_stream():
     assert manager.pending_wait_blocks == {2}
 
 
+def test_wait_for_blocks_clear_pending_skips_non_pending_stale_events_without_cuda_stream():
+    manager = KVOffloadMVP0.__new__(KVOffloadMVP0)
+    manager.copy_stream = object()
+    manager.h2d_done = {0: object(), 1: object()}
+    manager.pending_wait_blocks = {1}
+    manager.stats = {"copy_waits": 0}
+
+    original_current_stream = torch.cuda.current_stream
+    torch.cuda.current_stream = lambda: (_ for _ in ()).throw(AssertionError("current_stream called"))
+    try:
+        manager.wait_for_blocks([0], clear_pending=True)
+    finally:
+        torch.cuda.current_stream = original_current_stream
+
+    assert manager.stats["copy_waits"] == 0
+    assert manager.pending_wait_blocks == {1}
+
+
 def test_ensure_resident_empty_blocks_is_noop_without_copy_hooks():
     manager = _NoopKVOffload()
 
@@ -356,6 +374,7 @@ def main():
     test_wait_for_blocks_clear_pending_api_without_cuda()
     test_wait_for_blocks_empty_is_noop_without_cuda_stream()
     test_wait_for_blocks_without_events_clears_pending_without_cuda_stream()
+    test_wait_for_blocks_clear_pending_skips_non_pending_stale_events_without_cuda_stream()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
     test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()
