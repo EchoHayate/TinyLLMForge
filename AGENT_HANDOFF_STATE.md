@@ -1165,6 +1165,24 @@ TDD/验证：
 
 结论：相对 `20260710_skip_stale_h2d_waits`，H2D/eviction/copy_waits 不劣化，同时 `prefetch_plans 933 -> 737`、`prefetch_read_blocks 924 -> 728`，约减少 21% read-window staging plan/hook 次数。这是 Python/planner 和无效 wait hook 降噪，不单独宣称稳定 wall-clock 提升。下一步若继续，应重点看剩余 737 个真实 staging windows 是否可由跨层 planner 合并，或把 `prefetch_read_blocks` 进一步降到接近 H2D copies 下界。
 
+## 2026-07-10 Clear shared H2D pending blocks
+
+修正 batched H2D event 的 pending 清理语义：当 `wait_for_blocks(..., clear_pending=True)` 等待了某个 H2D event 后，所有仍在 `pending_wait_blocks` 且共享同一个 `h2d_done` event 的 logical blocks 都可以一起清掉。旧逻辑只清 requested blocks；在 `_enqueue_h2d_pairs()` 把多个 logical blocks 合并到同一个 CUDA event 时，未 requested 的同批 block 会继续留在 pending，后续 resident fast-path 会误认为它们仍未等待，阻止 skip resident staging。
+
+TDD/验证：
+
+- RED：新增 `test_wait_for_blocks_clear_pending_clears_all_blocks_sharing_waited_event_without_cuda`，构造 `h2d_done[0] is h2d_done[1]` 且 `pending_wait_blocks={0,1,2}`，调用 `wait_for_blocks([0], clear_pending=True)`；旧实现只清 `0`，按预期失败。
+- GREEN：`wait_for_blocks()` 记录本次实际等待的 event id，并在 `clear_pending=True` 时额外清掉所有共享这些 event id 的 pending blocks。
+- 更新 CUDA 测试语义：原 `test_wait_for_blocks_can_clear_only_requested_pending_h2d_waits` 改为 `test_wait_for_blocks_clears_pending_blocks_that_share_h2d_event`，显式断言同批 H2D event 下 `{0,1}` 都被清掉。
+- 本地验证通过：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/model_runner.py tools/test_kv_offload.py tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py`、`git diff --check`。
+- 远程目标测试通过：`tools/test_kv_offload.py`、`tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py`。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34931 MASTER_PORT=34931 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_clear_shared_h2d_pending tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_clear_shared_h2d_pending.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=53.252644926309586`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=728`、`d2h_copies=9`、`evictions=732`、`prefetch_plans=737`、`prefetch_read_blocks=728`、`prefetch_write_blocks=9`、`copy_waits=1460`。
+
+结论：当前单 prompt decode smoke counters 与 `20260710_skip_resident_read_stage_touch` 一致，说明这个修复不是该 smoke 的直接收益来源；它是 batched H2D / coalesced event 场景的语义修复，避免共享 event 的 sibling blocks 长期卡在 pending，从而为后续真正合并 H2D spans、跨窗口批量 staging 铺路。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

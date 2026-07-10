@@ -131,6 +131,27 @@ def test_wait_for_blocks_clear_pending_skips_non_pending_stale_events_without_cu
     assert manager.pending_wait_blocks == {1}
 
 
+def test_wait_for_blocks_clear_pending_clears_all_blocks_sharing_waited_event_without_cuda():
+    manager = KVOffloadMVP0.__new__(KVOffloadMVP0)
+    stream = _DummyStream()
+    event = object()
+    manager.copy_stream = object()
+    manager.h2d_done = {0: event, 1: event, 2: object()}
+    manager.pending_wait_blocks = {0, 1, 2}
+    manager.stats = {"copy_waits": 0}
+
+    original_current_stream = torch.cuda.current_stream
+    torch.cuda.current_stream = lambda: stream
+    try:
+        manager.wait_for_blocks([0], clear_pending=True)
+    finally:
+        torch.cuda.current_stream = original_current_stream
+
+    assert manager.stats["copy_waits"] == 1
+    assert manager.pending_wait_blocks == {2}
+    assert stream.waited == [event]
+
+
 def test_ensure_resident_empty_blocks_is_noop_without_copy_hooks():
     manager = _NoopKVOffload()
 
@@ -321,7 +342,7 @@ def test_ensure_resident_wait_clears_pending_h2d_waits():
     assert after_waits == before_waits
 
 
-def test_wait_for_blocks_can_clear_only_requested_pending_h2d_waits():
+def test_wait_for_blocks_clears_pending_blocks_that_share_h2d_event():
     if not torch.cuda.is_available():
         print("skipping CUDA-only KV offload test")
         return
@@ -338,12 +359,13 @@ def test_wait_for_blocks_can_clear_only_requested_pending_h2d_waits():
     manager.ensure_resident([0, 1], require_valid=True, future_logical_blocks={0, 1}, wait=False)
 
     assert manager.pending_wait_blocks == {0, 1}
+    assert manager.h2d_done[0] is manager.h2d_done[1]
     before_waits = manager.summary()["copy_waits"]
     manager.wait_for_blocks([0], clear_pending=True)
     after_waits = manager.summary()["copy_waits"]
 
     assert after_waits == before_waits + 1
-    assert manager.pending_wait_blocks == {1}
+    assert manager.pending_wait_blocks == set()
 
 
 def test_evict_policy_avoids_pending_h2d_block_when_possible():
@@ -375,6 +397,7 @@ def main():
     test_wait_for_blocks_empty_is_noop_without_cuda_stream()
     test_wait_for_blocks_without_events_clears_pending_without_cuda_stream()
     test_wait_for_blocks_clear_pending_skips_non_pending_stale_events_without_cuda_stream()
+    test_wait_for_blocks_clear_pending_clears_all_blocks_sharing_waited_event_without_cuda()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
     test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()
@@ -385,7 +408,7 @@ def main():
     test_wait_for_blocks_coalesces_identical_h2d_events()
     test_deferred_eviction_waits_once_per_identical_d2h_event()
     test_ensure_resident_wait_clears_pending_h2d_waits()
-    test_wait_for_blocks_can_clear_only_requested_pending_h2d_waits()
+    test_wait_for_blocks_clears_pending_blocks_that_share_h2d_event()
     test_evict_policy_avoids_pending_h2d_block_when_possible()
     print("kv offload tests passed")
 

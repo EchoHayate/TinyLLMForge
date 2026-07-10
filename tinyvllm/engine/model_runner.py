@@ -350,6 +350,10 @@ class KVOffloadMVP0:
                 self.stats["copy_waits"] += 1
         if clear_pending:
             self.pending_wait_blocks.difference_update(blocks)
+            self.pending_wait_blocks.difference_update(
+                block for block in list(self.pending_wait_blocks)
+                if self.h2d_done.get(block) is not None and id(self.h2d_done[block]) in waited_event_ids
+            )
 
     def wait_for_pending(self):
         if not self.pending_wait_blocks:
