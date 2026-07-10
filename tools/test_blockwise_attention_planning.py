@@ -185,6 +185,49 @@ def test_blockwise_decode_reuses_cached_read_window_plan_across_layers():
         )
 
 
+def test_blockwise_decode_reuses_cached_position_template_across_layers():
+    manager = _PlanOnlyManager()
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[
+            [0, 1],
+        ],
+        kv_offload_context_lens=[2],
+        kv_offload_blockwise_blocks=2,
+        kv_offload_write_blocks=[],
+        kv_offload_decode_window_plan_cache=None,
+        kv_offload_decode_position_template_cache=None,
+    )
+    q = torch.ones(1, 1, 1, dtype=torch.float32)
+    k_cache = torch.zeros(2, 1, 1, 1, dtype=torch.float32)
+    v_cache = torch.zeros(2, 1, 1, 1, dtype=torch.float32)
+
+    _blockwise_online_decode_attention(
+        q,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=1,
+        head_dim=1,
+        scale=1.0,
+    )
+
+    with patch.object(
+        attention_mod.torch,
+        "arange",
+        side_effect=AssertionError("decode position template recomputed"),
+    ):
+        _blockwise_online_decode_attention(
+            q,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=1,
+            head_dim=1,
+            scale=1.0,
+        )
+
+
 def test_blockwise_decode_gqa_does_not_materialize_repeated_kv_heads():
     manager = _PlanOnlyManager()
     context = SimpleNamespace(
@@ -635,6 +678,7 @@ def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks()
     test_blockwise_decode_reuses_cached_read_window_plan_across_layers()
+    test_blockwise_decode_reuses_cached_position_template_across_layers()
     test_blockwise_decode_gqa_does_not_materialize_repeated_kv_heads()
     test_gqa_grouped_helpers_match_repeated_kv_reference()
     test_stage_blockwise_read_window_updates_stats_and_waits_only_window_blocks()

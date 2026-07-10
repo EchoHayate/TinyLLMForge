@@ -47,6 +47,7 @@ class Context:
     kv_offload_prefill_chunk_starts: list[int] | None = None
     kv_offload_prefill_chunk_ends: list[int] | None = None
     kv_offload_decode_window_plan_cache: object | None = None
+    kv_offload_decode_position_template_cache: object | None = None
     kv_offload_prefill_window_plan_cache: object | None = None
     kv_offload_prefill_position_template_cache: object | None = None
 

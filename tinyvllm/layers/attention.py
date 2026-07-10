@@ -385,7 +385,20 @@ def _blockwise_online_decode_attention(
     write_blocks = set(int(block) for block in (context.kv_offload_write_blocks or []))
     if write_blocks:
         manager.mark_dirty(list(write_blocks))
-    position_template = torch.arange(block_size * window_blocks, device=q.device).view(1, 1, -1)
+    position_template_cache = getattr(context, "kv_offload_decode_position_template_cache", None)
+    position_template_tokens = block_size * window_blocks
+    if (
+        position_template_cache is None
+        or position_template_cache[0] != position_template_tokens
+        or position_template_cache[1] != q.device
+    ):
+        position_template_cache = (
+            position_template_tokens,
+            q.device,
+            torch.arange(position_template_tokens, device=q.device).view(1, 1, -1),
+        )
+        context.kv_offload_decode_position_template_cache = position_template_cache
+    position_template = position_template_cache[2]
 
     plan_cache = getattr(context, "kv_offload_decode_window_plan_cache", None)
     if plan_cache is None:
