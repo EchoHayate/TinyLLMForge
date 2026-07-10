@@ -449,30 +449,38 @@ def _blockwise_online_decode_attention(
         k_dense = k_dense.to(torch.float32)
         v_dense = v_dense.to(torch.float32)
         scores = _gqa_scores_decode(q_fp, k_dense, num_heads, scale)
-        window_mask_cache = getattr(context, "kv_offload_decode_window_mask_cache", None)
-        cache_key = (tuple(int(x) for x in window_lens), int(max_window_tokens), q.device)
-        if window_mask_cache is None:
-            window_mask_cache = {}
-            context.kv_offload_decode_window_mask_cache = window_mask_cache
-        mask_and_valid = window_mask_cache.get(cache_key)
-        if mask_and_valid is None:
-            mask = _decode_window_mask(window_lens, max_window_tokens, position_template, q.device)
-            valid = mask.any(dim=-1)
-            mask_and_valid = (mask, valid)
-            window_mask_cache[cache_key] = mask_and_valid
+        if full_window:
+            valid = None
+            chunk_m = scores.max(dim=-1).values
+            exp_scores = torch.exp(scores - chunk_m.unsqueeze(-1))
         else:
-            mask, valid = mask_and_valid
-        scores = scores.masked_fill(~mask, float("-inf"))
-        chunk_m = scores.max(dim=-1).values
-        chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
-        exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
+            window_mask_cache = getattr(context, "kv_offload_decode_window_mask_cache", None)
+            cache_key = (tuple(int(x) for x in window_lens), int(max_window_tokens), q.device)
+            if window_mask_cache is None:
+                window_mask_cache = {}
+                context.kv_offload_decode_window_mask_cache = window_mask_cache
+            mask_and_valid = window_mask_cache.get(cache_key)
+            if mask_and_valid is None:
+                mask = _decode_window_mask(window_lens, max_window_tokens, position_template, q.device)
+                valid = mask.any(dim=-1)
+                mask_and_valid = (mask, valid)
+                window_mask_cache[cache_key] = mask_and_valid
+            else:
+                mask, valid = mask_and_valid
+            scores = scores.masked_fill(~mask, float("-inf"))
+            chunk_m = scores.max(dim=-1).values
+            chunk_m_safe = torch.where(valid, chunk_m, torch.zeros_like(chunk_m))
+            exp_scores = torch.exp(scores - chunk_m_safe.unsqueeze(-1)).masked_fill(~mask, 0.0)
         chunk_l = exp_scores.sum(dim=-1)
         chunk_o = _gqa_weighted_values_decode(exp_scores, v_dense, num_heads)
 
         merged_m = torch.maximum(running_m, chunk_m)
-        merged_m = torch.where(valid, merged_m, running_m)
+        if valid is not None:
+            merged_m = torch.where(valid, merged_m, running_m)
         old_weight = torch.exp(running_m - merged_m).masked_fill(torch.isneginf(running_m), 0.0)
-        new_weight = torch.exp(chunk_m - merged_m).masked_fill(~valid, 0.0)
+        new_weight = torch.exp(chunk_m - merged_m)
+        if valid is not None:
+            new_weight = new_weight.masked_fill(~valid, 0.0)
         running_l = old_weight * running_l + new_weight * chunk_l
         running_o = old_weight.unsqueeze(-1) * running_o + new_weight.unsqueeze(-1) * chunk_o
         running_m = merged_m

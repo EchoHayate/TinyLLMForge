@@ -1095,6 +1095,21 @@ TDD/验证：
 
 结论：该优化不改变 staging/copy 行为，主要减少每层重复 window mask/valid 构造；本次 wall-clock 偏慢且 H2D 时间波动大，不作为性能结论。更大收益仍需处理低 `gpu_blocks=2` 的 repeated reload，或把这些 per-forward cache 之后的剩余 Python planner 合并。
 
+## 2026-07-10 Decode full-window mask skip
+
+继续减少完整 decode read window 的无效 mask 路径：当 `all(window_len == max_window_tokens)` 时，当前 window 对所有 batch row 都全有效，不需要 `_decode_window_mask()`、`masked_fill(~mask)`、`valid = mask.any(...)` 和对应 `torch.where`。现在 full-window decode 直接按无 mask scores 做 softmax/merge；partial/padded window 仍走原 mask/cache 路径。
+
+TDD/验证：
+
+- RED：新增 `test_blockwise_decode_full_windows_skip_mask_construction`，full decode window 下 monkeypatch `_decode_window_mask`，远程旧实现按预期触发 `AssertionError("full decode window should not build mask")`。
+- GREEN：远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py` 均通过。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34881 MASTER_PORT=34881 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_decode_full_window_mask_skip tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_decode_full_window_mask_skip.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=50.60374375060201`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=811`、`d2h_copies=9`、`evictions=815`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1626`。
+
+结论：这是低风险 compute/mask 微优化，不改变 KV staging/copy 计划；full decode window 少走 mask 构造、masked fill 和 valid merge 分支。H2D/evict 计数不变，后续更大收益仍在减少 low-staging repeated reload。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：
