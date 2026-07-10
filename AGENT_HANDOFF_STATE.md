@@ -1110,6 +1110,25 @@ TDD/验证：
 
 结论：这是低风险 compute/mask 微优化，不改变 KV staging/copy 计划；full decode window 少走 mask 构造、masked fill 和 valid merge 分支。H2D/evict 计数不变，后续更大收益仍在减少 low-staging repeated reload。
 
+## 2026-07-10 Decode alternating read-window order
+
+针对 `gpu_blocks=2` 低 staging 容量下 decode 层间反复从同一个方向扫描 read windows、导致下一层无法复用上一层结束时仍 resident 的 tail window，本轮让奇数层反向遍历已缓存的 decode read-window plan，并为反向顺序单独计算 capacity-bounded reverse future hint。偶数层保持原正向顺序；`layer_idx < 0` 的兼容路径也保持正向，避免未注入 layer metadata 时意外改变行为。
+
+TDD/验证：
+
+- RED1：新增 `test_blockwise_decode_odd_layers_stage_read_windows_from_tail`，旧实现按预期报 `_blockwise_online_decode_attention() got an unexpected keyword argument 'layer_idx'`。
+- RED2：新增 `test_blockwise_decode_odd_layers_hint_reverse_future_blocks`，中间实现只反向遍历、不反向 hint 时能抓到 future hint 方向错误；同时修复了 `layer_idx=-1` 被 Python `%` 误判为奇数的问题。
+- GREEN：本地 `PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/layers/attention.py tools/test_blockwise_attention_planning.py` 与 `git diff --check` 通过；远程 `tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py`、`tools/test_kv_offload.py` 均通过。
+- Decode 集成 smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34731 MASTER_PORT=34731 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_decode_alternating_window_order tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_decode_alternating_window_order.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=52.29836422204971`。
+  - KV counters：`gpu_blocks=2`、`h2d_copies=728`、`d2h_copies=9`、`evictions=732`、`prefetch_plans=933`、`prefetch_read_blocks=924`、`prefetch_write_blocks=9`、`copy_waits=1543`。
+- Decode matrix：第一次 `MASTER_PORT=34732` 整轮失败于 `EADDRINUSE`，无 JSON 生成，不作为回归；换 `TINYVLLM_DIST_PORT=34873 MASTER_PORT=34873 KV_OFFLOAD_GPU_BLOCKS_MATRIX="2 4" SMOKE_TAG=20260710_decode_alternating_window_order_matrix2` 后通过。
+  - `gpu_blocks=2`：`gate_pass=true`、`elapsed_s=52.78420425578952`、`h2d_copies=728`、`d2h_copies=9`、`evictions=732`、`resident_blocks=2`。
+  - `gpu_blocks=4`：`gate_pass=true`、`elapsed_s=52.421591091901064`、`h2d_copies=336`、`d2h_copies=9`、`evictions=338`、`resident_blocks=4`。
+
+结论：这次终于改变了 decode staging 行为，不只是 mask/小张量微优化。相对上一轮 `20260710_decode_full_window_mask_skip` 的 `gpu_blocks=2` counters，H2D `811 -> 728`、evictions `815 -> 732`、copy waits `1626 -> 1543`，约减少 10% 重复 reload/eviction；wall-clock 仍按远程单次 smoke 噪声处理，不单独宣称稳定 tok/s 提升。下一步更值得继续做的是把相邻 window 的 H2D/D2H batch 合并、或让 planner 直接输出跨层 alternating order + future hints 的统一结构，进一步减少 `prefetch_plans=933` 和 copy waits。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

@@ -142,6 +142,82 @@ def test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks():
     ]
 
 
+def test_blockwise_decode_odd_layers_stage_read_windows_from_tail():
+    manager = _PlanOnlyManager()
+    manager.gpu_blocks = 1
+    manager.logical_to_slot.update({3: 3, 4: 4})
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[
+            [0, 1, 2, 3, 4],
+        ],
+        kv_offload_context_lens=[5],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[],
+        kv_offload_decode_window_plan_cache=None,
+    )
+    q = torch.ones(1, 1, 1, dtype=torch.float32)
+    k_cache = torch.zeros(5, 1, 1, 1, dtype=torch.float32)
+    v_cache = torch.zeros(5, 1, 1, 1, dtype=torch.float32)
+
+    _blockwise_online_decode_attention(
+        q,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=1,
+        head_dim=1,
+        scale=1.0,
+        layer_idx=1,
+    )
+
+    assert manager.ensure_calls == [[4], [3], [2], [1], [0]]
+    assert manager.wait_calls == [
+        ([4], True),
+        ([3], True),
+        ([2], True),
+        ([1], True),
+        ([0], True),
+    ]
+
+
+def test_blockwise_decode_odd_layers_hint_reverse_future_blocks():
+    manager = _PlanOnlyManager()
+    manager.logical_to_slot.update({3: 3, 4: 4})
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[
+            [0, 1, 2, 3, 4],
+        ],
+        kv_offload_context_lens=[5],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[],
+        kv_offload_decode_window_plan_cache=None,
+    )
+    q = torch.ones(1, 1, 1, dtype=torch.float32)
+    k_cache = torch.zeros(5, 1, 1, 1, dtype=torch.float32)
+    v_cache = torch.zeros(5, 1, 1, 1, dtype=torch.float32)
+
+    _blockwise_online_decode_attention(
+        q,
+        k_cache,
+        v_cache,
+        context,
+        num_heads=1,
+        head_dim=1,
+        scale=1.0,
+        layer_idx=1,
+    )
+
+    assert manager.future_calls == [
+        {1, 2, 3, 4},
+        {0, 1, 2, 3},
+        {0, 1, 2},
+        {0, 1},
+        {0},
+    ]
+
+
 def test_blockwise_decode_reuses_cached_read_window_plan_across_layers():
     manager = _PlanOnlyManager()
     manager.logical_to_slot.update({3: 3, 4: 4})
@@ -787,6 +863,8 @@ def test_merge_attention_window_none_mask_does_not_allocate_valid_mask():
 def main():
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks()
+    test_blockwise_decode_odd_layers_stage_read_windows_from_tail()
+    test_blockwise_decode_odd_layers_hint_reverse_future_blocks()
     test_blockwise_decode_reuses_cached_read_window_plan_across_layers()
     test_blockwise_decode_reuses_cached_position_template_across_layers()
     test_blockwise_decode_reuses_cached_window_masks_across_layers()

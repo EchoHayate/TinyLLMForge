@@ -172,6 +172,22 @@ def _blockwise_read_window_future_hint_blocks(
     return future_hint_blocks
 
 
+def _blockwise_read_window_reverse_future_hint_blocks(
+    row_blocks: list[int],
+    start_block: int,
+    window_blocks: int,
+    extra_future_blocks: set[int],
+    gpu_blocks: int,
+) -> set[int]:
+    current_window = row_blocks[start_block:start_block + window_blocks]
+    future_hint_blocks = set(extra_future_blocks)
+    future_budget = max(0, int(gpu_blocks) - len(set(current_window)) - len(set(extra_future_blocks)))
+    lookback_end = start_block
+    lookback_start = max(0, lookback_end - future_budget)
+    future_hint_blocks.update(row_blocks[lookback_start:lookback_end])
+    return future_hint_blocks
+
+
 def _blockwise_prefill_future_hint_blocks(
     row_blocks: list[int],
     start_block: int,
@@ -214,6 +230,7 @@ def _build_blockwise_decode_window_plan(
         if not needed_blocks or max(window_lens, default=0) <= 0:
             continue
         future_hint_blocks = set(write_blocks)
+        reverse_future_hint_blocks = set(write_blocks)
         for row_blocks in block_rows:
             future_hint_blocks.update(
                 _blockwise_read_window_future_hint_blocks(
@@ -225,11 +242,21 @@ def _build_blockwise_decode_window_plan(
                     gpu_blocks,
                 )
             )
+            reverse_future_hint_blocks.update(
+                _blockwise_read_window_reverse_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    window_blocks,
+                    write_blocks,
+                    gpu_blocks,
+                )
+            )
         plans.append({
             "window_rows": window_rows,
             "window_lens": window_lens,
             "needed_blocks": needed_blocks,
             "future_hint_blocks": future_hint_blocks,
+            "reverse_future_hint_blocks": reverse_future_hint_blocks,
             "max_window_tokens": max(window_lens),
         })
     return plans
@@ -357,6 +384,7 @@ def _blockwise_online_decode_attention(
     num_heads: int,
     head_dim: int,
     scale: float,
+    layer_idx: int = -1,
 ) -> torch.Tensor:
     """Exact decode attention over logical KV blocks staged window by window.
 
@@ -413,14 +441,20 @@ def _blockwise_online_decode_attention(
         )
         context.kv_offload_decode_window_plan_cache = plan_cache
 
-    for window_plan in plan_cache:
+    reverse_windows = int(layer_idx) >= 0 and int(layer_idx) % 2 == 1
+    window_plans = reversed(plan_cache) if reverse_windows else plan_cache
+    for window_plan in window_plans:
         window_rows = window_plan["window_rows"]
         window_lens = window_plan["window_lens"]
         needed_blocks = window_plan["needed_blocks"]
         _stage_blockwise_read_window(
             manager,
             needed_blocks,
-            future_extra_blocks=window_plan["future_hint_blocks"],
+            future_extra_blocks=(
+                window_plan["reverse_future_hint_blocks"]
+                if reverse_windows
+                else window_plan["future_hint_blocks"]
+            ),
             protected_extra_blocks=write_blocks,
             capacity_extra_blocks=set(),
             capacity_error_prefix="blockwise decode window has more unique logical blocks than GPU staging slots",
@@ -1226,7 +1260,8 @@ class Attention(nn.Module):
             if context.kv_offload_blockwise_decode:
                 assert self.kv_quant_bits == 0, "KV offload blockwise decode MVP 仅支持 fp16/bf16 KV"
                 o = _blockwise_online_decode_attention(
-                    q, k_cache, v_cache, context, self.num_heads, self.head_dim, self.scale)
+                    q, k_cache, v_cache, context, self.num_heads, self.head_dim, self.scale,
+                    layer_idx=getattr(self, "layer_idx", -1))
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o
 
