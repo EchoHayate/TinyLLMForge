@@ -283,28 +283,50 @@ class KVOffloadMVP0:
         h2d_pairs = []
         deferred_d2h_pairs = []
         deferred_wait_blocks = []
+        missing_blocks = []
         for logical_block in ordered:
-            slot = self.logical_to_slot.get(logical_block)
-            if slot is None:
+            if self.logical_to_slot.get(logical_block) is None:
                 if require_valid and not self.cpu_valid[logical_block]:
                     raise RuntimeError(f"KV offload requested unreadable logical block {logical_block}")
-                slot = self._evict_slot(
-                    protected,
-                    future_logical_blocks=future_logical_blocks,
-                    defer_dirty_writeback=True,
-                )
-                old_logical = self.slot_to_logical[slot]
-                if old_logical is not None and old_logical in self.dirty_logical_blocks:
-                    deferred_d2h_pairs.append((old_logical, slot))
-                    self.dirty_logical_blocks.discard(old_logical)
-                if old_logical is not None:
-                    deferred_wait_blocks.append(old_logical)
-                    self.logical_to_slot.pop(old_logical, None)
+                missing_blocks.append(logical_block)
+
+        assigned_missing_slots = {}
+        for logical_block in missing_blocks:
+            slot = self._evict_slot(
+                protected,
+                future_logical_blocks=future_logical_blocks,
+                defer_dirty_writeback=True,
+            )
+            old_logical = self.slot_to_logical[slot]
+            if old_logical is not None and old_logical in self.dirty_logical_blocks:
+                deferred_d2h_pairs.append((old_logical, slot))
+                self.dirty_logical_blocks.discard(old_logical)
+            if old_logical is not None:
+                deferred_wait_blocks.append(old_logical)
+                self.logical_to_slot.pop(old_logical, None)
+                self.slot_to_logical[slot] = None
+            self.logical_to_slot[logical_block] = slot
+            self.slot_to_logical[slot] = logical_block
+            assigned_missing_slots[logical_block] = slot
+
+        if len(assigned_missing_slots) > 1:
+            sorted_logical_blocks = sorted(assigned_missing_slots)
+            sorted_slots = sorted(assigned_missing_slots.values())
+            if any(
+                assigned_missing_slots[logical_block] != slot
+                for logical_block, slot in zip(sorted_logical_blocks, sorted_slots)
+            ):
+                for logical_block in sorted_logical_blocks:
+                    slot = self.logical_to_slot.pop(logical_block)
                     self.slot_to_logical[slot] = None
-                self.logical_to_slot[logical_block] = slot
-                self.slot_to_logical[slot] = logical_block
-                if self.cpu_valid[logical_block]:
-                    h2d_pairs.append((logical_block, slot))
+                for logical_block, slot in zip(sorted_logical_blocks, sorted_slots):
+                    self.logical_to_slot[logical_block] = slot
+                    self.slot_to_logical[slot] = logical_block
+
+        for logical_block in ordered:
+            slot = self.logical_to_slot[logical_block]
+            if logical_block in assigned_missing_slots and self.cpu_valid[logical_block]:
+                h2d_pairs.append((logical_block, slot))
             self._touch(slot)
         if not h2d_pairs and not deferred_d2h_pairs and not deferred_wait_blocks:
             return {logical_block: self.logical_to_slot[logical_block] for logical_block in ordered}

@@ -1183,6 +1183,27 @@ TDD/验证：
 
 结论：当前单 prompt decode smoke counters 与 `20260710_skip_resident_read_stage_touch` 一致，说明这个修复不是该 smoke 的直接收益来源；它是 batched H2D / coalesced event 场景的语义修复，避免共享 event 的 sibling blocks 长期卡在 pending，从而为后续真正合并 H2D spans、跨窗口批量 staging 铺路。
 
+## 2026-07-10 Assign contiguous H2D slots for missing block batches
+
+批量 reload 多个 missing logical blocks 时，`ensure_resident()` 现在先选出一组 victim slots，再把 missing logical blocks 和 selected slots 分别排序后配对。这样在 LRU victim 顺序与物理 slot 顺序相反时，仍可把连续 logical blocks 放进连续 GPU slots，让 `_coalesce_copy_pairs()` 形成更长 H2D span；外部语义不变，dirty D2H、clean eviction、LRU `_touch()` 仍按同一批 selected slots 执行。
+
+TDD/验证：
+
+- RED：新增 `test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_for_coalesced_h2d`，构造 `slot_last_used=[3,2,1,0]` 的反向 LRU 场景；旧实现会把 logical `4,5,6,7` 映射到 slots `3,2,1,0`，`_coalesce_copy_pairs()` 无法合成 `(4,0,4)`，按预期失败。
+- GREEN：`ensure_resident()` 对同一批 missing blocks 做 sorted logical -> sorted slot 配对，使测试中的 H2D pairs 变为 `[(4,0),(5,1),(6,2),(7,3)]`，可 coalesce 成单 span。
+- 本地验证通过：`PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile tinyvllm/engine/model_runner.py tools/test_kv_offload.py`、`git diff --check`。本地 `tools/test_kv_offload.py` 不能跑，因为当前本机 Python 缺 `torch`。
+- 远程目标测试通过：`tools/test_kv_offload.py`、`tools/test_blockwise_attention_planning.py`、`tools/test_chunked_prefill.py`、`tools/test_ngram_speculative.py`。
+- 默认 decode smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34841 MASTER_PORT=34841 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 SMOKE_TAG=20260710_contiguous_h2d_slots tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_contiguous_h2d_slots.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=51.20729864016175`。
+  - KV counters 与上一轮一致：`gpu_blocks=2`、`kv_offload_blockwise_blocks=1`、`h2d_copies=728`、`d2h_copies=9`、`evictions=732`、`prefetch_plans=737`、`prefetch_read_blocks=728`、`copy_waits=1460`、`h2d_batches=728`、`h2d_batch_spans=728`。该配置每次 H2D 基本只有单 block，因此不能体现 slot coalescing 收益。
+- 多块窗口 decode smoke：`CUDA_VISIBLE_DEVICES=4 TINYVLLM_DIST_PORT=34843 MASTER_PORT=34843 RUN_PREFLIGHT=0 RUN_MATH_SMOKE=0 MAX_OUTPUT_LEN=4 KV_OFFLOAD_GPU_BLOCKS=4 KV_OFFLOAD_BLOCKWISE_BLOCKS=2 SMOKE_TAG=20260710_contiguous_h2d_slots_w2g4 tools/smoke_blockwise_prefill_remote.sh` 通过。
+  - 输出：`profile_out/kv_offload_blockwise_prefill_real_longctx_smoke_20260710_contiguous_h2d_slots_w2g4.json`
+  - summary：`gate_pass=true`、`output_tokens=4`、`decode_steps=3`、`elapsed_s=48.30962808430195`。
+  - KV counters：`gpu_blocks=4`、`kv_offload_blockwise_blocks=2`、`h2d_copies=337`、`d2h_copies=9`、`evictions=339`、`prefetch_plans=276`、`prefetch_read_blocks=534`、`copy_waits=606`、`h2d_batches=267`、`h2d_batch_spans=295`。这里已经出现真实 batch/span 合并：H2D blocks 337 个被压到 267 次 enqueue / 295 个 spans。
+
+结论：这轮不是默认 `blockwise_blocks=1/gpu_blocks=2` 的直接收益，而是为更大 staging / 多块窗口 / batch-copy 场景减少 H2D span fragmentation。后续更值得继续做的是把 read-window planner 主动输出可合并的连续 logical windows，或把 `_enqueue_h2d_pairs()` 从“按调用批次合并”提升到跨相邻窗口的显式 batch staging。
+
 ## 2026-06-30 Streaming/blockwise attention 数学 smoke
 
 为了进入“单条超长上下文超过 staging slots”的下一阶段，先没有直接改 production attention kernel，而是在 `tools/profile_ngram_commit.py` 增加了 exact blockwise decode attention 的 online-softmax smoke：

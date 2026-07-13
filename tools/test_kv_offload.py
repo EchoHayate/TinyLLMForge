@@ -49,6 +49,35 @@ class _NoopKVOffload(KVOffloadMVP0):
         self.wait_for_blocks_calls += 1
 
 
+class _RecordingKVOffload(_NoopKVOffload):
+    def __init__(self):
+        super().__init__()
+        self.gpu_blocks = 4
+        self.logical_blocks = 8
+        self.logical_to_slot = {
+            0: 0,
+            1: 1,
+            2: 2,
+            3: 3,
+        }
+        self.slot_to_logical = [0, 1, 2, 3]
+        self.slot_last_used = [3, 2, 1, 0]
+        self.cpu_valid = [False, False, False, False, True, True, True, True]
+        self.block_nbytes = 1
+        self.batch_copy = True
+        self.evict_policy = "lru"
+        self.d2h_done = {}
+        self.stats = {
+            "evict_clean": 0,
+            "evictions": 0,
+            "copy_waits": 0,
+        }
+        self.h2d_pairs = []
+
+    def _enqueue_h2d_pairs(self, pairs):
+        self.h2d_pairs.append(list(pairs))
+
+
 class _DummyStream:
     def __init__(self):
         self.waited = []
@@ -201,6 +230,16 @@ def test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks():
     assert manager.enqueue_d2h_calls == 0
     assert manager.enqueue_h2d_calls == 0
     assert manager.wait_for_blocks_calls == 0
+
+
+def test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_for_coalesced_h2d():
+    manager = _RecordingKVOffload()
+
+    mapping = manager.ensure_resident([4, 5, 6, 7], require_valid=True, wait=False)
+
+    assert mapping == {4: 0, 5: 1, 6: 2, 7: 3}
+    assert manager.h2d_pairs == [[(4, 0), (5, 1), (6, 2), (7, 3)]]
+    assert manager._coalesce_copy_pairs(manager.h2d_pairs[0]) == [(4, 0, 4)]
 
 
 def test_map_block_rows_uses_existing_resident_slots_without_staging():
@@ -401,6 +440,7 @@ def main():
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
     test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()
+    test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_for_coalesced_h2d()
     test_map_block_rows_uses_existing_resident_slots_without_staging()
     test_map_slots_for_positions_uses_existing_resident_slots_without_staging()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
