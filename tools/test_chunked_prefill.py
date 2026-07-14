@@ -422,9 +422,9 @@ def test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks():
     assert seq.token_ids == [1, 2, 3, 4, 5]
     assert seq.last_token == 5
     assert seq.num_tokens == 5
-    assert seq.block_table == [original_block, reserved[0]]
-    assert block_manager.blocks[reserved[0]].ref_count == 1
-    assert block_manager.blocks[reserved[0]].hash == -1
+    assert seq.block_table == [original_block]
+    assert block_manager.blocks[reserved[0]].ref_count == 0
+    assert reserved[0] in block_manager.free_block_ids
     assert block_manager.blocks[reserved[1]].ref_count == 0
     assert reserved[1] in block_manager.free_block_ids
     h0 = block_manager.compute_hash([1, 2, 3, 4], -1)
@@ -471,10 +471,45 @@ def test_commit_accepted_tokens_publishes_multiple_full_block_hashes():
     assert len(seq.block_table) == 3
     assert block_manager.hash_to_block_id[h0] == seq.block_table[0]
     assert block_manager.hash_to_block_id[h1] == seq.block_table[1]
-    assert block_manager.hash_to_block_id[h2] == seq.block_table[2]
     assert block_manager.blocks[seq.block_table[0]].token_ids == [1, 2, 3, 4]
     assert block_manager.blocks[seq.block_table[1]].token_ids == [5, 6, 7, 8]
+    assert block_manager.blocks[seq.block_table[2]].hash == -1
+
+    block_manager.may_append(seq)
+
+    assert block_manager.hash_to_block_id[h2] == seq.block_table[2]
     assert block_manager.blocks[seq.block_table[2]].token_ids == [9, 10, 11, 12]
+
+
+def test_commit_accepted_tokens_keeps_scheduler_hash_state_after_crossing_boundary():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = make_seq([1, 2, 3])
+    block_manager.allocate(seq)
+
+    reserved = block_manager.reserve_append_blocks(seq, 2)
+    block_manager.commit_accepted_tokens(seq, [4, 5], reserved)
+    block_manager.may_append(seq)
+
+    assert seq.token_ids == [1, 2, 3, 4, 5]
+    assert len(seq.block_table) == 2
+    assert block_manager.blocks[seq.block_table[0]].hash != -1
+    assert block_manager.blocks[seq.block_table[1]].hash == -1
+
+
+def test_commit_accepted_tokens_leaves_just_filled_last_block_for_scheduler_publish():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = make_seq([1, 2, 3])
+    block_manager.allocate(seq)
+
+    reserved = block_manager.reserve_append_blocks(seq, 1)
+    block_manager.commit_accepted_tokens(seq, [4], reserved)
+    block_manager.may_append(seq)
+
+    assert seq.token_ids == [1, 2, 3, 4]
+    assert len(seq.block_table) == 1
+    assert block_manager.blocks[seq.block_table[0]].hash != -1
 
 
 def test_max_consecutive_prefill_chunks_yields_to_decode():
@@ -886,6 +921,8 @@ def main():
     test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks()
     test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks()
     test_commit_accepted_tokens_publishes_multiple_full_block_hashes()
+    test_commit_accepted_tokens_keeps_scheduler_hash_state_after_crossing_boundary()
+    test_commit_accepted_tokens_leaves_just_filled_last_block_for_scheduler_publish()
     test_max_consecutive_prefill_chunks_yields_to_decode()
     test_mixed_prefill_decode_schedules_prefill_chunk_with_decode()
     test_mixed_short_prefill_batching_reserves_slot_for_decode()

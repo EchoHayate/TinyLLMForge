@@ -151,9 +151,13 @@ class BlockManager:
             block.ref_count = 0
             self._deallocate_block(block_id)
 
-    def publish_full_blocks(self, seq: Sequence):
+    def publish_full_blocks(self, seq: Sequence, materialized_tokens=None):
         """Publish prefix-cache hashes for all fully materialized blocks."""
+        if materialized_tokens is None:
+            materialized_tokens = len(seq)
         for i, block_id in enumerate(seq.block_table):
+            if (i + 1) * self.block_size > materialized_tokens:
+                continue
             token_ids = seq.block(i)
             if len(token_ids) != self.block_size:
                 continue
@@ -177,7 +181,8 @@ class BlockManager:
             return
 
         final_len = len(seq) + len(accepted_tokens)
-        needed_blocks = (final_len + self.block_size - 1) // self.block_size
+        materialized_tokens = final_len - 1
+        needed_blocks = (materialized_tokens + self.block_size - 1) // self.block_size
         missing_blocks = max(0, needed_blocks - len(seq.block_table))
         assert missing_blocks <= len(reserved_block_ids)
         committed_blocks = list(reserved_block_ids[:missing_blocks])
@@ -185,7 +190,7 @@ class BlockManager:
         seq.block_table.extend(committed_blocks)
         for token_id in accepted_tokens:
             seq.append_token(token_id)
-        self.publish_full_blocks(seq)
+        self.publish_full_blocks(seq, materialized_tokens=materialized_tokens)
         self.release_reserved_blocks(unused_blocks)
 
     def commit_prefill(self, seq: Sequence, old_end: int, new_end: int):
