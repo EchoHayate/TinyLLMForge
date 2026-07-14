@@ -19,6 +19,7 @@ _SPEC = importlib.util.spec_from_file_location("adaptive_ngram_gate_under_test",
 gate = importlib.util.module_from_spec(_SPEC)
 sys.modules["adaptive_ngram_gate_under_test"] = gate
 _SPEC.loader.exec_module(gate)
+is_retryable_port_collision = gate._is_retryable_port_collision
 
 
 def _adaptive_events(run_key: str) -> list[dict]:
@@ -276,6 +277,15 @@ def test_required_upload_paths_cover_profiler_imports():
     )
 
 
+def test_port_collision_retry_classifier_is_narrow():
+    assert is_retryable_port_collision(
+        1,
+        "RuntimeError: The server socket has failed to listen: EADDRINUSE",
+    )
+    assert not is_retryable_port_collision(0, "EADDRINUSE")
+    assert not is_retryable_port_collision(1, "RuntimeError: CUDA out of memory")
+
+
 def test_normalize_row_uses_profiler_prompt_tokens_and_candidate_metrics():
     manifest = gate.build_manifest(
         repetitions=1,
@@ -362,6 +372,7 @@ def main():
     test_summarize_rows_marks_missing_prompt_token_count_incomplete()
     test_natural_prompt_regression_forces_no_go()
     test_required_upload_paths_cover_profiler_imports()
+    test_port_collision_retry_classifier_is_narrow()
     test_normalize_row_uses_profiler_prompt_tokens_and_candidate_metrics()
     test_profiler_command_forces_fixed_length_greedy_measurement()
     print("adaptive ngram gate tests passed")

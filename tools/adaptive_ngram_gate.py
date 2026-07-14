@@ -33,6 +33,7 @@ REQUIRED_UPLOAD_PATHS = (
     "tools/profile_ngram_commit.py",
     "tools/adaptive_ngram_gate.py",
 )
+MAX_PORT_COLLISION_RETRIES = 3
 
 POLICIES = {
     "baseline": {
@@ -246,6 +247,13 @@ def _allocate_distinct_ports(used_ports: set[int]) -> tuple[int, int]:
             return dist_port, master_port
 
 
+def _is_retryable_port_collision(returncode: int, output: str) -> bool:
+    if returncode == 0:
+        return False
+    lowered = output.lower()
+    return "eaddrinuse" in lowered or "address already in use" in lowered
+
+
 def _model_identifier(model_path: str) -> str:
     config_path = Path(model_path) / "config.json"
     if config_path.exists():
@@ -417,25 +425,40 @@ def run_gate(
         if spec["run_key"] in completed:
             continue
         prompt = _prompt_by_name(spec["prompt_name"])
-        dist_port, master_port = _allocate_distinct_ports(used_ports)
         process_json = process_dir / f"{spec['run_key']}.json"
         stdout_path = logs_dir / f"{spec['run_key']}.stdout.log"
         stderr_path = logs_dir / f"{spec['run_key']}.stderr.log"
         command = _profiler_command(spec, prompt, python_bin, model_path, process_json)
-        environment = os.environ.copy()
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["PYTHONPATH"] = str(_REPO_ROOT)
-        environment["TINYVLLM_DIST_PORT"] = str(dist_port)
-        environment["MASTER_PORT"] = str(master_port)
         started = time.time()
-        completed_process = subprocess.run(
-            command,
-            cwd=_REPO_ROOT,
-            env=environment,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        port_attempts = []
+        for attempt_index in range(MAX_PORT_COLLISION_RETRIES + 1):
+            dist_port, master_port = _allocate_distinct_ports(used_ports)
+            environment = os.environ.copy()
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            environment["PYTHONPATH"] = str(_REPO_ROOT)
+            environment["TINYVLLM_DIST_PORT"] = str(dist_port)
+            environment["MASTER_PORT"] = str(master_port)
+            process_json.unlink(missing_ok=True)
+            completed_process = subprocess.run(
+                command,
+                cwd=_REPO_ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            port_attempts.append({
+                "attempt": attempt_index + 1,
+                "tinyvllm_dist_port": dist_port,
+                "master_port": master_port,
+                "returncode": completed_process.returncode,
+                "port_collision": _is_retryable_port_collision(
+                    completed_process.returncode,
+                    completed_process.stdout + completed_process.stderr,
+                ),
+            })
+            if not port_attempts[-1]["port_collision"]:
+                break
         finished = time.time()
         stdout_path.write_text(completed_process.stdout, encoding="utf-8")
         stderr_path.write_text(completed_process.stderr, encoding="utf-8")
@@ -451,6 +474,7 @@ def run_gate(
             "command": command,
             "tinyvllm_dist_port": dist_port,
             "master_port": master_port,
+            "port_attempts": port_attempts,
             "stdout_path": str(stdout_path.relative_to(out_dir)),
             "stderr_path": str(stderr_path.relative_to(out_dir)),
             "process_json_path": str(process_json.relative_to(out_dir)),
