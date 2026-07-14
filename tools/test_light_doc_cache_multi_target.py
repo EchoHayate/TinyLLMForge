@@ -82,3 +82,92 @@ def test_repository_target_dataset_is_valid() -> None:
     )
     assert payload["version"] == 1
     assert len(payload["targets"]) == 8
+
+
+def _row(
+    target_index: int,
+    mode: str,
+    mean_diff: float,
+    *,
+    argmax_match: bool = True,
+    status: str = "success",
+) -> dict[str, object]:
+    return {
+        "target_id": f"target_{target_index}",
+        "category": "short_factual",
+        "length_bucket": "short",
+        "mode": mode,
+        "role": "trained" if mode == "calibration_holdout" else "baseline",
+        "status": status,
+        "error": "",
+        "prompt_tokens": 20 + target_index,
+        "calibration_bank_sha256": "a" * 64 if mode == "calibration_holdout" else "",
+        "logical_byte_saving_fraction": 0.1763,
+        "missing_tokens": 100 + target_index,
+        "missing_mse": 10.0 + target_index,
+        "missing_mae": 2.0,
+        "missing_max_abs": 20.0,
+        "max_abs_logit_diff": mean_diff * 4,
+        "mean_abs_logit_diff": mean_diff,
+        "argmax_match": argmax_match,
+        "original_argmax": 100,
+        "restored_argmax": 100 if argmax_match else 101,
+        "artifact": f"targets/target_{target_index}/{mode}",
+    }
+
+
+def test_nearest_rank_percentile_is_deterministic() -> None:
+    assert REPORT.nearest_rank_percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.90) == 5.0
+    assert REPORT.nearest_rank_percentile([5.0, 1.0, 3.0, 2.0], 0.50) == 2.0
+
+
+def test_gate_passes_only_when_every_condition_holds() -> None:
+    rows = []
+    correlated = [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]
+    holdout = [0.80, 0.85, 0.90, 0.90, 0.95, 1.00, 1.05, 1.10]
+    for index in range(8):
+        rows.append(_row(index, "correlated_same_layer_target", correlated[index]))
+        rows.append(_row(index, "calibration_holdout", holdout[index]))
+        rows.append(_row(index, "repeat_last_target", 1.20))
+    gate = REPORT.evaluate_gate(rows)
+    assert gate["decision"] == "GO"
+    assert gate["paired_targets"] == 8
+    assert gate["holdout_win_count"] == 5
+    assert gate["holdout_win_rate"] == 0.625
+
+
+def test_gate_fails_on_missing_pair_or_argmax_regression() -> None:
+    rows = []
+    for index in range(8):
+        rows.append(_row(index, "correlated_same_layer_target", 1.0))
+        if index != 7:
+            rows.append(
+                _row(
+                    index,
+                    "calibration_holdout",
+                    0.8,
+                    argmax_match=index != 6,
+                )
+            )
+    gate = REPORT.evaluate_gate(rows)
+    assert gate["decision"] == "NO_GO"
+    assert "all eight paired targets completed" in gate["failed_conditions"]
+    assert "no correlated argmax match regressed" in gate["failed_conditions"]
+
+
+def test_write_outputs_keeps_per_target_setup_fields(tmp_path: Path) -> None:
+    rows = [
+        _row(0, "correlated_same_layer_target", 1.0),
+        _row(1, "correlated_same_layer_target", 0.8),
+    ]
+    summary = REPORT.aggregate_rows(rows)
+    REPORT.write_outputs(tmp_path, rows, summary)
+    csv_text = (tmp_path / "multi_target_rows.csv").read_text(encoding="utf-8")
+    assert "target_0" in csv_text
+    assert "target_1" in csv_text
+    assert ",20," in csv_text
+    assert ",21," in csv_text
+    assert (tmp_path / "multi_target_summary.json").exists()
+    assert "# Light Doc Cache Multi-Target Gate" in (
+        tmp_path / "multi_target_report.md"
+    ).read_text(encoding="utf-8")
