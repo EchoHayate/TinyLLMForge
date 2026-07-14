@@ -45,6 +45,7 @@ summarize_target_verify_stats = ngram.summarize_target_verify_stats
 AdaptiveDraftState = ngram.AdaptiveDraftState
 update_adaptive_draft_state = ngram.update_adaptive_draft_state
 propose_draft = profile_ngram.propose_draft
+validate_profile_args = profile_ngram.validate_profile_args
 DraftModelInput = draft_model_schema.DraftModelInput
 DraftModelContract = draft_model_schema.DraftModelContract
 DraftModelResult = draft_model_schema.DraftModelResult
@@ -307,6 +308,81 @@ def test_propose_draft_dispatches_ngram_source():
     assert draft.source == "ngram"
     assert draft.tokens == [4, 1]
     assert draft.metadata == {"match_start": 3, "ngram_size": 2}
+
+
+def test_propose_draft_accepts_per_event_cap_without_mutating_args():
+    class Args:
+        draft_source = "ngram"
+        ngram_size = 2
+        max_draft_tokens = 4
+
+    draft = propose_draft(
+        [1, 2, 3, 4, 1, 2],
+        Args(),
+        max_draft_tokens=1,
+    )
+
+    assert draft.tokens == [3]
+    assert Args.max_draft_tokens == 4
+
+
+def test_profile_validation_rejects_adaptive_non_ngram_source():
+    class Args:
+        model = "model"
+        temperature = 0.0
+        max_commit_events = 0
+        warmup_output_len = 1
+        simulate_kv_upload_mb = 0.0
+        draft_policy = "adaptive"
+        draft_source = "dflash-toy"
+        mode = "candidate-only"
+        max_num_seqs = 1
+        max_draft_tokens = 4
+
+    try:
+        validate_profile_args(Args())
+    except ValueError as exc:
+        assert "adaptive draft policy requires --draft-source ngram" in str(exc)
+    else:
+        raise AssertionError("adaptive non-ngram source accepted")
+
+
+def test_profile_validation_requires_single_sequence_for_adaptive():
+    class Args:
+        model = "model"
+        temperature = 0.0
+        max_commit_events = 0
+        warmup_output_len = 1
+        simulate_kv_upload_mb = 0.0
+        draft_policy = "adaptive"
+        draft_source = "ngram"
+        mode = "candidate-only"
+        max_num_seqs = 2
+        max_draft_tokens = 4
+
+    try:
+        validate_profile_args(Args())
+    except ValueError as exc:
+        assert "--max-num-seqs 1" in str(exc)
+    else:
+        raise AssertionError("batched adaptive profile accepted")
+
+
+def test_attach_draft_policy_event_updates_adaptive_after_verification():
+    state = AdaptiveDraftState()
+
+    event = profile_ngram.attach_draft_policy_event(
+        {"accepted_count": 0, "timing_ms": {"verify_commit_total_ms": 3.5}},
+        profile_ngram.DraftProposal(tokens=[10, 11], source="ngram"),
+        selected_k=2,
+        adaptive_state=state,
+    )
+
+    assert event["selected_k"] == 2
+    assert event["proposed_tokens"] == 2
+    assert event["wasted_draft_tokens"] == 2
+    assert event["adaptive_transition"]["selected_k_after"] == 1
+    assert state.selected_k == 1
 
 
 def test_propose_draft_dflash_toy_repeats_recent_window():
@@ -844,6 +920,10 @@ def main():
     test_adaptive_rejects_invalid_counts_and_state()
     test_adaptive_transition_record_is_json_friendly_and_replayable()
     test_propose_draft_dispatches_ngram_source()
+    test_propose_draft_accepts_per_event_cap_without_mutating_args()
+    test_profile_validation_rejects_adaptive_non_ngram_source()
+    test_profile_validation_requires_single_sequence_for_adaptive()
+    test_attach_draft_policy_event_updates_adaptive_after_verification()
     test_propose_draft_dflash_toy_repeats_recent_window()
     test_propose_draft_dflash_toy_waits_for_context()
     test_propose_draft_dflash_toy_ngram_or_repeat_prefers_ngram()

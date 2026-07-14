@@ -40,6 +40,8 @@ _NGRAM_SPEC.loader.exec_module(ngram)
 
 count_accepted_prefix = ngram.count_accepted_prefix
 propose_ngram_draft = ngram.propose_ngram_draft
+AdaptiveDraftState = ngram.AdaptiveDraftState
+update_adaptive_draft_state = ngram.update_adaptive_draft_state
 
 
 DEFAULT_PROMPTS = [
@@ -88,6 +90,8 @@ def parse_args():
                    help="S3 commit smoke currently requires greedy decoding, so this must be 0.0.")
     p.add_argument("--draft-source", type=str, default="ngram", choices=["ngram", "dflash-toy", "dflash-toy-ngram-or-repeat"],
                    help="Draft source for candidate-only/paired speculative verify+commit experiments.")
+    p.add_argument("--draft-policy", type=str, default="fixed", choices=["fixed", "adaptive"],
+                   help="Use a fixed proposal cap or the profiler-only adaptive n-gram cap.")
     p.add_argument("--ngram-size", type=int, default=3)
     p.add_argument("--dflash-toy-context-tokens", type=int, default=1,
                    help="Minimum trailing context tokens required before dflash-toy proposes a block.")
@@ -155,9 +159,14 @@ def cuda_sync_if_available():
         return
 
 
-def propose_draft(history: list[int], args) -> DraftProposal:
+def propose_draft(
+    history: list[int],
+    args,
+    max_draft_tokens: int | None = None,
+) -> DraftProposal:
+    draft_cap = args.max_draft_tokens if max_draft_tokens is None else int(max_draft_tokens)
     if args.draft_source == "ngram":
-        draft = propose_ngram_draft(history, args.ngram_size, args.max_draft_tokens)
+        draft = propose_ngram_draft(history, args.ngram_size, draft_cap)
         return DraftProposal(
             tokens=list(draft.tokens),
             source="ngram",
@@ -167,7 +176,7 @@ def propose_draft(history: list[int], args) -> DraftProposal:
             },
         )
     if args.draft_source == "dflash-toy-ngram-or-repeat":
-        draft = propose_ngram_draft(history, args.ngram_size, args.max_draft_tokens)
+        draft = propose_ngram_draft(history, args.ngram_size, draft_cap)
         if draft.tokens:
             return DraftProposal(
                 tokens=list(draft.tokens),
@@ -181,18 +190,18 @@ def propose_draft(history: list[int], args) -> DraftProposal:
             )
     if args.draft_source in ("dflash-toy", "dflash-toy-ngram-or-repeat"):
         context_tokens = max(1, int(args.dflash_toy_context_tokens))
-        if args.max_draft_tokens <= 0 or len(history) < context_tokens:
+        if draft_cap <= 0 or len(history) < context_tokens:
             return DraftProposal(
                 tokens=[],
                 source=args.draft_source,
                 metadata={"reason": "insufficient_history", "context_tokens": context_tokens},
             )
-        window = list(history[-max(1, min(len(history), args.max_draft_tokens)):])
+        window = list(history[-max(1, min(len(history), draft_cap)):])
         tokens = []
-        while len(tokens) < args.max_draft_tokens:
+        while len(tokens) < draft_cap:
             tokens.extend(window)
         return DraftProposal(
-            tokens=tokens[:args.max_draft_tokens],
+            tokens=tokens[:draft_cap],
             source=args.draft_source,
             metadata={
                 "toy_strategy": "repeat_recent_tokens" if args.draft_source == "dflash-toy" else "ngram_or_repeat",
@@ -202,6 +211,24 @@ def propose_draft(history: list[int], args) -> DraftProposal:
             },
         )
     raise ValueError(f"unsupported draft_source={args.draft_source}")
+
+
+def attach_draft_policy_event(
+    event: dict,
+    draft: DraftProposal,
+    selected_k: int,
+    adaptive_state: AdaptiveDraftState | None,
+) -> dict:
+    event["selected_k"] = int(selected_k)
+    event["proposed_tokens"] = len(draft.tokens)
+    event["wasted_draft_tokens"] = len(draft.tokens) - int(event["accepted_count"])
+    if adaptive_state is not None:
+        event["adaptive_transition"] = update_adaptive_draft_state(
+            adaptive_state,
+            proposed=len(draft.tokens),
+            accepted=int(event["accepted_count"]),
+        )
+    return event
 
 
 def run_draft_model_stub(hidden_rows, candidate_token_ids=None, top_k: int = 3,
@@ -1522,6 +1549,7 @@ def run_candidate_only_profile(args) -> dict:
             "verify_timing_ms": {},
             "events": [],
             "verify_events": [],
+            "adaptive_state": AdaptiveDraftState() if args.draft_policy == "adaptive" else None,
         }
 
     outputs = {}
@@ -1537,7 +1565,13 @@ def run_candidate_only_profile(args) -> dict:
             candidate = _find_running_seq(llm, candidate_id)
             if not can_commit_more or candidate is None:
                 continue
-            draft = propose_draft(candidate.token_ids, args)
+            adaptive_state = stats["adaptive_state"]
+            selected_k = adaptive_state.selected_k if adaptive_state is not None else args.max_draft_tokens
+            draft = propose_draft(
+                candidate.token_ids,
+                args,
+                max_draft_tokens=selected_k,
+            )
             if not draft.tokens:
                 stats["no_draft_steps"] += 1
                 continue
@@ -1553,6 +1587,12 @@ def run_candidate_only_profile(args) -> dict:
                 debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
                 hidden_to_draft_adapter=args.hidden_to_draft_adapter,
                 debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
+            )
+            attach_draft_policy_event(
+                event,
+                draft,
+                selected_k=selected_k,
+                adaptive_state=adaptive_state,
             )
             event["draft_metadata"] = draft.metadata
             event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}
@@ -1614,6 +1654,23 @@ def run_candidate_only_profile(args) -> dict:
             "verify_events": stats["verify_events"],
             "acceptance_rate": stats["accepted_count"] / stats["drafted_tokens"] if stats["drafted_tokens"] else 0.0,
             "candidate_step_reduction": stats["accepted_count"] / len(token_ids) if token_ids else 0.0,
+            "draft_policy": args.draft_policy,
+            "selected_k_counts": {
+                str(level): sum(
+                    1 for event in stats["verify_events"]
+                    if event.get("selected_k") == level
+                )
+                for level in (1, 2, 4)
+            },
+            "adaptive_final_state": (
+                {
+                    "selected_k": stats["adaptive_state"].selected_k,
+                    "acceptance_ema": stats["adaptive_state"].acceptance_ema,
+                    "full_accept_streak": stats["adaptive_state"].full_accept_streak,
+                    "proposal_events": stats["adaptive_state"].proposal_events,
+                }
+                if stats["adaptive_state"] is not None else None
+            ),
         })
     output_tokens = sum(item["output_tokens"] for item in per_prompt)
     accepted_tokens = sum(item["accepted_count"] for item in per_prompt)
@@ -1621,6 +1678,17 @@ def run_candidate_only_profile(args) -> dict:
     commit_attempts = sum(item["commit_attempts"] for item in per_prompt)
     zero_accept_events = sum(item["zero_accept_events"] for item in per_prompt)
     no_draft_steps = sum(item["no_draft_steps"] for item in per_prompt)
+    result_verify_events = [
+        event
+        for item in per_prompt
+        for event in item.get("verify_events", [])
+    ]
+    wasted_draft_tokens = drafted_tokens - accepted_tokens
+    zero_accept_verify_ms = sum(
+        float(event.get("timing_ms", {}).get("verify_commit_total_ms", 0.0))
+        for event in result_verify_events
+        if event["accepted_count"] == 0
+    )
     summary = _base_summary(args, prompts, elapsed_s, step_records)
     summary.update({
         "output_tokens": output_tokens,
@@ -1633,6 +1701,18 @@ def run_candidate_only_profile(args) -> dict:
         "drafted_tokens": drafted_tokens,
         "accepted_count": accepted_tokens,
         "acceptance_rate": accepted_tokens / drafted_tokens if drafted_tokens else 0.0,
+        "wasted_draft_tokens": wasted_draft_tokens,
+        "draft_waste_rate": wasted_draft_tokens / drafted_tokens if drafted_tokens else 0.0,
+        "zero_accept_event_rate": zero_accept_events / commit_attempts if commit_attempts else 0.0,
+        "zero_accept_verify_ms": zero_accept_verify_ms,
+        "draft_policy": args.draft_policy,
+        "selected_k_counts": {
+            str(level): sum(
+                item["selected_k_counts"][str(level)]
+                for item in per_prompt
+            )
+            for level in (1, 2, 4)
+        },
         "candidate_autoregressive_steps_avoided": accepted_tokens,
         "candidate_step_reduction": accepted_tokens / output_tokens if output_tokens else 0.0,
         "verify_timing_ms": _sum_timing_ms([{"timing_ms": item["verify_timing_ms"]} for item in per_prompt]),
@@ -1673,6 +1753,28 @@ def run_candidate_only_profile(args) -> dict:
     }
 
 
+def validate_profile_args(args) -> None:
+    if args.model is None:
+        raise ValueError("--model is required unless a synthetic smoke flag is set")
+    if args.temperature != 0.0:
+        raise ValueError("S3/S4 profiler currently supports greedy decoding only (--temperature 0.0)")
+    if args.max_commit_events < 0:
+        raise ValueError("--max-commit-events must be >= 0; use 0 for unlimited")
+    if args.warmup_output_len < 0:
+        raise ValueError("--warmup-output-len must be >= 0")
+    if args.simulate_kv_upload_mb < 0:
+        raise ValueError("--simulate-kv-upload-mb must be >= 0")
+    if args.max_draft_tokens <= 0:
+        raise ValueError("--max-draft-tokens must be > 0")
+    if args.draft_policy == "adaptive":
+        if args.draft_source != "ngram":
+            raise ValueError("adaptive draft policy requires --draft-source ngram")
+        if args.mode != "candidate-only":
+            raise ValueError("adaptive draft policy requires --mode candidate-only")
+        if args.max_num_seqs != 1:
+            raise ValueError("adaptive draft policy requires --max-num-seqs 1")
+
+
 def run_profile(args) -> dict:
     if args.kv_offload_migration_smoke:
         return run_kv_offload_migration_smoke()
@@ -1683,18 +1785,7 @@ def run_profile(args) -> dict:
     if args.blockwise_prefill_attn_smoke:
         return run_blockwise_prefill_attn_smoke(args)
 
-    if args.model is None:
-        raise ValueError("--model is required unless a KV offload synthetic smoke flag is set")
-
-    if args.temperature != 0.0:
-        raise ValueError("S3/S4 profiler currently supports greedy decoding only (--temperature 0.0)")
-
-    if args.max_commit_events < 0:
-        raise ValueError("--max-commit-events must be >= 0; use 0 for unlimited")
-    if args.warmup_output_len < 0:
-        raise ValueError("--warmup-output-len must be >= 0")
-    if args.simulate_kv_upload_mb < 0:
-        raise ValueError("--simulate-kv-upload-mb must be >= 0")
+    validate_profile_args(args)
 
     if args.mode == "baseline-only":
         return run_baseline_only_profile(args)
