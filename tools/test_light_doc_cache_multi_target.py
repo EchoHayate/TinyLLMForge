@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_PATH = ROOT / "experiments" / "light_doc_cache" / "make_multi_target_read_path_report.py"
 SPEC = importlib.util.spec_from_file_location("make_multi_target_read_path_report", REPORT_PATH)
@@ -226,3 +228,54 @@ def test_sha256_file_is_stable(tmp_path: Path) -> None:
     path = tmp_path / "bank.json"
     path.write_text('{"kind":"test"}\n', encoding="utf-8")
     assert len(REPORT.hashlib_sha256_file(path)) == 64
+
+
+def test_multi_target_remote_runner_has_required_safety_contract() -> None:
+    script = (
+        ROOT
+        / "experiments"
+        / "light_doc_cache"
+        / "run_tinyllm_read_path_multi_target_remote.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+    for needle in [
+        "set -euo pipefail",
+        "sitian@10.232.195.203",
+        "CONTROL_PATH",
+        "rsync",
+        "--relative",
+        "nvidia-smi --query-gpu=index,memory.used",
+        "TINYVLLM_DIST_PORT",
+        "MASTER_PORT",
+        "TARGET_LIMIT",
+        "multi_target_summary.json",
+    ]:
+        assert needle in text
+
+
+def test_read_path_pack_and_scatter_follow_sequence_block_table() -> None:
+    read_path_script = (
+        ROOT
+        / "experiments"
+        / "light_doc_cache"
+        / "run_tinyllm_sidecar_read_path_smoke.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_tinyllm_sidecar_read_path_smoke_for_multi_target_test",
+        read_path_script,
+    )
+    assert spec is not None and spec.loader is not None
+    read_path = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = read_path
+    spec.loader.exec_module(read_path)
+
+    full = np.arange(2 * 1 * 5 * 2 * 1 * 1).reshape(2, 1, 5, 2, 1, 1)
+    packed = read_path.pack_sequence_kv_blocks(full, [3, 1])
+    assert np.array_equal(packed[:, :, 0], full[:, :, 3])
+    assert np.array_equal(packed[:, :, 1], full[:, :, 1])
+
+    restored_packed = packed + 1000
+    scattered = read_path.scatter_sequence_kv_blocks(full, restored_packed, [3, 1])
+    assert np.array_equal(scattered[:, :, 3], restored_packed[:, :, 0])
+    assert np.array_equal(scattered[:, :, 1], restored_packed[:, :, 1])
+    assert np.array_equal(scattered[:, :, 0], full[:, :, 0])
