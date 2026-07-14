@@ -1,0 +1,22 @@
+{
+  "argmax_match": true,
+  "artifact": "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence/targets/repetitive/correlated_same_layer_target",
+  "calibration_bank_sha256": "",
+  "category": "repetitive_text",
+  "error": "",
+  "length_bucket": "long",
+  "logical_byte_saving_fraction": 0.17633928571428573,
+  "max_abs_logit_diff": 3.21875,
+  "mean_abs_logit_diff": 0.5488048791885376,
+  "missing_mae": 1.0438909217008396,
+  "missing_max_abs": 204.0,
+  "missing_mse": 4.439373941327945,
+  "missing_tokens": 7979,
+  "mode": "correlated_same_layer_target",
+  "original_argmax": 785,
+  "prompt_tokens": 202,
+  "restored_argmax": 785,
+  "role": "baseline",
+  "status": "success",
+  "target_id": "repetitive"
+}

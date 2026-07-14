@@ -1,0 +1,26 @@
+MULTI_TARGET_AUDIT_OK NO_GO
+BANK_SHA256 92ab5801523c85faa5e315cc229381818f960cc69940a4de6579688bd8e1fcc0
+ROWS 24
+ATTEMPTS 24
+SUCCESSFUL_ROWS 24
+BUCKET_COUNTS short=2 medium=3 long=3
+HOLDOUT_BANK_HASH_COUNT 1
+
+COMPLETION_CHECKLIST
+[x] Eight required categories are present in the dataset and manifest.
+[x] Actual Qwen3-0.6B token counts cover short, medium, and long buckets.
+[x] One immutable calibration bank is referenced by every holdout row.
+[x] Three modes were attempted for every target.
+[x] Per-target metrics exist under targets/<id>/<mode>/summary.json.
+[x] Aggregate mean, median, P90, and worst metrics exist.
+[x] Win rate and relative regression fields exist.
+[x] GO/NO_GO conditions were independently audited.
+[x] Reports preserve the default-off claim boundary.
+[x] Documentation makes no physical-memory or throughput claim.
+
+DECISION NO_GO
+FAILED_CONDITIONS
+- holdout wins at least five targets
+- mean logit diff improves at least five percent
+- worst relative regression no more than twenty five percent
+- no correlated argmax match regressed

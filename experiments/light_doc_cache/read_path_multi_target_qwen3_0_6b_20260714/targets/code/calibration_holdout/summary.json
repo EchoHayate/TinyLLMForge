@@ -1,0 +1,22 @@
+{
+  "argmax_match": true,
+  "artifact": "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence/targets/code/calibration_holdout",
+  "calibration_bank_sha256": "92ab5801523c85faa5e315cc229381818f960cc69940a4de6579688bd8e1fcc0",
+  "category": "source_code",
+  "error": "",
+  "length_bucket": "medium",
+  "logical_byte_saving_fraction": 0.17410714285714285,
+  "max_abs_logit_diff": 7.375,
+  "mean_abs_logit_diff": 1.2279694080352783,
+  "missing_mae": 1.6726506633943394,
+  "missing_max_abs": 322.0,
+  "missing_mse": 13.467333002617329,
+  "missing_tokens": 3081,
+  "mode": "calibration_holdout",
+  "original_argmax": 594,
+  "prompt_tokens": 79,
+  "restored_argmax": 594,
+  "role": "trained",
+  "status": "success",
+  "target_id": "code"
+}

@@ -1,0 +1,22 @@
+{
+  "argmax_match": false,
+  "artifact": "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence/targets/document_qa/correlated_same_layer_target",
+  "calibration_bank_sha256": "",
+  "category": "long_document_qa",
+  "error": "",
+  "length_bucket": "long",
+  "logical_byte_saving_fraction": 0.17633928571428573,
+  "max_abs_logit_diff": 6.03125,
+  "mean_abs_logit_diff": 0.8609092235565186,
+  "missing_mae": 1.214912933600074,
+  "missing_max_abs": 165.0,
+  "missing_mse": 6.1397970702798155,
+  "missing_tokens": 8374,
+  "mode": "correlated_same_layer_target",
+  "original_argmax": 785,
+  "prompt_tokens": 212,
+  "restored_argmax": 28715,
+  "role": "baseline",
+  "status": "success",
+  "target_id": "document_qa"
+}

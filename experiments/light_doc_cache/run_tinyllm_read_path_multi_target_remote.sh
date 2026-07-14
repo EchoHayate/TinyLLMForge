@@ -78,6 +78,14 @@ PORT="$(
 
 "${SSH[@]}" "$REMOTE" \
   "cd '$REMOTE_REPO' && mkdir -p '$REMOTE_OUTPUT' && \
+   printf '%s\n' \
+     'remote=$REMOTE' \
+     'hostname='\"\$(hostname)\" \
+     'gpu=$GPU' \
+     'port=$PORT' \
+     'model=$MODEL' \
+     'target_limit=$TARGET_LIMIT' \
+     > '$REMOTE_OUTPUT/remote_run.env' && \
    CUDA_VISIBLE_DEVICES='$GPU' \
    TINYVLLM_DIST_PORT='$PORT' \
    MASTER_PORT='$PORT' \

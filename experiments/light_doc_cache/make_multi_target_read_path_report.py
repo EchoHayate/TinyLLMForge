@@ -345,7 +345,11 @@ def write_outputs(
     with (output_dir / "multi_target_rows.csv").open(
         "w", newline="", encoding="utf-8"
     ) as handle:
-        writer = csv.DictWriter(handle, fieldnames=ROW_FIELDS)
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=ROW_FIELDS,
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(
             {field: row.get(field, "") for field in ROW_FIELDS}

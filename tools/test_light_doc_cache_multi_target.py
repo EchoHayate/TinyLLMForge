@@ -164,7 +164,9 @@ def test_write_outputs_keeps_per_target_setup_fields(tmp_path: Path) -> None:
     ]
     summary = REPORT.aggregate_rows(rows)
     REPORT.write_outputs(tmp_path, rows, summary)
-    csv_text = (tmp_path / "multi_target_rows.csv").read_text(encoding="utf-8")
+    csv_path = tmp_path / "multi_target_rows.csv"
+    csv_text = csv_path.read_text(encoding="utf-8")
+    assert b"\r\n" not in csv_path.read_bytes()
     assert "target_0" in csv_text
     assert "target_1" in csv_text
     assert ",20," in csv_text

@@ -1,0 +1,22 @@
+{
+  "argmax_match": true,
+  "artifact": "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence/targets/math/correlated_same_layer_target",
+  "calibration_bank_sha256": "",
+  "category": "mathematical_reasoning",
+  "error": "",
+  "length_bucket": "medium",
+  "logical_byte_saving_fraction": 0.17288165266106442,
+  "max_abs_logit_diff": 4.125,
+  "mean_abs_logit_diff": 0.6339895725250244,
+  "missing_mae": 1.2833169758253837,
+  "missing_max_abs": 125.0,
+  "missing_mse": 6.6390464437234495,
+  "missing_tokens": 1975,
+  "mode": "correlated_same_layer_target",
+  "original_argmax": 11,
+  "prompt_tokens": 51,
+  "restored_argmax": 11,
+  "role": "baseline",
+  "status": "success",
+  "target_id": "math"
+}

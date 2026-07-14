@@ -1,0 +1,22 @@
+{
+  "argmax_match": true,
+  "artifact": "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence/targets/code/correlated_same_layer_target",
+  "calibration_bank_sha256": "",
+  "category": "source_code",
+  "error": "",
+  "length_bucket": "medium",
+  "logical_byte_saving_fraction": 0.17410714285714285,
+  "max_abs_logit_diff": 1.9765625,
+  "mean_abs_logit_diff": 0.29286789894104004,
+  "missing_mae": 1.224153705461193,
+  "missing_max_abs": 249.0,
+  "missing_mse": 6.42021067581516,
+  "missing_tokens": 3081,
+  "mode": "correlated_same_layer_target",
+  "original_argmax": 594,
+  "prompt_tokens": 79,
+  "restored_argmax": 594,
+  "role": "baseline",
+  "status": "success",
+  "target_id": "code"
+}

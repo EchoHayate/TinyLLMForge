@@ -1,0 +1,22 @@
+{
+  "argmax_match": true,
+  "artifact": "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence/targets/structured/correlated_same_layer_target",
+  "calibration_bank_sha256": "",
+  "category": "structured_text",
+  "error": "",
+  "length_bucket": "short",
+  "logical_byte_saving_fraction": 0.17633928571428573,
+  "max_abs_logit_diff": 4.75,
+  "mean_abs_logit_diff": 0.7945890426635742,
+  "missing_mae": 1.2538355068734595,
+  "missing_max_abs": 254.0,
+  "missing_mse": 7.0926455710229055,
+  "missing_tokens": 1422,
+  "mode": "correlated_same_layer_target",
+  "original_argmax": 785,
+  "prompt_tokens": 36,
+  "restored_argmax": 785,
+  "role": "baseline",
+  "status": "success",
+  "target_id": "structured"
+}
