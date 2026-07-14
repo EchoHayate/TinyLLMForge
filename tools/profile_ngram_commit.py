@@ -82,6 +82,8 @@ def parse_args():
     p.add_argument("--prompt", action="append", default=None,
                    help="Prompt to benchmark. Can be passed multiple times. Defaults to the S3/S4 single prompt.")
     p.add_argument("--max-output-len", type=int, default=64)
+    p.add_argument("--ignore-eos", action="store_true", default=False,
+                   help="Generate exactly --max-output-len tokens for isolated benchmark comparability.")
     p.add_argument("--warmup-output-len", type=int, default=0,
                    help="Run one untimed warmup request before measurement. This removes cold CUDA/kernel setup from timing.")
     p.add_argument("--simulate-kv-upload-mb", type=float, default=0.0,
@@ -726,7 +728,11 @@ def _create_llm(args):
         quest_min_seq_len=args.quest_min_seq_len,
     )
     prompts = args.prompt or DEFAULT_PROMPTS
-    sp = SamplingParams(temperature=args.temperature, ignore_eos=False, max_tokens=args.max_output_len)
+    sp = SamplingParams(
+        temperature=args.temperature,
+        ignore_eos=args.ignore_eos,
+        max_tokens=args.max_output_len,
+    )
     return llm, prompts, sp
 
 
@@ -1502,6 +1508,7 @@ def run_baseline_only_profile(args) -> dict:
         token_ids = outputs.get(seq_id, [])
         per_prompt.append({
             **item,
+            "prompt_tokens": len(llm.tokenizer.encode(item["prompt"])),
             "output_tokens": len(token_ids),
             "token_ids": token_ids,
             "text": llm.tokenizer.decode(token_ids),
@@ -1640,6 +1647,7 @@ def run_candidate_only_profile(args) -> dict:
             "prompt_index": stats["prompt_index"],
             "prompt": stats["prompt"],
             "seq_id": candidate_id,
+            "prompt_tokens": len(llm.tokenizer.encode(stats["prompt"])),
             "output_tokens": len(token_ids),
             "token_ids": token_ids,
             "text": llm.tokenizer.decode(token_ids),
