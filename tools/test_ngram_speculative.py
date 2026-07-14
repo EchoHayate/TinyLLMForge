@@ -53,12 +53,28 @@ DraftModelStubConfig = draft_model_schema.DraftModelStubConfig
 validate_draft_model_contract = draft_model_schema.validate_draft_model_contract
 run_draft_model_stub = profile_ngram.run_draft_model_stub
 summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
+build_verify_tail_plan = profile_ngram._build_verify_tail_plan
 
 
 def _base_draft_model_metadata(metadata: dict) -> dict:
     return {
         key: value for key, value in metadata.items()
         if key not in ("input_schema", "contract")
+    }
+
+
+def test_verify_tail_plan_keeps_pending_token_on_decode_path():
+    assert build_verify_tail_plan(history_len=52, draft_tokens=[10]) == {
+        "input_tokens": [],
+        "slot_positions": [],
+        "positions": [],
+        "kv_tokens": 52,
+    }
+    assert build_verify_tail_plan(history_len=52, draft_tokens=[10, 20, 30, 40]) == {
+        "input_tokens": [10, 20, 30],
+        "slot_positions": [52, 53, 54],
+        "positions": [53, 54, 55],
+        "kv_tokens": 55,
     }
 
 

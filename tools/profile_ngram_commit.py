@@ -509,6 +509,17 @@ def _find_running_seq(llm, seq_id: int):
     return None
 
 
+def _build_verify_tail_plan(history_len: int, draft_tokens: list[int]) -> dict:
+    input_tokens = list(draft_tokens[:-1])
+    query_len = len(input_tokens)
+    return {
+        "input_tokens": input_tokens,
+        "slot_positions": list(range(history_len, history_len + query_len)),
+        "positions": list(range(history_len + 1, history_len + 1 + query_len)),
+        "kv_tokens": history_len + query_len,
+    }
+
+
 def _finish_if_needed(llm, seq, committed_tokens: list[int]) -> bool:
     if not committed_tokens:
         return False
@@ -556,10 +567,16 @@ def verify_and_commit_block(
 
     try:
         t0 = time.perf_counter()
-        input_tokens = [seq.last_token] + list(draft_tokens)
+        first_target = llm.model_runner.run([seq], is_prefill=False)[0]
+        cuda_sync_if_available()
+        timing_ms["decode_first_target_ms"] = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        tail_plan = _build_verify_tail_plan(history_len, draft_tokens)
+        input_tokens = tail_plan["input_tokens"]
         query_len = len(input_tokens)
         proxy_block_table = list(seq.block_table) + list(reserved_blocks)
-        slot_positions = list(range(history_len - 1, history_len + len(draft_tokens)))
+        slot_positions = tail_plan["slot_positions"]
         dirty_blocks = [proxy_block_table[pos // seq.block_size] for pos in slot_positions]
         if getattr(llm.model_runner, "kv_offload", None) is not None:
             first_write_offset_by_block = {}
@@ -598,18 +615,16 @@ def verify_and_commit_block(
             for pos in slot_positions
         ]
         input_ids = llm.model_runner._list_to_cuda(input_tokens, "commit_input_ids", torch.int64)
-        # Match TinyLLM's decode convention: the last token of a length-H
-        # sequence is evaluated with position H, not H-1.
         positions = llm.model_runner._list_to_cuda(
-            list(range(history_len, history_len + query_len)), "commit_positions", torch.int64)
+            tail_plan["positions"], "commit_positions", torch.int64)
         cu_seqlens_q = llm.model_runner._list_to_cuda([0, query_len], "commit_cu_seqlens_q", torch.int32)
         cu_seqlens_k = llm.model_runner._list_to_cuda(
-            [0, history_len + len(draft_tokens)], "commit_cu_seqlens_k", torch.int32)
+            [0, tail_plan["kv_tokens"]], "commit_cu_seqlens_k", torch.int32)
         slot_mapping = llm.model_runner._list_to_cuda(slot_mapping_data, "commit_slot_mapping", torch.int32)
         block_tables = llm.model_runner.prepare_block_tables_from_rows([physical_proxy_block_table], "commit_block_tables")
         logits_indices = llm.model_runner._list_to_cuda(
-            list(range(len(draft_tokens))), "commit_logits_indices", torch.int64)
-        set_context(True, cu_seqlens_q, cu_seqlens_k, query_len, history_len + len(draft_tokens),
+            list(range(query_len)), "commit_logits_indices", torch.int64)
+        set_context(True, cu_seqlens_q, cu_seqlens_k, query_len, tail_plan["kv_tokens"],
                     slot_mapping, None, block_tables, logits_indices)
         cuda_sync_if_available()
         timing_ms["verify_prepare_ms"] = (time.perf_counter() - t0) * 1000.0
@@ -619,30 +634,34 @@ def verify_and_commit_block(
         t0 = time.perf_counter()
         hidden_debug = None
         hidden_to_draft_stub = None
-        if getattr(llm.model_runner, "kv_offload", None) is not None:
-            llm.model_runner._kv_offload_before_forward()
-        if debug_target_hidden or debug_hidden_to_draft_stub:
-            logits, hidden_states = llm.model_runner.run_model(
-                input_ids, positions, is_prefill=True, return_hidden=True)
-            hidden_debug = {
-                "shape": [int(dim) for dim in hidden_states.shape],
-                "dtype": str(hidden_states.dtype),
-                "device": str(hidden_states.device),
-            }
-            if debug_hidden_to_draft_stub:
-                hidden_to_draft_stub = summarize_hidden_to_draft_stub(
-                    hidden_states, logits, debug_hidden_to_draft_top_k, hidden_to_draft_adapter)
+        if query_len:
+            if getattr(llm.model_runner, "kv_offload", None) is not None:
+                llm.model_runner._kv_offload_before_forward()
+            if debug_target_hidden or debug_hidden_to_draft_stub:
+                logits, hidden_states = llm.model_runner.run_model(
+                    input_ids, positions, is_prefill=True, return_hidden=True)
+                hidden_debug = {
+                    "shape": [int(dim) for dim in hidden_states.shape],
+                    "dtype": str(hidden_states.dtype),
+                    "device": str(hidden_states.device),
+                }
+                if debug_hidden_to_draft_stub:
+                    hidden_to_draft_stub = summarize_hidden_to_draft_stub(
+                        hidden_states, logits, debug_hidden_to_draft_top_k, hidden_to_draft_adapter)
+            else:
+                logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
+            tail_targets = [int(token_id) for token_id in logits.argmax(dim=-1).tolist()]
         else:
-            logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
+            tail_targets = []
         cuda_sync_if_available()
-        if getattr(llm.model_runner, "kv_offload", None) is not None:
+        if query_len and getattr(llm.model_runner, "kv_offload", None) is not None:
             llm.model_runner.kv_offload.mark_dirty(dirty_blocks)
             if not llm.model_runner.kv_offload.writeback_on_evict:
                 llm.model_runner.kv_offload.writeback_dirty(dirty_blocks)
         timing_ms["target_forward_ms"] = (time.perf_counter() - t0) * 1000.0
 
         t0 = time.perf_counter()
-        target_tokens = [int(token_id) for token_id in logits.argmax(dim=-1).tolist()]
+        target_tokens = [int(first_target)] + tail_targets
         accepted = count_accepted_prefix(draft_tokens, target_tokens)
         accepted_tokens = list(draft_tokens[:accepted])
         if not seq.ignore_eos and llm.scheduler.eos in accepted_tokens:
