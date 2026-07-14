@@ -8,11 +8,19 @@ REMOTE_HOST="${REMOTE_HOST:-sitian@10.232.195.203}"
 REMOTE_PYTHON="${REMOTE_PYTHON:-/data00/home/sitian/sitian-workspace01/tllm/env/bin/python}"
 REMOTE_BASE="${REMOTE_BASE:-/data00/home/sitian/sitian-workspace01/tllm/adaptive-ngram-gates}"
 CUDA_DEVICE="${CUDA_VISIBLE_DEVICES:-7}"
+SSH_CONTROL_PATH="${SSH_CONTROL_PATH:-/tmp/ssh-sitian-10.232.195.203}"
 MODE="${1:-smoke}"
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)-$$}"
 REMOTE_DIR="${REMOTE_BASE}/${RUN_TAG}"
 LOCAL_OUT="${LOCAL_OUT:-${REPO_ROOT}/experiments/adaptive_ngram/${RUN_TAG}}"
 BASE_SEED="${BASE_SEED:-20260714}"
+
+SSH_CMD=(ssh)
+SCP_CMD=(scp)
+if [[ -S "${SSH_CONTROL_PATH}" ]]; then
+  SSH_CMD+=(-S "${SSH_CONTROL_PATH}" -o BatchMode=yes)
+  SCP_CMD+=(-o "ControlPath=${SSH_CONTROL_PATH}" -o BatchMode=yes)
+fi
 
 case "${MODE}" in
   preflight)
@@ -38,7 +46,7 @@ else
 fi
 
 discover_model() {
-  ssh "${REMOTE_HOST}" "${REMOTE_PYTHON}" - <<'PY'
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "${REMOTE_PYTHON}" - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -83,7 +91,7 @@ PY
 
 validate_model() {
   local model_path="$1"
-  ssh "${REMOTE_HOST}" "${REMOTE_PYTHON}" - "${model_path}" <<'PY'
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "${REMOTE_PYTHON}" - "${model_path}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -131,15 +139,15 @@ echo "[adaptive-ngram] source_commit=${SOURCE_COMMIT} dirty=${SOURCE_DIRTY}"
 echo "[adaptive-ngram] remote_dir=${REMOTE_DIR}"
 echo "[adaptive-ngram] local_out=${LOCAL_OUT}"
 
-ssh "${REMOTE_HOST}" "mkdir -p '${REMOTE_DIR}/tools'"
+"${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p '${REMOTE_DIR}/tools'"
 tar -C "${REPO_ROOT}" -cf - \
   tinyvllm \
   tools/draft_model_schema.py \
   tools/profile_ngram_commit.py \
   tools/adaptive_ngram_gate.py |
-  ssh "${REMOTE_HOST}" "tar -C '${REMOTE_DIR}' -xf -"
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "tar -C '${REMOTE_DIR}' -xf -"
 
-ssh "${REMOTE_HOST}" \
+"${SSH_CMD[@]}" "${REMOTE_HOST}" \
   "cd '${REMOTE_DIR}' && \
    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH='${REMOTE_DIR}' \
    '${REMOTE_PYTHON}' -m py_compile \
@@ -175,7 +183,7 @@ if [[ "${RESUME:-0}" == "1" ]]; then
 fi
 
 set +e
-ssh "${REMOTE_HOST}" \
+"${SSH_CMD[@]}" "${REMOTE_HOST}" \
   "cd '${REMOTE_DIR}' && \
    CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
    PYTHONDONTWRITEBYTECODE=1 \
@@ -185,7 +193,7 @@ REMOTE_RUN_STATUS=$?
 set -e
 
 mkdir -p "${LOCAL_OUT}"
-scp -r "${REMOTE_HOST}:${REMOTE_OUT}/." "${LOCAL_OUT}/"
+"${SCP_CMD[@]}" -r "${REMOTE_HOST}:${REMOTE_OUT}/." "${LOCAL_OUT}/"
 
 if [[ -f "${LOCAL_OUT}/manifest.json" && -f "${LOCAL_OUT}/raw_rows.json" ]]; then
   PYTHONDONTWRITEBYTECODE=1 python3 "${REPO_ROOT}/tools/adaptive_ngram_gate.py" \
