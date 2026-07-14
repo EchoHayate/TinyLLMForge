@@ -17,6 +17,29 @@ class NGramDraft:
     ngram_size: int
 
 
+@dataclass
+class AdaptiveDraftState:
+    levels: tuple[int, ...] = (1, 2, 4)
+    level_index: int = 1
+    acceptance_ema: float = 0.5
+    full_accept_streak: int = 0
+    proposal_events: int = 0
+
+    def __post_init__(self):
+        if self.levels != (1, 2, 4):
+            raise ValueError("adaptive levels must be exactly (1, 2, 4)")
+        if self.level_index < 0 or self.level_index >= len(self.levels):
+            raise ValueError("level_index is outside adaptive levels")
+        if not 0.0 <= self.acceptance_ema <= 1.0:
+            raise ValueError("acceptance_ema must be within [0, 1]")
+        if self.full_accept_streak < 0 or self.proposal_events < 0:
+            raise ValueError("adaptive counters must be >= 0")
+
+    @property
+    def selected_k(self) -> int:
+        return self.levels[self.level_index]
+
+
 @dataclass(frozen=True)
 class NGramReplayStats:
     positions: int
@@ -91,6 +114,61 @@ class NGramTargetVerifyStats:
     @property
     def mismatch_rate(self) -> float:
         return self.mismatched_events / self.verify_events if self.verify_events else 0.0
+
+
+def update_adaptive_draft_state(
+    state: AdaptiveDraftState,
+    proposed: int,
+    accepted: int,
+) -> dict[str, int | float | str | bool | list[int]]:
+    if proposed <= 0:
+        raise ValueError("proposed must be > 0")
+    if accepted < 0 or accepted > proposed:
+        raise ValueError("accepted must be within [0, proposed]")
+
+    selected_k_before = state.selected_k
+    acceptance_ema_before = state.acceptance_ema
+    full_accept_streak_before = state.full_accept_streak
+    event_acceptance = accepted / proposed
+    state.acceptance_ema = 0.5 * event_acceptance + 0.5 * state.acceptance_ema
+    state.proposal_events += 1
+    transition_reason = "hold"
+
+    if accepted == 0:
+        state.full_accept_streak = 0
+        state.level_index = 0
+        transition_reason = "zero_accept"
+    elif event_acceptance < 0.5 or state.acceptance_ema < 0.5:
+        state.full_accept_streak = 0
+        state.level_index = max(0, state.level_index - 1)
+        transition_reason = "weak_acceptance"
+    elif accepted == proposed:
+        state.full_accept_streak += 1
+        transition_reason = "full_accept_streak"
+        if state.acceptance_ema >= 0.75 and state.full_accept_streak >= 2:
+            state.level_index = min(len(state.levels) - 1, state.level_index + 1)
+            state.full_accept_streak = 0
+            transition_reason = "promote"
+    else:
+        state.full_accept_streak = 0
+
+    selected_k_after = state.selected_k
+    return {
+        "levels": list(state.levels),
+        "proposal_event": state.proposal_events,
+        "proposed_tokens": proposed,
+        "accepted_tokens": accepted,
+        "event_acceptance": event_acceptance,
+        "acceptance_ema_before": acceptance_ema_before,
+        "acceptance_ema_after": state.acceptance_ema,
+        "full_accept_streak_before": full_accept_streak_before,
+        "full_accept_streak_after": state.full_accept_streak,
+        "selected_k_before": selected_k_before,
+        "selected_k_after": selected_k_after,
+        "transition_reason": transition_reason,
+        "promoted": selected_k_after > selected_k_before,
+        "demoted": selected_k_after < selected_k_before,
+    }
 
 
 def propose_ngram_draft(history: list[int], ngram_size: int, max_draft_tokens: int) -> NGramDraft:

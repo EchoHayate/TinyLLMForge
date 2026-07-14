@@ -42,6 +42,8 @@ summarize_online_dry_run_totals = ngram.summarize_online_dry_run_totals
 count_accepted_prefix = ngram.count_accepted_prefix
 NGramTargetVerifyStats = ngram.NGramTargetVerifyStats
 summarize_target_verify_stats = ngram.summarize_target_verify_stats
+AdaptiveDraftState = ngram.AdaptiveDraftState
+update_adaptive_draft_state = ngram.update_adaptive_draft_state
 propose_draft = profile_ngram.propose_draft
 DraftModelInput = draft_model_schema.DraftModelInput
 DraftModelContract = draft_model_schema.DraftModelContract
@@ -181,6 +183,116 @@ def test_summarize_target_verify_stats_is_json_friendly():
         "target_acceptance_rate": 0.625,
         "replay_acceptance_rate": 0.625,
         "mismatch_rate": 0.0,
+    }
+
+
+def test_adaptive_draft_state_starts_at_k2():
+    state = AdaptiveDraftState()
+
+    assert state.levels == (1, 2, 4)
+    assert state.selected_k == 2
+    assert state.acceptance_ema == 0.5
+    assert state.full_accept_streak == 0
+    assert state.proposal_events == 0
+
+
+def test_adaptive_two_strong_full_accepts_promote_and_saturate():
+    state = AdaptiveDraftState()
+
+    first = update_adaptive_draft_state(state, proposed=2, accepted=2)
+    second = update_adaptive_draft_state(state, proposed=2, accepted=2)
+    third = update_adaptive_draft_state(state, proposed=4, accepted=4)
+    fourth = update_adaptive_draft_state(state, proposed=4, accepted=4)
+
+    assert first["selected_k_before"] == 2
+    assert first["selected_k_after"] == 2
+    assert first["transition_reason"] == "full_accept_streak"
+    assert second["selected_k_after"] == 4
+    assert second["transition_reason"] == "promote"
+    assert third["selected_k_after"] == 4
+    assert fourth["selected_k_after"] == 4
+    assert state.selected_k == 4
+
+
+def test_adaptive_zero_accept_jumps_from_k4_to_k1():
+    state = AdaptiveDraftState(level_index=2, acceptance_ema=0.9, full_accept_streak=1)
+
+    event = update_adaptive_draft_state(state, proposed=4, accepted=0)
+
+    assert event["selected_k_before"] == 4
+    assert event["selected_k_after"] == 1
+    assert event["transition_reason"] == "zero_accept"
+    assert state.full_accept_streak == 0
+
+
+def test_adaptive_weak_partial_accept_moves_down_one_level():
+    state = AdaptiveDraftState(level_index=2, acceptance_ema=0.8)
+
+    event = update_adaptive_draft_state(state, proposed=4, accepted=1)
+
+    assert event["selected_k_after"] == 2
+    assert event["transition_reason"] == "weak_acceptance"
+
+
+def test_adaptive_weak_ema_demotes_k2_to_k1():
+    state = AdaptiveDraftState(level_index=1, acceptance_ema=0.2)
+
+    event = update_adaptive_draft_state(state, proposed=2, accepted=1)
+
+    assert event["event_acceptance"] == 0.5
+    assert event["acceptance_ema_after"] == 0.35
+    assert event["selected_k_after"] == 1
+
+
+def test_adaptive_partial_accept_resets_full_accept_streak():
+    state = AdaptiveDraftState(full_accept_streak=1, acceptance_ema=0.9)
+
+    event = update_adaptive_draft_state(state, proposed=2, accepted=1)
+
+    assert event["selected_k_after"] == 2
+    assert event["full_accept_streak_after"] == 0
+    assert state.full_accept_streak == 0
+
+
+def test_adaptive_rejects_invalid_counts_and_state():
+    for proposed, accepted in ((0, 0), (-1, 0), (2, -1), (2, 3)):
+        try:
+            update_adaptive_draft_state(AdaptiveDraftState(), proposed, accepted)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError((proposed, accepted))
+
+    try:
+        AdaptiveDraftState(levels=(1, 3, 4))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid adaptive levels accepted")
+
+
+def test_adaptive_transition_record_is_json_friendly_and_replayable():
+    import json
+
+    state = AdaptiveDraftState()
+    event = update_adaptive_draft_state(state, proposed=1, accepted=1)
+
+    assert json.loads(json.dumps(event)) == event
+    assert event == {
+        "levels": [1, 2, 4],
+        "proposal_event": 1,
+        "proposed_tokens": 1,
+        "accepted_tokens": 1,
+        "event_acceptance": 1.0,
+        "acceptance_ema_before": 0.5,
+        "acceptance_ema_after": 0.75,
+        "full_accept_streak_before": 0,
+        "full_accept_streak_after": 1,
+        "selected_k_before": 2,
+        "selected_k_after": 2,
+        "transition_reason": "full_accept_streak",
+        "promoted": False,
+        "demoted": False,
     }
 
 
@@ -723,6 +835,14 @@ def main():
     test_online_dry_run_rejects_and_clears_pending_tokens()
     test_count_accepted_prefix_stops_at_first_mismatch()
     test_summarize_target_verify_stats_is_json_friendly()
+    test_adaptive_draft_state_starts_at_k2()
+    test_adaptive_two_strong_full_accepts_promote_and_saturate()
+    test_adaptive_zero_accept_jumps_from_k4_to_k1()
+    test_adaptive_weak_partial_accept_moves_down_one_level()
+    test_adaptive_weak_ema_demotes_k2_to_k1()
+    test_adaptive_partial_accept_resets_full_accept_streak()
+    test_adaptive_rejects_invalid_counts_and_state()
+    test_adaptive_transition_record_is_json_friendly_and_replayable()
     test_propose_draft_dispatches_ngram_source()
     test_propose_draft_dflash_toy_repeats_recent_window()
     test_propose_draft_dflash_toy_waits_for_context()
