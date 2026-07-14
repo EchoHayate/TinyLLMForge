@@ -171,3 +171,58 @@ def test_write_outputs_keeps_per_target_setup_fields(tmp_path: Path) -> None:
     assert "# Light Doc Cache Multi-Target Gate" in (
         tmp_path / "multi_target_report.md"
     ).read_text(encoding="utf-8")
+
+
+def test_run_target_matrix_attempts_all_modes_and_records_failures(
+    tmp_path: Path,
+) -> None:
+    driver_path = (
+        ROOT
+        / "experiments"
+        / "light_doc_cache"
+        / "run_tinyllm_read_path_multi_target.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_tinyllm_read_path_multi_target",
+        driver_path,
+    )
+    assert spec is not None and spec.loader is not None
+    driver = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = driver
+    spec.loader.exec_module(driver)
+    targets = _valid_payload()["targets"][:2]
+    calls = []
+
+    def fake_run_mode(*, target, mode, output_dir):
+        calls.append((target["id"], mode))
+        if target["id"] == "structured" and mode == "calibration_holdout":
+            raise RuntimeError("synthetic target failure")
+        return _row(
+            0 if target["id"] == "short_fact" else 1,
+            mode,
+            0.5,
+        )
+
+    rows, manifest = driver.run_target_matrix(
+        targets=targets,
+        output_dir=tmp_path,
+        calibration_bank_sha256="b" * 64,
+        run_mode=fake_run_mode,
+    )
+    assert len(calls) == 6
+    assert len(rows) == 6
+    failed = [
+        row
+        for row in rows
+        if row["target_id"] == "structured"
+        and row["mode"] == "calibration_holdout"
+    ][0]
+    assert failed["status"] == "failed"
+    assert failed["error"] == "RuntimeError: synthetic target failure"
+    assert manifest["calibration_bank_sha256"] == "b" * 64
+
+
+def test_sha256_file_is_stable(tmp_path: Path) -> None:
+    path = tmp_path / "bank.json"
+    path.write_text('{"kind":"test"}\n', encoding="utf-8")
+    assert len(REPORT.hashlib_sha256_file(path)) == 64

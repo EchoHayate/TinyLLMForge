@@ -22,6 +22,11 @@ REQUIRED_CATEGORIES = {
     "out_of_distribution",
 }
 LENGTH_BUCKETS = {"short", "medium", "long"}
+TOKEN_BUCKET_RANGES = {
+    "short": (16, 48),
+    "medium": (49, 160),
+    "long": (161, 384),
+}
 REQUIRED_MODES = (
     "repeat_last_target",
     "correlated_same_layer_target",
@@ -103,6 +108,14 @@ def nearest_rank_percentile(values: list[float], percentile: float) -> float:
     ordered = sorted(float(value) for value in values)
     rank = max(1, math.ceil(percentile * len(ordered)))
     return ordered[rank - 1]
+
+
+def hashlib_sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _metric_summary(values: list[float]) -> dict[str, float] | None:
@@ -224,6 +237,19 @@ def evaluate_gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for target_id, correlated, holdout in pairs
         if bool(correlated["argmax_match"]) and not bool(holdout["argmax_match"])
     ]
+    token_bucket_mismatches = sorted(
+        {
+            str(row["target_id"])
+            for row in rows
+            if row["status"] == "success"
+            and row["length_bucket"] in TOKEN_BUCKET_RANGES
+            and not (
+                TOKEN_BUCKET_RANGES[str(row["length_bucket"])][0]
+                <= int(row["prompt_tokens"])
+                <= TOKEN_BUCKET_RANGES[str(row["length_bucket"])][1]
+            )
+        }
+    )
     conditions = {
         "all eight paired targets completed": len(pairs) == 8,
         "holdout argmax rate not lower": holdout_argmax >= correlated_argmax,
@@ -233,6 +259,9 @@ def evaluate_gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             bool(relative_changes) and max(relative_changes) <= 0.25
         ),
         "no correlated argmax match regressed": not argmax_regressions,
+        "actual prompt tokens match intended length buckets": (
+            not token_bucket_mismatches
+        ),
     }
     return {
         "decision": "GO" if all(conditions.values()) else "NO_GO",
@@ -250,6 +279,7 @@ def evaluate_gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             max(relative_changes) if relative_changes else None
         ),
         "argmax_regressions": argmax_regressions,
+        "token_bucket_mismatches": token_bucket_mismatches,
     }
 
 
@@ -272,7 +302,7 @@ def normalize_summary_row(
     )
     bank_path = Path(bank_path_text) if bank_path_text else None
     bank_sha256 = (
-        hashlib.sha256(bank_path.read_bytes()).hexdigest()
+        hashlib_sha256_file(bank_path)
         if bank_path is not None and bank_path.is_file()
         else ""
     )
