@@ -1570,3 +1570,92 @@ ssh sitian@10.232.195.203 'cd /data00/home/sitian/sitian-workspace01/tllm/TinyLL
   --max-num-seqs 16 \
   --out-json profile_out/ngram_spec_s4_06b_candidate_n5d4_verify.json'
 ```
+
+2026-07-14 继续推进：Light Doc Cache multi-target gate 已完成，最终结论
+`NO_GO`。
+
+实现 commits：
+
+- `1cfab07` Add Light Doc Cache target matrix
+- `67848ec` Add Light Doc Cache multi-target gate
+- `e0417ce` Extract fixed Light Doc Cache calibration bank
+- `d41a3fb` Add Light Doc Cache multi-target driver
+- `f8538f3` Add Light Doc Cache multi-target remote smoke
+- `b085ba0` Calibrate Light Doc Cache target lengths
+
+实现和验证要点：
+
+- 固定一个 calibration bank，8 个 target 全部复用同一 bank。
+- 每个 target 比较：
+  - `repeat_last_target`
+  - `correlated_same_layer_target`
+  - `calibration_holdout`
+- 远端 tokenizer 实际 bucket：
+  - short `31/36`
+  - medium `79/51/52`
+  - long `212/202/229`
+- 2-target smoke 首次发现三模式 logits 完全相同；根因是现有 sidecar
+  read-path 把预分配 KV 的物理 block 轴当连续序列 token 轴。复用同一 LLM
+  后 `Sequence.block_table` 不再从 block 0 开始，恢复数据写错物理槽。
+- 已在 default-off smoke 边界修复：按 `seq.block_table` pack sequence KV，
+  restore 后 scatter 回原物理 blocks，再做临时 KV pointer swap。没有改
+  scheduler、attention kernel、KV allocation lifetime 或 slot mapping。
+
+最终 canonical artifact：
+
+- 本地：
+  `experiments/light_doc_cache/read_path_multi_target_qwen3_0_6b_20260714/`
+- 远端：
+  `/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/profile_out/light_doc_cache_multi_target_20260714_final_evidence`
+- Remote: `sitian@10.232.195.203`
+- Hostname: `n232-195-203`
+- GPU: `4`
+- Dynamic port: `60495`
+- Bank SHA256:
+  `92ab5801523c85faa5e315cc229381818f960cc69940a4de6579688bd8e1fcc0`
+
+独立审计：
+
+```text
+MULTI_TARGET_AUDIT_OK NO_GO
+BANK_SHA256 92ab5801523c85faa5e315cc229381818f960cc69940a4de6579688bd8e1fcc0
+ROWS 24 ATTEMPTS 24
+BUCKET_COUNTS {'medium': 3, 'long': 3, 'short': 2}
+```
+
+聚合结果：
+
+- `repeat_last_target`
+  - mean logit diff `0.637132`
+  - argmax `5/8`
+  - mean missing MSE `12.2817`
+- `correlated_same_layer_target`
+  - mean logit diff `0.642408`
+  - argmax `4/8`
+  - mean missing MSE `6.28873`
+- `calibration_holdout`
+  - mean logit diff `1.31780`
+  - argmax `5/8`
+  - mean missing MSE `13.8190`
+
+Gate：
+
+- 8/8 paired targets completed：pass
+- holdout argmax rate not lower：pass
+- holdout wins >=5：fail，实际 `0/8`
+- aggregate mean logit diff improves >=5%：fail，实际回退 `105.13%`
+- worst relative regression <=25%：fail，实际 `322.98%`
+- no correlated argmax match regressed：fail，`repetitive` 回退
+- actual token buckets valid：pass
+
+最终决策：`NO_GO`。
+
+后续边界和方向：
+
+- 不要在同一 8-target gate 上继续调这个 holdout selector，避免 target
+  leakage / overfit。
+- 不进入 attention hot path 或 physical KV allocation。
+- 当前约 `17.50%` 只是 logical byte accounting，不是 GPU 显存、吞吐或
+  task-quality 证明。
+- 下一主分支改做 APC/shared-prefix benchmark 或 adaptive speculative
+  decoding；Light Doc Cache selector 暂停。
