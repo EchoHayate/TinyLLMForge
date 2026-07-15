@@ -43,6 +43,14 @@ propose_ngram_draft = ngram.propose_ngram_draft
 AdaptiveDraftState = ngram.AdaptiveDraftState
 update_adaptive_draft_state = ngram.update_adaptive_draft_state
 
+_SAM_PATH = os.path.join(_REPO_ROOT, "tinyvllm", "speculative", "sam.py")
+_SAM_SPEC = importlib.util.spec_from_file_location("sam_commit_profile", _SAM_PATH)
+sam = importlib.util.module_from_spec(_SAM_SPEC)
+sys.modules["sam_commit_profile"] = sam
+_SAM_SPEC.loader.exec_module(sam)
+
+SuffixAutomatonDraftIndex = sam.SuffixAutomatonDraftIndex
+
 
 DEFAULT_PROMPTS = [
     "Repeat the following phrase five times: alpha beta gamma alpha beta gamma.",
@@ -90,9 +98,9 @@ def parse_args():
                    help="Simulate CPU->GPU KV page upload cost per decode/verify target forward by copying this many MiB.")
     p.add_argument("--temperature", type=float, default=0.0,
                    help="S3 commit smoke currently requires greedy decoding, so this must be 0.0.")
-    p.add_argument("--draft-source", type=str, default="ngram", choices=["ngram", "dflash-toy", "dflash-toy-ngram-or-repeat"],
+    p.add_argument("--draft-source", type=str, default="ngram", choices=["ngram", "sam", "dflash-toy", "dflash-toy-ngram-or-repeat"],
                    help="Draft source for candidate-only/paired speculative verify+commit experiments.")
-    p.add_argument("--draft-policy", type=str, default="fixed", choices=["fixed", "adaptive"],
+    p.add_argument("--draft-policy", type=str, default="fixed", choices=["fixed", "adaptive", "sam-fixed", "sam-match-aware"],
                    help="Use a fixed proposal cap or the profiler-only adaptive n-gram cap.")
     p.add_argument("--ngram-size", type=int, default=3)
     p.add_argument("--dflash-toy-context-tokens", type=int, default=1,
@@ -165,6 +173,7 @@ def propose_draft(
     history: list[int],
     args,
     max_draft_tokens: int | None = None,
+    sam_index: SuffixAutomatonDraftIndex | None = None,
 ) -> DraftProposal:
     draft_cap = args.max_draft_tokens if max_draft_tokens is None else int(max_draft_tokens)
     if args.draft_source == "ngram":
@@ -176,6 +185,19 @@ def propose_draft(
                 "match_start": draft.match_start,
                 "ngram_size": draft.ngram_size,
             },
+        )
+    if args.draft_source == "sam":
+        if sam_index is None:
+            raise ValueError("SAM draft source requires sam_index")
+        sam_index.assert_history(history)
+        if args.draft_policy == "sam-match-aware":
+            draft = sam_index.propose_match_aware()
+        else:
+            draft = sam_index.propose(draft_cap)
+        return DraftProposal(
+            tokens=list(draft.tokens),
+            source="sam",
+            metadata=dict(draft.metadata),
         )
     if args.draft_source == "dflash-toy-ngram-or-repeat":
         draft = propose_ngram_draft(history, args.ngram_size, draft_cap)
@@ -1800,6 +1822,18 @@ def validate_profile_args(args) -> None:
             raise ValueError("adaptive draft policy requires --mode candidate-only")
         if args.max_num_seqs != 1:
             raise ValueError("adaptive draft policy requires --max-num-seqs 1")
+    if args.draft_policy in ("sam-fixed", "sam-match-aware"):
+        if args.draft_source != "sam":
+            raise ValueError("SAM draft policy requires --draft-source sam")
+        if args.mode != "candidate-only":
+            raise ValueError("SAM draft policy requires --mode candidate-only")
+        if args.max_num_seqs != 1:
+            raise ValueError("SAM draft policy requires --max-num-seqs 1")
+    if args.draft_source == "sam" and args.draft_policy not in (
+        "sam-fixed",
+        "sam-match-aware",
+    ):
+        raise ValueError("--draft-source sam requires a SAM draft policy")
 
 
 def run_profile(args) -> dict:

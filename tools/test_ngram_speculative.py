@@ -46,6 +46,7 @@ AdaptiveDraftState = ngram.AdaptiveDraftState
 update_adaptive_draft_state = ngram.update_adaptive_draft_state
 propose_draft = profile_ngram.propose_draft
 validate_profile_args = profile_ngram.validate_profile_args
+SuffixAutomatonDraftIndex = profile_ngram.SuffixAutomatonDraftIndex
 DraftModelInput = draft_model_schema.DraftModelInput
 DraftModelContract = draft_model_schema.DraftModelContract
 DraftModelResult = draft_model_schema.DraftModelResult
@@ -340,6 +341,70 @@ def test_propose_draft_accepts_per_event_cap_without_mutating_args():
 
     assert draft.tokens == [3]
     assert Args.max_draft_tokens == 4
+
+
+def test_propose_draft_dispatches_fixed_sam_source():
+    class Args:
+        draft_source = "sam"
+        draft_policy = "sam-fixed"
+        ngram_size = 3
+        max_draft_tokens = 16
+
+    index = SuffixAutomatonDraftIndex([1, 2, 3, 1, 2])
+    draft = propose_draft(
+        index.indexed_tokens,
+        Args(),
+        max_draft_tokens=16,
+        sam_index=index,
+    )
+    assert draft.source == "sam"
+    assert draft.tokens == [3, 1, 2]
+    assert draft.metadata["selected_k"] == 16
+
+
+def test_propose_draft_dispatches_match_aware_sam_bypass():
+    class Args:
+        draft_source = "sam"
+        draft_policy = "sam-match-aware"
+        ngram_size = 3
+        max_draft_tokens = 16
+
+    index = SuffixAutomatonDraftIndex([1, 9, 1])
+    draft = propose_draft(index.indexed_tokens, Args(), sam_index=index)
+    assert draft.tokens == []
+    assert draft.metadata["selected_k"] == 0
+    assert draft.metadata["bypass_reason"] == "no_usable_match"
+
+
+def test_sam_profile_args_require_candidate_greedy_single_sequence():
+    from types import SimpleNamespace
+
+    valid = dict(
+        model="/model",
+        temperature=0.0,
+        max_commit_events=0,
+        warmup_output_len=0,
+        simulate_kv_upload_mb=0.0,
+        max_draft_tokens=16,
+        draft_source="sam",
+        draft_policy="sam-match-aware",
+        mode="candidate-only",
+        max_num_seqs=1,
+    )
+    validate_profile_args(SimpleNamespace(**valid))
+    for override in (
+        {"temperature": 0.7},
+        {"mode": "paired"},
+        {"max_num_seqs": 2},
+        {"draft_source": "ngram"},
+    ):
+        args = SimpleNamespace(**{**valid, **override})
+        try:
+            validate_profile_args(args)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(override)
 
 
 def test_profile_validation_rejects_adaptive_non_ngram_source():
@@ -937,6 +1002,9 @@ def main():
     test_adaptive_transition_record_is_json_friendly_and_replayable()
     test_propose_draft_dispatches_ngram_source()
     test_propose_draft_accepts_per_event_cap_without_mutating_args()
+    test_propose_draft_dispatches_fixed_sam_source()
+    test_propose_draft_dispatches_match_aware_sam_bypass()
+    test_sam_profile_args_require_candidate_greedy_single_sequence()
     test_profile_validation_rejects_adaptive_non_ngram_source()
     test_profile_validation_requires_single_sequence_for_adaptive()
     test_attach_draft_policy_event_updates_adaptive_after_verification()
