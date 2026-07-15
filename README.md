@@ -47,6 +47,56 @@ Canonical 五件套位于：
 - 该结论只覆盖记录的 Qwen3-0.6B、greedy、单序列、固定 prompt bank 和 profiler-owned 路径；不证明 ragged/batched target verification、生产 batch throughput、queueing tail latency、memory-capacity reduction，亦不能外推到其他模型。
 - 保留 adaptive policy、correctness verifier 和 gate 基础设施用于后续研究；当前只可在已验证的高重复单序列 regime 中考虑 fixed K4。下一优先方向是更高质量的 draft source，而不是继续在同一 gate 上调 adaptive 阈值。
 
+## Prompt + Dynamic SAM drafter gate
+
+2026-07-15 完成了 profiler-owned token suffix automaton drafter、match-aware
+`K∈{0,4,8,16}`、严格五文件 gate、resume、动态端口和隔离远端 runner。
+当前结论是 **INCOMPLETE**，因此没有启动 175 行 canonical 性能测量。
+
+常用命令：
+
+```bash
+tools/run_sam_drafter_gate_remote.sh preflight
+CUDA_VISIBLE_DEVICES=5 tools/run_sam_drafter_gate_remote.sh smoke
+CUDA_VISIBLE_DEVICES=5 tools/run_sam_drafter_gate_remote.sh canonical
+RESUME=1 RUN_TAG="${RUN_TAG}" \
+  CUDA_VISIBLE_DEVICES=5 tools/run_sam_drafter_gate_remote.sh canonical
+python3 tools/sam_drafter_gate.py verify \
+  --out-dir experiments/sam_drafter/qwen3-06b-sam-smoke3-reconciled-20260715
+```
+
+当前严格 smoke 证据位于：
+`experiments/sam_drafter/qwen3-06b-sam-smoke3-reconciled-20260715/`。
+它包含 5 prompts × 5 policies × 1 repetition = 25 个独立进程，五件套为
+`manifest.json`、`raw_rows.json`、`event_rows.json`、`summary.json` 和
+`report.md`。
+
+验证结果：
+
+- 25/25 rows、进程、动态端口和 artifact 可独立重建；SAM trace
+  reconciliation 通过。
+- Match-aware SAM 覆盖了 `K=0/4/8/16`、prompt/generated continuation、
+  zero accept 和 fully accepted multi-token proposal。
+- `runtime_mutation=false`、`profiler_owned=true`；没有修改
+  `LLMEngine.step()`、scheduler、`Sequence` 或公开生成 API。
+- exact-output correctness 未通过：`natural_prose` 和
+  `structured_code_like` 的部分 multi-token speculative policies 与稳定的
+  greedy baseline 分叉。
+- 两次独立 baseline 重跑对上述 prompts 均完全一致；同一共享 verifier 使用
+  `K=1` 时也完全一致，只有 `K>1` 的 batch tail verify/commit 路径稳定分叉。
+  因此当前 blocker 是既有 multi-token verifier/KV materialization 路径，而非
+  SAM 索引或 match-aware policy。
+
+Smoke 中曾观察到的 policy tok/s 和 paired speedup **仅是诊断值**；由于
+exactness 失败，不能作为性能 GO/NO_GO 证据，也不能据此宣称 SAM 加速。
+下一步应先为 `verify_and_commit_block()` 增加逐 token target 对照和 KV
+slot/materialization 回归，修复后复用同一固定 manifest/threshold 重新 smoke；
+只有 smoke 不再是 `INCOMPLETE` 才允许启动 175 行 canonical。
+
+当前结论只覆盖 Qwen3-0.6B、greedy、单序列、profiler-owned 路径；不证明
+ragged/batched correctness、production batch throughput、queue tail latency、
+non-greedy correctness或 memory reduction。
+
 ## 参考资料
 ```
 https://github.com/GeeeekExplorer/nano-vllm
