@@ -14,6 +14,7 @@ REMOTE_DIR="${REMOTE_BASE}/${RUN_TAG}"
 LOCAL_OUT="${LOCAL_OUT:-${REPO_ROOT}/experiments/sam_drafter/${RUN_TAG}}"
 BASE_SEED="${BASE_SEED:-20260715}"
 CONTROL_SOCKET="${CONTROL_SOCKET:-/tmp/ssh-sitian-10.232.195.203}"
+RESUME="${RESUME:-0}"
 
 case "${MODE}" in
   preflight) REPETITIONS=0 ;;
@@ -63,6 +64,10 @@ DIRTY_ARG=""
 if [[ "${SOURCE_DIRTY}" == "1" ]]; then
   DIRTY_ARG="--source-dirty"
 fi
+RESUME_ARG=""
+if [[ "${RESUME}" == "1" ]]; then
+  RESUME_ARG="--resume"
+fi
 
 ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
   "set -euo pipefail; cd '${REMOTE_DIR}'; \
@@ -75,6 +80,7 @@ ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
      --base-seed '${BASE_SEED}' \
      --source-commit '${SOURCE_COMMIT}' \
      ${DIRTY_ARG} \
+     ${RESUME_ARG} \
      --host '${REMOTE_HOST}'"
 
 mkdir -p "${LOCAL_OUT}"

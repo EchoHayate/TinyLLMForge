@@ -347,6 +347,29 @@ def _row_is_resumable(manifest: dict, spec: dict, row: dict) -> bool:
     )
 
 
+def _resume_manifest_is_compatible(
+    existing: dict,
+    requested: dict,
+) -> bool:
+    frozen_fields = (
+        "gate",
+        "source_commit",
+        "source_dirty",
+        "model_path",
+        "model_identifier",
+        "host",
+        "python_bin",
+        "repetitions",
+        "base_seed",
+        "policies",
+        "thresholds",
+        "prompt_bank",
+        "run_specs",
+        "claim_scope",
+    )
+    return all(existing.get(field) == requested.get(field) for field in frozen_fields)
+
+
 def _normalize_row(
     manifest: dict,
     spec: dict,
@@ -456,7 +479,13 @@ def run_gate(
         python_bin,
         extra_environment,
     )
-    _atomic_write_json(out_dir / "manifest.json", manifest)
+    manifest_path = out_dir / "manifest.json"
+    if resume and manifest_path.exists():
+        existing_manifest = _load_json(manifest_path)
+        if not _resume_manifest_is_compatible(existing_manifest, manifest):
+            raise ValueError("resume manifest is incompatible with requested run")
+        manifest = existing_manifest
+    _atomic_write_json(manifest_path, manifest)
     raw_path = out_dir / "raw_rows.json"
     event_path = out_dir / "event_rows.json"
     rows = _load_json(raw_path) if resume and raw_path.exists() else []

@@ -449,6 +449,23 @@ def test_resume_rejects_each_compatibility_mismatch():
     assert gate._row_is_resumable(manifest, spec, changed) is False
 
 
+def test_resume_manifest_requires_frozen_experiment_identity():
+    manifest, _, _ = _synthetic_complete_gate_rows()
+    assert gate._resume_manifest_is_compatible(manifest, dict(manifest)) is True
+    for field, value in (
+        ("source_commit", "other"),
+        ("source_dirty", True),
+        ("model_identifier", "other"),
+        ("repetitions", 1),
+        ("base_seed", 1),
+        ("thresholds", {}),
+        ("prompt_bank", []),
+        ("policies", {}),
+    ):
+        changed = {**manifest, field: value}
+        assert gate._resume_manifest_is_compatible(manifest, changed) is False
+
+
 def test_remote_runner_uses_exact_host_python_model_and_isolation():
     source = (
         Path(_REPO_ROOT)
@@ -464,6 +481,8 @@ def test_remote_runner_uses_exact_host_python_model_and_isolation():
     assert "TINYVLLM_DIST_PORT" not in source
     assert "MASTER_PORT" not in source
     assert "sam-drafter-gates" in source
+    assert 'RESUME="${RESUME:-0}"' in source
+    assert "--resume" in source
 
 
 def main():
@@ -481,6 +500,7 @@ def main():
     test_missing_each_required_policy_branch_is_incomplete()
     test_verify_artifacts_recomputes_summary_report_and_hashes()
     test_resume_rejects_each_compatibility_mismatch()
+    test_resume_manifest_requires_frozen_experiment_identity()
     test_remote_runner_uses_exact_host_python_model_and_isolation()
     print("sam drafter gate tests passed")
 
