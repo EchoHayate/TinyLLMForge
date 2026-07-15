@@ -761,6 +761,18 @@ def summarize_rows(
         sam = policies["sam_match_aware"]
         baseline = policies["baseline"]
         ngram = policies["ngram_fixed_k4"]
+        throughputs = (
+            sam.get("output_tokens_per_s"),
+            baseline.get("output_tokens_per_s"),
+            ngram.get("output_tokens_per_s"),
+        )
+        if any(
+            not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            for value in throughputs
+        ):
+            continue
         paired_speedups["sam_vs_baseline"][prompt_name].append(
             sam["output_tokens_per_s"] / baseline["output_tokens_per_s"] - 1.0
         )

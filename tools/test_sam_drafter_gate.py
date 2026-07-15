@@ -269,6 +269,8 @@ def test_missing_or_failed_evidence_is_incomplete_not_no_go():
     manifest, rows, events = _synthetic_complete_gate_rows()
     assert gate.summarize_rows(manifest, rows[:-1], events)["decision"] == "INCOMPLETE"
     rows[-1]["process"]["returncode"] = 1
+    rows[-1]["elapsed_s"] = None
+    rows[-1]["output_tokens_per_s"] = None
     assert gate.summarize_rows(manifest, rows, events)["decision"] == "INCOMPLETE"
 
 
