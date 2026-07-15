@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import socket
+import statistics
 import subprocess
 import time
 from pathlib import Path
@@ -506,6 +508,386 @@ def run_gate(
         _atomic_write_json(raw_path, rows)
         _atomic_write_json(event_path, events)
     return {"manifest": manifest, "raw_rows": rows, "event_rows": events}
+
+
+def _median(values: list[float]) -> float:
+    return float(statistics.median(values))
+
+
+def reconcile_run_trace(row: dict, events: list[dict]) -> dict:
+    if not row["policy"].startswith("sam_"):
+        return {"valid": True, "fail_reasons": []}
+    failures = []
+    proposal_events = [
+        event for event in events if event.get("event_type") == "proposal"
+    ]
+    verify_events = [
+        event for event in events if event.get("event_type") == "verify"
+    ]
+    bypass_events = [
+        event for event in events if event.get("event_type") == "bypass"
+    ]
+    integrity_events = [
+        event for event in events
+        if event.get("event_type") == "index_integrity"
+    ]
+    checks = {
+        "verify_attempts": (
+            row.get("verify_attempts"),
+            len(verify_events),
+        ),
+        "drafted_tokens": (
+            row.get("drafted_tokens"),
+            sum(int(event.get("proposed_tokens", 0)) for event in proposal_events),
+        ),
+        "accepted_tokens": (
+            row.get("accepted_tokens"),
+            sum(int(event.get("accepted_count", 0)) for event in verify_events),
+        ),
+        "zero_accept_events": (
+            row.get("zero_accept_events"),
+            sum(int(event.get("accepted_count", 0)) == 0 for event in verify_events),
+        ),
+        "sam_bypass_count": (
+            row.get("sam_bypass_count"),
+            len(bypass_events),
+        ),
+    }
+    for field, (observed, expected) in checks.items():
+        if observed != expected:
+            failures.append(f"{field}_trace_mismatch:{observed}!={expected}")
+    if row.get("wasted_draft_tokens") != (
+        int(row.get("drafted_tokens", 0)) - int(row.get("accepted_tokens", 0))
+    ):
+        failures.append("wasted_draft_tokens_trace_mismatch")
+    selected_counts = {
+        str(level): sum(
+            int(event.get("selected_k", -1)) == level
+            for event in proposal_events
+        )
+        for level in (0, 4, 8, 16)
+    }
+    normalized_counts = {
+        str(level): int(row.get("selected_k_counts", {}).get(str(level), 0))
+        for level in (0, 4, 8, 16)
+    }
+    if selected_counts != normalized_counts:
+        failures.append("selected_k_counts_trace_mismatch")
+    for proposal in proposal_events:
+        matching = [
+            event
+            for event in (
+                bypass_events
+                if int(proposal.get("proposed_tokens", 0)) == 0
+                else verify_events
+            )
+            if event.get("step") == proposal.get("step")
+            and event.get("candidate_seq_id") == proposal.get("candidate_seq_id")
+        ]
+        if len(matching) != 1:
+            failures.append(
+                f"proposal_terminal_event_mismatch:step={proposal.get('step')}"
+            )
+    if not integrity_events:
+        failures.append("missing_index_integrity_event")
+    else:
+        if any(event.get("history_match") is not True for event in integrity_events):
+            failures.append("index_integrity_history_mismatch")
+        if int(integrity_events[-1].get("index_token_count", -1)) != (
+            int(row.get("prompt_tokens", -1))
+            + int(row.get("output_tokens", -1))
+        ):
+            failures.append("index_integrity_token_count_mismatch")
+    if any(event.get("runtime_mutation") is not False for event in events):
+        failures.append("event_runtime_mutation_not_false")
+    if any(event.get("profiler_owned") is not True for event in events):
+        failures.append("event_profiler_owned_not_true")
+    return {"valid": not failures, "fail_reasons": failures}
+
+
+def _structural_failures(
+    manifest: dict,
+    raw_rows: list[dict],
+    event_rows: list[dict],
+) -> list[str]:
+    failures = []
+    expected_specs = {
+        spec["run_key"]: spec for spec in manifest.get("run_specs", [])
+    }
+    rows_by_key = {}
+    for row in raw_rows:
+        key = row.get("run_key")
+        if key in rows_by_key:
+            failures.append(f"duplicate_row:{key}")
+        rows_by_key[key] = row
+    if set(rows_by_key) != set(expected_specs):
+        failures.append("run_key_set_mismatch")
+    if len(raw_rows) != manifest.get("expected_rows"):
+        failures.append("row_count_mismatch")
+    used_ports = set()
+    for key, row in rows_by_key.items():
+        spec = expected_specs.get(key)
+        if spec is None:
+            continue
+        for field in (
+            "source_commit",
+            "source_dirty",
+            "model_identifier",
+        ):
+            if row.get(field) != manifest.get(field):
+                failures.append(f"{key}:{field}_mismatch")
+        for field in ("prompt_sha256", "policy", "repetition"):
+            if row.get(field) != spec.get(field):
+                failures.append(f"{key}:{field}_mismatch")
+        process = row.get("process", {})
+        if process.get("returncode") != 0:
+            failures.append(f"{key}:process_failed")
+        for port_field in ("tinyvllm_dist_port", "master_port"):
+            port = process.get(port_field)
+            if not isinstance(port, int) or port <= 0:
+                failures.append(f"{key}:{port_field}_invalid")
+            elif port in used_ports:
+                failures.append(f"{key}:{port_field}_reused")
+            else:
+                used_ports.add(port)
+        if row.get("profiler_gate_pass") is not True:
+            failures.append(f"{key}:profiler_gate_failed")
+        prompt_tokens = row.get("prompt_tokens")
+        if not isinstance(prompt_tokens, int) or prompt_tokens <= 0:
+            failures.append(f"{key}:prompt_tokens_invalid")
+        for field in ("elapsed_s", "output_tokens_per_s"):
+            value = row.get(field)
+            if (
+                not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                failures.append(f"{key}:{field}_invalid")
+        for field in (
+            "output_tokens",
+            "proposal_events",
+            "verify_attempts",
+            "no_draft_positions",
+            "drafted_tokens",
+            "accepted_tokens",
+            "wasted_draft_tokens",
+            "zero_accept_events",
+            "sam_bypass_count",
+        ):
+            value = row.get(field)
+            if not isinstance(value, int) or value < 0:
+                failures.append(f"{key}:{field}_invalid")
+        if row["policy"].startswith("sam_"):
+            if row.get("runtime_mutation") is not False:
+                failures.append(f"{key}:runtime_mutation_not_false")
+            if row.get("profiler_owned") is not True:
+                failures.append(f"{key}:profiler_owned_not_true")
+    events_by_run = {}
+    for event in event_rows:
+        events_by_run.setdefault(event.get("run_key"), []).append(event)
+    for key, row in rows_by_key.items():
+        trace = reconcile_run_trace(row, events_by_run.get(key, []))
+        failures.extend(f"{key}:{reason}" for reason in trace["fail_reasons"])
+    return failures
+
+
+def summarize_rows(
+    manifest: dict,
+    raw_rows: list[dict],
+    event_rows: list[dict],
+) -> dict:
+    structural_failures = _structural_failures(
+        manifest,
+        raw_rows,
+        event_rows,
+    )
+    rows_by_pair = {}
+    for row in raw_rows:
+        rows_by_pair.setdefault(
+            (row.get("repetition"), row.get("prompt_name")),
+            {},
+        )[row.get("policy")] = row
+    correctness_failures = []
+    required_policies = set(POLICIES)
+    for pair, policies in rows_by_pair.items():
+        if set(policies) != required_policies:
+            structural_failures.append(f"{pair}:paired_policy_set_mismatch")
+            continue
+        baseline_ids = policies["baseline"].get("output_token_ids")
+        baseline_hash = sha256_json(baseline_ids)
+        for policy, row in policies.items():
+            if row.get("output_token_sha256") != sha256_json(
+                row.get("output_token_ids")
+            ):
+                correctness_failures.append(
+                    f"{pair}:{policy}:output_hash_mismatch"
+                )
+            if sha256_json(row.get("output_token_ids")) != baseline_hash:
+                correctness_failures.append(
+                    f"{pair}:{policy}:output_mismatch"
+                )
+    paired_speedups = {
+        "sam_vs_baseline": {prompt["name"]: [] for prompt in PROMPT_BANK},
+        "sam_vs_ngram_k4": {prompt["name"]: [] for prompt in PROMPT_BANK},
+    }
+    verify_reductions = []
+    waste_reductions = []
+    for (repetition, prompt_name), policies in rows_by_pair.items():
+        if set(policies) != required_policies:
+            continue
+        sam = policies["sam_match_aware"]
+        baseline = policies["baseline"]
+        ngram = policies["ngram_fixed_k4"]
+        paired_speedups["sam_vs_baseline"][prompt_name].append(
+            sam["output_tokens_per_s"] / baseline["output_tokens_per_s"] - 1.0
+        )
+        paired_speedups["sam_vs_ngram_k4"][prompt_name].append(
+            sam["output_tokens_per_s"] / ngram["output_tokens_per_s"] - 1.0
+        )
+        if ngram["verify_attempts"] > 0:
+            verify_reductions.append(
+                1.0 - sam["verify_attempts"] / ngram["verify_attempts"]
+            )
+        if ngram["wasted_draft_tokens"] > 0:
+            waste_reductions.append(
+                1.0
+                - sam["wasted_draft_tokens"] / ngram["wasted_draft_tokens"]
+            )
+    if not verify_reductions:
+        structural_failures.append("missing_positive_verify_reference")
+    if not waste_reductions:
+        structural_failures.append("missing_positive_waste_reference")
+    all_vs_baseline = [
+        value
+        for values in paired_speedups["sam_vs_baseline"].values()
+        for value in values
+    ]
+    all_vs_ngram = [
+        value
+        for values in paired_speedups["sam_vs_ngram_k4"].values()
+        for value in values
+    ]
+    sam_events = [
+        event for event in event_rows
+        if event.get("policy") == "sam_match_aware"
+    ]
+    proposal_events = [
+        event for event in sam_events if event.get("event_type") == "proposal"
+    ]
+    verify_events = [
+        event for event in sam_events if event.get("event_type") == "verify"
+    ]
+    selected_levels = {
+        int(event.get("selected_k", -1)) for event in proposal_events
+    }
+    regions = {
+        event.get("draft_metadata", {}).get("continuation_region")
+        for event in proposal_events
+    }
+    exercise_failures = []
+    for level in (0, 4, 8, 16):
+        if level not in selected_levels:
+            exercise_failures.append(f"missing_selected_k_{level}")
+    for region in ("prompt", "generated"):
+        if region not in regions:
+            exercise_failures.append(f"missing_continuation_region_{region}")
+    if not any(int(event.get("accepted_count", -1)) == 0 for event in verify_events):
+        exercise_failures.append("missing_zero_accept_verify")
+    if not any(
+        int(event.get("proposed_tokens", 0)) > 1
+        and int(event.get("accepted_count", -1))
+        == int(event.get("proposed_tokens", 0))
+        for event in verify_events
+    ):
+        exercise_failures.append("missing_full_multi_token_accept")
+    trace_failures = [
+        reason
+        for reason in structural_failures
+        if "trace_mismatch" in reason
+        or "proposal_terminal_event_mismatch" in reason
+        or "index_integrity" in reason
+        or "missing_index_integrity" in reason
+    ]
+    evidence_failures = (
+        structural_failures + correctness_failures + exercise_failures
+    )
+    sam_vs_baseline = _median(all_vs_baseline) if all_vs_baseline else None
+    sam_vs_ngram = _median(all_vs_ngram) if all_vs_ngram else None
+    verify_reduction = (
+        _median(verify_reductions) if verify_reductions else None
+    )
+    waste_reduction = _median(waste_reductions) if waste_reductions else None
+    critical_prompt_medians = {
+        prompt["name"]: (
+            _median(paired_speedups["sam_vs_baseline"][prompt["name"]])
+            if paired_speedups["sam_vs_baseline"][prompt["name"]]
+            else None
+        )
+        for prompt in PROMPT_BANK
+    }
+    performance_failures = []
+    if not evidence_failures:
+        if sam_vs_baseline < THRESHOLDS["sam_vs_baseline_min"]:
+            performance_failures.append("sam_vs_baseline_gate_failed")
+        direct_win = sam_vs_ngram >= THRESHOLDS["sam_vs_ngram_k4_min"]
+        efficient_near_tie = (
+            sam_vs_ngram >= THRESHOLDS["sam_near_ngram_k4_min"]
+            and verify_reduction
+            >= THRESHOLDS["verify_attempt_reduction_min"]
+            and waste_reduction >= THRESHOLDS["draft_waste_reduction_min"]
+        )
+        if not (direct_win or efficient_near_tie):
+            performance_failures.append("sam_vs_ngram_gate_failed")
+        for prompt_name, speedup in critical_prompt_medians.items():
+            if speedup < THRESHOLDS["critical_prompt_speedup_min"]:
+                performance_failures.append(
+                    f"critical_prompt_regression:{prompt_name}"
+                )
+    if evidence_failures:
+        decision = "INCOMPLETE"
+        decision_reasons = evidence_failures
+    elif performance_failures:
+        decision = "NO_GO"
+        decision_reasons = performance_failures
+    else:
+        decision = "GO"
+        decision_reasons = []
+    throughput_by_policy = {
+        policy: _median([
+            row["output_tokens_per_s"]
+            for row in raw_rows
+            if row.get("policy") == policy
+            and isinstance(row.get("output_tokens_per_s"), (int, float))
+            and math.isfinite(row["output_tokens_per_s"])
+        ])
+        for policy in POLICIES
+        if any(row.get("policy") == policy for row in raw_rows)
+    }
+    return {
+        "decision": decision,
+        "decision_reasons": decision_reasons,
+        "expected_rows": manifest.get("expected_rows"),
+        "observed_rows": len(raw_rows),
+        "structural_failures": structural_failures,
+        "correctness_failures": correctness_failures,
+        "exercise_failures": exercise_failures,
+        "correctness_pass": not correctness_failures,
+        "trace_reconciliation_pass": not trace_failures,
+        "policy_exercise_pass": not exercise_failures,
+        "paired_speedups": paired_speedups,
+        "median_sam_vs_baseline": sam_vs_baseline,
+        "median_sam_vs_ngram_k4": sam_vs_ngram,
+        "median_verify_attempt_reduction": verify_reduction,
+        "median_draft_waste_reduction": waste_reduction,
+        "critical_prompt_medians": critical_prompt_medians,
+        "throughput_by_policy": throughput_by_policy,
+        "sam_cpu_overhead_ms": {
+            field: sum(float(row.get(field, 0.0)) for row in raw_rows)
+            for field in ("sam_build_ms", "sam_extension_ms", "sam_lookup_ms")
+        },
+        "thresholds": dict(THRESHOLDS),
+        "claim_scope": manifest.get("claim_scope", {}),
+    }
 
 
 def parse_args():
