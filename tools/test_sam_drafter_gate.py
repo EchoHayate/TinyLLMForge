@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -343,6 +345,52 @@ def test_missing_each_required_policy_branch_is_incomplete():
         assert gate.summarize_rows(manifest, rows, filtered)["decision"] == "INCOMPLETE"
 
 
+def test_verify_artifacts_recomputes_summary_report_and_hashes():
+    manifest, rows, events = _synthetic_complete_gate_rows()
+    summary = gate.summarize_rows(manifest, rows, events)
+    with tempfile.TemporaryDirectory() as temporary:
+        out_dir = Path(temporary)
+        gate._write_canonical_artifacts(
+            out_dir,
+            manifest,
+            rows,
+            events,
+            summary,
+        )
+        assert gate.verify_artifacts(out_dir)["decision"] == "GO"
+        (out_dir / "report.md").write_text("tampered\n")
+        try:
+            gate.verify_artifacts(out_dir)
+        except ValueError as exc:
+            assert "report.md" in str(exc)
+        else:
+            raise AssertionError("tampered report accepted")
+
+
+def test_resume_rejects_each_compatibility_mismatch():
+    manifest, rows, _ = _synthetic_complete_gate_rows()
+    spec = manifest["run_specs"][0]
+    row = rows[0]
+    assert gate._row_is_resumable(manifest, spec, row) is True
+    mutations = (
+        ("source_commit", "other"),
+        ("source_dirty", True),
+        ("model_identifier", "other-model"),
+        ("prompt_sha256", "bad-hash"),
+        ("policy", "sam_match_aware"),
+        ("repetition", 99),
+    )
+    for field, value in mutations:
+        changed = {**row, field: value}
+        assert gate._row_is_resumable(manifest, spec, changed) is False
+    changed = {**row, "process": {**row["process"], "returncode": 1}}
+    assert gate._row_is_resumable(manifest, spec, changed) is False
+    changed = {**row, "profiler_gate_pass": False}
+    assert gate._row_is_resumable(manifest, spec, changed) is False
+    changed = {**row, "elapsed_s": float("nan")}
+    assert gate._row_is_resumable(manifest, spec, changed) is False
+
+
 def main():
     test_prompt_bank_has_five_stable_classes()
     test_run_specs_are_175_unique_rows_for_canonical()
@@ -355,6 +403,8 @@ def main():
     test_speedup_is_median_of_paired_ratios()
     test_zero_positive_reference_for_required_reduction_is_incomplete()
     test_missing_each_required_policy_branch_is_incomplete()
+    test_verify_artifacts_recomputes_summary_report_and_hashes()
+    test_resume_rejects_each_compatibility_mismatch()
     print("sam drafter gate tests passed")
 
 

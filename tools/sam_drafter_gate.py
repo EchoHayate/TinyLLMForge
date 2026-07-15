@@ -234,6 +234,10 @@ def _atomic_write_text(path: Path, payload: str) -> None:
     os.replace(temporary, path)
 
 
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
 def _load_json(path: Path):
     return json.loads(path.read_text())
 
@@ -320,6 +324,27 @@ def _profiler_command(
         if spec["draft_source"] == "ngram":
             command.extend(["--ngram-size", "5"])
     return command
+
+
+def _row_is_resumable(manifest: dict, spec: dict, row: dict) -> bool:
+    elapsed_s = row.get("elapsed_s")
+    throughput = row.get("output_tokens_per_s")
+    return (
+        row.get("source_commit") == manifest.get("source_commit")
+        and row.get("source_dirty") == manifest.get("source_dirty")
+        and row.get("model_identifier") == manifest.get("model_identifier")
+        and row.get("prompt_sha256") == spec.get("prompt_sha256")
+        and row.get("policy") == spec.get("policy")
+        and row.get("repetition") == spec.get("repetition")
+        and row.get("process", {}).get("returncode") == 0
+        and row.get("profiler_gate_pass") is True
+        and isinstance(elapsed_s, (int, float))
+        and math.isfinite(elapsed_s)
+        and elapsed_s > 0
+        and isinstance(throughput, (int, float))
+        and math.isfinite(throughput)
+        and throughput > 0
+    )
 
 
 def _normalize_row(
@@ -436,16 +461,7 @@ def run_gate(
     used_ports = set()
     for spec in manifest["run_specs"]:
         existing = rows_by_key.get(spec["run_key"])
-        if existing and (
-            existing.get("source_commit") == source_commit
-            and existing.get("source_dirty") == source_dirty
-            and existing.get("model_identifier") == manifest["model_identifier"]
-            and existing.get("prompt_sha256") == spec["prompt_sha256"]
-            and existing.get("policy") == spec["policy"]
-            and existing.get("repetition") == spec["repetition"]
-            and existing.get("process", {}).get("returncode") == 0
-            and existing.get("profiler_gate_pass") is True
-        ):
+        if existing and _row_is_resumable(manifest, spec, existing):
             continue
         rows = [row for row in rows if row["run_key"] != spec["run_key"]]
         events = [
@@ -507,7 +523,14 @@ def run_gate(
         events.extend(normalized_events)
         _atomic_write_json(raw_path, rows)
         _atomic_write_json(event_path, events)
-    return {"manifest": manifest, "raw_rows": rows, "event_rows": events}
+    summary = summarize_rows(manifest, rows, events)
+    _write_canonical_artifacts(out_dir, manifest, rows, events, summary)
+    return {
+        "manifest": manifest,
+        "raw_rows": rows,
+        "event_rows": events,
+        "summary": summary,
+    }
 
 
 def _median(values: list[float]) -> float:
@@ -888,6 +911,174 @@ def summarize_rows(
         "thresholds": dict(THRESHOLDS),
         "claim_scope": manifest.get("claim_scope", {}),
     }
+
+
+def render_report(manifest: dict, summary: dict) -> str:
+    reasons = summary.get("decision_reasons", [])
+    lines = [
+        "# SAM Drafter Canonical Gate",
+        "",
+        "## Decision",
+        "",
+        f"- Decision: `{summary['decision']}`",
+        f"- Reasons: {', '.join(reasons) if reasons else 'none'}",
+        "",
+        "## Environment",
+        "",
+        f"- Host: `{manifest['host']}`",
+        f"- Source commit: `{manifest['source_commit']}`",
+        f"- Source dirty: `{manifest['source_dirty']}`",
+        f"- Model: `{manifest['model_identifier']}`",
+        "",
+        "## Completeness",
+        "",
+        f"- Rows: `{summary['observed_rows']}/{summary['expected_rows']}`",
+        f"- Correctness pass: `{summary['correctness_pass']}`",
+        (
+            "- Trace reconciliation pass: "
+            f"`{summary['trace_reconciliation_pass']}`"
+        ),
+        f"- Policy exercise pass: `{summary['policy_exercise_pass']}`",
+        "",
+        "## Median Throughput",
+        "",
+    ]
+    for policy, throughput in summary.get("throughput_by_policy", {}).items():
+        lines.append(f"- `{policy}`: `{throughput:.6f}` tok/s")
+    lines.extend([
+        "",
+        "## Paired Metrics",
+        "",
+        (
+            "- SAM vs baseline: "
+            f"`{summary['median_sam_vs_baseline']}`"
+        ),
+        (
+            "- SAM vs n-gram K4: "
+            f"`{summary['median_sam_vs_ngram_k4']}`"
+        ),
+        (
+            "- Verify-attempt reduction: "
+            f"`{summary['median_verify_attempt_reduction']}`"
+        ),
+        (
+            "- Draft-waste reduction: "
+            f"`{summary['median_draft_waste_reduction']}`"
+        ),
+        "",
+        "## Critical Prompts",
+        "",
+    ])
+    for prompt, speedup in summary.get("critical_prompt_medians", {}).items():
+        lines.append(f"- `{prompt}`: `{speedup}`")
+    lines.extend([
+        "",
+        "## Policy Exercise",
+        "",
+        f"- Failures: `{summary.get('exercise_failures', [])}`",
+        "",
+        "## SAM CPU Overhead",
+        "",
+    ])
+    for field, value in summary.get("sam_cpu_overhead_ms", {}).items():
+        lines.append(f"- `{field}`: `{value:.6f}` ms")
+    lines.extend([
+        "",
+        "## Fixed Thresholds",
+        "",
+        f"```json\n{json.dumps(summary['thresholds'], indent=2, sort_keys=True)}\n```",
+        "",
+        "## Claim Boundaries",
+        "",
+        f"```json\n{json.dumps(summary['claim_scope'], indent=2, sort_keys=True)}\n```",
+        "",
+        "## Next Direction",
+        "",
+        (
+            "- Proceed to broader but still profiler-owned validation."
+            if summary["decision"] == "GO"
+            else "- Stop performance promotion and inspect failed evidence or thresholds."
+            if summary["decision"] == "NO_GO"
+            else "- Repair incomplete evidence and rerun without changing thresholds."
+        ),
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _canonical_json_bytes(payload) -> bytes:
+    return (
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+
+
+def _write_canonical_artifacts(
+    out_dir: Path,
+    manifest: dict,
+    raw_rows: list[dict],
+    event_rows: list[dict],
+    summary: dict,
+) -> None:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_bytes = _canonical_json_bytes(manifest)
+    raw_bytes = _canonical_json_bytes(raw_rows)
+    event_bytes = _canonical_json_bytes(event_rows)
+    stored_summary = {
+        **summary,
+        "input_artifact_sha256": {
+            "manifest.json": sha256_bytes(manifest_bytes),
+            "raw_rows.json": sha256_bytes(raw_bytes),
+            "event_rows.json": sha256_bytes(event_bytes),
+        },
+    }
+    _atomic_write_json(out_dir / "manifest.json", manifest)
+    _atomic_write_json(out_dir / "raw_rows.json", raw_rows)
+    _atomic_write_json(out_dir / "event_rows.json", event_rows)
+    _atomic_write_json(out_dir / "summary.json", stored_summary)
+    _atomic_write_text(
+        out_dir / "report.md",
+        render_report(manifest, stored_summary),
+    )
+
+
+def verify_artifacts(out_dir: Path) -> dict:
+    out_dir = Path(out_dir)
+    expected = {
+        "manifest.json",
+        "raw_rows.json",
+        "event_rows.json",
+        "summary.json",
+        "report.md",
+    }
+    observed = {path.name for path in out_dir.iterdir() if path.is_file()}
+    if observed != expected:
+        raise ValueError(
+            f"canonical file set mismatch: expected={sorted(expected)} "
+            f"observed={sorted(observed)}"
+        )
+    manifest_path = out_dir / "manifest.json"
+    raw_path = out_dir / "raw_rows.json"
+    event_path = out_dir / "event_rows.json"
+    stored_summary = _load_json(out_dir / "summary.json")
+    expected_hashes = {
+        "manifest.json": sha256_bytes(manifest_path.read_bytes()),
+        "raw_rows.json": sha256_bytes(raw_path.read_bytes()),
+        "event_rows.json": sha256_bytes(event_path.read_bytes()),
+    }
+    if stored_summary.get("input_artifact_sha256") != expected_hashes:
+        raise ValueError("input artifact hash mismatch")
+    manifest = _load_json(manifest_path)
+    rows = _load_json(raw_path)
+    events = _load_json(event_path)
+    regenerated = summarize_rows(manifest, rows, events)
+    regenerated["input_artifact_sha256"] = expected_hashes
+    if regenerated != stored_summary:
+        raise ValueError("summary.json regeneration mismatch")
+    expected_report = render_report(manifest, regenerated)
+    if (out_dir / "report.md").read_text() != expected_report:
+        raise ValueError("report.md regeneration mismatch")
+    return regenerated
 
 
 def parse_args():
