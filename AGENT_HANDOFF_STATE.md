@@ -1659,3 +1659,198 @@ Gate：
   task-quality 证明。
 - 下一主分支改做 APC/shared-prefix benchmark 或 adaptive speculative
   decoding；Light Doc Cache selector 暂停。
+
+## 2026-07-15 Adaptive n-gram speculative decoding canonical gate
+
+### 状态与环境
+
+- Branch：`feat/adaptive-ngram-speculation`
+- Canonical source commit：`08b122daedc8ab531a5d301f0b5a82b5cb1997e5`
+- Source dirty：`false`
+- Run tag：`qwen3-06b-canonical-20260715-025426`
+- Remote：`sitian@10.232.195.203`
+- Remote Python：`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`
+- Model：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`
+- GPU：`3`
+- Isolated remote directory：
+  `/data00/home/sitian/sitian-workspace01/tllm/adaptive-ngram-gates/qwen3-06b-canonical-20260715-025426`
+- Local canonical artifacts：
+  `experiments/adaptive_ngram/qwen3-06b-canonical-20260715-025426/`
+
+实现范围严格保持为 profiler-owned、greedy、单序列。Adaptive state 只选择下一次 n-gram proposal cap `K∈{1,2,4}`；没有把 adaptive 状态接入 scheduler、`Sequence`、`LLM.generate()`、target logits、accepted-prefix rule、EOS rule 或 normal decode fallback。为保证 speculative accepted-token block/hash 生命周期正确，仅修复了 `block_manager.py` 的既有边界，并由 block-boundary regression 覆盖。
+
+### 运行命令
+
+Canonical 初始运行在远端完成 43/140 后因本地 Kerberos 票据过期中断；恢复系统 API cache 后，使用同一 run tag、同一 isolated remote directory 和 `RESUME=1` 续跑。Resume 只接受已有唯一合法 row，不平均重复或 partial row。
+
+```bash
+cd /Users/bytedance/dev/TinyLLMForge-adaptive-ngram
+
+RUN_TAG=qwen3-06b-canonical-20260715-025426 \
+LOCAL_OUT=/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/adaptive_ngram/qwen3-06b-canonical-20260715-025426 \
+CUDA_VISIBLE_DEVICES=3 \
+MODEL_PATH=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B \
+RESUME=1 \
+SSH_CONTROL_PATH=/tmp/ssh-sitian-10.232.195.203 \
+tools/run_adaptive_ngram_gate_remote.sh canonical
+```
+
+等价的 canonical 新跑入口为：
+
+```bash
+RUN_TAG="qwen3-06b-canonical-$(date +%Y%m%d-%H%M%S)" \
+  tools/run_adaptive_ngram_gate_remote.sh canonical
+```
+
+Runner 上传当前最小 source snapshot 到隔离目录，远端 preflight 后逐进程运行，每个模型进程使用不同的动态 `TINYVLLM_DIST_PORT` 和 `MASTER_PORT`，最后下载 artifacts 并执行本地 verifier。
+
+### Smoke 与 canonical 覆盖
+
+- 最终 one-repetition smoke：
+  `qwen3-06b-smoke-r4-20260715-022440`
+- Smoke：20/20 rows、1 repetition、source commit `08b122d`、`source_dirty=false`
+- Smoke verifier：correctness、trajectory replay、adaptive exercise 全部通过；决策为 provisional `NO_GO`
+- Canonical：140/140 unique rows
+  - 4 prompt classes
+  - 5 isolated policies
+  - 7 repetitions
+  - 每个 policy 28 rows
+  - 每个 prompt 35 rows
+  - 每次 repetition 20 rows
+  - 140 个 process JSON 对应 140 个独立模型进程
+  - 280 个互异动态端口（每进程各一个 distributed port 和 master port）
+  - 0 process failures
+
+逐-run stdout/stderr 和 process JSON 保留在远端 isolated directory；Git 中 canonical 目录只持久化规范要求的五件套：
+
+```text
+manifest.json
+raw_rows.json
+event_rows.json
+summary.json
+report.md
+```
+
+### Verifier 与 artifact 完整性
+
+Runner 的远端 verifier 和下载后的本地 verifier 均成功。第二层独立审计输出：
+
+```text
+ADAPTIVE_NGRAM_CANONICAL_AUDIT_OK NO_GO
+SOURCE_COMMIT 08b122daedc8ab531a5d301f0b5a82b5cb1997e5
+ROWS 140
+POLICY_COUNTS {'adaptive': 28, 'baseline': 28, 'fixed_k1': 28, 'fixed_k2': 28, 'fixed_k4': 28}
+PROMPT_COUNTS {'natural_prose': 35, 'repeated_long_context': 35, 'structured_mixed': 35, 'transition_heavy': 35}
+REPETITION_COUNTS {0: 20, 1: 20, 2: 20, 3: 20, 4: 20, 5: 20, 6: 20}
+```
+
+远端与下载后本地五件套 SHA256 逐文件一致：
+
+```text
+manifest.json   f350289adaf4cfa71c523beda72291d0bb44b589623142778f3c0edc065353e4
+raw_rows.json   cad13ba325dfd9b0bc48e9f4355ddac71aae25917033a58b46086ed09b158ac0
+event_rows.json b975ccdadf5eb1c88fcfd8b5bc7ef0075cbec11c7f45480dea5b3ef9d15834ea
+summary.json    391f3c311b0f2c59a3e3ea07c3c9da3b850491b1844c4318e455e4c550f0b42e
+report.md       e3066e313c516f414762715518a8acad01996207d3e09615ac7772cfb3e795a5
+```
+
+### Canonical 性能结果
+
+| Policy | aggregate median tok/s | drafted tokens | accepted tokens | token acceptance |
+|---|---:|---:|---:|---:|
+| normal greedy | 33.815941 | 0 | 0 | n/a |
+| fixed K1 | 32.979915 | 742 | 700 | 94.34% |
+| fixed K2 | 32.925531 | 1008 | 931 | 92.36% |
+| fixed K4 | 37.962906 | 1288 | 1120 | 86.96% |
+| adaptive | 37.574839 | 1197 | 1092 | 91.23% |
+
+| Prompt | normal greedy | fixed K1 | fixed K2 | fixed K4 | adaptive |
+|---|---:|---:|---:|---:|---:|
+| natural prose | 33.956405 | 33.435853 | 33.271282 | 31.579000 | 32.969817 |
+| structured mixed | 33.719898 | 33.486046 | 33.077964 | 32.191697 | 33.160628 |
+| repeated long context | 33.935897 | 33.026123 | 32.911202 | 46.905002 | 46.608547 |
+| transition heavy | 33.996681 | 32.474497 | 32.921986 | 41.950054 | 39.137848 |
+
+聚合 waste / zero-accept：
+
+| Metric | fixed K4 | adaptive | adaptive relative change |
+|---|---:|---:|---:|
+| median wasted draft tokens | 24 | 15 | -37.50% |
+| median zero-accept verify cost | 224.830 ms | 180.475 ms | -19.73% |
+
+Adaptive event exercise：
+
+- Selected K counts：`K1=21`、`K2=70`、`K4=259`
+- Transition counts：
+  `full_accept_streak=154`、`hold=28`、`promote=140`、
+  `weak_acceptance=7`、`zero_accept=21`
+- 所有 adaptive event 可由 event record 独立 replay；selected K 只出现 `1/2/4`
+
+### 固定 gate 判定
+
+固定阈值没有在观察结果后修改：
+
+| Gate | Threshold | Observed | Result |
+|---|---:|---:|---|
+| adaptive vs normal greedy | `>= +5%` | `+11.1158%` | PASS |
+| adaptive vs best fixed direct | `>= +2%` | `-1.0222%` | FAIL |
+| near-best fixed fallback | `>= -1%` | `-1.0222%` | FAIL |
+| waste reduction vs K4 | `>= 20%` | `37.50%` | PASS |
+| zero-accept cost reduction vs K4 | `>= 15%` | `19.7282%` | PASS |
+| natural prompt / baseline | `>= 0.95` | `0.970945` | PASS |
+| transition-heavy / baseline | `>= 0.95` | `1.151226` | PASS |
+| exact output correctness | required | pass, no failures | PASS |
+| trajectory replay | required | pass, no failures | PASS |
+| adaptive exercise | required | levels/reasons complete | PASS |
+
+最终决策严格为：
+
+```text
+NO_GO
+reason: adaptive_vs_fixed_gate_failed
+```
+
+虽然 adaptive 相对 normal greedy 明显加速，并同时改善 K4 waste 和 zero-accept cost，但它相对最佳 fixed K4 的 `-1.0222%` 刚刚越过预先固定的 `-1%` fallback 下限，因此不能判 GO，也不能事后把阈值放宽到包住结果。
+
+### 结果证明与边界
+
+该 canonical gate 证明：
+
+1. 在记录的 Qwen3-0.6B、greedy、单序列 prompt bank 上，adaptive 与 fixed speculative 输出都和 normal greedy token 序列一致。
+2. 两阶段 verifier 与 accepted-token block/hash lifecycle 在该覆盖内通过 correctness 和 trajectory replay。
+3. Adaptive 状态机确实覆盖 `K=1/2/4` 以及 promotion、weak demotion、zero-accept demotion 和 hold。
+4. Adaptive 相比 normal greedy 有 `+11.12%` aggregate median tok/s，且比 K4 少 waste / zero-accept verify cost。
+5. 在预先固定的综合 gate 下，当前 adaptive policy 没有战胜最佳 fixed policy，因此不能成为默认策略。
+
+该 gate不证明：
+
+- ragged 或 batched target verification correctness；
+- production batch throughput、scheduler interaction 或 queueing-tail latency；
+- GPU memory-capacity reduction；
+- sampling/non-greedy correctness；
+- 其他模型、prompt 分布、GPU 或并发负载上的迁移收益。
+
+### Prompt-to-artifact completion audit
+
+1. **Exact adaptive transition rules**：`tools/test_ngram_speculative.py` 覆盖初始化、promotion、弱接受降级、zero-accept 直降、no-match 不更新和 JSON replay；canonical `event_rows.json` trajectory replay pass。
+2. **Unchanged verify/commit semantics**：变更列表未修改 `Sequence`、scheduler、`LLM.generate()` 或 `LLMEngine.step()`；candidate 与同 prompt baseline token SHA/列表完全一致。`block_manager.py` 仅修复 accepted-token block/hash lifecycle，并由 `tools/test_chunked_prefill.py` block-boundary regression 覆盖。
+3. **Single sequence**：140/140 raw rows 均 `max_num_seqs=1`，每个 subprocess 只传一个 literal prompt。
+4. **Five isolated policies**：baseline/fixed K1/fixed K2/fixed K4/adaptive 各 28 个独立 process rows，共 140 unique run keys。
+5. **Four prompt classes**：manifest 固定 natural、mixed、high-repeat、transition-heavy 四类；summary 有四类 per-prompt median。
+6. **Seven repetitions**：repetition `0..6` 各 20 rows。
+7. **Dynamic distinct ports**：140 个进程记录 280 个互异 `TINYVLLM_DIST_PORT`/`MASTER_PORT`；只有 `EADDRINUSE` 允许受控重试。
+8. **Actual model identity**：manifest 记录实际路径 `/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`，remote validation 读取 `config.json` 并确认 `model_type=qwen3`、0.6B identity。
+9. **Mandatory correctness**：`correctness_pass=true`、`correctness_failures=[]`、`trajectory_replay_pass=true`、`trajectory_failures=[]`。
+10. **Fixed thresholds**：`summary.json` 保留设计时固定阈值；独立审计复算得到同一 `NO_GO`，未根据结果调整。
+11. **Canonical artifact set**：Git 中目录精确包含 manifest/raw rows/event rows/summary/report 五件套。
+12. **Remote and post-download verification**：runner 远端 verify、下载后本地 verify、`/tmp/audit_adaptive_ngram_canonical.py` 独立审计均通过；五件套远端/本地 SHA256 一致。
+13. **README and handoff**：`README.md` 记录复现入口、关键数字、NO_GO 原因和边界；本节记录完整环境、命令、证据链和后续方向。
+14. **Claim boundaries**：`report.md`、`README.md` 和本节均明确限制为 greedy single-sequence profiler-owned Qwen3-0.6B，不外推 batch/queue/memory/其他模型。
+
+结论：14 项均有直接 artifact 或代码/测试证据，不依赖单一 green proxy。Canonical adaptive gate 已完成，但产品策略结论是 `NO_GO`。
+
+### 下一方向
+
+保留 adaptive policy、两阶段 verifier、block-boundary regression、deterministic matrix、resume、artifact verifier 和报告生成器。不要在同一 4-prompt gate 上继续调 EMA/阈值以追赶 `0.0222` 个百分点，避免 benchmark overfit。
+
+短期只在已验证的高重复、greedy、单序列 regime 中把 fixed K4 作为可选 profiler policy，不能设为通用默认。下一主线优先做更高质量 draft source（例如真实小 draft model / 更强 retrieval draft）的 profiler-owned gate；进入 runtime 前仍须重新完成 exact-output、ragged batch、scheduler/load 和 memory-capacity gate。

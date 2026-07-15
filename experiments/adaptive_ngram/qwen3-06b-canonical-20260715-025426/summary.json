@@ -1,0 +1,143 @@
+{
+  "adaptive_exercise_failures": [],
+  "adaptive_exercise_pass": true,
+  "adaptive_selected_levels": [
+    1,
+    2,
+    4
+  ],
+  "adaptive_transition_reasons": [
+    "full_accept_streak",
+    "hold",
+    "promote",
+    "weak_acceptance",
+    "zero_accept"
+  ],
+  "adaptive_vs_baseline": 0.1111575721954392,
+  "adaptive_vs_best_fixed": -0.010222269666711137,
+  "adaptive_waste_reduction_vs_k4": 0.375,
+  "adaptive_zero_cost_reduction_vs_k4": 0.19728198422038135,
+  "aggregate_throughput_by_repetition": {
+    "adaptive": [
+      37.04708739159049,
+      37.509773589198524,
+      38.696865227920156,
+      38.07859243916843,
+      38.02996116257264,
+      37.570929350964676,
+      37.57483920383451
+    ],
+    "baseline": [
+      34.073449489735914,
+      33.81594127068195,
+      33.97861428598033,
+      34.10745234428795,
+      33.457653192030136,
+      33.36752351771194,
+      33.3259399729817
+    ],
+    "fixed_k1": [
+      32.39537662335924,
+      32.94960699282538,
+      32.97991491592105,
+      33.378917769236,
+      32.72447199077922,
+      33.724165039573705,
+      33.03843332221775
+    ],
+    "fixed_k2": [
+      32.92553075452571,
+      32.337496271096335,
+      33.02696556713246,
+      33.11879129088507,
+      32.38992463112572,
+      32.01284315411797,
+      33.15822123867508
+    ],
+    "fixed_k4": [
+      36.81928966367225,
+      38.67963165669826,
+      37.91429784047048,
+      38.17239715869313,
+      37.56258411109769,
+      37.9629062690488,
+      38.165138319424635
+    ]
+  },
+  "aggregate_throughput_medians": {
+    "adaptive": 37.57483920383451,
+    "baseline": 33.81594127068195,
+    "fixed_k1": 32.97991491592105,
+    "fixed_k2": 32.92553075452571,
+    "fixed_k4": 37.9629062690488
+  },
+  "best_fixed_policy": "fixed_k4",
+  "correctness_failures": [],
+  "correctness_pass": true,
+  "decision": "NO_GO",
+  "decision_reasons": [
+    "adaptive_vs_fixed_gate_failed"
+  ],
+  "expected_rows": 140,
+  "observed_rows": 140,
+  "per_prompt_throughput_medians": {
+    "natural_prose": {
+      "adaptive": 32.969816916061134,
+      "baseline": 33.95640513854372,
+      "fixed_k1": 33.43585313999954,
+      "fixed_k2": 33.271282297223195,
+      "fixed_k4": 31.579000393528563
+    },
+    "repeated_long_context": {
+      "adaptive": 46.60854689624378,
+      "baseline": 33.93589663179918,
+      "fixed_k1": 33.02612339250164,
+      "fixed_k2": 32.91120159167905,
+      "fixed_k4": 46.90500178885381
+    },
+    "structured_mixed": {
+      "adaptive": 33.16062774073887,
+      "baseline": 33.7198979540972,
+      "fixed_k1": 33.486046255676534,
+      "fixed_k2": 33.07796433900278,
+      "fixed_k4": 32.191697464155986
+    },
+    "transition_heavy": {
+      "adaptive": 39.13784796080132,
+      "baseline": 33.99668089680677,
+      "fixed_k1": 32.474497303861696,
+      "fixed_k2": 32.92198649329768,
+      "fixed_k4": 41.95005393431064
+    }
+  },
+  "protected_prompt_ratios": {
+    "natural_prose": 0.9709454455364971,
+    "transition_heavy": 1.151225558742043
+  },
+  "schema_version": 1,
+  "structural_failures": [],
+  "thresholds": {
+    "adaptive_near_best_fixed_min": -0.01,
+    "adaptive_vs_baseline_min": 0.05,
+    "adaptive_vs_best_fixed_min": 0.02,
+    "adaptive_waste_reduction_vs_k4_min": 0.2,
+    "adaptive_zero_cost_reduction_vs_k4_min": 0.15,
+    "natural_transition_ratio_min": 0.95
+  },
+  "trajectory_failures": [],
+  "trajectory_replay_pass": true,
+  "wasted_draft_tokens_medians": {
+    "adaptive": 15.0,
+    "baseline": 0.0,
+    "fixed_k1": 6.0,
+    "fixed_k2": 11.0,
+    "fixed_k4": 24.0
+  },
+  "zero_accept_verify_ms_medians": {
+    "adaptive": 180.47528713941574,
+    "baseline": 0.0,
+    "fixed_k1": 179.62540313601494,
+    "fixed_k2": 178.3432699739933,
+    "fixed_k4": 224.8302437365055
+  }
+}

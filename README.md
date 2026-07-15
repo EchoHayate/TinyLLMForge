@@ -15,6 +15,38 @@ build a tiny LLM engine from scratch
 - **KV offload / blockwise attention**：已打通 GPU staging、dirty writeback、H2D reload、prefetch/eviction 与 blockwise attention 正确性；局部 `gpu_blocks=4` matrix 中 H2D / eviction 计数约 **-33%**，但端到端 tok/s 收益仍需更严格 benchmark 证明。
 - **DFlash profiler-only**：已完成 hidden-to-draft / draft-model-stub ABI、batch schema 与 contract 验证；当前不接 runtime，因此对现有推理速度 **0% 直接收益**，主要价值是降低未来接真实 draft model 的风险。
 
+## Adaptive n-gram speculative decoding canonical gate
+
+2026-07-15 在 Qwen3-0.6B 上完成了严格的 greedy、单序列 canonical gate：4 类固定 prompt × 5 个隔离 policy（normal greedy、fixed K1/K2/K4、adaptive K∈{1,2,4}）× 7 次重复，共 140 个独立进程。复现入口：
+
+```bash
+RUN_TAG=qwen3-06b-canonical-20260715-025426 \
+LOCAL_OUT=$PWD/experiments/adaptive_ngram/qwen3-06b-canonical-20260715-025426 \
+CUDA_VISIBLE_DEVICES=3 \
+MODEL_PATH=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B \
+tools/run_adaptive_ngram_gate_remote.sh canonical
+```
+
+Canonical 五件套位于：
+`experiments/adaptive_ngram/qwen3-06b-canonical-20260715-025426/`。
+
+| Policy | aggregate median tok/s |
+|---|---:|
+| normal greedy | 33.815941 |
+| fixed K1 | 32.979915 |
+| fixed K2 | 32.925531 |
+| fixed K4 | 37.962906 |
+| adaptive K∈{1,2,4} | 37.574839 |
+
+结果与边界：
+
+- 140/140 行完整，所有进程返回 0；同 prompt 的候选输出与 normal greedy token 序列完全一致，trajectory replay 和 adaptive exercise 均通过。
+- Adaptive 相对 normal greedy 为 **+11.12%**，但相对最佳 fixed K4 为 **-1.022%**。
+- Adaptive 的聚合 token acceptance 为 **91.23%**；相对 fixed K4，median wasted draft tokens 从 `24` 降到 `15`（**-37.5%**），median zero-accept verify cost 从 `224.830 ms` 降到 `180.475 ms`（**-19.73%**）。
+- 固定 gate 要求 adaptive 至少比最佳 fixed 快 2%；或者落后不超过 1%，同时 waste 至少降低 20%、zero-accept cost 至少降低 15%。后两项通过，但 `-1.022% < -1%`，因此最终结论严格为 **NO_GO**，没有在观察结果后放宽阈值。
+- 该结论只覆盖记录的 Qwen3-0.6B、greedy、单序列、固定 prompt bank 和 profiler-owned 路径；不证明 ragged/batched target verification、生产 batch throughput、queueing tail latency、memory-capacity reduction，亦不能外推到其他模型。
+- 保留 adaptive policy、correctness verifier 和 gate 基础设施用于后续研究；当前只可在已验证的高重复单序列 regime 中考虑 fixed K4。下一优先方向是更高质量的 draft source，而不是继续在同一 gate 上调 adaptive 阈值。
+
 ## 参考资料
 ```
 https://github.com/GeeeekExplorer/nano-vllm
