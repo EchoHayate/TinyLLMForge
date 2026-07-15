@@ -1105,6 +1105,29 @@ def gather_kv_cache_dense(
     return k_dense.contiguous(), v_dense.contiguous()
 
 
+def _flash_attn_spec_verify(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    context,
+    scale: float,
+) -> torch.Tensor:
+    if context.context_lens is None or context.context_lens.numel() != 1:
+        raise RuntimeError("spec_verify requires one context length")
+    if context.block_tables is None or context.block_tables.size(0) != 1:
+        raise RuntimeError("spec_verify requires one block-table row")
+    output = flash_attn_with_kvcache(
+        q.unsqueeze(0),
+        k_cache,
+        v_cache,
+        cache_seqlens=context.context_lens,
+        block_table=context.block_tables,
+        softmax_scale=scale,
+        causal=True,
+    )
+    return output.view_as(q)
+
+
 class Attention(nn.Module):
 
     def __init__(
@@ -1179,7 +1202,17 @@ class Attention(nn.Module):
                 # Quest：写入 KV 后同步维护 per-block summary
                 if self.k_min is not None and self.k_max is not None:
                     update_block_summary(k, context.slot_mapping, self.k_min, self.k_max, k_cache.shape[1])
-        if context.is_prefill:
+        if context.mode == "spec_verify":
+            if self.kv_quant_bits != 0:
+                raise RuntimeError("spec_verify requires FP16/BF16 KV")
+            o = _flash_attn_spec_verify(
+                q,
+                k_cache,
+                v_cache,
+                context,
+                self.scale,
+            )
+        elif context.mode == "prefill":
             # prefill传入的 q = [batch_size, seq_len, num_heads, head_dim]
             # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
             if context.kv_offload_blockwise_prefill:
@@ -1247,7 +1280,7 @@ class Attention(nn.Module):
                     num_clusters=context.am_compact_num_clusters,
                     num_key_spans=context.am_compact_num_key_spans,
                 )
-        else:
+        elif context.mode == "decode":
             # decode阶段传入的 q = [batch_size, num_heads, head_dim]
             block_tables = context.block_tables
             cache_seqlens = context.context_lens
@@ -1382,5 +1415,7 @@ class Attention(nn.Module):
                 )
             o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = cache_seqlens,
                                         block_table = block_tables, softmax_scale = self.scale, causal = True)
+        else:
+            raise RuntimeError(f"unsupported attention mode: {context.mode}")
         o = o.view(-1, self.num_heads * self.head_dim)
         return o
