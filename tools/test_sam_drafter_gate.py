@@ -391,6 +391,23 @@ def test_resume_rejects_each_compatibility_mismatch():
     assert gate._row_is_resumable(manifest, spec, changed) is False
 
 
+def test_remote_runner_uses_exact_host_python_model_and_isolation():
+    source = (
+        Path(_REPO_ROOT)
+        / "tools"
+        / "run_sam_drafter_gate_remote.sh"
+    ).read_text()
+    assert "sitian@10.232.195.203" in source
+    assert "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python" in source
+    assert (
+        "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B"
+        in source
+    )
+    assert "TINYVLLM_DIST_PORT" not in source
+    assert "MASTER_PORT" not in source
+    assert "sam-drafter-gates" in source
+
+
 def main():
     test_prompt_bank_has_five_stable_classes()
     test_run_specs_are_175_unique_rows_for_canonical()
@@ -405,6 +422,7 @@ def main():
     test_missing_each_required_policy_branch_is_incomplete()
     test_verify_artifacts_recomputes_summary_report_and_hashes()
     test_resume_rejects_each_compatibility_mismatch()
+    test_remote_runner_uses_exact_host_python_model_and_isolation()
     print("sam drafter gate tests passed")
 
 

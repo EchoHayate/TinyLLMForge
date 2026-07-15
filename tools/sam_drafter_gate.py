@@ -1083,20 +1083,29 @@ def verify_artifacts(out_dir: Path) -> dict:
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--python-bin", required=True)
-    parser.add_argument("--model-path", required=True)
-    parser.add_argument("--repetitions", type=int, default=7)
-    parser.add_argument("--base-seed", type=int, default=20260715)
-    parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--source-dirty", action="store_true")
-    parser.add_argument("--host", default=socket.gethostname())
-    parser.add_argument("--resume", action="store_true")
+    subparsers = parser.add_subparsers(dest="command")
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("--out-dir", type=Path, required=True)
+    run_parser.add_argument("--python-bin", required=True)
+    run_parser.add_argument("--model-path", required=True)
+    run_parser.add_argument("--repetitions", type=int, default=7)
+    run_parser.add_argument("--base-seed", type=int, default=20260715)
+    run_parser.add_argument("--source-commit", required=True)
+    run_parser.add_argument("--source-dirty", action="store_true")
+    run_parser.add_argument("--host", default=socket.gethostname())
+    run_parser.add_argument("--resume", action="store_true")
+    verify_parser = subparsers.add_parser("verify")
+    verify_parser.add_argument("--out-dir", type=Path, required=True)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.command == "verify":
+        print(json.dumps(verify_artifacts(args.out_dir), indent=2))
+        return
+    if args.command != "run":
+        raise ValueError("command must be run or verify")
     run_gate(
         args.out_dir,
         args.python_bin,
