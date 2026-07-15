@@ -1,0 +1,107 @@
+{
+  "claim_scope": {
+    "greedy_only": true,
+    "memory_reduction": false,
+    "production_batch_throughput": false,
+    "profiler_owned": true,
+    "queue_tail_latency": false,
+    "ragged_batched_verify": false,
+    "single_sequence": true
+  },
+  "correctness_failures": [
+    "(0, 'natural_prose'):sam_fixed_k16:output_mismatch",
+    "(0, 'natural_prose'):sam_match_aware:output_mismatch",
+    "(0, 'natural_prose'):ngram_fixed_k4:output_mismatch",
+    "(0, 'structured_code_like'):sam_fixed_k16:output_mismatch",
+    "(0, 'structured_code_like'):ngram_adaptive:output_mismatch",
+    "(0, 'structured_code_like'):ngram_fixed_k4:output_mismatch"
+  ],
+  "correctness_pass": false,
+  "critical_prompt_medians": {
+    "natural_prose": 0.026962506917506568,
+    "prompt_copy_retrieval": -0.034491184842733946,
+    "repeated_long_context": 1.757506046746982,
+    "structured_code_like": 0.8281352152283568,
+    "transition_heavy": 0.7992583744152906
+  },
+  "decision": "INCOMPLETE",
+  "decision_reasons": [
+    "(0, 'natural_prose'):sam_fixed_k16:output_mismatch",
+    "(0, 'natural_prose'):sam_match_aware:output_mismatch",
+    "(0, 'natural_prose'):ngram_fixed_k4:output_mismatch",
+    "(0, 'structured_code_like'):sam_fixed_k16:output_mismatch",
+    "(0, 'structured_code_like'):ngram_adaptive:output_mismatch",
+    "(0, 'structured_code_like'):ngram_fixed_k4:output_mismatch"
+  ],
+  "exercise_failures": [],
+  "expected_rows": 25,
+  "input_artifact_sha256": {
+    "event_rows.json": "597486b21636f989cee76a5184a9f05ecbf401ab11034b37ce8f591dfa697134",
+    "manifest.json": "70517b85da26ae24d86d5b96decc602d084c80e3a965b5950cdd416a7753cdba",
+    "raw_rows.json": "6e86d0999c3caa7156a566782755a4539a334d7d4e92386edab1ab0c0133a03c"
+  },
+  "median_draft_waste_reduction": -2.888888888888889,
+  "median_sam_vs_baseline": 0.7992583744152906,
+  "median_sam_vs_ngram_k4": 0.30749802288440087,
+  "median_verify_attempt_reduction": -0.4444444444444444,
+  "observed_rows": 25,
+  "paired_speedups": {
+    "sam_vs_baseline": {
+      "natural_prose": [
+        0.026962506917506568
+      ],
+      "prompt_copy_retrieval": [
+        -0.034491184842733946
+      ],
+      "repeated_long_context": [
+        1.757506046746982
+      ],
+      "structured_code_like": [
+        0.8281352152283568
+      ],
+      "transition_heavy": [
+        0.7992583744152906
+      ]
+    },
+    "sam_vs_ngram_k4": {
+      "natural_prose": [
+        -0.03583197211632172
+      ],
+      "prompt_copy_retrieval": [
+        -0.13181568097593022
+      ],
+      "repeated_long_context": [
+        0.8862680899707336
+      ],
+      "structured_code_like": [
+        0.7272320619755661
+      ],
+      "transition_heavy": [
+        0.30749802288440087
+      ]
+    }
+  },
+  "policy_exercise_pass": true,
+  "sam_cpu_overhead_ms": {
+    "sam_build_ms": 6.315998733043671,
+    "sam_extension_ms": 6.9756098091602325,
+    "sam_lookup_ms": 14.791347086429596
+  },
+  "structural_failures": [],
+  "thresholds": {
+    "critical_prompt_speedup_min": -0.05,
+    "draft_waste_reduction_min": 0.25,
+    "sam_near_ngram_k4_min": -0.01,
+    "sam_vs_baseline_min": 0.1,
+    "sam_vs_ngram_k4_min": 0.03,
+    "verify_attempt_reduction_min": 0.25
+  },
+  "throughput_by_policy": {
+    "baseline": 31.3647546520044,
+    "ngram_adaptive": 33.15864939858553,
+    "ngram_fixed_k4": 36.53856041110329,
+    "sam_fixed_k16": 32.39745550332752,
+    "sam_match_aware": 57.33901249632667
+  },
+  "trace_reconciliation_pass": true
+}
