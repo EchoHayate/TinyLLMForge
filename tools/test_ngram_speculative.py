@@ -47,6 +47,8 @@ update_adaptive_draft_state = ngram.update_adaptive_draft_state
 propose_draft = profile_ngram.propose_draft
 validate_profile_args = profile_ngram.validate_profile_args
 SuffixAutomatonDraftIndex = profile_ngram.SuffixAutomatonDraftIndex
+sync_sam_index = profile_ngram.sync_sam_index
+should_verify_draft = profile_ngram.should_verify_draft
 DraftModelInput = draft_model_schema.DraftModelInput
 DraftModelContract = draft_model_schema.DraftModelContract
 DraftModelResult = draft_model_schema.DraftModelResult
@@ -405,6 +407,45 @@ def test_sam_profile_args_require_candidate_greedy_single_sequence():
             pass
         else:
             raise AssertionError(override)
+
+
+def test_sync_sam_index_extends_only_verified_history_tail():
+    index = SuffixAutomatonDraftIndex([1, 2, 3])
+    event = sync_sam_index(index, [1, 2, 3, 4, 5])
+    assert index.indexed_tokens == [1, 2, 3, 4, 5]
+    assert event["extended_tokens"] == [4, 5]
+    assert event["runtime_mutation"] is False
+
+
+def test_sync_sam_index_rejects_history_rewrite():
+    index = SuffixAutomatonDraftIndex([1, 2, 3])
+    try:
+        sync_sam_index(index, [1, 9, 3])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("history rewrite accepted")
+
+
+def test_empty_sam_proposal_bypasses_verifier():
+    class Args:
+        draft_source = "sam"
+        draft_policy = "sam-match-aware"
+        ngram_size = 3
+        max_draft_tokens = 16
+
+    index = SuffixAutomatonDraftIndex([1, 9, 1])
+    draft = propose_draft(index.indexed_tokens, Args(), sam_index=index)
+    assert should_verify_draft(draft) is False
+
+
+def test_sam_profiler_remains_profiler_owned():
+    source = open(
+        os.path.join(_REPO_ROOT, "tools", "profile_ngram_commit.py")
+    ).read()
+    assert "verify_and_commit_block(" in source
+    assert '"runtime_mutation": False' in source
+    assert "LLMEngine.step" not in source
 
 
 def test_profile_validation_rejects_adaptive_non_ngram_source():
@@ -1005,6 +1046,10 @@ def main():
     test_propose_draft_dispatches_fixed_sam_source()
     test_propose_draft_dispatches_match_aware_sam_bypass()
     test_sam_profile_args_require_candidate_greedy_single_sequence()
+    test_sync_sam_index_extends_only_verified_history_tail()
+    test_sync_sam_index_rejects_history_rewrite()
+    test_empty_sam_proposal_bypasses_verifier()
+    test_sam_profiler_remains_profiler_owned()
     test_profile_validation_rejects_adaptive_non_ngram_source()
     test_profile_validation_requires_single_sequence_for_adaptive()
     test_attach_draft_policy_event_updates_adaptive_after_verification()

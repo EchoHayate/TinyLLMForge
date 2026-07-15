@@ -64,6 +64,35 @@ class DraftProposal:
     metadata: dict = field(default_factory=dict)
 
 
+def should_verify_draft(draft: DraftProposal) -> bool:
+    return bool(draft.tokens)
+
+
+def sync_sam_index(
+    sam_index: SuffixAutomatonDraftIndex,
+    target_verified_history: list[int],
+) -> dict:
+    normalized = [int(token_id) for token_id in target_verified_history]
+    indexed = sam_index.indexed_tokens
+    if normalized[:len(indexed)] != indexed:
+        raise ValueError("target history rewrote the SAM indexed prefix")
+    extension = normalized[len(indexed):]
+    t0 = time.perf_counter()
+    sam_index.extend_verified(extension)
+    extension_ms = (time.perf_counter() - t0) * 1000.0
+    sam_index.assert_history(normalized)
+    return {
+        "event_type": "index_integrity",
+        "extended_tokens": extension,
+        "extension_ms": extension_ms,
+        "index_token_count": len(sam_index.indexed_tokens),
+        "index_state_count": len(sam_index.states),
+        "history_match": True,
+        "runtime_mutation": False,
+        "profiler_owned": True,
+    }
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=str, default=None)
@@ -1583,7 +1612,15 @@ def run_candidate_only_profile(args) -> dict:
     stats_by_candidate = {}
     for prompt_index, prompt in enumerate(prompts):
         llm.add_request(prompt, sp)
-        candidate_id = llm.scheduler.waiting[-1].seq_id
+        candidate = llm.scheduler.waiting[-1]
+        candidate_id = candidate.seq_id
+        sam_build_t0 = time.perf_counter()
+        sam_index = (
+            SuffixAutomatonDraftIndex(list(candidate.token_ids))
+            if args.draft_source == "sam"
+            else None
+        )
+        sam_build_ms = (time.perf_counter() - sam_build_t0) * 1000.0
         stats_by_candidate[candidate_id] = {
             "prompt_index": prompt_index,
             "prompt": prompt,
@@ -1598,6 +1635,12 @@ def run_candidate_only_profile(args) -> dict:
             "events": [],
             "verify_events": [],
             "adaptive_state": AdaptiveDraftState() if args.draft_policy == "adaptive" else None,
+            "sam_index": sam_index,
+            "sam_build_ms": sam_build_ms,
+            "sam_extension_ms": 0.0,
+            "sam_lookup_ms": 0.0,
+            "sam_events": [],
+            "sam_bypass_count": 0,
         }
 
     outputs = {}
@@ -1615,13 +1658,56 @@ def run_candidate_only_profile(args) -> dict:
                 continue
             adaptive_state = stats["adaptive_state"]
             selected_k = adaptive_state.selected_k if adaptive_state is not None else args.max_draft_tokens
+            sam_index = stats["sam_index"]
+            if sam_index is not None:
+                integrity_event = sync_sam_index(sam_index, candidate.token_ids)
+                stats["sam_extension_ms"] += integrity_event["extension_ms"]
+                stats["sam_events"].append({
+                    "step": step_idx,
+                    "prompt_index": stats["prompt_index"],
+                    "candidate_seq_id": candidate_id,
+                    **integrity_event,
+                })
+            lookup_t0 = time.perf_counter()
             draft = propose_draft(
                 candidate.token_ids,
                 args,
                 max_draft_tokens=selected_k,
+                sam_index=sam_index,
             )
-            if not draft.tokens:
+            lookup_ms = (time.perf_counter() - lookup_t0) * 1000.0
+            if sam_index is not None:
+                stats["sam_lookup_ms"] += lookup_ms
+                draft.metadata["lookup_time_ms"] = lookup_ms
+                stats["sam_events"].append({
+                    "event_type": "proposal",
+                    "step": step_idx,
+                    "prompt_index": stats["prompt_index"],
+                    "candidate_seq_id": candidate_id,
+                    "draft_source": "sam",
+                    "selected_k": int(draft.metadata["selected_k"]),
+                    "proposed_tokens": len(draft.tokens),
+                    "draft_metadata": draft.metadata,
+                    "runtime_mutation": False,
+                    "profiler_owned": True,
+                })
+            if not should_verify_draft(draft):
                 stats["no_draft_steps"] += 1
+                if sam_index is not None:
+                    stats["sam_events"].append({
+                        "event_type": "bypass",
+                        "step": step_idx,
+                        "prompt_index": stats["prompt_index"],
+                        "candidate_seq_id": candidate_id,
+                        "draft_source": "sam",
+                        "selected_k": int(draft.metadata["selected_k"]),
+                        "proposed_tokens": 0,
+                        "accepted_count": 0,
+                        "draft_metadata": draft.metadata,
+                        "runtime_mutation": False,
+                        "profiler_owned": True,
+                    })
+                    stats["sam_bypass_count"] += 1
                 continue
             stats["commit_attempts"] += 1
             stats["drafted_tokens"] += len(draft.tokens)
@@ -1639,12 +1725,18 @@ def run_candidate_only_profile(args) -> dict:
             attach_draft_policy_event(
                 event,
                 draft,
-                selected_k=selected_k,
+                selected_k=int(draft.metadata.get("selected_k", selected_k)),
                 adaptive_state=adaptive_state,
             )
             event["draft_metadata"] = draft.metadata
+            if sam_index is not None:
+                event["event_type"] = "verify"
+                event["runtime_mutation"] = False
+                event["profiler_owned"] = True
             event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}
             stats["verify_events"].append(event_record)
+            if sam_index is not None:
+                stats["sam_events"].append(event_record)
             stats["accepted_count"] += event["accepted_count"]
             _accumulate_timing_ms(stats["verify_timing_ms"], event)
             if event["accepted_count"] <= 0:
@@ -1684,6 +1776,24 @@ def run_candidate_only_profile(args) -> dict:
     per_prompt = []
     for candidate_id, stats in stats_by_candidate.items():
         token_ids = outputs.get(candidate_id, [])
+        if stats["sam_index"] is not None:
+            final_history = (
+                stats["sam_index"].indexed_tokens[
+                    :stats["sam_index"].prompt_length
+                ]
+                + list(token_ids)
+            )
+            integrity_event = sync_sam_index(
+                stats["sam_index"],
+                final_history,
+            )
+            stats["sam_extension_ms"] += integrity_event["extension_ms"]
+            stats["sam_events"].append({
+                "step": step_idx,
+                "prompt_index": stats["prompt_index"],
+                "candidate_seq_id": candidate_id,
+                **integrity_event,
+            })
         per_prompt.append({
             "prompt_index": stats["prompt_index"],
             "prompt": stats["prompt"],
@@ -1706,11 +1816,86 @@ def run_candidate_only_profile(args) -> dict:
             "draft_policy": args.draft_policy,
             "selected_k_counts": {
                 str(level): sum(
-                    1 for event in stats["verify_events"]
-                    if event.get("selected_k") == level
+                    1 for event in (
+                        stats["sam_events"]
+                        if stats["sam_index"] is not None
+                        else stats["verify_events"]
+                    )
+                    if (
+                        event.get("event_type") == "proposal"
+                        if stats["sam_index"] is not None
+                        else True
+                    )
+                    and int(event.get("selected_k", -1)) == level
                 )
-                for level in (1, 2, 4)
+                for level in (
+                    (0, 4, 8, 16)
+                    if stats["sam_index"] is not None
+                    else (1, 2, 4)
+                )
             },
+            "sam_build_ms": stats["sam_build_ms"],
+            "sam_extension_ms": stats["sam_extension_ms"],
+            "sam_lookup_ms": stats["sam_lookup_ms"],
+            "sam_state_count": (
+                len(stats["sam_index"].states)
+                if stats["sam_index"] is not None
+                else 0
+            ),
+            "sam_indexed_tokens": (
+                len(stats["sam_index"].indexed_tokens)
+                if stats["sam_index"] is not None
+                else 0
+            ),
+            "sam_bypass_count": stats["sam_bypass_count"],
+            "sam_bypass_reasons": {
+                reason: sum(
+                    1 for event in stats["sam_events"]
+                    if event.get("event_type") == "bypass"
+                    and event.get("draft_metadata", {}).get("bypass_reason")
+                    == reason
+                )
+                for reason in sorted({
+                    event.get("draft_metadata", {}).get("bypass_reason")
+                    for event in stats["sam_events"]
+                    if event.get("event_type") == "bypass"
+                    and event.get("draft_metadata", {}).get("bypass_reason")
+                })
+            },
+            "sam_match_length_counts": {
+                str(length): sum(
+                    1 for event in stats["sam_events"]
+                    if event.get("event_type") == "proposal"
+                    and int(
+                        event.get("draft_metadata", {}).get("match_length", -1)
+                    ) == length
+                )
+                for length in sorted({
+                    int(event.get("draft_metadata", {}).get("match_length", -1))
+                    for event in stats["sam_events"]
+                    if event.get("event_type") == "proposal"
+                })
+            },
+            "sam_continuation_region_counts": {
+                region: sum(
+                    1 for event in stats["sam_events"]
+                    if event.get("event_type") == "proposal"
+                    and event.get("draft_metadata", {}).get(
+                        "continuation_region"
+                    ) == region
+                )
+                for region in sorted({
+                    event.get("draft_metadata", {}).get("continuation_region")
+                    for event in stats["sam_events"]
+                    if event.get("event_type") == "proposal"
+                    and event.get("draft_metadata", {}).get(
+                        "continuation_region"
+                    )
+                })
+            },
+            "sam_events": stats["sam_events"],
+            "runtime_mutation": False,
+            "profiler_owned": True,
             "adaptive_final_state": (
                 {
                     "selected_k": stats["adaptive_state"].selected_k,
@@ -1757,11 +1942,29 @@ def run_candidate_only_profile(args) -> dict:
         "draft_policy": args.draft_policy,
         "selected_k_counts": {
             str(level): sum(
-                item["selected_k_counts"][str(level)]
+                item["selected_k_counts"].get(str(level), 0)
                 for item in per_prompt
             )
-            for level in (1, 2, 4)
+            for level in (
+                (0, 4, 8, 16)
+                if args.draft_source == "sam"
+                else (1, 2, 4)
+            )
         },
+        "sam_build_ms": sum(item["sam_build_ms"] for item in per_prompt),
+        "sam_extension_ms": sum(
+            item["sam_extension_ms"] for item in per_prompt
+        ),
+        "sam_lookup_ms": sum(item["sam_lookup_ms"] for item in per_prompt),
+        "sam_state_count": sum(item["sam_state_count"] for item in per_prompt),
+        "sam_indexed_tokens": sum(
+            item["sam_indexed_tokens"] for item in per_prompt
+        ),
+        "sam_bypass_count": sum(
+            item["sam_bypass_count"] for item in per_prompt
+        ),
+        "runtime_mutation": False,
+        "profiler_owned": True,
         "candidate_autoregressive_steps_avoided": accepted_tokens,
         "candidate_step_reduction": accepted_tokens / output_tokens if output_tokens else 0.0,
         "verify_timing_ms": _sum_timing_ms([{"timing_ms": item["verify_timing_ms"]} for item in per_prompt]),
@@ -1794,6 +1997,9 @@ def run_candidate_only_profile(args) -> dict:
         "commit_events": commit_events,
         "verify_events": [
             event for item in per_prompt for event in item.get("verify_events", [])
+        ],
+        "sam_events": [
+            event for item in per_prompt for event in item.get("sam_events", [])
         ],
         "step_records": step_records,
         "warmup": warmup,
