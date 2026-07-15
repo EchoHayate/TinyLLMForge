@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 import torch
 
+from tinyvllm.speculative.verifier import AttentionMode
+
 
 @dataclass
 class Context:
+    mode: AttentionMode = "decode"
     is_prefill: bool = False    #prefill or decode
     cu_seqlens_q: torch.Tensor | None = None    #prefill        累积序列长度 记录批量中每个序列的起始和结束位置。cu_seqlens_q = [0, 3, 8]
     cu_seqlens_k: torch.Tensor | None = None    #prefill
@@ -54,6 +57,23 @@ class Context:
 
 _CONTEXT = Context()
 
+
+def resolve_attention_mode(
+    is_prefill: bool | None,
+    mode: AttentionMode | None,
+) -> AttentionMode:
+    if mode is None:
+        return "prefill" if bool(is_prefill) else "decode"
+    if mode not in ("prefill", "decode", "spec_verify"):
+        raise ValueError(f"unsupported attention mode: {mode}")
+    expected_prefill = mode == "prefill"
+    if is_prefill is not None and bool(is_prefill) != expected_prefill:
+        raise ValueError(
+            f"conflicting attention mode: is_prefill={is_prefill}, mode={mode}"
+        )
+    return mode
+
+
 def get_context():
     return _CONTEXT
 
@@ -92,7 +112,7 @@ def am_compact_enabled_layers(context: Context, num_hidden_layers: int) -> tuple
     )
 
 
-def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0,
+def set_context(is_prefill=None, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0, max_seqlen_k=0,
                 slot_mapping=None, context_lens=None, block_tables=None,
                 logits_indices=None,
                 quest_top_k_blocks: int = -1, quest_min_seq_len: int = 0,
@@ -121,12 +141,15 @@ def set_context(is_prefill, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=0
                 kv_offload_context_lens: list[int] | None = None,
                 kv_offload_write_blocks: list[int] | None = None,
                 kv_offload_prefill_chunk_starts: list[int] | None = None,
-                kv_offload_prefill_chunk_ends: list[int] | None = None):
+                kv_offload_prefill_chunk_ends: list[int] | None = None,
+                mode: AttentionMode | None = None):
     global _CONTEXT
+    resolved_mode = resolve_attention_mode(is_prefill, mode)
     if am_compact_enable_layers is not None and not isinstance(am_compact_enable_layers, tuple):
         am_compact_enable_layers = tuple(int(x) for x in am_compact_enable_layers)
     _CONTEXT = Context(
-        is_prefill=is_prefill,
+        mode=resolved_mode,
+        is_prefill=resolved_mode == "prefill",
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
         max_seqlen_q=max_seqlen_q,
