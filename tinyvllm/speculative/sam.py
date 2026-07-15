@@ -153,6 +153,20 @@ class SuffixAutomatonDraftIndex:
             "index_token_count": len(self.indexed_tokens),
             "index_state_count": len(self.states),
         }
+        copied_end = (
+            -1 if match is None else match.continuation_start + len(tokens)
+        )
+        metadata["copied_span_crosses_prompt_boundary"] = (
+            match is not None
+            and match.continuation_start < self.prompt_length < copied_end
+        )
+        metadata["bypass_reason"] = (
+            "selected_k_zero"
+            if max_draft_tokens == 0
+            else "no_usable_match"
+            if match is None
+            else None
+        )
         return SAMDraft(
             tokens=list(tokens),
             selected_k=int(max_draft_tokens),
@@ -160,6 +174,24 @@ class SuffixAutomatonDraftIndex:
             metadata=metadata,
         )
 
+    def propose_match_aware(self) -> SAMDraft:
+        match = self.longest_usable_suffix()
+        selected_k = select_match_aware_k(
+            0 if match is None else match.match_length
+        )
+        draft = self.propose(selected_k)
+        if selected_k == 0:
+            draft.metadata["bypass_reason"] = "no_usable_match"
+        return draft
+
 
 def select_match_aware_k(match_length: int) -> int:
-    raise NotImplementedError
+    if match_length < 0:
+        raise ValueError("match_length must be >= 0")
+    if match_length < 2:
+        return 0
+    if match_length < 4:
+        return 4
+    if match_length < 8:
+        return 8
+    return 16

@@ -34,6 +34,21 @@ def test_longest_usable_suffix_uses_earliest_representative():
     assert match.continuation_region == "prompt"
 
 
+def test_match_aware_k_boundaries():
+    assert [select_match_aware_k(value) for value in (0, 1)] == [0, 0]
+    assert [select_match_aware_k(value) for value in (2, 3)] == [4, 4]
+    assert [select_match_aware_k(value) for value in (4, 7)] == [8, 8]
+    assert [select_match_aware_k(value) for value in (8, 32)] == [16, 16]
+
+
+def test_match_aware_bypass_for_short_match():
+    index = SuffixAutomatonDraftIndex([1, 9, 1])
+    draft = index.propose_match_aware()
+    assert draft.selected_k == 0
+    assert draft.tokens == []
+    assert draft.metadata["bypass_reason"] == "no_usable_match"
+
+
 def test_terminal_only_occurrence_is_not_usable():
     index = SuffixAutomatonDraftIndex([1, 2, 3, 4])
     assert index.longest_usable_suffix() is None
@@ -54,6 +69,25 @@ def test_proposal_stops_at_observed_stream_boundary():
     assert draft.tokens == [3, 1, 2]
     assert draft.selected_k == 16
     assert draft.match is not None
+
+
+def test_selected_cap_can_exceed_available_continuation():
+    index = SuffixAutomatonDraftIndex([1, 2, 3, 1, 2])
+    draft = index.propose_match_aware()
+    assert draft.selected_k == 4
+    assert len(draft.tokens) == 3
+    assert draft.metadata["available_continuation_tokens"] == 3
+
+
+def test_copied_span_crossing_prompt_boundary_is_exact():
+    index = SuffixAutomatonDraftIndex([1, 2, 1])
+    index.extend_verified([2])
+    draft = index.propose(max_draft_tokens=8)
+    expected_end = draft.metadata["continuation_start"] + len(draft.tokens)
+    assert draft.tokens == [1, 2]
+    assert draft.metadata["copied_span_crosses_prompt_boundary"] == (
+        draft.metadata["continuation_start"] < index.prompt_length < expected_end
+    )
 
 
 def test_prompt_and_generated_continuation_metadata():
