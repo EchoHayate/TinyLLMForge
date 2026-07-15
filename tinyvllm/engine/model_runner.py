@@ -15,6 +15,12 @@ from tinyvllm.layers.linear import set_quant_config
 from tinyvllm.layers.sampler import Sampler
 from tinyvllm.utils.context import reset_context, set_context, get_context
 from tinyvllm.engine.kv_cartridge import compress_decode_block_table_rows, should_use_kv_cartridge
+from tinyvllm.speculative.verifier import (
+    AttentionMode,
+    SpecVerifyMetadata,
+    SpecVerifyPlan,
+    validate_spec_verify_slots,
+)
 
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
@@ -860,6 +866,139 @@ class ModelRunner:
     def prepare_block_tables_from_rows(self, rows: list[list[int]], name: str = "block_tables"):
         return self._list_to_cuda_2d(rows, name, torch.int32)
 
+    def _validate_spec_verify_compatibility(
+        self,
+        *,
+        seq_count: int,
+        linear_draft: bool,
+        greedy: bool,
+        mixed_batch: bool,
+    ) -> None:
+        if seq_count != 1:
+            raise RuntimeError("spec_verify requires exactly one sequence")
+        if not linear_draft:
+            raise RuntimeError("spec_verify requires a linear draft")
+        if not greedy:
+            raise RuntimeError("spec_verify requires greedy acceptance")
+        if mixed_batch or self.config.chunked_prefill_mixed_batch:
+            raise RuntimeError(
+                "chunked_prefill_mixed_batch is unsupported by spec_verify"
+            )
+        unsupported = (
+            ("kv_quant_bits", self.config.kv_quant_bits != 0),
+            ("kv_offload_mvp0", self.config.kv_offload_mvp0),
+            (
+                "kv_offload_blockwise_decode",
+                self.config.kv_offload_blockwise_decode,
+            ),
+            (
+                "kv_offload_blockwise_prefill",
+                self.config.kv_offload_blockwise_prefill,
+            ),
+            ("quest_top_k_blocks", self.config.quest_top_k_blocks > 0),
+            ("am_compact_blocks", self.config.am_compact_blocks > 0),
+            ("kv_cartridge_blocks", self.config.kv_cartridge_blocks > 0),
+        )
+        for name, active in unsupported:
+            if active:
+                raise RuntimeError(f"{name} is unsupported by spec_verify")
+
+    def prepare_spec_verify(
+        self,
+        seq: Sequence,
+        input_tokens: list[int],
+        proxy_block_table: list[int],
+        slot_positions: list[int],
+    ) -> tuple[torch.Tensor, torch.Tensor, SpecVerifyMetadata]:
+        self._validate_spec_verify_compatibility(
+            seq_count=1,
+            linear_draft=True,
+            greedy=True,
+            mixed_batch=False,
+        )
+        if not input_tokens:
+            raise ValueError(
+                "prepare_spec_verify requires at least one tail query"
+            )
+        if len(input_tokens) != len(slot_positions):
+            raise ValueError(
+                "spec_verify input tokens and slot positions must match"
+            )
+        normalized_slots = [int(position) for position in slot_positions]
+        expected_slots = list(
+            range(
+                normalized_slots[0],
+                normalized_slots[0] + len(normalized_slots),
+            )
+        )
+        if normalized_slots != expected_slots:
+            raise ValueError(
+                "spec_verify slot positions must be consecutive"
+            )
+
+        positions_data = [position + 1 for position in normalized_slots]
+        context_len = normalized_slots[-1] + 1
+        visible_block_count = (
+            context_len + self.block_size - 1
+        ) // self.block_size
+        visible_block_table = [
+            int(block_id)
+            for block_id in proxy_block_table[:visible_block_count]
+        ]
+        plan = SpecVerifyPlan(
+            input_tokens=tuple(int(token_id) for token_id in input_tokens),
+            positions=tuple(positions_data),
+            logical_slots=tuple(normalized_slots),
+            context_len=context_len,
+            visible_block_count=visible_block_count,
+        )
+        physical_slots = validate_spec_verify_slots(
+            plan,
+            visible_block_table,
+            self.block_size,
+        )
+
+        input_ids = self._list_to_cuda(
+            [int(token_id) for token_id in input_tokens],
+            "spec_verify_input_ids",
+            torch.int64,
+        )
+        positions = self._list_to_cuda(
+            positions_data,
+            "spec_verify_positions",
+            torch.int64,
+        )
+        slot_mapping = self._list_to_cuda(
+            list(physical_slots),
+            "spec_verify_slot_mapping",
+            torch.int32,
+        )
+        context_lens = self._list_to_cuda(
+            [context_len],
+            "spec_verify_context_lens",
+            torch.int32,
+        )
+        block_tables = self.prepare_block_tables_from_rows(
+            [visible_block_table],
+            "spec_verify_block_tables",
+        )
+        set_context(
+            mode="spec_verify",
+            slot_mapping=slot_mapping,
+            context_lens=context_lens,
+            block_tables=block_tables,
+        )
+        metadata = SpecVerifyMetadata(
+            query_len=len(input_tokens),
+            input_tokens=tuple(int(token_id) for token_id in input_tokens),
+            positions=tuple(positions_data),
+            logical_slots=tuple(normalized_slots),
+            physical_slots=physical_slots,
+            context_len=context_len,
+            block_table=tuple(visible_block_table),
+        )
+        return input_ids, positions, metadata
+
     def _kv_offload_translate_block_rows(
         self,
         rows: list[list[int]],
@@ -1322,16 +1461,21 @@ class ModelRunner:
         is_prefill: bool,
         input_embeds: torch.Tensor | None = None,
         return_hidden: bool = False,
+        execution_mode: AttentionMode | None = None,
     ):
+        mode = execution_mode or get_context().mode
+        if mode == "spec_verify" and is_prefill:
+            raise ValueError("spec_verify cannot use prefill execution")
+        spec_verify_active = mode == "spec_verify"
         # Quest 实际启用时（context 已确认）才走 eager；否则照常走 cuda graph
-        quest_active = (not is_prefill) and (get_context().quest_top_k_blocks > 0)
-        am_active = (not is_prefill) and (get_context().am_compact_blocks > 0)
+        quest_active = mode == "decode" and (get_context().quest_top_k_blocks > 0)
+        am_active = mode == "decode" and (get_context().am_compact_blocks > 0)
         # C4：decode 反量化每步都要 alloc，cuda graph 无法 replay，强制 eager
         c4_active = self.config.kv_quant_bits == 4
         # cpu_offload：init 阶段已跳过 capture，这里也必须走 eager（否则 self.graphs 不存在）
         offload_active = self.config.cpu_offload
         kv_offload_active = self.config.kv_offload_mvp0
-        if (is_prefill or self.enforce_eager or input_ids.size(0) > 512
+        if (is_prefill or spec_verify_active or self.enforce_eager or input_ids.size(0) > 512
                 or quest_active or am_active or c4_active or offload_active or kv_offload_active
                 or input_embeds is not None or return_hidden):     #动态执行 eager mode
             hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
