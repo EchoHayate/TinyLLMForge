@@ -2,11 +2,11 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
-## 2026-07-15 SAM drafter gate 当前状态
+## 2026-07-15 SAM drafter gate 最终状态
 
 - 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
 - 分支：`feat/adaptive-ngram-speculation`
-- 当前实现 source commit：`c9194b3`；后续还有文档/证据提交，以最终
+- correctness 修复 commit：`b71e7ce`；后续还有文档/证据提交，以最终
   `git rev-parse HEAD` 为准。
 - 远端：`sitian@10.232.195.203`
 - Python：`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`
@@ -15,32 +15,19 @@
   `auto_num_blocks > 0` assertion。
 - 固定 seed：`20260715`
 - 有效 smoke：25 rows，5 prompts × 5 policies × 1 repetition。
-- 本地五文件：
-  `experiments/sam_drafter/qwen3-06b-sam-smoke3-reconciled-20260715/`
-- 原始远端目录：
-  `/data00/home/sitian/sitian-workspace01/tllm/sam-drafter-gates/qwen3-06b-sam-smoke3-20260715-150220`
+- 修复后本地五文件：
+  `experiments/sam_drafter/qwen3-06b-sam-remat-smoke-20260715-162323/`
+- 修复后远端目录：
+  `/data00/home/sitian/sitian-workspace01/tllm/sam-drafter-gates/qwen3-06b-sam-remat-smoke-20260715-162323`
 
 严格 verifier 结果：
 
 ```text
-decision=INCOMPLETE
+decision=NO_GO
 observed_rows=25
-correctness_pass=false
+correctness_pass=true
 trace_reconciliation_pass=true
 policy_exercise_pass=true
-```
-
-失败仅剩 exact-output mismatch：
-
-```text
-natural_prose:
-  sam_fixed_k16
-  sam_match_aware
-  ngram_fixed_k4
-structured_code_like:
-  sam_fixed_k16
-  ngram_adaptive
-  ngram_fixed_k4
 ```
 
 诊断证据：
@@ -50,21 +37,48 @@ structured_code_like:
    随机分岔。
 2. 同一共享 verifier 使用 fixed n-gram `K=1` 时，两类 prompt 均与 baseline
    完全一致。
-3. `K>1` 时会走 batch tail prefill/KV materialization，随后稳定分叉。
+3. `K>1` 时会走 batch tail prefill/KV materialization，旧实现随后稳定分叉。
 4. SAM index 的最终 token count 实际正确；早期 `INCOMPLETE` 中的
    `index_integrity_token_count_mismatch` 是 event 去重保留旧值，已由
    commit `3f61619` 和回归测试修复。
-5. 因此 blocker 是既有 `verify_and_commit_block()` multi-token target/KV
-   路径，不是 SAM proposal source。不要放宽 exact-output gate。
+5. 修复在 acceptance 判定后使用正常 decode kernel 重物化
+   `accepted_tokens[:-1]` 的 KV；两-prompt A/B 和完整 25-row smoke exactness
+   均通过。
+6. 该 correctness fallback 很昂贵：`sam_fixed_k16` 300 次 decode calls、
+   `sam_match_aware` 288 次 decode calls；两者重物化累计约 `18.03s`。
 
 五文件 SHA-256：
 
 ```text
-manifest.json   70517b85da26ae24d86d5b96decc602d084c80e3a965b5950cdd416a7753cdba
-raw_rows.json   6e86d0999c3caa7156a566782755a4539a334d7d4e92386edab1ab0c0133a03c
-event_rows.json 597486b21636f989cee76a5184a9f05ecbf401ab11034b37ce8f591dfa697134
-summary.json    aeeeda830601dac6db24f6d733b9ec4af9630d2fa72ac4fe6929521dbb8d5472
-report.md       11c180ff79ce156c1e8e8cd0c5b810983317101d9d234b57c1587be5af55a2f5
+manifest.json   0aaf027ac3045648fd9fa92a5738edb03b27b746dd390a9c5b2d67f08662eecc
+raw_rows.json   fdf0fdf94807a5bffe11065b2b90a130935af3ca42d0bc0be7663aa1f2d455e8
+event_rows.json ee125f0b4258c9050905c2c00c61c22fb56ea461b6bb68bce85fcd68ae272d5c
+summary.json    913d195d75aa0f448a19d1ec50469c5a3c24b619501a93b85dbe9e33dbaaf483
+report.md       a4b0bb681383c4696e82378906e89c8dceeb4e4394449a817d39e6ce30f9feb6
+```
+
+关键性能结果：
+
+```text
+baseline median tok/s          32.5173
+ngram fixed K4                 25.9687
+ngram adaptive                 25.7055
+SAM fixed K16                  28.3399
+SAM match-aware                28.6274
+SAM vs baseline                -10.72%
+SAM vs ngram K4                +8.44%
+verify-attempt reduction       25.00%
+draft-waste reduction          -218.18%
+```
+
+最终 `NO_GO` 原因：
+
+```text
+sam_vs_baseline_gate_failed
+critical_prompt_regression:natural_prose
+critical_prompt_regression:structured_code_like
+critical_prompt_regression:repeated_long_context
+critical_prompt_regression:prompt_copy_retrieval
 ```
 
 复现与验证：
@@ -76,19 +90,17 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_chunked_prefill.py
 PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_drafter_gate.py
 bash -n tools/run_sam_drafter_gate_remote.sh
 python3 tools/sam_drafter_gate.py verify \
-  --out-dir experiments/sam_drafter/qwen3-06b-sam-smoke3-reconciled-20260715
+  --out-dir experiments/sam_drafter/qwen3-06b-sam-remat-smoke-20260715-162323
 ```
 
 下一 TODO：
 
-1. 为 multi-token verifier 增加“batch tail target logits vs 逐 token decode”
-   对照测试和 KV slot/materialization 检查。
-2. 修复必须保持 `verify_and_commit_block()` 的 exact greedy 语义；不能通过
-   放宽输出比较、阈值或 prompt bank 绕过。
-3. 修复后重跑 25-row smoke。只有 decision 为 `GO` 或 `NO_GO`、绝不能是
-   `INCOMPLETE`，才启动 175-row canonical。
-4. canonical 未运行，因此当前没有 SAM 性能结论；smoke throughput 只能作为
-   诊断值。
+1. 不要继续调 SAM match-aware 阈值或 prompt bank；当前严格结果是 NO_GO。
+2. 若继续 speculative 主线，优先让 batch target verifier 原生写出与正常
+   decode 等价的 KV，避免逐 token重物化。
+3. 或等待兼容的 learned drafter/checkpoint，再重新设计独立 gate。
+4. 175-row canonical 未运行：25-row smoke 已在所有关键 prompt class 上大幅
+   失败 baseline gate，继续运行不具成本效益。
 
 ## 必须优先使用远程环境
 
