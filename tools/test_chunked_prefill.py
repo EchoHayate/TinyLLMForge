@@ -69,6 +69,7 @@ context_mod = load_module("tinyvllm.utils.context", "tinyvllm/utils/context.py")
 sequence_mod = load_module("tinyvllm.engine.sequence", "tinyvllm/engine/sequence.py")
 block_manager_mod = load_module("tinyvllm.engine.block_manager", "tinyvllm/engine/block_manager.py")
 scheduler_mod = load_module("tinyvllm.engine.scheduler", "tinyvllm/engine/scheduler.py")
+sam_mod = load_module("sam_chunked_prefill_test", "tinyvllm/speculative/sam.py")
 if dist is not None:
     dist.get_rank = lambda: 0
     dist.get_world_size = lambda: 1
@@ -78,6 +79,7 @@ else:
 
 BlockManager = block_manager_mod.BlockManager
 Sequence = sequence_mod.Sequence
+SuffixAutomatonDraftIndex = sam_mod.SuffixAutomatonDraftIndex
 SequenceStatus = sequence_mod.SequenceStatus
 Scheduler = scheduler_mod.Scheduler
 SamplingParams = sampling_mod.SamplingParams
@@ -495,6 +497,46 @@ def test_commit_accepted_tokens_keeps_scheduler_hash_state_after_crossing_bounda
     assert len(seq.block_table) == 2
     assert block_manager.blocks[seq.block_table[0]].hash != -1
     assert block_manager.blocks[seq.block_table[1]].hash == -1
+
+
+def test_sam_originated_acceptance_crosses_block_boundary():
+    reset_sequence_state()
+    block_size = 4
+    block_manager = BlockManager(num_blocks=8, block_size=block_size)
+    prompt_tokens = [1, 2, 3]
+    repeated_verified_prefix = [4, 5, 6, 7, 1, 2]
+    index = SuffixAutomatonDraftIndex(
+        prompt_tokens + repeated_verified_prefix
+    )
+    draft = index.propose(max_draft_tokens=16)
+    current_block_offset = len(prompt_tokens) % block_size
+    assert len(draft.tokens) > block_size - current_block_offset
+
+    seq = make_seq(prompt_tokens)
+    block_manager.allocate(seq)
+    reserved = block_manager.reserve_append_blocks(
+        seq,
+        len(draft.tokens) + block_size,
+    )
+    expected_target_prefix = list(draft.tokens)
+    block_manager.commit_accepted_tokens(
+        seq,
+        expected_target_prefix,
+        reserved,
+    )
+    committed_tokens = seq.token_ids[len(prompt_tokens):]
+
+    assert committed_tokens == expected_target_prefix
+    assert len(seq.block_table) > 1
+    assert block_manager.blocks[seq.block_table[0]].token_ids == seq.block(0)
+    adopted = set(seq.block_table) & set(reserved)
+    unused = set(reserved) - adopted
+    assert adopted
+    assert unused
+    assert all(block_manager.blocks[block_id].ref_count == 1 for block_id in adopted)
+    assert all(block_manager.blocks[block_id].ref_count == 0 for block_id in unused)
+    assert all(block_id in block_manager.free_block_ids for block_id in unused)
+    assert len(committed_tokens) > block_size - current_block_offset
 
 
 def test_commit_accepted_tokens_leaves_just_filled_last_block_for_scheduler_publish():
@@ -922,6 +964,7 @@ def main():
     test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks()
     test_commit_accepted_tokens_publishes_multiple_full_block_hashes()
     test_commit_accepted_tokens_keeps_scheduler_hash_state_after_crossing_boundary()
+    test_sam_originated_acceptance_crosses_block_boundary()
     test_commit_accepted_tokens_leaves_just_filled_last_block_for_scheduler_publish()
     test_max_consecutive_prefill_chunks_yields_to_decode()
     test_mixed_prefill_decode_schedules_prefill_chunk_with_decode()

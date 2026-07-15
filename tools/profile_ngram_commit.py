@@ -275,6 +275,10 @@ def attach_draft_policy_event(
     event["selected_k"] = int(selected_k)
     event["proposed_tokens"] = len(draft.tokens)
     event["wasted_draft_tokens"] = len(draft.tokens) - int(event["accepted_count"])
+    if draft.source == "sam":
+        event["draft_metadata"] = dict(draft.metadata)
+        event["runtime_mutation"] = False
+        event["profiler_owned"] = True
     if adaptive_state is not None:
         event["adaptive_transition"] = update_adaptive_draft_state(
             adaptive_state,

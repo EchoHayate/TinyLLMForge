@@ -448,6 +448,36 @@ def test_sam_profiler_remains_profiler_owned():
     assert "LLMEngine.step" not in source
 
 
+def test_sam_verify_event_contract_is_profiler_owned():
+    class Args:
+        draft_source = "sam"
+        draft_policy = "sam-fixed"
+        ngram_size = 3
+        max_draft_tokens = 16
+
+    index = SuffixAutomatonDraftIndex([1, 2, 3, 1, 2])
+    draft = propose_draft(index.indexed_tokens, Args(), sam_index=index)
+    event = {
+        "draft_source": draft.source,
+        "accepted_count": 2,
+    }
+    profile_ngram.attach_draft_policy_event(
+        event,
+        draft,
+        selected_k=draft.selected_k
+        if hasattr(draft, "selected_k")
+        else draft.metadata["selected_k"],
+        adaptive_state=None,
+    )
+    assert event["draft_source"] == "sam"
+    assert event["draft_metadata"]["match_length"] >= 2
+    assert event["runtime_mutation"] is False
+    assert event["profiler_owned"] is True
+    assert event["wasted_draft_tokens"] == (
+        event["proposed_tokens"] - event["accepted_count"]
+    )
+
+
 def test_profile_validation_rejects_adaptive_non_ngram_source():
     class Args:
         model = "model"
@@ -1050,6 +1080,7 @@ def main():
     test_sync_sam_index_rejects_history_rewrite()
     test_empty_sam_proposal_bypasses_verifier()
     test_sam_profiler_remains_profiler_owned()
+    test_sam_verify_event_contract_is_profiler_owned()
     test_profile_validation_rejects_adaptive_non_ngram_source()
     test_profile_validation_requires_single_sequence_for_adaptive()
     test_attach_draft_policy_event_updates_adaptive_after_verification()
