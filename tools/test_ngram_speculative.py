@@ -6,6 +6,8 @@
 import os
 import sys
 import importlib.util
+import types
+from enum import Enum
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -58,6 +60,37 @@ validate_draft_model_contract = draft_model_schema.validate_draft_model_contract
 run_draft_model_stub = profile_ngram.run_draft_model_stub
 summarize_hidden_to_draft_stub = profile_ngram.summarize_hidden_to_draft_stub
 build_verify_tail_plan = profile_ngram._build_verify_tail_plan
+verify_and_commit_block = profile_ngram.verify_and_commit_block
+
+
+def _install_native_test_context():
+    current = types.SimpleNamespace(mode="decode")
+
+    def set_context(*args, mode=None, **kwargs):
+        current.mode = mode or ("prefill" if args and args[0] else "decode")
+
+    def reset_context():
+        current.mode = "decode"
+
+    context_module = types.ModuleType("tinyvllm.utils.context")
+    context_module.get_context = lambda: current
+    context_module.set_context = set_context
+    context_module.reset_context = reset_context
+    tinyvllm_module = sys.modules.setdefault(
+        "tinyvllm",
+        types.ModuleType("tinyvllm"),
+    )
+    tinyvllm_module.__path__ = []
+    utils_module = sys.modules.setdefault(
+        "tinyvllm.utils",
+        types.ModuleType("tinyvllm.utils"),
+    )
+    utils_module.__path__ = []
+    sys.modules["tinyvllm.utils.context"] = context_module
+    return context_module
+
+
+native_test_context = _install_native_test_context()
 
 
 def _base_draft_model_metadata(metadata: dict) -> dict:
@@ -556,6 +589,471 @@ def test_accepted_kv_rematerialization_skips_pending_only_token():
         )
         assert event["rematerialized_tokens"] == []
         assert event["decode_calls"] == 0
+
+
+class _FakeArgmax:
+    def __init__(self, values):
+        self.values = values
+
+    def tolist(self):
+        return list(self.values)
+
+
+class _FakeLogits:
+    def __init__(self, target_tokens):
+        self.target_tokens = list(target_tokens)
+
+    def argmax(self, dim=-1):
+        assert dim == -1
+        return _FakeArgmax(self.target_tokens)
+
+
+class _NativeSequence:
+    block_size = 4
+
+    def __init__(self, token_ids, max_tokens=16, ignore_eos=False):
+        self.token_ids = list(token_ids)
+        self.num_tokens = len(self.token_ids)
+        self.num_prompt_tokens = len(self.token_ids)
+        self.last_token = self.token_ids[-1]
+        self.max_tokens = max_tokens
+        self.ignore_eos = ignore_eos
+        self.block_table = [10]
+        self.status = _NativeStatus.RUNNING
+
+    def __len__(self):
+        return self.num_tokens
+
+    @property
+    def num_completion_tokens(self):
+        return self.num_tokens - self.num_prompt_tokens
+
+    def append_token(self, token_id):
+        self.token_ids.append(int(token_id))
+        self.num_tokens += 1
+        self.last_token = int(token_id)
+
+
+class _NativeBlockManager:
+    def __init__(self, fail_commit=False):
+        self.fail_commit = fail_commit
+        self.reserve_calls = 0
+        self.release_calls = []
+        self.commit_calls = []
+        self.deallocate_calls = []
+
+    def reserve_append_blocks(self, seq, num_new_tokens):
+        self.reserve_calls += 1
+        final_len = len(seq) + num_new_tokens
+        needed_blocks = (
+            final_len + seq.block_size - 1
+        ) // seq.block_size
+        missing_blocks = max(0, needed_blocks - len(seq.block_table))
+        return list(range(11, 11 + missing_blocks))
+
+    def release_reserved_blocks(self, block_ids):
+        self.release_calls.append(list(block_ids))
+
+    def commit_accepted_tokens(self, seq, accepted_tokens, reserved_blocks):
+        if self.fail_commit:
+            raise RuntimeError("commit failure")
+        self.commit_calls.append(
+            (list(accepted_tokens), list(reserved_blocks))
+        )
+        if accepted_tokens:
+            materialized_tokens = len(seq) + len(accepted_tokens) - 1
+            needed_blocks = (
+                materialized_tokens + seq.block_size - 1
+            ) // seq.block_size
+            missing = max(0, needed_blocks - len(seq.block_table))
+            seq.block_table.extend(reserved_blocks[:missing])
+            self.release_reserved_blocks(reserved_blocks[missing:])
+            for token_id in accepted_tokens:
+                seq.append_token(token_id)
+        else:
+            self.release_reserved_blocks(reserved_blocks)
+
+    def deallocate(self, seq):
+        self.deallocate_calls.append(seq)
+        seq.block_table = []
+
+
+class _NativeStatus(Enum):
+    RUNNING = "running"
+    FINISHED = "finished"
+
+
+class _NativeModelRunner:
+    def __init__(self, first_target, tail_targets, fail_tail=False):
+        self.first_target = int(first_target)
+        self.tail_targets = list(tail_targets)
+        self.fail_tail = fail_tail
+        self.kv_offload = None
+        self.normal_decode_calls = 0
+        self.spec_verify_calls = 0
+        self.prepare_calls = []
+
+    def _validate_spec_verify_compatibility(self, **kwargs):
+        return None
+
+    def run(self, seqs, is_prefill):
+        assert is_prefill is False
+        self.normal_decode_calls += 1
+        return [self.first_target]
+
+    def prepare_spec_verify(
+        self,
+        seq,
+        input_tokens,
+        proxy_block_table,
+        slot_positions,
+    ):
+        self.prepare_calls.append(
+            {
+                "input_tokens": list(input_tokens),
+                "proxy_block_table": list(proxy_block_table),
+                "slot_positions": list(slot_positions),
+            }
+        )
+        metadata = type(
+            "Metadata",
+            (),
+            {
+                "query_len": len(input_tokens),
+                "input_tokens": tuple(input_tokens),
+                "positions": tuple(position + 1 for position in slot_positions),
+                "logical_slots": tuple(slot_positions),
+                "physical_slots": tuple(slot_positions),
+                "context_len": slot_positions[-1] + 1,
+                "block_table": tuple(proxy_block_table),
+            },
+        )()
+        return object(), object(), metadata
+
+    def run_model(
+        self,
+        input_ids,
+        positions,
+        is_prefill,
+        execution_mode=None,
+        return_hidden=False,
+    ):
+        assert is_prefill is False
+        assert execution_mode == "spec_verify"
+        assert return_hidden is False
+        self.spec_verify_calls += 1
+        if self.fail_tail:
+            raise RuntimeError("tail failure")
+        return _FakeLogits(self.tail_targets)
+
+
+def _native_verify_fixture(
+    *,
+    first_target,
+    tail_targets,
+    eos=99,
+    max_tokens=16,
+    fail_tail=False,
+    fail_commit=False,
+):
+    sequence = _NativeSequence([1, 2, 3], max_tokens=max_tokens)
+    block_manager = _NativeBlockManager(fail_commit=fail_commit)
+    model_runner = _NativeModelRunner(
+        first_target,
+        tail_targets,
+        fail_tail=fail_tail,
+    )
+    scheduler = type(
+        "Scheduler",
+        (),
+        {
+            "block_manager": block_manager,
+            "eos": eos,
+            "running": [sequence],
+        },
+    )()
+    llm = type(
+        "LLM",
+        (),
+        {
+            "scheduler": scheduler,
+            "model_runner": model_runner,
+        },
+    )()
+    return llm, sequence, block_manager, model_runner
+
+
+def test_native_verify_commits_without_decode_rematerialization():
+    llm, seq, _, runner = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[5, 6],
+    )
+    original = profile_ngram.rematerialize_accepted_kv
+    profile_ngram.rematerialize_accepted_kv = (
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("native verifier must not rematerialize KV")
+        )
+    )
+    try:
+        event = verify_and_commit_block(
+            llm,
+            seq,
+            [4, 5, 6],
+            verifier_mode="native",
+        )
+    finally:
+        profile_ngram.rematerialize_accepted_kv = original
+
+    assert event["accepted_tokens"] == [4, 5, 6]
+    assert event["verifier_mode"] == "native"
+    assert event["query_len"] == 2
+    assert event["accepted_kv_rematerialization"] == {
+        "rematerialized_tokens": [],
+        "decode_calls": 0,
+        "elapsed_ms": 0.0,
+    }
+    assert event["timing_ms"]["accepted_kv_rematerialize_ms"] == 0.0
+    assert event["accepted_kv_copy_calls"] == 0
+    assert event["accepted_kv_replay_calls"] == 0
+    assert runner.normal_decode_calls == 1
+    assert runner.spec_verify_calls == 1
+
+
+def test_native_k1_uses_first_target_without_tail_forward():
+    llm, seq, _, runner = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[],
+    )
+
+    event = verify_and_commit_block(
+        llm,
+        seq,
+        [4],
+        verifier_mode="native",
+    )
+
+    assert event["accepted_tokens"] == [4]
+    assert event["query_len"] == 0
+    assert runner.spec_verify_calls == 0
+    assert runner.prepare_calls == []
+
+
+def test_native_unsupported_mode_fails_before_reservation():
+    llm, seq, block_manager, runner = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[],
+    )
+
+    def fail_compatibility(**kwargs):
+        raise RuntimeError("kv_offload_mvp0 is unsupported by spec_verify")
+
+    runner._validate_spec_verify_compatibility = fail_compatibility
+    try:
+        verify_and_commit_block(
+            llm,
+            seq,
+            [4],
+            verifier_mode="native",
+        )
+    except RuntimeError as exc:
+        assert "kv_offload_mvp0" in str(exc)
+    else:
+        raise AssertionError("unsupported native mode must fail")
+
+    assert block_manager.reserve_calls == 0
+
+
+def test_native_tail_failure_releases_reservation_and_resets_context():
+    llm, seq, block_manager, _ = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[5],
+        fail_tail=True,
+    )
+
+    try:
+        verify_and_commit_block(
+            llm,
+            seq,
+            [4, 5],
+            verifier_mode="native",
+        )
+    except RuntimeError as exc:
+        assert "tail failure" in str(exc)
+    else:
+        raise AssertionError("tail failure must propagate")
+
+    assert block_manager.release_calls == [[11]]
+    assert native_test_context.get_context().mode == "decode"
+
+
+def test_native_acceptance_matrix_preserves_pending_token_lifecycle():
+    cases = (
+        ("zero", 9, [5, 6], [], 0),
+        ("one", 4, [9, 6], [4], 0),
+        ("partial", 4, [5, 9], [4, 5], 0),
+        ("full", 4, [5, 6], [4, 5, 6], 1),
+    )
+
+    for name, first_target, tail_targets, expected, committed_blocks in cases:
+        llm, seq, _, _ = _native_verify_fixture(
+            first_target=first_target,
+            tail_targets=tail_targets,
+        )
+        event = verify_and_commit_block(
+            llm,
+            seq,
+            [4, 5, 6],
+            verifier_mode="native",
+        )
+
+        assert event["accepted_tokens"] == expected, name
+        assert len(seq) == 3 + len(expected), name
+        assert event["committed_blocks"] == (
+            [11] if committed_blocks else []
+        ), name
+        assert event["released_blocks"] == (
+            [] if committed_blocks else [11]
+        ), name
+        if expected:
+            assert seq.last_token == expected[-1], name
+
+
+def test_native_eos_and_output_budget_truncation_flags():
+    llm, seq, _, _ = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[99, 6],
+        eos=99,
+    )
+    eos_event = verify_and_commit_block(
+        llm,
+        seq,
+        [4, 99, 6],
+        verifier_mode="native",
+    )
+    assert eos_event["accepted_tokens"] == [4, 99]
+    assert eos_event["eos_truncated"] is True
+    assert eos_event["output_budget_truncated"] is False
+    assert eos_event["finished"] is True
+
+    llm, seq, _, _ = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[5, 6],
+        max_tokens=2,
+    )
+    budget_event = verify_and_commit_block(
+        llm,
+        seq,
+        [4, 5, 6],
+        verifier_mode="native",
+    )
+    assert budget_event["accepted_tokens"] == [4, 5]
+    assert budget_event["eos_truncated"] is False
+    assert budget_event["output_budget_truncated"] is True
+    assert budget_event["finished"] is True
+
+
+def test_native_commit_failure_reports_phase_and_releases_reservation():
+    llm, seq, block_manager, _ = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[5],
+        fail_commit=True,
+    )
+
+    try:
+        verify_and_commit_block(
+            llm,
+            seq,
+            [4, 5],
+            verifier_mode="native",
+        )
+    except RuntimeError as exc:
+        assert "metadata_commit" in str(exc)
+        assert "commit failure" in str(exc)
+    else:
+        raise AssertionError("commit failure must propagate")
+
+    assert seq.token_ids == [1, 2, 3]
+    assert seq.block_table == [10]
+    assert block_manager.release_calls == [[11]]
+    assert native_test_context.get_context().mode == "decode"
+
+
+def test_native_full_accept_commits_multiple_reserved_blocks():
+    draft_tokens = list(range(4, 12))
+    llm, seq, _, runner = _native_verify_fixture(
+        first_target=4,
+        tail_targets=list(range(5, 12)),
+    )
+
+    event = verify_and_commit_block(
+        llm,
+        seq,
+        draft_tokens,
+        verifier_mode="native",
+    )
+
+    assert event["query_len"] == 7
+    assert event["accepted_tokens"] == draft_tokens
+    assert event["reserved_blocks"] == [11, 12]
+    assert event["committed_blocks"] == [11, 12]
+    assert event["released_blocks"] == []
+    assert seq.block_table == [10, 11, 12]
+    assert seq.last_token == 11
+    assert runner.spec_verify_calls == 1
+
+
+def test_native_profile_args_require_supported_scope():
+    base = {
+        "model": "model",
+        "temperature": 0.0,
+        "max_commit_events": 1,
+        "warmup_output_len": 0,
+        "simulate_kv_upload_mb": 0.0,
+        "max_draft_tokens": 4,
+        "draft_policy": "fixed",
+        "draft_source": "ngram",
+        "mode": "candidate-only",
+        "max_num_seqs": 1,
+        "verifier_mode": "native",
+        "enforce_eager": True,
+        "kv_quant_bits": 0,
+        "kv_offload_mvp0": False,
+        "kv_offload_blockwise_decode": False,
+        "kv_offload_blockwise_prefill": False,
+        "quest_top_k_blocks": -1,
+        "am_compact_blocks": 0,
+        "kv_cartridge_blocks": 0,
+    }
+    validate_profile_args(type("Args", (), base)())
+
+    invalid = (
+        ("mode", "paired"),
+        ("max_num_seqs", 2),
+        ("enforce_eager", False),
+        ("kv_quant_bits", 4),
+        ("kv_offload_mvp0", True),
+        ("kv_offload_blockwise_decode", True),
+        ("kv_offload_blockwise_prefill", True),
+        ("quest_top_k_blocks", 1),
+        ("am_compact_blocks", 1),
+        ("kv_cartridge_blocks", 1),
+    )
+    for name, value in invalid:
+        values = dict(base)
+        values[name] = value
+        try:
+            validate_profile_args(type("Args", (), values)())
+        except ValueError as exc:
+            assert "native verifier" in str(exc)
+        else:
+            raise AssertionError(name)
+
+
+def test_candidate_profiles_forward_verifier_mode_to_commit():
+    source = open(
+        os.path.join(_REPO_ROOT, "tools", "profile_ngram_commit.py")
+    ).read()
+    assert source.count("verifier_mode=args.verifier_mode") == 2
 
 
 def test_profile_validation_rejects_adaptive_non_ngram_source():
@@ -1163,6 +1661,16 @@ def main():
     test_sam_verify_event_contract_is_profiler_owned()
     test_accepted_kv_rematerialization_uses_normal_decode_for_materialized_prefix()
     test_accepted_kv_rematerialization_skips_pending_only_token()
+    test_native_verify_commits_without_decode_rematerialization()
+    test_native_k1_uses_first_target_without_tail_forward()
+    test_native_unsupported_mode_fails_before_reservation()
+    test_native_tail_failure_releases_reservation_and_resets_context()
+    test_native_acceptance_matrix_preserves_pending_token_lifecycle()
+    test_native_eos_and_output_budget_truncation_flags()
+    test_native_commit_failure_reports_phase_and_releases_reservation()
+    test_native_full_accept_commits_multiple_reserved_blocks()
+    test_native_profile_args_require_supported_scope()
+    test_candidate_profiles_forward_verifier_mode_to_commit()
     test_profile_validation_rejects_adaptive_non_ngram_source()
     test_profile_validation_requires_single_sequence_for_adaptive()
     test_attach_draft_policy_event_updates_adaptive_after_verification()

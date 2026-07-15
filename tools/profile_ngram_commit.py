@@ -124,6 +124,14 @@ def rematerialize_accepted_kv(
     }
 
 
+def _empty_rematerialization_event() -> dict:
+    return {
+        "rematerialized_tokens": [],
+        "decode_calls": 0,
+        "elapsed_ms": 0.0,
+    }
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=str, default=None)
@@ -166,6 +174,13 @@ def parse_args():
     p.add_argument("--dflash-toy-context-tokens", type=int, default=1,
                    help="Minimum trailing context tokens required before dflash-toy proposes a block.")
     p.add_argument("--max-draft-tokens", type=int, default=4)
+    p.add_argument(
+        "--verifier-mode",
+        type=str,
+        default="legacy_rematerialize",
+        choices=["legacy_rematerialize", "native"],
+        help="Target verifier implementation for candidate commit events.",
+    )
     p.add_argument("--max-commit-events", type=int, default=1,
                    help="Maximum accepted commit events per candidate. Use 0 for unlimited S4 online benchmark.")
     p.add_argument("--allow-zero-accept", action="store_true", default=False,
@@ -632,6 +647,7 @@ def verify_and_commit_block(
     debug_hidden_to_draft_stub: bool = False,
     hidden_to_draft_adapter: str = "topk-stub",
     debug_hidden_to_draft_top_k: int = 3,
+    verifier_mode: str = "legacy_rematerialize",
 ) -> dict:
     """Verify a speculative draft block with the target model and commit accepted tokens.
 
@@ -639,17 +655,28 @@ def verify_and_commit_block(
     block drafts, or a future real DFlash draft model can share the same target
     verification and KV metadata path.
     """
-    import torch
     from tinyvllm.utils.context import reset_context, set_context
 
     total_t0 = time.perf_counter()
     history_len = len(seq)
     block_manager = llm.scheduler.block_manager
+    if not draft_tokens:
+        raise ValueError("verify_and_commit_block requires draft tokens")
+    if verifier_mode not in ("legacy_rematerialize", "native"):
+        raise ValueError(f"unsupported verifier_mode={verifier_mode}")
+    if verifier_mode == "native":
+        llm.model_runner._validate_spec_verify_compatibility(
+            seq_count=1,
+            linear_draft=True,
+            greedy=True,
+            mixed_batch=False,
+        )
     t0 = time.perf_counter()
     reserved_blocks = block_manager.reserve_append_blocks(seq, len(draft_tokens))
     timing_ms = {
         "reserve_blocks_ms": (time.perf_counter() - t0) * 1000.0,
     }
+    phase = "first_target_decode"
 
     try:
         t0 = time.perf_counter()
@@ -658,72 +685,141 @@ def verify_and_commit_block(
         timing_ms["decode_first_target_ms"] = (time.perf_counter() - t0) * 1000.0
 
         t0 = time.perf_counter()
+        phase = "verify_prepare"
         tail_plan = _build_verify_tail_plan(history_len, draft_tokens)
         input_tokens = tail_plan["input_tokens"]
         query_len = len(input_tokens)
         proxy_block_table = list(seq.block_table) + list(reserved_blocks)
         slot_positions = tail_plan["slot_positions"]
-        dirty_blocks = [proxy_block_table[pos // seq.block_size] for pos in slot_positions]
-        if getattr(llm.model_runner, "kv_offload", None) is not None:
-            first_write_offset_by_block = {}
-            for pos in slot_positions:
-                block_id = proxy_block_table[pos // seq.block_size]
-                offset = pos % seq.block_size
-                first_write_offset_by_block[block_id] = min(
-                    offset, first_write_offset_by_block.get(block_id, offset))
-            valid_read_blocks = [
-                block_id for block_id in seq.block_table
-                if first_write_offset_by_block.get(block_id, 1) > 0
-            ]
-            future_blocks = set(int(block_id) for block_id in proxy_block_table)
-            future_blocks.update(int(block_id) for block_id in dirty_blocks)
-            llm.model_runner.kv_offload.stats["prefetch_plans"] += 1
-            llm.model_runner.kv_offload.stats["prefetch_read_blocks"] += len(set(valid_read_blocks))
-            llm.model_runner.kv_offload.stats["prefetch_write_blocks"] += len(set(dirty_blocks))
-            llm.model_runner.kv_offload.ensure_resident(
-                valid_read_blocks,
-                require_valid=True,
-                future_logical_blocks=future_blocks,
-            )
-            llm.model_runner.kv_offload.ensure_resident(
-                dirty_blocks,
-                require_valid=False,
-                future_logical_blocks=future_blocks,
-            )
-            physical_proxy_block_table = [
-                llm.model_runner.kv_offload.logical_to_slot[int(block_id)]
-                for block_id in proxy_block_table
-            ]
+        verifier_metadata = None
+        dirty_blocks = []
+        if verifier_mode == "native":
+            if query_len:
+                input_ids, positions, verifier_metadata = (
+                    llm.model_runner.prepare_spec_verify(
+                        seq,
+                        input_tokens=input_tokens,
+                        proxy_block_table=proxy_block_table,
+                        slot_positions=slot_positions,
+                    )
+                )
         else:
-            physical_proxy_block_table = proxy_block_table
-        slot_mapping_data = [
-            physical_proxy_block_table[pos // seq.block_size] * seq.block_size + (pos % seq.block_size)
-            for pos in slot_positions
-        ]
-        input_ids = llm.model_runner._list_to_cuda(input_tokens, "commit_input_ids", torch.int64)
-        positions = llm.model_runner._list_to_cuda(
-            tail_plan["positions"], "commit_positions", torch.int64)
-        cu_seqlens_q = llm.model_runner._list_to_cuda([0, query_len], "commit_cu_seqlens_q", torch.int32)
-        cu_seqlens_k = llm.model_runner._list_to_cuda(
-            [0, tail_plan["kv_tokens"]], "commit_cu_seqlens_k", torch.int32)
-        slot_mapping = llm.model_runner._list_to_cuda(slot_mapping_data, "commit_slot_mapping", torch.int32)
-        block_tables = llm.model_runner.prepare_block_tables_from_rows([physical_proxy_block_table], "commit_block_tables")
-        logits_indices = llm.model_runner._list_to_cuda(
-            list(range(query_len)), "commit_logits_indices", torch.int64)
-        set_context(True, cu_seqlens_q, cu_seqlens_k, query_len, tail_plan["kv_tokens"],
-                    slot_mapping, None, block_tables, logits_indices)
+            import torch
+
+            dirty_blocks = [
+                proxy_block_table[pos // seq.block_size]
+                for pos in slot_positions
+            ]
+            if getattr(llm.model_runner, "kv_offload", None) is not None:
+                first_write_offset_by_block = {}
+                for pos in slot_positions:
+                    block_id = proxy_block_table[pos // seq.block_size]
+                    offset = pos % seq.block_size
+                    first_write_offset_by_block[block_id] = min(
+                        offset,
+                        first_write_offset_by_block.get(block_id, offset),
+                    )
+                valid_read_blocks = [
+                    block_id for block_id in seq.block_table
+                    if first_write_offset_by_block.get(block_id, 1) > 0
+                ]
+                future_blocks = set(
+                    int(block_id) for block_id in proxy_block_table
+                )
+                future_blocks.update(int(block_id) for block_id in dirty_blocks)
+                llm.model_runner.kv_offload.stats["prefetch_plans"] += 1
+                llm.model_runner.kv_offload.stats["prefetch_read_blocks"] += len(
+                    set(valid_read_blocks)
+                )
+                llm.model_runner.kv_offload.stats["prefetch_write_blocks"] += len(
+                    set(dirty_blocks)
+                )
+                llm.model_runner.kv_offload.ensure_resident(
+                    valid_read_blocks,
+                    require_valid=True,
+                    future_logical_blocks=future_blocks,
+                )
+                llm.model_runner.kv_offload.ensure_resident(
+                    dirty_blocks,
+                    require_valid=False,
+                    future_logical_blocks=future_blocks,
+                )
+                physical_proxy_block_table = [
+                    llm.model_runner.kv_offload.logical_to_slot[int(block_id)]
+                    for block_id in proxy_block_table
+                ]
+            else:
+                physical_proxy_block_table = proxy_block_table
+            slot_mapping_data = [
+                physical_proxy_block_table[pos // seq.block_size]
+                * seq.block_size
+                + (pos % seq.block_size)
+                for pos in slot_positions
+            ]
+            input_ids = llm.model_runner._list_to_cuda(
+                input_tokens,
+                "commit_input_ids",
+                torch.int64,
+            )
+            positions = llm.model_runner._list_to_cuda(
+                tail_plan["positions"],
+                "commit_positions",
+                torch.int64,
+            )
+            cu_seqlens_q = llm.model_runner._list_to_cuda(
+                [0, query_len],
+                "commit_cu_seqlens_q",
+                torch.int32,
+            )
+            cu_seqlens_k = llm.model_runner._list_to_cuda(
+                [0, tail_plan["kv_tokens"]],
+                "commit_cu_seqlens_k",
+                torch.int32,
+            )
+            slot_mapping = llm.model_runner._list_to_cuda(
+                slot_mapping_data,
+                "commit_slot_mapping",
+                torch.int32,
+            )
+            block_tables = llm.model_runner.prepare_block_tables_from_rows(
+                [physical_proxy_block_table],
+                "commit_block_tables",
+            )
+            logits_indices = llm.model_runner._list_to_cuda(
+                list(range(query_len)),
+                "commit_logits_indices",
+                torch.int64,
+            )
+            set_context(
+                True,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                query_len,
+                tail_plan["kv_tokens"],
+                slot_mapping,
+                None,
+                block_tables,
+                logits_indices,
+            )
         cuda_sync_if_available()
         timing_ms["verify_prepare_ms"] = (time.perf_counter() - t0) * 1000.0
 
         timing_ms["simulated_kv_upload_ms"] = _simulate_kv_upload(llm, simulate_kv_upload_mb)
 
         t0 = time.perf_counter()
+        phase = "tail_forward"
         hidden_debug = None
         hidden_to_draft_stub = None
         if query_len:
-            if getattr(llm.model_runner, "kv_offload", None) is not None:
+            if (
+                verifier_mode == "legacy_rematerialize"
+                and getattr(llm.model_runner, "kv_offload", None) is not None
+            ):
                 llm.model_runner._kv_offload_before_forward()
-            if debug_target_hidden or debug_hidden_to_draft_stub:
+            if (
+                verifier_mode == "legacy_rematerialize"
+                and (debug_target_hidden or debug_hidden_to_draft_stub)
+            ):
                 logits, hidden_states = llm.model_runner.run_model(
                     input_ids, positions, is_prefill=True, return_hidden=True)
                 hidden_debug = {
@@ -735,57 +831,99 @@ def verify_and_commit_block(
                     hidden_to_draft_stub = summarize_hidden_to_draft_stub(
                         hidden_states, logits, debug_hidden_to_draft_top_k, hidden_to_draft_adapter)
             else:
-                logits = llm.model_runner.run_model(input_ids, positions, is_prefill=True)
+                logits = llm.model_runner.run_model(
+                    input_ids,
+                    positions,
+                    is_prefill=verifier_mode == "legacy_rematerialize",
+                    execution_mode=(
+                        "spec_verify"
+                        if verifier_mode == "native"
+                        else "prefill"
+                    ),
+                )
             tail_targets = [int(token_id) for token_id in logits.argmax(dim=-1).tolist()]
         else:
             tail_targets = []
         cuda_sync_if_available()
-        if query_len and getattr(llm.model_runner, "kv_offload", None) is not None:
+        if (
+            verifier_mode == "legacy_rematerialize"
+            and query_len
+            and getattr(llm.model_runner, "kv_offload", None) is not None
+        ):
             llm.model_runner.kv_offload.mark_dirty(dirty_blocks)
             if not llm.model_runner.kv_offload.writeback_on_evict:
                 llm.model_runner.kv_offload.writeback_dirty(dirty_blocks)
         timing_ms["target_forward_ms"] = (time.perf_counter() - t0) * 1000.0
 
         t0 = time.perf_counter()
+        phase = "acceptance"
         target_tokens = [int(first_target)] + tail_targets
         accepted = count_accepted_prefix(draft_tokens, target_tokens)
-        accepted_tokens = list(draft_tokens[:accepted])
+        greedy_accepted_tokens = list(draft_tokens[:accepted])
+        accepted_tokens = list(greedy_accepted_tokens)
+        eos_truncated = False
         if not seq.ignore_eos and llm.scheduler.eos in accepted_tokens:
             eos_index = accepted_tokens.index(llm.scheduler.eos)
+            eos_truncated = eos_index + 1 < len(accepted_tokens)
             accepted_tokens = accepted_tokens[:eos_index + 1]
         remaining_budget = max(0, seq.max_tokens - seq.num_completion_tokens)
+        output_budget_truncated = remaining_budget < len(accepted_tokens)
         accepted_tokens = accepted_tokens[:remaining_budget]
         timing_ms["accept_sample_ms"] = (time.perf_counter() - t0) * 1000.0
 
-        rematerialization = rematerialize_accepted_kv(
-            llm,
-            seq,
-            accepted_tokens,
-            proxy_block_table,
+        rematerialization = (
+            _empty_rematerialization_event()
+            if verifier_mode == "native"
+            else rematerialize_accepted_kv(
+                llm,
+                seq,
+                accepted_tokens,
+                proxy_block_table,
+            )
         )
         timing_ms["accepted_kv_rematerialize_ms"] = rematerialization[
             "elapsed_ms"
         ]
 
         event_reserved_blocks = list(reserved_blocks)
+        block_table_before_commit = list(seq.block_table)
         t0 = time.perf_counter()
+        phase = "metadata_commit"
         block_manager.commit_accepted_tokens(seq, accepted_tokens, reserved_blocks)
+        committed_blocks = list(
+            seq.block_table[len(block_table_before_commit):]
+        )
+        released_blocks = [
+            block_id for block_id in event_reserved_blocks
+            if block_id not in committed_blocks
+        ]
         reserved_blocks = []
         timing_ms["commit_metadata_ms"] = (time.perf_counter() - t0) * 1000.0
 
         t0 = time.perf_counter()
+        phase = "finish_check"
         finished = _finish_if_needed(llm, seq, accepted_tokens)
         timing_ms["finish_check_ms"] = (time.perf_counter() - t0) * 1000.0
         timing_ms["verify_commit_total_ms"] = (time.perf_counter() - total_t0) * 1000.0
-        return {
+        event = {
+            "verifier_mode": verifier_mode,
             "draft_source": draft_source,
             "history_len": history_len,
+            "draft_len": len(draft_tokens),
+            "query_len": query_len,
             "draft_tokens": list(draft_tokens),
             "target_tokens": target_tokens,
             "accepted_tokens": accepted_tokens,
             "accepted_count": len(accepted_tokens),
+            "eos_truncated": eos_truncated,
+            "output_budget_truncated": output_budget_truncated,
             "accepted_kv_rematerialization": rematerialization,
+            "accepted_kv_copy_calls": 0,
+            "accepted_kv_replay_calls": rematerialization["decode_calls"],
             "reserved_blocks": event_reserved_blocks,
+            "committed_blocks": committed_blocks,
+            "released_blocks": released_blocks,
+            "target_forward_count": 1 + int(query_len > 0),
             "block_table_after": list(seq.block_table),
             "num_tokens_after": seq.num_tokens,
             "last_token_after": int(seq.last_token),
@@ -794,8 +932,31 @@ def verify_and_commit_block(
             "target_hidden_debug": hidden_debug,
             "hidden_to_draft_stub": hidden_to_draft_stub,
         }
-    except Exception:
+        if verifier_metadata is not None:
+            event.update({
+                "input_tokens": list(verifier_metadata.input_tokens),
+                "positions": list(verifier_metadata.positions),
+                "logical_slots": list(verifier_metadata.logical_slots),
+                "physical_slots": list(verifier_metadata.physical_slots),
+                "context_len": int(verifier_metadata.context_len),
+                "proxy_block_table": list(verifier_metadata.block_table),
+            })
+        elif verifier_mode == "native":
+            event.update({
+                "input_tokens": [],
+                "positions": [],
+                "logical_slots": [],
+                "physical_slots": [],
+                "context_len": history_len,
+                "proxy_block_table": list(proxy_block_table),
+            })
+        return event
+    except Exception as exc:
         block_manager.release_reserved_blocks(reserved_blocks)
+        if verifier_mode == "native":
+            raise RuntimeError(
+                f"spec_verify {phase} failed: {exc}"
+            ) from exc
         raise
     finally:
         reset_context()
@@ -1445,6 +1606,7 @@ def run_paired_profile(args) -> dict:
                 debug_target_hidden=args.debug_target_hidden,
                 debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
                 hidden_to_draft_adapter=args.hidden_to_draft_adapter,
+                verifier_mode=args.verifier_mode,
                 debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
             )
             event["draft_metadata"] = draft.metadata
@@ -1766,6 +1928,7 @@ def run_candidate_only_profile(args) -> dict:
                 debug_target_hidden=args.debug_target_hidden,
                 debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
                 hidden_to_draft_adapter=args.hidden_to_draft_adapter,
+                verifier_mode=args.verifier_mode,
                 debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
             )
             attach_draft_policy_event(
@@ -2086,6 +2249,30 @@ def validate_profile_args(args) -> None:
         "sam-match-aware",
     ):
         raise ValueError("--draft-source sam requires a SAM draft policy")
+    if getattr(args, "verifier_mode", "legacy_rematerialize") == "native":
+        unsupported = (
+            ("--mode candidate-only", args.mode != "candidate-only"),
+            ("--max-num-seqs 1", args.max_num_seqs != 1),
+            ("--enforce-eager", not args.enforce_eager),
+            ("--kv-quant-bits 0", args.kv_quant_bits != 0),
+            ("--kv-offload-mvp0 disabled", args.kv_offload_mvp0),
+            (
+                "--kv-offload-blockwise-decode disabled",
+                args.kv_offload_blockwise_decode,
+            ),
+            (
+                "--kv-offload-blockwise-prefill disabled",
+                args.kv_offload_blockwise_prefill,
+            ),
+            ("--quest-top-k-blocks <= 0", args.quest_top_k_blocks > 0),
+            ("--am-compact-blocks 0", args.am_compact_blocks > 0),
+            ("--kv-cartridge-blocks 0", args.kv_cartridge_blocks > 0),
+        )
+        for requirement, active in unsupported:
+            if active:
+                raise ValueError(
+                    f"native verifier requires {requirement}"
+                )
 
 
 def run_profile(args) -> dict:
