@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+from copy import copy
 from dataclasses import dataclass, field
 
 from draft_model_schema import (
@@ -90,6 +91,36 @@ def sync_sam_index(
         "history_match": True,
         "runtime_mutation": False,
         "profiler_owned": True,
+    }
+
+
+def rematerialize_accepted_kv(
+    llm,
+    seq,
+    accepted_tokens: list[int],
+    proxy_block_table: list[int],
+) -> dict:
+    rematerialized_tokens = [
+        int(token_id) for token_id in accepted_tokens[:-1]
+    ]
+    t0 = time.perf_counter()
+    if rematerialized_tokens:
+        proxy = copy(seq)
+        proxy.token_ids = list(seq.token_ids)
+        proxy.block_table = list(proxy_block_table)
+        proxy.num_tokens = len(proxy.token_ids)
+        proxy.last_token = proxy.token_ids[-1]
+        for token_id in rematerialized_tokens:
+            proxy.append_token(token_id)
+            llm.model_runner.run(
+                [proxy],
+                is_prefill=False,
+                do_sample=False,
+            )
+    return {
+        "rematerialized_tokens": rematerialized_tokens,
+        "decode_calls": len(rematerialized_tokens),
+        "elapsed_ms": (time.perf_counter() - t0) * 1000.0,
     }
 
 
@@ -726,6 +757,16 @@ def verify_and_commit_block(
         accepted_tokens = accepted_tokens[:remaining_budget]
         timing_ms["accept_sample_ms"] = (time.perf_counter() - t0) * 1000.0
 
+        rematerialization = rematerialize_accepted_kv(
+            llm,
+            seq,
+            accepted_tokens,
+            proxy_block_table,
+        )
+        timing_ms["accepted_kv_rematerialize_ms"] = rematerialization[
+            "elapsed_ms"
+        ]
+
         event_reserved_blocks = list(reserved_blocks)
         t0 = time.perf_counter()
         block_manager.commit_accepted_tokens(seq, accepted_tokens, reserved_blocks)
@@ -743,6 +784,7 @@ def verify_and_commit_block(
             "target_tokens": target_tokens,
             "accepted_tokens": accepted_tokens,
             "accepted_count": len(accepted_tokens),
+            "accepted_kv_rematerialization": rematerialization,
             "reserved_blocks": event_reserved_blocks,
             "block_table_after": list(seq.block_table),
             "num_tokens_after": seq.num_tokens,

@@ -49,6 +49,7 @@ validate_profile_args = profile_ngram.validate_profile_args
 SuffixAutomatonDraftIndex = profile_ngram.SuffixAutomatonDraftIndex
 sync_sam_index = profile_ngram.sync_sam_index
 should_verify_draft = profile_ngram.should_verify_draft
+rematerialize_accepted_kv = profile_ngram.rematerialize_accepted_kv
 DraftModelInput = draft_model_schema.DraftModelInput
 DraftModelContract = draft_model_schema.DraftModelContract
 DraftModelResult = draft_model_schema.DraftModelResult
@@ -476,6 +477,85 @@ def test_sam_verify_event_contract_is_profiler_owned():
     assert event["wasted_draft_tokens"] == (
         event["proposed_tokens"] - event["accepted_count"]
     )
+
+
+def test_accepted_kv_rematerialization_uses_normal_decode_for_materialized_prefix():
+    class FakeSequence:
+        block_size = 4
+
+        def __init__(self):
+            self.token_ids = [1, 2, 3]
+            self.block_table = [10]
+            self.num_tokens = 3
+            self.last_token = 3
+
+        def append_token(self, token_id):
+            self.token_ids.append(token_id)
+            self.num_tokens += 1
+            self.last_token = token_id
+
+    class FakeModelRunner:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, seqs, is_prefill, do_sample):
+            seq = seqs[0]
+            self.calls.append({
+                "token_ids": list(seq.token_ids),
+                "block_table": list(seq.block_table),
+                "is_prefill": is_prefill,
+                "do_sample": do_sample,
+            })
+
+    class FakeLLM:
+        def __init__(self):
+            self.model_runner = FakeModelRunner()
+
+    llm = FakeLLM()
+    seq = FakeSequence()
+    event = rematerialize_accepted_kv(
+        llm,
+        seq,
+        accepted_tokens=[4, 5, 6],
+        proxy_block_table=[10, 11],
+    )
+
+    assert [call["token_ids"] for call in llm.model_runner.calls] == [
+        [1, 2, 3, 4],
+        [1, 2, 3, 4, 5],
+    ]
+    assert all(call["block_table"] == [10, 11] for call in llm.model_runner.calls)
+    assert all(call["is_prefill"] is False for call in llm.model_runner.calls)
+    assert all(call["do_sample"] is False for call in llm.model_runner.calls)
+    assert seq.token_ids == [1, 2, 3]
+    assert seq.block_table == [10]
+    assert event["rematerialized_tokens"] == [4, 5]
+    assert event["decode_calls"] == 2
+
+
+def test_accepted_kv_rematerialization_skips_pending_only_token():
+    class FailModelRunner:
+        def run(self, *args, **kwargs):
+            raise AssertionError("decode should not run")
+
+    class FakeLLM:
+        model_runner = FailModelRunner()
+
+    class FakeSequence:
+        token_ids = [1, 2, 3]
+        block_table = [10]
+        num_tokens = 3
+        last_token = 3
+
+    for accepted_tokens in ([], [4]):
+        event = rematerialize_accepted_kv(
+            FakeLLM(),
+            FakeSequence(),
+            accepted_tokens=accepted_tokens,
+            proxy_block_table=[10],
+        )
+        assert event["rematerialized_tokens"] == []
+        assert event["decode_calls"] == 0
 
 
 def test_profile_validation_rejects_adaptive_non_ngram_source():
@@ -1081,6 +1161,8 @@ def main():
     test_empty_sam_proposal_bypasses_verifier()
     test_sam_profiler_remains_profiler_owned()
     test_sam_verify_event_contract_is_profiler_owned()
+    test_accepted_kv_rematerialization_uses_normal_decode_for_materialized_prefix()
+    test_accepted_kv_rematerialization_skips_pending_only_token()
     test_profile_validation_rejects_adaptive_non_ngram_source()
     test_profile_validation_requires_single_sequence_for_adaptive()
     test_attach_draft_policy_event_updates_adaptive_after_verification()
