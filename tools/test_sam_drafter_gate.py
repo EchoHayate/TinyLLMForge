@@ -255,6 +255,62 @@ def test_profiler_commands_are_policy_specific():
     ] == "sam"
 
 
+def test_normalize_row_keeps_final_integrity_event_for_duplicate_step():
+    manifest = gate.build_manifest(
+        repetitions=1,
+        base_seed=7,
+        source_commit="synthetic",
+        source_dirty=False,
+        model_path="/model",
+        model_identifier="model",
+        host="host",
+        python_bin="python3",
+    )
+    spec = next(
+        item for item in manifest["run_specs"]
+        if item["policy"] == "sam_match_aware"
+    )
+    result = {
+        "summary": {
+            "output_tokens": 4,
+            "output_tokens_per_s": 1.0,
+            "elapsed_s": 4.0,
+            "gate_pass": True,
+        },
+        "per_prompt": [{
+            "prompt_tokens": 3,
+            "output_tokens": 4,
+            "token_ids": [4, 5, 6, 7],
+        }],
+        "sam_events": [
+            {
+                "event_type": "index_integrity",
+                "step": 4,
+                "candidate_seq_id": 1,
+                "index_token_count": 6,
+            },
+            {
+                "event_type": "index_integrity",
+                "step": 4,
+                "candidate_seq_id": 1,
+                "index_token_count": 7,
+            },
+        ],
+    }
+    _, events = gate._normalize_row(
+        manifest,
+        spec,
+        result,
+        {"returncode": 0},
+    )
+    integrity = [
+        event for event in events
+        if event["event_type"] == "index_integrity"
+    ]
+    assert len(integrity) == 1
+    assert integrity[0]["index_token_count"] == 7
+
+
 def test_complete_175_row_fixture_is_go():
     manifest, rows, events = _synthetic_complete_gate_rows()
     summary = gate.summarize_rows(manifest, rows, events)
@@ -415,6 +471,7 @@ def main():
     test_run_specs_are_175_unique_rows_for_canonical()
     test_required_upload_paths_cover_all_runtime_imports()
     test_profiler_commands_are_policy_specific()
+    test_normalize_row_keeps_final_integrity_event_for_duplicate_step()
     test_complete_175_row_fixture_is_go()
     test_missing_or_failed_evidence_is_incomplete_not_no_go()
     test_output_mismatch_is_incomplete()

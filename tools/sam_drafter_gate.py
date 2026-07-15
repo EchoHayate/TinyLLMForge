@@ -399,26 +399,30 @@ def _normalize_row(
         "profiler_gate_fail_reasons": summary.get("gate_fail_reasons", []),
         "process": process,
     }
-    events = []
-    seen = set()
+    events_by_key = {}
+    event_order = []
     for event in result.get("verify_events", []) + result.get("sam_events", []):
         event_type = event.get("event_type", "verify")
         stable_key = (
             f"{spec['run_key']}:{event.get('step', -1)}:"
             f"{event_type}:{event.get('candidate_seq_id', -1)}"
         )
-        if stable_key in seen:
-            continue
-        seen.add(stable_key)
-        events.append({
+        if stable_key not in events_by_key:
+            event_order.append(stable_key)
+        events_by_key[stable_key] = {
             **event,
             "event_key": stable_key,
-            "event_index": len(events),
             "run_key": spec["run_key"],
             "policy": spec["policy"],
             "prompt_name": spec["prompt_name"],
             "prompt_class": spec["prompt_class"],
             "repetition": spec["repetition"],
+        }
+    events = []
+    for stable_key in event_order:
+        events.append({
+            **events_by_key[stable_key],
+            "event_index": len(events),
         })
     return row, events
 
