@@ -78,10 +78,9 @@ rsync -a -e "${RSYNC_SSH}" \
 python3 - "${LOCAL_OUT}" "${REPETITIONS}" <<'PY'
 import json
 import sys
-from copy import deepcopy
 from pathlib import Path
 
-from tools.profile_prefix_cache import decide_gate
+from tools.profile_prefix_cache import audit_artifact_payloads
 
 root = Path(sys.argv[1])
 repetitions = int(sys.argv[2])
@@ -97,6 +96,7 @@ if missing_files:
     raise SystemExit(f"missing artifact files: {missing_files}")
 manifest = json.loads((root / "manifest.json").read_text())
 correctness = json.loads((root / "correctness_rows.json").read_text())
+performance_rows = json.loads((root / "performance_rows.json").read_text())
 summary = json.loads((root / "summary.json").read_text())
 required = {
     "repeat_255",
@@ -123,15 +123,14 @@ for path in (
 decision = summary.get("decision", {}).get("decision")
 if decision not in {"GO", "NO_GO"}:
     raise SystemExit(f"invalid gate decision: {decision!r}")
-recomputed = decide_gate(
-    deepcopy(summary.get("correctness_rows", [])),
-    deepcopy(summary.get("performance_cases", [])),
+audit_errors = audit_artifact_payloads(
+    correctness,
+    performance_rows,
+    summary,
+    repetitions,
 )
-if recomputed != summary.get("decision"):
-    raise SystemExit(
-        "summary decision does not match recomputed gate: "
-        f"stored={summary.get('decision')!r} recomputed={recomputed!r}"
-    )
+if audit_errors:
+    raise SystemExit("artifact consistency failures: " + "; ".join(audit_errors))
 performance_cases = summary.get("performance_cases", [])
 prefixes = {case.get("shared_prefix_tokens") for case in performance_cases}
 if not {256, 1024, 2048} <= prefixes:

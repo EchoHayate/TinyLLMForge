@@ -16,6 +16,7 @@ if _REPO_ROOT not in sys.path:
 
 from tools.profile_prefix_cache import (
     adjusted_ttft_ms,
+    audit_artifact_payloads,
     build_manifest,
     clone_logits_for_capture,
     compare_logits,
@@ -334,6 +335,75 @@ def test_decide_gate_rejects_cached_or_query_token_mismatch():
     assert "cached-token" in " ".join(decision["reasons"])
 
 
+def test_audit_artifact_payloads_recomputes_raw_performance_rows():
+    correctness = [{"case": "boundary", "correct": True}]
+    performance_rows = []
+    performance_cases = []
+    for prefix, cold_ms, warm_ms in (
+        (256, 10.0, 9.8),
+        (1024, 20.0, 15.0),
+        (2048, 40.0, 28.0),
+    ):
+        rows = [
+            {
+                "state": state,
+                "ttft_ms": ttft_ms,
+                "query_tokens": query_tokens,
+                "cached_tokens": cached_tokens,
+                "correct": True,
+                "shared_prefix_tokens": prefix,
+            }
+            for state, ttft_ms, query_tokens, cached_tokens in (
+                ("cold", cold_ms, prefix + 300, 0),
+                ("warm", warm_ms, 300, prefix),
+                ("cache_cleared", cold_ms, prefix + 300, 0),
+            )
+        ]
+        performance_rows.extend(rows)
+        summaries = {
+            state: summarize_case_rows(
+                [row for row in rows if row["state"] == state]
+            )
+            for state in ("cold", "warm", "cache_cleared")
+        }
+        performance_cases.append(
+            {
+                "shared_prefix_tokens": prefix,
+                "suffix_tokens": 300,
+                "expected_reusable_tokens": prefix,
+                "cold": summaries["cold"],
+                "warm": summaries["warm"],
+                "cache_cleared": summaries["cache_cleared"],
+                "cold_median_query_tokens": prefix + 300,
+                "warm_median_query_tokens": 300,
+                "warm_median_cached_tokens": prefix,
+                "all_correct": True,
+            }
+        )
+    decision = decide_gate(correctness, performance_cases)
+    summary = {
+        "correctness_rows": correctness,
+        "performance_cases": performance_cases,
+        "decision": decision,
+    }
+
+    assert audit_artifact_payloads(
+        correctness,
+        performance_rows,
+        summary,
+        repetitions=1,
+    ) == []
+
+    summary["performance_cases"][1]["warm"]["median_ttft_ms"] = 14.0
+    errors = audit_artifact_payloads(
+        correctness,
+        performance_rows,
+        summary,
+        repetitions=1,
+    )
+    assert any("raw rows" in error for error in errors)
+
+
 def main():
     test_expected_reusable_tokens_keeps_sampleable_suffix()
     test_expected_shared_reusable_tokens_requires_full_shared_blocks()
@@ -348,6 +418,7 @@ def main():
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()
     test_decide_gate_rejects_any_correctness_failure_or_warm_regression()
     test_decide_gate_rejects_cached_or_query_token_mismatch()
+    test_audit_artifact_payloads_recomputes_raw_performance_rows()
     print("prefix cache profiler tests passed")
 
 

@@ -8,6 +8,7 @@ import statistics
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from pathlib import Path
 
 
@@ -139,6 +140,88 @@ def decide_gate(correctness_rows: list[dict], performance_cases: list[dict]) -> 
         if saved_queries != int(case["expected_reusable_tokens"]):
             reasons.append(f"{prefix}: executed prefill-token reduction mismatch")
     return {"decision": "NO_GO" if reasons else "GO", "reasons": reasons}
+
+
+def audit_artifact_payloads(
+    correctness_rows: list[dict],
+    performance_rows: list[dict],
+    summary: dict,
+    repetitions: int,
+) -> list[str]:
+    errors = []
+    if summary.get("correctness_rows") != correctness_rows:
+        errors.append("summary correctness rows do not match correctness_rows.json")
+
+    stored_cases = summary.get("performance_cases", [])
+    stored_by_prefix = {
+        int(case["shared_prefix_tokens"]): case for case in stored_cases
+    }
+    raw_prefixes = {
+        int(row["shared_prefix_tokens"]) for row in performance_rows
+    }
+    if raw_prefixes != set(stored_by_prefix):
+        errors.append(
+            "raw rows and summary performance prefixes differ: "
+            f"raw={sorted(raw_prefixes)} summary={sorted(stored_by_prefix)}"
+        )
+
+    recomputed_cases = []
+    for prefix in sorted(raw_prefixes):
+        prefix_rows = [
+            row
+            for row in performance_rows
+            if int(row["shared_prefix_tokens"]) == prefix
+        ]
+        state_rows = {
+            state: [row for row in prefix_rows if row["state"] == state]
+            for state in ("cold", "warm", "cache_cleared")
+        }
+        for state, rows in state_rows.items():
+            if len(rows) != repetitions:
+                errors.append(
+                    f"{prefix} {state} raw samples {len(rows)} != {repetitions}"
+                )
+        if any(not rows for rows in state_rows.values()):
+            continue
+
+        stored = stored_by_prefix.get(prefix)
+        if stored is None:
+            continue
+        summaries = {
+            state: summarize_case_rows(rows)
+            for state, rows in state_rows.items()
+        }
+        recomputed = {
+            "shared_prefix_tokens": prefix,
+            "suffix_tokens": int(stored["suffix_tokens"]),
+            "expected_reusable_tokens": int(
+                stored["expected_reusable_tokens"]
+            ),
+            "cold": summaries["cold"],
+            "warm": summaries["warm"],
+            "cache_cleared": summaries["cache_cleared"],
+            "cold_median_query_tokens": summaries["cold"][
+                "median_query_tokens"
+            ],
+            "warm_median_query_tokens": summaries["warm"][
+                "median_query_tokens"
+            ],
+            "warm_median_cached_tokens": summaries["warm"][
+                "median_cached_tokens"
+            ],
+            "all_correct": all(row["correct"] for row in prefix_rows),
+        }
+        recomputed_cases.append(recomputed)
+
+    recomputed_decision = decide_gate(
+        deepcopy(correctness_rows),
+        recomputed_cases,
+    )
+    if recomputed_cases != stored_cases:
+        errors.append("summary performance cases do not match raw rows")
+    if recomputed_decision != summary.get("decision"):
+        errors.append("summary decision does not match recomputed gate")
+    return errors
 
 
 def cuda_sync():
