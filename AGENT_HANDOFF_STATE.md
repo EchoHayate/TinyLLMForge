@@ -11,6 +11,8 @@
   - `b148f08 fix(apc): budget normal prefill by cache misses`
   - `9aefb47 fix(apc): batch warm chunked prefills by misses`
   - `8d993d0 fix(apc): evict stale hashes on block reuse`
+  - `662b286 fix(apc): preserve duplicate prefix mappings`
+  - `14309ba feat(apc): gate warm batch admission`
 - 修改：
   - `BlockManager.can_allocate()` 现在只从请求的 free-block 需求中扣除
     完整、token 校验通过且仍在 `used_block_ids` 中的 live prefix blocks。
@@ -29,6 +31,9 @@
   - idle cached block 被 cold miss 覆盖重用前，会条件删除仍指向该 block 的旧
     hash mapping，避免 `hash_to_block_id` 随 churn 积累 stale entries。
     cache-hit reactivation 仍会立即恢复 hash/token metadata 与 mapping。
+  - duplicate/collision-safe secondary index 保留同一 hash 的所有物理 blocks；
+    primary block 被覆盖时可 O(hash duplicate count) 回退到等价 token block，
+    不会因 same-batch duplicate publication 丢失仍有效的 KV。
 - TDD 证据：
   - 旧实现下 live-prefix admission 测试精确失败于
     `assert block_manager.can_allocate(warm) is True`。
@@ -46,6 +51,29 @@
   - stale-index 旧实现下，单 block 发布 prefix A、释放后被 cold prefix B
     覆盖时，`hash(A) -> block_id` 仍残留；修复后覆盖时删除 A，B commit 后
     字典只保留 `hash(B) -> block_id`。
+  - duplicate-prefix 旧实现下，两个同 hash/equal-token blocks 中 primary 被
+    overwrite 后，整个 prefix mapping 消失；修复后 primary 回退到另一份
+    仍有效的 KV。hash collision 下 primary token 不匹配时也会在同 hash
+    候选集合中找到 token-equal block。
+
+APC canonical gate 已扩展 warm-batch evidence：
+
+- 新 artifact：`batch_performance_rows.json`。
+- 1024/2048 shared-prefix、8-request cold/warm/cache-cleared batch。
+- 每条请求共享同一已 seed prefix、使用不同 suffix；warm 必须全部在一个
+  model batch 中接入。
+- raw rows 记录：
+  - full-batch elapsed time（不是单请求 TTFT）；
+  - model batch count；
+  - total/per-request cached/query tokens；
+  - exact token/text 与 full-logit correctness。
+- batch `GO` 条件：
+  - warm median model batches = 1；
+  - 每请求 cached/query accounting 精确；
+  - warm full-batch median elapsed 比 cold 至少改善 15%。
+- remote runner 会从 `batch_performance_rows.json` 重建 batch summaries 和
+  最终 decision，不信任 summary 自报；source manifest 也覆盖 runner 与两份
+  CPU tests。
 
 官方设计对照后的边界：
 
@@ -86,6 +114,8 @@ git diff --check
 3. 继续执行 K1 canonical gate；在此之前不得提交 K1 fast path 或声称性能达标。
 4. 没有 canonical APC GPU `summary.json` 前，不修改根 README 的最终
    GO/NO_GO checkbox，也不填写最终 APC 指标。
+5. smoke/canonical 现在必须同时存在并通过审计：
+   `performance_rows.json` 与 `batch_performance_rows.json`。
 
 ## 2026-07-15 SAM drafter gate 最终状态
 
