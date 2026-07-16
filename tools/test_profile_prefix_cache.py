@@ -5,15 +5,21 @@ Run: python3 tools/test_profile_prefix_cache.py
 
 import os
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from tools.profile_prefix_cache import (
+    build_manifest,
+    compare_logits,
     decide_gate,
     expected_reusable_tokens,
+    expected_shared_reusable_tokens,
     make_token_prompt,
+    parse_int_list,
     summarize_case_rows,
 )
 
@@ -39,10 +45,75 @@ def test_expected_reusable_tokens_keeps_sampleable_suffix():
     assert expected_reusable_tokens(513, 256) == 512
 
 
+def test_expected_shared_reusable_tokens_requires_full_shared_blocks():
+    assert expected_shared_reusable_tokens(255, 319, 256) == 0
+    assert expected_shared_reusable_tokens(256, 320, 256) == 256
+    assert expected_shared_reusable_tokens(300, 364, 256) == 256
+    assert expected_shared_reusable_tokens(512, 512, 256) == 256
+
+
 def test_make_token_prompt_is_deterministic_and_offset_sensitive():
     assert make_token_prompt(8, 0) == make_token_prompt(8, 0)
     assert make_token_prompt(8, 0) != make_token_prompt(8, 11)
     assert len(make_token_prompt(257, 3)) == 257
+    prefix = make_token_prompt(256, 100)
+    producer = prefix + make_token_prompt(64, 311)
+    consumer = prefix + make_token_prompt(64, 623)
+    assert producer[:256] == consumer[:256]
+    assert producer[256:] != consumer[256:]
+
+
+def test_parse_int_list_accepts_comma_separated_values():
+    assert parse_int_list("256,1024,2048") == [256, 1024, 2048]
+
+
+def test_build_manifest_records_source_hashes():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "source.py"
+        source.write_text("print('ok')\n")
+        manifest = build_manifest(root, ["source.py"], {"model": "/tmp/model"})
+        assert manifest["args"]["model"] == "/tmp/model"
+        assert len(manifest["source_sha256"]["source.py"]) == 64
+
+
+def test_compare_logits_requires_argmax_and_numeric_tolerance():
+    class FakeTensor:
+        def __init__(self, values):
+            self.values = list(values)
+
+        def __sub__(self, other):
+            return FakeTensor(
+                left - right for left, right in zip(self.values, other.values)
+            )
+
+        def abs(self):
+            return FakeTensor(abs(value) for value in self.values)
+
+        def max(self):
+            return max(self.values)
+
+        def mean(self):
+            return sum(self.values) / len(self.values)
+
+        def argmax(self):
+            return max(range(len(self.values)), key=self.values.__getitem__)
+
+    reference = FakeTensor([1.0, 3.0, 2.0])
+    close = FakeTensor([1.05, 3.0, 1.95])
+    comparison = compare_logits(reference, close)
+    assert comparison["argmax_match"] is True
+    assert comparison["within_tolerance"] is True
+
+    changed_argmax = FakeTensor([1.0, 2.9, 3.1])
+    comparison = compare_logits(reference, changed_argmax)
+    assert comparison["argmax_match"] is False
+    assert comparison["within_tolerance"] is False
+
+    large_delta = FakeTensor([1.0, 3.0, 1.7])
+    comparison = compare_logits(reference, large_delta)
+    assert comparison["argmax_match"] is True
+    assert comparison["within_tolerance"] is False
 
 
 def test_summarize_case_rows_reports_medians_and_correctness():
@@ -120,7 +191,11 @@ def test_decide_gate_rejects_cached_or_query_token_mismatch():
 
 def main():
     test_expected_reusable_tokens_keeps_sampleable_suffix()
+    test_expected_shared_reusable_tokens_requires_full_shared_blocks()
     test_make_token_prompt_is_deterministic_and_offset_sensitive()
+    test_parse_int_list_accepts_comma_separated_values()
+    test_build_manifest_records_source_hashes()
+    test_compare_logits_requires_argmax_and_numeric_tolerance()
     test_summarize_case_rows_reports_medians_and_correctness()
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()
     test_decide_gate_rejects_any_correctness_failure_or_warm_regression()
