@@ -75,12 +75,23 @@ ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
 rsync -a -e "${RSYNC_SSH}" \
   "${REMOTE_HOST}:${REMOTE_OUT}/" "${LOCAL_OUT}/"
 
-python3 - "${LOCAL_OUT}" <<'PY'
+python3 - "${LOCAL_OUT}" "${REPETITIONS}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
+repetitions = int(sys.argv[2])
+required_files = {
+    "manifest.json",
+    "correctness_rows.json",
+    "performance_rows.json",
+    "summary.json",
+    "report.md",
+}
+missing_files = sorted(name for name in required_files if not (root / name).is_file())
+if missing_files:
+    raise SystemExit(f"missing artifact files: {missing_files}")
 manifest = json.loads((root / "manifest.json").read_text())
 correctness = json.loads((root / "correctness_rows.json").read_text())
 summary = json.loads((root / "summary.json").read_text())
@@ -109,6 +120,18 @@ for path in (
 decision = summary.get("decision", {}).get("decision")
 if decision not in {"GO", "NO_GO"}:
     raise SystemExit(f"invalid gate decision: {decision!r}")
+performance_cases = summary.get("performance_cases", [])
+prefixes = {case.get("shared_prefix_tokens") for case in performance_cases}
+if not {256, 1024, 2048} <= prefixes:
+    raise SystemExit(f"missing performance prefixes: {sorted({256, 1024, 2048} - prefixes)}")
+for case in performance_cases:
+    for state in ("cold", "warm", "cache_cleared"):
+        samples = case.get(state, {}).get("samples")
+        if samples != repetitions:
+            raise SystemExit(
+                f"{case.get('shared_prefix_tokens')} {state} samples "
+                f"{samples!r} != {repetitions}"
+            )
 print("PREFIX_CACHE_GATE_ARTIFACTS_OK")
 PY
 
