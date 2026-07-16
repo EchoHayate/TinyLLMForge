@@ -65,6 +65,8 @@ def parse_args():
     )
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--shared-prefix-tokens", default="256,1024,2048")
+    parser.add_argument("--batch-prefix-tokens", default="1024,2048")
+    parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--suffix-tokens", type=int, default=64)
     parser.add_argument("--repetitions", type=int, default=7)
     parser.add_argument("--warmup-repetitions", type=int, default=2)
@@ -113,8 +115,68 @@ def summarize_case_rows(rows: list[dict]) -> dict:
     }
 
 
-def decide_gate(correctness_rows: list[dict], performance_cases: list[dict]) -> dict:
+def summarize_batch_case_rows(rows: list[dict]) -> dict:
+    return {
+        "samples": len(rows),
+        "median_batch_elapsed_ms": statistics.median(
+            float(row["batch_elapsed_ms"]) for row in rows
+        ),
+        "min_batch_elapsed_ms": min(
+            float(row["batch_elapsed_ms"]) for row in rows
+        ),
+        "max_batch_elapsed_ms": max(
+            float(row["batch_elapsed_ms"]) for row in rows
+        ),
+        "median_model_batches": statistics.median(
+            int(row["model_batches"]) for row in rows
+        ),
+        "median_total_query_tokens": statistics.median(
+            int(row["total_query_tokens"]) for row in rows
+        ),
+        "median_total_cached_tokens": statistics.median(
+            int(row["total_cached_tokens"]) for row in rows
+        ),
+        "median_requests": statistics.median(
+            int(row["requests"]) for row in rows
+        ),
+        "all_correct": all(bool(row["correct"]) for row in rows),
+    }
+
+
+def batch_row_accounting_correct(
+    row: dict,
+    expected_reusable_tokens: int,
+    prompt_tokens: int,
+) -> bool:
+    requests = int(row["requests"])
+    cached = [
+        int(value)
+        for value in row.get("cached_tokens_per_request", [])
+    ]
+    queries = [
+        int(value)
+        for value in row.get("query_tokens_per_request", [])
+    ]
+    if len(cached) != requests or len(queries) != requests:
+        return False
+    if row["state"] == "warm":
+        expected_cached = expected_reusable_tokens
+    else:
+        expected_cached = 0
+    expected_query = prompt_tokens - expected_cached
+    return (
+        all(value == expected_cached for value in cached)
+        and all(value == expected_query for value in queries)
+    )
+
+
+def decide_gate(
+    correctness_rows: list[dict],
+    performance_cases: list[dict],
+    batch_performance_cases: list[dict] | None = None,
+) -> dict:
     reasons = []
+    batch_performance_cases = batch_performance_cases or []
     failed = [row["case"] for row in correctness_rows if not row["correct"]]
     if failed:
         reasons.append("correctness failures: " + ", ".join(failed))
@@ -139,6 +201,40 @@ def decide_gate(correctness_rows: list[dict], performance_cases: list[dict]) -> 
         )
         if saved_queries != int(case["expected_reusable_tokens"]):
             reasons.append(f"{prefix}: executed prefill-token reduction mismatch")
+    for case in batch_performance_cases:
+        prefix = int(case["shared_prefix_tokens"])
+        batch_size = int(case["batch_size"])
+        expected_reusable = int(
+            case["expected_reusable_tokens_per_request"]
+        )
+        cold = float(case["cold"]["median_batch_elapsed_ms"])
+        warm = float(case["warm"]["median_batch_elapsed_ms"])
+        improvement = (cold - warm) / cold if cold > 0 else 0.0
+        case["warm_ttft_improvement_fraction"] = improvement
+        if not case["all_correct"]:
+            reasons.append(f"{prefix} batch: incorrect performance sample")
+        if int(case["warm"]["median_model_batches"]) != 1:
+            reasons.append(
+                f"{prefix} batch: warm requests did not fit one single model batch"
+            )
+        if int(case["warm"]["median_requests"]) != batch_size:
+            reasons.append(f"{prefix} batch: warm request count mismatch")
+        if int(case["warm"]["median_total_cached_tokens"]) != (
+            batch_size * expected_reusable
+        ):
+            reasons.append(f"{prefix} batch: cached-token accounting mismatch")
+        saved_queries = (
+            int(case["cold"]["median_total_query_tokens"])
+            - int(case["warm"]["median_total_query_tokens"])
+        )
+        if saved_queries != batch_size * expected_reusable:
+            reasons.append(
+                f"{prefix} batch: executed prefill-token reduction mismatch"
+            )
+        if improvement < 0.15:
+            reasons.append(
+                f"{prefix} batch: warm elapsed improvement below 15%"
+            )
     return {"decision": "NO_GO" if reasons else "GO", "reasons": reasons}
 
 
@@ -237,11 +333,115 @@ def audit_artifact_payloads(
     recomputed_decision = decide_gate(
         deepcopy(correctness_rows),
         recomputed_cases,
+        deepcopy(summary.get("batch_performance_cases", [])),
     )
     if recomputed_cases != stored_cases:
         errors.append("summary performance cases do not match raw rows")
     if recomputed_decision != summary.get("decision"):
         errors.append("summary decision does not match recomputed gate")
+    return errors
+
+
+def audit_batch_artifact_payloads(
+    batch_performance_rows: list[dict],
+    summary: dict,
+    repetitions: int,
+    correctness_rows: list[dict],
+    performance_cases: list[dict],
+    block_size: int = 256,
+) -> list[str]:
+    errors = []
+    stored_cases = summary.get("batch_performance_cases", [])
+    stored_by_prefix = {
+        int(case["shared_prefix_tokens"]): case for case in stored_cases
+    }
+    raw_prefixes = {
+        int(row["shared_prefix_tokens"])
+        for row in batch_performance_rows
+    }
+    if raw_prefixes != set(stored_by_prefix):
+        errors.append(
+            "raw rows and summary batch prefixes differ: "
+            f"raw={sorted(raw_prefixes)} summary={sorted(stored_by_prefix)}"
+        )
+
+    recomputed_cases = []
+    for prefix in sorted(raw_prefixes):
+        prefix_rows = [
+            row
+            for row in batch_performance_rows
+            if int(row["shared_prefix_tokens"]) == prefix
+        ]
+        state_rows = {
+            state: [row for row in prefix_rows if row["state"] == state]
+            for state in ("cold", "warm", "cache_cleared")
+        }
+        for state, rows in state_rows.items():
+            if len(rows) != repetitions:
+                errors.append(
+                    f"{prefix} batch {state} raw samples "
+                    f"{len(rows)} != {repetitions}"
+                )
+        if any(not rows for rows in state_rows.values()):
+            continue
+
+        batch_sizes = {
+            int(row["batch_size"]) for row in prefix_rows
+        }
+        suffix_values = {
+            int(row["suffix_tokens"]) for row in prefix_rows
+        }
+        if len(batch_sizes) != 1 or len(suffix_values) != 1:
+            errors.append(
+                f"{prefix} batch rows have inconsistent shape"
+            )
+            continue
+        batch_size = batch_sizes.pop()
+        suffix_tokens = suffix_values.pop()
+        expected_reusable = expected_shared_reusable_tokens(
+            prefix,
+            prefix + suffix_tokens,
+            block_size,
+        )
+        for row in prefix_rows:
+            row["correct"] = (
+                bool(row["correct"])
+                and batch_row_accounting_correct(
+                    row,
+                    expected_reusable,
+                    prefix + suffix_tokens,
+                )
+            )
+        summaries = {
+            state: summarize_batch_case_rows(rows)
+            for state, rows in state_rows.items()
+        }
+        recomputed_cases.append(
+            {
+                "shared_prefix_tokens": prefix,
+                "suffix_tokens": suffix_tokens,
+                "batch_size": batch_size,
+                "expected_reusable_tokens_per_request": expected_reusable,
+                "cold": summaries["cold"],
+                "warm": summaries["warm"],
+                "cache_cleared": summaries["cache_cleared"],
+                "all_correct": all(
+                    bool(row["correct"]) for row in prefix_rows
+                ),
+            }
+        )
+
+    recomputed_decision = decide_gate(
+        deepcopy(correctness_rows),
+        deepcopy(performance_cases),
+        recomputed_cases,
+    )
+    if recomputed_cases != stored_cases:
+        errors.append("summary batch performance cases do not match raw rows")
+    if recomputed_decision != summary.get("decision"):
+        errors.append(
+            "summary decision does not match recomputed batch gate"
+        )
     return errors
 
 
@@ -350,6 +550,126 @@ def schedule_and_run_prefill(llm, prompts, capture_logits=True):
         "ttft_ms": ttft_ms,
         "raw_ttft_ms": raw_ttft_ms,
         "capture_overhead_ms": capture_overhead_ms,
+    }
+
+
+def schedule_and_run_prefill_batches(llm, prompts):
+    from tinyvllm import SamplingParams
+
+    params = SamplingParams(temperature=0.0, max_tokens=1, ignore_eos=True)
+    for prompt in prompts:
+        llm.add_request(prompt, params)
+
+    rows_by_seq_id = {}
+    capture_events = []
+    captured_batches = []
+    model_batches = 0
+    host_instrumentation_ms = 0.0
+    original_forward = llm.model_runner.sampler.forward
+
+    def capture_forward(logits, temperatures):
+        if logits.is_cuda:
+            import torch
+
+            capture_start = torch.cuda.Event(enable_timing=True)
+            capture_end = torch.cuda.Event(enable_timing=True)
+            capture_start.record()
+            captured = clone_logits_for_capture(logits)
+            capture_end.record()
+            capture_events.append((capture_start, capture_end))
+        else:
+            captured = clone_logits_for_capture(logits)
+        capture_forward.captured = captured
+        return original_forward(logits, temperatures)
+
+    llm.model_runner.sampler.forward = capture_forward
+    try:
+        cuda_sync()
+        start = time.perf_counter()
+        while len(rows_by_seq_id) < len(prompts):
+            scheduled = llm.scheduler.schedule()
+            if len(scheduled) == 4:
+                seqs, is_prefill, do_sample, batch_kind = scheduled
+            else:
+                seqs, is_prefill, do_sample = scheduled
+                batch_kind = None
+            assert is_prefill and do_sample
+            capture_forward.captured = None
+            token_ids = llm.model_runner.call(
+                "run",
+                seqs,
+                is_prefill,
+                do_sample,
+                batch_kind,
+            )
+            captured = capture_forward.captured
+            assert captured is not None
+            instrumentation_start = time.perf_counter()
+            capture_index = len(captured_batches)
+            captured_batches.append(captured)
+            for index, seq in enumerate(seqs):
+                rows_by_seq_id[int(seq.seq_id)] = {
+                    "metadata": {
+                        "seq_id": int(seq.seq_id),
+                        "prompt_tokens": len(seq),
+                        "cached_tokens": int(seq.num_cached_tokens),
+                        "chunk_start": int(seq.prefill_chunk_start),
+                        "chunk_end": int(seq.prefill_chunk_end),
+                        "query_tokens": int(
+                            seq.prefill_chunk_end
+                            - seq.prefill_chunk_start
+                        ),
+                        "block_table": list(seq.block_table),
+                    },
+                    "token_id": int(token_ids[index]),
+                    "capture_index": capture_index,
+                    "row_index": index,
+                }
+            host_instrumentation_ms += (
+                time.perf_counter() - instrumentation_start
+            ) * 1000.0
+            llm.scheduler.postprocess(
+                seqs,
+                token_ids,
+                is_prefill,
+                do_sample,
+                batch_kind,
+            )
+            model_batches += 1
+        cuda_sync()
+        raw_ttft_ms = (time.perf_counter() - start) * 1000.0
+    finally:
+        llm.model_runner.sampler.forward = original_forward
+
+    capture_overhead_ms = sum(
+        float(start_event.elapsed_time(end_event))
+        for start_event, end_event in capture_events
+    )
+    materialized_batches = [
+        materialize_captured_logits([captured])
+        for captured in captured_batches
+    ]
+    ordered = [rows_by_seq_id[key] for key in sorted(rows_by_seq_id)]
+    decoded = [
+        llm.tokenizer.decode([row["token_id"]])
+        for row in ordered
+    ]
+    return {
+        "metadata": [row["metadata"] for row in ordered],
+        "token_ids": [row["token_id"] for row in ordered],
+        "decoded": decoded,
+        "logits": [
+            materialized_batches[row["capture_index"]][row["row_index"]]
+            for row in ordered
+        ],
+        "model_batches": model_batches,
+        "ttft_ms": adjusted_ttft_ms(
+            raw_ttft_ms - host_instrumentation_ms,
+            capture_overhead_ms,
+        ),
+        "raw_ttft_ms": raw_ttft_ms,
+        "capture_overhead_ms": capture_overhead_ms,
+        "host_instrumentation_ms": host_instrumentation_ms,
     }
 
 
@@ -575,6 +895,58 @@ def _performance_row(state, result, reference, repetition):
     return row
 
 
+def summarize_batch_result(
+    state,
+    result,
+    reference,
+    repetition,
+) -> dict:
+    same_request_count = (
+        len(result["metadata"]) == len(reference["metadata"])
+    )
+    comparisons = [
+        compare_logits(reference["logits"][index], result["logits"][index])
+        for index in range(
+            min(
+                len(result["metadata"]),
+                len(reference["metadata"]),
+            )
+        )
+    ]
+    correct = (
+        same_request_count
+        and result["token_ids"] == reference["token_ids"]
+        and result["decoded"] == reference["decoded"]
+        and all(row["within_tolerance"] for row in comparisons)
+    )
+    return {
+        "state": state,
+        "repetition": repetition,
+        "requests": len(result["metadata"]),
+        "model_batches": int(result["model_batches"]),
+        "total_cached_tokens": sum(
+            int(row["cached_tokens"]) for row in result["metadata"]
+        ),
+        "total_query_tokens": sum(
+            int(row["query_tokens"]) for row in result["metadata"]
+        ),
+        "cached_tokens_per_request": [
+            int(row["cached_tokens"]) for row in result["metadata"]
+        ],
+        "query_tokens_per_request": [
+            int(row["query_tokens"]) for row in result["metadata"]
+        ],
+        "batch_elapsed_ms": result["ttft_ms"],
+        "raw_ttft_ms": result["raw_ttft_ms"],
+        "capture_overhead_ms": result["capture_overhead_ms"],
+        "host_instrumentation_ms": result.get(
+            "host_instrumentation_ms",
+            0.0,
+        ),
+        "correct": correct,
+    }
+
+
 def run_performance_cases(
     llm,
     shared_prefix_tokens: list[int],
@@ -665,13 +1037,137 @@ def run_performance_cases(
     return raw_rows, performance_cases
 
 
+def run_batch_performance_cases(
+    llm,
+    shared_prefix_tokens: list[int],
+    suffix_tokens: int,
+    batch_size: int,
+    repetitions: int,
+    warmup_repetitions: int,
+) -> tuple[list[dict], list[dict]]:
+    block_manager = llm.scheduler.block_manager
+    raw_rows = []
+    performance_cases = []
+    total_repetitions = repetitions + warmup_repetitions
+    for prefix_tokens in shared_prefix_tokens:
+        case_rows = []
+        for repetition in range(total_repetitions):
+            prompts = []
+            base_offset = (
+                50000
+                + prefix_tokens * 17
+                + repetition * 1009
+            )
+            prefix = make_token_prompt(prefix_tokens, base_offset)
+            producer = (
+                prefix
+                + make_token_prompt(
+                    suffix_tokens,
+                    base_offset + 211,
+                )
+            )
+            for request_index in range(batch_size):
+                prompts.append(
+                    prefix
+                    + make_token_prompt(
+                        suffix_tokens,
+                        base_offset + 523 + request_index * 100003,
+                    )
+                )
+
+            block_manager.clear_reusable_cache()
+            cold = schedule_and_run_prefill_batches(llm, prompts)
+
+            block_manager.clear_reusable_cache()
+            schedule_and_run_prefill(llm, [producer])
+            warm = schedule_and_run_prefill_batches(llm, prompts)
+
+            block_manager.clear_reusable_cache()
+            schedule_and_run_prefill(llm, [producer])
+            block_manager.clear_reusable_cache()
+            cleared = schedule_and_run_prefill_batches(llm, prompts)
+
+            if repetition < warmup_repetitions:
+                continue
+            measured_repetition = repetition - warmup_repetitions
+            rows = [
+                summarize_batch_result(
+                    "cold",
+                    cold,
+                    cold,
+                    measured_repetition,
+                ),
+                summarize_batch_result(
+                    "warm",
+                    warm,
+                    cold,
+                    measured_repetition,
+                ),
+                summarize_batch_result(
+                    "cache_cleared",
+                    cleared,
+                    cold,
+                    measured_repetition,
+                ),
+            ]
+            for row in rows:
+                row["shared_prefix_tokens"] = prefix_tokens
+                row["suffix_tokens"] = suffix_tokens
+                row["batch_size"] = batch_size
+                row["correct"] = (
+                    bool(row["correct"])
+                    and batch_row_accounting_correct(
+                        row,
+                        expected_shared_reusable_tokens(
+                            prefix_tokens,
+                            prefix_tokens + suffix_tokens,
+                            block_manager.block_size,
+                        ),
+                        prefix_tokens + suffix_tokens,
+                    )
+                )
+            case_rows.extend(rows)
+            raw_rows.extend(rows)
+
+        summaries = {
+            state: summarize_batch_case_rows(
+                [row for row in case_rows if row["state"] == state]
+            )
+            for state in ("cold", "warm", "cache_cleared")
+        }
+        expected_cached = expected_shared_reusable_tokens(
+            prefix_tokens,
+            prefix_tokens + suffix_tokens,
+            block_manager.block_size,
+        )
+        performance_cases.append(
+            {
+                "shared_prefix_tokens": prefix_tokens,
+                "suffix_tokens": suffix_tokens,
+                "batch_size": batch_size,
+                "expected_reusable_tokens_per_request": expected_cached,
+                "cold": summaries["cold"],
+                "warm": summaries["warm"],
+                "cache_cleared": summaries["cache_cleared"],
+                "all_correct": all(row["correct"] for row in case_rows),
+            }
+        )
+    return raw_rows, performance_cases
+
+
 def _write_json(path: Path, payload):
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     )
 
 
-def render_report(manifest, correctness_rows, performance_cases, decision) -> str:
+def render_report(
+    manifest,
+    correctness_rows,
+    performance_cases,
+    batch_performance_cases,
+    decision,
+) -> str:
     lines = [
         "# Prefix Cache Correctness and TTFT Gate",
         "",
@@ -733,6 +1229,41 @@ def render_report(manifest, correctness_rows, performance_cases, decision) -> st
             )
         )
 
+    lines.extend(
+        [
+            "",
+            "## Warm Batch Admission",
+            "",
+            "| Shared Prefix | Batch | Cold Batches | Warm Batches | "
+            "Cold Elapsed ms | Warm Elapsed ms | Warm Cached | "
+            "Cold Query | Warm Query | Improvement | Correct |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+            "---: | ---: | ---: | --- |",
+        ]
+    )
+    for case in batch_performance_cases:
+        lines.append(
+            "| {prefix} | {batch_size} | {cold_batches} | "
+            "{warm_batches} | {cold:.3f} | {warm:.3f} | "
+            "{cached} | {cold_query} | {warm_query} | "
+            "{improvement:.2%} | {correct} |".format(
+                prefix=case["shared_prefix_tokens"],
+                batch_size=case["batch_size"],
+                cold_batches=case["cold"]["median_model_batches"],
+                warm_batches=case["warm"]["median_model_batches"],
+                cold=case["cold"]["median_batch_elapsed_ms"],
+                warm=case["warm"]["median_batch_elapsed_ms"],
+                cached=case["warm"]["median_total_cached_tokens"],
+                cold_query=case["cold"]["median_total_query_tokens"],
+                warm_query=case["warm"]["median_total_query_tokens"],
+                improvement=case.get(
+                    "warm_ttft_improvement_fraction",
+                    0.0,
+                ),
+                correct=case["all_correct"],
+            )
+        )
+
     lines.extend(["", "## Rejection Reasons", ""])
     if decision["reasons"]:
         lines.extend(f"- {reason}" for reason in decision["reasons"])
@@ -759,6 +1290,10 @@ def run_profile(args) -> dict:
     from tinyvllm import LLM
 
     repo_root = Path(__file__).resolve().parents[1]
+    if args.batch_size <= 0:
+        raise ValueError(
+            f"batch_size must be positive: {args.batch_size}"
+        )
     out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     source_files = [
@@ -766,6 +1301,8 @@ def run_profile(args) -> dict:
         "tinyvllm/engine/scheduler.py",
         "tools/profile_prefix_cache.py",
         "tools/test_profile_prefix_cache.py",
+        "tools/test_chunked_prefill.py",
+        "tools/run_prefix_cache_gate_remote.sh",
     ]
     manifest = build_manifest(repo_root, source_files, vars(args))
     _write_json(out_dir / "manifest.json", manifest)
@@ -781,6 +1318,8 @@ def run_profile(args) -> dict:
     correctness_rows = []
     performance_rows = []
     performance_cases = []
+    batch_performance_rows = []
+    batch_performance_cases = []
     if args.mode in ("correctness", "full"):
         correctness_rows = run_correctness_cases(llm, repo_root)
     if args.mode in ("performance", "full"):
@@ -791,7 +1330,27 @@ def run_profile(args) -> dict:
             args.repetitions,
             args.warmup_repetitions,
         )
-    decision = decide_gate(correctness_rows, performance_cases)
+        if args.batch_size > args.max_num_seqs:
+            raise ValueError(
+                "batch_size exceeds max_num_seqs: "
+                f"batch_size={args.batch_size}, "
+                f"max_num_seqs={args.max_num_seqs}"
+            )
+        batch_performance_rows, batch_performance_cases = (
+            run_batch_performance_cases(
+                llm,
+                parse_int_list(args.batch_prefix_tokens),
+                args.suffix_tokens,
+                args.batch_size,
+                args.repetitions,
+                args.warmup_repetitions,
+            )
+        )
+    decision = decide_gate(
+        correctness_rows,
+        performance_cases,
+        batch_performance_cases,
+    )
     if args.mode != "full":
         decision["decision"] = "NO_GO"
         decision["reasons"].append(
@@ -800,13 +1359,24 @@ def run_profile(args) -> dict:
     summary = {
         "correctness_rows": correctness_rows,
         "performance_cases": performance_cases,
+        "batch_performance_cases": batch_performance_cases,
         "decision": decision,
     }
     _write_json(out_dir / "correctness_rows.json", correctness_rows)
     _write_json(out_dir / "performance_rows.json", performance_rows)
+    _write_json(
+        out_dir / "batch_performance_rows.json",
+        batch_performance_rows,
+    )
     _write_json(out_dir / "summary.json", summary)
     (out_dir / "report.md").write_text(
-        render_report(manifest, correctness_rows, performance_cases, decision)
+        render_report(
+            manifest,
+            correctness_rows,
+            performance_cases,
+            batch_performance_cases,
+            decision,
+        )
     )
     return summary
 

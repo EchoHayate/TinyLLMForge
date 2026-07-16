@@ -26,6 +26,7 @@ OWNED_SOURCE_FILES=(
   tools/profile_prefix_cache.py
   tools/test_profile_prefix_cache.py
   tools/test_chunked_prefill.py
+  tools/run_prefix_cache_gate_remote.sh
 )
 
 if [[ "${TINYVLLM_PORT}" == "${MASTER_PORT_VALUE}" ]]; then
@@ -80,6 +81,8 @@ ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
      --mode full \
      --out-dir '${REMOTE_OUT}' \
      --shared-prefix-tokens 256,1024,2048 \
+     --batch-prefix-tokens 1024,2048 \
+     --batch-size 8 \
      --suffix-tokens 64 \
      --repetitions '${REPETITIONS}' \
      --warmup-repetitions '${WARMUP_REPETITIONS}' \
@@ -93,7 +96,11 @@ import json
 import sys
 from pathlib import Path
 
-from tools.profile_prefix_cache import audit_artifact_payloads, sha256_file
+from tools.profile_prefix_cache import (
+    audit_artifact_payloads,
+    audit_batch_artifact_payloads,
+    sha256_file,
+)
 
 root = Path(sys.argv[1])
 repetitions = int(sys.argv[2])
@@ -101,6 +108,7 @@ required_files = {
     "manifest.json",
     "correctness_rows.json",
     "performance_rows.json",
+    "batch_performance_rows.json",
     "summary.json",
     "report.md",
 }
@@ -110,6 +118,9 @@ if missing_files:
 manifest = json.loads((root / "manifest.json").read_text())
 correctness = json.loads((root / "correctness_rows.json").read_text())
 performance_rows = json.loads((root / "performance_rows.json").read_text())
+batch_performance_rows = json.loads(
+    (root / "batch_performance_rows.json").read_text()
+)
 summary = json.loads((root / "summary.json").read_text())
 required = {
     "repeat_255",
@@ -129,6 +140,9 @@ for path in (
     "tinyvllm/engine/block_manager.py",
     "tinyvllm/engine/scheduler.py",
     "tools/profile_prefix_cache.py",
+    "tools/test_profile_prefix_cache.py",
+    "tools/test_chunked_prefill.py",
+    "tools/run_prefix_cache_gate_remote.sh",
 ):
     digest = manifest["source_sha256"].get(path, "")
     if len(digest) != 64:
@@ -148,6 +162,15 @@ audit_errors = audit_artifact_payloads(
     summary,
     repetitions,
 )
+audit_errors.extend(
+    audit_batch_artifact_payloads(
+        batch_performance_rows,
+        summary,
+        repetitions,
+        correctness,
+        summary.get("performance_cases", []),
+    )
+)
 if audit_errors:
     raise SystemExit("artifact consistency failures: " + "; ".join(audit_errors))
 performance_cases = summary.get("performance_cases", [])
@@ -162,6 +185,28 @@ for case in performance_cases:
                 f"{case.get('shared_prefix_tokens')} {state} samples "
                 f"{samples!r} != {repetitions}"
             )
+batch_cases = summary.get("batch_performance_cases", [])
+batch_prefixes = {
+    case.get("shared_prefix_tokens") for case in batch_cases
+}
+if not {1024, 2048} <= batch_prefixes:
+    raise SystemExit(
+        "missing batch performance prefixes: "
+        f"{sorted({1024, 2048} - batch_prefixes)}"
+    )
+for case in batch_cases:
+    for state in ("cold", "warm", "cache_cleared"):
+        samples = case.get(state, {}).get("samples")
+        if samples != repetitions:
+            raise SystemExit(
+                f"{case.get('shared_prefix_tokens')} batch {state} "
+                f"samples {samples!r} != {repetitions}"
+            )
+    if case.get("warm", {}).get("median_model_batches") != 1:
+        raise SystemExit(
+            f"{case.get('shared_prefix_tokens')} warm batch did not "
+            "fit one model batch"
+        )
 print("PREFIX_CACHE_GATE_ARTIFACTS_OK")
 PY
 

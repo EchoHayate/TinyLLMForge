@@ -63,6 +63,7 @@ Expected files:
 - `manifest.json`
 - `correctness_rows.json`
 - `performance_rows.json`
+- `batch_performance_rows.json`
 - `summary.json`
 - `report.md`
 
@@ -79,6 +80,10 @@ The generated decision is `GO` only when all of the following hold:
 - warm median TTFT improves by at least 20% for shared prefixes of 1024 and
   2048 tokens;
 - no warm median TTFT regresses by more than 5%.
+- for 8-request warm batches at 1024/2048 shared-prefix tokens:
+  - all requests fit in one model batch;
+  - total cached/query-token accounting matches the expected reusable prefix;
+  - warm median full-batch elapsed time improves by at least 15% over cold.
 
 The 256-token case is retained as a small-prefix regression detector, but it is
 not required to reach the 20% improvement threshold.
@@ -121,6 +126,9 @@ remote-only checks that remain blocked:
   `tools/test_profile_prefix_cache.py`.
 - [x] Cold/warm/cache-cleared profiler paths and cached/query-token reporting:
   `tools/profile_prefix_cache.py`.
+- [x] Warm-batch admission profiler and raw artifact audit:
+  8-request 1024/2048-prefix cases in `tools/profile_prefix_cache.py` and
+  `batch_performance_rows.json`.
 - [x] Source hashes and isolated upload:
   profiler manifest plus `tools/run_prefix_cache_gate_remote.sh`.
 - [x] Claim boundaries:
@@ -133,6 +141,9 @@ remote-only checks that remain blocked:
   requires canonical `correctness_rows.json`.
 - [ ] Seven-sample cold/warm/cache-cleared TTFT for 256/1024/2048:
   requires canonical `performance_rows.json` and `summary.json`.
+- [ ] Seven-sample 8-request cold/warm/cache-cleared batch elapsed time for
+  1024/2048:
+  requires canonical `batch_performance_rows.json` and `summary.json`.
 - [ ] Final threshold decision and rejection reasons:
   requires canonical `summary.json`.
 - [ ] Root `README.md` and `AGENT_HANDOFF_STATE.md` final result:
