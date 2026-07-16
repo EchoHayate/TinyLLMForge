@@ -820,12 +820,48 @@ def test_audit_batch_artifact_payloads_recomputes_raw_rows():
         ],
         cases,
     )
+    cold_row = next(
+        row
+        for row in rows
+        if row["shared_prefix_tokens"] == 1024
+        and row["state"] == "cold"
+    )
+    cold_row["cache_isolation_between_batches"] = False
+    errors = audit_batch_artifact_payloads(
+        rows,
+        summary,
+        repetitions=1,
+        correctness_rows=[{"case": "boundary", "correct": True}],
+        performance_cases=[
+            _perf_case(256, 10.0, 9.8),
+            _perf_case(1024, 20.0, 15.0),
+            _perf_case(2048, 40.0, 28.0),
+        ],
+    )
+    assert any("raw rows" in error for error in errors)
+    cold_row["cache_isolation_between_batches"] = True
+
     warm_row = next(
         row
         for row in rows
         if row["shared_prefix_tokens"] == 1024
         and row["state"] == "warm"
     )
+    warm_row["cache_isolation_between_batches"] = True
+    errors = audit_batch_artifact_payloads(
+        rows,
+        summary,
+        repetitions=1,
+        correctness_rows=[{"case": "boundary", "correct": True}],
+        performance_cases=[
+            _perf_case(256, 10.0, 9.8),
+            _perf_case(1024, 20.0, 15.0),
+            _perf_case(2048, 40.0, 28.0),
+        ],
+    )
+    assert any("raw rows" in error for error in errors)
+    warm_row["cache_isolation_between_batches"] = False
+
     warm_row["cached_tokens_per_request"][0] = 0
     errors = audit_batch_artifact_payloads(
         rows,
