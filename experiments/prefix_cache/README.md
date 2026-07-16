@@ -101,6 +101,45 @@ Remote execution is currently blocked by expired Kerberos credentials for
 handoff with a final APC decision until the canonical `summary.json` has been
 mirrored locally and audited.
 
+## Prompt-to-Artifact Audit
+
+Current evidence is intentionally split between completed local checks and
+remote-only checks that remain blocked:
+
+- [x] Compute-complete publication:
+  `tools/test_chunked_prefill.py` and `tinyvllm/engine/scheduler.py`.
+- [x] Sampleable suffix leaves a positive query row:
+  255/256/257/512/513 CPU boundary tests.
+- [x] Same-batch publication isolation:
+  normal/chunked scheduler CPU regressions.
+- [x] Hash-collision token validation:
+  `test_allocate_rejects_hash_collision_when_tokens_differ`.
+- [x] Cache clearing and live-block safety:
+  `test_clear_reusable_cache_preserves_live_block_metadata` and capacity
+  pressure coverage.
+- [x] Gate threshold logic:
+  `tools/test_profile_prefix_cache.py`.
+- [x] Cold/warm/cache-cleared profiler paths and cached/query-token reporting:
+  `tools/profile_prefix_cache.py`.
+- [x] Source hashes and isolated upload:
+  profiler manifest plus `tools/run_prefix_cache_gate_remote.sh`.
+- [x] Claim boundaries:
+  generated `report.md` template and this README.
+- [ ] Remote 255/256/257/512/513 exact-token and full-logit rows:
+  requires canonical `correctness_rows.json`.
+- [ ] Remote `[P,Q,P]` wrong-row isolation:
+  requires canonical `correctness_rows.json`.
+- [ ] Remote shared-prefix/different-suffix and cache-cleared cases:
+  requires canonical `correctness_rows.json`.
+- [ ] Seven-sample cold/warm/cache-cleared TTFT for 256/1024/2048:
+  requires canonical `performance_rows.json` and `summary.json`.
+- [ ] Final threshold decision and rejection reasons:
+  requires canonical `summary.json`.
+- [ ] Root `README.md` and `AGENT_HANDOFF_STATE.md` final result:
+  must be selected from the audited canonical decision, not inferred.
+
+Any unchecked item means the APC performance gate is incomplete.
+
 ## Claim Boundaries
 
 - A passing gate supports correctness-safe full-block cross-request prefix
