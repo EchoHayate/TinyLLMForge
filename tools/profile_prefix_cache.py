@@ -148,6 +148,18 @@ def cuda_sync():
         torch.cuda.synchronize()
 
 
+def clone_logits_for_capture(logits):
+    return logits.detach().float().clone()
+
+
+def materialize_captured_logits(captures):
+    return captures[0].cpu() if captures else None
+
+
+def adjusted_ttft_ms(raw_ttft_ms: float, capture_overhead_ms: float) -> float:
+    return max(0.0, float(raw_ttft_ms) - float(capture_overhead_ms))
+
+
 def schedule_and_run_prefill(llm, prompts, capture_logits=True):
     from tinyvllm import SamplingParams
 
@@ -178,11 +190,22 @@ def schedule_and_run_prefill(llm, prompts, capture_logits=True):
     assert all(row["query_tokens"] > 0 for row in metadata)
 
     captures = []
+    capture_events = []
     original_forward = llm.model_runner.sampler.forward
     if capture_logits:
 
         def capture_forward(logits, temperatures):
-            captures.append(logits.detach().float().cpu().clone())
+            if logits.is_cuda:
+                import torch
+
+                capture_start = torch.cuda.Event(enable_timing=True)
+                capture_end = torch.cuda.Event(enable_timing=True)
+                capture_start.record()
+                captures.append(clone_logits_for_capture(logits))
+                capture_end.record()
+                capture_events.append((capture_start, capture_end))
+            else:
+                captures.append(clone_logits_for_capture(logits))
             return original_forward(logits, temperatures)
 
         llm.model_runner.sampler.forward = capture_forward
@@ -197,9 +220,15 @@ def schedule_and_run_prefill(llm, prompts, capture_logits=True):
             batch_kind,
         )
         cuda_sync()
-        ttft_ms = (time.perf_counter() - start) * 1000.0
+        raw_ttft_ms = (time.perf_counter() - start) * 1000.0
     finally:
         llm.model_runner.sampler.forward = original_forward
+    capture_overhead_ms = sum(
+        float(start_event.elapsed_time(end_event))
+        for start_event, end_event in capture_events
+    )
+    ttft_ms = adjusted_ttft_ms(raw_ttft_ms, capture_overhead_ms)
+    logits = materialize_captured_logits(captures)
     llm.scheduler.postprocess(
         seqs,
         token_ids,
@@ -207,7 +236,6 @@ def schedule_and_run_prefill(llm, prompts, capture_logits=True):
         do_sample,
         batch_kind,
     )
-    logits = captures[0] if captures else None
     return {
         "metadata": metadata,
         "token_ids": [int(token_id) for token_id in token_ids],
@@ -216,6 +244,8 @@ def schedule_and_run_prefill(llm, prompts, capture_logits=True):
         ],
         "logits": logits,
         "ttft_ms": ttft_ms,
+        "raw_ttft_ms": raw_ttft_ms,
+        "capture_overhead_ms": capture_overhead_ms,
     }
 
 
@@ -436,6 +466,8 @@ def _performance_row(state, result, reference, repetition):
     )
     row["repetition"] = repetition
     row["ttft_ms"] = result["ttft_ms"]
+    row["raw_ttft_ms"] = result["raw_ttft_ms"]
+    row["capture_overhead_ms"] = result["capture_overhead_ms"]
     return row
 
 

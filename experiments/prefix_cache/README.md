@@ -83,6 +83,12 @@ The generated decision is `GO` only when all of the following hold:
 The 256-token case is retained as a small-prefix regression detector, but it is
 not required to reach the 20% improvement threshold.
 
+The profiler captures full logits for correctness. It keeps the GPU-to-CPU
+transfer outside the timed region and uses CUDA events to measure the remaining
+GPU clone instrumentation. Performance rows store `raw_ttft_ms`,
+`capture_overhead_ms`, and adjusted `ttft_ms`; the gate compares the adjusted
+value so profiler-only full-logit capture does not bias cold/warm TTFT.
+
 ## Current Status
 
 The safety implementation, CPU regressions, report helpers, executable GPU

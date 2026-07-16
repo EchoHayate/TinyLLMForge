@@ -13,12 +13,15 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from tools.profile_prefix_cache import (
+    adjusted_ttft_ms,
     build_manifest,
+    clone_logits_for_capture,
     compare_logits,
     decide_gate,
     expected_reusable_tokens,
     expected_shared_reusable_tokens,
     make_token_prompt,
+    materialize_captured_logits,
     parse_int_list,
     summarize_case_rows,
 )
@@ -116,6 +119,39 @@ def test_compare_logits_requires_argmax_and_numeric_tolerance():
     assert comparison["within_tolerance"] is False
 
 
+def test_logit_capture_defers_cpu_transfer_until_after_timing():
+    calls = []
+
+    class FakeTensor:
+        def detach(self):
+            calls.append("detach")
+            return self
+
+        def float(self):
+            calls.append("float")
+            return self
+
+        def clone(self):
+            calls.append("clone")
+            return self
+
+        def cpu(self):
+            calls.append("cpu")
+            return self
+
+    captured = clone_logits_for_capture(FakeTensor())
+    assert calls == ["detach", "float", "clone"]
+
+    materialized = materialize_captured_logits([captured])
+    assert materialized is captured
+    assert calls == ["detach", "float", "clone", "cpu"]
+
+
+def test_adjusted_ttft_excludes_capture_instrumentation():
+    assert adjusted_ttft_ms(12.5, 2.0) == 10.5
+    assert adjusted_ttft_ms(1.0, 2.0) == 0.0
+
+
 def test_summarize_case_rows_reports_medians_and_correctness():
     rows = [
         {
@@ -196,6 +232,8 @@ def main():
     test_parse_int_list_accepts_comma_separated_values()
     test_build_manifest_records_source_hashes()
     test_compare_logits_requires_argmax_and_numeric_tolerance()
+    test_logit_capture_defers_cpu_transfer_until_after_timing()
+    test_adjusted_ttft_excludes_capture_instrumentation()
     test_summarize_case_rows_reports_medians_and_correctness()
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()
     test_decide_gate_rejects_any_correctness_failure_or_warm_regression()
