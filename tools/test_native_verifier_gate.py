@@ -182,6 +182,43 @@ def test_eos_case_uses_a_dedicated_real_eos_prompt():
     assert eos_cases[0]["prompt"] != gate._PROMPT
 
 
+def test_eos_case_materializes_from_real_probe_history_window():
+    case_spec = next(
+        case for case in gate.CASE_MATRIX
+        if case["eos_case"]
+    )
+    history_tokens = list(range(300, 555))
+    eos_token_id = 151645
+    history_tokens[250] = eos_token_id
+    probe = {
+        "target_tokens": list(range(700, 708)),
+        "history_tokens": history_tokens,
+        "vocab_size": 151936,
+        "prompt_token_count": 16,
+        "eos_token_id": eos_token_id,
+    }
+
+    case = gate._materialize_case(
+        case_spec,
+        probe,
+        "synthetic",
+        False,
+    )
+
+    assert case["history_len"] == 243
+    assert case["draft_tokens"] == history_tokens[243:251]
+    assert case["draft_tokens"][-1] == eos_token_id
+    assert case["block_case"] == "real_eos_history"
+    assert case["ignore_eos"] is False
+    assert case["max_tokens"] == (
+        case["history_len"]
+        - probe["prompt_token_count"]
+        + len(case["draft_tokens"])
+        + case["continuation_steps"]
+        + 4
+    )
+
+
 def test_manifest_freezes_scope_thresholds_and_case_matrix():
     manifest, _, _, _ = _complete_fixture()
     assert manifest["classification_on_success"] == (
@@ -435,6 +472,7 @@ def main():
     tests = (
         test_case_matrix_covers_required_dimensions,
         test_eos_case_uses_a_dedicated_real_eos_prompt,
+        test_eos_case_materializes_from_real_probe_history_window,
         test_manifest_freezes_scope_thresholds_and_case_matrix,
         test_capability_specs_cover_query_dtype_and_block_dimensions,
         test_complete_evidence_is_ready_for_performance_gate,

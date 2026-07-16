@@ -175,11 +175,11 @@ CASE_MATRIX = (
         block_case="one_new_block",
     ),
     _case(
-        "k8-eos-boundary",
+        "k8-eos-real-history",
         draft_len=8,
         acceptance_case="partial",
         history_len=255,
-        block_case="one_new_block",
+        block_case="real_eos_history",
         eos_case=True,
         prompt=_EOS_PROMPT,
     ),
@@ -625,13 +625,35 @@ def _materialize_case(
     from native_verifier_oracle import construct_draft_tokens
 
     targets = [int(token_id) for token_id in probe["target_tokens"]]
+    history_len = int(case_spec["history_len"])
     draft_tokens = construct_draft_tokens(
         targets,
         acceptance_case=case_spec["acceptance_case"],
         vocab_size=int(probe["vocab_size"]),
     )
     prompt_tokens = int(probe["prompt_token_count"])
-    completion_at_history = int(case_spec["history_len"]) - prompt_tokens
+    if case_spec["eos_case"]:
+        eos_token_id = int(probe["eos_token_id"])
+        history_tokens = [
+            int(token_id) for token_id in probe["history_tokens"]
+        ]
+        draft_len = int(case_spec["draft_len"])
+        eos_indices = [
+            index
+            for index, token_id in enumerate(history_tokens)
+            if token_id == eos_token_id
+            and index - draft_len + 1 >= prompt_tokens
+        ]
+        if not eos_indices:
+            raise ValueError(
+                f"{case_spec['case_id']} probe history has no usable real EOS"
+            )
+        eos_index = eos_indices[-1]
+        history_len = eos_index - draft_len + 1
+        draft_tokens = history_tokens[
+            history_len:history_len + draft_len
+        ]
+    completion_at_history = history_len - prompt_tokens
     max_tokens = (
         completion_at_history + 2
         if case_spec["output_budget_case"]
@@ -640,21 +662,9 @@ def _materialize_case(
         + int(case_spec["continuation_steps"])
         + 4
     )
-    if case_spec["eos_case"]:
-        eos_token_id = int(probe["eos_token_id"])
-        accepted_prefix = 0
-        for token_id in targets:
-            if token_id == eos_token_id:
-                accepted_prefix += 1
-                break
-            accepted_prefix += 1
-        if eos_token_id not in targets:
-            raise ValueError(
-                f"{case_spec['case_id']} probe target stream has no real EOS"
-            )
-        draft_tokens = list(targets)
     return {
         **case_spec,
+        "history_len": history_len,
         "draft_tokens": draft_tokens,
         "max_tokens": max_tokens,
         "ignore_eos": not bool(case_spec["eos_case"]),
