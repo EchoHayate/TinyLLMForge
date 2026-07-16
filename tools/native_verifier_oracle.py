@@ -253,7 +253,18 @@ def _append_kv_rows(total: dict[str, list], snapshot: dict) -> None:
         rows = snapshot.get(name)
         if rows is None:
             raise ValueError(f"KV snapshot is missing {name}")
-        total[name].extend(rows)
+        if not total[name]:
+            total[name].extend([
+                list(layer_rows)
+                for layer_rows in rows
+            ])
+            continue
+        if len(total[name]) != len(rows):
+            raise ValueError(
+                f"KV snapshot layer count changed for {name}"
+            )
+        for accumulated, layer_rows in zip(total[name], rows):
+            accumulated.extend(layer_rows)
 
 
 def _run_decode_evidence_step(llm, seq) -> dict:

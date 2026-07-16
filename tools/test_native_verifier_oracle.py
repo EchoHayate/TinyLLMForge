@@ -399,6 +399,41 @@ def test_build_case_payload_records_complete_evidence():
     }
 
 
+def test_oracle_kv_rows_are_aggregated_layer_major():
+    total = {"keys": [], "values": []}
+    oracle._append_kv_rows(total, {
+        "keys": [
+            [["l0s0"]],
+            [["l1s0"]],
+        ],
+        "values": [
+            [["v0s0"]],
+            [["v1s0"]],
+        ],
+    })
+    oracle._append_kv_rows(total, {
+        "keys": [
+            [["l0s1"]],
+            [["l1s1"]],
+        ],
+        "values": [
+            [["v0s1"]],
+            [["v1s1"]],
+        ],
+    })
+
+    assert total == {
+        "keys": [
+            [["l0s0"], ["l0s1"]],
+            [["l1s0"], ["l1s1"]],
+        ],
+        "values": [
+            [["v0s0"], ["v0s1"]],
+            [["v1s0"], ["v1s1"]],
+        ],
+    }
+
+
 def test_run_case_validates_input_and_writes_backend_payload():
     calls = []
 
@@ -614,6 +649,7 @@ def main():
     test_missing_or_nonfinite_evidence_is_classified_strictly()
     test_less_than_16_continuation_steps_is_incomplete()
     test_build_case_payload_records_complete_evidence()
+    test_oracle_kv_rows_are_aggregated_layer_major()
     test_run_case_validates_input_and_writes_backend_payload()
     test_run_case_accepts_all_isolated_policies()
     test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases()
