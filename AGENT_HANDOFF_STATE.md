@@ -126,6 +126,9 @@ GPU gate 的 K1 改动继续隔离在：
 - `/tmp/ssh-sitian-10.232.195.203` ControlMaster socket 不存在。
 - `ssh -o BatchMode=yes sitian@10.232.195.203 ...` 仍失败：
   `Connection closed by UNKNOWN port 65535`。
+- `kinit -R` 无法无交互续期：
+  `Matching credential (krbtgt/BYTEDANCE.COM@BYTEDANCE.COM) not found`；
+  当前 cache 没有可续期 TGT，需要用户侧重新完成 Kerberos 登录。
 
 认证恢复后的固定顺序：
 
