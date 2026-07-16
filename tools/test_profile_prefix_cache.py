@@ -5,6 +5,8 @@ Run: python3 tools/test_profile_prefix_cache.py
 
 import os
 import sys
+from types import ModuleType
+from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -23,6 +25,7 @@ from tools.profile_prefix_cache import (
     make_token_prompt,
     materialize_captured_logits,
     parse_int_list,
+    schedule_and_run_prefill,
     summarize_case_rows,
 )
 
@@ -152,6 +155,112 @@ def test_adjusted_ttft_excludes_capture_instrumentation():
     assert adjusted_ttft_ms(1.0, 2.0) == 0.0
 
 
+def test_schedule_and_run_prefill_records_metadata_and_instrumentation():
+    import tools.profile_prefix_cache as profile_prefix_cache
+
+    class FakeTensor:
+        is_cuda = False
+
+        def __init__(self, values):
+            self.values = list(values)
+
+        def detach(self):
+            return self
+
+        def float(self):
+            return self
+
+        def clone(self):
+            return FakeTensor(self.values)
+
+        def cpu(self):
+            return self
+
+    class FakeSampler:
+        def forward(self, logits, temperatures):
+            assert temperatures == [0.0]
+            return [2]
+
+    class FakeRunner:
+        def __init__(self):
+            self.sampler = FakeSampler()
+
+        def call(self, method_name, seqs, is_prefill, do_sample, batch_kind):
+            assert method_name == "run"
+            assert is_prefill is True
+            assert do_sample is True
+            assert batch_kind is None
+            return self.sampler.forward(FakeTensor([1.0, 2.0, 3.0]), [0.0])
+
+    class FakeSequence:
+        seq_id = 7
+        num_cached_tokens = 256
+        prefill_chunk_start = 256
+        prefill_chunk_end = 320
+        block_table = [4, 9]
+
+        def __len__(self):
+            return 320
+
+    seq = FakeSequence()
+
+    class FakeScheduler:
+        def schedule(self):
+            return [seq], True, True
+
+        def postprocess(self, seqs, token_ids, is_prefill, do_sample, batch_kind):
+            assert seqs == [seq]
+            assert token_ids == [2]
+            assert is_prefill is True
+            assert do_sample is True
+            assert batch_kind is None
+
+    class FakeLLM:
+        def __init__(self):
+            self.scheduler = FakeScheduler()
+            self.model_runner = FakeRunner()
+            self.tokenizer = SimpleNamespace(
+                decode=lambda token_ids: f"token-{token_ids[0]}"
+            )
+            self.prompts = []
+
+        def add_request(self, prompt, params):
+            self.prompts.append((prompt, params))
+
+    original_sync = profile_prefix_cache.cuda_sync
+    original_tinyvllm = sys.modules.get("tinyvllm")
+    fake_tinyvllm = ModuleType("tinyvllm")
+    fake_tinyvllm.SamplingParams = lambda **kwargs: SimpleNamespace(**kwargs)
+    sys.modules["tinyvllm"] = fake_tinyvllm
+    profile_prefix_cache.cuda_sync = lambda: None
+    try:
+        result = schedule_and_run_prefill(FakeLLM(), [[1] * 320])
+    finally:
+        profile_prefix_cache.cuda_sync = original_sync
+        if original_tinyvllm is None:
+            del sys.modules["tinyvllm"]
+        else:
+            sys.modules["tinyvllm"] = original_tinyvllm
+
+    assert result["metadata"] == [
+        {
+            "seq_id": 7,
+            "prompt_tokens": 320,
+            "cached_tokens": 256,
+            "chunk_start": 256,
+            "chunk_end": 320,
+            "query_tokens": 64,
+            "block_table": [4, 9],
+        }
+    ]
+    assert result["token_ids"] == [2]
+    assert result["decoded"] == ["token-2"]
+    assert result["logits"].values == [1.0, 2.0, 3.0]
+    assert result["raw_ttft_ms"] >= 0.0
+    assert result["capture_overhead_ms"] == 0
+    assert result["ttft_ms"] == result["raw_ttft_ms"]
+
+
 def test_summarize_case_rows_reports_medians_and_correctness():
     rows = [
         {
@@ -234,6 +343,7 @@ def main():
     test_compare_logits_requires_argmax_and_numeric_tolerance()
     test_logit_capture_defers_cpu_transfer_until_after_timing()
     test_adjusted_ttft_excludes_capture_instrumentation()
+    test_schedule_and_run_prefill_records_metadata_and_instrumentation()
     test_summarize_case_rows_reports_medians_and_correctness()
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()
     test_decide_gate_rejects_any_correctness_failure_or_warm_regression()
