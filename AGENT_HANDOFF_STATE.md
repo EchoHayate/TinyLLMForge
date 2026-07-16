@@ -13,6 +13,7 @@
   - `8d993d0 fix(apc): evict stale hashes on block reuse`
   - `662b286 fix(apc): preserve duplicate prefix mappings`
   - `14309ba feat(apc): gate warm batch admission`
+  - `6632818 fix(apc): isolate cold batch cache state`
 - 修改：
   - `BlockManager.can_allocate()` 现在只从请求的 free-block 需求中扣除
     完整、token 校验通过且仍在 `used_block_ids` 中的 live prefix blocks。
@@ -74,6 +75,16 @@ APC canonical gate 已扩展 warm-batch evidence：
 - remote runner 会从 `batch_performance_rows.json` 重建 batch summaries 和
   最终 decision，不信任 summary 自报；source manifest 也覆盖 runner 与两份
   CPU tests。
+- cold/cache-cleared batch 现在在一次 profiler run 内的相邻 model batches
+  之间调用 `clear_reusable_cache()`；否则前一 model batch 刚发布的共享 prefix
+  KV 会把后一 model batch 意外预热，使 cold 路径低估 admission 成本。
+- warm batch 不执行该隔离清理；它必须保留 producer seed 的 reusable KV，
+  并由 scheduler 自然证明 8 条请求可一次接入。
+- batch 间 cache clear 的 host wall time 计入 `host_instrumentation_ms`，从
+  measured full-batch elapsed 中扣除，避免把 profiler 隔离操作算作模型时间。
+- raw row 新增 `cache_isolation_between_batches`；artifact audit 强制
+  cold/cache-cleared 为 `true`、warm 为 `false`，因此旧的污染 artifact
+  不能通过 canonical 重算。
 
 官方设计对照后的边界：
 
@@ -88,11 +99,22 @@ APC canonical gate 已扩展 warm-batch evidence：
 PYTHONDONTWRITEBYTECODE=1 python3 tools/test_chunked_prefill.py
 PYTHONDONTWRITEBYTECODE=1 python3 tools/test_profile_chunked_prefill.py
 PYTHONDONTWRITEBYTECODE=1 python3 tools/test_profile_prefix_cache.py
-python3 -m py_compile tinyvllm/engine/block_manager.py tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_eval_needle_fixed_prompts.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_native_verifier_oracle.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_native_verifier_gate.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_model_runner_spec_verify.py
+python3 -m py_compile \
+  tools/profile_prefix_cache.py \
+  tools/test_profile_prefix_cache.py \
+  tinyvllm/engine/block_manager.py \
+  tinyvllm/engine/scheduler.py
+bash -n tools/run_prefix_cache_gate_remote.sh
 git diff --check
 ```
 
-以上全部通过。尚未提交、仍等待远程 GPU gate 的 K1 改动继续隔离在：
+以上命令已在 `6632818` 提交前 fresh 运行并全部通过。尚未提交、仍等待远程
+GPU gate 的 K1 改动继续隔离在：
 
 - `tools/profile_ngram_commit.py`
 - `tools/test_ngram_speculative.py`
