@@ -6,7 +6,11 @@
 
 - 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
 - 分支：`feat/adaptive-ngram-speculation`
-- commit：`36788ad fix(apc): account for live prefix hits in admission`
+- commits：
+  - `36788ad fix(apc): account for live prefix hits in admission`
+  - `b148f08 fix(apc): budget normal prefill by cache misses`
+  - `9aefb47 fix(apc): batch warm chunked prefills by misses`
+  - `8d993d0 fix(apc): evict stale hashes on block reuse`
 - 修改：
   - `BlockManager.can_allocate()` 现在只从请求的 free-block 需求中扣除
     完整、token 校验通过且仍在 `used_block_ids` 中的 live prefix blocks。
@@ -14,6 +18,17 @@
     因此 admission 不会把 idle hit 错算成额外容量。
   - 匹配遵守 sampleable suffix cap，并在 hash 命中后比较 token ids，避免
     collision 或最后 sample token 被错误复用。
+  - `BlockManager.estimate_admission()` 只读返回
+    `(reusable_tokens, required_free_blocks)`，normal/chunked scheduler 可用
+    同一次 prefix scan 同时做 token budget 与 block capacity admission。
+  - normal prefill 的 batch token budget 现在按
+    `len(seq) - reusable_tokens` 计算，不再把已命中的完整 prefix 重复计入。
+  - chunked prefill 的额外 final-prompt batching 也按 uncached suffix
+    判断是否可在一个 chunk 内完成；delayed hash publication 仍保证本批新 KV
+    不会形成 same-batch dependency。
+  - idle cached block 被 cold miss 覆盖重用前，会条件删除仍指向该 block 的旧
+    hash mapping，避免 `hash_to_block_id` 随 churn 积累 stale entries。
+    cache-hit reactivation 仍会立即恢复 hash/token metadata 与 mapping。
 - TDD 证据：
   - 旧实现下 live-prefix admission 测试精确失败于
     `assert block_manager.can_allocate(warm) is True`。
@@ -21,6 +36,24 @@
     实际 `allocate()` 命中 8 cached tokens 并恰好消耗最后 1 个 free block。
   - idle-hit 场景保守拒绝：3-block prompt、2 个 idle cached blocks、仅
     2 个 free blocks 时仍需要 3 个 free-block activations。
+  - normal budget 旧实现下，9-token warm prompt 命中 8 tokens 后仍按 9
+    tokens 拒绝，最终错误跌入空 decode `assert scheduled_seqs`；修复后合法的
+    10-token budget 可一次接入 3 条各只需计算 1 token 的 warm prompts。
+  - cold control 保持不变：10-token budget 仍只接入两条 5-token cold prompts。
+  - chunked 旧实现下，4-token cold prompt 后的 9-token/8-hit warm prompt
+    被 `len(candidate) > chunk_size` 拒绝；修复后两者以 4+1 actual prefill
+    tokens 合批，warm prompt 从 token 8 开始计算。
+  - stale-index 旧实现下，单 block 发布 prefix A、释放后被 cold prefix B
+    覆盖时，`hash(A) -> block_id` 仍残留；修复后覆盖时删除 A，B commit 后
+    字典只保留 `hash(B) -> block_id`。
+
+官方设计对照后的边界：
+
+- vLLM APC 与 TensorRT-LLM KV reuse 都把可回收 cache block 的 eviction/
+  reuse bookkeeping 视为核心；当前 stale-index 修复属于同一基础卫生层。
+- SGLang 的 RadixAttention/cache-aware scheduling 是更大的结构与策略改动。
+  当前不要顺手实现 radix tree 或 waiting-queue bypass；queue bypass 会改变
+  FIFO、公平性与尾延迟，必须先单独定义 throughput/TTFT/starvation gate。
 - 提交后 fresh local verification：
 
 ```bash
