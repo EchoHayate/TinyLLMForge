@@ -164,9 +164,12 @@ def batch_row_accounting_correct(
     else:
         expected_cached = 0
     expected_query = prompt_tokens - expected_cached
+    expected_isolation = row["state"] != "warm"
     return (
         all(value == expected_cached for value in cached)
         and all(value == expected_query for value in queries)
+        and bool(row.get("cache_isolation_between_batches", False))
+        == expected_isolation
     )
 
 
@@ -553,7 +556,11 @@ def schedule_and_run_prefill(llm, prompts, capture_logits=True):
     }
 
 
-def schedule_and_run_prefill_batches(llm, prompts):
+def schedule_and_run_prefill_batches(
+    llm,
+    prompts,
+    clear_cache_between_batches: bool = False,
+):
     from tinyvllm import SamplingParams
 
     params = SamplingParams(temperature=0.0, max_tokens=1, ignore_eos=True)
@@ -636,6 +643,15 @@ def schedule_and_run_prefill_batches(llm, prompts):
                 batch_kind,
             )
             model_batches += 1
+            if (
+                clear_cache_between_batches
+                and len(rows_by_seq_id) < len(prompts)
+            ):
+                instrumentation_start = time.perf_counter()
+                llm.scheduler.block_manager.clear_reusable_cache()
+                host_instrumentation_ms += (
+                    time.perf_counter() - instrumentation_start
+                ) * 1000.0
         cuda_sync()
         raw_ttft_ms = (time.perf_counter() - start) * 1000.0
     finally:
@@ -670,6 +686,9 @@ def schedule_and_run_prefill_batches(llm, prompts):
         "raw_ttft_ms": raw_ttft_ms,
         "capture_overhead_ms": capture_overhead_ms,
         "host_instrumentation_ms": host_instrumentation_ms,
+        "cache_isolation_between_batches": bool(
+            clear_cache_between_batches
+        ),
     }
 
 
@@ -943,6 +962,9 @@ def summarize_batch_result(
             "host_instrumentation_ms",
             0.0,
         ),
+        "cache_isolation_between_batches": bool(
+            result.get("cache_isolation_between_batches", False)
+        ),
         "correct": correct,
     }
 
@@ -1076,7 +1098,11 @@ def run_batch_performance_cases(
                 )
 
             block_manager.clear_reusable_cache()
-            cold = schedule_and_run_prefill_batches(llm, prompts)
+            cold = schedule_and_run_prefill_batches(
+                llm,
+                prompts,
+                clear_cache_between_batches=True,
+            )
 
             block_manager.clear_reusable_cache()
             schedule_and_run_prefill(llm, [producer])
@@ -1085,7 +1111,11 @@ def run_batch_performance_cases(
             block_manager.clear_reusable_cache()
             schedule_and_run_prefill(llm, [producer])
             block_manager.clear_reusable_cache()
-            cleared = schedule_and_run_prefill_batches(llm, prompts)
+            cleared = schedule_and_run_prefill_batches(
+                llm,
+                prompts,
+                clear_cache_between_batches=True,
+            )
 
             if repetition < warmup_repetitions:
                 continue

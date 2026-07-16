@@ -357,9 +357,16 @@ def test_schedule_and_run_prefill_batches_drains_all_requests():
     class FakeScheduler:
         def __init__(self):
             self.batches = [seqs[:2], seqs[2:]]
+            self.clear_calls = 0
+            self.block_manager = SimpleNamespace(
+                clear_reusable_cache=self.clear_reusable_cache
+            )
 
         def schedule(self):
             return self.batches.pop(0), True, True
+
+        def clear_reusable_cache(self):
+            self.clear_calls += 1
 
         def postprocess(
             self,
@@ -390,9 +397,11 @@ def test_schedule_and_run_prefill_batches_drains_all_requests():
     sys.modules["tinyvllm"] = fake_tinyvllm
     profile_prefix_cache.cuda_sync = lambda: None
     try:
+        llm = FakeLLM()
         result = schedule_and_run_prefill_batches(
-            FakeLLM(),
+            llm,
             [[1] * 9 for _ in range(3)],
+            clear_cache_between_batches=True,
         )
     finally:
         profile_prefix_cache.cuda_sync = original_sync
@@ -402,6 +411,7 @@ def test_schedule_and_run_prefill_batches_drains_all_requests():
             sys.modules["tinyvllm"] = original_tinyvllm
 
     assert result["model_batches"] == 2
+    assert llm.scheduler.clear_calls == 1
     assert [row["seq_id"] for row in result["metadata"]] == [0, 1, 2]
     assert result["token_ids"] == [1, 2, 3]
     assert result["decoded"] == ["token-1", "token-2", "token-3"]
@@ -732,6 +742,7 @@ def test_audit_batch_artifact_payloads_recomputes_raw_rows():
                 "shared_prefix_tokens": prefix,
                 "suffix_tokens": 64,
                 "batch_size": 8,
+                "cache_isolation_between_batches": state != "warm",
             }
             for state, ttft_ms, model_batches, query_tokens, cached_tokens in (
                 ("cold", cold_ms, 2, 8 * (prefix + 64), 0),
