@@ -78,7 +78,10 @@ rsync -a -e "${RSYNC_SSH}" \
 python3 - "${LOCAL_OUT}" "${REPETITIONS}" <<'PY'
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
+
+from tools.profile_prefix_cache import decide_gate
 
 root = Path(sys.argv[1])
 repetitions = int(sys.argv[2])
@@ -120,6 +123,15 @@ for path in (
 decision = summary.get("decision", {}).get("decision")
 if decision not in {"GO", "NO_GO"}:
     raise SystemExit(f"invalid gate decision: {decision!r}")
+recomputed = decide_gate(
+    deepcopy(summary.get("correctness_rows", [])),
+    deepcopy(summary.get("performance_cases", [])),
+)
+if recomputed != summary.get("decision"):
+    raise SystemExit(
+        "summary decision does not match recomputed gate: "
+        f"stored={summary.get('decision')!r} recomputed={recomputed!r}"
+    )
 performance_cases = summary.get("performance_cases", [])
 prefixes = {case.get("shared_prefix_tokens") for case in performance_cases}
 if not {256, 1024, 2048} <= prefixes:
