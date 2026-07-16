@@ -171,14 +171,16 @@ class _SerializedModelRunner:
         return [11]
 
     def prepare_decode(self, seqs):
-        assert len(seqs) == 1
-        seq = seqs[0]
-        self.prepare_calls.append({
-            "last_token": int(seq.last_token),
-            "block_table": list(seq.block_table),
-            "num_blocks": int(seq.num_blocks),
-        })
-        return [int(seq.last_token)], [len(seq)]
+        for seq in seqs:
+            self.prepare_calls.append({
+                "last_token": int(seq.last_token),
+                "block_table": list(seq.block_table),
+                "num_blocks": int(seq.num_blocks),
+            })
+        return (
+            [int(seq.last_token) for seq in seqs],
+            [len(seq) for seq in seqs],
+        )
 
     def run_model(
         self,
@@ -190,29 +192,98 @@ class _SerializedModelRunner:
     ):
         assert is_prefill is False
         assert execution_mode == "decode"
-        prepare_call = self.prepare_calls[-1]
-        if (
-            len(prepare_call["block_table"])
-            != prepare_call["num_blocks"]
+        target_by_pending = {
+            7: 11,
+            11: 22,
+            22: 33,
+        }
+        rows = []
+        prepare_calls = self.prepare_calls[-len(input_ids):]
+        for pending_token, prepare_call in zip(
+            input_ids,
+            prepare_calls,
         ):
-            target = 11
-        else:
-            target_by_pending = {
-                7: 11,
-                11: 22,
-                22: 33,
-            }
-            pending_token = int(input_ids[0])
-            target = target_by_pending[pending_token]
-        logits = [0.0] * 34
-        logits[target] = 1.0
-        return _FakeTensor([logits])
+            if (
+                len(prepare_call["block_table"])
+                != prepare_call["num_blocks"]
+            ):
+                target = 11
+            else:
+                target = target_by_pending[int(pending_token)]
+            logits = [0.0] * 34
+            logits[target] = 1.0
+            rows.append(logits)
+        return _FakeTensor(rows)
 
     def snapshot_kv_slots(self, physical_slots):
-        slot = int(physical_slots[0])
+        slots = [int(slot) for slot in physical_slots]
         return {
-            "keys": _FakeTensor([[float(slot)]]),
-            "values": _FakeTensor([[float(slot + 1)]]),
+            "keys": _FakeTensor([
+                [[float(slot)] for slot in slots],
+            ]),
+            "values": _FakeTensor([
+                [[float(slot + 1)] for slot in slots],
+            ]),
+        }
+
+
+class _RowExpandedModelRunner:
+    def __init__(self):
+        self.prepare_batches = []
+
+    def run(self, seqs, is_prefill):
+        assert is_prefill is False
+        assert len(seqs) == 1
+        return [11]
+
+    def prepare_decode(self, seqs):
+        self.prepare_batches.append([
+            {
+                "last_token": int(seq.last_token),
+                "num_tokens": len(seq),
+                "block_table": list(seq.block_table),
+                "num_blocks": int(seq.num_blocks),
+            }
+            for seq in seqs
+        ])
+        return (
+            [int(seq.last_token) for seq in seqs],
+            [len(seq) for seq in seqs],
+        )
+
+    def run_model(
+        self,
+        input_ids,
+        positions,
+        *,
+        is_prefill,
+        execution_mode,
+    ):
+        assert is_prefill is False
+        assert execution_mode == "decode"
+        target_by_pending = {
+            11: 22,
+            22: 33,
+        }
+        rows = []
+        for pending_token in input_ids:
+            target = target_by_pending[int(pending_token)]
+            logits = [0.0] * 34
+            logits[target] = 1.0
+            rows.append(logits)
+        return _FakeTensor(rows)
+
+    def snapshot_kv_slots(self, physical_slots):
+        slots = [int(slot) for slot in physical_slots]
+        return {
+            "keys": _FakeTensor([
+                [[float(slot)] for slot in slots],
+                [[float(slot + 10)] for slot in slots],
+            ]),
+            "values": _FakeTensor([
+                [[float(slot + 20)] for slot in slots],
+                [[float(slot + 30)] for slot in slots],
+            ]),
         }
 
 
@@ -223,9 +294,13 @@ class _FakeScheduler:
 
 
 class _FakeLLM:
-    def __init__(self, block_manager):
+    def __init__(self, block_manager, model_runner=None):
         self.scheduler = _FakeScheduler(block_manager)
-        self.model_runner = _SerializedModelRunner()
+        self.model_runner = (
+            model_runner
+            if model_runner is not None
+            else _SerializedModelRunner()
+        )
 
 
 def test_tinyvllm_backend_has_runtime_timer_dependency():
@@ -616,6 +691,48 @@ def test_serialized_oracle_consumes_each_pending_draft_token_once():
     )
 
 
+def test_oracle_expands_tail_queries_into_one_decode_batch():
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = _FakeSequence([1, 2, 7])
+    block_manager.allocate(seq)
+    runner = _RowExpandedModelRunner()
+    llm = _FakeLLM(block_manager, runner)
+
+    result = oracle._run_serialized_oracle_verify(
+        llm,
+        seq,
+        [11, 22, 33],
+    )
+
+    assert result["target_tokens"] == [11, 22, 33]
+    assert len(runner.prepare_batches) == 1
+    assert runner.prepare_batches[0] == [
+        {
+            "last_token": 11,
+            "num_tokens": 4,
+            "block_table": [0],
+            "num_blocks": 1,
+        },
+        {
+            "last_token": 22,
+            "num_tokens": 5,
+            "block_table": [0, 1],
+            "num_blocks": 2,
+        },
+    ]
+    assert result["physical_slots"] == [3, 4]
+    assert result["kv"] == {
+        "keys": [
+            [[3.0], [4.0]],
+            [[13.0], [14.0]],
+        ],
+        "values": [
+            [[23.0], [24.0]],
+            [[33.0], [34.0]],
+        ],
+    }
+
+
 def test_baseline_commits_block_metadata_before_continuation():
     block_manager = BlockManager(num_blocks=8, block_size=4)
     seq = _FakeSequence([1, 2, 7])
@@ -654,6 +771,7 @@ def main():
     test_run_case_accepts_all_isolated_policies()
     test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases()
     test_serialized_oracle_consumes_each_pending_draft_token_once()
+    test_oracle_expands_tail_queries_into_one_decode_batch()
     test_baseline_commits_block_metadata_before_continuation()
     print("native verifier oracle tests passed")
 

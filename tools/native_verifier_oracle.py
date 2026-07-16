@@ -376,6 +376,72 @@ def _run_serialized_decode_evidence_step(
         reset_context()
 
 
+def _build_row_expanded_oracle_proxies(
+    seq,
+    input_tokens: list[int],
+    full_block_table: list[int],
+):
+    proxies = []
+    physical_slots = []
+    for query_index in range(len(input_tokens)):
+        proxy = copy(seq)
+        proxy.token_ids = list(seq.token_ids)
+        proxy.block_table = list(seq.block_table)
+        proxy.num_tokens = len(proxy.token_ids)
+        proxy.last_token = proxy.token_ids[-1]
+        for token_id in input_tokens[:query_index + 1]:
+            proxy.append_token(int(token_id))
+        _expose_serialized_proxy_blocks(proxy, full_block_table)
+        logical_slot = len(proxy) - 1
+        physical_slots.append(_physical_slot(proxy, logical_slot))
+        proxies.append(proxy)
+    return proxies, physical_slots
+
+
+def _run_row_expanded_oracle_tail(
+    llm,
+    seq,
+    input_tokens: list[int],
+    full_block_table: list[int],
+) -> dict:
+    from tinyvllm.utils.context import reset_context
+
+    if not input_tokens:
+        return {
+            "target_tokens": [],
+            "logits": [],
+            "kv": {"keys": [], "values": []},
+            "physical_slots": [],
+        }
+    proxies, physical_slots = _build_row_expanded_oracle_proxies(
+        seq,
+        input_tokens,
+        full_block_table,
+    )
+    try:
+        input_ids, positions = llm.model_runner.prepare_decode(proxies)
+        logits = llm.model_runner.run_model(
+            input_ids,
+            positions,
+            is_prefill=False,
+            execution_mode="decode",
+        )
+        snapshot = llm.model_runner.snapshot_kv_slots(
+            physical_slots
+        )
+        return {
+            "target_tokens": [
+                int(token_id)
+                for token_id in logits.argmax(dim=-1).tolist()
+            ],
+            "logits": _tensor_to_float_list(logits),
+            "kv": _snapshot_to_lists(snapshot),
+            "physical_slots": physical_slots,
+        }
+    finally:
+        reset_context()
+
+
 def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
     from tinyvllm.utils.context import reset_context
 
@@ -389,28 +455,18 @@ def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
         first_target = int(
             llm.model_runner.run([seq], is_prefill=False)[0]
         )
-        proxy, full_block_table = _make_serialized_proxy(
+        _, full_block_table = _make_serialized_proxy(
             seq,
             reserved_blocks,
         )
+        tail = _run_row_expanded_oracle_tail(
+            llm,
+            seq,
+            draft_tokens[:-1],
+            full_block_table,
+        )
 
-        tail_targets = []
-        logits_rows = []
-        physical_slots = []
-        kv_rows = {"keys": [], "values": []}
-        for token_id in draft_tokens[:-1]:
-            proxy.append_token(int(token_id))
-            step = _run_serialized_decode_evidence_step(
-                llm,
-                proxy,
-                full_block_table,
-            )
-            tail_targets.append(step["token_id"])
-            logits_rows.extend(step["logits"])
-            _append_kv_rows(kv_rows, step["kv"])
-            physical_slots.append(step["physical_slot"])
-
-        target_tokens = [first_target] + tail_targets
+        target_tokens = [first_target] + tail["target_tokens"]
         accepted_tokens = _truncate_accepted_tokens(
             llm,
             seq,
@@ -426,9 +482,9 @@ def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
         return {
             "target_tokens": target_tokens,
             "accepted_tokens": accepted_tokens,
-            "logits": logits_rows,
-            "kv": kv_rows,
-            "physical_slots": physical_slots,
+            "logits": tail["logits"],
+            "kv": tail["kv"],
+            "physical_slots": tail["physical_slots"],
         }
     except Exception:
         block_manager.release_reserved_blocks(owned_blocks)
