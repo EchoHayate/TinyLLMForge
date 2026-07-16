@@ -6,7 +6,9 @@ Run: python3 tools/test_adaptive_ngram_gate.py
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,6 +64,44 @@ def _source_repo() -> tuple[tempfile.TemporaryDirectory, Path]:
     _run(["git", "add", "."], root)
     _run(["git", "commit", "-m", "base"], root)
     return temporary, root
+
+
+def _synthetic_source_evidence() -> dict:
+    files = []
+    return {
+        "schema_version": 1,
+        "base_commit": "1" * 40,
+        "dirty": False,
+        "patch_path": "source.patch",
+        "patch_sha256": gate.sha256_bytes(b""),
+        "patch_size_bytes": 0,
+        "owned_roots": list(gate.OWNED_SOURCE_ROOTS),
+        "files": files,
+        "tree_sha256": gate.source_tree_sha256(files),
+    }
+
+
+def _source_preflight(evidence: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "source_tree_sha256": evidence["tree_sha256"],
+        "source_verify": {
+            "returncode": 0,
+            "stdout_sha256": gate.sha256_text("source verified\n"),
+            "stderr_sha256": gate.sha256_text(""),
+        },
+        "k1_test": {
+            "command": [
+                "python3",
+                "tools/test_ngram_speculative.py",
+            ],
+            "returncode": 0,
+            "stdout_sha256": gate.sha256_text(
+                "ngram speculative tests passed\n",
+            ),
+            "stderr_sha256": gate.sha256_text(""),
+        },
+    }
 
 
 def _adaptive_events(run_key: str) -> list[dict]:
@@ -126,18 +166,24 @@ def _synthetic_complete_gate_rows(
     fixed_k4_waste: int = 40,
     adaptive_zero_ms: float = 8.0,
     fixed_k4_zero_ms: float = 12.0,
+    source_evidence: dict | None = None,
+    source_preflight: dict | None = None,
 ) -> tuple[dict, list[dict], list[dict]]:
     fixed_tps = fixed_tps or {1: 103.0, 2: 104.0, 4: 105.0}
+    source_evidence = source_evidence or _synthetic_source_evidence()
+    source_preflight = source_preflight or _source_preflight(source_evidence)
     specs = gate.build_run_specs(repetitions=repetitions, base_seed=20260714)
     manifest = gate.build_manifest(
         repetitions=repetitions,
         base_seed=20260714,
-        source_commit="synthetic",
-        source_dirty=False,
+        source_commit=source_evidence["base_commit"],
+        source_dirty=source_evidence["dirty"],
         model_path="/models/Qwen3-0.6B",
         model_identifier="Qwen3-0.6B",
         host="synthetic-host",
         python_bin="python3",
+        source_evidence=source_evidence,
+        source_preflight=source_preflight,
     )
     rows = []
     events = []
@@ -162,8 +208,9 @@ def _synthetic_complete_gate_rows(
             **spec,
             "model_path": "/models/Qwen3-0.6B",
             "model_identifier": "Qwen3-0.6B",
-            "source_commit": "synthetic",
-            "source_dirty": False,
+            "source_commit": source_evidence["base_commit"],
+            "source_dirty": source_evidence["dirty"],
+            "source_tree_sha256": source_evidence["tree_sha256"],
             "prompt_tokens": 32,
             "output_tokens": output_tokens,
             "output_token_ids": [11, 12, 13],
@@ -329,15 +376,18 @@ def test_port_collision_retry_classifier_is_narrow():
 
 
 def test_normalize_row_uses_profiler_prompt_tokens_and_candidate_metrics():
+    source_evidence = _synthetic_source_evidence()
     manifest = gate.build_manifest(
         repetitions=1,
         base_seed=20260714,
-        source_commit="synthetic",
-        source_dirty=False,
+        source_commit=source_evidence["base_commit"],
+        source_dirty=source_evidence["dirty"],
         model_path="/models/Qwen3-0.6B",
         model_identifier="Qwen3-0.6B",
         host="synthetic-host",
         python_bin="python3",
+        source_evidence=source_evidence,
+        source_preflight=_source_preflight(source_evidence),
     )
     spec = next(item for item in manifest["run_specs"] if item["policy"] == "adaptive")
     profiler_result = {
@@ -568,6 +618,218 @@ def test_validate_source_snapshot_rejects_patch_and_tree_tampering():
         temporary.cleanup()
 
 
+def test_manifest_embeds_source_identity_and_rows_copy_it():
+    temporary, root = _source_repo()
+    try:
+        snapshot = root / "snapshot"
+        evidence = gate.build_source_evidence(root, snapshot)
+        preflight = _source_preflight(evidence)
+        manifest = gate.build_manifest(
+            repetitions=1,
+            base_seed=20260714,
+            source_commit=evidence["base_commit"],
+            source_dirty=evidence["dirty"],
+            model_path="/models/Qwen3-0.6B",
+            model_identifier="Qwen3-0.6B",
+            host="synthetic-host",
+            python_bin="python3",
+            source_evidence=evidence,
+            source_preflight=preflight,
+        )
+
+        assert manifest["schema_version"] == 2
+        assert manifest["source_tree_sha256"] == evidence["tree_sha256"]
+        assert manifest["source_evidence"] == evidence
+        assert manifest["source_preflight"] == preflight
+
+        spec = manifest["run_specs"][0]
+        row, _ = gate._normalize_row(
+            manifest,
+            spec,
+            {"summary": {}, "per_prompt": []},
+            {
+                "returncode": 1,
+                "command": [],
+                "tinyvllm_dist_port": 20000,
+                "master_port": 20001,
+            },
+        )
+        assert row["source_tree_sha256"] == evidence["tree_sha256"]
+    finally:
+        temporary.cleanup()
+
+
+def test_source_preflight_must_match_and_pass():
+    temporary, root = _source_repo()
+    try:
+        evidence = gate.build_source_evidence(root, root / "snapshot")
+        gate.validate_source_preflight(_source_preflight(evidence), evidence)
+
+        for mutation, expected in (
+            (
+                lambda value: value["k1_test"].update(returncode=1),
+                "remote K1 test failed",
+            ),
+            (
+                lambda value: value.update(source_tree_sha256="0" * 64),
+                "preflight source tree mismatch",
+            ),
+        ):
+            value = json.loads(json.dumps(_source_preflight(evidence)))
+            mutation(value)
+            try:
+                gate.validate_source_preflight(value, evidence)
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(expected)
+    finally:
+        temporary.cleanup()
+
+
+def test_structural_failures_reject_row_source_identity_mismatch():
+    manifest, rows, events = _synthetic_complete_gate_rows(repetitions=1)
+    rows[0]["source_tree_sha256"] = "0" * 64
+
+    summary = gate.summarize_rows(manifest, rows, events)
+
+    assert summary["decision"] == "INCOMPLETE"
+    assert any(
+        "source_tree_sha256_mismatch" in item
+        for item in summary["structural_failures"]
+    )
+
+
+def _complete_artifact_fixture():
+    temporary, root = _source_repo()
+    (root / "tools" / "profile_ngram_commit.py").write_text(
+        "# profile_ngram_commit.py\nFAST_K1 = True\n",
+        encoding="utf-8",
+    )
+    snapshot = root / "snapshot"
+    evidence = gate.build_source_evidence(root, snapshot)
+    preflight = _source_preflight(evidence)
+    manifest, rows, events = _synthetic_complete_gate_rows(
+        repetitions=1,
+        source_evidence=evidence,
+        source_preflight=preflight,
+    )
+    out_dir = root / "artifacts"
+    out_dir.mkdir()
+    shutil.copytree(snapshot / "source", out_dir / "source")
+    shutil.copyfile(
+        snapshot / "source_evidence.json",
+        out_dir / "source_evidence.json",
+    )
+    shutil.copyfile(snapshot / "source.patch", out_dir / "source.patch")
+    (out_dir / "source_preflight.json").write_text(
+        json.dumps(preflight, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    summary = gate.summarize_rows(manifest, rows, events)
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / "raw_rows.json").write_text(
+        json.dumps(rows, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / "event_rows.json").write_text(
+        json.dumps(events, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / "report.md").write_text(
+        gate.render_report(manifest, summary),
+        encoding="utf-8",
+    )
+    return temporary, root, out_dir
+
+
+def test_verify_artifacts_reconstructs_recorded_source():
+    temporary, root, out_dir = _complete_artifact_fixture()
+    try:
+        summary = gate.verify_artifacts(out_dir, repo_root=root)
+        assert summary["decision"] == "GO"
+    finally:
+        temporary.cleanup()
+
+
+def test_verify_artifacts_rejects_source_patch_and_preflight_tampering():
+    def fail_k1_preflight(path: Path) -> None:
+        preflight = json.loads(path.read_text(encoding="utf-8"))
+        preflight["k1_test"]["returncode"] = 1
+        path.write_text(
+            json.dumps(preflight, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_path = path.parent / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["source_preflight"] = preflight
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    cases = (
+        (
+            "source/tools/profile_ngram_commit.py",
+            lambda path: path.write_text(
+                path.read_text(encoding="utf-8") + "tamper\n",
+                encoding="utf-8",
+            ),
+            "source file hash mismatch",
+        ),
+        (
+            "source.patch",
+            lambda path: path.write_bytes(
+                bytes([path.read_bytes()[0] ^ 1]) + path.read_bytes()[1:],
+            ),
+            "patch hash mismatch",
+        ),
+        (
+            "source_preflight.json",
+            fail_k1_preflight,
+            "remote K1 test failed",
+        ),
+    )
+    for relative_path, mutate, expected in cases:
+        temporary, root, out_dir = _complete_artifact_fixture()
+        try:
+            mutate(out_dir / relative_path)
+            try:
+                gate.verify_artifacts(out_dir, repo_root=root)
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(expected)
+        finally:
+            temporary.cleanup()
+
+
+def test_validate_materialized_source_artifacts_rejects_resume_tampering():
+    temporary, root, out_dir = _complete_artifact_fixture()
+    try:
+        gate.validate_materialized_source_artifacts(out_dir)
+        source_path = out_dir / "source" / "tools" / "profile_ngram_commit.py"
+        source_path.write_text(
+            source_path.read_text(encoding="utf-8") + "tamper\n",
+            encoding="utf-8",
+        )
+        try:
+            gate.validate_materialized_source_artifacts(out_dir)
+        except ValueError as exc:
+            assert "source file hash mismatch" in str(exc)
+        else:
+            raise AssertionError("tampered resumable source must fail")
+    finally:
+        temporary.cleanup()
+
+
 def main():
     test_prompt_bank_has_four_stable_single_sequence_classes()
     test_build_run_specs_is_complete_unique_and_deterministic()
@@ -586,6 +848,12 @@ def main():
     test_source_evidence_rejects_untracked_owned_file()
     test_validate_source_snapshot_rejects_changed_missing_and_extra_files()
     test_validate_source_snapshot_rejects_patch_and_tree_tampering()
+    test_manifest_embeds_source_identity_and_rows_copy_it()
+    test_source_preflight_must_match_and_pass()
+    test_structural_failures_reject_row_source_identity_mismatch()
+    test_verify_artifacts_reconstructs_recorded_source()
+    test_verify_artifacts_rejects_source_patch_and_preflight_tampering()
+    test_validate_materialized_source_artifacts_rejects_resume_tampering()
     print("adaptive ngram gate tests passed")
 
 

@@ -475,6 +475,32 @@ def build_source_evidence(repo_root: Path, out_dir: Path) -> dict:
     return evidence
 
 
+def validate_source_preflight(preflight: dict, evidence: dict) -> None:
+    if not isinstance(preflight, dict) or preflight.get("schema_version") != 1:
+        raise ValueError("unsupported source preflight schema")
+    if preflight.get("source_tree_sha256") != evidence.get("tree_sha256"):
+        raise ValueError("preflight source tree mismatch")
+    for field, failure_message in (
+        ("source_verify", "remote source verification failed"),
+        ("k1_test", "remote K1 test failed"),
+    ):
+        record = preflight.get(field)
+        if not isinstance(record, dict):
+            raise ValueError(f"missing {field} preflight record")
+        if record.get("returncode") != 0:
+            raise ValueError(failure_message)
+        _validate_sha256(record.get("stdout_sha256"), f"{field} stdout sha256")
+        _validate_sha256(record.get("stderr_sha256"), f"{field} stderr sha256")
+    command = preflight["k1_test"].get("command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(value, str) and value for value in command)
+        or "tools/test_ngram_speculative.py" not in command
+    ):
+        raise ValueError("invalid remote K1 test command")
+
+
 PROMPT_BANK = tuple(
     {**item, "prompt_sha256": sha256_text(item["prompt"])}
     for item in PROMPT_BANK_BASE
@@ -526,14 +552,24 @@ def build_manifest(
     model_identifier: str,
     host: str,
     python_bin: str,
+    source_evidence: dict,
+    source_preflight: dict,
     extra_environment: dict | None = None,
 ) -> dict:
+    if source_commit != source_evidence.get("base_commit"):
+        raise ValueError("source commit does not match source evidence")
+    if bool(source_dirty) != source_evidence.get("dirty"):
+        raise ValueError("source dirty flag does not match source evidence")
+    validate_source_preflight(source_preflight, source_evidence)
     specs = build_run_specs(repetitions, base_seed)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at_unix_s": time.time(),
         "source_commit": source_commit,
         "source_dirty": bool(source_dirty),
+        "source_tree_sha256": source_evidence["tree_sha256"],
+        "source_evidence": source_evidence,
+        "source_preflight": source_preflight,
         "model_path": model_path,
         "model_identifier": model_identifier,
         "host": host,
@@ -670,6 +706,7 @@ def _normalize_row(
         "model_identifier": manifest["model_identifier"],
         "source_commit": manifest["source_commit"],
         "source_dirty": manifest["source_dirty"],
+        "source_tree_sha256": manifest["source_tree_sha256"],
         "prompt_tokens": prompt_result.get("prompt_tokens", summary.get("prompt_tokens")),
         "output_tokens": int(prompt_result.get("output_tokens", summary.get("output_tokens", 0)) or 0),
         "output_token_ids": output_token_ids,
@@ -713,24 +750,37 @@ def run_gate(
     model_path: str,
     repetitions: int,
     base_seed: int,
-    source_commit: str,
-    source_dirty: bool,
     host: str,
     resume: bool,
+    source_root: Path,
+    source_evidence_path: Path,
+    source_patch_path: Path,
+    source_preflight_path: Path,
     extra_environment: dict | None = None,
 ) -> dict:
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    source_root = source_root.resolve()
+    source_evidence = _load_json(source_evidence_path)
+    source_preflight = _load_json(source_preflight_path)
+    validate_source_snapshot(
+        source_root,
+        source_evidence,
+        source_patch_path,
+    )
+    validate_source_preflight(source_preflight, source_evidence)
     manifest_path = out_dir / "manifest.json"
     manifest = build_manifest(
         repetitions=repetitions,
         base_seed=base_seed,
-        source_commit=source_commit,
-        source_dirty=source_dirty,
+        source_commit=source_evidence["base_commit"],
+        source_dirty=source_evidence["dirty"],
         model_path=model_path,
         model_identifier=_model_identifier(model_path),
         host=host,
         python_bin=python_bin,
+        source_evidence=source_evidence,
+        source_preflight=source_preflight,
         extra_environment=extra_environment,
     )
     if manifest_path.exists() and resume:
@@ -738,6 +788,9 @@ def run_gate(
         comparable_keys = (
             "source_commit",
             "source_dirty",
+            "source_tree_sha256",
+            "source_evidence",
+            "source_preflight",
             "model_path",
             "repetitions",
             "base_seed",
@@ -748,8 +801,16 @@ def run_gate(
         if any(existing_manifest.get(key) != manifest.get(key) for key in comparable_keys):
             raise ValueError("resume manifest does not match requested gate")
         manifest = existing_manifest
+        validate_materialized_source_artifacts(out_dir, manifest=manifest)
     else:
         _atomic_write_json(manifest_path, manifest)
+        materialize_source_artifacts(
+            out_dir,
+            source_root,
+            source_evidence_path,
+            source_patch_path,
+            source_preflight_path,
+        )
 
     raw_path = out_dir / "raw_rows.json"
     event_path = out_dir / "event_rows.json"
@@ -908,6 +969,11 @@ def _structural_failures(manifest: dict, raw_rows: list[dict]) -> list[str]:
     ports = []
     for row in raw_rows:
         process = row.get("process", {})
+        for field in ("source_commit", "source_dirty", "source_tree_sha256"):
+            if row.get(field) != manifest.get(field):
+                failures.append(
+                    f"{row.get('run_key')}:{field}_mismatch"
+                )
         if process.get("returncode") != 0:
             failures.append(f"{row.get('run_key')}:process_returncode={process.get('returncode')}")
         if row.get("profiler_gate_pass") is not True:
@@ -1198,9 +1264,77 @@ def render_report(manifest: dict, summary: dict) -> str:
     return "\n".join(lines)
 
 
-def verify_artifacts(out_dir: Path) -> dict:
+def materialize_source_artifacts(
+    out_dir: Path,
+    source_root: Path,
+    evidence_path: Path,
+    patch_path: Path,
+    preflight_path: Path,
+) -> None:
+    evidence = _load_json(evidence_path)
+    preflight = _load_json(preflight_path)
+    validate_source_snapshot(source_root, evidence, patch_path)
+    validate_source_preflight(preflight, evidence)
+    destination = out_dir / "source"
+    if destination.exists():
+        shutil.rmtree(destination)
+    for record in evidence["files"]:
+        relative_path = record["path"]
+        target = destination / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_root / relative_path, target)
+    shutil.copyfile(evidence_path, out_dir / "source_evidence.json")
+    shutil.copyfile(patch_path, out_dir / "source.patch")
+    shutil.copyfile(preflight_path, out_dir / "source_preflight.json")
+    validate_source_snapshot(
+        destination,
+        evidence,
+        out_dir / "source.patch",
+    )
+
+
+def validate_materialized_source_artifacts(
+    out_dir: Path,
+    manifest: dict | None = None,
+) -> tuple[dict, dict]:
+    out_dir = out_dir.resolve()
+    evidence = _load_json(out_dir / "source_evidence.json")
+    preflight = _load_json(out_dir / "source_preflight.json")
+    if manifest is None and (out_dir / "manifest.json").is_file():
+        manifest = _load_json(out_dir / "manifest.json")
+    if manifest is not None:
+        if manifest.get("source_evidence") != evidence:
+            raise ValueError("manifest source evidence mismatch")
+        if manifest.get("source_preflight") != preflight:
+            raise ValueError("manifest source preflight mismatch")
+        if manifest.get("source_tree_sha256") != evidence.get("tree_sha256"):
+            raise ValueError("manifest source tree mismatch")
+    validate_source_snapshot(
+        out_dir / "source",
+        evidence,
+        out_dir / "source.patch",
+    )
+    validate_source_preflight(preflight, evidence)
+    return evidence, preflight
+
+
+def verify_artifacts(
+    out_dir: Path,
+    repo_root: Path = _REPO_ROOT,
+) -> dict:
     out_dir = out_dir.resolve()
     manifest = _load_json(out_dir / "manifest.json")
+    evidence, _ = validate_materialized_source_artifacts(
+        out_dir,
+        manifest=manifest,
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        reconstruct_source_snapshot(
+            repo_root,
+            Path(temporary) / "source",
+            evidence,
+            out_dir / "source.patch",
+        )
     raw_rows = _load_json(out_dir / "raw_rows.json")
     event_rows = _load_json(out_dir / "event_rows.json")
     expected_summary = summarize_rows(manifest, raw_rows, event_rows)
@@ -1223,10 +1357,21 @@ def parse_args():
     run_parser.add_argument("--model-path", required=True)
     run_parser.add_argument("--repetitions", type=int, choices=[1, 7], required=True)
     run_parser.add_argument("--base-seed", type=int, default=20260714)
-    run_parser.add_argument("--source-commit", required=True)
-    run_parser.add_argument("--source-dirty", action="store_true")
+    run_parser.add_argument("--source-root", type=Path, required=True)
+    run_parser.add_argument("--source-evidence", type=Path, required=True)
+    run_parser.add_argument("--source-patch", type=Path, required=True)
+    run_parser.add_argument("--source-preflight", type=Path, required=True)
     run_parser.add_argument("--host", required=True)
     run_parser.add_argument("--resume", action="store_true")
+
+    snapshot_parser = subparsers.add_parser("snapshot-source")
+    snapshot_parser.add_argument("--repo-root", type=Path, required=True)
+    snapshot_parser.add_argument("--out-dir", type=Path, required=True)
+
+    source_verify_parser = subparsers.add_parser("verify-source")
+    source_verify_parser.add_argument("--source-root", type=Path, required=True)
+    source_verify_parser.add_argument("--evidence", type=Path, required=True)
+    source_verify_parser.add_argument("--patch", type=Path, required=True)
 
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--out-dir", type=Path, required=True)
@@ -1245,13 +1390,24 @@ def main():
             model_path=args.model_path,
             repetitions=args.repetitions,
             base_seed=args.base_seed,
-            source_commit=args.source_commit,
-            source_dirty=args.source_dirty,
             host=args.host,
             resume=args.resume,
+            source_root=args.source_root,
+            source_evidence_path=args.source_evidence,
+            source_patch_path=args.source_patch,
+            source_preflight_path=args.source_preflight,
             extra_environment={
                 "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
             },
+        )
+    elif args.command == "snapshot-source":
+        summary = build_source_evidence(args.repo_root, args.out_dir)
+    elif args.command == "verify-source":
+        evidence = _load_json(args.evidence)
+        summary = validate_source_snapshot(
+            args.source_root,
+            evidence,
+            args.patch,
         )
     elif args.command == "summarize":
         manifest = _load_json(args.out_dir / "manifest.json")
@@ -1263,7 +1419,7 @@ def main():
     else:
         summary = verify_artifacts(args.out_dir)
     print(json.dumps(summary, indent=2, sort_keys=True))
-    if summary["decision"] == "INCOMPLETE":
+    if summary.get("decision") == "INCOMPLETE":
         raise SystemExit(2)
 
 
