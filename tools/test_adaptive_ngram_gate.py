@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -20,6 +23,45 @@ gate = importlib.util.module_from_spec(_SPEC)
 sys.modules["adaptive_ngram_gate_under_test"] = gate
 _SPEC.loader.exec_module(gate)
 is_retryable_port_collision = gate._is_retryable_port_collision
+
+
+def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+
+def _source_repo() -> tuple[tempfile.TemporaryDirectory, Path]:
+    temporary = tempfile.TemporaryDirectory()
+    root = Path(temporary.name)
+    (root / "tinyvllm").mkdir()
+    (root / "tinyvllm" / "__init__.py").write_text(
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+    (root / "tools").mkdir()
+    for name in (
+        "draft_model_schema.py",
+        "profile_ngram_commit.py",
+        "adaptive_ngram_gate.py",
+        "test_ngram_speculative.py",
+        "test_adaptive_ngram_gate.py",
+        "run_adaptive_ngram_gate_remote.sh",
+    ):
+        (root / "tools" / name).write_text(
+            f"# {name}\n",
+            encoding="utf-8",
+        )
+    _run(["git", "init"], root)
+    _run(["git", "config", "user.name", "Gate Test"], root)
+    _run(["git", "config", "user.email", "gate@example.invalid"], root)
+    _run(["git", "add", "."], root)
+    _run(["git", "commit", "-m", "base"], root)
+    return temporary, root
 
 
 def _adaptive_events(run_key: str) -> list[dict]:
@@ -362,6 +404,170 @@ def test_profiler_command_forces_fixed_length_greedy_measurement():
     assert command[command.index("--temperature") + 1] == "0.0"
 
 
+def test_source_evidence_reconstructs_dirty_owned_files():
+    temporary, root = _source_repo()
+    try:
+        (root / "tools" / "profile_ngram_commit.py").write_text(
+            "# profile_ngram_commit.py\nFAST_K1 = True\n",
+            encoding="utf-8",
+        )
+        out_dir = root / "snapshot"
+        evidence = gate.build_source_evidence(root, out_dir)
+
+        assert evidence["schema_version"] == 1
+        assert evidence["dirty"] is True
+        assert evidence["base_commit"] == _run(
+            ["git", "rev-parse", "HEAD"],
+            root,
+        ).stdout.strip()
+        assert evidence["patch_size_bytes"] > 0
+        assert evidence["tree_sha256"] == gate.source_tree_sha256(
+            evidence["files"],
+        )
+
+        reconstructed = root / "reconstructed"
+        gate.reconstruct_source_snapshot(
+            root,
+            reconstructed,
+            evidence,
+            out_dir / "source.patch",
+        )
+        gate.validate_source_snapshot(
+            reconstructed,
+            evidence,
+            out_dir / "source.patch",
+        )
+        assert (
+            reconstructed / "tools" / "profile_ngram_commit.py"
+        ).read_text(encoding="utf-8").endswith("FAST_K1 = True\n")
+    finally:
+        temporary.cleanup()
+
+
+def test_source_evidence_clean_tree_uses_empty_patch():
+    temporary, root = _source_repo()
+    try:
+        out_dir = root / "snapshot"
+        evidence = gate.build_source_evidence(root, out_dir)
+
+        assert evidence["dirty"] is False
+        assert (out_dir / "source.patch").read_bytes() == b""
+        assert evidence["patch_sha256"] == gate.sha256_bytes(b"")
+    finally:
+        temporary.cleanup()
+
+
+def test_source_evidence_rejects_untracked_owned_file():
+    temporary, root = _source_repo()
+    try:
+        (root / "tinyvllm" / "untracked.py").write_text(
+            "unexpected = True\n",
+            encoding="utf-8",
+        )
+        try:
+            gate.build_source_evidence(root, root / "snapshot")
+        except ValueError as exc:
+            assert "untracked owned source" in str(exc)
+        else:
+            raise AssertionError("untracked owned source must fail")
+    finally:
+        temporary.cleanup()
+
+
+def test_validate_source_snapshot_rejects_changed_missing_and_extra_files():
+    temporary, root = _source_repo()
+    try:
+        out_dir = root / "snapshot"
+        evidence = gate.build_source_evidence(root, out_dir)
+        source_root = out_dir / "source"
+
+        target = source_root / "tinyvllm" / "__init__.py"
+        original = target.read_bytes()
+        target.write_bytes(b"changed\n")
+        try:
+            gate.validate_source_snapshot(
+                source_root,
+                evidence,
+                out_dir / "source.patch",
+            )
+        except ValueError as exc:
+            assert "source file hash mismatch" in str(exc)
+        else:
+            raise AssertionError("changed source file must fail")
+        target.write_bytes(original)
+
+        target.unlink()
+        try:
+            gate.validate_source_snapshot(
+                source_root,
+                evidence,
+                out_dir / "source.patch",
+            )
+        except ValueError as exc:
+            assert "source path set mismatch" in str(exc)
+        else:
+            raise AssertionError("missing source path must fail")
+        target.write_bytes(original)
+
+        extra = source_root / "tinyvllm" / "extra.py"
+        extra.write_text("extra = True\n", encoding="utf-8")
+        try:
+            gate.validate_source_snapshot(
+                source_root,
+                evidence,
+                out_dir / "source.patch",
+            )
+        except ValueError as exc:
+            assert "source path set mismatch" in str(exc)
+        else:
+            raise AssertionError("extra source path must fail")
+    finally:
+        temporary.cleanup()
+
+
+def test_validate_source_snapshot_rejects_patch_and_tree_tampering():
+    temporary, root = _source_repo()
+    try:
+        (root / "tools" / "profile_ngram_commit.py").write_text(
+            "# profile_ngram_commit.py\nFAST_K1 = True\n",
+            encoding="utf-8",
+        )
+        out_dir = root / "snapshot"
+        evidence = gate.build_source_evidence(root, out_dir)
+        patch = out_dir / "source.patch"
+        patch_payload = patch.read_bytes()
+        assert patch_payload
+        patch.write_bytes(
+            bytes([patch_payload[0] ^ 1]) + patch_payload[1:],
+        )
+        try:
+            gate.validate_source_snapshot(
+                out_dir / "source",
+                evidence,
+                patch,
+            )
+        except ValueError as exc:
+            assert "patch hash mismatch" in str(exc)
+        else:
+            raise AssertionError("changed patch must fail")
+
+        patch.write_bytes(patch_payload)
+        changed = dict(evidence)
+        changed["tree_sha256"] = "0" * 64
+        try:
+            gate.validate_source_snapshot(
+                out_dir / "source",
+                changed,
+                patch,
+            )
+        except ValueError as exc:
+            assert "source tree hash mismatch" in str(exc)
+        else:
+            raise AssertionError("changed tree hash must fail")
+    finally:
+        temporary.cleanup()
+
+
 def main():
     test_prompt_bank_has_four_stable_single_sequence_classes()
     test_build_run_specs_is_complete_unique_and_deterministic()
@@ -375,6 +581,11 @@ def main():
     test_port_collision_retry_classifier_is_narrow()
     test_normalize_row_uses_profiler_prompt_tokens_and_candidate_metrics()
     test_profiler_command_forces_fixed_length_greedy_measurement()
+    test_source_evidence_reconstructs_dirty_owned_files()
+    test_source_evidence_clean_tree_uses_empty_patch()
+    test_source_evidence_rejects_untracked_owned_file()
+    test_validate_source_snapshot_rejects_changed_missing_and_extra_files()
+    test_validate_source_snapshot_rejects_patch_and_tree_tampering()
     print("adaptive ngram gate tests passed")
 
 
