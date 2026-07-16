@@ -3,13 +3,77 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_THIS_DIR)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+
+def _load_module(module_name: str, relative_path: str):
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        os.path.join(_REPO_ROOT, relative_path),
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+tinyvllm_pkg = types.ModuleType("tinyvllm")
+tinyvllm_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm")]
+engine_pkg = types.ModuleType("tinyvllm.engine")
+engine_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm", "engine")]
+utils_pkg = types.ModuleType("tinyvllm.utils")
+utils_pkg.__path__ = [os.path.join(_REPO_ROOT, "tinyvllm", "utils")]
+sys.modules.setdefault("tinyvllm", tinyvllm_pkg)
+sys.modules.setdefault("tinyvllm.engine", engine_pkg)
+sys.modules.setdefault("tinyvllm.utils", utils_pkg)
+
+context_mod = types.ModuleType("tinyvllm.utils.context")
+context_mod.reset_context = lambda: None
+sys.modules.setdefault("tinyvllm.utils.context", context_mod)
+
+xxhash_mod = types.ModuleType("xxhash")
+
+
+class _FakeXXH64:
+    def __init__(self):
+        self._hash = hashlib.blake2b(digest_size=8)
+
+    def update(self, data):
+        self._hash.update(data)
+
+    def intdigest(self):
+        return int.from_bytes(self._hash.digest(), "little")
+
+
+xxhash_mod.xxh64 = _FakeXXH64
+sys.modules.setdefault("xxhash", xxhash_mod)
+_load_module(
+    "tinyvllm.sampling_params",
+    "tinyvllm/sampling_params.py",
+)
+_load_module(
+    "tinyvllm.engine.sequence",
+    "tinyvllm/engine/sequence.py",
+)
+block_manager_module = _load_module(
+    "tinyvllm.engine.block_manager",
+    "tinyvllm/engine/block_manager.py",
+)
+BlockManager = block_manager_module.BlockManager
+
 _ORACLE_PATH = os.path.join(_THIS_DIR, "native_verifier_oracle.py")
 _SPEC = importlib.util.spec_from_file_location(
     "native_verifier_oracle_under_test",
@@ -24,6 +88,144 @@ dtype_tolerance = oracle.dtype_tolerance
 build_case_payload = oracle.build_case_payload
 construct_draft_tokens = oracle.construct_draft_tokens
 run_case = oracle.run_case
+
+
+class _FakeTensor:
+    def __init__(self, values):
+        self.values = values
+
+    def argmax(self, dim=-1):
+        assert dim == -1
+        rows = self.values
+        if rows and not isinstance(rows[0], list):
+            rows = [rows]
+        return _FakeTensor([
+            max(range(len(row)), key=row.__getitem__)
+            for row in rows
+        ])
+
+    def detach(self):
+        return self
+
+    def to(self, *args, **kwargs):
+        return self
+
+    def float(self):
+        return self
+
+    def tolist(self):
+        return self.values
+
+
+class _FakeSequence:
+    block_size = 4
+
+    def __init__(self, token_ids):
+        self.token_ids = list(token_ids)
+        self.num_tokens = len(self.token_ids)
+        self.num_prompt_tokens = len(self.token_ids)
+        self.last_token = self.token_ids[-1]
+        self.block_table = []
+        self.num_cached_tokens = 0
+        self.num_computed_tokens = 0
+        self.ignore_eos = True
+        self.max_tokens = 32
+
+    def __len__(self):
+        return self.num_tokens
+
+    @property
+    def num_blocks(self):
+        return (
+            self.num_tokens + self.block_size - 1
+        ) // self.block_size
+
+    @property
+    def last_block_num_tokens(self):
+        return (
+            self.num_tokens
+            - (self.num_blocks - 1) * self.block_size
+        )
+
+    @property
+    def num_completion_tokens(self):
+        return self.num_tokens - self.num_prompt_tokens
+
+    def block(self, index):
+        start = index * self.block_size
+        return self.token_ids[start:start + self.block_size]
+
+    def append_token(self, token_id):
+        self.token_ids.append(int(token_id))
+        self.num_tokens += 1
+        self.last_token = int(token_id)
+
+
+class _SerializedModelRunner:
+    def __init__(self):
+        self.prepare_calls = []
+
+    def run(self, seqs, is_prefill):
+        assert is_prefill is False
+        assert len(seqs) == 1
+        return [11]
+
+    def prepare_decode(self, seqs):
+        assert len(seqs) == 1
+        seq = seqs[0]
+        self.prepare_calls.append({
+            "last_token": int(seq.last_token),
+            "block_table": list(seq.block_table),
+            "num_blocks": int(seq.num_blocks),
+        })
+        return [int(seq.last_token)], [len(seq)]
+
+    def run_model(
+        self,
+        input_ids,
+        positions,
+        *,
+        is_prefill,
+        execution_mode,
+    ):
+        assert is_prefill is False
+        assert execution_mode == "decode"
+        prepare_call = self.prepare_calls[-1]
+        if (
+            len(prepare_call["block_table"])
+            != prepare_call["num_blocks"]
+        ):
+            target = 11
+        else:
+            target_by_pending = {
+                7: 11,
+                11: 22,
+                22: 33,
+            }
+            pending_token = int(input_ids[0])
+            target = target_by_pending[pending_token]
+        logits = [0.0] * 34
+        logits[target] = 1.0
+        return _FakeTensor([logits])
+
+    def snapshot_kv_slots(self, physical_slots):
+        slot = int(physical_slots[0])
+        return {
+            "keys": _FakeTensor([[float(slot)]]),
+            "values": _FakeTensor([[float(slot + 1)]]),
+        }
+
+
+class _FakeScheduler:
+    def __init__(self, block_manager):
+        self.block_manager = block_manager
+        self.eos = 999
+
+
+class _FakeLLM:
+    def __init__(self, block_manager):
+        self.scheduler = _FakeScheduler(block_manager)
+        self.model_runner = _SerializedModelRunner()
 
 
 def test_tinyvllm_backend_has_runtime_timer_dependency():
@@ -356,6 +558,51 @@ def test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases():
         raise AssertionError("partial K=1 must fail")
 
 
+def test_serialized_oracle_consumes_each_pending_draft_token_once():
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = _FakeSequence([1, 2, 7])
+    block_manager.allocate(seq)
+    llm = _FakeLLM(block_manager)
+
+    result = oracle._run_serialized_oracle_verify(
+        llm,
+        seq,
+        [11, 22, 33],
+    )
+
+    assert result["target_tokens"] == [11, 22, 33]
+    assert [
+        call["last_token"]
+        for call in llm.model_runner.prepare_calls
+    ] == [11, 22]
+    assert all(
+        len(call["block_table"]) == call["num_blocks"]
+        for call in llm.model_runner.prepare_calls
+    )
+
+
+def test_baseline_commits_block_metadata_before_continuation():
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = _FakeSequence([1, 2, 7])
+    block_manager.allocate(seq)
+    llm = _FakeLLM(block_manager)
+
+    result = oracle._run_baseline_verify(
+        llm,
+        seq,
+        [11, 22, 99],
+    )
+
+    assert result["target_tokens"] == [11, 22, 33]
+    assert result["accepted_tokens"] == [11, 22]
+    assert seq.token_ids == [1, 2, 7, 11, 22]
+    assert len(seq.block_table) == 1
+    assert block_manager.blocks[seq.block_table[-1]].hash != -1
+
+    block_manager.may_append(seq)
+    assert len(seq.block_table) == 2
+
+
 def main():
     test_tinyvllm_backend_has_runtime_timer_dependency()
     test_dtype_tolerances_are_fixed()
@@ -370,6 +617,8 @@ def main():
     test_run_case_validates_input_and_writes_backend_payload()
     test_run_case_accepts_all_isolated_policies()
     test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases()
+    test_serialized_oracle_consumes_each_pending_draft_token_once()
+    test_baseline_commits_block_metadata_before_continuation()
     print("native verifier oracle tests passed")
 
 

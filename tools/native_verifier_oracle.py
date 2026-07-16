@@ -316,6 +316,55 @@ def _truncate_accepted_tokens(llm, seq, draft_tokens, target_tokens):
     return accepted_tokens[:remaining_budget]
 
 
+def _make_serialized_proxy(seq, reserved_blocks: list[int]):
+    proxy = copy(seq)
+    proxy.token_ids = list(seq.token_ids)
+    proxy.block_table = list(seq.block_table)
+    proxy.num_tokens = len(proxy.token_ids)
+    proxy.last_token = proxy.token_ids[-1]
+    full_block_table = list(seq.block_table) + list(reserved_blocks)
+    return proxy, full_block_table
+
+
+def _expose_serialized_proxy_blocks(proxy, full_block_table) -> None:
+    visible_blocks = proxy.num_blocks
+    if visible_blocks > len(full_block_table):
+        raise RuntimeError(
+            "serialized verifier proxy exceeded reserved block capacity"
+        )
+    proxy.block_table = list(full_block_table[:visible_blocks])
+
+
+def _run_serialized_decode_evidence_step(
+    llm,
+    proxy,
+    full_block_table,
+) -> dict:
+    from tinyvllm.utils.context import reset_context
+
+    _expose_serialized_proxy_blocks(proxy, full_block_table)
+    logical_slot = len(proxy) - 1
+    physical_slot = _physical_slot(proxy, logical_slot)
+    try:
+        input_ids, positions = llm.model_runner.prepare_decode([proxy])
+        logits = llm.model_runner.run_model(
+            input_ids,
+            positions,
+            is_prefill=False,
+            execution_mode="decode",
+        )
+        token_id = int(logits.argmax(dim=-1).tolist()[0])
+        kv = llm.model_runner.snapshot_kv_slots([physical_slot])
+        return {
+            "token_id": token_id,
+            "logits": _tensor_to_float_list(logits),
+            "kv": _snapshot_to_lists(kv),
+            "physical_slot": physical_slot,
+        }
+    finally:
+        reset_context()
+
+
 def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
     from tinyvllm.utils.context import reset_context
 
@@ -329,11 +378,10 @@ def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
         first_target = int(
             llm.model_runner.run([seq], is_prefill=False)[0]
         )
-        proxy = copy(seq)
-        proxy.token_ids = list(seq.token_ids)
-        proxy.block_table = list(seq.block_table) + list(reserved_blocks)
-        proxy.num_tokens = len(proxy.token_ids)
-        proxy.last_token = proxy.token_ids[-1]
+        proxy, full_block_table = _make_serialized_proxy(
+            seq,
+            reserved_blocks,
+        )
 
         tail_targets = []
         logits_rows = []
@@ -341,27 +389,15 @@ def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
         kv_rows = {"keys": [], "values": []}
         for token_id in draft_tokens[:-1]:
             proxy.append_token(int(token_id))
-            logical_slot = len(proxy) - 1
-            physical_slot = _physical_slot(proxy, logical_slot)
-            try:
-                input_ids, positions = llm.model_runner.prepare_decode([proxy])
-                logits = llm.model_runner.run_model(
-                    input_ids,
-                    positions,
-                    is_prefill=False,
-                    execution_mode="decode",
-                )
-                tail_targets.append(
-                    int(logits.argmax(dim=-1).tolist()[0])
-                )
-                logits_rows.extend(_tensor_to_float_list(logits))
-                snapshot = _snapshot_to_lists(
-                    llm.model_runner.snapshot_kv_slots([physical_slot])
-                )
-                _append_kv_rows(kv_rows, snapshot)
-                physical_slots.append(physical_slot)
-            finally:
-                reset_context()
+            step = _run_serialized_decode_evidence_step(
+                llm,
+                proxy,
+                full_block_table,
+            )
+            tail_targets.append(step["token_id"])
+            logits_rows.extend(step["logits"])
+            _append_kv_rows(kv_rows, step["kv"])
+            physical_slots.append(step["physical_slot"])
 
         target_tokens = [first_target] + tail_targets
         accepted_tokens = _truncate_accepted_tokens(
@@ -411,23 +447,60 @@ def _run_legacy_verify(llm, seq, draft_tokens: list[int]) -> dict:
 
 
 def _run_baseline_verify(llm, seq, draft_tokens: list[int]) -> dict:
+    block_manager = llm.scheduler.block_manager
+    reserved_blocks = block_manager.reserve_append_blocks(
+        seq,
+        len(draft_tokens),
+    )
+    owned_blocks = list(reserved_blocks)
     target_tokens = []
-    accepted_tokens = []
     verifier_commit_ms = 0.0
-    for draft_token in draft_tokens:
+    try:
         t0 = time.perf_counter()
-        step = _run_decode_evidence_step(llm, seq)
+        first_target = int(
+            llm.model_runner.run([seq], is_prefill=False)[0]
+        )
         verifier_commit_ms += (time.perf_counter() - t0) * 1000.0
-        target_tokens.append(step["token_id"])
-        if int(step["token_id"]) != int(draft_token):
-            break
-        accepted_tokens.append(int(draft_token))
-        seq.append_token(int(draft_token))
-        if (
-            (not seq.ignore_eos and int(draft_token) == int(llm.scheduler.eos))
-            or seq.num_completion_tokens >= seq.max_tokens
-        ):
-            break
+        target_tokens.append(first_target)
+
+        proxy, full_block_table = _make_serialized_proxy(
+            seq,
+            reserved_blocks,
+        )
+        if first_target == int(draft_tokens[0]):
+            for draft_index in range(1, len(draft_tokens)):
+                proxy.append_token(int(draft_tokens[draft_index - 1]))
+                t0 = time.perf_counter()
+                step = _run_serialized_decode_evidence_step(
+                    llm,
+                    proxy,
+                    full_block_table,
+                )
+                verifier_commit_ms += (
+                    time.perf_counter() - t0
+                ) * 1000.0
+                target_tokens.append(step["token_id"])
+                if (
+                    int(step["token_id"])
+                    != int(draft_tokens[draft_index])
+                ):
+                    break
+
+        accepted_tokens = _truncate_accepted_tokens(
+            llm,
+            seq,
+            draft_tokens,
+            target_tokens,
+        )
+        block_manager.commit_accepted_tokens(
+            seq,
+            accepted_tokens,
+            reserved_blocks,
+        )
+        owned_blocks = []
+    except Exception:
+        block_manager.release_reserved_blocks(owned_blocks)
+        raise
     return {
         "target_tokens": target_tokens,
         "accepted_tokens": accepted_tokens,
