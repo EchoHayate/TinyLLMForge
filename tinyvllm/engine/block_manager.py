@@ -29,6 +29,7 @@ class BlockManager:
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]   
         self.hash_to_block_id: dict[int, int] = dict()              #键代表某个block的token序列的哈希值 值代表这个哈希值对应的kv缓存块的id（block_id） 用于快速查找和复用内容相同的 KV 缓存块
+        self.hash_to_block_ids: dict[int, set[int]] = dict()
         self.free_block_ids: deque[int] = deque(range(num_blocks))  #双向队列分配和回收元素
         self.used_block_ids: set[int] = set()                       #跟踪所有正在被使用的block_id 查找的时间复杂度O（1） 如果使用deque 查找的时间复杂度为O（n） 
 
@@ -42,15 +43,57 @@ class BlockManager:
         h.update(np.array(token_ids).tobytes())
         return h.intdigest()
 
+    def _register_cached_block(
+        self,
+        block_id: int,
+        h: int,
+        token_ids: list[int],
+    ):
+        block = self.blocks[block_id]
+        block.update(h, token_ids)
+        self.hash_to_block_ids.setdefault(h, set()).add(block_id)
+        self.hash_to_block_id[h] = block_id
+
+    def _unregister_cached_block(self, block_id: int):
+        block = self.blocks[block_id]
+        h = block.hash
+        if h == -1:
+            return
+        block_ids = self.hash_to_block_ids.get(h)
+        if block_ids is not None:
+            block_ids.discard(block_id)
+            if not block_ids:
+                del self.hash_to_block_ids[h]
+            elif self.hash_to_block_id.get(h) == block_id:
+                self.hash_to_block_id[h] = next(iter(block_ids))
+        if (
+            self.hash_to_block_id.get(h) == block_id
+            and h not in self.hash_to_block_ids
+        ):
+            del self.hash_to_block_id[h]
+
+    def _find_cached_block_id(
+        self,
+        h: int,
+        token_ids: list[int],
+    ) -> int:
+        primary = self.hash_to_block_id.get(h, -1)
+        if (
+            primary != -1
+            and self.blocks[primary].token_ids == token_ids
+        ):
+            return primary
+        for block_id in self.hash_to_block_ids.get(h, ()):
+            if self.blocks[block_id].token_ids == token_ids:
+                self.hash_to_block_id[h] = block_id
+                return block_id
+        return -1
+
     # 分配对应id的block, 重置状态，并且更新 free_block_ids 队列 和 used_block_ids 集合
     def _allocate_block(self, block_id: int) -> Block:
         block = self.blocks[block_id]
         assert block.ref_count == 0
-        if (
-            block.hash != -1
-            and self.hash_to_block_id.get(block.hash) == block_id
-        ):
-            del self.hash_to_block_id[block.hash]
+        self._unregister_cached_block(block_id)
         block.reset()
         self.free_block_ids.remove(block_id)
         self.used_block_ids.add(block_id)
@@ -74,11 +117,8 @@ class BlockManager:
             if len(token_ids) != self.block_size:
                 break
             h = self.compute_hash(token_ids, h)
-            block_id = self.hash_to_block_id.get(h, -1)
-            if (
-                block_id == -1
-                or self.blocks[block_id].token_ids != token_ids
-            ):
+            block_id = self._find_cached_block_id(h, token_ids)
+            if block_id == -1:
                 break
             block_ids.append(block_id)
         return block_ids
@@ -125,12 +165,12 @@ class BlockManager:
             # 未填满的块（非完整块）的哈希值为 -1，不纳入缓存（因为复用价值低）
             h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1   #计算hash的前提是当前block_size能被占满 如果占不满说明当前sequence结束
             block_id = (
-                self.hash_to_block_id.get(h, -1)
+                self._find_cached_block_id(h, token_ids)
                 if i < max_cached_blocks
                 else -1
             )
             # 没有缓存或者缓存未命中
-            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:    #self.blocks[block_id].token_ids != token_ids 确保内容没有变动过
+            if block_id == -1:
                 cache_miss = True
             
             # 没有缓存或者缓存为命中，那么就从空闲块表的头部，取出一块进行分配
@@ -152,23 +192,26 @@ class BlockManager:
                 # 对 prefix-cache 命中的 block，KV 已经存在，必须恢复 hash/token_ids 元数据，
                 # 否则后续 commit_prefill 计算下一块 hash 时 prefix 链会断。
                 if h != -1:
-                    block.update(h, token_ids)
-                    self.hash_to_block_id[h] = block_id
+                    self._register_cached_block(block_id, h, token_ids)
 
             if h != -1 and publish_hashes:      #相同的 token_ids 序列（通过哈希 h 标识）始终对应到同一个 block_id
-                block.update(h, token_ids)   #对这一步的操作不是很明白 为什么要更新
-                self.hash_to_block_id[h] = block_id
+                self._register_cached_block(block_id, h, token_ids)
             seq.block_table.append(block_id)
         seq.num_computed_tokens = seq.num_cached_tokens
 
     def clear_reusable_cache(self) -> int:
         """Drop only idle prefix metadata; never mutate live blocks."""
         self.hash_to_block_id.clear()
+        self.hash_to_block_ids.clear()
         cleared = 0
         for block in self.blocks:
             if block.ref_count != 0:
                 if block.hash != -1:
-                    self.hash_to_block_id[block.hash] = block.block_id
+                    self._register_cached_block(
+                        block.block_id,
+                        block.hash,
+                        block.token_ids,
+                    )
                 continue
             if block.hash != -1 or block.token_ids:
                 block.hash = -1
@@ -238,8 +281,7 @@ class BlockManager:
                 continue
             prefix = self.blocks[seq.block_table[i - 1]].hash if i > 0 else -1
             h = self.compute_hash(token_ids, prefix)
-            block.update(h, token_ids)
-            self.hash_to_block_id[h] = block_id
+            self._register_cached_block(block_id, h, token_ids)
 
     def commit_accepted_tokens(self, seq: Sequence, accepted_tokens: list[int], reserved_block_ids: list[int]):
         """Commit accepted speculative tokens and expose only needed blocks.
@@ -286,8 +328,7 @@ class BlockManager:
                 continue
             prefix = self.blocks[seq.block_table[i - 1]].hash if i > 0 else -1
             h = self.compute_hash(token_ids, prefix)
-            block.update(h, token_ids)
-            self.hash_to_block_id[h] = block_id
+            self._register_cached_block(block_id, h, token_ids)
             
     def deallocate(self, seq: Sequence):
         for block_id in reversed(seq.block_table):   #先释放末尾的 “独有块”（引用计数容易降为 0） 再处理可能被共享的 “前缀块”
@@ -325,8 +366,11 @@ class BlockManager:
             token_ids = seq.block(seq.num_blocks - 1)       #最后一个seq列表 因为从0开始计数
             prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1  #这个边界条件很重要
             h = self.compute_hash(token_ids, prefix)
-            last_block.update(h, token_ids)
-            self.hash_to_block_id[h] = last_block.block_id
+            self._register_cached_block(
+                last_block.block_id,
+                h,
+                token_ids,
+            )
         else:   #最后一个块未填满，h是-1，没有计算哈希值写入字典用于缓存
             assert last_block.hash == -1
             

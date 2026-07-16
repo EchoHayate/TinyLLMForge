@@ -609,6 +609,40 @@ def test_allocate_rejects_hash_collision_when_tokens_differ():
     assert seq.block_table[0] != cached_block
 
 
+def test_allocate_finds_token_match_behind_hash_collision_primary():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=3, block_size=4)
+    original_compute_hash = block_manager.compute_hash
+    block_manager.compute_hash = lambda token_ids, prefix=-1: 12345
+    try:
+        first = make_seq([1, 2, 3, 4], max_tokens=1)
+        second = make_seq([5, 6, 7, 8], max_tokens=1)
+        for seq in (first, second):
+            block_manager.allocate(
+                seq,
+                publish_hashes=False,
+                max_cached_tokens=0,
+            )
+            block_manager.commit_prefill(seq, 0, len(seq))
+        first_block_id = first.block_table[0]
+        second_block_id = second.block_table[0]
+        assert block_manager.hash_to_block_id[12345] == second_block_id
+        block_manager.deallocate(second)
+        block_manager.deallocate(first)
+
+        warm = make_seq([1, 2, 3, 4, 9], max_tokens=1)
+        block_manager.allocate(
+            warm,
+            publish_hashes=False,
+            max_cached_tokens=block_manager.max_reusable_tokens(warm),
+        )
+    finally:
+        block_manager.compute_hash = original_compute_hash
+
+    assert warm.num_cached_tokens == 4
+    assert warm.block_table[0] == first_block_id
+
+
 def test_clear_reusable_cache_preserves_live_block_metadata():
     reset_sequence_state()
     block_manager = BlockManager(num_blocks=8, block_size=4)
@@ -641,6 +675,9 @@ def test_clear_reusable_cache_preserves_live_block_metadata():
     assert block_manager.blocks[live_block_id].hash == live_hash
     assert block_manager.blocks[live_block_id].token_ids == live_tokens
     assert block_manager.blocks[live_block_id].ref_count == 1
+    assert block_manager.hash_to_block_ids == {
+        live_hash: {live_block_id},
+    }
 
 
 def test_reusing_idle_block_removes_stale_hash_mapping():
@@ -661,6 +698,41 @@ def test_reusing_idle_block_removes_stale_hash_mapping():
     second_hash = block_manager.blocks[block_id].hash
     assert second_hash != first_hash
     assert block_manager.hash_to_block_id == {second_hash: block_id}
+    assert block_manager.hash_to_block_ids == {
+        second_hash: {block_id},
+    }
+
+
+def test_reusing_indexed_duplicate_preserves_equivalent_cache_mapping():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=2, block_size=4)
+    first = make_seq([1, 2, 3, 4], max_tokens=1)
+    second = make_seq([1, 2, 3, 4], max_tokens=1)
+    block_manager.allocate(first, publish_hashes=False, max_cached_tokens=0)
+    block_manager.allocate(second, publish_hashes=False, max_cached_tokens=0)
+    block_manager.commit_prefill(first, 0, len(first))
+    block_manager.commit_prefill(second, 0, len(second))
+    first_block_id = first.block_table[0]
+    second_block_id = second.block_table[0]
+    shared_hash = block_manager.blocks[first_block_id].hash
+    assert block_manager.hash_to_block_id[shared_hash] == second_block_id
+
+    block_manager.deallocate(second)
+    block_manager.deallocate(first)
+    cold = make_seq([5, 6, 7, 8], max_tokens=1)
+    block_manager.allocate(cold, publish_hashes=False, max_cached_tokens=0)
+
+    assert cold.block_table == [second_block_id]
+    assert block_manager.hash_to_block_id[shared_hash] == first_block_id
+    block_manager.deallocate(cold)
+    warm = make_seq([1, 2, 3, 4, 9], max_tokens=1)
+    block_manager.allocate(
+        warm,
+        publish_hashes=False,
+        max_cached_tokens=block_manager.max_reusable_tokens(warm),
+    )
+    assert warm.num_cached_tokens == 4
+    assert warm.block_table[0] == first_block_id
 
 
 def test_capacity_pressure_never_returns_live_shared_block():
@@ -1424,8 +1496,10 @@ def main():
     test_can_allocate_counts_idle_prefix_hits_as_free_block_requirement()
     test_estimate_admission_is_read_only_for_live_and_idle_hits()
     test_allocate_rejects_hash_collision_when_tokens_differ()
+    test_allocate_finds_token_match_behind_hash_collision_primary()
     test_clear_reusable_cache_preserves_live_block_metadata()
     test_reusing_idle_block_removes_stale_hash_mapping()
+    test_reusing_indexed_duplicate_preserves_equivalent_cache_mapping()
     test_capacity_pressure_never_returns_live_shared_block()
     test_normal_prefill_publishes_only_after_postprocess()
     test_normal_prefill_does_not_reuse_prefix_created_in_same_batch()
