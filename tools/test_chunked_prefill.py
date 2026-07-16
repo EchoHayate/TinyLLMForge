@@ -578,6 +578,123 @@ def test_capacity_pressure_never_returns_live_shared_block():
     assert live_block_id not in block_manager.free_block_ids
 
 
+def test_normal_prefill_publishes_only_after_postprocess():
+    reset_sequence_state()
+    scheduler = Scheduler(
+        make_config(max_num_prefill_tokens_per_step=0)
+    )
+    seq = make_seq([1, 2, 3, 4, 5], max_tokens=2)
+    scheduler.add(seq)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    h0 = scheduler.block_manager.compute_hash([1, 2, 3, 4], -1)
+
+    assert seqs == [seq]
+    assert is_prefill is True
+    assert do_sample is True
+    assert seq.prefill_chunk_start == 0
+    assert seq.prefill_chunk_end == 5
+    assert h0 not in scheduler.block_manager.hash_to_block_id
+
+    scheduler.postprocess(seqs, [99], is_prefill, do_sample)
+
+    assert h0 in scheduler.block_manager.hash_to_block_id
+    assert seq.num_computed_tokens == 5
+    assert seq.completion_token_ids == [99]
+
+
+def test_normal_prefill_does_not_reuse_prefix_created_in_same_batch():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+        max_num_seqs=3,
+        max_num_batched_tokens=32,
+    ))
+    seq_a = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    seq_b = make_seq([9, 8, 7, 6, 5], max_tokens=1)
+    seq_c = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    for seq in (seq_a, seq_b, seq_c):
+        scheduler.add(seq)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [seq_a, seq_b, seq_c]
+    assert is_prefill is True
+    assert do_sample is True
+    assert [seq.num_cached_tokens for seq in seqs] == [0, 0, 0]
+    assert all(
+        seq.prefill_chunk_end > seq.prefill_chunk_start
+        for seq in seqs
+    )
+    assert seq_a.block_table[0] != seq_c.block_table[0]
+
+
+def test_normal_prefill_exact_block_warm_hit_recomputes_final_block():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+        max_num_batched_tokens=32,
+    ))
+    cold = make_seq([1, 2, 3, 4], max_tokens=1)
+    scheduler.add(cold)
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    scheduler.postprocess(seqs, [70], is_prefill, do_sample)
+
+    warm = make_seq([1, 2, 3, 4], max_tokens=1)
+    scheduler.add(warm)
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [warm]
+    assert warm.num_cached_tokens == 0
+    assert warm.prefill_chunk_start == 0
+    assert warm.prefill_chunk_end == 4
+
+
+def _seed_scheduler_cache(scheduler, token_ids):
+    seq = make_seq(token_ids, max_tokens=1)
+    scheduler.add(seq)
+    seqs, is_prefill, do_sample = scheduler.schedule()
+    while not do_sample:
+        scheduler.postprocess(seqs, None, is_prefill, do_sample)
+        seqs, is_prefill, do_sample = scheduler.schedule()
+    scheduler.postprocess(seqs, [71], is_prefill, do_sample)
+
+
+def test_normal_prefill_warm_hit_reuses_only_complete_prefix_blocks():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+        max_num_batched_tokens=32,
+    ))
+    _seed_scheduler_cache(scheduler, list(range(1, 9)))
+
+    warm = make_seq(list(range(1, 9)), max_tokens=1)
+    scheduler.add(warm)
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert warm.num_cached_tokens == 4
+    assert warm.prefill_chunk_start == 4
+    assert warm.prefill_chunk_end == 8
+    assert do_sample is True
+
+
+def test_chunked_prefill_uses_same_sampleable_prefix_cap():
+    reset_sequence_state()
+    scheduler = Scheduler(
+        make_config(max_num_prefill_tokens_per_step=4)
+    )
+    _seed_scheduler_cache(scheduler, list(range(1, 9)))
+
+    warm = make_seq(list(range(1, 9)), max_tokens=1)
+    scheduler.add(warm)
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert warm.num_cached_tokens == 4
+    assert warm.prefill_chunk_start == 4
+    assert warm.prefill_chunk_end == 8
+    assert do_sample is True
+
+
 def test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks():
     reset_sequence_state()
     block_manager = BlockManager(num_blocks=8, block_size=4)
@@ -1135,6 +1252,11 @@ def main():
     test_allocate_rejects_hash_collision_when_tokens_differ()
     test_clear_reusable_cache_preserves_live_block_metadata()
     test_capacity_pressure_never_returns_live_shared_block()
+    test_normal_prefill_publishes_only_after_postprocess()
+    test_normal_prefill_does_not_reuse_prefix_created_in_same_batch()
+    test_normal_prefill_exact_block_warm_hit_recomputes_final_block()
+    test_normal_prefill_warm_hit_reuses_only_complete_prefix_blocks()
+    test_chunked_prefill_uses_same_sampleable_prefix_cap()
     test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks()
     test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks()
     test_commit_accepted_tokens_publishes_multiple_full_block_hashes()

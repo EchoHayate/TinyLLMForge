@@ -96,11 +96,20 @@ class Scheduler:
             if num_batched_tokens + len(seq) > self.max_num_batched_tokens or not self.block_manager.can_allocate(seq):
                 break
             num_seqs += 1
-            self.block_manager.allocate(seq)
-            seq.num_computed_tokens = len(seq)
+            max_cached_tokens = (
+                self.block_manager.max_reusable_tokens(seq)
+            )
+            self.block_manager.allocate(
+                seq,
+                publish_hashes=False,
+                max_cached_tokens=max_cached_tokens,
+            )
             seq.prefill_chunk_start = seq.num_cached_tokens
             seq.prefill_chunk_end = len(seq)
             seq.prefill_chunk_final = True
+            assert (
+                seq.prefill_chunk_end > seq.prefill_chunk_start
+            )
             num_batched_tokens += len(seq) - seq.num_cached_tokens
             seq.status = SequenceStatus.RUNNING
             self.waiting.popleft()
@@ -161,7 +170,12 @@ class Scheduler:
         if not self.block_manager.can_allocate(candidate):
             return None
         seq = self.waiting.popleft()
-        self.block_manager.allocate(seq, publish_hashes=False)
+        max_cached_tokens = self.block_manager.max_reusable_tokens(seq)
+        self.block_manager.allocate(
+            seq,
+            publish_hashes=False,
+            max_cached_tokens=max_cached_tokens,
+        )
         seq.status = SequenceStatus.PREFILLING
         first = self._schedule_one_prefill_chunk(seq, max_chunk_tokens=max_prefill_tokens)
         if first is None:
@@ -182,7 +196,14 @@ class Scheduler:
             if not self.block_manager.can_allocate(candidate):
                 break
             seq = self.waiting.popleft()
-            self.block_manager.allocate(seq, publish_hashes=False)
+            max_cached_tokens = (
+                self.block_manager.max_reusable_tokens(seq)
+            )
+            self.block_manager.allocate(
+                seq,
+                publish_hashes=False,
+                max_cached_tokens=max_cached_tokens,
+            )
             seq.status = SequenceStatus.PREFILLING
             one = self._schedule_one_prefill_chunk(seq, max_chunk_tokens=max_prefill_tokens - num_batched_tokens)
             if one is None or not one[2]:
@@ -210,6 +231,10 @@ class Scheduler:
         seq.prefill_chunk_start = start
         seq.prefill_chunk_end = end
         seq.prefill_chunk_final = (end == len(seq))
+        if seq.prefill_chunk_final:
+            assert (
+                seq.prefill_chunk_end > seq.prefill_chunk_start
+            )
         return [seq], True, seq.prefill_chunk_final
 
     def _schedule_mixed_prefill_decode(self) -> tuple[list[Sequence], bool, bool, str] | None:
@@ -267,6 +292,17 @@ class Scheduler:
         if is_prefill and self.chunked_prefill_enabled:
             self._postprocess_chunked_prefill(seqs, token_ids, do_sample)
             return
+        if is_prefill:
+            for seq in seqs:
+                old_end = seq.num_computed_tokens
+                new_end = seq.prefill_chunk_end
+                assert new_end > seq.prefill_chunk_start
+                self.block_manager.commit_prefill(
+                    seq,
+                    old_end,
+                    new_end,
+                )
+                seq.num_computed_tokens = new_end
         for seq, token_id in zip(seqs, token_ids):
             seq.append_token(token_id)
             # 如果不能忽略句子终止符号，并且遇到了终止符号
