@@ -227,6 +227,7 @@ def test_prepare_spec_verify_installs_reference_context():
     assert current.mode == "spec_verify"
     assert current.context_lens.values == [55]
     assert current.block_tables.values == [[0]]
+    assert current.flash_attn_num_splits == 16
 
 
 def test_snapshot_kv_slots_uses_physical_block_and_offset_indices():

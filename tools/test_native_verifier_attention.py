@@ -124,6 +124,7 @@ def test_spec_verify_helper_uses_single_multi_query_row():
         captured["cache_seqlens"] = kwargs["cache_seqlens"].tolist()
         captured["block_table"] = kwargs["block_table"].tolist()
         captured["causal"] = kwargs["causal"]
+        captured["num_splits"] = kwargs["num_splits"]
         return q
 
     attention.flash_attn_with_kvcache = fake_flash
@@ -132,6 +133,7 @@ def test_spec_verify_helper_uses_single_multi_query_row():
     context = types.SimpleNamespace(
         context_lens=FakeTensor((1,), [55]),
         block_tables=FakeTensor((1, 1), [[0]]),
+        flash_attn_num_splits=16,
     )
 
     output = attention._flash_attn_spec_verify(
@@ -148,6 +150,7 @@ def test_spec_verify_helper_uses_single_multi_query_row():
         "cache_seqlens": [55],
         "block_table": [[0]],
         "causal": True,
+        "num_splits": 16,
     }
 
 

@@ -404,6 +404,9 @@ def _run_row_expanded_oracle_tail(
     input_tokens: list[int],
     full_block_table: list[int],
 ) -> dict:
+    from tinyvllm.speculative.verifier import (
+        SPEC_VERIFY_FLASH_ATTN_NUM_SPLITS,
+    )
     from tinyvllm.utils.context import reset_context
 
     if not input_tokens:
@@ -419,7 +422,10 @@ def _run_row_expanded_oracle_tail(
         full_block_table,
     )
     try:
-        input_ids, positions = llm.model_runner.prepare_decode(proxies)
+        input_ids, positions = llm.model_runner.prepare_decode(
+            proxies,
+            flash_attn_num_splits=SPEC_VERIFY_FLASH_ATTN_NUM_SPLITS,
+        )
         logits = llm.model_runner.run_model(
             input_ids,
             positions,

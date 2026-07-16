@@ -15,6 +15,7 @@ class Context:
     slot_mapping: torch.Tensor | None = None    #prefill or decode
     context_lens: torch.Tensor | None = None    #decode
     block_tables: torch.Tensor | None = None    #prefill or decode
+    flash_attn_num_splits: int = 0
     logits_indices: torch.Tensor | None = None  #prefill: rows in flattened hidden states that need logits
     # Quest 动态稀疏 attention：>0 表示开启，每个 query 只看 top-k block
     quest_top_k_blocks: int = -1
@@ -142,7 +143,8 @@ def set_context(is_prefill=None, cu_seqlens_q=None, cu_seqlens_k=None, max_seqle
                 kv_offload_write_blocks: list[int] | None = None,
                 kv_offload_prefill_chunk_starts: list[int] | None = None,
                 kv_offload_prefill_chunk_ends: list[int] | None = None,
-                mode: AttentionMode | None = None):
+                mode: AttentionMode | None = None,
+                flash_attn_num_splits: int = 0):
     global _CONTEXT
     resolved_mode = resolve_attention_mode(is_prefill, mode)
     if am_compact_enable_layers is not None and not isinstance(am_compact_enable_layers, tuple):
@@ -157,6 +159,7 @@ def set_context(is_prefill=None, cu_seqlens_q=None, cu_seqlens_k=None, max_seqle
         slot_mapping=slot_mapping,
         context_lens=context_lens,
         block_tables=block_tables,
+        flash_attn_num_splits=int(flash_attn_num_splits),
         logits_indices=logits_indices,
         quest_top_k_blocks=quest_top_k_blocks,
         quest_min_seq_len=quest_min_seq_len,

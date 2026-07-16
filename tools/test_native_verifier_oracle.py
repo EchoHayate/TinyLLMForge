@@ -170,7 +170,8 @@ class _SerializedModelRunner:
         assert len(seqs) == 1
         return [11]
 
-    def prepare_decode(self, seqs):
+    def prepare_decode(self, seqs, *, flash_attn_num_splits=0):
+        assert flash_attn_num_splits in (0, 16)
         for seq in seqs:
             self.prepare_calls.append({
                 "last_token": int(seq.last_token),
@@ -236,7 +237,8 @@ class _RowExpandedModelRunner:
         assert len(seqs) == 1
         return [11]
 
-    def prepare_decode(self, seqs):
+    def prepare_decode(self, seqs, *, flash_attn_num_splits=0):
+        assert flash_attn_num_splits == 16
         self.prepare_batches.append([
             {
                 "last_token": int(seq.last_token),

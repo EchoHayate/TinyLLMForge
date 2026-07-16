@@ -5,6 +5,7 @@ from typing import Literal
 
 
 AttentionMode = Literal["prefill", "decode", "spec_verify"]
+SPEC_VERIFY_FLASH_ATTN_NUM_SPLITS = 16
 
 
 @dataclass(frozen=True)

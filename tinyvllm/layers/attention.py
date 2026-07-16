@@ -1124,6 +1124,7 @@ def _flash_attn_spec_verify(
         block_table=context.block_tables,
         softmax_scale=scale,
         causal=True,
+        num_splits=context.flash_attn_num_splits,
     )
     return output.view_as(q)
 
@@ -1414,7 +1415,8 @@ class Attention(nn.Module):
                     context.quest_top_k_blocks,
                 )
             o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = cache_seqlens,
-                                        block_table = block_tables, softmax_scale = self.scale, causal = True)
+                                        block_table = block_tables, softmax_scale = self.scale, causal = True,
+                                        num_splits=context.flash_attn_num_splits)
         else:
             raise RuntimeError(f"unsupported attention mode: {context.mode}")
         o = o.view(-1, self.num_heads * self.head_dim)

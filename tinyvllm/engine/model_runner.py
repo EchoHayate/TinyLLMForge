@@ -17,6 +17,7 @@ from tinyvllm.utils.context import reset_context, set_context, get_context
 from tinyvllm.engine.kv_cartridge import compress_decode_block_table_rows, should_use_kv_cartridge
 from tinyvllm.speculative.verifier import (
     AttentionMode,
+    SPEC_VERIFY_FLASH_ATTN_NUM_SPLITS,
     SpecVerifyMetadata,
     SpecVerifyPlan,
     validate_spec_verify_slots,
@@ -1019,6 +1020,7 @@ class ModelRunner:
             slot_mapping=slot_mapping,
             context_lens=context_lens,
             block_tables=block_tables,
+            flash_attn_num_splits=SPEC_VERIFY_FLASH_ATTN_NUM_SPLITS,
         )
         metadata = SpecVerifyMetadata(
             query_len=len(input_tokens),
@@ -1320,7 +1322,12 @@ class ModelRunner:
 
 
     # decode阶段单token输出
-    def prepare_decode(self, seqs: list[Sequence]):         #暂时跳过
+    def prepare_decode(
+        self,
+        seqs: list[Sequence],
+        *,
+        flash_attn_num_splits: int = 0,
+    ):         #暂时跳过
         self._kv_offload_pending_dirty_blocks = []
         input_ids = []
         positions = []
@@ -1436,6 +1443,7 @@ class ModelRunner:
         else:
             quest_active_top_k = -1
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,
+                    flash_attn_num_splits=flash_attn_num_splits,
                     quest_top_k_blocks=quest_active_top_k,
                     quest_min_seq_len=cfg_min_len,
                     am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
