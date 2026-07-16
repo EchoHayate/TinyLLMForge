@@ -22,7 +22,12 @@ _SPEC.loader.exec_module(oracle)
 compare_native_and_oracle = oracle.compare_native_and_oracle
 dtype_tolerance = oracle.dtype_tolerance
 build_case_payload = oracle.build_case_payload
+construct_draft_tokens = oracle.construct_draft_tokens
 run_case = oracle.run_case
+
+
+def test_tinyvllm_backend_has_runtime_timer_dependency():
+    assert callable(oracle.time.perf_counter)
 
 
 def make_comparison_fixture():
@@ -274,7 +279,85 @@ def test_run_case_validates_input_and_writes_backend_payload():
             raise AssertionError("invalid oracle case must fail")
 
 
+def test_run_case_accepts_all_isolated_policies():
+    seen = []
+
+    def fake_backend(**kwargs):
+        seen.append(kwargs["policy"])
+        return {
+            "policy": kwargs["policy"],
+            "case_id": kwargs["case"]["case_id"],
+        }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for policy in (
+            "probe",
+            "baseline",
+            "legacy_rematerialize",
+            "native",
+            "oracle",
+        ):
+            run_case(
+                policy=policy,
+                case={
+                    "case_id": "case-1",
+                    "prompt": "hello",
+                    "history_len": 8,
+                    "draft_tokens": [4],
+                    "max_tokens": 32,
+                    "ignore_eos": True,
+                },
+                out_path=Path(tmp) / f"{policy}.json",
+                model="/model",
+                continuation_steps=16,
+                backend=fake_backend,
+            )
+    assert seen == [
+        "probe",
+        "baseline",
+        "legacy_rematerialize",
+        "native",
+        "oracle",
+    ]
+
+
+def test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases():
+    targets = [10, 20, 30, 40]
+    assert construct_draft_tokens(
+        targets,
+        acceptance_case="full",
+        vocab_size=100,
+    ) == [10, 20, 30, 40]
+    assert construct_draft_tokens(
+        targets,
+        acceptance_case="partial",
+        vocab_size=100,
+    ) == [10, 20, 31, 40]
+    assert construct_draft_tokens(
+        targets,
+        acceptance_case="one",
+        vocab_size=100,
+    ) == [10, 21, 30, 40]
+    assert construct_draft_tokens(
+        targets,
+        acceptance_case="zero",
+        vocab_size=100,
+    ) == [11, 20, 30, 40]
+
+    try:
+        construct_draft_tokens(
+            [10],
+            acceptance_case="partial",
+            vocab_size=100,
+        )
+    except ValueError as exc:
+        assert "partial" in str(exc)
+    else:
+        raise AssertionError("partial K=1 must fail")
+
+
 def main():
+    test_tinyvllm_backend_has_runtime_timer_dependency()
     test_dtype_tolerances_are_fixed()
     test_comparison_requires_tokens_acceptance_metadata_and_continuation()
     test_token_mismatch_is_no_go_even_when_numeric_error_is_small()
@@ -285,6 +368,8 @@ def main():
     test_less_than_16_continuation_steps_is_incomplete()
     test_build_case_payload_records_complete_evidence()
     test_run_case_validates_input_and_writes_backend_payload()
+    test_run_case_accepts_all_isolated_policies()
+    test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases()
     print("native verifier oracle tests passed")
 
 

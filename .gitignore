@@ -7,3 +7,4 @@ ai-plugin-lock.json
 __pycache__/
 *.pyc
 profile_out/
+experiments/native_verifier/

@@ -167,11 +167,19 @@ def test_case_matrix_covers_required_dimensions():
     }
     assert any(case["eos_case"] for case in cases)
     assert any(case["output_budget_case"] for case in cases)
-    assert {"current_block", "one_new_block", "multiple_new_blocks"} <= {
+    assert {"current_block", "one_new_block", "multi_block_context"} <= {
         case["block_case"] for case in cases
     }
     assert all(case["continuation_steps"] >= 16 for case in cases)
     assert len({case["case_id"] for case in cases}) == len(cases)
+
+
+def test_eos_case_uses_a_dedicated_real_eos_prompt():
+    eos_cases = [case for case in gate.CASE_MATRIX if case["eos_case"]]
+
+    assert len(eos_cases) == 1
+    assert eos_cases[0]["prompt"] == gate._EOS_PROMPT
+    assert eos_cases[0]["prompt"] != gate._PROMPT
 
 
 def test_manifest_freezes_scope_thresholds_and_case_matrix():
@@ -187,6 +195,24 @@ def test_manifest_freezes_scope_thresholds_and_case_matrix():
     )
     assert manifest["claim_boundaries"]
     assert manifest["source_dirty"] is False
+
+
+def test_capability_specs_cover_query_dtype_and_block_dimensions():
+    fp16 = gate.build_capability_specs(bf16_supported=False)
+    both = gate.build_capability_specs(bf16_supported=True)
+
+    assert len(fp16) == 8
+    assert len(both) == 16
+    assert {row["query_len"] for row in both} == {1, 3, 7, 15}
+    assert {row["dtype"] for row in both} == {
+        "torch.float16",
+        "torch.bfloat16",
+    }
+    assert {row["block_case"] for row in both} == {
+        "one_block",
+        "cross_block",
+    }
+    assert all(row["gqa"] is True for row in both)
 
 
 def test_complete_evidence_is_ready_for_performance_gate():
@@ -408,7 +434,9 @@ def test_artifact_verifier_rejects_dirty_source_and_manifest_drift():
 def main():
     tests = (
         test_case_matrix_covers_required_dimensions,
+        test_eos_case_uses_a_dedicated_real_eos_prompt,
         test_manifest_freezes_scope_thresholds_and_case_matrix,
+        test_capability_specs_cover_query_dtype_and_block_dimensions,
         test_complete_evidence_is_ready_for_performance_gate,
         test_semantic_or_replay_failure_is_no_go,
         test_missing_duplicate_or_failed_process_is_incomplete,

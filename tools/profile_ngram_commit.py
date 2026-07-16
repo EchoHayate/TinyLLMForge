@@ -674,10 +674,6 @@ def verify_and_commit_block(
         raise ValueError(
             "oracle evidence capture requires verifier_mode=native"
         )
-    if defer_finish_for_oracle_evidence and not capture_oracle_evidence:
-        raise ValueError(
-            "deferred finish requires oracle evidence capture"
-        )
     if verifier_mode == "native":
         llm.model_runner._validate_spec_verify_compatibility(
             seq_count=1,

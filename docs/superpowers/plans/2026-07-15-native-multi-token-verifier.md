@@ -1318,7 +1318,7 @@ def test_case_matrix_covers_required_dimensions():
     }
     assert any(case["eos_case"] for case in cases)
     assert any(case["output_budget_case"] for case in cases)
-    assert {"current_block", "one_new_block", "multiple_new_blocks"} <= {
+    assert {"current_block", "one_new_block", "multi_block_context"} <= {
         case["block_case"] for case in cases
     }
     assert all(case["continuation_steps"] >= 16 for case in cases)
@@ -1333,6 +1333,10 @@ Use deterministic draft construction:
 - EOS: place the real EOS token at a preregistered accepted position;
 - budget: set remaining budget below the accepted prefix;
 - block cases: choose history offsets relative to block size `256`.
+  With `K <= 16`, a real verifier event can enter at most one new block;
+  `multi_block_context` therefore means multiple visible history blocks plus
+  a tail that crosses one block boundary. Multiple newly reserved blocks stay
+  covered by dependency-light lifecycle tests using a smaller block size.
 
 - [ ] **Step 2: Add failing classification tests**
 

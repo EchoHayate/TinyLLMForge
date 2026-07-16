@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sys
+import time
 from copy import copy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -145,6 +146,36 @@ def build_case_payload(evidence: dict) -> dict:
     return payload
 
 
+def construct_draft_tokens(
+    target_tokens: list[int],
+    *,
+    acceptance_case: str,
+    vocab_size: int,
+) -> list[int]:
+    draft = [int(token_id) for token_id in target_tokens]
+    if not draft:
+        raise ValueError("draft construction requires target tokens")
+    if vocab_size <= 1:
+        raise ValueError("draft construction requires vocab_size > 1")
+    if acceptance_case == "full":
+        return draft
+    mismatch_index = {
+        "zero": 0,
+        "one": 1,
+        "partial": max(1, len(draft) // 2),
+    }.get(acceptance_case)
+    if mismatch_index is None:
+        raise ValueError(
+            f"unsupported acceptance_case={acceptance_case}"
+        )
+    if mismatch_index >= len(draft):
+        raise ValueError(
+            f"{acceptance_case} acceptance requires a longer draft"
+        )
+    draft[mismatch_index] = (draft[mismatch_index] + 1) % vocab_size
+    return draft
+
+
 def run_case(
     *,
     policy: str,
@@ -154,7 +185,13 @@ def run_case(
     continuation_steps: int,
     backend: Callable[..., dict] | None = None,
 ) -> dict:
-    if policy not in ("native", "oracle"):
+    if policy not in (
+        "probe",
+        "baseline",
+        "legacy_rematerialize",
+        "native",
+        "oracle",
+    ):
         raise ValueError(f"unsupported verifier oracle policy: {policy}")
     if continuation_steps < 16:
         raise ValueError("continuation_steps must be at least 16")
@@ -353,6 +390,71 @@ def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
         reset_context()
 
 
+def _run_legacy_verify(llm, seq, draft_tokens: list[int]) -> dict:
+    profile = _load_profile_module()
+    event = profile.verify_and_commit_block(
+        llm,
+        seq,
+        draft_tokens,
+        draft_source="oracle-case",
+        verifier_mode="legacy_rematerialize",
+        defer_finish_for_oracle_evidence=True,
+    )
+    return {
+        "target_tokens": list(event["target_tokens"]),
+        "accepted_tokens": list(event["accepted_tokens"]),
+        "logits": [],
+        "kv": {"keys": [], "values": []},
+        "physical_slots": [],
+        "event": event,
+    }
+
+
+def _run_baseline_verify(llm, seq, draft_tokens: list[int]) -> dict:
+    target_tokens = []
+    accepted_tokens = []
+    verifier_commit_ms = 0.0
+    for draft_token in draft_tokens:
+        t0 = time.perf_counter()
+        step = _run_decode_evidence_step(llm, seq)
+        verifier_commit_ms += (time.perf_counter() - t0) * 1000.0
+        target_tokens.append(step["token_id"])
+        if int(step["token_id"]) != int(draft_token):
+            break
+        accepted_tokens.append(int(draft_token))
+        seq.append_token(int(draft_token))
+        if (
+            (not seq.ignore_eos and int(draft_token) == int(llm.scheduler.eos))
+            or seq.num_completion_tokens >= seq.max_tokens
+        ):
+            break
+    return {
+        "target_tokens": target_tokens,
+        "accepted_tokens": accepted_tokens,
+        "logits": [],
+        "kv": {"keys": [], "values": []},
+        "physical_slots": [],
+        "event": {
+            "verifier_mode": "baseline",
+            "draft_len": len(draft_tokens),
+            "accepted_count": len(accepted_tokens),
+            "target_tokens": target_tokens,
+            "accepted_tokens": accepted_tokens,
+            "target_forward_count": len(target_tokens),
+            "accepted_kv_rematerialization": {
+                "rematerialized_tokens": [],
+                "decode_calls": 0,
+                "elapsed_ms": 0.0,
+            },
+            "accepted_kv_copy_calls": 0,
+            "accepted_kv_replay_calls": 0,
+            "timing_ms": {
+                "verify_commit_total_ms": verifier_commit_ms,
+            },
+        },
+    }
+
+
 def _run_continuation(llm, seq, continuation_steps: int) -> dict:
     if seq.is_finished:
         raise RuntimeError(
@@ -377,6 +479,24 @@ def _run_continuation(llm, seq, continuation_steps: int) -> dict:
     }
 
 
+def _run_probe_targets(llm, seq, draft_len: int) -> list[int]:
+    targets = []
+    for _ in range(draft_len):
+        step = _run_decode_evidence_step(llm, seq)
+        targets.append(step["token_id"])
+        seq.append_token(step["token_id"])
+    return targets
+
+
+def _token_sha256(tokens: list[int]) -> str:
+    return __import__("hashlib").sha256(
+        json.dumps(
+            [int(token_id) for token_id in tokens],
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _run_tinyvllm_case(
     *,
     policy: str,
@@ -385,6 +505,7 @@ def _run_tinyvllm_case(
     continuation_steps: int,
 ) -> dict:
     from tinyvllm import LLM, SamplingParams
+    import torch
 
     profile = _load_profile_module()
     prompt_tokens = None
@@ -425,6 +546,29 @@ def _run_tinyvllm_case(
         seq.max_tokens = int(case["max_tokens"])
         seq.ignore_eos = bool(case["ignore_eos"])
 
+        torch.cuda.reset_peak_memory_stats()
+        case_t0 = time.perf_counter()
+        if policy == "probe":
+            target_tokens = _run_probe_targets(
+                llm,
+                seq,
+                len(case["draft_tokens"]),
+            )
+            return {
+                "case_id": case["case_id"],
+                "policy": "probe",
+                "target_tokens": target_tokens,
+                "vocab_size": int(llm.tokenizer.vocab_size),
+                "eos_token_id": int(llm.scheduler.eos),
+                "prompt_token_count": len(prompt_tokens),
+                "history_tokens": list(
+                    seq.token_ids[:-len(target_tokens)]
+                ),
+                "history_token_sha256": _token_sha256(
+                    seq.token_ids[:-len(target_tokens)]
+                ),
+                "dtype": str(llm.model_runner.kv_cache.dtype),
+            }
         if policy == "native":
             event = profile.verify_and_commit_block(
                 llm,
@@ -445,6 +589,18 @@ def _run_tinyvllm_case(
                 ]["physical_slots"],
                 "event": event,
             }
+        elif policy == "legacy_rematerialize":
+            verify = _run_legacy_verify(
+                llm,
+                seq,
+                case["draft_tokens"],
+            )
+        elif policy == "baseline":
+            verify = _run_baseline_verify(
+                llm,
+                seq,
+                case["draft_tokens"],
+            )
         else:
             verify = _run_serialized_oracle_verify(
                 llm,
@@ -460,7 +616,23 @@ def _run_tinyvllm_case(
             continuation_steps,
         )
         dtype_name = str(llm.model_runner.kv_cache.dtype)
-        return build_case_payload({
+        elapsed_s = time.perf_counter() - case_t0
+        output_tokens = (
+            len(verify["accepted_tokens"])
+            + len(continuation["tokens"])
+        )
+        event = verify.get("event")
+        verifier_commit_ms = (
+            float(
+                event.get("timing_ms", {}).get(
+                    "verify_commit_total_ms",
+                    0.0,
+                )
+            )
+            if event
+            else 0.0
+        )
+        payload = build_case_payload({
             "case_id": case["case_id"],
             "policy": policy,
             "model": str(model),
@@ -483,6 +655,32 @@ def _run_tinyvllm_case(
             ],
             "event": verify.get("event"),
         })
+        payload.update({
+            "status": "PASS",
+            "source_commit": str(
+                case.get("source_commit", "unknown")
+            ),
+            "source_dirty": bool(case.get("source_dirty", False)),
+            "output_token_sha256": _token_sha256(
+                list(seq.token_ids)
+            ),
+            "continuation_token_sha256": _token_sha256(
+                continuation["tokens"]
+            ),
+            "sequence_token_sha256": _token_sha256(
+                sequence_tokens_after
+            ),
+            "elapsed_s": elapsed_s,
+            "output_tokens": output_tokens,
+            "output_tokens_per_s": (
+                output_tokens / elapsed_s if elapsed_s > 0 else 0.0
+            ),
+            "verifier_commit_ms": verifier_commit_ms,
+            "max_allocated_gpu_memory_bytes": int(
+                torch.cuda.max_memory_allocated()
+            ),
+        })
+        return payload
     finally:
         atexit.unregister(llm.exit)
         llm.exit()
@@ -639,7 +837,13 @@ def _parse_args():
     run_parser.add_argument(
         "--policy",
         required=True,
-        choices=["native", "oracle"],
+        choices=[
+            "probe",
+            "baseline",
+            "legacy_rematerialize",
+            "native",
+            "oracle",
+        ],
     )
     run_parser.add_argument("--case-json", required=True)
     run_parser.add_argument("--out", required=True)

@@ -402,6 +402,13 @@ The oracle produces:
 - the accepted prefix under the same greedy acceptance function;
 - at least 16 subsequent normal-decode tokens and their logits/KV.
 
+For the real engine block size of `256` and phase-one `K <= 16`, one verifier
+event can cross into at most one new block. Remote block-boundary evidence
+therefore covers current-block, one-new-block, and multi-block visible-context
+cases. Multiple newly reserved blocks are a lifecycle-only test dimension
+using a smaller dependency-light block size; remote artifacts must not claim
+that physically unreachable case.
+
 Native and oracle runs must start from identical prefix state.
 
 ### Comparison

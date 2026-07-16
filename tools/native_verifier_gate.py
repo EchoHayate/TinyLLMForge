@@ -6,7 +6,11 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import socket
 import statistics
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -70,6 +74,11 @@ _PROMPT = (
     "Repeat the sequence alpha beta gamma while preserving exact spacing: "
     "alpha beta gamma alpha beta gamma."
 )
+_EOS_PROMPT = (
+    "<|im_start|>user\n"
+    "Reply with exactly OK and then stop.<|im_end|>\n"
+    "<|im_start|>assistant\n"
+)
 
 
 def sha256_text(text: str) -> str:
@@ -104,11 +113,12 @@ def _case(
     block_case: str,
     eos_case: bool = False,
     output_budget_case: bool = False,
+    prompt: str = _PROMPT,
 ) -> dict:
     return {
         "case_id": case_id,
-        "prompt": _PROMPT,
-        "prompt_sha256": sha256_text(_PROMPT),
+        "prompt": prompt,
+        "prompt_sha256": sha256_text(prompt),
         "history_len": history_len,
         "draft_len": draft_len,
         "acceptance_case": acceptance_case,
@@ -171,6 +181,7 @@ CASE_MATRIX = (
         history_len=255,
         block_case="one_new_block",
         eos_case=True,
+        prompt=_EOS_PROMPT,
     ),
     _case(
         "k8-budget-boundary",
@@ -181,13 +192,30 @@ CASE_MATRIX = (
         output_budget_case=True,
     ),
     _case(
-        "k16-full-multiblock",
+        "k16-full-multiblock-context",
         draft_len=16,
         acceptance_case="full",
         history_len=511,
-        block_case="multiple_new_blocks",
+        block_case="multi_block_context",
     ),
 )
+
+
+def build_capability_specs(bf16_supported: bool) -> list[dict]:
+    dtypes = ["torch.float16"]
+    if bf16_supported:
+        dtypes.append("torch.bfloat16")
+    return [
+        {
+            "dtype": dtype,
+            "query_len": query_len,
+            "block_case": block_case,
+            "gqa": True,
+        }
+        for dtype in dtypes
+        for query_len in (1, 3, 7, 15)
+        for block_case in ("one_block", "cross_block")
+    ]
 
 
 def build_manifest(
@@ -243,6 +271,222 @@ def build_manifest(
     }
 
 
+def _capability_tolerance(dtype_name: str) -> dict:
+    return DTYPE_TOLERANCES[dtype_name]
+
+
+def _run_capability_spec(spec: dict) -> dict:
+    import torch
+    from flash_attn import flash_attn_with_kvcache
+
+    dtype = getattr(torch, spec["dtype"].split(".")[-1])
+    query_len = int(spec["query_len"])
+    block_size = 256
+    prefix_len = (
+        32
+        if spec["block_case"] == "one_block"
+        else block_size - 2
+    )
+    total_len = prefix_len + query_len
+    num_blocks = (total_len + block_size - 1) // block_size
+    num_heads = 4
+    num_kv_heads = 2
+    head_dim = 32
+    generator = torch.Generator(device="cuda")
+    generator.manual_seed(
+        20260716
+        + query_len * 17
+        + (1000 if dtype == torch.bfloat16 else 0)
+        + (100 if spec["block_case"] == "cross_block" else 0)
+    )
+    q = torch.randn(
+        1,
+        query_len,
+        num_heads,
+        head_dim,
+        device="cuda",
+        dtype=dtype,
+        generator=generator,
+    )
+    dense_k = torch.randn(
+        total_len,
+        num_kv_heads,
+        head_dim,
+        device="cuda",
+        dtype=dtype,
+        generator=generator,
+    )
+    dense_v = torch.randn(
+        total_len,
+        num_kv_heads,
+        head_dim,
+        device="cuda",
+        dtype=dtype,
+        generator=generator,
+    )
+    k_cache = torch.zeros(
+        num_blocks,
+        block_size,
+        num_kv_heads,
+        head_dim,
+        device="cuda",
+        dtype=dtype,
+    )
+    v_cache = torch.zeros_like(k_cache)
+    for position in range(total_len):
+        block_id = position // block_size
+        offset = position % block_size
+        k_cache[block_id, offset].copy_(dense_k[position])
+        v_cache[block_id, offset].copy_(dense_v[position])
+    block_table = torch.arange(
+        num_blocks,
+        device="cuda",
+        dtype=torch.int32,
+    ).unsqueeze(0)
+    scale = head_dim ** -0.5
+    native = flash_attn_with_kvcache(
+        q,
+        k_cache,
+        v_cache,
+        cache_seqlens=torch.tensor(
+            [total_len],
+            device="cuda",
+            dtype=torch.int32,
+        ),
+        block_table=block_table,
+        softmax_scale=scale,
+        causal=True,
+    )
+    oracle_rows = []
+    for query_index in range(query_len):
+        oracle_rows.append(
+            flash_attn_with_kvcache(
+                q[:, query_index:query_index + 1],
+                k_cache,
+                v_cache,
+                cache_seqlens=torch.tensor(
+                    [prefix_len + query_index + 1],
+                    device="cuda",
+                    dtype=torch.int32,
+                ),
+                block_table=block_table,
+                softmax_scale=scale,
+                causal=True,
+            )
+        )
+    oracle = torch.cat(oracle_rows, dim=1)
+    tolerance = _capability_tolerance(spec["dtype"])
+    output_match = torch.allclose(
+        native,
+        oracle,
+        rtol=tolerance["logits_rtol"],
+        atol=tolerance["logits_atol"],
+    )
+    max_output_abs_error = float(
+        (native.float() - oracle.float()).abs().max().item()
+    )
+
+    future_row_masked = True
+    if query_len > 1:
+        perturbed_k = k_cache.clone()
+        perturbed_v = v_cache.clone()
+        final_position = total_len - 1
+        final_block = final_position // block_size
+        final_offset = final_position % block_size
+        perturbed_k[final_block, final_offset].add_(7)
+        perturbed_v[final_block, final_offset].sub_(5)
+        perturbed = flash_attn_with_kvcache(
+            q,
+            perturbed_k,
+            perturbed_v,
+            cache_seqlens=torch.tensor(
+                [total_len],
+                device="cuda",
+                dtype=torch.int32,
+            ),
+            block_table=block_table,
+            softmax_scale=scale,
+            causal=True,
+        )
+        future_row_masked = torch.allclose(
+            native[:, :-1],
+            perturbed[:, :-1],
+            rtol=tolerance["logits_rtol"],
+            atol=tolerance["logits_atol"],
+        )
+    kv_match = (
+        torch.equal(
+            k_cache.reshape(-1, num_kv_heads, head_dim)[:total_len],
+            dense_k,
+        )
+        and torch.equal(
+            v_cache.reshape(-1, num_kv_heads, head_dim)[:total_len],
+            dense_v,
+        )
+    )
+    finite = bool(
+        torch.isfinite(native).all()
+        and torch.isfinite(oracle).all()
+        and torch.isfinite(k_cache).all()
+        and torch.isfinite(v_cache).all()
+    )
+    return {
+        **spec,
+        "output_match": bool(output_match),
+        "kv_match": bool(kv_match),
+        "future_row_masked": bool(future_row_masked),
+        "finite": finite,
+        "max_output_abs_error": max_output_abs_error,
+        "tolerance": tolerance,
+    }
+
+
+def run_capability_matrix(out_path: Path) -> dict:
+    import torch
+
+    rows = []
+    errors = []
+    bf16_supported = bool(torch.cuda.is_bf16_supported())
+    for spec in build_capability_specs(bf16_supported):
+        try:
+            rows.append(_run_capability_spec(spec))
+        except Exception as exc:
+            errors.append({
+                **spec,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            })
+    status = "PASS"
+    if errors or any(
+        not all(
+            row[field]
+            for field in (
+                "output_match",
+                "kv_match",
+                "future_row_masked",
+                "finite",
+            )
+        )
+        for row in rows
+    ):
+        status = "INCOMPLETE"
+    payload = {
+        "status": status,
+        "rows": rows,
+        "errors": errors,
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "gpu_name": torch.cuda.get_device_name(0),
+        "bf16_supported": bf16_supported,
+    }
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    )
+    return payload
+
+
 def _row_key(row: dict) -> tuple[str, str]:
     return str(row.get("case_id")), str(row.get("policy"))
 
@@ -276,6 +520,395 @@ def _median(values) -> float:
     if not values:
         raise ValueError("median requires evidence")
     return float(statistics.median(values))
+
+
+def _allocate_port_pair() -> tuple[int, int]:
+    sockets = []
+    ports = []
+    try:
+        for _ in range(2):
+            handle = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            handle.bind(("127.0.0.1", 0))
+            sockets.append(handle)
+            ports.append(int(handle.getsockname()[1]))
+    finally:
+        for handle in sockets:
+            handle.close()
+    return ports[0], ports[1]
+
+
+def _case_process(
+    *,
+    python_bin: str,
+    model_path: str,
+    policy: str,
+    case: dict,
+    out_path: Path,
+    log_dir: Path,
+) -> tuple[dict | None, dict]:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    case_path = out_path.with_suffix(".case.json")
+    case_path.write_text(
+        json.dumps(case, indent=2, sort_keys=True) + "\n"
+    )
+    last_process = None
+    for attempt in range(1, 4):
+        dist_port, master_port = _allocate_port_pair()
+        stdout_path = log_dir / (
+            f"{case['case_id']}.{policy}.attempt{attempt}.stdout.log"
+        )
+        stderr_path = log_dir / (
+            f"{case['case_id']}.{policy}.attempt{attempt}.stderr.log"
+        )
+        command = [
+            str(python_bin),
+            str(Path(__file__).with_name("native_verifier_oracle.py")),
+            "run-case",
+            "--policy",
+            policy,
+            "--case-json",
+            str(case_path),
+            "--out",
+            str(out_path),
+            "--model",
+            str(model_path),
+            "--continuation-steps",
+            str(case["continuation_steps"]),
+        ]
+        environment = os.environ.copy()
+        environment["TINYVLLM_DIST_PORT"] = str(dist_port)
+        environment["MASTER_PORT"] = str(master_port)
+        t0 = time.perf_counter()
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            env=environment,
+        )
+        elapsed_s = time.perf_counter() - t0
+        stdout_path.write_text(completed.stdout)
+        stderr_path.write_text(completed.stderr)
+        last_process = {
+            "returncode": int(completed.returncode),
+            "command": command,
+            "tinyvllm_dist_port": dist_port,
+            "master_port": master_port,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "elapsed_s": elapsed_s,
+            "attempt": attempt,
+        }
+        combined = completed.stdout + "\n" + completed.stderr
+        retryable = completed.returncode != 0 and (
+            "EADDRINUSE" in combined
+            or "address already in use" in combined.lower()
+        )
+        if completed.returncode == 0:
+            payload = json.loads(out_path.read_text())
+            return payload, last_process
+        if not retryable:
+            break
+    return None, last_process or {
+        "returncode": 1,
+        "tinyvllm_dist_port": -1,
+        "master_port": -1,
+    }
+
+
+def _materialize_case(
+    case_spec: dict,
+    probe: dict,
+    source_commit: str,
+    source_dirty: bool,
+) -> dict:
+    from native_verifier_oracle import construct_draft_tokens
+
+    targets = [int(token_id) for token_id in probe["target_tokens"]]
+    draft_tokens = construct_draft_tokens(
+        targets,
+        acceptance_case=case_spec["acceptance_case"],
+        vocab_size=int(probe["vocab_size"]),
+    )
+    prompt_tokens = int(probe["prompt_token_count"])
+    completion_at_history = int(case_spec["history_len"]) - prompt_tokens
+    max_tokens = (
+        completion_at_history + 2
+        if case_spec["output_budget_case"]
+        else completion_at_history
+        + len(draft_tokens)
+        + int(case_spec["continuation_steps"])
+        + 4
+    )
+    if case_spec["eos_case"]:
+        eos_token_id = int(probe["eos_token_id"])
+        accepted_prefix = 0
+        for token_id in targets:
+            if token_id == eos_token_id:
+                accepted_prefix += 1
+                break
+            accepted_prefix += 1
+        if eos_token_id not in targets:
+            raise ValueError(
+                f"{case_spec['case_id']} probe target stream has no real EOS"
+            )
+        draft_tokens = list(targets)
+    return {
+        **case_spec,
+        "draft_tokens": draft_tokens,
+        "max_tokens": max_tokens,
+        "ignore_eos": not bool(case_spec["eos_case"]),
+        "source_commit": source_commit,
+        "source_dirty": source_dirty,
+    }
+
+
+def _normalize_case_row(
+    payload: dict | None,
+    process: dict,
+    case_id: str,
+    policy: str,
+    source_commit: str,
+    source_dirty: bool,
+) -> dict:
+    if payload is None:
+        return {
+            "case_id": case_id,
+            "policy": policy,
+            "status": "INCOMPLETE",
+            "source_commit": source_commit,
+            "source_dirty": source_dirty,
+            "process": process,
+        }
+    row = dict(payload)
+    row["process"] = process
+    row["source_commit"] = source_commit
+    row["source_dirty"] = source_dirty
+    return row
+
+
+def _event_from_rows(
+    native_row: dict,
+    legacy_row: dict,
+) -> dict | None:
+    native_event = native_row.get("event")
+    legacy_event = legacy_row.get("event")
+    if not isinstance(native_event, dict) or not isinstance(
+        legacy_event,
+        dict,
+    ):
+        return None
+    return {
+        "case_id": native_row["case_id"],
+        "policy": "native",
+        "draft_len": int(native_event["draft_len"]),
+        "accepted_count": int(native_event["accepted_count"]),
+        "zero_accept_included_in_throughput": True,
+        "accepted_kv_rematerialization": native_event[
+            "accepted_kv_rematerialization"
+        ],
+        "accepted_kv_copy_calls": native_event[
+            "accepted_kv_copy_calls"
+        ],
+        "accepted_kv_replay_calls": native_event[
+            "accepted_kv_replay_calls"
+        ],
+        "target_forward_count": native_event["target_forward_count"],
+        "legacy_decode_replay_calls": legacy_event[
+            "accepted_kv_rematerialization"
+        ]["decode_calls"],
+        "legacy_total_target_forwards": (
+            int(legacy_event["target_forward_count"])
+            + int(
+                legacy_event["accepted_kv_rematerialization"][
+                    "decode_calls"
+                ]
+            )
+        ),
+        "native_total_target_forwards": int(
+            native_event["target_forward_count"]
+        ),
+        "verifier_commit_ms": float(
+            native_event["timing_ms"]["verify_commit_total_ms"]
+        ),
+        "legacy_verifier_commit_ms": float(
+            legacy_event["timing_ms"]["verify_commit_total_ms"]
+        ),
+        "eos_truncated": bool(native_event["eos_truncated"]),
+        "output_budget_truncated": bool(
+            native_event["output_budget_truncated"]
+        ),
+    }
+
+
+def run_gate(
+    *,
+    out_dir: Path,
+    python_bin: str,
+    model_path: str,
+    source_commit: str,
+    source_dirty: bool,
+    host: str,
+    run_tag: str,
+    preflight_path: Path,
+) -> dict:
+    from native_verifier_oracle import compare_native_and_oracle
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = out_dir / "logs"
+    raw_dir = out_dir / "raw"
+    preflight = json.loads(Path(preflight_path).read_text())
+    capability_path = out_dir / "capability.json"
+    capability = json.loads(capability_path.read_text())
+    manifest = build_manifest(
+        source_commit=source_commit,
+        source_dirty=source_dirty,
+        model_path=model_path,
+        model_identifier=preflight["model_identifier"],
+        host=host,
+        python_bin=python_bin,
+        torch_version=preflight["torch"],
+        cuda_version=preflight["cuda"],
+        flash_attn_version=preflight["flash_attn"],
+        gpu_name=preflight["gpu"],
+        bf16_supported=preflight["bf16_supported"],
+        run_tag=run_tag,
+    )
+    case_rows = []
+    event_rows = []
+    for case_spec in CASE_MATRIX:
+        probe_case = {
+            **case_spec,
+            "draft_tokens": [0] * int(case_spec["draft_len"]),
+            "max_tokens": 2048,
+            "ignore_eos": True,
+            "source_commit": source_commit,
+            "source_dirty": source_dirty,
+        }
+        probe, probe_process = _case_process(
+            python_bin=python_bin,
+            model_path=model_path,
+            policy="probe",
+            case=probe_case,
+            out_path=raw_dir / f"{case_spec['case_id']}.probe.json",
+            log_dir=log_dir,
+        )
+        manifest["process_port_pairs"].append({
+            "case_id": case_spec["case_id"],
+            "policy": "probe",
+            "tinyvllm_dist_port": probe_process[
+                "tinyvllm_dist_port"
+            ],
+            "master_port": probe_process["master_port"],
+        })
+        try:
+            if probe is None:
+                raise RuntimeError("probe process failed")
+            case = _materialize_case(
+                case_spec,
+                probe,
+                source_commit,
+                source_dirty,
+            )
+        except Exception as exc:
+            for policy in POLICIES:
+                case_rows.append({
+                    "case_id": case_spec["case_id"],
+                    "policy": policy,
+                    "status": "INCOMPLETE",
+                    "source_commit": source_commit,
+                    "source_dirty": source_dirty,
+                    "reason": str(exc),
+                    "process": probe_process,
+                })
+            continue
+
+        rows_by_policy = {}
+        for policy in POLICIES:
+            payload, process = _case_process(
+                python_bin=python_bin,
+                model_path=model_path,
+                policy=policy,
+                case=case,
+                out_path=raw_dir / (
+                    f"{case_spec['case_id']}.{policy}.json"
+                ),
+                log_dir=log_dir,
+            )
+            manifest["process_port_pairs"].append({
+                "case_id": case_spec["case_id"],
+                "policy": policy,
+                "tinyvllm_dist_port": process[
+                    "tinyvllm_dist_port"
+                ],
+                "master_port": process["master_port"],
+            })
+            row = _normalize_case_row(
+                payload,
+                process,
+                case_spec["case_id"],
+                policy,
+                source_commit,
+                source_dirty,
+            )
+            rows_by_policy[policy] = row
+            case_rows.append(row)
+        if (
+            rows_by_policy["native"].get("status") == "PASS"
+            and rows_by_policy["oracle"].get("status") == "PASS"
+        ):
+            rows_by_policy["oracle"]["comparison"] = (
+                compare_native_and_oracle(
+                    rows_by_policy["native"],
+                    rows_by_policy["oracle"],
+                )
+            )
+        event = _event_from_rows(
+            rows_by_policy["native"],
+            rows_by_policy["legacy_rematerialize"],
+        )
+        if event is not None:
+            event_rows.append(event)
+
+    summary = classify_gate(
+        manifest,
+        capability,
+        case_rows,
+        event_rows,
+    )
+    report = render_report(
+        manifest,
+        capability,
+        case_rows,
+        event_rows,
+        summary,
+    )
+    payloads = {
+        "capability.json": capability,
+        "case_rows.json": case_rows,
+        "event_rows.json": event_rows,
+        "summary.json": summary,
+    }
+    for name, payload in payloads.items():
+        (out_dir / name).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        )
+    (out_dir / "report.md").write_text(report)
+    manifest["artifact_hashes"] = {
+        name: sha256_file(out_dir / name)
+        for name in (
+            "capability.json",
+            "case_rows.json",
+            "event_rows.json",
+            "summary.json",
+            "report.md",
+        )
+    }
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    )
+    return summary
 
 
 def _incomplete(reasons: list[str], **extra) -> dict:
@@ -816,6 +1449,15 @@ def _parse_args():
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--out-dir", required=True)
+    run_parser.add_argument("--python-bin", required=True)
+    run_parser.add_argument("--model-path", required=True)
+    run_parser.add_argument("--source-commit", required=True)
+    run_parser.add_argument("--source-dirty", action="store_true")
+    run_parser.add_argument("--host", required=True)
+    run_parser.add_argument("--run-tag", required=True)
+    run_parser.add_argument("--preflight", required=True)
+    capability_parser = subparsers.add_parser("capability")
+    capability_parser.add_argument("--out", required=True)
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--out-dir", required=True)
     report_parser = subparsers.add_parser("render-report")
@@ -825,7 +1467,30 @@ def _parse_args():
 
 def main():
     args = _parse_args()
+    if args.command == "capability":
+        result = run_capability_matrix(Path(args.out))
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if result["status"] != "PASS":
+            raise SystemExit(2)
+        return
     out_dir = Path(args.out_dir)
+    if args.command == "run":
+        result = run_gate(
+            out_dir=out_dir,
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            source_commit=args.source_commit,
+            source_dirty=args.source_dirty,
+            host=args.host,
+            run_tag=args.run_tag,
+            preflight_path=Path(args.preflight),
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if result["classification"] == "INCOMPLETE":
+            raise SystemExit(2)
+        if result["classification"] == "NO_GO":
+            raise SystemExit(3)
+        return
     if args.command == "verify":
         result = verify_artifacts(out_dir)
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -852,9 +1517,7 @@ def main():
             end="",
         )
         return
-    raise SystemExit(
-        "run is implemented by the isolated remote runner in Task 8"
-    )
+    raise AssertionError(args.command)
 
 
 if __name__ == "__main__":
