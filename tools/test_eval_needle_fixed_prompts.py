@@ -29,7 +29,7 @@ sys.modules.setdefault("tinyvllm", tinyvllm_stub)
 eval_needle = types.ModuleType("eval_needle_under_test")
 eval_needle.__dict__["__file__"] = os.path.join(_THIS_DIR, "eval_needle.py")
 with open(os.path.join(_THIS_DIR, "eval_needle.py"), "r") as f:
-    source = "from __future__ import annotations\n" + f.read()
+    source = f.read()
 exec(compile(source, os.path.join(_THIS_DIR, "eval_needle.py"), "exec"), eval_needle.__dict__)
 
 
@@ -136,10 +136,24 @@ def test_build_llm_kwargs_uses_configured_tp_size():
         kv_cartridge_min_seq_len=2048,
         kv_cartridge_mode="uniform",
         am_compact_blocks=32,
+        am_compact_selector="highest",
         am_compact_min_seq_len=4096,
         am_compact_score_method="rms",
         am_compact_beta_bound=3.0,
         am_compact_ridge_lambda=1e-6,
+        am_omp_candidate_pool_size=0,
+        am_compact_cache_refresh_interval=0,
+        am_prefill_cache_ref_query_stride=8,
+        am_compact_num_clusters=1,
+        am_compact_route_top_k=1,
+        am_compact_num_key_spans=1,
+        am_compact_decode_refit=False,
+        am_compact_decode_refit_mode="selected",
+        am_compact_decode_refit_interval=1,
+        am_compact_skip_first_layers=0,
+        am_compact_skip_last_layers=0,
+        am_compact_enable_layers=None,
+        am_compact_layer_stride=1,
     )
 
     kwargs = eval_needle.build_llm_kwargs(args, init_top_k=16)
@@ -151,10 +165,13 @@ def test_build_llm_kwargs_uses_configured_tp_size():
     assert kwargs["kv_cartridge_min_seq_len"] == 2048
     assert kwargs["kv_cartridge_mode"] == "uniform"
     assert kwargs["am_compact_blocks"] == 32
+    assert kwargs["am_compact_selector"] == "highest"
     assert kwargs["am_compact_min_seq_len"] == 4096
     assert kwargs["am_compact_score_method"] == "rms"
     assert kwargs["am_compact_beta_bound"] == 3.0
     assert kwargs["am_compact_ridge_lambda"] == 1e-6
+    assert kwargs["am_compact_decode_refit"] is False
+    assert kwargs["am_compact_decode_refit_mode"] == "selected"
 
 
 def main():
