@@ -643,6 +643,26 @@ def test_clear_reusable_cache_preserves_live_block_metadata():
     assert block_manager.blocks[live_block_id].ref_count == 1
 
 
+def test_reusing_idle_block_removes_stale_hash_mapping():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=1, block_size=4)
+    first = make_seq([1, 2, 3, 4], max_tokens=1)
+    block_manager.allocate(first, publish_hashes=False, max_cached_tokens=0)
+    block_manager.commit_prefill(first, 0, len(first))
+    block_id = first.block_table[0]
+    first_hash = block_manager.blocks[block_id].hash
+    block_manager.deallocate(first)
+
+    second = make_seq([5, 6, 7, 8], max_tokens=1)
+    block_manager.allocate(second, publish_hashes=False, max_cached_tokens=0)
+
+    assert first_hash not in block_manager.hash_to_block_id
+    block_manager.commit_prefill(second, 0, len(second))
+    second_hash = block_manager.blocks[block_id].hash
+    assert second_hash != first_hash
+    assert block_manager.hash_to_block_id == {second_hash: block_id}
+
+
 def test_capacity_pressure_never_returns_live_shared_block():
     reset_sequence_state()
     block_manager = BlockManager(num_blocks=3, block_size=4)
@@ -1405,6 +1425,7 @@ def main():
     test_estimate_admission_is_read_only_for_live_and_idle_hits()
     test_allocate_rejects_hash_collision_when_tokens_differ()
     test_clear_reusable_cache_preserves_live_block_metadata()
+    test_reusing_idle_block_removes_stale_hash_mapping()
     test_capacity_pressure_never_returns_live_shared_block()
     test_normal_prefill_publishes_only_after_postprocess()
     test_normal_prefill_does_not_reuse_prefix_created_in_same_batch()
