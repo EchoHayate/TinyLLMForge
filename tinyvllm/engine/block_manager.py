@@ -60,9 +60,9 @@ class BlockManager:
 
     # can_allocate 和 allocate 函数都是在prefill阶段调用
     # allocate, deallocate函数，都是针对一条 sequence 语句来说的
-    def can_allocate(self, seq: Sequence) -> bool:
+    def _reusable_prefix_block_ids(self, seq: Sequence) -> list[int]:
         max_cached_blocks = self.max_reusable_tokens(seq) // self.block_size
-        live_prefix_blocks = 0
+        block_ids = []
         h = -1
         for i in range(min(seq.num_blocks, max_cached_blocks)):
             token_ids = seq.block(i)
@@ -75,9 +75,21 @@ class BlockManager:
                 or self.blocks[block_id].token_ids != token_ids
             ):
                 break
-            if block_id in self.used_block_ids:
-                live_prefix_blocks += 1
+            block_ids.append(block_id)
+        return block_ids
+
+    def estimate_admission(self, seq: Sequence) -> tuple[int, int]:
+        reusable_block_ids = self._reusable_prefix_block_ids(seq)
+        live_prefix_blocks = sum(
+            block_id in self.used_block_ids
+            for block_id in reusable_block_ids
+        )
+        reusable_tokens = len(reusable_block_ids) * self.block_size
         required_free_blocks = seq.num_blocks - live_prefix_blocks
+        return reusable_tokens, required_free_blocks
+
+    def can_allocate(self, seq: Sequence) -> bool:
+        _, required_free_blocks = self.estimate_admission(seq)
         return len(self.free_block_ids) >= required_free_blocks
 
     def max_reusable_tokens(self, seq: Sequence) -> int:

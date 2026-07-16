@@ -93,7 +93,16 @@ class Scheduler:
         num_batched_tokens = 0
         while self.waiting and num_seqs < self.max_num_seqs:
             seq = self.waiting[0]                   # 这里不使用 popleft的原因是 waiting 队列不一定调度成功（如下if判断） 如果调度不成功 这个token就不在waiting队列里了
-            if num_batched_tokens + len(seq) > self.max_num_batched_tokens or not self.block_manager.can_allocate(seq):
+            reusable_tokens, required_free_blocks = (
+                self.block_manager.estimate_admission(seq)
+            )
+            prefill_tokens = len(seq) - reusable_tokens
+            if (
+                num_batched_tokens + prefill_tokens
+                > self.max_num_batched_tokens
+                or len(self.block_manager.free_block_ids)
+                < required_free_blocks
+            ):
                 break
             num_seqs += 1
             max_cached_tokens = (

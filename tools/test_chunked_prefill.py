@@ -518,6 +518,35 @@ def test_can_allocate_counts_idle_prefix_hits_as_free_block_requirement():
     assert block_manager.can_allocate(warm) is False
 
 
+def test_estimate_admission_is_read_only_for_live_and_idle_hits():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    source = make_seq(list(range(1, 9)), max_tokens=2)
+    block_manager.allocate(source, publish_hashes=False, max_cached_tokens=0)
+    block_manager.commit_prefill(source, 0, len(source))
+    source_blocks = list(source.block_table)
+
+    live_sharer = make_seq(list(range(1, 6)), max_tokens=2)
+    block_manager.allocate(
+        live_sharer,
+        publish_hashes=False,
+        max_cached_tokens=block_manager.max_reusable_tokens(live_sharer),
+    )
+    block_manager.deallocate(source)
+    assert source_blocks[0] in block_manager.used_block_ids
+    assert source_blocks[1] in block_manager.free_block_ids
+
+    warm = make_seq(list(range(1, 10)), max_tokens=1)
+    free_before = list(block_manager.free_block_ids)
+    refs_before = [block.ref_count for block in block_manager.blocks]
+
+    assert block_manager.estimate_admission(warm) == (8, 2)
+    assert list(block_manager.free_block_ids) == free_before
+    assert [block.ref_count for block in block_manager.blocks] == refs_before
+    assert warm.block_table == []
+    assert warm.num_cached_tokens == 0
+
+
 def test_allocate_rejects_hash_collision_when_tokens_differ():
     reset_sequence_state()
     block_manager = BlockManager(num_blocks=8, block_size=4)
@@ -538,6 +567,7 @@ def test_allocate_rejects_hash_collision_when_tokens_differ():
     )
     try:
         seq = make_seq([9, 8, 7, 6], max_tokens=1)
+        assert block_manager.estimate_admission(seq)[0] == 0
         block_manager.allocate(
             seq,
             publish_hashes=False,
@@ -715,6 +745,58 @@ def test_normal_prefill_warm_hit_reuses_only_complete_prefix_blocks():
     assert warm.prefill_chunk_start == 4
     assert warm.prefill_chunk_end == 8
     assert do_sample is True
+
+
+def test_normal_prefill_token_budget_counts_only_uncached_tokens():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+        max_num_seqs=3,
+        max_num_batched_tokens=10,
+        max_model_len=10,
+    ))
+    _publish_and_release(
+        scheduler.block_manager,
+        list(range(1, 9)),
+    )
+
+    warm_seqs = [
+        make_seq(list(range(1, 10)), max_tokens=1)
+        for _ in range(3)
+    ]
+    for seq in warm_seqs:
+        scheduler.add(seq)
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == warm_seqs
+    assert is_prefill is True
+    assert do_sample is True
+    assert [seq.num_cached_tokens for seq in seqs] == [8, 8, 8]
+    assert [seq.prefill_chunk_start for seq in seqs] == [8, 8, 8]
+    assert [seq.prefill_chunk_end for seq in seqs] == [9, 9, 9]
+
+
+def test_normal_prefill_token_budget_still_limits_cold_prompts():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+        max_num_seqs=3,
+        max_num_batched_tokens=10,
+        max_model_len=10,
+    ))
+    cold_seqs = [
+        make_seq(range(offset, offset + 5), max_tokens=1)
+        for offset in (0, 10, 20)
+    ]
+    for seq in cold_seqs:
+        scheduler.add(seq)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == cold_seqs[:2]
+    assert is_prefill is True
+    assert do_sample is True
+    assert list(scheduler.waiting) == cold_seqs[2:]
 
 
 def test_chunked_prefill_uses_same_sampleable_prefix_cap():
@@ -1290,6 +1372,7 @@ def main():
     test_allocate_reuses_only_blocks_before_sampleable_suffix()
     test_can_allocate_excludes_live_prefix_hits_from_free_block_requirement()
     test_can_allocate_counts_idle_prefix_hits_as_free_block_requirement()
+    test_estimate_admission_is_read_only_for_live_and_idle_hits()
     test_allocate_rejects_hash_collision_when_tokens_differ()
     test_clear_reusable_cache_preserves_live_block_metadata()
     test_capacity_pressure_never_returns_live_shared_block()
@@ -1297,6 +1380,8 @@ def main():
     test_normal_prefill_does_not_reuse_prefix_created_in_same_batch()
     test_normal_prefill_exact_block_warm_hit_recomputes_final_block()
     test_normal_prefill_warm_hit_reuses_only_complete_prefix_blocks()
+    test_normal_prefill_token_budget_counts_only_uncached_tokens()
+    test_normal_prefill_token_budget_still_limits_cold_prompts()
     test_chunked_prefill_uses_same_sampleable_prefix_cap()
     test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks()
     test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks()
