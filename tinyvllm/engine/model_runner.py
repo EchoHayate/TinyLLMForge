@@ -854,6 +854,38 @@ class ModelRunner:
         # 而 1 个缓存块能存 256 个 token，因此这个块的总元素数是：
         # 256（token数） × 32768（每个token的元素数） = 8388608 个元素
 
+    def snapshot_kv_slots(
+        self,
+        physical_slots: list[int],
+    ) -> dict[str, torch.Tensor]:
+        if self.config.kv_quant_bits != 0:
+            raise RuntimeError("KV snapshot requires FP KV")
+        if not physical_slots:
+            raise ValueError("KV snapshot requires at least one physical slot")
+        block_ids = torch.tensor(
+            [slot // self.block_size for slot in physical_slots],
+            device=self.kv_cache.device,
+            dtype=torch.long,
+        )
+        offsets = torch.tensor(
+            [slot % self.block_size for slot in physical_slots],
+            device=self.kv_cache.device,
+            dtype=torch.long,
+        )
+        keys = (
+            self.kv_cache[0, :, block_ids, offsets]
+            .detach()
+            .cpu()
+            .clone()
+        )
+        values = (
+            self.kv_cache[1, :, block_ids, offsets]
+            .detach()
+            .cpu()
+            .clone()
+        )
+        return {"keys": keys, "values": values}
+
     
     # 每个序列（seq）的block_table是一个列表，记录该序列在 KV Cache 中使用的块编号。
     def prepare_block_tables(self, seqs: list[Sequence]):

@@ -607,6 +607,22 @@ class _FakeLogits:
         assert dim == -1
         return _FakeArgmax(self.target_tokens)
 
+    def detach(self):
+        return self
+
+    def to(self, device=None, dtype=None):
+        assert device == "cpu"
+        return self
+
+    def float(self):
+        return self
+
+    def tolist(self):
+        return [
+            [float(token_id), float(token_id) + 0.25]
+            for token_id in self.target_tokens
+        ]
+
 
 class _NativeSequence:
     block_size = 4
@@ -692,6 +708,7 @@ class _NativeModelRunner:
         self.normal_decode_calls = 0
         self.spec_verify_calls = 0
         self.prepare_calls = []
+        self.snapshot_calls = []
 
     def _validate_spec_verify_compatibility(self, **kwargs):
         return None
@@ -745,6 +762,15 @@ class _NativeModelRunner:
         if self.fail_tail:
             raise RuntimeError("tail failure")
         return _FakeLogits(self.tail_targets)
+
+    def snapshot_kv_slots(self, physical_slots):
+        self.snapshot_calls.append(list(physical_slots))
+        return {
+            "keys": _FakeLogits(physical_slots),
+            "values": _FakeLogits(
+                [slot + 100 for slot in physical_slots]
+            ),
+        }
 
 
 def _native_verify_fixture(
@@ -817,6 +843,31 @@ def test_native_verify_commits_without_decode_rematerialization():
     assert event["accepted_kv_replay_calls"] == 0
     assert runner.normal_decode_calls == 1
     assert runner.spec_verify_calls == 1
+    assert runner.snapshot_calls == []
+
+
+def test_native_oracle_evidence_captures_tail_logits_and_final_slot_kv():
+    llm, seq, _, runner = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[5, 6],
+    )
+
+    event = verify_and_commit_block(
+        llm,
+        seq,
+        [4, 5, 6],
+        verifier_mode="native",
+        capture_oracle_evidence=True,
+    )
+
+    evidence = event["oracle_evidence"]
+    assert evidence["logits"] == [[5.0, 5.25], [6.0, 6.25]]
+    assert evidence["physical_slots"] == [3, 4]
+    assert evidence["kv"] == {
+        "keys": [[3.0, 3.25], [4.0, 4.25]],
+        "values": [[103.0, 103.25], [104.0, 104.25]],
+    }
+    assert runner.snapshot_calls == [[3, 4]]
 
 
 def test_native_k1_uses_first_target_without_tail_forward():
@@ -950,6 +1001,30 @@ def test_native_eos_and_output_budget_truncation_flags():
     assert budget_event["eos_truncated"] is False
     assert budget_event["output_budget_truncated"] is True
     assert budget_event["finished"] is True
+
+
+def test_native_oracle_evidence_can_defer_terminal_deallocation():
+    llm, seq, block_manager, _ = _native_verify_fixture(
+        first_target=4,
+        tail_targets=[99, 6],
+        eos=99,
+    )
+
+    event = verify_and_commit_block(
+        llm,
+        seq,
+        [4, 99, 6],
+        verifier_mode="native",
+        capture_oracle_evidence=True,
+        defer_finish_for_oracle_evidence=True,
+    )
+
+    assert event["accepted_tokens"] == [4, 99]
+    assert event["finished"] is False
+    assert event["finish_would_trigger"] is True
+    assert event["finish_deferred_for_oracle_evidence"] is True
+    assert block_manager.deallocate_calls == []
+    assert seq.block_table == [10]
 
 
 def test_native_commit_failure_reports_phase_and_releases_reservation():
@@ -1662,11 +1737,13 @@ def main():
     test_accepted_kv_rematerialization_uses_normal_decode_for_materialized_prefix()
     test_accepted_kv_rematerialization_skips_pending_only_token()
     test_native_verify_commits_without_decode_rematerialization()
+    test_native_oracle_evidence_captures_tail_logits_and_final_slot_kv()
     test_native_k1_uses_first_target_without_tail_forward()
     test_native_unsupported_mode_fails_before_reservation()
     test_native_tail_failure_releases_reservation_and_resets_context()
     test_native_acceptance_matrix_preserves_pending_token_lifecycle()
     test_native_eos_and_output_budget_truncation_flags()
+    test_native_oracle_evidence_can_defer_terminal_deallocation()
     test_native_commit_failure_reports_phase_and_releases_reservation()
     test_native_full_accept_commits_multiple_reserved_blocks()
     test_native_profile_args_require_supported_scope()

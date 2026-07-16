@@ -45,6 +45,28 @@ class FakeTensor:
         raise IndexError(dim)
 
 
+class FakeIndexedTensor:
+    def __init__(self, values, trace=None):
+        self.values = values
+        self.trace = [] if trace is None else trace
+
+    def __getitem__(self, index):
+        self.trace.append(("getitem", index))
+        return FakeIndexedTensor(("selected", index), self.trace)
+
+    def detach(self):
+        self.trace.append(("detach", None))
+        return self
+
+    def cpu(self):
+        self.trace.append(("cpu", None))
+        return self
+
+    def clone(self):
+        self.trace.append(("clone", None))
+        return FakeIndexedTensor(("cloned", self.values), self.trace)
+
+
 def _install_module(name: str, **attributes):
     module = types.ModuleType(name)
     for key, value in attributes.items():
@@ -75,6 +97,16 @@ def _load_model_runner_module():
         int64="int64",
         int32="int32",
         float32="float32",
+        long="long",
+    )
+    torch_module.tensor = (
+        lambda values, device=None, dtype=None: FakeIndexedTensor(
+            {
+                "values": list(values),
+                "device": device,
+                "dtype": dtype,
+            }
+        )
     )
     torch_module.inference_mode = lambda: (lambda function: function)
     distributed_module = _install_module("torch.distributed")
@@ -197,6 +229,53 @@ def test_prepare_spec_verify_installs_reference_context():
     assert current.block_tables.values == [[0]]
 
 
+def test_snapshot_kv_slots_uses_physical_block_and_offset_indices():
+    runner = make_runner()
+    runner.block_size = 4
+    runner.kv_cache = FakeIndexedTensor("kv-cache")
+    runner.kv_cache.device = "cuda:0"
+
+    snapshot = runner.snapshot_kv_slots([3, 4, 9])
+
+    assert set(snapshot) == {"keys", "values"}
+    key_index = runner.kv_cache.trace[0][1]
+    value_index = runner.kv_cache.trace[4][1]
+    assert key_index[0] == 0
+    assert key_index[1] == slice(None)
+    assert key_index[2].values["values"] == [0, 1, 2]
+    assert key_index[3].values["values"] == [3, 0, 1]
+    assert value_index[0] == 1
+    assert value_index[1] == slice(None)
+    assert value_index[2].values["values"] == [0, 1, 2]
+    assert value_index[3].values["values"] == [3, 0, 1]
+    assert runner.kv_cache.trace.count(("detach", None)) == 2
+    assert runner.kv_cache.trace.count(("cpu", None)) == 2
+    assert runner.kv_cache.trace.count(("clone", None)) == 2
+
+
+def test_snapshot_kv_slots_rejects_empty_or_quantized_requests():
+    runner = make_runner()
+    runner.kv_cache = FakeIndexedTensor("kv-cache")
+    runner.kv_cache.device = "cuda:0"
+
+    try:
+        runner.snapshot_kv_slots([])
+    except ValueError as exc:
+        assert "at least one" in str(exc)
+    else:
+        raise AssertionError("empty snapshot request must fail")
+
+    runner = make_runner(kv_quant_bits=4)
+    runner.kv_cache = FakeIndexedTensor("kv-cache")
+    runner.kv_cache.device = "cuda:0"
+    try:
+        runner.snapshot_kv_slots([0])
+    except RuntimeError as exc:
+        assert "FP KV" in str(exc)
+    else:
+        raise AssertionError("quantized KV snapshot must fail")
+
+
 def test_prepare_spec_verify_rejects_nonconsecutive_slots_before_upload():
     runner = make_runner()
     runner._list_to_cuda = lambda *args, **kwargs: (
@@ -308,6 +387,8 @@ def test_spec_verify_run_model_uses_eager_and_keeps_all_rows():
 def main():
     tests = (
         test_prepare_spec_verify_installs_reference_context,
+        test_snapshot_kv_slots_uses_physical_block_and_offset_indices,
+        test_snapshot_kv_slots_rejects_empty_or_quantized_requests,
         test_prepare_spec_verify_rejects_nonconsecutive_slots_before_upload,
         test_every_unsupported_feature_fails_closed,
         test_multi_sequence_nonlinear_and_nongreedy_fail,

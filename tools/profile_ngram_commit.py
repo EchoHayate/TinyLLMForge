@@ -132,6 +132,10 @@ def _empty_rematerialization_event() -> dict:
     }
 
 
+def _tensor_to_float_list(tensor):
+    return tensor.detach().to(device="cpu").float().tolist()
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=str, default=None)
@@ -648,6 +652,8 @@ def verify_and_commit_block(
     hidden_to_draft_adapter: str = "topk-stub",
     debug_hidden_to_draft_top_k: int = 3,
     verifier_mode: str = "legacy_rematerialize",
+    capture_oracle_evidence: bool = False,
+    defer_finish_for_oracle_evidence: bool = False,
 ) -> dict:
     """Verify a speculative draft block with the target model and commit accepted tokens.
 
@@ -664,6 +670,14 @@ def verify_and_commit_block(
         raise ValueError("verify_and_commit_block requires draft tokens")
     if verifier_mode not in ("legacy_rematerialize", "native"):
         raise ValueError(f"unsupported verifier_mode={verifier_mode}")
+    if capture_oracle_evidence and verifier_mode != "native":
+        raise ValueError(
+            "oracle evidence capture requires verifier_mode=native"
+        )
+    if defer_finish_for_oracle_evidence and not capture_oracle_evidence:
+        raise ValueError(
+            "deferred finish requires oracle evidence capture"
+        )
     if verifier_mode == "native":
         llm.model_runner._validate_spec_verify_compatibility(
             seq_count=1,
@@ -810,6 +824,7 @@ def verify_and_commit_block(
         phase = "tail_forward"
         hidden_debug = None
         hidden_to_draft_stub = None
+        oracle_evidence = None
         if query_len:
             if (
                 verifier_mode == "legacy_rematerialize"
@@ -842,8 +857,28 @@ def verify_and_commit_block(
                     ),
                 )
             tail_targets = [int(token_id) for token_id in logits.argmax(dim=-1).tolist()]
+            if capture_oracle_evidence:
+                kv_snapshot = llm.model_runner.snapshot_kv_slots(
+                    list(verifier_metadata.physical_slots)
+                )
+                oracle_evidence = {
+                    "logits": _tensor_to_float_list(logits),
+                    "physical_slots": list(
+                        verifier_metadata.physical_slots
+                    ),
+                    "kv": {
+                        name: _tensor_to_float_list(tensor)
+                        for name, tensor in kv_snapshot.items()
+                    },
+                }
         else:
             tail_targets = []
+            if capture_oracle_evidence:
+                oracle_evidence = {
+                    "logits": [],
+                    "physical_slots": [],
+                    "kv": {"keys": [], "values": []},
+                }
         cuda_sync_if_available()
         if (
             verifier_mode == "legacy_rematerialize"
@@ -902,7 +937,20 @@ def verify_and_commit_block(
 
         t0 = time.perf_counter()
         phase = "finish_check"
-        finished = _finish_if_needed(llm, seq, accepted_tokens)
+        finish_would_trigger = bool(accepted_tokens) and (
+            (
+                not seq.ignore_eos
+                and any(
+                    int(token_id) == int(llm.scheduler.eos)
+                    for token_id in accepted_tokens
+                )
+            )
+            or seq.num_completion_tokens >= seq.max_tokens
+        )
+        if defer_finish_for_oracle_evidence:
+            finished = False
+        else:
+            finished = _finish_if_needed(llm, seq, accepted_tokens)
         timing_ms["finish_check_ms"] = (time.perf_counter() - t0) * 1000.0
         timing_ms["verify_commit_total_ms"] = (time.perf_counter() - total_t0) * 1000.0
         event = {
@@ -928,10 +976,17 @@ def verify_and_commit_block(
             "num_tokens_after": seq.num_tokens,
             "last_token_after": int(seq.last_token),
             "finished": finished,
+            "finish_would_trigger": finish_would_trigger,
+            "finish_deferred_for_oracle_evidence": bool(
+                defer_finish_for_oracle_evidence
+                and finish_would_trigger
+            ),
             "timing_ms": timing_ms,
             "target_hidden_debug": hidden_debug,
             "hidden_to_draft_stub": hidden_to_draft_stub,
         }
+        if oracle_evidence is not None:
+            event["oracle_evidence"] = oracle_evidence
         if verifier_metadata is not None:
             event.update({
                 "input_tokens": list(verifier_metadata.input_tokens),
