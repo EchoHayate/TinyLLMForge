@@ -299,7 +299,7 @@ def run_correctness_cases(llm, repo_root: Path) -> list[dict]:
         cold = schedule_and_run_prefill(llm, [prompt])
         warm = schedule_and_run_prefill(llm, [prompt])
         row = _single_comparison_row(
-            f"repeated_prompt_{prompt_tokens}",
+            f"repeat_{prompt_tokens}",
             "warm",
             warm,
             cold,
@@ -340,7 +340,7 @@ def run_correctness_cases(llm, repo_root: Path) -> list[dict]:
     batch = schedule_and_run_prefill(llm, [prompt_p, prompt_q, prompt_p])
     batch_q_delta = compare_logits(batch["logits"][2], batch["logits"][1])
     p_first = _comparison_row(
-        "same_batch_p_q_p_first_p",
+        "same_batch_p_q_p_first",
         "same_batch",
         batch,
         0,
@@ -352,7 +352,7 @@ def run_correctness_cases(llm, repo_root: Path) -> list[dict]:
         },
     )
     q_middle = _comparison_row(
-        "same_batch_p_q_p_q",
+        "same_batch_p_q_p_middle",
         "same_batch",
         batch,
         1,
@@ -364,7 +364,7 @@ def run_correctness_cases(llm, repo_root: Path) -> list[dict]:
         },
     )
     p_third = _comparison_row(
-        "same_batch_p_q_p_third_p",
+        "same_batch_p_q_p",
         "same_batch",
         batch,
         2,
@@ -394,7 +394,7 @@ def run_correctness_cases(llm, repo_root: Path) -> list[dict]:
     schedule_and_run_prefill(llm, [producer])
     warm = schedule_and_run_prefill(llm, [consumer])
     warm_row = _single_comparison_row(
-        "shared_block_distinct_suffix",
+        "shared_prefix_different_suffix",
         "warm",
         warm,
         cold,
@@ -412,7 +412,7 @@ def run_correctness_cases(llm, repo_root: Path) -> list[dict]:
     block_manager.clear_reusable_cache()
     cleared = schedule_and_run_prefill(llm, [consumer])
     cleared_row = _single_comparison_row(
-        "cache_cleared_rerun",
+        "cache_cleared",
         "cache_cleared",
         cleared,
         cold,
