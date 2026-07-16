@@ -80,7 +80,7 @@ import json
 import sys
 from pathlib import Path
 
-from tools.profile_prefix_cache import audit_artifact_payloads
+from tools.profile_prefix_cache import audit_artifact_payloads, sha256_file
 
 root = Path(sys.argv[1])
 repetitions = int(sys.argv[2])
@@ -120,6 +120,12 @@ for path in (
     digest = manifest["source_sha256"].get(path, "")
     if len(digest) != 64:
         raise SystemExit(f"invalid source hash for {path}: {digest!r}")
+    local_digest = sha256_file(Path(path))
+    if digest != local_digest:
+        raise SystemExit(
+            f"source hash mismatch for {path}: "
+            f"manifest={digest} local={local_digest}"
+        )
 decision = summary.get("decision", {}).get("decision")
 if decision not in {"GO", "NO_GO"}:
     raise SystemExit(f"invalid gate decision: {decision!r}")

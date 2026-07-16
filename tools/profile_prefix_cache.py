@@ -147,6 +147,7 @@ def audit_artifact_payloads(
     performance_rows: list[dict],
     summary: dict,
     repetitions: int,
+    block_size: int = 256,
 ) -> list[str]:
     errors = []
     if summary.get("correctness_rows") != correctness_rows:
@@ -187,16 +188,36 @@ def audit_artifact_payloads(
         stored = stored_by_prefix.get(prefix)
         if stored is None:
             continue
+        suffix_values = {
+            int(row["suffix_tokens"])
+            for row in prefix_rows
+            if "suffix_tokens" in row
+        }
+        if len(suffix_values) != 1:
+            errors.append(
+                f"{prefix} raw rows have inconsistent suffix tokens: "
+                f"{sorted(suffix_values)}"
+            )
+            continue
+        suffix_tokens = suffix_values.pop()
+        expected_reusable = expected_shared_reusable_tokens(
+            prefix,
+            prefix + suffix_tokens,
+            block_size,
+        )
+        if int(stored["expected_reusable_tokens"]) != expected_reusable:
+            errors.append(
+                f"{prefix} expected reusable tokens "
+                f"{stored['expected_reusable_tokens']} != {expected_reusable}"
+            )
         summaries = {
             state: summarize_case_rows(rows)
             for state, rows in state_rows.items()
         }
         recomputed = {
             "shared_prefix_tokens": prefix,
-            "suffix_tokens": int(stored["suffix_tokens"]),
-            "expected_reusable_tokens": int(
-                stored["expected_reusable_tokens"]
-            ),
+            "suffix_tokens": suffix_tokens,
+            "expected_reusable_tokens": expected_reusable,
             "cold": summaries["cold"],
             "warm": summaries["warm"],
             "cache_cleared": summaries["cache_cleared"],

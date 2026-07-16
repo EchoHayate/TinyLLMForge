@@ -352,6 +352,7 @@ def test_audit_artifact_payloads_recomputes_raw_performance_rows():
                 "cached_tokens": cached_tokens,
                 "correct": True,
                 "shared_prefix_tokens": prefix,
+                "suffix_tokens": 300,
             }
             for state, ttft_ms, query_tokens, cached_tokens in (
                 ("cold", cold_ms, prefix + 300, 0),
@@ -402,6 +403,16 @@ def test_audit_artifact_payloads_recomputes_raw_performance_rows():
         repetitions=1,
     )
     assert any("raw rows" in error for error in errors)
+
+    summary["performance_cases"][1]["warm"]["median_ttft_ms"] = 15.0
+    summary["performance_cases"][1]["expected_reusable_tokens"] = 768
+    errors = audit_artifact_payloads(
+        correctness,
+        performance_rows,
+        summary,
+        repetitions=1,
+    )
+    assert any("expected reusable tokens" in error for error in errors)
 
 
 def main():
