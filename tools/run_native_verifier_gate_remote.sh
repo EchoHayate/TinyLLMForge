@@ -63,7 +63,8 @@ ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
    cd '${REMOTE_DIR}'; \
    tar -xzf source.tar.gz; \
    rm source.tar.gz; \
-   mkdir -p artifacts logs; \
+   mkdir -p artifacts logs '${REMOTE_DIR}/tmp'; \
+   TMPDIR='${REMOTE_DIR}/tmp' \
    CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
    PYTHONDONTWRITEBYTECODE=1 \
    PYTHONPATH='${REMOTE_DIR}' \
@@ -100,6 +101,7 @@ print(json.dumps({
     'tinyvllm_path': str(Path(tinyvllm.__file__).resolve()),
 }, indent=2, sort_keys=True))
 PY
+   TMPDIR='${REMOTE_DIR}/tmp' \
    CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
    PYTHONDONTWRITEBYTECODE=1 \
    PYTHONPATH='${REMOTE_DIR}' \
@@ -112,6 +114,7 @@ PY
      tools/native_verifier_oracle.py \
      tools/native_verifier_gate.py \
      tools/test_native_verifier_attention.py; \
+   TMPDIR='${REMOTE_DIR}/tmp' \
    CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
    PYTHONDONTWRITEBYTECODE=1 \
    PYTHONPATH='${REMOTE_DIR}' \
@@ -139,6 +142,7 @@ fi
 
 ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
   "set -euo pipefail; cd '${REMOTE_DIR}'; \
+   TMPDIR='${REMOTE_DIR}/tmp' \
    CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
    PYTHONDONTWRITEBYTECODE=1 \
    PYTHONPATH='${REMOTE_DIR}' \
