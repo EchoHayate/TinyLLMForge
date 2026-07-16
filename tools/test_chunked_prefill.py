@@ -193,6 +193,35 @@ def test_chunked_prefill_batches_multiple_short_final_prompts():
     assert list(scheduler.running) == [seq_a, seq_b]
 
 
+def test_chunked_prefill_batches_warm_prompt_by_uncached_tokens():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=2,
+        max_num_batched_tokens=10,
+        max_model_len=10,
+        max_num_prefill_tokens_per_step=4,
+    ))
+    _publish_and_release(
+        scheduler.block_manager,
+        list(range(1, 9)),
+    )
+    cold = make_seq([21, 22, 23, 24], max_tokens=1)
+    warm = make_seq(list(range(1, 10)), max_tokens=1)
+    scheduler.add(cold)
+    scheduler.add(warm)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [cold, warm]
+    assert is_prefill is True
+    assert do_sample is True
+    assert cold.prefill_chunk_start == 0
+    assert cold.prefill_chunk_end == 4
+    assert warm.num_cached_tokens == 8
+    assert warm.prefill_chunk_start == 8
+    assert warm.prefill_chunk_end == 9
+
+
 def test_decode_first_prioritizes_existing_running_sequence():
     reset_sequence_state()
     scheduler = Scheduler(make_config(
@@ -1358,6 +1387,7 @@ def main():
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
     test_chunked_prefill_batches_multiple_short_final_prompts()
+    test_chunked_prefill_batches_warm_prompt_by_uncached_tokens()
     test_decode_first_prioritizes_existing_running_sequence()
     test_add_rejects_request_beyond_max_model_len()
     test_add_rejects_prompt_beyond_logical_kv_capacity()

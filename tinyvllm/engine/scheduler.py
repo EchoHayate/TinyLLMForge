@@ -196,13 +196,21 @@ class Scheduler:
         num_batched_tokens = scheduled[0].prefill_chunk_end - scheduled[0].prefill_chunk_start
         while self.waiting and len(scheduled) < max_prefill_seqs:
             candidate = self.waiting[0]
-            # Conservative short-prompt batching: only admit prompts that finish
-            # in one chunk without relying on prefix-cache state discovered after allocation.
-            if len(candidate) > self.max_num_prefill_tokens_per_step:
+            reusable_tokens, required_free_blocks = (
+                self.block_manager.estimate_admission(candidate)
+            )
+            prefill_tokens = len(candidate) - reusable_tokens
+            # Conservative short-prompt batching: only admit prompts whose
+            # uncached suffix finishes in one chunk. Prefix state is read before
+            # allocation, and new hashes remain unpublished until postprocess.
+            if prefill_tokens > self.max_num_prefill_tokens_per_step:
                 break
-            if num_batched_tokens + len(candidate) > max_prefill_tokens:
+            if num_batched_tokens + prefill_tokens > max_prefill_tokens:
                 break
-            if not self.block_manager.can_allocate(candidate):
+            if (
+                len(self.block_manager.free_block_ids)
+                < required_free_blocks
+            ):
                 break
             seq = self.waiting.popleft()
             max_cached_tokens = (
