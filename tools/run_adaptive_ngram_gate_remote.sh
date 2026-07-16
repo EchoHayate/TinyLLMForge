@@ -14,6 +14,12 @@ RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)-$$}"
 REMOTE_DIR="${REMOTE_BASE}/${RUN_TAG}"
 LOCAL_OUT="${LOCAL_OUT:-${REPO_ROOT}/experiments/adaptive_ngram/${RUN_TAG}}"
 BASE_SEED="${BASE_SEED:-20260714}"
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/adaptive-ngram-sam.XXXXXX")"
+
+cleanup() {
+  rm -rf "${STAGING_DIR}"
+}
+trap cleanup EXIT
 
 SSH_CMD=(ssh)
 SCP_CMD=(scp)
@@ -38,12 +44,29 @@ case "${MODE}" in
     ;;
 esac
 
-SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain)" ]]; then
-  SOURCE_DIRTY=1
-else
-  SOURCE_DIRTY=0
-fi
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  "${REPO_ROOT}/tools/adaptive_ngram_gate.py" \
+  snapshot-source \
+  --repo-root "${REPO_ROOT}" \
+  --out-dir "${STAGING_DIR}" >/dev/null
+
+IFS=$'\t' read -r \
+  SOURCE_COMMIT SOURCE_DIRTY SOURCE_TREE_SHA256 SOURCE_PATCH_SHA256 < <(
+  python3 - "${STAGING_DIR}/source_evidence.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+evidence = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(
+    evidence["base_commit"],
+    1 if evidence["dirty"] else 0,
+    evidence["tree_sha256"],
+    evidence["patch_sha256"],
+    sep="\t",
+)
+PY
+)
 
 discover_model() {
   "${SSH_CMD[@]}" "${REMOTE_HOST}" "${REMOTE_PYTHON}" - <<'PY'
@@ -136,31 +159,131 @@ echo "[adaptive-ngram] host=${REMOTE_HOST}"
 echo "[adaptive-ngram] python=${REMOTE_PYTHON}"
 echo "[adaptive-ngram] model=${RESOLVED_MODEL_PATH}"
 echo "[adaptive-ngram] source_commit=${SOURCE_COMMIT} dirty=${SOURCE_DIRTY}"
+echo "[adaptive-ngram] source_tree_sha256=${SOURCE_TREE_SHA256}"
+echo "[adaptive-ngram] source_patch_sha256=${SOURCE_PATCH_SHA256}"
 echo "[adaptive-ngram] remote_dir=${REMOTE_DIR}"
 echo "[adaptive-ngram] local_out=${LOCAL_OUT}"
 
-"${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p '${REMOTE_DIR}/tools'"
-tar -C "${REPO_ROOT}" -cf - \
-  tinyvllm \
-  tools/draft_model_schema.py \
-  tools/profile_ngram_commit.py \
-  tools/adaptive_ngram_gate.py |
-  "${SSH_CMD[@]}" "${REMOTE_HOST}" "tar -C '${REMOTE_DIR}' -xf -"
-
 "${SSH_CMD[@]}" "${REMOTE_HOST}" \
-  "cd '${REMOTE_DIR}' && \
-   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH='${REMOTE_DIR}' \
-   '${REMOTE_PYTHON}' -m py_compile \
-     tinyvllm/speculative/ngram.py \
-     tools/profile_ngram_commit.py \
-     tools/adaptive_ngram_gate.py && \
-   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH='${REMOTE_DIR}' \
-   '${REMOTE_PYTHON}' tools/profile_ngram_commit.py --help >/dev/null && \
-   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH='${REMOTE_DIR}' \
-   '${REMOTE_PYTHON}' tools/adaptive_ngram_gate.py --help >/dev/null"
+  "mkdir -p '${REMOTE_DIR}/source'"
+tar -C "${STAGING_DIR}/source" -cf - . |
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" \
+    "tar -C '${REMOTE_DIR}/source' -xf -"
+"${SCP_CMD[@]}" \
+  "${STAGING_DIR}/source_evidence.json" \
+  "${STAGING_DIR}/source.patch" \
+  "${REMOTE_HOST}:${REMOTE_DIR}/"
+
+"${SSH_CMD[@]}" "${REMOTE_HOST}" bash -s -- \
+  "${REMOTE_DIR}" "${REMOTE_PYTHON}" <<'REMOTE_BASH'
+set -u
+
+remote_dir="$1"
+remote_python="$2"
+source_root="${remote_dir}/source"
+source_stdout="${remote_dir}/source_verify.stdout.log"
+source_stderr="${remote_dir}/source_verify.stderr.log"
+k1_stdout="${remote_dir}/k1_test.stdout.log"
+k1_stderr="${remote_dir}/k1_test.stderr.log"
+
+set +e
+{
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+    "${remote_python}" "${source_root}/tools/adaptive_ngram_gate.py" \
+      verify-source \
+      --source-root "${source_root}" \
+      --evidence "${remote_dir}/source_evidence.json" \
+      --patch "${remote_dir}/source.patch" &&
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+    "${remote_python}" -m py_compile \
+      "${source_root}/tinyvllm/speculative/ngram.py" \
+      "${source_root}/tools/profile_ngram_commit.py" \
+      "${source_root}/tools/adaptive_ngram_gate.py" \
+      "${source_root}/tools/test_ngram_speculative.py" &&
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+    "${remote_python}" "${source_root}/tools/profile_ngram_commit.py" \
+      --help >/dev/null &&
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+    "${remote_python}" "${source_root}/tools/adaptive_ngram_gate.py" \
+      --help >/dev/null
+} >"${source_stdout}" 2>"${source_stderr}"
+source_status=$?
+
+if [[ "${source_status}" == "0" ]]; then
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+    "${remote_python}" "${source_root}/tools/test_ngram_speculative.py" \
+      >"${k1_stdout}" 2>"${k1_stderr}"
+  k1_status=$?
+else
+  : >"${k1_stdout}"
+  printf 'skipped because source verification failed\n' >"${k1_stderr}"
+  k1_status=125
+fi
+
+"${remote_python}" - \
+  "${source_status}" "${k1_status}" \
+  "${source_stdout}" "${source_stderr}" \
+  "${k1_stdout}" "${k1_stderr}" \
+  "${remote_dir}/command_record.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    source_status,
+    k1_status,
+    source_stdout,
+    source_stderr,
+    k1_stdout,
+    k1_stderr,
+    output_path,
+) = sys.argv[1:]
+payload = {
+    "source_verify": {
+        "returncode": int(source_status),
+        "stdout": Path(source_stdout).read_text(
+            encoding="utf-8",
+            errors="replace",
+        ),
+        "stderr": Path(source_stderr).read_text(
+            encoding="utf-8",
+            errors="replace",
+        ),
+    },
+    "k1_test": {
+        "command": [
+            sys.executable,
+            "tools/test_ngram_speculative.py",
+        ],
+        "returncode": int(k1_status),
+        "stdout": Path(k1_stdout).read_text(
+            encoding="utf-8",
+            errors="replace",
+        ),
+        "stderr": Path(k1_stderr).read_text(
+            encoding="utf-8",
+            errors="replace",
+        ),
+    },
+}
+Path(output_path).write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+  "${remote_python}" "${source_root}/tools/adaptive_ngram_gate.py" \
+    write-source-preflight \
+    --source-root "${source_root}" \
+    --evidence "${remote_dir}/source_evidence.json" \
+    --patch "${remote_dir}/source.patch" \
+    --command-record "${remote_dir}/command_record.json" \
+    --out "${remote_dir}/source_preflight.json"
+REMOTE_BASH
 
 if [[ "${MODE}" == "preflight" ]]; then
-  echo "[adaptive-ngram] remote preflight passed"
+  echo "[adaptive-ngram] remote preflight passed source_tree_sha256=${SOURCE_TREE_SHA256}"
   exit 0
 fi
 
@@ -172,22 +295,22 @@ RUN_ARGS=(
   --model-path "${RESOLVED_MODEL_PATH}"
   --repetitions "${REPETITIONS}"
   --base-seed "${BASE_SEED}"
-  --source-commit "${SOURCE_COMMIT}"
+  --source-root "${REMOTE_DIR}/source"
+  --source-evidence "${REMOTE_DIR}/source_evidence.json"
+  --source-patch "${REMOTE_DIR}/source.patch"
+  --source-preflight "${REMOTE_DIR}/source_preflight.json"
   --host "${REMOTE_HOST}"
 )
-if [[ "${SOURCE_DIRTY}" == "1" ]]; then
-  RUN_ARGS+=(--source-dirty)
-fi
 if [[ "${RESUME:-0}" == "1" ]]; then
   RUN_ARGS+=(--resume)
 fi
 
 set +e
 "${SSH_CMD[@]}" "${REMOTE_HOST}" \
-  "cd '${REMOTE_DIR}' && \
+  "cd '${REMOTE_DIR}/source' && \
    CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
    PYTHONDONTWRITEBYTECODE=1 \
-   PYTHONPATH='${REMOTE_DIR}' \
+   PYTHONPATH='${REMOTE_DIR}/source' \
    '${REMOTE_PYTHON}' tools/adaptive_ngram_gate.py $(printf "'%s' " "${RUN_ARGS[@]}")"
 REMOTE_RUN_STATUS=$?
 set -e

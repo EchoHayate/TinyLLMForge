@@ -501,6 +501,45 @@ def validate_source_preflight(preflight: dict, evidence: dict) -> None:
         raise ValueError("invalid remote K1 test command")
 
 
+def write_source_preflight(
+    source_root: Path,
+    evidence_path: Path,
+    patch_path: Path,
+    command_record_path: Path,
+    out_path: Path,
+) -> dict:
+    evidence = _load_json(evidence_path)
+    validation = validate_source_snapshot(
+        source_root,
+        evidence,
+        patch_path,
+    )
+    command_record = _load_json(command_record_path)
+    preflight = {
+        "schema_version": 1,
+        "source_tree_sha256": validation["source_tree_sha256"],
+    }
+    for field in ("source_verify", "k1_test"):
+        record = command_record.get(field)
+        if not isinstance(record, dict):
+            raise ValueError(f"missing {field} command record")
+        stdout = record.get("stdout")
+        stderr = record.get("stderr")
+        if not isinstance(stdout, str) or not isinstance(stderr, str):
+            raise ValueError(f"invalid {field} command output")
+        canonical = {
+            "returncode": record.get("returncode"),
+            "stdout_sha256": sha256_text(stdout),
+            "stderr_sha256": sha256_text(stderr),
+        }
+        if field == "k1_test":
+            canonical["command"] = record.get("command")
+        preflight[field] = canonical
+    validate_source_preflight(preflight, evidence)
+    _atomic_write_json(out_path, preflight)
+    return preflight
+
+
 PROMPT_BANK = tuple(
     {**item, "prompt_sha256": sha256_text(item["prompt"])}
     for item in PROMPT_BANK_BASE
@@ -1373,6 +1412,13 @@ def parse_args():
     source_verify_parser.add_argument("--evidence", type=Path, required=True)
     source_verify_parser.add_argument("--patch", type=Path, required=True)
 
+    preflight_parser = subparsers.add_parser("write-source-preflight")
+    preflight_parser.add_argument("--source-root", type=Path, required=True)
+    preflight_parser.add_argument("--evidence", type=Path, required=True)
+    preflight_parser.add_argument("--patch", type=Path, required=True)
+    preflight_parser.add_argument("--command-record", type=Path, required=True)
+    preflight_parser.add_argument("--out", type=Path, required=True)
+
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--out-dir", type=Path, required=True)
 
@@ -1408,6 +1454,14 @@ def main():
             args.source_root,
             evidence,
             args.patch,
+        )
+    elif args.command == "write-source-preflight":
+        summary = write_source_preflight(
+            args.source_root,
+            args.evidence,
+            args.patch,
+            args.command_record,
+            args.out,
         )
     elif args.command == "summarize":
         manifest = _load_json(args.out_dir / "manifest.json")

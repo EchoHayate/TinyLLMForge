@@ -830,6 +830,117 @@ def test_validate_materialized_source_artifacts_rejects_resume_tampering():
         temporary.cleanup()
 
 
+def test_write_source_preflight_records_verified_tree_and_k1_test():
+    temporary, root = _source_repo()
+    try:
+        snapshot = root / "snapshot"
+        evidence = gate.build_source_evidence(root, snapshot)
+        command_record = root / "commands.json"
+        command_record.write_text(
+            json.dumps({
+                "source_verify": {
+                    "returncode": 0,
+                    "stdout": "source verified\n",
+                    "stderr": "",
+                },
+                "k1_test": {
+                    "command": [
+                        "python3",
+                        "tools/test_ngram_speculative.py",
+                    ],
+                    "returncode": 0,
+                    "stdout": "ngram speculative tests passed\n",
+                    "stderr": "",
+                },
+            }),
+            encoding="utf-8",
+        )
+        output = root / "source_preflight.json"
+        preflight = gate.write_source_preflight(
+            snapshot / "source",
+            snapshot / "source_evidence.json",
+            snapshot / "source.patch",
+            command_record,
+            output,
+        )
+
+        gate.validate_source_preflight(preflight, evidence)
+        assert json.loads(output.read_text(encoding="utf-8")) == preflight
+        assert preflight["k1_test"]["stdout_sha256"] == gate.sha256_text(
+            "ngram speculative tests passed\n",
+        )
+        assert "stdout" not in preflight["k1_test"]
+        assert "stderr" not in preflight["k1_test"]
+    finally:
+        temporary.cleanup()
+
+
+def test_write_source_preflight_rejects_failed_commands():
+    for field, expected in (
+        ("source_verify", "remote source verification failed"),
+        ("k1_test", "remote K1 test failed"),
+    ):
+        temporary, root = _source_repo()
+        try:
+            snapshot = root / "snapshot"
+            gate.build_source_evidence(root, snapshot)
+            commands = {
+                "source_verify": {
+                    "returncode": 0,
+                    "stdout": "source verified\n",
+                    "stderr": "",
+                },
+                "k1_test": {
+                    "command": [
+                        "python3",
+                        "tools/test_ngram_speculative.py",
+                    ],
+                    "returncode": 0,
+                    "stdout": "ngram speculative tests passed\n",
+                    "stderr": "",
+                },
+            }
+            commands[field]["returncode"] = 1
+            command_record = root / "commands.json"
+            command_record.write_text(
+                json.dumps(commands),
+                encoding="utf-8",
+            )
+            try:
+                gate.write_source_preflight(
+                    snapshot / "source",
+                    snapshot / "source_evidence.json",
+                    snapshot / "source.patch",
+                    command_record,
+                    root / "source_preflight.json",
+                )
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(expected)
+        finally:
+            temporary.cleanup()
+
+
+def test_remote_runner_uses_one_auditable_staged_source_snapshot():
+    runner = (
+        Path(_REPO_ROOT) / "tools" / "run_adaptive_ngram_gate_remote.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "snapshot-source" in runner
+    assert 'tar -C "${STAGING_DIR}/source" -cf - .' in runner
+    assert 'tar -C "${REPO_ROOT}" -cf -' not in runner
+    assert "readarray" not in runner
+    assert "tools/test_ngram_speculative.py" in runner
+    assert "write-source-preflight" in runner
+    assert '--source-root "${REMOTE_DIR}/source"' in runner
+    assert '--source-evidence "${REMOTE_DIR}/source_evidence.json"' in runner
+    assert '--source-patch "${REMOTE_DIR}/source.patch"' in runner
+    assert '--source-preflight "${REMOTE_DIR}/source_preflight.json"' in runner
+    assert "--source-commit" not in runner
+    assert "--source-dirty" not in runner
+
+
 def main():
     test_prompt_bank_has_four_stable_single_sequence_classes()
     test_build_run_specs_is_complete_unique_and_deterministic()
@@ -854,6 +965,9 @@ def main():
     test_verify_artifacts_reconstructs_recorded_source()
     test_verify_artifacts_rejects_source_patch_and_preflight_tampering()
     test_validate_materialized_source_artifacts_rejects_resume_tampering()
+    test_write_source_preflight_records_verified_tree_and_k1_test()
+    test_write_source_preflight_rejects_failed_commands()
+    test_remote_runner_uses_one_auditable_staged_source_snapshot()
     print("adaptive ngram gate tests passed")
 
 
