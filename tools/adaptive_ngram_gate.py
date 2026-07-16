@@ -389,6 +389,11 @@ def reconstruct_source_snapshot(
 def build_source_evidence(repo_root: Path, out_dir: Path) -> dict:
     repo_root = repo_root.resolve()
     out_dir = out_dir.resolve()
+    if out_dir.exists():
+        if not out_dir.is_dir() or any(out_dir.iterdir()):
+            raise ValueError("source evidence output directory is not empty")
+    else:
+        out_dir.mkdir(parents=True)
     base_commit = _checked_git(repo_root, "rev-parse", "HEAD").decode().strip()
     if re.fullmatch(r"[0-9a-f]{40}", base_commit) is None:
         raise ValueError("git HEAD did not resolve to a full commit")
@@ -433,7 +438,6 @@ def build_source_evidence(repo_root: Path, out_dir: Path) -> dict:
         )
 
     relative_paths = expand_owned_source_paths(repo_root)
-    out_dir.mkdir(parents=True, exist_ok=False)
     staged_source = out_dir / "source"
     for relative_path in relative_paths:
         destination = staged_source / relative_path

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,8 +38,26 @@ def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
     )
 
 
-def _source_repo() -> tuple[tempfile.TemporaryDirectory, Path]:
-    temporary = tempfile.TemporaryDirectory()
+class _RetryingTemporaryDirectory:
+    def __init__(self):
+        self.name = tempfile.mkdtemp()
+
+    def cleanup(self) -> None:
+        last_error = None
+        for _ in range(20):
+            try:
+                shutil.rmtree(self.name)
+                return
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                last_error = exc
+                time.sleep(0.01)
+        raise last_error
+
+
+def _source_repo() -> tuple[_RetryingTemporaryDirectory, Path]:
+    temporary = _RetryingTemporaryDirectory()
     root = Path(temporary.name)
     (root / "tinyvllm").mkdir()
     (root / "tinyvllm" / "__init__.py").write_text(
@@ -507,6 +526,29 @@ def test_source_evidence_clean_tree_uses_empty_patch():
         temporary.cleanup()
 
 
+def test_source_evidence_accepts_existing_empty_staging_directory():
+    temporary, root = _source_repo()
+    try:
+        out_dir = root / "snapshot"
+        out_dir.mkdir()
+        evidence = gate.build_source_evidence(root, out_dir)
+        assert evidence["dirty"] is False
+        assert (out_dir / "source_evidence.json").is_file()
+        shutil.rmtree(out_dir)
+
+        nonempty = root / "nonempty"
+        nonempty.mkdir()
+        (nonempty / "unexpected").write_text("x", encoding="utf-8")
+        try:
+            gate.build_source_evidence(root, nonempty)
+        except ValueError as exc:
+            assert "source evidence output directory is not empty" in str(exc)
+        else:
+            raise AssertionError("non-empty staging directory must fail")
+    finally:
+        temporary.cleanup()
+
+
 def test_source_evidence_rejects_untracked_owned_file():
     temporary, root = _source_repo()
     try:
@@ -933,6 +975,7 @@ def test_remote_runner_uses_one_auditable_staged_source_snapshot():
     assert "readarray" not in runner
     assert "tools/test_ngram_speculative.py" in runner
     assert "write-source-preflight" in runner
+    assert 'PYTHONPYCACHEPREFIX="${remote_dir}/pycache"' in runner
     assert '--source-root "${REMOTE_DIR}/source"' in runner
     assert '--source-evidence "${REMOTE_DIR}/source_evidence.json"' in runner
     assert '--source-patch "${REMOTE_DIR}/source.patch"' in runner
@@ -956,6 +999,7 @@ def main():
     test_profiler_command_forces_fixed_length_greedy_measurement()
     test_source_evidence_reconstructs_dirty_owned_files()
     test_source_evidence_clean_tree_uses_empty_patch()
+    test_source_evidence_accepts_existing_empty_staging_directory()
     test_source_evidence_rejects_untracked_owned_file()
     test_validate_source_snapshot_rejects_changed_missing_and_extra_files()
     test_validate_source_snapshot_rejects_patch_and_tree_tampering()

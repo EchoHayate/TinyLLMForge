@@ -188,29 +188,34 @@ k1_stderr="${remote_dir}/k1_test.stderr.log"
 
 set +e
 {
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="${remote_dir}/pycache" \
+    PYTHONPATH="${source_root}" \
     "${remote_python}" "${source_root}/tools/adaptive_ngram_gate.py" \
       verify-source \
       --source-root "${source_root}" \
       --evidence "${remote_dir}/source_evidence.json" \
       --patch "${remote_dir}/source.patch" &&
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="${remote_dir}/pycache" \
+    PYTHONPATH="${source_root}" \
     "${remote_python}" -m py_compile \
       "${source_root}/tinyvllm/speculative/ngram.py" \
       "${source_root}/tools/profile_ngram_commit.py" \
       "${source_root}/tools/adaptive_ngram_gate.py" \
       "${source_root}/tools/test_ngram_speculative.py" &&
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="${remote_dir}/pycache" \
+    PYTHONPATH="${source_root}" \
     "${remote_python}" "${source_root}/tools/profile_ngram_commit.py" \
       --help >/dev/null &&
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="${remote_dir}/pycache" \
+    PYTHONPATH="${source_root}" \
     "${remote_python}" "${source_root}/tools/adaptive_ngram_gate.py" \
       --help >/dev/null
 } >"${source_stdout}" 2>"${source_stderr}"
 source_status=$?
 
 if [[ "${source_status}" == "0" ]]; then
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="${remote_dir}/pycache" \
+    PYTHONPATH="${source_root}" \
     "${remote_python}" "${source_root}/tools/test_ngram_speculative.py" \
       >"${k1_stdout}" 2>"${k1_stderr}"
   k1_status=$?
@@ -272,7 +277,8 @@ Path(output_path).write_text(
 )
 PY
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${source_root}" \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="${remote_dir}/pycache" \
+  PYTHONPATH="${source_root}" \
   "${remote_python}" "${source_root}/tools/adaptive_ngram_gate.py" \
     write-source-preflight \
     --source-root "${source_root}" \
