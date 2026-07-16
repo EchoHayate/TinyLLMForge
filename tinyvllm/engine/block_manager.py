@@ -61,7 +61,24 @@ class BlockManager:
     # can_allocate 和 allocate 函数都是在prefill阶段调用
     # allocate, deallocate函数，都是针对一条 sequence 语句来说的
     def can_allocate(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= seq.num_blocks
+        max_cached_blocks = self.max_reusable_tokens(seq) // self.block_size
+        live_prefix_blocks = 0
+        h = -1
+        for i in range(min(seq.num_blocks, max_cached_blocks)):
+            token_ids = seq.block(i)
+            if len(token_ids) != self.block_size:
+                break
+            h = self.compute_hash(token_ids, h)
+            block_id = self.hash_to_block_id.get(h, -1)
+            if (
+                block_id == -1
+                or self.blocks[block_id].token_ids != token_ids
+            ):
+                break
+            if block_id in self.used_block_ids:
+                live_prefix_blocks += 1
+        required_free_blocks = seq.num_blocks - live_prefix_blocks
+        return len(self.free_block_ids) >= required_free_blocks
 
     def max_reusable_tokens(self, seq: Sequence) -> int:
         """Return the full-block prefix cap that leaves one query token."""

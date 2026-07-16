@@ -479,6 +479,45 @@ def test_allocate_reuses_only_blocks_before_sampleable_suffix():
     assert seq.block_table[1] != cached_blocks[1]
 
 
+def test_can_allocate_excludes_live_prefix_hits_from_free_block_requirement():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=3, block_size=4)
+    live = make_seq(list(range(1, 9)), max_tokens=2)
+    block_manager.allocate(live, publish_hashes=False, max_cached_tokens=0)
+    block_manager.commit_prefill(live, 0, len(live))
+
+    warm = make_seq(list(range(1, 10)), max_tokens=1)
+    assert len(block_manager.free_block_ids) == 1
+    assert warm.num_blocks == 3
+    assert block_manager.max_reusable_tokens(warm) == 8
+    assert block_manager.can_allocate(warm) is True
+    block_manager.allocate(
+        warm,
+        publish_hashes=False,
+        max_cached_tokens=block_manager.max_reusable_tokens(warm),
+    )
+    assert warm.num_cached_tokens == 8
+    assert len(block_manager.free_block_ids) == 0
+
+
+def test_can_allocate_counts_idle_prefix_hits_as_free_block_requirement():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=3, block_size=4)
+    _publish_and_release(block_manager, list(range(1, 9)))
+
+    unrelated_live = make_seq([21, 22, 23, 24], max_tokens=2)
+    block_manager.allocate(
+        unrelated_live,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+
+    warm = make_seq(list(range(1, 10)), max_tokens=1)
+    assert len(block_manager.free_block_ids) == 2
+    assert warm.num_blocks == 3
+    assert block_manager.can_allocate(warm) is False
+
+
 def test_allocate_rejects_hash_collision_when_tokens_differ():
     reset_sequence_state()
     block_manager = BlockManager(num_blocks=8, block_size=4)
@@ -1249,6 +1288,8 @@ def main():
     test_max_reusable_tokens_keeps_one_sampleable_token()
     test_allocate_caps_exact_block_aligned_cache_hit()
     test_allocate_reuses_only_blocks_before_sampleable_suffix()
+    test_can_allocate_excludes_live_prefix_hits_from_free_block_requirement()
+    test_can_allocate_counts_idle_prefix_hits_as_free_block_requirement()
     test_allocate_rejects_hash_collision_when_tokens_differ()
     test_clear_reusable_cache_preserves_live_block_metadata()
     test_capacity_pressure_never_returns_live_shared_block()
