@@ -19,8 +19,14 @@ def test_remote_runner_uses_run_local_tmpdir():
     assert SCRIPT.count(f"TMPDIR='{remote_tmp}'") >= 2
 
 
+def test_remote_runner_uses_scp_control_path_option():
+    assert 'SCP_ARGS+=(-o "ControlPath=${CONTROL_SOCKET}")' in SCRIPT
+    assert SCRIPT.count('scp "${SCP_ARGS[@]}"') >= 2
+
+
 def main():
     test_remote_runner_uses_run_local_tmpdir()
+    test_remote_runner_uses_scp_control_path_option()
     print("native verifier remote runner tests passed")
 
 

@@ -23,8 +23,10 @@ case "${MODE}" in
 esac
 
 SSH_ARGS=(-o BatchMode=yes)
+SCP_ARGS=(-o BatchMode=yes)
 if [[ -S "${CONTROL_SOCKET}" ]]; then
   SSH_ARGS+=(-S "${CONTROL_SOCKET}")
+  SCP_ARGS+=(-o "ControlPath=${CONTROL_SOCKET}")
 fi
 
 SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
@@ -54,7 +56,7 @@ ssh "${SSH_ARGS[@]}" "${REMOTE_HOST}" \
    test -f '${MODEL_PATH}/config.json'; \
    mkdir -p '${REMOTE_DIR}'; \
    test -z \"\$(find '${REMOTE_DIR}' -mindepth 1 -maxdepth 1 -print -quit)\""
-scp "${SSH_ARGS[@]}" \
+scp "${SCP_ARGS[@]}" \
   "${ARCHIVE}" \
   "${REMOTE_HOST}:${REMOTE_DIR}/source.tar.gz"
 
@@ -127,7 +129,7 @@ PY
 
 mkdir -p "${LOCAL_OUT}"
 for file in preflight.json capability.json; do
-  scp "${SSH_ARGS[@]}" \
+  scp "${SCP_ARGS[@]}" \
     "${REMOTE_HOST}:${REMOTE_DIR}/artifacts/${file}" \
     "${LOCAL_OUT}/${file}"
 done
@@ -165,7 +167,7 @@ CANONICAL_FILES=(
   report.md
 )
 for file in "${CANONICAL_FILES[@]}"; do
-  scp "${SSH_ARGS[@]}" \
+  scp "${SCP_ARGS[@]}" \
     "${REMOTE_HOST}:${REMOTE_DIR}/artifacts/${file}" \
     "${LOCAL_OUT}/${file}"
 done
