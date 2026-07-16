@@ -14,6 +14,7 @@
   - `662b286 fix(apc): preserve duplicate prefix mappings`
   - `14309ba feat(apc): gate warm batch admission`
   - `6632818 fix(apc): isolate cold batch cache state`
+  - `be7e697 test(apc): reject invalid batch isolation artifacts`
 - 修改：
   - `BlockManager.can_allocate()` 现在只从请求的 free-block 需求中扣除
     完整、token 校验通过且仍在 `used_block_ids` 中的 live prefix blocks。
@@ -85,6 +86,8 @@ APC canonical gate 已扩展 warm-batch evidence：
 - raw row 新增 `cache_isolation_between_batches`；artifact audit 强制
   cold/cache-cleared 为 `true`、warm 为 `false`，因此旧的污染 artifact
   不能通过 canonical 重算。
+- `be7e697` 增加显式负例：cold 错标为未隔离、或 warm 错标为隔离时，
+  `audit_batch_artifact_payloads()` 都必须拒绝 raw→summary 不一致。
 
 官方设计对照后的边界：
 
