@@ -2,6 +2,58 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-16 APC prefix-hit-aware admission
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- commit：`36788ad fix(apc): account for live prefix hits in admission`
+- 修改：
+  - `BlockManager.can_allocate()` 现在只从请求的 free-block 需求中扣除
+    完整、token 校验通过且仍在 `used_block_ids` 中的 live prefix blocks。
+  - idle cached blocks 仍位于 `free_block_ids`，重新激活会真实消耗 free block，
+    因此 admission 不会把 idle hit 错算成额外容量。
+  - 匹配遵守 sampleable suffix cap，并在 hash 命中后比较 token ids，避免
+    collision 或最后 sample token 被错误复用。
+- TDD 证据：
+  - 旧实现下 live-prefix admission 测试精确失败于
+    `assert block_manager.can_allocate(warm) is True`。
+  - 修复后 live-hit 场景可在 3-block prompt、仅 1 个 free block 时接入，
+    实际 `allocate()` 命中 8 cached tokens 并恰好消耗最后 1 个 free block。
+  - idle-hit 场景保守拒绝：3-block prompt、2 个 idle cached blocks、仅
+    2 个 free blocks 时仍需要 3 个 free-block activations。
+- 提交后 fresh local verification：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_profile_chunked_prefill.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_profile_prefix_cache.py
+python3 -m py_compile tinyvllm/engine/block_manager.py tools/test_chunked_prefill.py
+git diff --check
+```
+
+以上全部通过。尚未提交、仍等待远程 GPU gate 的 K1 改动继续隔离在：
+
+- `tools/profile_ngram_commit.py`
+- `tools/test_ngram_speculative.py`
+
+远程状态刷新：
+
+- `klist` 中 `sitian@BYTEDANCE.COM` 的
+  `host/jump-proxy-hl.byted.org`、`host/10.232.195.203` ticket 均过期。
+- `/tmp/ssh-sitian-10.232.195.203` ControlMaster socket 不存在。
+- `ssh -o BatchMode=yes sitian@10.232.195.203 ...` 仍失败：
+  `Connection closed by UNKNOWN port 65535`。
+
+认证恢复后的固定顺序：
+
+1. APC smoke：
+   `TAG=20260716-smoke REPETITIONS=1 WARMUP_REPETITIONS=1 tools/run_prefix_cache_gate_remote.sh`
+2. smoke artifact audit 全部通过后再跑 APC canonical：
+   `TAG=20260716 REPETITIONS=7 WARMUP_REPETITIONS=2 tools/run_prefix_cache_gate_remote.sh`
+3. 继续执行 K1 canonical gate；在此之前不得提交 K1 fast path 或声称性能达标。
+4. 没有 canonical APC GPU `summary.json` 前，不修改根 README 的最终
+   GO/NO_GO checkbox，也不填写最终 APC 指标。
+
 ## 2026-07-15 SAM drafter gate 最终状态
 
 - 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
