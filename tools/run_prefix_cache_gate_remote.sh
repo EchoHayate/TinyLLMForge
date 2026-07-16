@@ -20,9 +20,22 @@ MASTER_PORT_VALUE="${MASTER_PORT:-$((37000 + RANDOM % 12000))}"
 REPETITIONS="${REPETITIONS:-7}"
 WARMUP_REPETITIONS="${WARMUP_REPETITIONS:-2}"
 CONTROL_SOCKET="${CONTROL_SOCKET:-/tmp/ssh-sitian-10.232.195.203}"
+OWNED_SOURCE_FILES=(
+  tinyvllm/engine/block_manager.py
+  tinyvllm/engine/scheduler.py
+  tools/profile_prefix_cache.py
+  tools/test_profile_prefix_cache.py
+  tools/test_chunked_prefill.py
+)
 
 if [[ "${TINYVLLM_PORT}" == "${MASTER_PORT_VALUE}" ]]; then
   MASTER_PORT_VALUE=$((MASTER_PORT_VALUE + 1))
+fi
+
+if [[ -n "$(git status --porcelain -- "${OWNED_SOURCE_FILES[@]}")" ]]; then
+  echo "prefix cache gate requires committed APC source files" >&2
+  git status --short -- "${OWNED_SOURCE_FILES[@]}" >&2
+  exit 2
 fi
 
 SSH_ARGS=(-o BatchMode=yes)
