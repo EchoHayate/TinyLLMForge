@@ -409,6 +409,175 @@ def test_chunked_prefill_restores_reused_cached_block_metadata():
     assert seq.completion_token_ids == [77]
 
 
+def _publish_and_release(block_manager, token_ids):
+    seq = make_seq(token_ids, max_tokens=1)
+    block_manager.allocate(
+        seq,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_manager.commit_prefill(seq, 0, len(seq))
+    block_table = list(seq.block_table)
+    block_manager.deallocate(seq)
+    return block_table
+
+
+def test_max_reusable_tokens_keeps_one_sampleable_token():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=16, block_size=4)
+
+    expected = {
+        3: 0,
+        4: 0,
+        5: 4,
+        8: 4,
+        9: 8,
+    }
+    for prompt_tokens, reusable_tokens in expected.items():
+        seq = make_seq(range(prompt_tokens), max_tokens=1)
+        assert block_manager.max_reusable_tokens(seq) == reusable_tokens
+
+
+def test_allocate_caps_exact_block_aligned_cache_hit():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=16, block_size=4)
+    cached_blocks = _publish_and_release(
+        block_manager,
+        [1, 2, 3, 4],
+    )
+
+    seq = make_seq([1, 2, 3, 4], max_tokens=1)
+    block_manager.allocate(
+        seq,
+        publish_hashes=False,
+        max_cached_tokens=block_manager.max_reusable_tokens(seq),
+    )
+
+    assert seq.num_cached_tokens == 0
+    assert seq.num_computed_tokens == 0
+    assert seq.block_table[0] != cached_blocks[0]
+
+
+def test_allocate_reuses_only_blocks_before_sampleable_suffix():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=16, block_size=4)
+    cached_blocks = _publish_and_release(
+        block_manager,
+        list(range(1, 9)),
+    )
+
+    seq = make_seq(list(range(1, 9)), max_tokens=1)
+    block_manager.allocate(
+        seq,
+        publish_hashes=False,
+        max_cached_tokens=block_manager.max_reusable_tokens(seq),
+    )
+
+    assert seq.num_cached_tokens == 4
+    assert seq.num_computed_tokens == 4
+    assert seq.block_table[0] == cached_blocks[0]
+    assert seq.block_table[1] != cached_blocks[1]
+
+
+def test_allocate_rejects_hash_collision_when_tokens_differ():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    cached = make_seq([1, 2, 3, 4], max_tokens=1)
+    block_manager.allocate(
+        cached,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_manager.commit_prefill(cached, 0, len(cached))
+    cached_block = cached.block_table[0]
+    cached_hash = block_manager.blocks[cached_block].hash
+    block_manager.deallocate(cached)
+
+    original_compute_hash = block_manager.compute_hash
+    block_manager.compute_hash = (
+        lambda token_ids, prefix=-1: cached_hash
+    )
+    try:
+        seq = make_seq([9, 8, 7, 6], max_tokens=1)
+        block_manager.allocate(
+            seq,
+            publish_hashes=False,
+            max_cached_tokens=4,
+        )
+    finally:
+        block_manager.compute_hash = original_compute_hash
+
+    assert seq.num_cached_tokens == 0
+    assert seq.block_table[0] != cached_block
+
+
+def test_clear_reusable_cache_preserves_live_block_metadata():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    free_cached = make_seq([1, 2, 3, 4], max_tokens=1)
+    block_manager.allocate(
+        free_cached,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_manager.commit_prefill(free_cached, 0, len(free_cached))
+    free_block_id = free_cached.block_table[0]
+    block_manager.deallocate(free_cached)
+
+    live = make_seq([5, 6, 7, 8], max_tokens=2)
+    block_manager.allocate(
+        live,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_manager.commit_prefill(live, 0, len(live))
+    live_block_id = live.block_table[0]
+    live_hash = block_manager.blocks[live_block_id].hash
+    live_tokens = list(block_manager.blocks[live_block_id].token_ids)
+
+    cleared = block_manager.clear_reusable_cache()
+
+    assert cleared == 1
+    assert block_manager.blocks[free_block_id].hash == -1
+    assert block_manager.blocks[free_block_id].token_ids == []
+    assert block_manager.blocks[live_block_id].hash == live_hash
+    assert block_manager.blocks[live_block_id].token_ids == live_tokens
+    assert block_manager.blocks[live_block_id].ref_count == 1
+
+
+def test_capacity_pressure_never_returns_live_shared_block():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=3, block_size=4)
+    live = make_seq([1, 2, 3, 4], max_tokens=2)
+    block_manager.allocate(
+        live,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_manager.commit_prefill(live, 0, len(live))
+    live_block_id = live.block_table[0]
+
+    shared = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    block_manager.allocate(
+        shared,
+        publish_hashes=False,
+        max_cached_tokens=block_manager.max_reusable_tokens(shared),
+    )
+    assert shared.block_table[0] == live_block_id
+    assert block_manager.blocks[live_block_id].ref_count == 2
+
+    other = make_seq([9, 8, 7, 6], max_tokens=1)
+    block_manager.allocate(
+        other,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+
+    assert other.block_table[0] != live_block_id
+    assert live_block_id in block_manager.used_block_ids
+    assert live_block_id not in block_manager.free_block_ids
+
+
 def test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks():
     reset_sequence_state()
     block_manager = BlockManager(num_blocks=8, block_size=4)
@@ -960,6 +1129,12 @@ def main():
     test_short_prefill_batch_respects_sequence_and_token_limits()
     test_chunked_prefill_does_not_publish_future_block_hashes()
     test_chunked_prefill_restores_reused_cached_block_metadata()
+    test_max_reusable_tokens_keeps_one_sampleable_token()
+    test_allocate_caps_exact_block_aligned_cache_hit()
+    test_allocate_reuses_only_blocks_before_sampleable_suffix()
+    test_allocate_rejects_hash_collision_when_tokens_differ()
+    test_clear_reusable_cache_preserves_live_block_metadata()
+    test_capacity_pressure_never_returns_live_shared_block()
     test_commit_accepted_tokens_appends_sequence_and_releases_unused_blocks()
     test_commit_accepted_tokens_zero_accept_releases_all_reserved_blocks()
     test_commit_accepted_tokens_publishes_multiple_full_block_hashes()

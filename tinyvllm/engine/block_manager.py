@@ -1,4 +1,5 @@
 from collections import deque
+from typing import Optional
 import xxhash
 #[thinking] 这里是把token_ids转换成hash值 然后去做处理 这样做：用哈希处理 token_ids 能减轻 KV 缓存负担  有没有别的方式呢
 import numpy as np
@@ -62,16 +63,38 @@ class BlockManager:
     def can_allocate(self, seq: Sequence) -> bool:
         return len(self.free_block_ids) >= seq.num_blocks
 
+    def max_reusable_tokens(self, seq: Sequence) -> int:
+        """Return the full-block prefix cap that leaves one query token."""
+        if len(seq) <= 1:
+            return 0
+        return ((len(seq) - 1) // self.block_size) * self.block_size
+
     # allocate  blocks for the sequences, update the block table and hash table
-    def allocate(self, seq: Sequence, publish_hashes: bool = True):    
+    def allocate(
+        self,
+        seq: Sequence,
+        publish_hashes: bool = True,
+        max_cached_tokens: Optional[int] = None,
+    ):
         assert not seq.block_table
+        if max_cached_tokens is None:
+            max_cached_tokens = len(seq)
+        max_cached_tokens = max(
+            0,
+            min(int(max_cached_tokens), len(seq)),
+        )
+        max_cached_blocks = max_cached_tokens // self.block_size
         h = -1
         cache_miss = False
         for i in range(seq.num_blocks):
             token_ids = seq.block(i)     #token_ids：块中包含的 token 编号列表  核心作用是用于计算当前块的哈希值
             # 未填满的块（非完整块）的哈希值为 -1，不纳入缓存（因为复用价值低）
             h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1   #计算hash的前提是当前block_size能被占满 如果占不满说明当前sequence结束
-            block_id = self.hash_to_block_id.get(h, -1)
+            block_id = (
+                self.hash_to_block_id.get(h, -1)
+                if i < max_cached_blocks
+                else -1
+            )
             # 没有缓存或者缓存未命中
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:    #self.blocks[block_id].token_ids != token_ids 确保内容没有变动过
                 cache_miss = True
@@ -103,6 +126,21 @@ class BlockManager:
                 self.hash_to_block_id[h] = block_id
             seq.block_table.append(block_id)
         seq.num_computed_tokens = seq.num_cached_tokens
+
+    def clear_reusable_cache(self) -> int:
+        """Drop only idle prefix metadata; never mutate live blocks."""
+        self.hash_to_block_id.clear()
+        cleared = 0
+        for block in self.blocks:
+            if block.ref_count != 0:
+                if block.hash != -1:
+                    self.hash_to_block_id[block.hash] = block.block_id
+                continue
+            if block.hash != -1 or block.token_ids:
+                block.hash = -1
+                block.token_ids = []
+                cleared += 1
+        return cleared
 
     def allocate_ephemeral(self, seq: Sequence):
         """Allocate scratch KV blocks without prefix-cache lookup or publication.
