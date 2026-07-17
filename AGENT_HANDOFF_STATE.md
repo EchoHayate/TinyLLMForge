@@ -2,6 +2,212 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-17 Speculation profitability router controlled canonical
+
+### 当前结论
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- controlled canonical：
+  `qwen3-06b-router-controlled-canonical-20260717-154410`
+- 最终分类：**NO_GO**，不是 `INCOMPLETE`
+- 不得宣称引擎整体已提升，也不得执行 real-source gate 来制造产品 `GO`
+- 下一主方向：停止 native-verifier/router micro-optimization，切换到
+  production batching、kernel/CUDA Graph overhead 或 quantization，
+  每条方向都必须另建书面设计与 gate
+
+### 远端环境与证据
+
+```text
+host              sitian@10.232.195.203
+python            /data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+model             /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B
+GPU               5 / NVIDIA A100 80GB PCIe
+remote run root   /data00/home/sitian/sitian-workspace01/tllm/speculation-router-runs/qwen3-06b-router-controlled-canonical-20260717-154410
+local compact     experiments/speculation_router/qwen3-06b-router-controlled-canonical-20260717-154410
+```
+
+完整 `raw/` 与 `logs/` 各约 8.6 GB，总 artifacts 约 18.3 GB，保留远端。
+本地只保留 required aggregate artifacts、source snapshot 和独立 verifier
+输出；13/13 aggregate artifact SHA-256 与 `artifact_hashes.json` 一致。
+
+### Source identity
+
+```text
+base commit       63953089f30d0e9506461a3eb1e44bc9df8d778e
+source dirty      false
+source tree       a67f8a574e43c88758b517e75f588d94ff647390e33219544f5b45426b5ffcc1
+source patch      e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+patch bytes       0
+```
+
+### Router semantics
+
+- `K<=1`、finished、output budget exhausted -> baseline
+- `K>=2 && native_compatible` -> native multi-token verifier
+- incompatible -> fail closed，只有显式 opt-in 才 baseline fallback
+- controlled drafts 标记为 `controlled_target_derived`，不能进入
+  real-source stage，也不能产生产品 `GO`
+
+### Canonical coverage 与独立审计
+
+```text
+cases                         18/18
+policies per case             5/5
+case rows                     90/90
+native events                 35
+router rows                   18
+unique dynamic port pairs     90/90
+duplicate port pairs          0
+remote exitcode               0
+independent verifier exitcode 0
+classification                NO_GO
+```
+
+覆盖 K1 fallback、K2/4/8/16 zero/one/partial/full acceptance、EOS、
+output-budget、block-boundary 和 multiblock continuation。
+
+独立 verifier 不是复用远端 summary：它从 canonical
+`source_snapshot.tar.gz` 解出当时 verifier，重新读取并 canonical-hash
+全部 raw JSON，再重算 classification。结果保存在：
+
+```text
+experiments/speculation_router/qwen3-06b-router-controlled-canonical-20260717-154410/independent-verify/verify.stdout
+experiments/speculation_router/qwen3-06b-router-controlled-canonical-20260717-154410/independent-verify/verify.exitcode
+```
+
+最终 flags：
+
+```text
+exactness_pass              false
+replay_elimination_pass     false
+router_isolation_pass       false
+performance_direction_pass false
+```
+
+NO_GO reasons：
+
+```text
+k8-eos-boundary/always_native continuation mismatch
+k8-eos-boundary/always_native output token mismatch
+k8-eos-boundary/oracle continuation mismatch
+k8-eos-boundary/oracle output token mismatch
+k8-eos-boundary/routed_native continuation mismatch
+k8-eos-boundary/routed_native output token mismatch
+```
+
+### Performance decomposition
+
+`routed_native / baseline` elapsed ratio：
+
+```text
+K1 fallback median  0.979660
+K2 median           1.071625  range 1.055554..1.286760
+K4 median           1.058623  range 0.940476..1.165044
+K8 median           0.902935  range 0.791938..1.272164
+K16 median          1.025948  range 0.751078..1.355439
+```
+
+K16 full-accept ratio `0.751078`，即该受控 case elapsed 约低 `24.9%`；
+K8 budget-boundary ratio `0.791938`。这些局部收益不能覆盖短 draft、
+zero/one acceptance 回归，更不能覆盖 K8 EOS exactness failure，因此不能
+外推成引擎整体提升。
+
+### Retry / recovery history
+
+- 首轮 transport 使用 rsync 时出现
+  `Connection closed by UNKNOWN port 65535`，改为 tar 原子上传与 8 MiB
+  SSH 分块下载。
+- preflight 与 launch heredoc 曾被 `ssh -n` 丢弃；分别补 RED tests，
+  改用 stdin-capable `SSH_STREAM`。
+- canonical 执行中 ControlMaster channel 多次 broken pipe，但远端模型
+  进程已 run-local 后台脱离，重建 master 后确认矩阵持续推进，未重跑。
+- canonical 完成后合法 0-byte `source.patch` 触发 `.partial` 不存在；
+  通过 TDD 修复，并新增 `download-only`，commit：
+  `cc91930 fix: recover published router artifacts safely`。
+- 一次误用 `RESUME=1` 证明该模式会重新执行而非仅下载；原 canonical
+  保存在 run-local `artifacts.previous`，核验 exitcode 0、472 files、
+  summary `NO_GO` 后原子恢复；失败 resume 保存在
+  `artifacts.failed-resume`。
+
+### Implementation commits
+
+```text
+68152c0 feat: add fixed speculation profitability router
+4decb20 feat: route short speculative drafts to baseline
+ca73ee2 refactor: share source-auditable gate evidence
+8b519b2 feat: add controlled speculation router gate
+a06bb85 feat: execute routed verifier envelope cases
+ded02a8 feat: add source-attributed speculation performance gate
+0fb06ae feat: add auditable speculation router remote gate
+ebff32f fix: harden speculation router evidence recovery
+9c91d7f fix: harden speculation gate remote transport
+29932f9 fix: preserve remote preflight stdin
+6395308 fix: preserve remote gate launch stdin
+cc91930 fix: recover published router artifacts safely
+```
+
+### Task 11 conditional gate
+
+Task 11 **跳过且 fail closed**：
+
+- controlled classification 已是 `NO_GO`；
+- workspace 没有经单独设计批准的 `draft_source.json` /
+  `prompt_bank.json`；
+- 没有 source-attributed、non-target-derived、non-debug、checkpoint /
+  tokenizer identity 完整的 compatible drafter source。
+
+不得用 debug stub、target-derived draft 或改名的 negative control 运行
+real-source smoke。
+
+### Prompt-to-artifact completion checklist
+
+- [x] K<=1 baseline isolation -> `tinyvllm/speculative/router.py`；
+  `router_rows.json`；`tools/test_speculation_router.py`
+- [x] K>=2 native dispatch -> `event_rows.json`；oracle/always-native/
+  routed-native rows；`tools/test_native_verifier_oracle.py`
+- [x] zero replay/copy/rematerialization gate -> `event_rows.json` +
+  `classify_controlled_gate()`；canonical 结果为 fail，不伪装为 pass
+- [x] K 2/4/8/16 acceptance matrix -> `manifest.json.case_matrix` +
+  `case_rows.json`，18 cases × 5 policies
+- [x] EOS/budget/block/continuation -> `k8-eos-boundary`、
+  `k8-budget-boundary`、K4 boundary、K16 multiblock rows + oracle fields
+- [x] controlled threshold -> canonical snapshot verifier 独立重算
+  `summary.json`，classification `NO_GO`
+- [x] source identity -> `source_evidence.json`、`source_preflight.json`、
+  `source_snapshot.tar.gz`，13/13 aggregate hashes matched
+- [x] dynamic unique ports -> `case_rows.json[].process` independent audit，
+  90/90 unique pairs
+- [x] real-source-only GO boundary -> controlled target-derived stage cannot
+  produce GO；classifier/input-validation tests；Task 11 fail closed
+- [x] remote result -> remote full raw verifier exit 0；local
+  `summary.json` / `report.md` / `independent-verify/verify.stdout`
+- [x] limitations and next direction -> `README.md` 与本节
+
+### Fresh reproduction / verification commands
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_speculation_router.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_source_audit.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_speculation_router_gate.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_run_speculation_router_gate_remote.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_ngram_speculative.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_native_verifier_oracle.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_native_verifier_gate.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_adaptive_ngram_gate.py
+python3 -m py_compile \
+  tinyvllm/speculative/router.py \
+  tools/profile_ngram_commit.py \
+  tools/source_audit.py \
+  tools/speculation_router_gate.py \
+  tools/native_verifier_oracle.py
+bash -n tools/run_speculation_router_gate_remote.sh
+git diff --check
+```
+
+完整 raw verifier 需在远端 run root 上执行；本地 compact artifact 不包含
+8.6 GB `raw/`，因此不得把本地缺 raw 的失败误报成 canonical 证据失败。
+
 ## 2026-07-17 K1 source-auditable canonical gate
 
 - 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`

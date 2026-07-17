@@ -15,6 +15,116 @@ build a tiny LLM engine from scratch
 - **KV offload / blockwise attention**：已打通 GPU staging、dirty writeback、H2D reload、prefetch/eviction 与 blockwise attention 正确性；局部 `gpu_blocks=4` matrix 中 H2D / eviction 计数约 **-33%**，但端到端 tok/s 收益仍需更严格 benchmark 证明。
 - **DFlash profiler-only**：已完成 hidden-to-draft / draft-model-stub ABI、batch schema 与 contract 验证；当前不接 runtime，因此对现有推理速度 **0% 直接收益**，主要价值是降低未来接真实 draft model 的风险。
 
+## Speculation profitability router controlled canonical
+
+2026-07-17 完成了 fixed profitability router 与 source-auditable
+controlled canonical。Router 语义固定为：
+
+- draft `K<=1`、sequence finished、output budget exhausted 都走 baseline；
+- `K>=2` 且 native-compatible 才走 native multi-token verifier；
+- incompatible source 默认 fail closed，只有显式允许时才 baseline fallback。
+
+远端复现入口：
+
+```bash
+RUN_TAG=qwen3-06b-router-controlled-canonical-20260717-154410 \
+CUDA_DEVICE=5 \
+tools/run_speculation_router_gate_remote.sh controlled
+```
+
+如果远端已经原子发布 artifacts，只恢复证据而不重新执行模型：
+
+```bash
+RUN_TAG=qwen3-06b-router-controlled-canonical-20260717-154410 \
+tools/run_speculation_router_gate_remote.sh download-only
+```
+
+Canonical source identity：
+
+```text
+base commit       63953089f30d0e9506461a3eb1e44bc9df8d778e
+source tree       a67f8a574e43c88758b517e75f588d94ff647390e33219544f5b45426b5ffcc1
+source patch      e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+patch bytes       0
+```
+
+环境与覆盖：
+
+- 远端：`sitian@10.232.195.203`，Python：
+  `/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`；
+- 模型：
+  `/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`，
+  GPU 5 / NVIDIA A100 80GB PCIe，BF16；
+- 18 cases × 5 policies = 90/90 case rows，35 native events，
+  18 router rows；
+- 90/90 `TINYVLLM_DIST_PORT` / `MASTER_PORT` pairs 唯一，无重复；
+- K=1 fallback，以及 K=2/4/8/16 的 zero/one/partial/full acceptance、
+  EOS、output-budget、block-boundary、multiblock continuation 均进入矩阵。
+
+`routed_native / baseline` 的 `elapsed_s` 比率如下；小于 1 才是 routed
+更快：
+
+| Region | median | min | max |
+|---|---:|---:|---:|
+| K1 fallback | 0.979660 | 0.979660 | 0.979660 |
+| K2 | 1.071625 | 1.055554 | 1.286760 |
+| K4 | 1.058623 | 0.940476 | 1.165044 |
+| K8 | 0.902935 | 0.791938 | 1.272164 |
+| K16 | 1.025948 | 0.751078 | 1.355439 |
+
+局部正向区间确实存在：K16 full-accept ratio 为 `0.751078`，约减少
+`24.9%` elapsed time；K8 budget-boundary 为 `0.791938`。但 zero/one
+acceptance 和短 draft 多数回归，且 canonical 在 K8 EOS lifecycle
+发现 always-native、oracle、routed-native 三条 policy 的 continuation /
+output-token mismatch。因此独立重算结果严格为 **NO_GO**：
+
+```text
+classification              NO_GO
+exactness_pass              false
+replay_elimination_pass     false
+router_isolation_pass       false
+performance_direction_pass false
+```
+
+完整 raw/log evidence 约 18.3 GB，保留在远端 run-local 路径：
+
+```text
+/data00/home/sitian/sitian-workspace01/tllm/speculation-router-runs/
+qwen3-06b-router-controlled-canonical-20260717-154410/artifacts
+```
+
+本地 compact evidence 位于：
+`experiments/speculation_router/qwen3-06b-router-controlled-canonical-20260717-154410/`。
+其中 13 个 required aggregate artifacts 已与 `artifact_hashes.json`
+逐一校验。完整 verifier 使用 canonical 自带的
+`source_snapshot.tar.gz` 在远端重新读取并 canonical-hash 全部 raw
+payload，输出保存在本地
+`independent-verify/verify.stdout`，exitcode 为 `0`。
+
+Claim boundary：
+
+- controlled target-derived drafts 只能判断 router/verifier envelope，
+  不能产生产品 `GO`；
+- 本结果不能证明生产 batching、queueing tail latency、non-greedy、
+  其他模型或 memory-capacity 收益；
+- 当前不得继续围绕 native verifier/router 做微优化或调阈值；
+- 因 controlled gate 为 `NO_GO`，且没有 source-attributed、
+  non-target-derived、non-debug 的 compatible drafter checkpoint，
+  real-source Task 11 按规范跳过。
+
+下一方向应切换到不同瓶颈并另写设计/gate：production batching、
+kernel/CUDA Graph overhead 或 quantization。若未来获得合格 real drafter，
+先运行：
+
+```bash
+python3 tools/speculation_router_gate.py validate-real-input \
+  --draft-source draft_source.json \
+  --prompt-bank prompt_bank.json
+RUN_TAG=qwen3-06b-router-real-smoke-$(date +%Y%m%d-%H%M%S) \
+tools/run_speculation_router_gate_remote.sh \
+  real-smoke draft_source.json prompt_bank.json
+```
+
 ## Adaptive n-gram speculative decoding canonical gate
 
 2026-07-15 在 Qwen3-0.6B 上完成了严格的 greedy、单序列 canonical gate：4 类固定 prompt × 5 个隔离 policy（normal greedy、fixed K1/K2/K4、adaptive K∈{1,2,4}）× 7 次重复，共 140 个独立进程。复现入口：
