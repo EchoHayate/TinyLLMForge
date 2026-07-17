@@ -37,7 +37,15 @@ SSH=(
   -S "${SSH_SOCKET}"
   "${REMOTE_HOST}"
 )
-RSYNC_SSH="ssh -n -o BatchMode=yes -o ConnectTimeout=20 -o ControlMaster=auto -o ControlPersist=600 -S ${SSH_SOCKET}"
+SSH_STREAM=(
+  ssh
+  -o BatchMode=yes
+  -o ConnectTimeout=20
+  -o ControlMaster=auto
+  -o ControlPersist=600
+  -S "${SSH_SOCKET}"
+  "${REMOTE_HOST}"
+)
 SUCCESS_ARTIFACTS=(
   source_evidence.json
   source.patch
@@ -57,8 +65,16 @@ SUCCESS_ARTIFACTS=(
 
 download_remote_file() {
   local artifact_name="$1"
-  local remote_path="${REMOTE_DIR}/artifacts/${artifact_name}"
-  local local_path="${LOCAL_OUT}/${artifact_name}"
+  download_remote_path \
+    "${REMOTE_DIR}/artifacts/${artifact_name}" \
+    "${LOCAL_OUT}/${artifact_name}" \
+    "${artifact_name}"
+}
+
+download_remote_path() {
+  local remote_path="$1"
+  local local_path="$2"
+  local artifact_name="$3"
   local partial_path="${local_path}.partial"
   local block_path="${partial_path}.block"
   local remote_size
@@ -221,9 +237,10 @@ if [[ "${MODE}" == real-smoke || "${MODE}" == real ]]; then
   cp "${PROMPT_BANK_JSON}" "${STAGING_DIR}/prompt_bank.json"
 fi
 
-"${SSH[@]}" "mkdir -p '${REMOTE_DIR}' '${REMOTE_DIR}/tmp'"
-rsync -a --delete -e "${RSYNC_SSH}" \
-  "${STAGING_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/staging/"
+"${SSH[@]}" \
+  "mkdir -p '${REMOTE_DIR}' '${REMOTE_DIR}/tmp'; rm -rf '${REMOTE_DIR}/staging.upload'; mkdir -p '${REMOTE_DIR}/staging.upload'"
+tar -C "${STAGING_DIR}" -cf - . | "${SSH_STREAM[@]}" \
+  "set -e; tar -C '${REMOTE_DIR}/staging.upload' -xf -; rm -rf '${REMOTE_DIR}/staging'; mv '${REMOTE_DIR}/staging.upload' '${REMOTE_DIR}/staging'"
 
 "${SSH[@]}" "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' MODEL_PATH='${MODEL_PATH}' CUDA_DEVICE='${CUDA_DEVICE}' bash -s" <<'REMOTE_PREFLIGHT'
 set -euo pipefail
@@ -321,8 +338,14 @@ cp "${REMOTE_DIR}/staging/source_preflight.json" \
 REMOTE_PREFLIGHT
 
 mkdir -p "${LOCAL_OUT}"
-rsync -a -e "${RSYNC_SSH}" \
-  "${REMOTE_HOST}:${REMOTE_DIR}/preflight-artifacts/" "${LOCAL_OUT}/"
+download_remote_path \
+  "${REMOTE_DIR}/preflight-artifacts/capability.json" \
+  "${LOCAL_OUT}/capability.json" \
+  "capability.json"
+download_remote_path \
+  "${REMOTE_DIR}/preflight-artifacts/source_preflight.json" \
+  "${LOCAL_OUT}/source_preflight.json" \
+  "source_preflight.json"
 cp "${STAGING_DIR}/source_evidence.json" "${LOCAL_OUT}/"
 cp "${STAGING_DIR}/source.patch" "${LOCAL_OUT}/"
 cp "${STAGING_DIR}/source_snapshot.tar.gz" "${LOCAL_OUT}/"

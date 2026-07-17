@@ -127,16 +127,29 @@ def test_only_immutable_staging_is_uploaded():
     runner = RUNNER_PATH.read_text()
 
     snapshot = runner.index("snapshot-source")
-    upload = runner.index(
-        '"${STAGING_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/staging/"'
-    )
+    upload = runner.index('tar -C "${STAGING_DIR}" -cf - .')
     preflight = runner.index("REMOTE_PREFLIGHT")
     launch = runner.index("nohup bash -c")
     assert snapshot < upload < preflight < launch
+    assert "staging.upload" in runner
+    assert "SSH_STREAM" in runner
     assert (
         '"${REPO_ROOT}/" "${REMOTE_HOST}:${REMOTE_DIR}/staging/"'
         not in runner
     )
+    assert "rsync " not in runner
+
+
+def test_preflight_download_uses_chunk_transport():
+    runner = RUNNER_PATH.read_text()
+
+    assert '"${REMOTE_DIR}/preflight-artifacts/capability.json"' in runner
+    assert '"${LOCAL_OUT}/capability.json"' in runner
+    assert (
+        '"${REMOTE_DIR}/preflight-artifacts/source_preflight.json"'
+        in runner
+    )
+    assert '"${LOCAL_OUT}/source_preflight.json"' in runner
 
 
 def test_ssh_chunk_download_recovers_from_transport_disconnects():
@@ -172,7 +185,11 @@ def test_transport_never_consumes_download_manifest_stdin():
     runner = RUNNER_PATH.read_text()
 
     assert "  -n\n  -o BatchMode=yes" in runner
-    assert "RSYNC_SSH=\"ssh -n " in runner
+    stream = runner[
+        runner.index("SSH_STREAM=("):
+        runner.index("SUCCESS_ARTIFACTS=(")
+    ]
+    assert "\n  -n\n" not in stream
 
 
 def main():
@@ -183,6 +200,7 @@ def main():
     test_success_artifacts_are_downloaded_individually()
     test_nonzero_remote_exit_preserves_available_artifacts()
     test_only_immutable_staging_is_uploaded()
+    test_preflight_download_uses_chunk_transport()
     test_ssh_chunk_download_recovers_from_transport_disconnects()
     test_raw_payload_download_uses_canonical_json_hash()
     test_transport_never_consumes_download_manifest_stdin()
