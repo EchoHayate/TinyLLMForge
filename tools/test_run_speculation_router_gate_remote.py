@@ -63,6 +63,20 @@ def test_runner_modes_and_owned_source_boundary():
         assert f'"{owned}"' in gate_source, owned
 
 
+def test_download_only_never_stages_or_launches_remote_work():
+    runner = RUNNER_PATH.read_text()
+
+    mode_branch = runner.index('if [[ "${MODE}" == download-only ]]')
+    download = runner.index("download_available_artifacts", mode_branch)
+    early_exit = runner.index("exit 0", download)
+    staging_guard = runner.index('if [[ -e "${STAGING_DIR}" ]]')
+    snapshot = runner.index("snapshot-source")
+    upload = runner.index('tar -C "${STAGING_DIR}" -cf - .')
+    launch = runner.index("nohup bash -c")
+    assert mode_branch < download < early_exit < staging_guard
+    assert early_exit < snapshot < upload < launch
+
+
 def test_resume_cannot_poll_a_stale_exitcode():
     runner = RUNNER_PATH.read_text()
     move_old = runner.index(
@@ -169,6 +183,22 @@ def test_ssh_chunk_download_recovers_from_transport_disconnects():
     assert "--append" not in runner
 
 
+def test_zero_byte_artifact_download_creates_partial_file():
+    runner = RUNNER_PATH.read_text()
+
+    create_partial = runner.index(
+        'if [[ ! -f "${partial_path}" ]]; then\n'
+        '    : > "${partial_path}"\n'
+        "  fi"
+    )
+    download_loop = runner.index("while (( offset < remote_size )); do")
+    size_check = runner.index(
+        'local_size="$(stat -f %z "${partial_path}")"',
+        download_loop,
+    )
+    assert create_partial < download_loop < size_check
+
+
 def test_raw_payload_download_uses_canonical_json_hash():
     runner = RUNNER_PATH.read_text()
 
@@ -218,6 +248,7 @@ def test_remote_run_heredoc_uses_stdin_capable_transport():
 def main():
     test_remote_runner_contract()
     test_runner_modes_and_owned_source_boundary()
+    test_download_only_never_stages_or_launches_remote_work()
     test_resume_cannot_poll_a_stale_exitcode()
     test_remote_exitcode_is_published_atomically()
     test_success_artifacts_are_downloaded_individually()
@@ -225,6 +256,7 @@ def main():
     test_only_immutable_staging_is_uploaded()
     test_preflight_download_uses_chunk_transport()
     test_ssh_chunk_download_recovers_from_transport_disconnects()
+    test_zero_byte_artifact_download_creates_partial_file()
     test_raw_payload_download_uses_canonical_json_hash()
     test_transport_never_consumes_download_manifest_stdin()
     test_preflight_heredoc_uses_stdin_capable_transport()

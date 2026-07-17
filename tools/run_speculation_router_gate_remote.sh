@@ -3,7 +3,7 @@ set -euo pipefail
 
 MODE="${1:-}"
 if [[ -z "${MODE}" ]]; then
-  echo "usage: $0 preflight|controlled-smoke|controlled|real-smoke|real [DRAFT_SOURCE_JSON PROMPT_BANK_JSON]" >&2
+  echo "usage: $0 preflight|controlled-smoke|controlled|real-smoke|real|download-only [DRAFT_SOURCE_JSON PROMPT_BANK_JSON]" >&2
   exit 2
 fi
 
@@ -13,6 +13,7 @@ REMOTE_PYTHON="/data00/home/sitian/sitian-workspace01/tllm/env/bin/python"
 MODEL_PATH="/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B"
 SSH_SOCKET="${SSH_SOCKET:-/tmp/ssh-sitian-10.232.195.203}"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
+RUN_TAG_WAS_SET="${RUN_TAG+x}"
 RUN_TAG="${RUN_TAG:-qwen3-06b-router-${MODE}-$(date +%Y%m%d-%H%M%S)}"
 LOCAL_OUT="${REPO_ROOT}/experiments/speculation_router/${RUN_TAG}"
 STAGING_DIR="${LOCAL_OUT}.staging"
@@ -106,6 +107,9 @@ download_remote_path() {
     offset=0
   fi
 
+  if [[ ! -f "${partial_path}" ]]; then
+    : > "${partial_path}"
+  fi
   while (( offset < remote_size )); do
     block_index=$((offset / DOWNLOAD_BLOCK_BYTES))
     expected_block_bytes=$((remote_size - offset))
@@ -204,7 +208,7 @@ cleanup_staging() {
 trap cleanup_staging EXIT
 
 case "${MODE}" in
-  preflight|controlled-smoke|controlled) ;;
+  preflight|controlled-smoke|controlled|download-only) ;;
   real-smoke|real)
     if [[ $# -ne 3 ]]; then
       echo "${MODE} requires DRAFT_SOURCE_JSON PROMPT_BANK_JSON" >&2
@@ -218,6 +222,17 @@ case "${MODE}" in
     exit 2
     ;;
 esac
+
+if [[ "${MODE}" == download-only ]]; then
+  if [[ -z "${RUN_TAG_WAS_SET}" ]]; then
+    echo "download-only requires RUN_TAG" >&2
+    exit 2
+  fi
+  rm -rf "${LOCAL_OUT}"
+  mkdir -p "${LOCAL_OUT}"
+  download_available_artifacts
+  exit 0
+fi
 
 if [[ -e "${STAGING_DIR}" ]]; then
   echo "staging directory already exists: ${STAGING_DIR}" >&2
