@@ -2,6 +2,146 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-17 K1 source-auditable canonical gate
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- 远端：`sitian@10.232.195.203`
+- Python：`/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`
+- 模型：`/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`
+- GPU：`CUDA_VISIBLE_DEVICES=7`
+- canonical artifact：
+  `experiments/adaptive_ngram/20260717-k1-sam-canonical/`
+- smoke artifact：
+  `experiments/adaptive_ngram/20260717-k1-sam-smoke-r2/`
+
+书面设计与执行计划：
+
+- `docs/superpowers/specs/2026-07-17-adaptive-ngram-sam-source-evidence-design.md`
+- `docs/superpowers/plans/2026-07-17-adaptive-ngram-sam-source-evidence.md`
+
+SAM/source evidence commits：
+
+- `efde993 test: add adaptive gate source evidence`
+- `f3ccaed feat: verify adaptive gate source artifacts`
+- `925e707 feat: stage auditable adaptive gate source`
+- `14f2b0b fix: preserve immutable gate source preflight`
+- `5963086 fix: detach long adaptive gate runs`
+- `198cede fix: allow generated adaptive gate artifacts`
+
+canonical source identity：
+
+```text
+base commit       198cede8a3b0d201588ceb547208ada111aa77b7
+source dirty      true
+source tree       149517ad81bd5c9be96bc03a041a430e9186537134cd502012bafa19fc5bcda6
+source patch      2c23549c6e8e875cab0d1b6dc9b79031a22bacdf1da3aeb3ef20a825cbb13392
+```
+
+远端 source preflight：
+
+- source snapshot hash verification：`returncode=0`
+- remote `tools/test_ngram_speculative.py`：`returncode=0`
+- source tree、patch、preflight 已嵌入 manifest，完整 artifact verifier 会从
+  base commit + binary patch 独立重建 source。
+
+canonical 完整性审计：
+
+```text
+rows                         140/140
+unique run keys              140
+rows per policy              28
+unique port values           280/280
+process returncode=0         140/140
+profiler gate pass           140/140
+exact output mismatches      0
+source tree identities       1
+correctness pass             true
+trajectory replay pass       true
+adaptive exercise pass       true
+full artifact verifier       pass
+```
+
+canonical 最终结论：
+
+```text
+decision                     NO_GO
+baseline median tok/s        32.914809
+fixed K1 median tok/s        32.896915
+fixed K1 vs baseline         -0.0544%
+adaptive median tok/s        29.087900
+adaptive vs baseline         -11.6267%
+adaptive vs best fixed       -11.5786%
+natural prose ratio          0.958180
+transition-heavy ratio       0.845165
+```
+
+NO_GO reasons：
+
+```text
+adaptive_vs_baseline_gate_failed
+adaptive_vs_fixed_gate_failed
+natural_or_transition_regression
+```
+
+K1 fast path 的边界：
+
+- `tools/profile_ngram_commit.py` 与 `tools/test_ngram_speculative.py` 仍为
+  **未提交修改**。
+- canonical correctness 通过，但 K1 吞吐中位数没有改善：
+  `-0.0544%`，因此不得提交 K1，也不得宣称性能改善。
+- 不要删除 canonical/smoke artifacts；它们是本轮 source-auditable 证据。
+
+canonical recovery 记录：
+
+- 首轮确实生成 140 rows，但 repetition 6 有 7 个进程在模型初始化阶段失败：
+  `ModelRunner.allocate_kv_cache()` 中 `assert auto_num_blocks > 0`。
+- 失败横跨 baseline/fixed/adaptive，且 GPU 7 后续恢复到约 80 GiB free；
+  归因为运行期间的瞬时可用显存不足，不是 K1 语义分叉。
+- 首轮 snapshot 和失败 run-key 清单保存在：
+  `experiments/adaptive_ngram/20260717-k1-sam-canonical/recovery-before-resume-20260717-120956/`
+- recovery 使用同一 remote immutable source、manifest、source evidence 和
+  preflight，先备份首轮 rows/events/summary/report，再只剔除 7 个失败
+  run keys，并以 `--resume` 补跑；最终 remote exitcode 为 `0`。
+- 为避免以后手工剔除，gate resume 已改为：只把
+  `returncode=0 && profiler_gate_pass=true` 的 row 当作 completed；失败 row
+  原位替换、旧失败 events 清除、旧端口仍保留在去重集合。
+
+canonical 关键文件 SHA-256：
+
+```text
+manifest.json         8605868bc709304fc188c3c6132977909a90d433d95d5a4203ba25debf9fd03d
+raw_rows.json         ee551544348bc667757d9a81f66bfca65331d52938fd0525149f28483e1e759f
+event_rows.json       24c089fd7ecdd432c1542a4442f65706865627ce3125f51e19bd1266beaaae79
+summary.json          016e62110c2c12ab458d99fb7bbf4c19fcab5587f1e118afc285b8004013cab8
+report.md             9aa3b4963528d0e2dc7f2770c2ee3fb18868d4e85803aa830a4c0896edd703d2
+source_evidence.json  46b449d85ddfce18db30a0ad0cbfea06be7744ddf6221e34b193eea7e077273b
+source.patch          2c23549c6e8e875cab0d1b6dc9b79031a22bacdf1da3aeb3ef20a825cbb13392
+source_preflight.json 757ae207108b9b470b0dc5c284aa6fafd0ba7b6e38ebd94e3d110b2f7c8c3d23
+```
+
+复验命令：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tools/adaptive_ngram_gate.py verify \
+  --out-dir experiments/adaptive_ngram/20260717-k1-sam-canonical
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_adaptive_ngram_gate.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/test_ngram_speculative.py
+python3 -m py_compile \
+  tools/adaptive_ngram_gate.py \
+  tools/test_adaptive_ngram_gate.py
+bash -n tools/run_adaptive_ngram_gate_remote.sh
+git diff --check
+```
+
+下一步：
+
+1. 保留本轮 NO_GO，不继续微调 adaptive n-gram 阈值来追逐该 prompt bank。
+2. 若继续 speculative 主线，优先评估更高质量 learned drafter 或减少
+   target verification/KV materialization 固定开销的结构性方案。
+3. 新方案必须另建 source-auditable smoke/canonical gate；不能复用本轮
+   NO_GO 作为性能改善证据。
+
 ## 2026-07-16 APC prefix-hit-aware admission
 
 - 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`

@@ -919,6 +919,42 @@ def test_validate_materialized_source_artifacts_rejects_resume_tampering():
         temporary.cleanup()
 
 
+def test_resume_state_reruns_failed_rows_without_reusing_ports():
+    raw_rows = [
+        {
+            "run_key": "successful",
+            "profiler_gate_pass": True,
+            "process": {
+                "returncode": 0,
+                "tinyvllm_dist_port": 20001,
+                "master_port": 20002,
+            },
+        },
+        {
+            "run_key": "failed",
+            "profiler_gate_pass": False,
+            "process": {
+                "returncode": 1,
+                "tinyvllm_dist_port": 20003,
+                "master_port": 20004,
+            },
+        },
+    ]
+    event_rows = [
+        {"run_key": "successful", "event_index": 0},
+        {"run_key": "failed", "event_index": 0},
+    ]
+
+    state = gate._build_resume_state(raw_rows, event_rows)
+
+    assert state["completed"] == {"successful"}
+    assert state["row_indices"] == {"successful": 0, "failed": 1}
+    assert state["used_ports"] == {20001, 20002, 20003, 20004}
+    assert state["event_rows"] == [
+        {"run_key": "successful", "event_index": 0},
+    ]
+
+
 def test_write_source_preflight_records_verified_tree_and_k1_test():
     temporary, root = _source_repo()
     try:
@@ -1062,6 +1098,7 @@ def main():
     test_verify_artifacts_reconstructs_recorded_source()
     test_verify_artifacts_rejects_source_patch_and_preflight_tampering()
     test_validate_materialized_source_artifacts_rejects_resume_tampering()
+    test_resume_state_reruns_failed_rows_without_reusing_ports()
     test_write_source_preflight_records_verified_tree_and_k1_test()
     test_write_source_preflight_rejects_failed_commands()
     test_remote_runner_uses_one_auditable_staged_source_snapshot()

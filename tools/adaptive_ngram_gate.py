@@ -801,6 +801,42 @@ def _normalize_row(
     return row, events
 
 
+def _build_resume_state(raw_rows: list[dict], event_rows: list[dict]) -> dict:
+    existing_keys = [row.get("run_key") for row in raw_rows]
+    if len(existing_keys) != len(set(existing_keys)):
+        raise ValueError("duplicate run keys in resumable raw rows")
+    row_indices = {
+        row["run_key"]: index
+        for index, row in enumerate(raw_rows)
+    }
+    completed = {
+        row["run_key"]
+        for row in raw_rows
+        if row.get("process", {}).get("returncode") == 0
+        and row.get("profiler_gate_pass") is True
+    }
+    retry_keys = set(row_indices) - completed
+    used_ports = {
+        int(port)
+        for row in raw_rows
+        for port in (
+            row.get("process", {}).get("tinyvllm_dist_port"),
+            row.get("process", {}).get("master_port"),
+        )
+        if port is not None
+    }
+    return {
+        "completed": completed,
+        "row_indices": row_indices,
+        "used_ports": used_ports,
+        "event_rows": [
+            event
+            for event in event_rows
+            if event.get("run_key") not in retry_keys
+        ],
+    }
+
+
 def run_gate(
     out_dir: Path,
     python_bin: str,
@@ -873,19 +909,11 @@ def run_gate(
     event_path = out_dir / "event_rows.json"
     raw_rows = _load_json(raw_path) if raw_path.exists() and resume else []
     event_rows = _load_json(event_path) if event_path.exists() and resume else []
-    existing_keys = [row.get("run_key") for row in raw_rows]
-    if len(existing_keys) != len(set(existing_keys)):
-        raise ValueError("duplicate run keys in resumable raw rows")
-    completed = set(existing_keys)
-    used_ports = {
-        int(port)
-        for row in raw_rows
-        for port in (
-            row.get("process", {}).get("tinyvllm_dist_port"),
-            row.get("process", {}).get("master_port"),
-        )
-        if port is not None
-    }
+    resume_state = _build_resume_state(raw_rows, event_rows)
+    completed = resume_state["completed"]
+    row_indices = resume_state["row_indices"]
+    used_ports = resume_state["used_ports"]
+    event_rows = resume_state["event_rows"]
     logs_dir = out_dir / "logs"
     process_dir = out_dir / "process_json"
     logs_dir.mkdir(exist_ok=True)
@@ -953,7 +981,12 @@ def run_gate(
             "parse_error": parse_error,
         }
         row, events = _normalize_row(manifest, spec, profiler_result, process)
-        raw_rows.append(row)
+        row_index = row_indices.get(spec["run_key"])
+        if row_index is None:
+            row_indices[spec["run_key"]] = len(raw_rows)
+            raw_rows.append(row)
+        else:
+            raw_rows[row_index] = row
         event_rows.extend(events)
         completed.add(spec["run_key"])
         _atomic_write_json(raw_path, raw_rows)
