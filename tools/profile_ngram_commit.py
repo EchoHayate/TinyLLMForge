@@ -52,6 +52,22 @@ _SAM_SPEC.loader.exec_module(sam)
 
 SuffixAutomatonDraftIndex = sam.SuffixAutomatonDraftIndex
 
+_ROUTER_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "speculative",
+    "router.py",
+)
+_ROUTER_SPEC = importlib.util.spec_from_file_location(
+    "speculation_router_profile",
+    _ROUTER_PATH,
+)
+router = importlib.util.module_from_spec(_ROUTER_SPEC)
+sys.modules["speculation_router_profile"] = router
+_ROUTER_SPEC.loader.exec_module(router)
+
+choose_speculation_route = router.choose_speculation_route
+
 
 DEFAULT_PROMPTS = [
     "Repeat the following phrase five times: alpha beta gamma alpha beta gamma.",
@@ -184,6 +200,15 @@ def parse_args():
         default="legacy_rematerialize",
         choices=["legacy_rematerialize", "native"],
         help="Target verifier implementation for candidate commit events.",
+    )
+    p.add_argument(
+        "--speculation-routing",
+        choices=("disabled", "always-native", "fixed-profitability"),
+        default="disabled",
+    )
+    p.add_argument(
+        "--allow-incompatible-fallback",
+        action="store_true",
     )
     p.add_argument("--max-commit-events", type=int, default=1,
                    help="Maximum accepted commit events per candidate. Use 0 for unlimited S4 online benchmark.")
@@ -638,6 +663,172 @@ def _finish_if_needed(llm, seq, committed_tokens: list[int]) -> bool:
             pass
         return True
     return False
+
+
+def _baseline_route_event(
+    *,
+    route,
+    draft_tokens: list[int],
+    draft_source: str,
+) -> dict:
+    return {
+        "route": route.name,
+        "route_fallback_reason": route.fallback_reason,
+        "verifier_mode": "baseline",
+        "draft_source": draft_source,
+        "draft_len": len(draft_tokens),
+        "draft_tokens": list(draft_tokens),
+        "target_tokens": [],
+        "accepted_tokens": [],
+        "accepted_count": 0,
+        "accepted_kv_rematerialization": {
+            "rematerialized_tokens": [],
+            "decode_calls": 0,
+            "elapsed_ms": 0.0,
+        },
+        "accepted_kv_copy_calls": 0,
+        "accepted_kv_replay_calls": 0,
+        "target_forward_count": 0,
+        "speculative_reservation_attempted": False,
+        "spec_verify_prepare_calls": 0,
+        "spec_verify_forward_calls": 0,
+        "timing_ms": {
+            "verify_commit_total_ms": 0.0,
+        },
+        "finished": False,
+    }
+
+
+def route_and_verify_draft(
+    llm,
+    seq,
+    draft_tokens: list[int],
+    *,
+    draft_source: str,
+    allow_incompatible_fallback: bool,
+    **verify_kwargs,
+) -> dict:
+    compatibility_reason = None
+    native_compatible = True
+    if len(draft_tokens) >= 2:
+        try:
+            llm.model_runner._validate_spec_verify_compatibility(
+                seq_count=1,
+                linear_draft=True,
+                greedy=True,
+                mixed_batch=False,
+            )
+        except Exception as exc:
+            native_compatible = False
+            compatibility_reason = str(exc)
+    route = choose_speculation_route(
+        draft_len=len(draft_tokens),
+        finished=bool(seq.is_finished),
+        remaining_output_budget=max(
+            0,
+            seq.max_tokens - seq.num_completion_tokens,
+        ),
+        native_compatible=native_compatible,
+        compatibility_reason=compatibility_reason,
+        allow_incompatible_fallback=allow_incompatible_fallback,
+    )
+    if route.name != "native_multi_token":
+        return _baseline_route_event(
+            route=route,
+            draft_tokens=draft_tokens,
+            draft_source=draft_source,
+        )
+    event = verify_and_commit_block(
+        llm,
+        seq,
+        draft_tokens,
+        draft_source=draft_source,
+        verifier_mode="native",
+        **verify_kwargs,
+    )
+    event.update({
+        "route": route.name,
+        "route_fallback_reason": None,
+        "speculative_reservation_attempted": True,
+        "spec_verify_prepare_calls": int(event["query_len"] > 0),
+        "spec_verify_forward_calls": int(event["query_len"] > 0),
+    })
+    return event
+
+
+def _verification_kwargs(args) -> dict:
+    return {
+        "simulate_kv_upload_mb": args.simulate_kv_upload_mb,
+        "debug_target_hidden": args.debug_target_hidden,
+        "debug_hidden_to_draft_stub": args.debug_hidden_to_draft_stub,
+        "hidden_to_draft_adapter": args.hidden_to_draft_adapter,
+        "debug_hidden_to_draft_top_k": args.debug_hidden_to_draft_top_k,
+    }
+
+
+def _run_draft_verification(
+    llm,
+    seq,
+    draft: DraftProposal,
+    args,
+) -> dict:
+    verify_kwargs = _verification_kwargs(args)
+    if args.speculation_routing == "fixed-profitability":
+        return route_and_verify_draft(
+            llm,
+            seq,
+            draft.tokens,
+            draft_source=draft.source,
+            allow_incompatible_fallback=(
+                args.allow_incompatible_fallback
+            ),
+            **verify_kwargs,
+        )
+    verifier_mode = (
+        "native"
+        if args.speculation_routing == "always-native"
+        else args.verifier_mode
+    )
+    return verify_and_commit_block(
+        llm,
+        seq,
+        draft.tokens,
+        draft_source=draft.source,
+        verifier_mode=verifier_mode,
+        **verify_kwargs,
+    )
+
+
+def summarize_route_events(route_events: list[dict]) -> dict:
+    route_names = (
+        "baseline_short_draft",
+        "baseline_finished",
+        "baseline_output_budget",
+        "baseline_incompatible",
+        "native_multi_token",
+    )
+    fallback_reasons = sorted({
+        event.get("route_fallback_reason")
+        for event in route_events
+        if event.get("route_fallback_reason")
+    })
+    return {
+        "route_attempts": len(route_events),
+        "route_counts": {
+            route_name: sum(
+                event.get("route") == route_name
+                for event in route_events
+            )
+            for route_name in route_names
+        },
+        "fallback_reason_counts": {
+            reason: sum(
+                event.get("route_fallback_reason") == reason
+                for event in route_events
+            )
+            for reason in fallback_reasons
+        },
+    }
 
 
 def verify_and_commit_block(
@@ -1893,6 +2084,7 @@ def run_candidate_only_profile(args) -> dict:
             "verify_timing_ms": {},
             "events": [],
             "verify_events": [],
+            "router_events": [],
             "adaptive_state": AdaptiveDraftState() if args.draft_policy == "adaptive" else None,
             "sam_index": sam_index,
             "sam_build_ms": sam_build_ms,
@@ -1950,7 +2142,8 @@ def run_candidate_only_profile(args) -> dict:
                     "runtime_mutation": False,
                     "profiler_owned": True,
                 })
-            if not should_verify_draft(draft):
+            routed = args.speculation_routing == "fixed-profitability"
+            if not should_verify_draft(draft) and not routed:
                 stats["no_draft_steps"] += 1
                 if sam_index is not None:
                     stats["sam_events"].append({
@@ -1968,19 +2161,12 @@ def run_candidate_only_profile(args) -> dict:
                     })
                     stats["sam_bypass_count"] += 1
                 continue
-            stats["commit_attempts"] += 1
             stats["drafted_tokens"] += len(draft.tokens)
-            event = verify_and_commit_block(
+            event = _run_draft_verification(
                 llm,
                 candidate,
-                draft.tokens,
-                draft_source=draft.source,
-                simulate_kv_upload_mb=args.simulate_kv_upload_mb,
-                debug_target_hidden=args.debug_target_hidden,
-                debug_hidden_to_draft_stub=args.debug_hidden_to_draft_stub,
-                hidden_to_draft_adapter=args.hidden_to_draft_adapter,
-                verifier_mode=args.verifier_mode,
-                debug_hidden_to_draft_top_k=args.debug_hidden_to_draft_top_k,
+                draft,
+                args,
             )
             attach_draft_policy_event(
                 event,
@@ -1994,11 +2180,23 @@ def run_candidate_only_profile(args) -> dict:
                 event["runtime_mutation"] = False
                 event["profiler_owned"] = True
             event_record = {"step": step_idx, "prompt_index": stats["prompt_index"], "candidate_seq_id": candidate_id, **event}
+            if event.get("route"):
+                stats["router_events"].append(event_record)
+            if event.get("route") not in (
+                "baseline_short_draft",
+                "baseline_finished",
+                "baseline_output_budget",
+                "baseline_incompatible",
+            ):
+                stats["commit_attempts"] += 1
             stats["verify_events"].append(event_record)
             if sam_index is not None:
                 stats["sam_events"].append(event_record)
             stats["accepted_count"] += event["accepted_count"]
             _accumulate_timing_ms(stats["verify_timing_ms"], event)
+            if event.get("route", "").startswith("baseline_"):
+                stats["no_draft_steps"] += 1
+                continue
             if event["accepted_count"] <= 0:
                 stats["zero_accept_events"] += 1
                 continue
@@ -2071,6 +2269,8 @@ def run_candidate_only_profile(args) -> dict:
             "accepted_count": stats["accepted_count"],
             "verify_timing_ms": stats["verify_timing_ms"],
             "verify_events": stats["verify_events"],
+            "router_events": stats["router_events"],
+            **summarize_route_events(stats["router_events"]),
             "acceptance_rate": stats["accepted_count"] / stats["drafted_tokens"] if stats["drafted_tokens"] else 0.0,
             "candidate_step_reduction": stats["accepted_count"] / len(token_ids) if token_ids else 0.0,
             "draft_policy": args.draft_policy,
@@ -2177,6 +2377,11 @@ def run_candidate_only_profile(args) -> dict:
         for item in per_prompt
         for event in item.get("verify_events", [])
     ]
+    result_router_events = [
+        event
+        for item in per_prompt
+        for event in item.get("router_events", [])
+    ]
     wasted_draft_tokens = drafted_tokens - accepted_tokens
     zero_accept_verify_ms = sum(
         float(event.get("timing_ms", {}).get("verify_commit_total_ms", 0.0))
@@ -2228,6 +2433,8 @@ def run_candidate_only_profile(args) -> dict:
         "candidate_autoregressive_steps_avoided": accepted_tokens,
         "candidate_step_reduction": accepted_tokens / output_tokens if output_tokens else 0.0,
         "verify_timing_ms": _sum_timing_ms([{"timing_ms": item["verify_timing_ms"]} for item in per_prompt]),
+        "router_events": result_router_events,
+        **summarize_route_events(result_router_events),
     })
     summary.update(_summarize_simulated_upload(
         args,
@@ -2258,6 +2465,7 @@ def run_candidate_only_profile(args) -> dict:
         "verify_events": [
             event for item in per_prompt for event in item.get("verify_events", [])
         ],
+        "router_events": result_router_events,
         "sam_events": [
             event for item in per_prompt for event in item.get("sam_events", [])
         ],
@@ -2281,6 +2489,35 @@ def validate_profile_args(args) -> None:
         raise ValueError("--simulate-kv-upload-mb must be >= 0")
     if args.max_draft_tokens <= 0:
         raise ValueError("--max-draft-tokens must be > 0")
+    speculation_routing = getattr(
+        args,
+        "speculation_routing",
+        "disabled",
+    )
+    allow_incompatible_fallback = getattr(
+        args,
+        "allow_incompatible_fallback",
+        False,
+    )
+    if speculation_routing != "disabled":
+        unsupported_routing = (
+            ("--mode candidate-only", args.mode != "candidate-only"),
+            ("--max-num-seqs 1", args.max_num_seqs != 1),
+            ("--enforce-eager", not args.enforce_eager),
+        )
+        for requirement, active in unsupported_routing:
+            if active:
+                raise ValueError(
+                    f"speculation routing requires {requirement}"
+                )
+    if (
+        allow_incompatible_fallback
+        and speculation_routing != "fixed-profitability"
+    ):
+        raise ValueError(
+            "--allow-incompatible-fallback requires "
+            "--speculation-routing fixed-profitability"
+        )
     if args.draft_policy == "adaptive":
         if args.draft_source != "ngram":
             raise ValueError("adaptive draft policy requires --draft-source ngram")
@@ -2300,7 +2537,10 @@ def validate_profile_args(args) -> None:
         "sam-match-aware",
     ):
         raise ValueError("--draft-source sam requires a SAM draft policy")
-    if getattr(args, "verifier_mode", "legacy_rematerialize") == "native":
+    if (
+        getattr(args, "verifier_mode", "legacy_rematerialize") == "native"
+        or speculation_routing != "disabled"
+    ):
         unsupported = (
             ("--mode candidate-only", args.mode != "candidate-only"),
             ("--max-num-seqs 1", args.max_num_seqs != 1),

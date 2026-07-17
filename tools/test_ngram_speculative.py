@@ -1124,11 +1124,13 @@ def test_native_profile_args_require_supported_scope():
             raise AssertionError(name)
 
 
-def test_candidate_profiles_forward_verifier_mode_to_commit():
+def test_candidate_profile_uses_routing_helper_and_paired_keeps_verifier_mode():
     source = open(
         os.path.join(_REPO_ROOT, "tools", "profile_ngram_commit.py")
     ).read()
-    assert source.count("verifier_mode=args.verifier_mode") == 2
+    assert source.count("_run_draft_verification(") == 2
+    assert source.count("verifier_mode=args.verifier_mode") == 1
+    assert 'args.speculation_routing == "fixed-profitability"' in source
 
 
 def test_profile_validation_rejects_adaptive_non_ngram_source():
@@ -1747,7 +1749,7 @@ def main():
     test_native_commit_failure_reports_phase_and_releases_reservation()
     test_native_full_accept_commits_multiple_reserved_blocks()
     test_native_profile_args_require_supported_scope()
-    test_candidate_profiles_forward_verifier_mode_to_commit()
+    test_candidate_profile_uses_routing_helper_and_paired_keeps_verifier_mode()
     test_profile_validation_rejects_adaptive_non_ngram_source()
     test_profile_validation_requires_single_sequence_for_adaptive()
     test_attach_draft_policy_event_updates_adaptive_after_verification()
