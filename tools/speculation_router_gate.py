@@ -11,6 +11,8 @@ import shutil
 import socket
 import statistics
 import subprocess
+import tarfile
+import tempfile
 import time
 from pathlib import Path
 
@@ -23,9 +25,16 @@ OWNED_SOURCE_ROOTS = (
     "tools/speculation_router_gate.py",
     "tools/test_speculation_router.py",
     "tools/test_speculation_router_gate.py",
+    "tools/test_ngram_speculative.py",
+    "tools/test_model_runner_spec_verify.py",
+    "tools/test_native_verifier_contract.py",
+    "tools/test_native_verifier_attention.py",
     "tools/native_verifier_oracle.py",
     "tools/test_native_verifier_oracle.py",
+    "tools/native_verifier_gate.py",
+    "tools/test_native_verifier_gate.py",
     "tools/run_speculation_router_gate_remote.sh",
+    "tools/test_run_speculation_router_gate_remote.py",
 )
 
 CONTROLLED_POLICIES = (
@@ -55,6 +64,30 @@ REAL_THRESHOLDS = {
     "max_transition_elapsed_ratio": 1.00,
     "max_individual_prompt_elapsed_ratio": 1.10,
 }
+
+CONTROLLED_REQUIRED_ARTIFACTS = (
+    "source_evidence.json",
+    "source.patch",
+    "source_snapshot.tar.gz",
+    "source_preflight.json",
+    "manifest.json",
+    "capability.json",
+    "case_rows.json",
+    "event_rows.json",
+    "router_rows.json",
+    "summary.json",
+    "report.md",
+    "artifact_hashes.json",
+    "remote_exitcode",
+    "runner.log",
+)
+
+REAL_REQUIRED_ARTIFACTS = (
+    *CONTROLLED_REQUIRED_ARTIFACTS,
+    "draft_source.json",
+    "prompt_bank.json",
+    "prompt_bank.sha256",
+)
 
 _REAL_SOURCE_TYPES = (
     "learned_speculative_head",
@@ -251,6 +284,27 @@ CONTROLLED_CASE_MATRIX = (
         block_case="multi_block_context",
     ),
 )
+
+_CONTROLLED_SMOKE_CASE_IDS = (
+    "k1-route-fallback",
+    "k2-zero-current",
+    "k2-full-current",
+    "k4-partial-boundary",
+    "k4-full-boundary",
+    "k16-full-multiblock",
+)
+
+
+def select_controlled_cases(case_limit: int = 0) -> list[dict]:
+    cases = list(CONTROLLED_CASE_MATRIX)
+    if not case_limit:
+        return cases
+    if case_limit < 1:
+        raise ValueError("case_limit must be non-negative")
+    if case_limit == len(_CONTROLLED_SMOKE_CASE_IDS):
+        by_id = {case["case_id"]: case for case in cases}
+        return [by_id[case_id] for case_id in _CONTROLLED_SMOKE_CASE_IDS]
+    return cases[:case_limit]
 
 
 def build_controlled_manifest(
@@ -1420,6 +1474,400 @@ def _write_json(path: Path, value) -> None:
     )
 
 
+def verify_raw_payload_hashes(
+    out_dir: Path,
+    case_rows: list[dict],
+    *,
+    stage: str,
+) -> None:
+    out_dir = Path(out_dir)
+    for row in case_rows:
+        expected = row.get("raw_payload_sha256")
+        if not expected:
+            if row.get("status") == "INCOMPLETE":
+                continue
+            raise ValueError(
+                f"{_row_key(row)} missing raw payload hash"
+            )
+        identity = (
+            row["case_id"]
+            if stage == "controlled"
+            else row["prompt_id"]
+        )
+        raw_path = (
+            out_dir
+            / "raw"
+            / f"{identity}.{row['policy']}.json"
+        )
+        if not raw_path.is_file():
+            raise ValueError(
+                f"missing raw payload: {raw_path.name}"
+            )
+        try:
+            payload = json.loads(raw_path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"truncated raw payload: {raw_path.name}"
+            ) from exc
+        if _sha256_json(payload) != expected:
+            raise ValueError(
+                f"raw payload hash mismatch: {raw_path.name}"
+            )
+
+
+def render_controlled_report(
+    manifest: dict,
+    capability: dict,
+    case_rows: list[dict],
+    event_rows: list[dict],
+    router_rows: list[dict],
+    summary: dict,
+) -> str:
+    del capability
+    lines = [
+        "# Speculation Profitability Router Gate",
+        "",
+        "## Stage",
+        "",
+        "- Evidence type: controlled target-derived drafts.",
+        "- This stage cannot produce a product performance GO.",
+        f"- Run tag: `{manifest.get('run_tag')}`",
+        f"- Source tree: `{manifest.get('source_tree_sha256')}`",
+        "",
+        "## Coverage",
+        "",
+        f"- Case rows: `{len(case_rows)}`",
+        f"- Native events: `{len(event_rows)}`",
+        f"- Router rows: `{len(router_rows)}`",
+        "",
+        "## Classification",
+        "",
+        f"Classification: `{summary['classification']}`",
+        "",
+        "Reasons:",
+    ]
+    reasons = summary.get("reasons") or []
+    lines.extend(
+        (f"- {reason}" for reason in reasons)
+        if reasons
+        else ("- none",)
+    )
+    lines.extend([
+        "",
+        "## Performance",
+        "",
+        "- Best profitable-region elapsed ratio: "
+        f"`{summary.get('best_profitable_region_elapsed_ratio')}`",
+        "- Median profitable-region elapsed ratio: "
+        f"`{summary.get('median_profitable_region_elapsed_ratio')}`",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def render_real_source_report(
+    manifest: dict,
+    draft_source: dict,
+    prompt_bank: dict,
+    case_rows: list[dict],
+    event_rows: list[dict],
+    router_rows: list[dict],
+    summary: dict,
+) -> str:
+    del prompt_bank
+    lines = [
+        "# Real-Source Speculation Performance Gate",
+        "",
+        f"- Source: `{draft_source.get('source_name')}`",
+        f"- Source type: `{draft_source.get('source_type')}`",
+        f"- Run tag: `{manifest.get('run_tag')}`",
+        f"- Case rows: `{len(case_rows)}`",
+        f"- Source events: `{len(event_rows)}`",
+        f"- Router rows: `{len(router_rows)}`",
+        "",
+        "## Classification",
+        "",
+        f"Classification: `{summary['classification']}`",
+        "",
+        "Reasons:",
+    ]
+    reasons = summary.get("reasons") or []
+    lines.extend(
+        (f"- {reason}" for reason in reasons)
+        if reasons
+        else ("- none",)
+    )
+    lines.extend([
+        "",
+        "## Performance",
+        "",
+        "- Elapsed improvement fraction: "
+        f"`{summary.get('elapsed_improvement_fraction')}`",
+        "- Tokens/s improvement fraction: "
+        f"`{summary.get('tokens_per_s_improvement_fraction')}`",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def snapshot_source(repo_root: Path, out_dir: Path) -> dict:
+    import source_audit
+
+    evidence = source_audit.build_source_evidence(
+        Path(repo_root),
+        Path(out_dir),
+        owned_roots=OWNED_SOURCE_ROOTS,
+        ignored_untracked_prefixes=(
+            "experiments/speculation_router",
+            "experiments/adaptive_ngram/20260717-k1-sam-canonical",
+            "experiments/adaptive_ngram/20260717-k1-sam-smoke-r2",
+            "experiments/adaptive_ngram/20260717-k1-sam-smoke",
+        ),
+    )
+    source_root = Path(out_dir) / "source"
+    archive_path = Path(out_dir) / "source_snapshot.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        archive.add(source_root, arcname="source")
+    return {
+        **evidence,
+        "source_snapshot_sha256": _sha256_file(archive_path),
+    }
+
+
+def _extract_source_snapshot(
+    archive_path: Path,
+    destination: Path,
+) -> Path:
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+        for member in members:
+            path = Path(member.name)
+            if (
+                path.is_absolute()
+                or ".." in path.parts
+                or member.issym()
+                or member.islnk()
+            ):
+                raise ValueError("unsafe source snapshot member")
+        archive.extractall(destination, members=members)
+    source_root = destination / "source"
+    if not source_root.is_dir():
+        raise ValueError("source snapshot is missing source root")
+    return source_root
+
+
+def _verify_source_artifacts(out_dir: Path) -> dict:
+    import source_audit
+
+    evidence = json.loads(
+        (out_dir / "source_evidence.json").read_text()
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        source_root = _extract_source_snapshot(
+            out_dir / "source_snapshot.tar.gz",
+            Path(temporary),
+        )
+        return source_audit.validate_source_snapshot(
+            source_root,
+            evidence,
+            out_dir / "source.patch",
+            expected_owned_roots=OWNED_SOURCE_ROOTS,
+        )
+
+
+def verify_remote_metadata(out_dir: Path, manifest: dict) -> None:
+    out_dir = Path(out_dir)
+    preflight_path = out_dir / "source_preflight.json"
+    if not preflight_path.is_file():
+        raise ValueError("missing source preflight")
+    preflight = json.loads(preflight_path.read_text())
+    exitcode_path = out_dir / "remote_exitcode"
+    if not exitcode_path.is_file():
+        raise ValueError("missing remote exit code")
+    try:
+        remote_exitcode = int(exitcode_path.read_text().strip())
+    except ValueError as exc:
+        raise ValueError("invalid remote exit code") from exc
+    if remote_exitcode != 0:
+        raise ValueError(
+            f"remote process exited with {remote_exitcode}"
+        )
+    if (
+        preflight.get("source_tree_sha256")
+        != manifest.get("source_tree_sha256")
+    ):
+        raise ValueError("source preflight tree mismatch")
+
+
+def finalize_artifacts(out_dir: Path) -> dict:
+    out_dir = Path(out_dir)
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    stage = manifest.get("stage")
+    capability = json.loads((out_dir / "capability.json").read_text())
+    case_rows = json.loads((out_dir / "case_rows.json").read_text())
+    event_rows = json.loads((out_dir / "event_rows.json").read_text())
+    router_rows = json.loads((out_dir / "router_rows.json").read_text())
+    if stage == "controlled":
+        summary = classify_controlled_gate(
+            manifest,
+            capability,
+            case_rows,
+            event_rows,
+            router_rows,
+        )
+        report = render_controlled_report(
+            manifest,
+            capability,
+            case_rows,
+            event_rows,
+            router_rows,
+            summary,
+        )
+        required = CONTROLLED_REQUIRED_ARTIFACTS
+    elif stage == "real-source":
+        draft_source = json.loads(
+            (out_dir / "draft_source.json").read_text()
+        )
+        prompt_bank = json.loads(
+            (out_dir / "prompt_bank.json").read_text()
+        )
+        summary = classify_real_source_gate(
+            manifest,
+            draft_source,
+            prompt_bank,
+            case_rows,
+            event_rows,
+            router_rows,
+        )
+        report = render_real_source_report(
+            manifest,
+            draft_source,
+            prompt_bank,
+            case_rows,
+            event_rows,
+            router_rows,
+            summary,
+        )
+        required = REAL_REQUIRED_ARTIFACTS
+    else:
+        raise ValueError("unknown gate stage")
+    _write_json(out_dir / "summary.json", summary)
+    (out_dir / "report.md").write_text(report)
+    missing = [
+        name for name in required
+        if name != "artifact_hashes.json"
+        and not (out_dir / name).is_file()
+    ]
+    if missing:
+        raise ValueError(
+            "cannot finalize missing artifacts: "
+            + ", ".join(missing)
+        )
+    hashes = {
+        name: _sha256_file(out_dir / name)
+        for name in required
+        if name != "artifact_hashes.json"
+    }
+    _write_json(out_dir / "artifact_hashes.json", hashes)
+    return summary
+
+
+def verify_artifacts(out_dir: Path) -> dict:
+    out_dir = Path(out_dir)
+    manifest_path = out_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("missing artifact: manifest.json")
+    manifest = json.loads(manifest_path.read_text())
+    stage = manifest.get("stage")
+    required = (
+        CONTROLLED_REQUIRED_ARTIFACTS
+        if stage == "controlled"
+        else REAL_REQUIRED_ARTIFACTS
+        if stage == "real-source"
+        else ()
+    )
+    if not required:
+        raise ValueError("unknown gate stage")
+    for name in required:
+        if not (out_dir / name).is_file():
+            raise ValueError(f"missing artifact: {name}")
+    hashes = json.loads(
+        (out_dir / "artifact_hashes.json").read_text()
+    )
+    for name in required:
+        if name == "artifact_hashes.json":
+            continue
+        if hashes.get(name) != _sha256_file(out_dir / name):
+            raise ValueError(f"artifact hash mismatch: {name}")
+    _verify_source_artifacts(out_dir)
+    verify_remote_metadata(out_dir, manifest)
+    capability = json.loads((out_dir / "capability.json").read_text())
+    case_rows = json.loads((out_dir / "case_rows.json").read_text())
+    event_rows = json.loads((out_dir / "event_rows.json").read_text())
+    router_rows = json.loads((out_dir / "router_rows.json").read_text())
+    verify_raw_payload_hashes(out_dir, case_rows, stage=stage)
+    recorded = json.loads((out_dir / "summary.json").read_text())
+    if stage == "controlled":
+        computed = classify_controlled_gate(
+            manifest,
+            capability,
+            case_rows,
+            event_rows,
+            router_rows,
+        )
+        report = render_controlled_report(
+            manifest,
+            capability,
+            case_rows,
+            event_rows,
+            router_rows,
+            computed,
+        )
+    else:
+        draft_source = json.loads(
+            (out_dir / "draft_source.json").read_text()
+        )
+        prompt_bank = json.loads(
+            (out_dir / "prompt_bank.json").read_text()
+        )
+        prompt_hash = canonical_prompt_bank_sha256(prompt_bank)
+        if (
+            (out_dir / "prompt_bank.sha256").read_text().strip()
+            != prompt_hash
+        ):
+            raise ValueError("prompt bank hash file mismatch")
+        computed = classify_real_source_gate(
+            manifest,
+            draft_source,
+            prompt_bank,
+            case_rows,
+            event_rows,
+            router_rows,
+        )
+        report = render_real_source_report(
+            manifest,
+            draft_source,
+            prompt_bank,
+            case_rows,
+            event_rows,
+            router_rows,
+            computed,
+        )
+    if recorded != computed:
+        raise ValueError("summary differs from recomputed gate")
+    if (out_dir / "report.md").read_text() != report:
+        raise ValueError("report differs from recomputed gate")
+    return computed
+
+
 def _record_process_pair(
     manifest: dict,
     *,
@@ -1479,11 +1927,7 @@ def run_controlled_gate(
     capability = json.loads(
         (out_dir / "capability.json").read_text()
     )
-    selected_cases = list(CONTROLLED_CASE_MATRIX)
-    if case_limit:
-        if case_limit < 1:
-            raise ValueError("case_limit must be non-negative")
-        selected_cases = selected_cases[:case_limit]
+    selected_cases = select_controlled_cases(case_limit)
 
     existing_rows = {
         _row_key(row): row
@@ -1520,6 +1964,7 @@ def run_controlled_gate(
             bf16_supported=source_preflight["bf16_supported"],
             run_tag=run_tag,
         )
+        manifest["case_matrix"] = selected_cases
 
     rows_by_key = dict(existing_rows)
     payloads_by_key = {}
@@ -1745,10 +2190,17 @@ def _row_key(row: dict) -> tuple[str, str]:
     return str(row.get("case_id")), str(row.get("policy"))
 
 
-def _expected_row_keys() -> set[tuple[str, str]]:
+def _manifest_case_matrix(manifest: dict) -> list[dict]:
+    cases = manifest.get("case_matrix")
+    return cases if isinstance(cases, list) else []
+
+
+def _expected_row_keys(
+    manifest: dict,
+) -> set[tuple[str, str]]:
     return {
         (case["case_id"], policy)
-        for case in CONTROLLED_CASE_MATRIX
+        for case in _manifest_case_matrix(manifest)
         for policy in CONTROLLED_POLICIES
     }
 
@@ -1801,8 +2253,19 @@ def classify_controlled_gate(
         structural.append("manifest stage mismatch")
     if manifest.get("thresholds") != CONTROLLED_THRESHOLDS:
         structural.append("manifest thresholds drift")
-    if manifest.get("case_matrix") != list(
-        CONTROLLED_CASE_MATRIX
+    manifest_cases = _manifest_case_matrix(manifest)
+    canonical_cases = {
+        case["case_id"]: case for case in CONTROLLED_CASE_MATRIX
+    }
+    if (
+        not manifest_cases
+        or any(
+            canonical_cases.get(case.get("case_id")) != case
+            for case in manifest_cases
+        )
+        or len({
+            case["case_id"] for case in manifest_cases
+        }) != len(manifest_cases)
     ):
         structural.append("manifest case matrix drift")
     if manifest.get("policies") != list(CONTROLLED_POLICIES):
@@ -1822,7 +2285,7 @@ def classify_controlled_gate(
         structural.append("source preflight tree mismatch")
 
     observed_keys = [_row_key(row) for row in case_rows]
-    expected_keys = _expected_row_keys()
+    expected_keys = _expected_row_keys(manifest)
     if len(observed_keys) != len(set(observed_keys)):
         structural.append("duplicate policy/case rows")
     if set(observed_keys) != expected_keys:
@@ -1877,7 +2340,7 @@ def classify_controlled_gate(
         structural.append("duplicate dynamic port pairs")
 
     expected_router_cases = {
-        case["case_id"] for case in CONTROLLED_CASE_MATRIX
+        case["case_id"] for case in manifest_cases
     }
     router_keys = [
         (row.get("case_id"), row.get("policy"))
@@ -1897,7 +2360,7 @@ def classify_controlled_gate(
     ]
     expected_event_keys = {
         (case["case_id"], policy)
-        for case in CONTROLLED_CASE_MATRIX
+        for case in manifest_cases
         for policy in ("always_native", "routed_native")
         if not (
             policy == "routed_native"
@@ -1918,7 +2381,7 @@ def classify_controlled_gate(
 
     by_key = {_row_key(row): row for row in case_rows}
     semantic = []
-    for case in CONTROLLED_CASE_MATRIX:
+    for case in manifest_cases:
         case_id = case["case_id"]
         baseline = by_key[(case_id, "baseline")]
         output_hash = baseline.get("output_token_sha256")
@@ -2058,7 +2521,7 @@ def classify_controlled_gate(
     lifecycle_reasons = []
     profitable_ratios = []
     per_case_ratios = {}
-    for case in CONTROLLED_CASE_MATRIX:
+    for case in manifest_cases:
         case_id = case["case_id"]
         routed = by_key[(case_id, "routed_native")]
         baseline = by_key[(case_id, "baseline")]
@@ -2125,6 +2588,75 @@ def _parse_args():
     )
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--out-dir", type=Path, required=True)
+    snapshot_parser = subparsers.add_parser("snapshot-source")
+    snapshot_parser.add_argument(
+        "--repo-root",
+        type=Path,
+        required=True,
+    )
+    snapshot_parser.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+    )
+    finalize_parser = subparsers.add_parser(
+        "finalize-artifacts"
+    )
+    finalize_parser.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+    )
+    controlled_parser = subparsers.add_parser("run-controlled")
+    for name in (
+        "out-dir",
+        "source-evidence",
+        "source-patch",
+        "source-preflight",
+    ):
+        controlled_parser.add_argument(
+            f"--{name}",
+            type=Path,
+            required=True,
+        )
+    for name in (
+        "python-bin",
+        "model-path",
+        "host",
+        "run-tag",
+    ):
+        controlled_parser.add_argument(f"--{name}", required=True)
+    controlled_parser.add_argument("--resume", action="store_true")
+    controlled_parser.add_argument("--case-limit", type=int, default=0)
+    real_parser = subparsers.add_parser("run-real")
+    for name in (
+        "out-dir",
+        "source-evidence",
+        "source-patch",
+        "source-preflight",
+        "draft-source",
+        "prompt-bank",
+    ):
+        real_parser.add_argument(
+            f"--{name}",
+            type=Path,
+            required=True,
+        )
+    for name in (
+        "python-bin",
+        "model-path",
+        "host",
+        "run-tag",
+    ):
+        real_parser.add_argument(f"--{name}", required=True)
+    real_parser.add_argument("--repetitions", type=int, required=True)
+    real_parser.add_argument(
+        "--warmup-repetitions",
+        type=int,
+        required=True,
+    )
+    real_parser.add_argument("--resume", action="store_true")
+    real_parser.add_argument("--prompt-limit", type=int, default=0)
     real_input_parser = subparsers.add_parser(
         "validate-real-input"
     )
@@ -2144,9 +2676,51 @@ def _parse_args():
 def main():
     args = _parse_args()
     if args.command == "verify":
-        raise SystemExit(
-            "artifact verification is not implemented yet"
+        result = verify_artifacts(args.out_dir)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    if args.command == "snapshot-source":
+        result = snapshot_source(args.repo_root, args.out_dir)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    if args.command == "finalize-artifacts":
+        result = finalize_artifacts(args.out_dir)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    if args.command == "run-controlled":
+        result = run_controlled_gate(
+            out_dir=args.out_dir,
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            source_evidence_path=args.source_evidence,
+            source_patch_path=args.source_patch,
+            source_preflight_path=args.source_preflight,
+            host=args.host,
+            run_tag=args.run_tag,
+            resume=args.resume,
+            case_limit=args.case_limit,
         )
+        print(json.dumps(result["summary"], indent=2, sort_keys=True))
+        return
+    if args.command == "run-real":
+        result = run_real_source_gate(
+            out_dir=args.out_dir,
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            source_evidence_path=args.source_evidence,
+            source_patch_path=args.source_patch,
+            source_preflight_path=args.source_preflight,
+            draft_source_path=args.draft_source,
+            prompt_bank_path=args.prompt_bank,
+            host=args.host,
+            run_tag=args.run_tag,
+            repetitions=args.repetitions,
+            warmup_repetitions=args.warmup_repetitions,
+            resume=args.resume,
+            prompt_limit=args.prompt_limit,
+        )
+        print(json.dumps(result["summary"], indent=2, sort_keys=True))
+        return
     if args.command == "validate-real-input":
         result = validate_real_input(
             json.loads(args.draft_source.read_text()),

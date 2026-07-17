@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import math
 import os
+import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -478,7 +481,7 @@ def test_controlled_driver_runs_deterministic_prefix_with_unique_ports():
             gate._case_process = original
 
     expected = []
-    for case in gate.CONTROLLED_CASE_MATRIX[:2]:
+    for case in gate.select_controlled_cases(2):
         expected.append((case["case_id"], "probe"))
         expected.extend(
             (case["case_id"], policy)
@@ -493,6 +496,32 @@ def test_controlled_driver_runs_deterministic_prefix_with_unique_ports():
         for row in result["case_rows"]
     ]
     assert len(pairs) == len(set(pairs))
+
+
+def test_controlled_smoke_selection_covers_required_branches():
+    cases = gate.select_controlled_cases(6)
+    assert len(cases) == 6
+    assert any(case["draft_len"] == 1 for case in cases)
+    assert any(
+        case["acceptance_case"] == "zero"
+        and case["draft_len"] >= 2
+        for case in cases
+    )
+    assert any(
+        case["acceptance_case"] == "partial"
+        and case["draft_len"] >= 2
+        for case in cases
+    )
+    assert any(
+        case["acceptance_case"] == "full"
+        and case["draft_len"] >= 2
+        for case in cases
+    )
+    assert any(
+        case["block_case"] == "one_new_block"
+        for case in cases
+    )
+    assert all(case["continuation_steps"] >= 16 for case in cases)
 
 
 def test_controlled_driver_resume_retries_only_failed_row():
@@ -1212,6 +1241,233 @@ def test_validate_real_input_cli_parses_both_manifests():
     assert args.prompt_bank == prompt_path
 
 
+def test_raw_payload_hash_verifier_rejects_tampering():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        raw_dir = root / "raw"
+        raw_dir.mkdir()
+        payload = {
+            "case_id": "case-1",
+            "policy": "baseline",
+            "status": "PASS",
+        }
+        raw_path = raw_dir / "case-1.baseline.json"
+        raw_path.write_text(json.dumps(payload))
+        row = {
+            "case_id": "case-1",
+            "policy": "baseline",
+            "status": "PASS",
+            "raw_payload_sha256": gate._sha256_json(payload),
+        }
+        gate.verify_raw_payload_hashes(root, [row], stage="controlled")
+        raw_path.write_text('{"tampered":true}')
+        try:
+            gate.verify_raw_payload_hashes(
+                root,
+                [row],
+                stage="controlled",
+            )
+        except ValueError as exc:
+            assert "raw payload" in str(exc)
+        else:
+            raise AssertionError("tampered raw payload was accepted")
+
+
+def test_raw_payload_hash_verifier_rejects_truncated_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        raw_dir = root / "raw"
+        raw_dir.mkdir()
+        raw_path = raw_dir / "case-1.baseline.json"
+        raw_path.write_text('{"case_id":')
+        row = {
+            "case_id": "case-1",
+            "policy": "baseline",
+            "status": "PASS",
+            "raw_payload_sha256": "0" * 64,
+        }
+        try:
+            gate.verify_raw_payload_hashes(
+                root,
+                [row],
+                stage="controlled",
+            )
+        except ValueError as exc:
+            assert "truncated raw payload" in str(exc)
+        else:
+            raise AssertionError("truncated raw payload was accepted")
+
+
+def test_remote_metadata_rejects_missing_nonzero_and_mismatch():
+    manifest = {"source_tree_sha256": "a" * 64}
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "source_preflight.json").write_text(json.dumps({
+            "source_tree_sha256": "a" * 64,
+        }))
+        for expected in (
+            "missing remote exit code",
+            "remote process exited with 7",
+            "source preflight tree mismatch",
+        ):
+            if expected == "remote process exited with 7":
+                (root / "remote_exitcode").write_text("7\n")
+            elif expected == "source preflight tree mismatch":
+                (root / "remote_exitcode").write_text("0\n")
+                (root / "source_preflight.json").write_text(
+                    json.dumps({
+                        "source_tree_sha256": "b" * 64,
+                    })
+                )
+            try:
+                gate.verify_remote_metadata(root, manifest)
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(
+                    f"remote metadata accepted: {expected}"
+                )
+
+
+def test_snapshot_upload_bytes_are_immutable_after_staging():
+    original_roots = gate.OWNED_SOURCE_ROOTS
+    gate.OWNED_SOURCE_ROOTS = ("tinyvllm",)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "tinyvllm"
+            source.mkdir()
+            worktree_file = source / "__init__.py"
+            worktree_file.write_text("VALUE = 1\n")
+            subprocess.run(
+                ["git", "init"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Gate Test"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "gate@example.invalid"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "add", "."],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            staging = root / "staging"
+            gate.snapshot_source(root, staging)
+            staged_file = staging / "source" / "tinyvllm" / "__init__.py"
+            staged_bytes = staged_file.read_bytes()
+            worktree_file.write_text("VALUE = 2\n")
+            assert staged_file.read_bytes() == staged_bytes
+            assert staged_file.read_text() == "VALUE = 1\n"
+    finally:
+        gate.OWNED_SOURCE_ROOTS = original_roots
+
+
+def test_controlled_report_is_deterministic():
+    fixture = _complete_fixture()
+    summary = gate.classify_controlled_gate(*fixture)
+    first = gate.render_controlled_report(*fixture, summary)
+    second = gate.render_controlled_report(*fixture, summary)
+    assert first == second
+    assert "READY_FOR_REAL_DRAFTER_GATE" in first
+    assert "controlled target-derived" in first
+
+
+def test_source_snapshot_tampering_is_rejected():
+    original_roots = gate.OWNED_SOURCE_ROOTS
+    gate.OWNED_SOURCE_ROOTS = ("tinyvllm",)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source" / "tinyvllm"
+            source.mkdir(parents=True)
+            payload = b"VALUE = 1\n"
+            (source / "__init__.py").write_bytes(payload)
+            files = [{
+                "path": "tinyvllm/__init__.py",
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }]
+            evidence = {
+                "schema_version": 1,
+                "base_commit": "1" * 40,
+                "dirty": False,
+                "patch_path": "source.patch",
+                "patch_sha256": hashlib.sha256(b"").hexdigest(),
+                "patch_size_bytes": 0,
+                "owned_roots": ["tinyvllm"],
+                "files": files,
+                "tree_sha256": hashlib.sha256(
+                    json.dumps(
+                        files,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            (root / "source_evidence.json").write_text(
+                json.dumps(evidence)
+            )
+            (root / "source.patch").write_bytes(b"")
+            archive = root / "source_snapshot.tar.gz"
+            with tarfile.open(archive, "w:gz") as handle:
+                handle.add(root / "source", arcname="source")
+            gate._verify_source_artifacts(root)
+
+            (source / "__init__.py").write_text("VALUE = 2\n")
+            with tarfile.open(archive, "w:gz") as handle:
+                handle.add(root / "source", arcname="source")
+            try:
+                gate._verify_source_artifacts(root)
+            except ValueError as exc:
+                assert "hash mismatch" in str(exc)
+            else:
+                raise AssertionError(
+                    "tampered source snapshot was accepted"
+                )
+    finally:
+        gate.OWNED_SOURCE_ROOTS = original_roots
+
+
+def test_artifact_verifier_rejects_missing_manifest():
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            gate.verify_artifacts(Path(tmp))
+        except ValueError as exc:
+            assert "manifest.json" in str(exc)
+        else:
+            raise AssertionError("missing manifest was accepted")
+
+
+def test_artifact_verifier_rejects_missing_canonical_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "manifest.json").write_text(
+            json.dumps({"stage": "controlled"})
+        )
+        try:
+            gate.verify_artifacts(root)
+        except ValueError as exc:
+            assert "source_evidence.json" in str(exc)
+        else:
+            raise AssertionError("missing canonical file was accepted")
+
+
 def main():
     test_complete_controlled_evidence_is_ready()
     test_no_profitable_region_is_no_go()
@@ -1224,6 +1480,7 @@ def main():
     test_nonfinite_performance_is_incomplete()
     test_lifecycle_regression_is_no_go()
     test_controlled_driver_runs_deterministic_prefix_with_unique_ports()
+    test_controlled_smoke_selection_covers_required_branches()
     test_controlled_driver_resume_retries_only_failed_row()
     test_controlled_materialization_rejects_non_target_derived_label()
     test_short_route_exactness_uses_baseline_reference()
@@ -1236,6 +1493,14 @@ def main():
     test_validate_real_input_checks_prompt_hash()
     test_real_process_command_marks_real_source_stage()
     test_validate_real_input_cli_parses_both_manifests()
+    test_raw_payload_hash_verifier_rejects_tampering()
+    test_raw_payload_hash_verifier_rejects_truncated_json()
+    test_remote_metadata_rejects_missing_nonzero_and_mismatch()
+    test_snapshot_upload_bytes_are_immutable_after_staging()
+    test_controlled_report_is_deterministic()
+    test_source_snapshot_tampering_is_rejected()
+    test_artifact_verifier_rejects_missing_manifest()
+    test_artifact_verifier_rejects_missing_canonical_file()
     print("speculation router gate tests passed")
 
 
