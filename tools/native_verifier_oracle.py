@@ -190,6 +190,8 @@ def run_case(
         "baseline",
         "legacy_rematerialize",
         "native",
+        "always_native",
+        "routed_native",
         "oracle",
     ):
         raise ValueError(f"unsupported verifier oracle policy: {policy}")
@@ -634,6 +636,76 @@ def _run_probe_targets(llm, seq, draft_len: int) -> list[int]:
     return targets
 
 
+def _native_event_evidence(event: dict) -> dict:
+    oracle_evidence = event.get("oracle_evidence", {})
+    return {
+        "target_tokens": list(event.get("target_tokens", [])),
+        "accepted_tokens": list(event.get("accepted_tokens", [])),
+        "logits": oracle_evidence.get("logits", []),
+        "kv": oracle_evidence.get(
+            "kv",
+            {"keys": [], "values": []},
+        ),
+        "physical_slots": oracle_evidence.get(
+            "physical_slots",
+            [],
+        ),
+        "event": event,
+    }
+
+
+def _run_policy_verify(
+    profile,
+    *,
+    policy: str,
+    llm,
+    seq,
+    draft_tokens: list[int],
+) -> dict:
+    common_kwargs = {
+        "draft_source": "controlled-target-derived",
+        "capture_oracle_evidence": True,
+        "defer_finish_for_oracle_evidence": True,
+    }
+    if policy == "always_native":
+        event = profile.verify_and_commit_block(
+            llm,
+            seq,
+            draft_tokens,
+            verifier_mode="native",
+            **common_kwargs,
+        )
+        event.update({
+            "route": "native_multi_token",
+            "route_fallback_reason": None,
+        })
+        return _native_event_evidence(event)
+    if policy == "routed_native":
+        event = profile.route_and_verify_draft(
+            llm,
+            seq,
+            draft_tokens,
+            allow_incompatible_fallback=False,
+            **common_kwargs,
+        )
+        return _native_event_evidence(event)
+    raise ValueError(f"unsupported routed verifier policy: {policy}")
+
+
+def _advance_short_route_with_normal_decode(
+    llm,
+    seq,
+    event: dict,
+) -> dict:
+    step = _run_decode_evidence_step(llm, seq)
+    seq.append_token(step["token_id"])
+    event.update({
+        "normal_decode_token": int(step["token_id"]),
+        "normal_decode_forward_count": 1,
+    })
+    return event
+
+
 def _token_sha256(tokens: list[int]) -> str:
     return __import__("hashlib").sha256(
         json.dumps(
@@ -735,6 +807,26 @@ def _run_tinyvllm_case(
                 ]["physical_slots"],
                 "event": event,
             }
+        elif policy in ("always_native", "routed_native"):
+            verify = _run_policy_verify(
+                profile,
+                policy=policy,
+                llm=llm,
+                seq=seq,
+                draft_tokens=case["draft_tokens"],
+            )
+            if (
+                policy == "routed_native"
+                and verify["event"].get("route")
+                != "native_multi_token"
+            ):
+                verify["event"] = (
+                    _advance_short_route_with_normal_decode(
+                        llm,
+                        seq,
+                        verify["event"],
+                    )
+                )
         elif policy == "legacy_rematerialize":
             verify = _run_legacy_verify(
                 llm,
@@ -766,6 +858,13 @@ def _run_tinyvllm_case(
         output_tokens = (
             len(verify["accepted_tokens"])
             + len(continuation["tokens"])
+            + int(
+                bool(
+                    (verify.get("event") or {}).get(
+                        "normal_decode_forward_count"
+                    )
+                )
+            )
         )
         event = verify.get("event")
         verifier_commit_ms = (
@@ -800,6 +899,22 @@ def _run_tinyvllm_case(
                 "physical_slots"
             ],
             "event": verify.get("event"),
+            "route": (
+                verify.get("event") or {}
+            ).get("route"),
+            "route_fallback_reason": (
+                verify.get("event") or {}
+            ).get("route_fallback_reason"),
+            "router_event": (
+                verify.get("event")
+                if policy == "routed_native"
+                else None
+            ),
+            "draft_construction": (
+                "controlled_target_derived"
+                if policy in ("always_native", "routed_native")
+                else None
+            ),
         })
         payload.update({
             "status": "PASS",
@@ -988,6 +1103,8 @@ def _parse_args():
             "baseline",
             "legacy_rematerialize",
             "native",
+            "always_native",
+            "routed_native",
             "oracle",
         ],
     )

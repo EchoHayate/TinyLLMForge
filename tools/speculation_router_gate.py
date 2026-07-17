@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
+import shutil
+import socket
 import statistics
+import subprocess
 import time
 from pathlib import Path
 
@@ -36,6 +41,16 @@ CONTROLLED_THRESHOLDS = {
     "max_required_lifecycle_elapsed_ratio": 1.05,
     "min_continuation_steps": 16,
 }
+
+_CONTROLLED_PROMPT = (
+    "Repeat the sequence alpha beta gamma while preserving exact spacing: "
+    "alpha beta gamma alpha beta gamma."
+)
+_CONTROLLED_EOS_PROMPT = (
+    "<|im_start|>user\n"
+    "Reply with exactly OK and then stop.<|im_end|>\n"
+    "<|im_start|>assistant\n"
+)
 
 
 def _case(
@@ -254,6 +269,623 @@ def build_controlled_manifest(
             "READY_FOR_REAL_DRAFTER_GATE"
         ),
         "process_port_pairs": [],
+    }
+
+
+def _allocate_port_pair() -> tuple[int, int]:
+    sockets = []
+    ports = []
+    try:
+        for _ in range(2):
+            handle = socket.socket(
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+            )
+            handle.bind(("127.0.0.1", 0))
+            sockets.append(handle)
+            ports.append(int(handle.getsockname()[1]))
+    finally:
+        for handle in sockets:
+            handle.close()
+    return ports[0], ports[1]
+
+
+def _case_process(
+    *,
+    python_bin: str,
+    model_path: str,
+    policy: str,
+    case: dict,
+    out_path: Path,
+    log_dir: Path,
+) -> tuple[dict | None, dict]:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    case_path = out_path.with_suffix(".case.json")
+    case_path.write_text(
+        json.dumps(case, indent=2, sort_keys=True) + "\n"
+    )
+    last_process = None
+    for attempt in range(1, 4):
+        dist_port, master_port = _allocate_port_pair()
+        stdout_path = log_dir / (
+            f"{case['case_id']}.{policy}.attempt{attempt}.stdout.log"
+        )
+        stderr_path = log_dir / (
+            f"{case['case_id']}.{policy}.attempt{attempt}.stderr.log"
+        )
+        command = [
+            str(python_bin),
+            str(Path(__file__).with_name(
+                "native_verifier_oracle.py"
+            )),
+            "run-case",
+            "--policy",
+            policy,
+            "--case-json",
+            str(case_path),
+            "--out",
+            str(out_path),
+            "--model",
+            str(model_path),
+            "--continuation-steps",
+            str(case["continuation_steps"]),
+        ]
+        environment = os.environ.copy()
+        environment["TINYVLLM_DIST_PORT"] = str(dist_port)
+        environment["MASTER_PORT"] = str(master_port)
+        started = time.perf_counter()
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            env=environment,
+            check=False,
+        )
+        stdout_path.write_text(completed.stdout)
+        stderr_path.write_text(completed.stderr)
+        last_process = {
+            "returncode": int(completed.returncode),
+            "command": command,
+            "tinyvllm_dist_port": dist_port,
+            "master_port": master_port,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "elapsed_s": time.perf_counter() - started,
+            "attempt": attempt,
+        }
+        combined = completed.stdout + "\n" + completed.stderr
+        retryable = completed.returncode != 0 and (
+            "EADDRINUSE" in combined
+            or "address already in use" in combined.lower()
+        )
+        if completed.returncode == 0:
+            return json.loads(out_path.read_text()), last_process
+        if not retryable:
+            break
+    return None, last_process or {
+        "returncode": 1,
+        "tinyvllm_dist_port": -1,
+        "master_port": -1,
+    }
+
+
+def _materialize_controlled_case(
+    case_spec: dict,
+    probe: dict,
+    *,
+    source_tree_sha256: str,
+) -> dict:
+    from native_verifier_oracle import construct_draft_tokens
+
+    if (
+        case_spec.get("draft_construction")
+        != "controlled_target_derived"
+    ):
+        raise ValueError(
+            "controlled case requires "
+            "draft_construction=controlled_target_derived"
+        )
+    targets = [int(token_id) for token_id in probe["target_tokens"]]
+    history_len = int(case_spec["history_len"])
+    draft_tokens = construct_draft_tokens(
+        targets,
+        acceptance_case=case_spec["acceptance_case"],
+        vocab_size=int(probe["vocab_size"]),
+    )
+    prompt_token_count = int(probe["prompt_token_count"])
+    if case_spec["eos_case"]:
+        eos_token_id = int(probe["eos_token_id"])
+        history_tokens = [
+            int(token_id) for token_id in probe["history_tokens"]
+        ]
+        draft_len = int(case_spec["draft_len"])
+        eos_indices = [
+            index
+            for index, token_id in enumerate(history_tokens)
+            if (
+                token_id == eos_token_id
+                and index - draft_len + 1 >= prompt_token_count
+            )
+        ]
+        if not eos_indices:
+            raise ValueError(
+                f"{case_spec['case_id']} probe history has no usable real EOS"
+            )
+        eos_index = eos_indices[-1]
+        history_len = eos_index - draft_len + 1
+        draft_tokens = history_tokens[
+            history_len:history_len + draft_len
+        ]
+    completion_at_history = history_len - prompt_token_count
+    max_tokens = (
+        completion_at_history + 2
+        if case_spec["output_budget_case"]
+        else completion_at_history
+        + len(draft_tokens)
+        + int(case_spec["continuation_steps"])
+        + 4
+    )
+    return {
+        **case_spec,
+        "prompt": (
+            _CONTROLLED_EOS_PROMPT
+            if case_spec["eos_case"]
+            else _CONTROLLED_PROMPT
+        ),
+        "history_len": history_len,
+        "draft_tokens": draft_tokens,
+        "max_tokens": max_tokens,
+        "ignore_eos": not bool(case_spec["eos_case"]),
+        "source_tree_sha256": source_tree_sha256,
+    }
+
+
+_LARGE_EVIDENCE_FIELDS = (
+    "logits",
+    "kv",
+    "continuation_logits",
+    "continuation_kv",
+    "physical_slots",
+    "continuation_physical_slots",
+    "event",
+    "router_event",
+)
+
+
+def _sha256_json(value) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _normalize_controlled_row(
+    payload: dict | None,
+    process: dict,
+    *,
+    case_id: str,
+    policy: str,
+    source_tree_sha256: str,
+) -> dict:
+    if payload is None:
+        return {
+            "case_id": case_id,
+            "policy": policy,
+            "status": "INCOMPLETE",
+            "source_tree_sha256": source_tree_sha256,
+            "process": process,
+        }
+    if (
+        policy in ("always_native", "routed_native")
+        and payload.get("draft_construction")
+        != "controlled_target_derived"
+    ):
+        raise ValueError(
+            "controlled runtime returned non-target-derived draft"
+        )
+    row = {
+        key: value
+        for key, value in payload.items()
+        if key not in _LARGE_EVIDENCE_FIELDS
+    }
+    row.update({
+        "case_id": case_id,
+        "policy": policy,
+        "source_tree_sha256": source_tree_sha256,
+        "process": process,
+        "raw_payload_sha256": _sha256_json(payload),
+    })
+    event = payload.get("event")
+    if isinstance(event, dict):
+        for field in (
+            "accepted_count",
+            "target_forward_count",
+            "normal_decode_forward_count",
+        ):
+            if field in event:
+                row[field] = int(event[field])
+    for field in _LARGE_EVIDENCE_FIELDS:
+        if field in payload and payload[field] is not None:
+            row[f"{field}_sha256"] = _sha256_json(payload[field])
+    return row
+
+
+def _native_event_row(row: dict, payload: dict) -> dict | None:
+    event = payload.get("event")
+    if not isinstance(event, dict):
+        return None
+    return {
+        "case_id": row["case_id"],
+        "policy": row["policy"],
+        "draft_len": int(event["draft_len"]),
+        "accepted_count": int(event["accepted_count"]),
+        "accepted_kv_rematerialization": event[
+            "accepted_kv_rematerialization"
+        ],
+        "accepted_kv_copy_calls": int(
+            event["accepted_kv_copy_calls"]
+        ),
+        "accepted_kv_replay_calls": int(
+            event["accepted_kv_replay_calls"]
+        ),
+        "target_forward_count": int(
+            event["target_forward_count"]
+        ),
+        "verifier_commit_ms": float(
+            event["timing_ms"]["verify_commit_total_ms"]
+        ),
+    }
+
+
+def _router_row(row: dict, payload: dict) -> dict | None:
+    event = payload.get("router_event")
+    if row["policy"] != "routed_native" or not isinstance(
+        event,
+        dict,
+    ):
+        return None
+    return {
+        "case_id": row["case_id"],
+        "policy": "routed_native",
+        "route": event.get("route"),
+        "draft_len": int(event["draft_len"]),
+        "route_fallback_reason": event.get(
+            "route_fallback_reason"
+        ),
+        "speculative_reservation_attempted": bool(
+            event.get("speculative_reservation_attempted", False)
+        ),
+        "spec_verify_prepare_calls": int(
+            event.get("spec_verify_prepare_calls", 0)
+        ),
+        "spec_verify_forward_calls": int(
+            event.get("spec_verify_forward_calls", 0)
+        ),
+        "target_forward_count": int(
+            event.get("target_forward_count", 0)
+        ),
+    }
+
+
+def _load_json_list(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    value = json.loads(path.read_text())
+    if not isinstance(value, list):
+        raise ValueError(f"{path.name} must contain a list")
+    return value
+
+
+def _exactness_reference_row(
+    case_spec: dict,
+    rows_by_key: dict[tuple[str, str], dict],
+) -> dict:
+    policy = (
+        "baseline"
+        if int(case_spec["draft_len"]) <= 1
+        else "routed_native"
+    )
+    return rows_by_key[(case_spec["case_id"], policy)]
+
+
+def _write_json(path: Path, value) -> None:
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def _record_process_pair(
+    manifest: dict,
+    *,
+    case_id: str,
+    policy: str,
+    process: dict,
+) -> None:
+    rows = [
+        row
+        for row in manifest.get("process_port_pairs", [])
+        if (
+            row.get("case_id"),
+            row.get("policy"),
+        ) != (case_id, policy)
+    ]
+    rows.append({
+        "case_id": case_id,
+        "policy": policy,
+        "tinyvllm_dist_port": process[
+            "tinyvllm_dist_port"
+        ],
+        "master_port": process["master_port"],
+    })
+    manifest["process_port_pairs"] = rows
+
+
+def run_controlled_gate(
+    *,
+    out_dir: Path,
+    python_bin: str,
+    model_path: str,
+    source_evidence_path: Path,
+    source_patch_path: Path,
+    source_preflight_path: Path,
+    host: str,
+    run_tag: str,
+    resume: bool = False,
+    case_limit: int = 0,
+) -> dict:
+    from native_verifier_oracle import (
+        compare_native_and_oracle,
+    )
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = out_dir / "raw"
+    log_dir = out_dir / "logs"
+    raw_dir.mkdir(exist_ok=True)
+    log_dir.mkdir(exist_ok=True)
+    source_evidence = json.loads(
+        Path(source_evidence_path).read_text()
+    )
+    source_preflight = json.loads(
+        Path(source_preflight_path).read_text()
+    )
+    source_tree_sha256 = source_evidence["tree_sha256"]
+    capability = json.loads(
+        (out_dir / "capability.json").read_text()
+    )
+    selected_cases = list(CONTROLLED_CASE_MATRIX)
+    if case_limit:
+        if case_limit < 1:
+            raise ValueError("case_limit must be non-negative")
+        selected_cases = selected_cases[:case_limit]
+
+    existing_rows = {
+        _row_key(row): row
+        for row in (
+            _load_json_list(out_dir / "case_rows.json")
+            if resume
+            else []
+        )
+    }
+    manifest_path = out_dir / "manifest.json"
+    if resume and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        if (
+            manifest.get("source_tree_sha256")
+            != source_tree_sha256
+            or manifest.get("model_path") != str(model_path)
+            or manifest.get("run_tag") != run_tag
+        ):
+            raise ValueError("resume manifest identity mismatch")
+    else:
+        manifest = build_controlled_manifest(
+            source_evidence=source_evidence,
+            source_preflight=source_preflight,
+            model_path=str(model_path),
+            model_identifier=source_preflight[
+                "model_identifier"
+            ],
+            host=host,
+            python_bin=python_bin,
+            torch_version=source_preflight["torch"],
+            cuda_version=source_preflight["cuda"],
+            flash_attn_version=source_preflight["flash_attn"],
+            gpu_name=source_preflight["gpu"],
+            bf16_supported=source_preflight["bf16_supported"],
+            run_tag=run_tag,
+        )
+
+    rows_by_key = dict(existing_rows)
+    payloads_by_key = {}
+    for case_spec in selected_cases:
+        needed_policies = [
+            policy
+            for policy in CONTROLLED_POLICIES
+            if rows_by_key.get(
+                (case_spec["case_id"], policy),
+                {},
+            ).get("status") != "PASS"
+        ]
+        case_path = raw_dir / (
+            f"{case_spec['case_id']}.materialized.json"
+        )
+        if needed_policies:
+            if resume and case_path.is_file():
+                case = json.loads(case_path.read_text())
+            else:
+                probe_case = {
+                    **case_spec,
+                    "prompt": (
+                        _CONTROLLED_EOS_PROMPT
+                        if case_spec["eos_case"]
+                        else _CONTROLLED_PROMPT
+                    ),
+                    "draft_tokens": [0] * int(
+                        case_spec["draft_len"]
+                    ),
+                    "max_tokens": 2048,
+                    "ignore_eos": True,
+                }
+                probe, probe_process = _case_process(
+                    python_bin=python_bin,
+                    model_path=model_path,
+                    policy="probe",
+                    case=probe_case,
+                    out_path=raw_dir / (
+                        f"{case_spec['case_id']}.probe.json"
+                    ),
+                    log_dir=log_dir,
+                )
+                _record_process_pair(
+                    manifest,
+                    case_id=case_spec["case_id"],
+                    policy="probe",
+                    process=probe_process,
+                )
+                if probe is None:
+                    for policy in needed_policies:
+                        rows_by_key[
+                            (case_spec["case_id"], policy)
+                        ] = _normalize_controlled_row(
+                            None,
+                            probe_process,
+                            case_id=case_spec["case_id"],
+                            policy=policy,
+                            source_tree_sha256=source_tree_sha256,
+                        )
+                    continue
+                case = _materialize_controlled_case(
+                    case_spec,
+                    probe,
+                    source_tree_sha256=source_tree_sha256,
+                )
+                _write_json(case_path, case)
+            for policy in needed_policies:
+                payload, process = _case_process(
+                    python_bin=python_bin,
+                    model_path=model_path,
+                    policy=policy,
+                    case=case,
+                    out_path=raw_dir / (
+                        f"{case_spec['case_id']}.{policy}.json"
+                    ),
+                    log_dir=log_dir,
+                )
+                _record_process_pair(
+                    manifest,
+                    case_id=case_spec["case_id"],
+                    policy=policy,
+                    process=process,
+                )
+                key = (case_spec["case_id"], policy)
+                rows_by_key[key] = _normalize_controlled_row(
+                    payload,
+                    process,
+                    case_id=case_spec["case_id"],
+                    policy=policy,
+                    source_tree_sha256=source_tree_sha256,
+                )
+                if payload is not None:
+                    payloads_by_key[key] = payload
+
+    selected_ids = {
+        case["case_id"] for case in selected_cases
+    }
+    case_rows = sorted(
+        (
+            row for key, row in rows_by_key.items()
+            if key[0] in selected_ids
+        ),
+        key=_row_key,
+    )
+    for row in case_rows:
+        key = _row_key(row)
+        if key not in payloads_by_key:
+            raw_path = raw_dir / f"{key[0]}.{key[1]}.json"
+            if raw_path.is_file():
+                payloads_by_key[key] = json.loads(
+                    raw_path.read_text()
+                )
+
+    for case_spec in selected_cases:
+        routed_key = (
+            case_spec["case_id"],
+            "routed_native",
+        )
+        oracle_key = (case_spec["case_id"], "oracle")
+        if (
+            _exactness_reference_row(
+                case_spec,
+                rows_by_key,
+            ).get("status") == "PASS"
+            and rows_by_key.get(oracle_key, {}).get("status")
+            == "PASS"
+        ):
+            rows_by_key[oracle_key]["comparison"] = (
+                compare_native_and_oracle(
+                    payloads_by_key[_row_key(
+                        _exactness_reference_row(
+                            case_spec,
+                            rows_by_key,
+                        )
+                    )],
+                    payloads_by_key[oracle_key],
+                )
+            )
+
+    event_rows = []
+    router_rows = []
+    for row in case_rows:
+        payload = payloads_by_key.get(_row_key(row), {})
+        if row["policy"] in ("always_native", "routed_native"):
+            event = _native_event_row(row, payload)
+            if event is not None and not (
+                row["policy"] == "routed_native"
+                and int(event["draft_len"]) <= 1
+            ):
+                event_rows.append(event)
+        router = _router_row(row, payload)
+        if router is not None:
+            router_rows.append(router)
+
+    case_rows = sorted(
+        (
+            row for key, row in rows_by_key.items()
+            if key[0] in selected_ids
+        ),
+        key=_row_key,
+    )
+    summary = classify_controlled_gate(
+        manifest,
+        capability,
+        case_rows,
+        event_rows,
+        router_rows,
+    )
+    source_targets = {
+        "source_evidence.json": Path(source_evidence_path),
+        "source.patch": Path(source_patch_path),
+        "source_preflight.json": Path(source_preflight_path),
+    }
+    for name, source in source_targets.items():
+        target = out_dir / name
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+    _write_json(manifest_path, manifest)
+    _write_json(out_dir / "case_rows.json", case_rows)
+    _write_json(out_dir / "event_rows.json", event_rows)
+    _write_json(out_dir / "router_rows.json", router_rows)
+    _write_json(out_dir / "summary.json", summary)
+    return {
+        "manifest": manifest,
+        "case_rows": case_rows,
+        "event_rows": event_rows,
+        "router_rows": router_rows,
+        "summary": summary,
     }
 
 

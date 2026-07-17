@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -303,6 +305,354 @@ def test_lifecycle_regression_is_no_go():
     )
 
 
+def _write_driver_inputs(out_dir: Path):
+    source_evidence = {
+        "schema_version": 1,
+        "base_commit": "1" * 40,
+        "dirty": False,
+        "tree_sha256": "3" * 64,
+    }
+    source_preflight = {
+        "schema_version": 1,
+        "source_tree_sha256": source_evidence["tree_sha256"],
+        "model_identifier": "Qwen3-0.6B",
+        "torch": "2.4.1",
+        "cuda": "12.1",
+        "flash_attn": "2.6.3",
+        "gpu": "Synthetic GPU",
+        "bf16_supported": True,
+    }
+    evidence_path = out_dir / "source_evidence.input.json"
+    patch_path = out_dir / "source.input.patch"
+    preflight_path = out_dir / "source_preflight.input.json"
+    evidence_path.write_text(json.dumps(source_evidence))
+    patch_path.write_bytes(b"")
+    preflight_path.write_text(json.dumps(source_preflight))
+    (out_dir / "capability.json").write_text(
+        json.dumps(_capability())
+    )
+    return evidence_path, patch_path, preflight_path
+
+
+def _fake_driver_process(calls, failed_keys=()):
+    failed_keys = set(failed_keys)
+
+    def run_process(
+        *,
+        python_bin,
+        model_path,
+        policy,
+        case,
+        out_path,
+        log_dir,
+    ):
+        del python_bin, model_path, log_dir
+        key = (case["case_id"], policy)
+        calls.append(key)
+        port = 20000 + len(calls) * 2
+        process = {
+            "returncode": 2 if key in failed_keys else 0,
+            "tinyvllm_dist_port": port,
+            "master_port": port + 1,
+        }
+        if key in failed_keys:
+            return None, process
+        if policy == "probe":
+            payload = {
+                "case_id": case["case_id"],
+                "policy": "probe",
+                "target_tokens": list(
+                    range(10, 10 + int(case["draft_len"]))
+                ),
+                "vocab_size": 1000,
+                "eos_token_id": 999,
+                "prompt_token_count": 8,
+                "history_tokens": list(
+                    range(int(case["history_len"]))
+                ),
+            }
+        else:
+            route = (
+                "baseline_short_draft"
+                if int(case["draft_len"]) <= 1
+                else "native_multi_token"
+            )
+            event = {
+                "route": route,
+                "route_fallback_reason": None,
+                "draft_len": int(case["draft_len"]),
+                "accepted_count": int(
+                    case["expected_accepted_count"]
+                ),
+                "accepted_kv_rematerialization": {
+                    "decode_calls": 0,
+                    "rematerialized_tokens": [],
+                    "elapsed_ms": 0.0,
+                },
+                "accepted_kv_copy_calls": 0,
+                "accepted_kv_replay_calls": 0,
+                "target_forward_count": (
+                    0 if route == "baseline_short_draft" else 1
+                ),
+                "speculative_reservation_attempted": (
+                    route == "native_multi_token"
+                ),
+                "spec_verify_prepare_calls": (
+                    0 if route == "baseline_short_draft" else 1
+                ),
+                "spec_verify_forward_calls": (
+                    0 if route == "baseline_short_draft" else 1
+                ),
+                "timing_ms": {"verify_commit_total_ms": 1.0},
+            }
+            payload = {
+                "case_id": case["case_id"],
+                "policy": policy,
+                "status": "PASS",
+                "draft_construction": (
+                    "controlled_target_derived"
+                ),
+                "target_tokens": list(case["draft_tokens"]),
+                "accepted_tokens": list(case["draft_tokens"]),
+                "sequence_tokens_after": [1, 2, 3],
+                "block_table_after": [0],
+                "continuation_tokens": list(range(16)),
+                "dtype": "torch.float16",
+                "finite": True,
+                "logits": [[0.0, 1.0]],
+                "kv": {"keys": [[1.0]], "values": [[2.0]]},
+                "continuation_logits": [[[0.0, 1.0]]],
+                "continuation_kv": [{
+                    "keys": [[1.0]],
+                    "values": [[2.0]],
+                }],
+                "elapsed_s": 1.0,
+                "output_tokens": 16,
+                "output_tokens_per_s": 16.0,
+                "output_token_sha256": (
+                    f"output-{case['case_id']}"
+                ),
+                "continuation_token_sha256": (
+                    f"continuation-{case['case_id']}"
+                ),
+                "event": event if policy in (
+                    "always_native",
+                    "routed_native",
+                    "legacy_rematerialize",
+                ) else None,
+                "route": (
+                    route if policy == "routed_native" else None
+                ),
+                "route_fallback_reason": None,
+                "router_event": (
+                    event if policy == "routed_native" else None
+                ),
+            }
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload))
+        return payload, process
+
+    return run_process
+
+
+def test_controlled_driver_runs_deterministic_prefix_with_unique_ports():
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        inputs = _write_driver_inputs(out_dir)
+        calls = []
+        original = gate._case_process
+        gate._case_process = _fake_driver_process(calls)
+        try:
+            result = gate.run_controlled_gate(
+                out_dir=out_dir,
+                python_bin="python3",
+                model_path="/model",
+                source_evidence_path=inputs[0],
+                source_patch_path=inputs[1],
+                source_preflight_path=inputs[2],
+                host="synthetic-host",
+                run_tag="driver-test",
+                case_limit=2,
+            )
+        finally:
+            gate._case_process = original
+
+    expected = []
+    for case in gate.CONTROLLED_CASE_MATRIX[:2]:
+        expected.append((case["case_id"], "probe"))
+        expected.extend(
+            (case["case_id"], policy)
+            for policy in gate.CONTROLLED_POLICIES
+        )
+    assert calls == expected
+    pairs = [
+        (
+            row["process"]["tinyvllm_dist_port"],
+            row["process"]["master_port"],
+        )
+        for row in result["case_rows"]
+    ]
+    assert len(pairs) == len(set(pairs))
+
+
+def test_controlled_driver_resume_retries_only_failed_row():
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        inputs = _write_driver_inputs(out_dir)
+        failed_key = (
+            gate.CONTROLLED_CASE_MATRIX[0]["case_id"],
+            "routed_native",
+        )
+        first_calls = []
+        original = gate._case_process
+        gate._case_process = _fake_driver_process(
+            first_calls,
+            failed_keys={failed_key},
+        )
+        try:
+            gate.run_controlled_gate(
+                out_dir=out_dir,
+                python_bin="python3",
+                model_path="/model",
+                source_evidence_path=inputs[0],
+                source_patch_path=inputs[1],
+                source_preflight_path=inputs[2],
+                host="synthetic-host",
+                run_tag="driver-test",
+                case_limit=1,
+            )
+            initial_manifest = json.loads(
+                (out_dir / "manifest.json").read_text()
+            )
+            baseline_process = next(
+                row for row in initial_manifest[
+                    "process_port_pairs"
+                ]
+                if row["case_id"] == failed_key[0]
+                and row["policy"] == "baseline"
+            )
+            stale_router = [{
+                "case_id": failed_key[0],
+                "policy": "routed_native",
+                "route": "stale",
+            }]
+            (out_dir / "router_rows.json").write_text(
+                json.dumps(stale_router)
+            )
+            resume_calls = []
+            gate._case_process = _fake_driver_process(resume_calls)
+            result = gate.run_controlled_gate(
+                out_dir=out_dir,
+                python_bin="python3",
+                model_path="/model",
+                source_evidence_path=inputs[0],
+                source_patch_path=inputs[1],
+                source_preflight_path=inputs[2],
+                host="synthetic-host",
+                run_tag="driver-test",
+                resume=True,
+                case_limit=1,
+            )
+        finally:
+            gate._case_process = original
+
+    assert resume_calls == [failed_key]
+    resumed_pairs = result["manifest"]["process_port_pairs"]
+    pair_keys = [
+        (row["case_id"], row["policy"])
+        for row in resumed_pairs
+    ]
+    assert len(pair_keys) == len(set(pair_keys))
+    assert next(
+        row for row in resumed_pairs
+        if row["case_id"] == failed_key[0]
+        and row["policy"] == "baseline"
+    ) == baseline_process
+    router = next(
+        row for row in result["router_rows"]
+        if row["case_id"] == failed_key[0]
+    )
+    assert router["route"] == "baseline_short_draft"
+
+
+def test_controlled_materialization_rejects_non_target_derived_label():
+    case = dict(gate.CONTROLLED_CASE_MATRIX[0])
+    case["draft_construction"] = "ngram"
+    try:
+        gate._materialize_controlled_case(
+            case,
+            {
+                "target_tokens": [10],
+                "vocab_size": 1000,
+                "eos_token_id": 999,
+                "prompt_token_count": 8,
+                "history_tokens": list(range(64)),
+            },
+            source_tree_sha256="3" * 64,
+        )
+    except ValueError as exc:
+        assert "controlled_target_derived" in str(exc)
+    else:
+        raise AssertionError(
+            "controlled gate must reject real-source construction"
+        )
+
+
+def test_short_route_exactness_uses_baseline_reference():
+    rows = {
+        ("k1-route-fallback", "baseline"): {"baseline": True},
+        ("k1-route-fallback", "routed_native"): {"routed": True},
+        ("k1-route-fallback", "oracle"): {"oracle": True},
+    }
+    assert gate._exactness_reference_row(
+        gate.CONTROLLED_CASE_MATRIX[0],
+        rows,
+    ) == {"baseline": True}
+
+
+def test_compact_row_promotes_scalars_without_numeric_arrays():
+    payload = {
+        "case_id": "case-1",
+        "policy": "routed_native",
+        "status": "PASS",
+        "draft_construction": "controlled_target_derived",
+        "target_tokens": [10, 20],
+        "accepted_tokens": [10],
+        "logits": [[0.0, 1.0]],
+        "kv": {"keys": [[1.0]], "values": [[2.0]]},
+        "continuation_logits": [[[0.0, 1.0]]],
+        "continuation_kv": [{
+            "keys": [[1.0]],
+            "values": [[2.0]],
+        }],
+        "event": {
+            "accepted_count": 1,
+            "target_forward_count": 1,
+            "normal_decode_forward_count": 0,
+        },
+    }
+    row = gate._normalize_controlled_row(
+        payload,
+        {
+            "returncode": 0,
+            "tinyvllm_dist_port": 20000,
+            "master_port": 20001,
+        },
+        case_id="case-1",
+        policy="routed_native",
+        source_tree_sha256="3" * 64,
+    )
+
+    assert row["accepted_count"] == 1
+    assert row["target_forward_count"] == 1
+    assert "logits" not in row
+    assert "kv" not in row
+    assert "continuation_logits" not in row
+    assert "continuation_kv" not in row
+    assert row["logits_sha256"]
+    assert row["kv_sha256"]
+
+
 def main():
     test_complete_controlled_evidence_is_ready()
     test_no_profitable_region_is_no_go()
@@ -314,6 +664,11 @@ def main():
     test_duplicate_port_pair_is_incomplete()
     test_nonfinite_performance_is_incomplete()
     test_lifecycle_regression_is_no_go()
+    test_controlled_driver_runs_deterministic_prefix_with_unique_ports()
+    test_controlled_driver_resume_retries_only_failed_row()
+    test_controlled_materialization_rejects_non_target_derived_label()
+    test_short_route_exactness_uses_baseline_reference()
+    test_compact_row_promotes_scalars_without_numeric_arrays()
     print("speculation router gate tests passed")
 
 

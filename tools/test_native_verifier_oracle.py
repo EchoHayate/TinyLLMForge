@@ -609,6 +609,8 @@ def test_run_case_accepts_all_isolated_policies():
             "baseline",
             "legacy_rematerialize",
             "native",
+            "always_native",
+            "routed_native",
             "oracle",
         ):
             run_case(
@@ -631,8 +633,197 @@ def test_run_case_accepts_all_isolated_policies():
         "baseline",
         "legacy_rematerialize",
         "native",
+        "always_native",
+        "routed_native",
         "oracle",
     ]
+
+
+def test_cli_accepts_routed_runtime_policies():
+    original = sys.argv
+    try:
+        for policy in ("always_native", "routed_native"):
+            sys.argv = [
+                "native_verifier_oracle.py",
+                "run-case",
+                "--policy",
+                policy,
+                "--case-json",
+                "case.json",
+                "--out",
+                "out.json",
+                "--model",
+                "/model",
+            ]
+            assert oracle._parse_args().policy == policy
+    finally:
+        sys.argv = original
+
+
+def test_always_native_dispatches_existing_native_verifier():
+    calls = []
+
+    class FakeProfile:
+        @staticmethod
+        def verify_and_commit_block(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {
+                "route": "native_multi_token",
+                "route_fallback_reason": None,
+                "target_tokens": [10, 20],
+                "accepted_tokens": [10, 20],
+                "oracle_evidence": {
+                    "logits": [[1.0]],
+                    "kv": {"keys": [[1.0]], "values": [[2.0]]},
+                    "physical_slots": [4],
+                },
+            }
+
+    llm = object()
+    seq = object()
+    verify = oracle._run_policy_verify(
+        FakeProfile,
+        policy="always_native",
+        llm=llm,
+        seq=seq,
+        draft_tokens=[10, 20],
+    )
+
+    assert calls == [((llm, seq, [10, 20]), {
+        "draft_source": "controlled-target-derived",
+        "verifier_mode": "native",
+        "capture_oracle_evidence": True,
+        "defer_finish_for_oracle_evidence": True,
+    })]
+    assert verify["target_tokens"] == [10, 20]
+    assert verify["accepted_tokens"] == [10, 20]
+    assert verify["event"]["route"] == "native_multi_token"
+
+
+def test_routed_native_short_draft_records_zero_speculative_work():
+    calls = []
+
+    class FakeProfile:
+        @staticmethod
+        def route_and_verify_draft(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {
+                "route": "baseline_short_draft",
+                "route_fallback_reason": None,
+                "target_tokens": [],
+                "accepted_tokens": [],
+                "accepted_count": 0,
+                "target_forward_count": 0,
+                "speculative_reservation_attempted": False,
+                "spec_verify_prepare_calls": 0,
+                "spec_verify_forward_calls": 0,
+            }
+
+    llm = object()
+    seq = object()
+    verify = oracle._run_policy_verify(
+        FakeProfile,
+        policy="routed_native",
+        llm=llm,
+        seq=seq,
+        draft_tokens=[10],
+    )
+
+    assert calls == [((llm, seq, [10]), {
+        "draft_source": "controlled-target-derived",
+        "allow_incompatible_fallback": False,
+        "capture_oracle_evidence": True,
+        "defer_finish_for_oracle_evidence": True,
+    })]
+    assert verify["target_tokens"] == []
+    assert verify["accepted_tokens"] == []
+    assert verify["event"]["route"] == "baseline_short_draft"
+    assert verify["event"]["accepted_count"] == 0
+    assert verify["event"]["target_forward_count"] == 0
+
+
+def test_routed_native_multi_token_retains_oracle_evidence():
+    calls = []
+
+    class FakeProfile:
+        @staticmethod
+        def route_and_verify_draft(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {
+                "route": "native_multi_token",
+                "route_fallback_reason": None,
+                "target_tokens": [10, 20, 30, 40],
+                "accepted_tokens": [10, 20, 30, 40],
+                "accepted_count": 4,
+                "target_forward_count": 1,
+                "oracle_evidence": {
+                    "logits": [[0.0, 1.0]],
+                    "kv": {"keys": [[1.0]], "values": [[2.0]]},
+                    "physical_slots": [4],
+                },
+            }
+
+    llm = object()
+    seq = object()
+    verify = oracle._run_policy_verify(
+        FakeProfile,
+        policy="routed_native",
+        llm=llm,
+        seq=seq,
+        draft_tokens=[10, 20, 30, 40],
+    )
+
+    assert calls == [((llm, seq, [10, 20, 30, 40]), {
+        "draft_source": "controlled-target-derived",
+        "allow_incompatible_fallback": False,
+        "capture_oracle_evidence": True,
+        "defer_finish_for_oracle_evidence": True,
+    })]
+    assert verify["target_tokens"] == [10, 20, 30, 40]
+    assert verify["accepted_tokens"] == [10, 20, 30, 40]
+    assert verify["logits"] == [[0.0, 1.0]]
+    assert verify["kv"] == {
+        "keys": [[1.0]],
+        "values": [[2.0]],
+    }
+    assert verify["event"]["route"] == "native_multi_token"
+
+
+def test_short_route_advances_with_normal_decode_without_speculative_work():
+    class FakeSequence:
+        def __init__(self):
+            self.token_ids = [1, 2]
+
+        def append_token(self, token_id):
+            self.token_ids.append(int(token_id))
+
+    original = oracle._run_decode_evidence_step
+    oracle._run_decode_evidence_step = lambda llm, seq: {
+        "token_id": 10,
+        "logits": [[0.0, 1.0]],
+        "kv": {"keys": [[1.0]], "values": [[2.0]]},
+        "physical_slot": 2,
+    }
+    try:
+        event = {
+            "route": "baseline_short_draft",
+            "accepted_count": 0,
+            "target_forward_count": 0,
+        }
+        seq = FakeSequence()
+        result = oracle._advance_short_route_with_normal_decode(
+            object(),
+            seq,
+            event,
+        )
+    finally:
+        oracle._run_decode_evidence_step = original
+
+    assert seq.token_ids == [1, 2, 10]
+    assert result["normal_decode_token"] == 10
+    assert result["normal_decode_forward_count"] == 1
+    assert event["accepted_count"] == 0
+    assert event["target_forward_count"] == 0
 
 
 def test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases():
@@ -771,6 +962,11 @@ def main():
     test_oracle_kv_rows_are_aggregated_layer_major()
     test_run_case_validates_input_and_writes_backend_payload()
     test_run_case_accepts_all_isolated_policies()
+    test_cli_accepts_routed_runtime_policies()
+    test_always_native_dispatches_existing_native_verifier()
+    test_routed_native_short_draft_records_zero_speculative_work()
+    test_routed_native_multi_token_retains_oracle_evidence()
+    test_short_route_advances_with_normal_decode_without_speculative_work()
     test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases()
     test_serialized_oracle_consumes_each_pending_draft_token_once()
     test_oracle_expands_tail_queries_into_one_decode_batch()
