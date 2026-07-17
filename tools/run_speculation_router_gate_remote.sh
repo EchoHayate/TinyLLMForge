@@ -23,9 +23,21 @@ PROMPT_LIMIT="${PROMPT_LIMIT:-}"
 REPETITIONS="${REPETITIONS:-3}"
 WARMUP_REPETITIONS="${WARMUP_REPETITIONS:-1}"
 RESUME="${RESUME:-0}"
+DOWNLOAD_BLOCK_BYTES="${DOWNLOAD_BLOCK_BYTES:-8388608}"
+DOWNLOAD_RETRIES="${DOWNLOAD_RETRIES:-8}"
+DOWNLOAD_RETRY_DELAY="${DOWNLOAD_RETRY_DELAY:-3}"
 
-SSH=(ssh -o BatchMode=yes -o ConnectTimeout=20 -S "${SSH_SOCKET}" "${REMOTE_HOST}")
-RSYNC_SSH="ssh -o BatchMode=yes -o ConnectTimeout=20 -S ${SSH_SOCKET}"
+SSH=(
+  ssh
+  -n
+  -o BatchMode=yes
+  -o ConnectTimeout=20
+  -o ControlMaster=auto
+  -o ControlPersist=600
+  -S "${SSH_SOCKET}"
+  "${REMOTE_HOST}"
+)
+RSYNC_SSH="ssh -n -o BatchMode=yes -o ConnectTimeout=20 -o ControlMaster=auto -o ControlPersist=600 -S ${SSH_SOCKET}"
 SUCCESS_ARTIFACTS=(
   source_evidence.json
   source.patch
@@ -47,18 +59,85 @@ download_remote_file() {
   local artifact_name="$1"
   local remote_path="${REMOTE_DIR}/artifacts/${artifact_name}"
   local local_path="${LOCAL_OUT}/${artifact_name}"
+  local partial_path="${local_path}.partial"
+  local block_path="${partial_path}.block"
   local remote_size
   local local_size
+  local aligned_size
+  local offset
+  local block_index
+  local expected_block_bytes
+  local actual_block_bytes
+  local attempt
 
   remote_size="$("${SSH[@]}" "stat -c %s '${remote_path}'")"
   mkdir -p "$(dirname "${local_path}")"
-  rsync -a -e "${RSYNC_SSH}" \
-    "${REMOTE_HOST}:${remote_path}" "${local_path}"
-  local_size="$(stat -f %z "${local_path}")"
-  if [[ "${local_size}" != "${remote_size}" ]]; then
-    echo "artifact size mismatch: ${artifact_name}" >&2
-    return 1
+  if [[ -f "${partial_path}" ]]; then
+    local_size="$(stat -f %z "${partial_path}")"
+    aligned_size=$((
+      (local_size / DOWNLOAD_BLOCK_BYTES)
+      * DOWNLOAD_BLOCK_BYTES
+    ))
+    if (( aligned_size != local_size )); then
+      truncate -s "${aligned_size}" "${partial_path}"
+    fi
+    if (( aligned_size > remote_size )); then
+      rm -f "${partial_path}"
+      aligned_size=0
+    fi
+    offset="${aligned_size}"
+  else
+    offset=0
   fi
+
+  while (( offset < remote_size )); do
+    block_index=$((offset / DOWNLOAD_BLOCK_BYTES))
+    expected_block_bytes=$((remote_size - offset))
+    if (( expected_block_bytes > DOWNLOAD_BLOCK_BYTES )); then
+      expected_block_bytes="${DOWNLOAD_BLOCK_BYTES}"
+    fi
+    for attempt in $(seq 1 "${DOWNLOAD_RETRIES}"); do
+      rm -f "${block_path}"
+      if "${SSH[@]}" \
+        "dd if='${remote_path}' bs=${DOWNLOAD_BLOCK_BYTES} skip=${block_index} count=1 iflag=fullblock status=none" \
+        >"${block_path}"
+      then
+        actual_block_bytes="$(stat -f %z "${block_path}")"
+        if [[ "${actual_block_bytes}" == "${expected_block_bytes}" ]]; then
+          cat "${block_path}" >> "${partial_path}"
+          offset=$((offset + actual_block_bytes))
+          break
+        fi
+      else
+        actual_block_bytes="$(
+          if [[ -f "${block_path}" ]]; then
+            stat -f %z "${block_path}"
+          else
+            printf '0'
+          fi
+        )"
+      fi
+      if [[ "${attempt}" -lt "${DOWNLOAD_RETRIES}" ]]; then
+        sleep "${DOWNLOAD_RETRY_DELAY}"
+      else
+        rm -f "${block_path}" "${local_path}"
+        echo \
+          "artifact block download retries exhausted: ${artifact_name} block=${block_index} bytes=${actual_block_bytes}/${expected_block_bytes}" \
+          >&2
+        return 1
+      fi
+    done
+    rm -f "${block_path}"
+  done
+
+  local_size="$(stat -f %z "${partial_path}")"
+  if [[ "${local_size}" == "${remote_size}" ]]; then
+    mv "${partial_path}" "${local_path}"
+    return 0
+  fi
+  rm -f "${local_path}"
+  echo "artifact size mismatch: ${artifact_name}" >&2
+  return 1
 }
 
 download_available_artifacts() {
@@ -81,6 +160,24 @@ download_available_artifacts() {
     "${SSH[@]}" \
       "find '${REMOTE_DIR}/artifacts' -type f -printf '%P\\t%s\\n' | sort"
   )
+}
+
+canonical_raw_sha256() {
+  python3 - "$1" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text())
+canonical = json.dumps(
+    payload,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+).encode("utf-8")
+print(hashlib.sha256(canonical).hexdigest())
+PY
 }
 
 cleanup_staging() {
@@ -363,7 +460,7 @@ fi
 
 while IFS=$'\t' read -r raw_name raw_payload_sha256; do
   download_remote_file "${raw_name}"
-  actual_sha256="$(shasum -a 256 "${LOCAL_OUT}/${raw_name}" | awk '{print $1}')"
+  actual_sha256="$(canonical_raw_sha256 "${LOCAL_OUT}/${raw_name}")"
   if [[ "${actual_sha256}" != "${raw_payload_sha256}" ]]; then
     echo "raw payload hash mismatch: ${raw_name}" >&2
     exit 1

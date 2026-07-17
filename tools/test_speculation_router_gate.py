@@ -682,6 +682,33 @@ def test_compact_row_promotes_scalars_without_numeric_arrays():
     assert row["kv_sha256"]
 
 
+def test_compact_oracle_row_backfills_historical_forward_count():
+    payload = {
+        "case_id": "case-1",
+        "policy": "oracle",
+        "status": "PASS",
+        "draft_tokens": [10, 20, 30, 40],
+        "target_tokens": [10, 20, 30, 40],
+        "accepted_tokens": [10, 20, 30, 40],
+        "elapsed_s": 1.0,
+        "output_tokens": 20,
+        "output_tokens_per_s": 20.0,
+    }
+    row = gate._normalize_controlled_row(
+        payload,
+        {
+            "returncode": 0,
+            "tinyvllm_dist_port": 20000,
+            "master_port": 20001,
+        },
+        case_id="case-1",
+        policy="oracle",
+        source_tree_sha256="3" * 64,
+    )
+
+    assert row["target_forward_count"] == 2
+
+
 def _real_source_fixture():
     prompt_bank = {
         "schema_version": 1,
@@ -1485,6 +1512,7 @@ def main():
     test_controlled_materialization_rejects_non_target_derived_label()
     test_short_route_exactness_uses_baseline_reference()
     test_compact_row_promotes_scalars_without_numeric_arrays()
+    test_compact_oracle_row_backfills_historical_forward_count()
     test_real_source_manifest_rejects_non_real_sources()
     test_complete_real_source_evidence_is_go()
     test_real_source_performance_and_route_failures_are_no_go()

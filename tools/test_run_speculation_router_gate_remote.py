@@ -139,6 +139,42 @@ def test_only_immutable_staging_is_uploaded():
     )
 
 
+def test_ssh_chunk_download_recovers_from_transport_disconnects():
+    runner = RUNNER_PATH.read_text()
+
+    assert "ControlMaster=auto" in runner
+    assert "ControlPersist=600" in runner
+    assert "DOWNLOAD_BLOCK_BYTES" in runner
+    assert "DOWNLOAD_RETRIES" in runner
+    assert "iflag=fullblock" in runner
+    assert "status=none" in runner
+    assert "block_path" in runner
+    assert "actual_block_bytes" in runner
+    assert "expected_block_bytes" in runner
+    assert "cat \"${block_path}\" >> \"${partial_path}\"" in runner
+    assert "aligned_size=$((\n" in runner
+    assert "--append" not in runner
+
+
+def test_raw_payload_download_uses_canonical_json_hash():
+    runner = RUNNER_PATH.read_text()
+
+    assert "canonical_raw_sha256" in runner
+    assert "sort_keys=True" in runner
+    assert 'separators=(\",\", \":\")' in runner
+    assert (
+        'shasum -a 256 "${LOCAL_OUT}/${raw_name}"'
+        not in runner
+    )
+
+
+def test_transport_never_consumes_download_manifest_stdin():
+    runner = RUNNER_PATH.read_text()
+
+    assert "  -n\n  -o BatchMode=yes" in runner
+    assert "RSYNC_SSH=\"ssh -n " in runner
+
+
 def main():
     test_remote_runner_contract()
     test_runner_modes_and_owned_source_boundary()
@@ -147,6 +183,9 @@ def main():
     test_success_artifacts_are_downloaded_individually()
     test_nonzero_remote_exit_preserves_available_artifacts()
     test_only_immutable_staging_is_uploaded()
+    test_ssh_chunk_download_recovers_from_transport_disconnects()
+    test_raw_payload_download_uses_canonical_json_hash()
+    test_transport_never_consumes_download_manifest_stdin()
     print("speculation router remote runner tests passed")
 
 

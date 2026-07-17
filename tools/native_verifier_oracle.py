@@ -493,6 +493,14 @@ def _run_serialized_oracle_verify(llm, seq, draft_tokens: list[int]) -> dict:
             "logits": tail["logits"],
             "kv": tail["kv"],
             "physical_slots": tail["physical_slots"],
+            "event": {
+                "verifier_mode": "oracle",
+                "draft_len": len(draft_tokens),
+                "accepted_count": len(accepted_tokens),
+                "target_tokens": target_tokens,
+                "accepted_tokens": accepted_tokens,
+                "target_forward_count": 1 + int(len(draft_tokens) > 1),
+            },
         }
     except Exception:
         block_manager.release_reserved_blocks(owned_blocks)

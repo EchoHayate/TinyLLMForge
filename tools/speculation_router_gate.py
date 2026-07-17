@@ -1384,6 +1384,12 @@ def _normalize_controlled_row(
         ):
             if field in event:
                 row[field] = int(event[field])
+    elif policy == "oracle":
+        draft_tokens = payload.get("draft_tokens")
+        if isinstance(draft_tokens, list) and draft_tokens:
+            row["target_forward_count"] = 1 + int(
+                len(draft_tokens) > 1
+            )
     for field in _LARGE_EVIDENCE_FIELDS:
         if field in payload and payload[field] is not None:
             row[f"{field}_sha256"] = _sha256_json(payload[field])

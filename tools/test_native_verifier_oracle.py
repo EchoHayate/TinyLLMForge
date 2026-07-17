@@ -882,6 +882,25 @@ def test_serialized_oracle_consumes_each_pending_draft_token_once():
         len(call["block_table"]) == call["num_blocks"]
         for call in llm.model_runner.prepare_calls
     )
+    assert result["event"]["target_forward_count"] == 2
+    assert result["event"]["accepted_count"] == 3
+
+
+def test_single_token_serialized_oracle_records_one_target_forward():
+    block_manager = BlockManager(num_blocks=8, block_size=4)
+    seq = _FakeSequence([1, 2, 7])
+    block_manager.allocate(seq)
+    llm = _FakeLLM(block_manager)
+
+    result = oracle._run_serialized_oracle_verify(
+        llm,
+        seq,
+        [11],
+    )
+
+    assert result["target_tokens"] == [11]
+    assert result["event"]["target_forward_count"] == 1
+    assert result["event"]["accepted_count"] == 1
 
 
 def test_oracle_expands_tail_queries_into_one_decode_batch():
@@ -969,6 +988,7 @@ def main():
     test_short_route_advances_with_normal_decode_without_speculative_work()
     test_construct_draft_tokens_is_deterministic_for_all_acceptance_cases()
     test_serialized_oracle_consumes_each_pending_draft_token_once()
+    test_single_token_serialized_oracle_records_one_target_forward()
     test_oracle_expands_tail_queries_into_one_decode_batch()
     test_baseline_commits_block_metadata_before_continuation()
     print("native verifier oracle tests passed")
