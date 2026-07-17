@@ -192,6 +192,17 @@ def test_transport_never_consumes_download_manifest_stdin():
     assert "\n  -n\n" not in stream
 
 
+def test_preflight_heredoc_uses_stdin_capable_transport():
+    runner = RUNNER_PATH.read_text()
+
+    assert (
+        '"${SSH_STREAM[@]}" '
+        '"REMOTE_DIR=\'${REMOTE_DIR}\' REMOTE_PYTHON=\'${REMOTE_PYTHON}\' '
+        'MODEL_PATH=\'${MODEL_PATH}\' CUDA_DEVICE=\'${CUDA_DEVICE}\' bash -s" '
+        "<<'REMOTE_PREFLIGHT'"
+    ) in runner
+
+
 def main():
     test_remote_runner_contract()
     test_runner_modes_and_owned_source_boundary()
@@ -204,6 +215,7 @@ def main():
     test_ssh_chunk_download_recovers_from_transport_disconnects()
     test_raw_payload_download_uses_canonical_json_hash()
     test_transport_never_consumes_download_manifest_stdin()
+    test_preflight_heredoc_uses_stdin_capable_transport()
     print("speculation router remote runner tests passed")
 
 

@@ -242,7 +242,7 @@ fi
 tar -C "${STAGING_DIR}" -cf - . | "${SSH_STREAM[@]}" \
   "set -e; tar -C '${REMOTE_DIR}/staging.upload' -xf -; rm -rf '${REMOTE_DIR}/staging'; mv '${REMOTE_DIR}/staging.upload' '${REMOTE_DIR}/staging'"
 
-"${SSH[@]}" "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' MODEL_PATH='${MODEL_PATH}' CUDA_DEVICE='${CUDA_DEVICE}' bash -s" <<'REMOTE_PREFLIGHT'
+"${SSH_STREAM[@]}" "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' MODEL_PATH='${MODEL_PATH}' CUDA_DEVICE='${CUDA_DEVICE}' bash -s" <<'REMOTE_PREFLIGHT'
 set -euo pipefail
 export TMPDIR="${REMOTE_DIR}/tmp"
 export PYTHONDONTWRITEBYTECODE=1
