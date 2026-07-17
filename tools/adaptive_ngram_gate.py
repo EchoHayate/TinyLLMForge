@@ -47,6 +47,9 @@ OWNED_SOURCE_ROOTS = (
     "tools/test_adaptive_ngram_gate.py",
     "tools/run_adaptive_ngram_gate_remote.sh",
 )
+GENERATED_ARTIFACT_ROOTS = (
+    "experiments/adaptive_ngram",
+)
 MAX_PORT_COLLISION_RETRIES = 3
 
 POLICIES = {
@@ -174,6 +177,14 @@ def _is_owned_source_path(relative_path: str) -> bool:
     return any(
         normalized == root or normalized.startswith(root + "/")
         for root in OWNED_SOURCE_ROOTS
+    )
+
+
+def _is_generated_artifact_path(relative_path: str) -> bool:
+    normalized = Path(relative_path).as_posix().lstrip("./")
+    return any(
+        normalized == root or normalized.startswith(root + "/")
+        for root in GENERATED_ARTIFACT_ROOTS
     )
 
 
@@ -429,7 +440,10 @@ def build_source_evidence(repo_root: Path, out_dir: Path) -> dict:
             "untracked owned source: " + ", ".join(untracked_owned)
         )
     untracked_outside = sorted(
-        path for path in untracked_paths if not _is_owned_source_path(path)
+        path
+        for path in untracked_paths
+        if not _is_owned_source_path(path)
+        and not _is_generated_artifact_path(path)
     )
     if untracked_outside:
         raise ValueError(

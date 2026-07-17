@@ -566,6 +566,53 @@ def test_source_evidence_rejects_untracked_owned_file():
         temporary.cleanup()
 
 
+def test_source_evidence_ignores_generated_adaptive_ngram_artifacts():
+    temporary, root = _source_repo()
+    try:
+        artifact = (
+            root
+            / "experiments"
+            / "adaptive_ngram"
+            / "20260717-k1-sam-smoke"
+            / "gate_rows.jsonl"
+        )
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text('{"run_key":"smoke"}\n', encoding="utf-8")
+
+        evidence = gate.build_source_evidence(root, root / "snapshot")
+
+        assert evidence["dirty"] is False
+        assert artifact.is_file()
+    finally:
+        temporary.cleanup()
+
+
+def test_source_evidence_rejects_other_untracked_artifacts():
+    temporary, root = _source_repo()
+    try:
+        artifact = (
+            root
+            / "experiments"
+            / "other_gate"
+            / "20260717-smoke"
+            / "gate_rows.jsonl"
+        )
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text('{"run_key":"smoke"}\n', encoding="utf-8")
+
+        try:
+            gate.build_source_evidence(root, root / "snapshot")
+        except ValueError as exc:
+            assert "untracked path outside owned source boundary" in str(exc)
+            assert "experiments/other_gate/20260717-smoke/gate_rows.jsonl" in str(
+                exc
+            )
+        else:
+            raise AssertionError("unrelated untracked artifact must fail")
+    finally:
+        temporary.cleanup()
+
+
 def test_validate_source_snapshot_rejects_changed_missing_and_extra_files():
     temporary, root = _source_repo()
     try:
@@ -1005,6 +1052,8 @@ def main():
     test_source_evidence_clean_tree_uses_empty_patch()
     test_source_evidence_accepts_existing_empty_staging_directory()
     test_source_evidence_rejects_untracked_owned_file()
+    test_source_evidence_ignores_generated_adaptive_ngram_artifacts()
+    test_source_evidence_rejects_other_untracked_artifacts()
     test_validate_source_snapshot_rejects_changed_missing_and_extra_files()
     test_validate_source_snapshot_rejects_patch_and_tree_tampering()
     test_manifest_embeds_source_identity_and_rows_copy_it()
