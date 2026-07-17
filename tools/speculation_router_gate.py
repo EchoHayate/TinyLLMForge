@@ -42,6 +42,31 @@ CONTROLLED_THRESHOLDS = {
     "min_continuation_steps": 16,
 }
 
+REAL_POLICIES = (
+    "baseline",
+    "source_always_native",
+    "source_routed_native",
+)
+
+REAL_THRESHOLDS = {
+    "min_elapsed_improvement_fraction": 0.05,
+    "min_tokens_per_s_improvement_fraction": 0.05,
+    "max_natural_elapsed_ratio": 1.00,
+    "max_transition_elapsed_ratio": 1.00,
+    "max_individual_prompt_elapsed_ratio": 1.10,
+}
+
+_REAL_SOURCE_TYPES = (
+    "learned_speculative_head",
+    "external_draft_model",
+)
+_NEGATIVE_CONTROL_ADAPTERS = (
+    "ngram",
+    "sam",
+    "dflash-toy",
+    "dflash-toy-ngram-or-repeat",
+)
+
 _CONTROLLED_PROMPT = (
     "Repeat the sequence alpha beta gamma while preserving exact spacing: "
     "alpha beta gamma alpha beta gamma."
@@ -461,6 +486,803 @@ def _sha256_json(value) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def canonical_prompt_bank_sha256(prompt_bank: dict) -> str:
+    return _sha256_json(prompt_bank)
+
+
+def _is_sha256(value) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def validate_draft_source_manifest(draft_source: dict) -> None:
+    required = (
+        "schema_version",
+        "source_name",
+        "source_type",
+        "implementation_paths",
+        "source_tree_sha256",
+        "checkpoint_identifier",
+        "checkpoint_config_sha256",
+        "tokenizer_identifier",
+        "vocab_size",
+        "hyperparameters",
+        "consumes_target_hidden_states",
+        "requires_additional_model_forward",
+        "target_derived",
+        "debug_stub",
+        "prompt_bank_sha256",
+    )
+    missing = [
+        field for field in required if field not in draft_source
+    ]
+    if missing:
+        raise ValueError(
+            "draft source manifest is missing: "
+            + ", ".join(missing)
+        )
+    if draft_source["schema_version"] != 1:
+        raise ValueError("unsupported draft source schema")
+    if (
+        not isinstance(draft_source["source_name"], str)
+        or not draft_source["source_name"]
+    ):
+        raise ValueError("draft source name is missing")
+    if draft_source["source_type"] not in _REAL_SOURCE_TYPES:
+        raise ValueError("unsupported real draft source type")
+    implementation_paths = draft_source["implementation_paths"]
+    if (
+        not isinstance(implementation_paths, list)
+        or not implementation_paths
+        or any(
+            not isinstance(path, str) or not path
+            for path in implementation_paths
+        )
+    ):
+        raise ValueError("draft source implementation paths are invalid")
+    for field in (
+        "source_tree_sha256",
+        "checkpoint_config_sha256",
+        "prompt_bank_sha256",
+    ):
+        if not _is_sha256(draft_source[field]):
+            raise ValueError(f"invalid draft source {field}")
+    for field in (
+        "checkpoint_identifier",
+        "tokenizer_identifier",
+    ):
+        if (
+            not isinstance(draft_source[field], str)
+            or not draft_source[field]
+        ):
+            raise ValueError(f"draft source {field} is missing")
+    if (
+        not isinstance(draft_source["vocab_size"], int)
+        or draft_source["vocab_size"] <= 1
+    ):
+        raise ValueError("draft source vocab_size is invalid")
+    if not isinstance(draft_source["hyperparameters"], dict):
+        raise ValueError("draft source hyperparameters are invalid")
+    if draft_source["target_derived"] is not False:
+        raise ValueError("real draft source must not be target-derived")
+    if draft_source["debug_stub"] is not False:
+        raise ValueError("real draft source must not be a debug stub")
+    for field in (
+        "consumes_target_hidden_states",
+        "requires_additional_model_forward",
+    ):
+        if not isinstance(draft_source[field], bool):
+            raise ValueError(f"draft source {field} must be boolean")
+    if draft_source.get("runtime_adapter") in (
+        _NEGATIVE_CONTROL_ADAPTERS
+    ):
+        raise ValueError(
+            "existing prompt lookup/ngram/SAM sources are "
+            "negative controls only"
+        )
+
+
+def validate_real_input(
+    draft_source: dict,
+    prompt_bank: dict,
+) -> dict:
+    validate_draft_source_manifest(draft_source)
+    prompt_hash = canonical_prompt_bank_sha256(prompt_bank)
+    if draft_source["prompt_bank_sha256"] != prompt_hash:
+        raise ValueError("draft source prompt bank hash mismatch")
+    return {
+        "status": "PASS",
+        "source_name": draft_source["source_name"],
+        "prompt_bank_sha256": prompt_hash,
+    }
+
+
+def _real_row_key(row: dict) -> tuple[str, str]:
+    return str(row.get("prompt_id")), str(row.get("policy"))
+
+
+def classify_real_source_gate(
+    manifest: dict,
+    draft_source: dict,
+    prompt_bank: dict,
+    case_rows: list[dict],
+    event_rows: list[dict],
+    router_rows: list[dict],
+) -> dict:
+    structural = []
+    try:
+        validate_draft_source_manifest(draft_source)
+    except ValueError as exc:
+        structural.append(str(exc))
+    prompt_hash = canonical_prompt_bank_sha256(prompt_bank)
+    draft_source_hash = _sha256_json(draft_source)
+    if manifest.get("stage") != "real-source":
+        structural.append("manifest stage mismatch")
+    if manifest.get("policies") != list(REAL_POLICIES):
+        structural.append("manifest real policies drift")
+    if manifest.get("thresholds") != REAL_THRESHOLDS:
+        structural.append("manifest real thresholds drift")
+    if manifest.get("draft_source_sha256") != draft_source_hash:
+        structural.append("draft source identity mismatch")
+    if manifest.get("prompt_bank_sha256") != prompt_hash:
+        structural.append("prompt bank identity mismatch")
+    if draft_source.get("prompt_bank_sha256") != prompt_hash:
+        structural.append("draft source prompt bank mismatch")
+    if (
+        draft_source.get("source_tree_sha256")
+        != manifest.get("source_tree_sha256")
+    ):
+        structural.append("draft source tree mismatch")
+    prompts = prompt_bank.get("prompts")
+    if not isinstance(prompts, list) or not prompts:
+        structural.append("prompt bank prompts are missing")
+        prompts = []
+    prompt_ids = [str(prompt.get("prompt_id")) for prompt in prompts]
+    if (
+        len(prompt_ids) != len(set(prompt_ids))
+        or any(not prompt_id for prompt_id in prompt_ids)
+    ):
+        structural.append("prompt bank prompt ids are invalid")
+    expected_keys = {
+        (prompt_id, policy)
+        for prompt_id in prompt_ids
+        for policy in REAL_POLICIES
+    }
+    observed_keys = [_real_row_key(row) for row in case_rows]
+    if (
+        len(observed_keys) != len(set(observed_keys))
+        or set(observed_keys) != expected_keys
+    ):
+        structural.append("missing or duplicate real-source rows")
+    hyperparameters_sha256 = _sha256_json(
+        draft_source.get("hyperparameters")
+    )
+    process_port_pairs = []
+    for row in case_rows:
+        key = _real_row_key(row)
+        process = row.get("process")
+        if (
+            not isinstance(process, dict)
+            or process.get("returncode") != 0
+        ):
+            structural.append(f"{key} process failed")
+        elif any(
+            not isinstance(process.get(field), int)
+            for field in (
+                "tinyvllm_dist_port",
+                "master_port",
+            )
+        ):
+            structural.append(f"{key} missing dynamic ports")
+        else:
+            process_port_pairs.append((
+                process["tinyvllm_dist_port"],
+                process["master_port"],
+            ))
+        for field, expected in (
+            (
+                "source_tree_sha256",
+                manifest.get("source_tree_sha256"),
+            ),
+            ("draft_source_sha256", draft_source_hash),
+            ("prompt_bank_sha256", prompt_hash),
+            (
+                "hyperparameters_sha256",
+                hyperparameters_sha256,
+            ),
+        ):
+            if row.get(field) != expected:
+                structural.append(f"{key} {field} mismatch")
+        for field in (
+            "elapsed_s",
+            "output_tokens",
+            "output_tokens_per_s",
+        ):
+            value = row.get(field)
+            if (
+                not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0
+            ):
+                structural.append(f"{key} invalid {field}")
+    if len(process_port_pairs) != len(set(process_port_pairs)):
+        structural.append("duplicate real-source dynamic port pairs")
+    expected_event_ids = set(prompt_ids)
+    event_ids = [
+        str(row.get("prompt_id")) for row in event_rows
+        if row.get("policy") == "source_routed_native"
+    ]
+    if (
+        len(event_ids) != len(set(event_ids))
+        or set(event_ids) != expected_event_ids
+    ):
+        structural.append("missing or duplicate real-source events")
+    router_ids = [
+        str(row.get("prompt_id")) for row in router_rows
+        if row.get("policy") == "source_routed_native"
+    ]
+    if (
+        len(router_ids) != len(set(router_ids))
+        or set(router_ids) != expected_event_ids
+    ):
+        structural.append("missing or duplicate real-source routes")
+    if structural:
+        return _incomplete(structural)
+
+    by_key = {_real_row_key(row): row for row in case_rows}
+    semantic = []
+    for prompt_id in prompt_ids:
+        baseline = by_key[(prompt_id, "baseline")]
+        output_hash = baseline.get("output_token_sha256")
+        if not output_hash:
+            return _incomplete([
+                f"{prompt_id} baseline output hash is missing",
+            ])
+        for policy in REAL_POLICIES:
+            row = by_key[(prompt_id, policy)]
+            if row.get("status") == "INCOMPLETE":
+                return _incomplete([
+                    f"{prompt_id}/{policy} row is INCOMPLETE",
+                ])
+            if row.get("status") != "PASS":
+                semantic.append(
+                    f"{prompt_id}/{policy} semantic failure"
+                )
+            if row.get("output_token_sha256") != output_hash:
+                semantic.append(
+                    f"{prompt_id}/{policy} output mismatch"
+                )
+    for event in event_rows:
+        rematerialization = event.get(
+            "accepted_kv_rematerialization",
+            {},
+        )
+        if (
+            rematerialization.get("decode_calls") != 0
+            or rematerialization.get("rematerialized_tokens")
+            or float(rematerialization.get("elapsed_ms", math.nan))
+            != 0.0
+            or event.get("accepted_kv_copy_calls") != 0
+            or event.get("accepted_kv_replay_calls") != 0
+        ):
+            semantic.append(
+                f"{event['prompt_id']} replay/copy/rematerialization"
+            )
+        if (
+            int(event.get("baseline_target_forward_count", 0))
+            - int(event.get("target_forward_count", 0))
+            <= 0
+        ):
+            semantic.append(
+                f"{event['prompt_id']} no target-forward reduction"
+            )
+    routes = {row.get("route") for row in router_rows}
+    if "native_multi_token" not in routes:
+        semantic.append("native route was not exercised")
+    if not any(
+        route is not None and route != "native_multi_token"
+        for route in routes
+    ):
+        semantic.append("fallback route was not exercised")
+    if semantic:
+        return _no_go(
+            semantic,
+            exactness_pass=False,
+            replay_elimination_pass=False,
+            router_isolation_pass=False,
+        )
+
+    performance = []
+    baseline_elapsed = 0.0
+    routed_elapsed = 0.0
+    baseline_tokens = 0.0
+    routed_tokens = 0.0
+    prompt_ratios = {}
+    bucket_ratios: dict[str, list[float]] = {}
+    for prompt in prompts:
+        prompt_id = str(prompt["prompt_id"])
+        bucket = str(prompt.get("bucket"))
+        baseline = by_key[(prompt_id, "baseline")]
+        routed = by_key[(prompt_id, "source_routed_native")]
+        always = by_key[(prompt_id, "source_always_native")]
+        ratio = (
+            float(routed["elapsed_s"])
+            / float(baseline["elapsed_s"])
+        )
+        prompt_ratios[prompt_id] = ratio
+        bucket_ratios.setdefault(bucket, []).append(ratio)
+        if ratio > REAL_THRESHOLDS[
+            "max_individual_prompt_elapsed_ratio"
+        ]:
+            performance.append(
+                f"{prompt_id} individual prompt regression"
+            )
+        if float(routed["elapsed_s"]) > float(always["elapsed_s"]):
+            performance.append(
+                f"{prompt_id} routed slower than always-native"
+            )
+        baseline_elapsed += float(baseline["elapsed_s"])
+        routed_elapsed += float(routed["elapsed_s"])
+        baseline_tokens += float(baseline["output_tokens"])
+        routed_tokens += float(routed["output_tokens"])
+    elapsed_improvement = 1.0 - (
+        routed_elapsed / baseline_elapsed
+    )
+    baseline_tps = baseline_tokens / baseline_elapsed
+    routed_tps = routed_tokens / routed_elapsed
+    tps_improvement = routed_tps / baseline_tps - 1.0
+    if elapsed_improvement < REAL_THRESHOLDS[
+        "min_elapsed_improvement_fraction"
+    ]:
+        performance.append("aggregate elapsed gain below 5%")
+    if tps_improvement < REAL_THRESHOLDS[
+        "min_tokens_per_s_improvement_fraction"
+    ]:
+        performance.append("aggregate tokens/s gain below 5%")
+    for bucket, threshold_key in (
+        ("natural", "max_natural_elapsed_ratio"),
+        (
+            "transition_heavy",
+            "max_transition_elapsed_ratio",
+        ),
+    ):
+        ratios = bucket_ratios.get(bucket)
+        if not ratios:
+            return _incomplete([f"{bucket} bucket is missing"])
+        if max(ratios) > REAL_THRESHOLDS[threshold_key]:
+            performance.append(f"{bucket} bucket regression")
+    if performance:
+        return _no_go(
+            performance,
+            exactness_pass=True,
+            replay_elimination_pass=True,
+            router_isolation_pass=True,
+            elapsed_improvement_fraction=elapsed_improvement,
+            tokens_per_s_improvement_fraction=tps_improvement,
+            per_prompt_elapsed_ratios=prompt_ratios,
+        )
+    return {
+        "classification": "GO",
+        "reasons": [],
+        "exactness_pass": True,
+        "replay_elimination_pass": True,
+        "router_isolation_pass": True,
+        "performance_direction_pass": True,
+        "elapsed_improvement_fraction": elapsed_improvement,
+        "tokens_per_s_improvement_fraction": tps_improvement,
+        "per_prompt_elapsed_ratios": prompt_ratios,
+    }
+
+
+def _real_policy_process(
+    *,
+    python_bin: str,
+    model_path: str,
+    policy: str,
+    prompt: dict,
+    draft_source: dict,
+    repetitions: int,
+    warmup_repetitions: int,
+    out_path: Path,
+    log_dir: Path,
+) -> tuple[dict | None, dict]:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    dist_port, master_port = _allocate_port_pair()
+    stdout_path = log_dir / (
+        f"{prompt['prompt_id']}.{policy}.stdout.log"
+    )
+    stderr_path = log_dir / (
+        f"{prompt['prompt_id']}.{policy}.stderr.log"
+    )
+    runtime_adapter = draft_source.get("runtime_adapter")
+    if policy != "baseline" and not runtime_adapter:
+        message = (
+            "named real draft source has no registered runtime_adapter"
+        )
+        stdout_path.write_text("")
+        stderr_path.write_text(message + "\n")
+        return None, {
+            "returncode": 2,
+            "command": [],
+            "tinyvllm_dist_port": dist_port,
+            "master_port": master_port,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "elapsed_s": 0.0,
+            "attempt": 1,
+            "reason": message,
+        }
+    mode = "baseline-only" if policy == "baseline" else "candidate-only"
+    routing = (
+        "always-native"
+        if policy == "source_always_native"
+        else "fixed-profitability"
+    )
+    command = [
+        str(python_bin),
+        str(Path(__file__).with_name("profile_ngram_commit.py")),
+        "--model",
+        str(model_path),
+        "--max-output-len",
+        str(prompt["max_tokens"]),
+        "--temperature",
+        "0.0",
+        "--mode",
+        mode,
+        "--max-num-seqs",
+        "1",
+        "--warmup-output-len",
+        str(prompt["max_tokens"] if warmup_repetitions else 0),
+        "--warmup-repetitions",
+        str(warmup_repetitions),
+        "--out-json",
+        str(out_path),
+    ]
+    for _ in range(repetitions):
+        command.extend([
+            "--prompt",
+            str(prompt["prompt"]),
+        ])
+    if policy != "baseline":
+        command.extend([
+            "--draft-source",
+            str(runtime_adapter),
+            "--draft-construction",
+            "real_source",
+            "--gate-stage",
+            "real-source",
+            "--speculation-routing",
+            routing,
+            "--max-draft-tokens",
+            str(
+                draft_source["hyperparameters"].get(
+                    "max_draft_tokens",
+                    8,
+                )
+            ),
+        ])
+        if policy == "source_routed_native":
+            command.append("--allow-incompatible-fallback")
+    environment = os.environ.copy()
+    environment["TINYVLLM_DIST_PORT"] = str(dist_port)
+    environment["MASTER_PORT"] = str(master_port)
+    started = time.perf_counter()
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        env=environment,
+        check=False,
+    )
+    stdout_path.write_text(completed.stdout)
+    stderr_path.write_text(completed.stderr)
+    process = {
+        "returncode": int(completed.returncode),
+        "command": command,
+        "tinyvllm_dist_port": dist_port,
+        "master_port": master_port,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "elapsed_s": time.perf_counter() - started,
+        "attempt": 1,
+    }
+    if completed.returncode != 0 or not out_path.is_file():
+        return None, process
+    profile_payload = json.loads(out_path.read_text())
+    summary = profile_payload["summary"]
+    per_prompt = profile_payload.get("per_prompt", [])
+    output_tokens = int(summary.get("output_tokens", 0))
+    token_ids = (
+        per_prompt[0].get("token_ids", [])
+        if per_prompt
+        else []
+    )
+    payload = {
+        "prompt_id": prompt["prompt_id"],
+        "bucket": prompt["bucket"],
+        "policy": policy,
+        "status": "PASS",
+        "elapsed_s": float(summary["elapsed_s"]),
+        "output_tokens": output_tokens,
+        "output_tokens_per_s": float(
+            summary["output_tokens_per_s"]
+        ),
+        "output_token_sha256": _sha256_json(token_ids),
+        "event": (
+            profile_payload.get("verify_events", [None])[0]
+            if policy == "source_routed_native"
+            and profile_payload.get("verify_events")
+            else None
+        ),
+        "router_event": (
+            profile_payload.get("router_events", [None])[0]
+            if policy == "source_routed_native"
+            and profile_payload.get("router_events")
+            else None
+        ),
+    }
+    _write_json(out_path, payload)
+    return payload, process
+
+
+def _build_real_manifest(
+    *,
+    source_evidence: dict,
+    source_preflight: dict,
+    draft_source: dict,
+    prompt_bank: dict,
+    model_path: str,
+    host: str,
+    python_bin: str,
+    run_tag: str,
+    repetitions: int,
+    warmup_repetitions: int,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "stage": "real-source",
+        "run_tag": run_tag,
+        "created_unix_s": time.time(),
+        "source_tree_sha256": source_evidence["tree_sha256"],
+        "source_evidence": source_evidence,
+        "source_preflight": source_preflight,
+        "draft_source_sha256": _sha256_json(draft_source),
+        "prompt_bank_sha256": canonical_prompt_bank_sha256(
+            prompt_bank
+        ),
+        "model_path": str(model_path),
+        "host": host,
+        "python_bin": python_bin,
+        "policies": list(REAL_POLICIES),
+        "thresholds": REAL_THRESHOLDS,
+        "repetitions": int(repetitions),
+        "warmup_repetitions": int(warmup_repetitions),
+        "process_port_pairs": [],
+    }
+
+
+def _normalize_real_row(
+    payload: dict | None,
+    process: dict,
+    *,
+    prompt: dict,
+    policy: str,
+    manifest: dict,
+    draft_source: dict,
+) -> dict:
+    identity = {
+        "prompt_id": prompt["prompt_id"],
+        "bucket": prompt["bucket"],
+        "policy": policy,
+        "source_tree_sha256": manifest["source_tree_sha256"],
+        "draft_source_sha256": manifest["draft_source_sha256"],
+        "prompt_bank_sha256": manifest["prompt_bank_sha256"],
+        "hyperparameters_sha256": _sha256_json(
+            draft_source["hyperparameters"]
+        ),
+        "process": process,
+    }
+    if payload is None:
+        return {
+            **identity,
+            "status": "INCOMPLETE",
+        }
+    return {
+        **{
+            key: value
+            for key, value in payload.items()
+            if key not in ("event", "router_event")
+        },
+        **identity,
+        "raw_payload_sha256": _sha256_json(payload),
+    }
+
+
+def run_real_source_gate(
+    *,
+    out_dir: Path,
+    python_bin: str,
+    model_path: str,
+    source_evidence_path: Path,
+    source_patch_path: Path,
+    source_preflight_path: Path,
+    draft_source_path: Path,
+    prompt_bank_path: Path,
+    host: str,
+    run_tag: str,
+    repetitions: int,
+    warmup_repetitions: int,
+    resume: bool = False,
+    prompt_limit: int = 0,
+) -> dict:
+    if repetitions < 1 or warmup_repetitions < 0:
+        raise ValueError("invalid real-source repetition counts")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = out_dir / "raw"
+    log_dir = out_dir / "logs"
+    raw_dir.mkdir(exist_ok=True)
+    log_dir.mkdir(exist_ok=True)
+    source_evidence = json.loads(
+        Path(source_evidence_path).read_text()
+    )
+    source_preflight = json.loads(
+        Path(source_preflight_path).read_text()
+    )
+    draft_source = json.loads(Path(draft_source_path).read_text())
+    prompt_bank = json.loads(Path(prompt_bank_path).read_text())
+    validate_real_input(draft_source, prompt_bank)
+    if (
+        source_evidence["tree_sha256"]
+        != draft_source["source_tree_sha256"]
+    ):
+        raise ValueError("draft source tree identity mismatch")
+    prompts = list(prompt_bank["prompts"])
+    if prompt_limit:
+        if prompt_limit < 1:
+            raise ValueError("prompt_limit must be non-negative")
+        prompts = prompts[:prompt_limit]
+    manifest_path = out_dir / "manifest.json"
+    if resume and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        if any((
+            manifest.get("run_tag") != run_tag,
+            manifest.get("source_tree_sha256")
+            != source_evidence["tree_sha256"],
+            manifest.get("draft_source_sha256")
+            != _sha256_json(draft_source),
+            manifest.get("prompt_bank_sha256")
+            != canonical_prompt_bank_sha256(prompt_bank),
+        )):
+            raise ValueError("real-source resume identity mismatch")
+    else:
+        manifest = _build_real_manifest(
+            source_evidence=source_evidence,
+            source_preflight=source_preflight,
+            draft_source=draft_source,
+            prompt_bank=prompt_bank,
+            model_path=model_path,
+            host=host,
+            python_bin=python_bin,
+            run_tag=run_tag,
+            repetitions=repetitions,
+            warmup_repetitions=warmup_repetitions,
+        )
+    rows_by_key = {
+        _real_row_key(row): row
+        for row in (
+            _load_json_list(out_dir / "case_rows.json")
+            if resume
+            else []
+        )
+    }
+    payloads = {}
+    for prompt in prompts:
+        for policy in REAL_POLICIES:
+            key = (prompt["prompt_id"], policy)
+            if rows_by_key.get(key, {}).get("status") == "PASS":
+                raw_path = raw_dir / f"{key[0]}.{key[1]}.json"
+                if raw_path.is_file():
+                    payloads[key] = json.loads(raw_path.read_text())
+                continue
+            payload, process = _real_policy_process(
+                python_bin=python_bin,
+                model_path=model_path,
+                policy=policy,
+                prompt=prompt,
+                draft_source=draft_source,
+                repetitions=repetitions,
+                warmup_repetitions=warmup_repetitions,
+                out_path=raw_dir / f"{key[0]}.{key[1]}.json",
+                log_dir=log_dir,
+            )
+            _record_process_pair(
+                manifest,
+                case_id=prompt["prompt_id"],
+                policy=policy,
+                process=process,
+            )
+            rows_by_key[key] = _normalize_real_row(
+                payload,
+                process,
+                prompt=prompt,
+                policy=policy,
+                manifest=manifest,
+                draft_source=draft_source,
+            )
+            if payload is not None:
+                payloads[key] = payload
+    selected_ids = {prompt["prompt_id"] for prompt in prompts}
+    case_rows = sorted(
+        (
+            row for key, row in rows_by_key.items()
+            if key[0] in selected_ids
+        ),
+        key=_real_row_key,
+    )
+    event_rows = []
+    router_rows = []
+    for row in case_rows:
+        payload = payloads.get(_real_row_key(row), {})
+        event = payload.get("event")
+        if (
+            row["policy"] == "source_routed_native"
+            and isinstance(event, dict)
+        ):
+            event_rows.append({
+                "prompt_id": row["prompt_id"],
+                "policy": row["policy"],
+                **event,
+            })
+        router = payload.get("router_event")
+        if (
+            row["policy"] == "source_routed_native"
+            and isinstance(router, dict)
+        ):
+            router_rows.append({
+                "prompt_id": row["prompt_id"],
+                "policy": row["policy"],
+                **router,
+            })
+    summary = classify_real_source_gate(
+        manifest,
+        draft_source,
+        prompt_bank,
+        case_rows,
+        event_rows,
+        router_rows,
+    )
+    for name, source in {
+        "source_evidence.json": Path(source_evidence_path),
+        "source.patch": Path(source_patch_path),
+        "source_preflight.json": Path(source_preflight_path),
+        "draft_source.json": Path(draft_source_path),
+        "prompt_bank.json": Path(prompt_bank_path),
+    }.items():
+        target = out_dir / name
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+    (out_dir / "prompt_bank.sha256").write_text(
+        manifest["prompt_bank_sha256"] + "\n"
+    )
+    _write_json(manifest_path, manifest)
+    _write_json(out_dir / "case_rows.json", case_rows)
+    _write_json(out_dir / "event_rows.json", event_rows)
+    _write_json(out_dir / "router_rows.json", router_rows)
+    _write_json(out_dir / "summary.json", summary)
+    return {
+        "manifest": manifest,
+        "case_rows": case_rows,
+        "event_rows": event_rows,
+        "router_rows": router_rows,
+        "summary": summary,
+    }
 
 
 def _normalize_controlled_row(
@@ -1303,6 +2125,19 @@ def _parse_args():
     )
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--out-dir", type=Path, required=True)
+    real_input_parser = subparsers.add_parser(
+        "validate-real-input"
+    )
+    real_input_parser.add_argument(
+        "--draft-source",
+        type=Path,
+        required=True,
+    )
+    real_input_parser.add_argument(
+        "--prompt-bank",
+        type=Path,
+        required=True,
+    )
     return parser.parse_args()
 
 
@@ -1312,6 +2147,14 @@ def main():
         raise SystemExit(
             "artifact verification is not implemented yet"
         )
+    if args.command == "validate-real-input":
+        result = validate_real_input(
+            json.loads(args.draft_source.read_text()),
+            json.loads(args.prompt_bank.read_text()),
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    raise AssertionError(args.command)
 
 
 if __name__ == "__main__":

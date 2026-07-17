@@ -653,6 +653,565 @@ def test_compact_row_promotes_scalars_without_numeric_arrays():
     assert row["kv_sha256"]
 
 
+def _real_source_fixture():
+    prompt_bank = {
+        "schema_version": 1,
+        "prompts": [
+            {
+                "prompt_id": f"{bucket}-1",
+                "bucket": bucket,
+                "prompt": f"fixture {bucket}",
+                "max_tokens": 32,
+                "seed": 0,
+                "dtype": "torch.float16",
+            }
+            for bucket in (
+                "natural",
+                "code",
+                "repetitive",
+                "transition_heavy",
+                "low_match",
+                "eos",
+                "short_context",
+                "long_context",
+            )
+        ],
+    }
+    prompt_hash = gate.canonical_prompt_bank_sha256(prompt_bank)
+    draft_source = {
+        "schema_version": 1,
+        "source_name": "fixture-learned-drafter",
+        "source_type": "learned_speculative_head",
+        "implementation_paths": ["tools/profile_ngram_commit.py"],
+        "source_tree_sha256": "a" * 64,
+        "checkpoint_identifier": "fixture/checkpoint",
+        "checkpoint_config_sha256": "b" * 64,
+        "tokenizer_identifier": "Qwen3-0.6B",
+        "vocab_size": 151936,
+        "hyperparameters": {"max_draft_tokens": 8},
+        "consumes_target_hidden_states": True,
+        "requires_additional_model_forward": True,
+        "target_derived": False,
+        "debug_stub": False,
+        "prompt_bank_sha256": prompt_hash,
+    }
+    manifest = {
+        "stage": "real-source",
+        "source_tree_sha256": "a" * 64,
+        "draft_source_sha256": gate._sha256_json(draft_source),
+        "prompt_bank_sha256": prompt_hash,
+        "policies": list(gate.REAL_POLICIES),
+        "thresholds": gate.REAL_THRESHOLDS,
+        "repetitions": 3,
+        "warmup_repetitions": 1,
+    }
+    case_rows = []
+    event_rows = []
+    router_rows = []
+    port = 30000
+    for prompt in prompt_bank["prompts"]:
+        baseline_elapsed = 1.0
+        for policy, elapsed_s in (
+            ("baseline", baseline_elapsed),
+            ("source_always_native", 0.97),
+            ("source_routed_native", 0.90),
+        ):
+            case_rows.append({
+                "prompt_id": prompt["prompt_id"],
+                "bucket": prompt["bucket"],
+                "policy": policy,
+                "status": "PASS",
+                "source_tree_sha256": "a" * 64,
+                "draft_source_sha256": manifest[
+                    "draft_source_sha256"
+                ],
+                "prompt_bank_sha256": prompt_hash,
+                "hyperparameters_sha256": gate._sha256_json(
+                    draft_source["hyperparameters"]
+                ),
+                "elapsed_s": elapsed_s,
+                "output_tokens": 32,
+                "output_tokens_per_s": 32.0 / elapsed_s,
+                "output_token_sha256": (
+                    f"output-{prompt['prompt_id']}"
+                ),
+                "process": {
+                    "returncode": 0,
+                    "tinyvllm_dist_port": port,
+                    "master_port": port + 1,
+                },
+            })
+            port += 2
+        event_rows.append({
+            "prompt_id": prompt["prompt_id"],
+            "policy": "source_routed_native",
+            "proposal_elapsed_ms": 1.0,
+            "proposed_count": 4,
+            "accepted_count": 3,
+            "rejected_count": 1,
+            "target_forward_count": 1,
+            "baseline_target_forward_count": 4,
+            "accepted_kv_rematerialization": {
+                "decode_calls": 0,
+                "rematerialized_tokens": [],
+                "elapsed_ms": 0.0,
+            },
+            "accepted_kv_copy_calls": 0,
+            "accepted_kv_replay_calls": 0,
+        })
+        router_rows.append({
+            "prompt_id": prompt["prompt_id"],
+            "policy": "source_routed_native",
+            "route": (
+                "baseline_incompatible"
+                if prompt["bucket"] == "low_match"
+                else "native_multi_token"
+            ),
+            "route_fallback_reason": (
+                "fixture incompatibility"
+                if prompt["bucket"] == "low_match"
+                else None
+            ),
+        })
+    return (
+        manifest,
+        draft_source,
+        prompt_bank,
+        case_rows,
+        event_rows,
+        router_rows,
+    )
+
+
+def test_real_source_manifest_rejects_non_real_sources():
+    fixture = list(_real_source_fixture())
+    draft_source = fixture[1]
+    gate.validate_draft_source_manifest(draft_source)
+    for field, value in (
+        ("target_derived", True),
+        ("debug_stub", True),
+        ("source_type", "ngram"),
+        ("checkpoint_identifier", ""),
+    ):
+        invalid = dict(draft_source)
+        invalid[field] = value
+        try:
+            gate.validate_draft_source_manifest(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(field)
+
+
+def test_complete_real_source_evidence_is_go():
+    assert gate.classify_real_source_gate(
+        *_real_source_fixture()
+    )["classification"] == "GO"
+
+
+def test_real_source_performance_and_route_failures_are_no_go():
+    mutations = []
+
+    def no_elapsed_gain(fixture):
+        for row in fixture[3]:
+            if row["policy"] == "source_routed_native":
+                row["elapsed_s"] = 0.96
+                row["output_tokens_per_s"] = 32.0 / 0.96
+
+    mutations.append(no_elapsed_gain)
+
+    def no_tokens_per_s_gain(fixture):
+        for row in fixture[3]:
+            if row["policy"] == "source_routed_native":
+                row["output_tokens"] = 28
+                row["output_tokens_per_s"] = (
+                    28.0 / row["elapsed_s"]
+                )
+
+    mutations.append(no_tokens_per_s_gain)
+
+    def natural_regression(fixture):
+        row = next(
+            row for row in fixture[3]
+            if row["bucket"] == "natural"
+            and row["policy"] == "source_routed_native"
+        )
+        row["elapsed_s"] = 1.01
+        row["output_tokens_per_s"] = 32.0 / 1.01
+
+    mutations.append(natural_regression)
+
+    def transition_regression(fixture):
+        row = next(
+            row for row in fixture[3]
+            if row["bucket"] == "transition_heavy"
+            and row["policy"] == "source_routed_native"
+        )
+        row["elapsed_s"] = 1.01
+        row["output_tokens_per_s"] = 32.0 / 1.01
+
+    mutations.append(transition_regression)
+
+    def individual_prompt_regression(fixture):
+        row = next(
+            row for row in fixture[3]
+            if row["bucket"] == "repetitive"
+            and row["policy"] == "source_routed_native"
+        )
+        row["elapsed_s"] = 1.11
+        row["output_tokens_per_s"] = 32.0 / 1.11
+
+    mutations.append(individual_prompt_regression)
+
+    def routed_slower(fixture):
+        row = next(
+            row for row in fixture[3]
+            if row["bucket"] == "code"
+            and row["policy"] == "source_routed_native"
+        )
+        row["elapsed_s"] = 0.98
+        row["output_tokens_per_s"] = 32.0 / 0.98
+
+    mutations.append(routed_slower)
+
+    def no_fallback(fixture):
+        for row in fixture[5]:
+            row["route"] = "native_multi_token"
+            row["route_fallback_reason"] = None
+
+    mutations.append(no_fallback)
+
+    def no_forward_reduction(fixture):
+        fixture[4][0]["target_forward_count"] = 4
+
+    mutations.append(no_forward_reduction)
+
+    def output_mismatch(fixture):
+        row = next(
+            row for row in fixture[3]
+            if row["policy"] == "source_routed_native"
+        )
+        row["output_token_sha256"] = "mismatch"
+
+    mutations.append(output_mismatch)
+
+    for mutate in mutations:
+        fixture = list(_real_source_fixture())
+        mutate(fixture)
+        assert gate.classify_real_source_gate(
+            *fixture
+        )["classification"] == "NO_GO", mutate.__name__
+
+
+def test_real_source_missing_identity_or_process_is_incomplete():
+    fixture = list(_real_source_fixture())
+    fixture[1]["checkpoint_identifier"] = ""
+    assert gate.classify_real_source_gate(
+        *fixture
+    )["classification"] == "INCOMPLETE"
+
+    fixture = list(_real_source_fixture())
+    fixture[3][1]["process"].update(
+        fixture[3][0]["process"]
+    )
+    assert gate.classify_real_source_gate(
+        *fixture
+    )["classification"] == "INCOMPLETE"
+
+    fixture = list(_real_source_fixture())
+    fixture[3][0]["process"]["returncode"] = 2
+    assert gate.classify_real_source_gate(
+        *fixture
+    )["classification"] == "INCOMPLETE"
+
+    fixture = list(_real_source_fixture())
+    fixture[3][0]["elapsed_s"] = math.nan
+    assert gate.classify_real_source_gate(
+        *fixture
+    )["classification"] == "INCOMPLETE"
+
+    fixture = list(_real_source_fixture())
+    fixture[1]["hyperparameters"]["max_draft_tokens"] = 16
+    assert gate.classify_real_source_gate(
+        *fixture
+    )["classification"] == "INCOMPLETE"
+
+
+def _write_real_driver_inputs(out_dir: Path):
+    fixture = _real_source_fixture()
+    source_evidence = {
+        "schema_version": 1,
+        "base_commit": "1" * 40,
+        "dirty": False,
+        "tree_sha256": "a" * 64,
+    }
+    source_preflight = {
+        "schema_version": 1,
+        "source_tree_sha256": "a" * 64,
+        "model_identifier": "Qwen3-0.6B",
+        "torch": "2.4.1",
+        "cuda": "12.1",
+        "flash_attn": "2.6.3",
+        "gpu": "Synthetic GPU",
+        "bf16_supported": True,
+    }
+    paths = {
+        "source_evidence": out_dir / "source_evidence.input.json",
+        "source_patch": out_dir / "source.input.patch",
+        "source_preflight": out_dir / "source_preflight.input.json",
+        "draft_source": out_dir / "draft_source.input.json",
+        "prompt_bank": out_dir / "prompt_bank.input.json",
+    }
+    paths["source_evidence"].write_text(json.dumps(source_evidence))
+    paths["source_patch"].write_bytes(b"")
+    paths["source_preflight"].write_text(json.dumps(source_preflight))
+    paths["draft_source"].write_text(json.dumps(fixture[1]))
+    paths["prompt_bank"].write_text(json.dumps(fixture[2]))
+    return paths
+
+
+def _fake_real_process(calls, failed_keys=()):
+    failed_keys = set(failed_keys)
+
+    def run_process(
+        *,
+        python_bin,
+        model_path,
+        policy,
+        prompt,
+        draft_source,
+        repetitions,
+        warmup_repetitions,
+        out_path,
+        log_dir,
+    ):
+        del (
+            python_bin,
+            model_path,
+            draft_source,
+            repetitions,
+            warmup_repetitions,
+            log_dir,
+        )
+        key = (prompt["prompt_id"], policy)
+        calls.append(key)
+        port = 40000 + len(calls) * 2
+        process = {
+            "returncode": 2 if key in failed_keys else 0,
+            "tinyvllm_dist_port": port,
+            "master_port": port + 1,
+        }
+        if key in failed_keys:
+            return None, process
+        elapsed_s = {
+            "baseline": 1.0,
+            "source_always_native": 0.97,
+            "source_routed_native": 0.90,
+        }[policy]
+        event = None
+        router_event = None
+        if policy == "source_routed_native":
+            route = (
+                "baseline_incompatible"
+                if prompt["bucket"] == "low_match"
+                else "native_multi_token"
+            )
+            event = {
+                "proposal_elapsed_ms": 1.0,
+                "proposed_count": 4,
+                "accepted_count": 3,
+                "rejected_count": 1,
+                "target_forward_count": 1,
+                "baseline_target_forward_count": 4,
+                "accepted_kv_rematerialization": {
+                    "decode_calls": 0,
+                    "rematerialized_tokens": [],
+                    "elapsed_ms": 0.0,
+                },
+                "accepted_kv_copy_calls": 0,
+                "accepted_kv_replay_calls": 0,
+            }
+            router_event = {
+                "route": route,
+                "route_fallback_reason": (
+                    "fixture incompatibility"
+                    if route != "native_multi_token"
+                    else None
+                ),
+            }
+        payload = {
+            "prompt_id": prompt["prompt_id"],
+            "bucket": prompt["bucket"],
+            "policy": policy,
+            "status": "PASS",
+            "elapsed_s": elapsed_s,
+            "output_tokens": 32,
+            "output_tokens_per_s": 32.0 / elapsed_s,
+            "output_token_sha256": (
+                f"output-{prompt['prompt_id']}"
+            ),
+            "event": event,
+            "router_event": router_event,
+        }
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload))
+        return payload, process
+
+    return run_process
+
+
+def test_real_driver_runs_three_policies_and_resumes_failed_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        paths = _write_real_driver_inputs(out_dir)
+        failed_key = ("natural-1", "source_routed_native")
+        calls = []
+        original = gate._real_policy_process
+        gate._real_policy_process = _fake_real_process(
+            calls,
+            failed_keys={failed_key},
+        )
+        try:
+            gate.run_real_source_gate(
+                out_dir=out_dir,
+                python_bin="python3",
+                model_path="/model",
+                source_evidence_path=paths["source_evidence"],
+                source_patch_path=paths["source_patch"],
+                source_preflight_path=paths["source_preflight"],
+                draft_source_path=paths["draft_source"],
+                prompt_bank_path=paths["prompt_bank"],
+                host="synthetic-host",
+                run_tag="real-driver-test",
+                repetitions=3,
+                warmup_repetitions=1,
+                prompt_limit=2,
+            )
+            first_expected = [
+                (prompt_id, policy)
+                for prompt_id in ("natural-1", "code-1")
+                for policy in gate.REAL_POLICIES
+            ]
+            assert calls == first_expected
+            resume_calls = []
+            gate._real_policy_process = _fake_real_process(
+                resume_calls
+            )
+            result = gate.run_real_source_gate(
+                out_dir=out_dir,
+                python_bin="python3",
+                model_path="/model",
+                source_evidence_path=paths["source_evidence"],
+                source_patch_path=paths["source_patch"],
+                source_preflight_path=paths["source_preflight"],
+                draft_source_path=paths["draft_source"],
+                prompt_bank_path=paths["prompt_bank"],
+                host="synthetic-host",
+                run_tag="real-driver-test",
+                repetitions=3,
+                warmup_repetitions=1,
+                resume=True,
+                prompt_limit=2,
+            )
+        finally:
+            gate._real_policy_process = original
+
+    assert resume_calls == [failed_key]
+    assert len(result["case_rows"]) == 6
+    assert result["summary"]["classification"] == "INCOMPLETE"
+
+
+def test_validate_real_input_checks_prompt_hash():
+    fixture = list(_real_source_fixture())
+    result = gate.validate_real_input(fixture[1], fixture[2])
+    assert result == {
+        "status": "PASS",
+        "source_name": "fixture-learned-drafter",
+        "prompt_bank_sha256": fixture[1]["prompt_bank_sha256"],
+    }
+    fixture[2]["prompts"][0]["prompt"] = "tampered"
+    try:
+        gate.validate_real_input(fixture[1], fixture[2])
+    except ValueError as exc:
+        assert "prompt bank" in str(exc)
+    else:
+        raise AssertionError("tampered prompt bank was accepted")
+
+
+def test_real_process_command_marks_real_source_stage():
+    fixture = _real_source_fixture()
+    draft_source = dict(fixture[1])
+    draft_source["runtime_adapter"] = "ngram"
+    calls = []
+    original = gate.subprocess.run
+
+    class Completed:
+        returncode = 2
+        stdout = ""
+        stderr = "fixture stop"
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Completed()
+
+    gate.subprocess.run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload, process = gate._real_policy_process(
+                python_bin="python3",
+                model_path="/model",
+                policy="source_routed_native",
+                prompt=fixture[2]["prompts"][0],
+                draft_source=draft_source,
+                repetitions=3,
+                warmup_repetitions=1,
+                out_path=Path(tmp) / "raw.json",
+                log_dir=Path(tmp) / "logs",
+            )
+    finally:
+        gate.subprocess.run = original
+
+    assert payload is None
+    assert process["returncode"] == 2
+    command = calls[0][0]
+    assert command.count("--prompt") == 3
+    assert command[command.index("--gate-stage") + 1] == "real-source"
+    assert (
+        command[command.index("--draft-construction") + 1]
+        == "real_source"
+    )
+    assert "--allow-incompatible-fallback" in command
+    assert (
+        command[command.index("--warmup-repetitions") + 1]
+        == "1"
+    )
+
+
+def test_validate_real_input_cli_parses_both_manifests():
+    fixture = _real_source_fixture()
+    with tempfile.TemporaryDirectory() as tmp:
+        draft_path = Path(tmp) / "draft_source.json"
+        prompt_path = Path(tmp) / "prompt_bank.json"
+        draft_path.write_text(json.dumps(fixture[1]))
+        prompt_path.write_text(json.dumps(fixture[2]))
+        original = sys.argv
+        try:
+            sys.argv = [
+                "speculation_router_gate.py",
+                "validate-real-input",
+                "--draft-source",
+                str(draft_path),
+                "--prompt-bank",
+                str(prompt_path),
+            ]
+            args = gate._parse_args()
+        finally:
+            sys.argv = original
+    assert args.command == "validate-real-input"
+    assert args.draft_source == draft_path
+    assert args.prompt_bank == prompt_path
+
+
 def main():
     test_complete_controlled_evidence_is_ready()
     test_no_profitable_region_is_no_go()
@@ -669,6 +1228,14 @@ def main():
     test_controlled_materialization_rejects_non_target_derived_label()
     test_short_route_exactness_uses_baseline_reference()
     test_compact_row_promotes_scalars_without_numeric_arrays()
+    test_real_source_manifest_rejects_non_real_sources()
+    test_complete_real_source_evidence_is_go()
+    test_real_source_performance_and_route_failures_are_no_go()
+    test_real_source_missing_identity_or_process_is_incomplete()
+    test_real_driver_runs_three_policies_and_resumes_failed_only()
+    test_validate_real_input_checks_prompt_hash()
+    test_real_process_command_marks_real_source_stage()
+    test_validate_real_input_cli_parses_both_manifests()
     print("speculation router gate tests passed")
 
 

@@ -12,6 +12,7 @@ must still match the baseline request exactly.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -182,6 +183,12 @@ def parse_args():
                    help="Generate exactly --max-output-len tokens for isolated benchmark comparability.")
     p.add_argument("--warmup-output-len", type=int, default=0,
                    help="Run one untimed warmup request before measurement. This removes cold CUDA/kernel setup from timing.")
+    p.add_argument(
+        "--warmup-repetitions",
+        type=int,
+        default=1,
+        help="Number of untimed warmup requests when warmup output length is positive.",
+    )
     p.add_argument("--simulate-kv-upload-mb", type=float, default=0.0,
                    help="Simulate CPU->GPU KV page upload cost per decode/verify target forward by copying this many MiB.")
     p.add_argument("--temperature", type=float, default=0.0,
@@ -209,6 +216,20 @@ def parse_args():
     p.add_argument(
         "--allow-incompatible-fallback",
         action="store_true",
+    )
+    p.add_argument(
+        "--gate-stage",
+        choices=("controlled", "real-source"),
+        default="controlled",
+    )
+    p.add_argument(
+        "--draft-construction",
+        choices=(
+            "controlled_target_derived",
+            "real_source",
+            "negative_control",
+        ),
+        default="negative_control",
     )
     p.add_argument("--max-commit-events", type=int, default=1,
                    help="Maximum accepted commit events per candidate. Use 0 for unlimited S4 online benchmark.")
@@ -360,6 +381,41 @@ def attach_draft_policy_event(
             proposed=len(draft.tokens),
             accepted=int(event["accepted_count"]),
         )
+    return event
+
+
+def attach_gate_source_evidence(
+    event: dict,
+    draft: DraftProposal,
+    *,
+    gate_stage: str,
+    draft_construction: str,
+    proposal_started_s: float,
+    proposal_finished_s: float,
+) -> dict:
+    metadata_sha256 = hashlib.sha256(
+        json.dumps(
+            draft.metadata,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    proposed_count = len(draft.tokens)
+    accepted_count = int(event.get("accepted_count", 0))
+    event.update({
+        "gate_stage": gate_stage,
+        "draft_construction": draft_construction,
+        "proposal_started_s": float(proposal_started_s),
+        "proposal_finished_s": float(proposal_finished_s),
+        "proposal_elapsed_ms": (
+            float(proposal_finished_s) - float(proposal_started_s)
+        ) * 1000.0,
+        "proposed_tokens": list(draft.tokens),
+        "proposed_count": proposed_count,
+        "accepted_count": accepted_count,
+        "rejected_count": max(0, proposed_count - accepted_count),
+        "source_metadata_sha256": metadata_sha256,
+    })
     return event
 
 
@@ -1263,19 +1319,22 @@ def _run_warmup(llm, args, prompts: list[str]) -> dict | None:
 
     prompt = prompts[0] if prompts else DEFAULT_PROMPTS[0]
     sp = SamplingParams(temperature=args.temperature, ignore_eos=False, max_tokens=args.warmup_output_len)
-    llm.add_request(prompt, sp)
     t0 = time.perf_counter()
     cuda_sync_if_available()
     steps = 0
     output_tokens = 0
-    while not llm.is_finished():
-        out, _ = llm.step()
-        cuda_sync_if_available()
-        steps += 1
-        for _, token_ids in out:
-            output_tokens = max(output_tokens, len(token_ids))
+    repetitions = int(getattr(args, "warmup_repetitions", 1))
+    for _ in range(repetitions):
+        llm.add_request(prompt, sp)
+        while not llm.is_finished():
+            out, _ = llm.step()
+            cuda_sync_if_available()
+            steps += 1
+            for _, token_ids in out:
+                output_tokens = max(output_tokens, len(token_ids))
     return {
         "warmup_output_len": args.warmup_output_len,
+        "warmup_repetitions": repetitions,
         "warmup_steps": steps,
         "warmup_output_tokens": output_tokens,
         "warmup_elapsed_s": time.perf_counter() - t0,
@@ -2126,7 +2185,10 @@ def run_candidate_only_profile(args) -> dict:
                 max_draft_tokens=selected_k,
                 sam_index=sam_index,
             )
-            lookup_ms = (time.perf_counter() - lookup_t0) * 1000.0
+            proposal_finished_s = time.perf_counter()
+            lookup_ms = (
+                proposal_finished_s - lookup_t0
+            ) * 1000.0
             if sam_index is not None:
                 stats["sam_lookup_ms"] += lookup_ms
                 draft.metadata["lookup_time_ms"] = lookup_ms
@@ -2173,6 +2235,22 @@ def run_candidate_only_profile(args) -> dict:
                 draft,
                 selected_k=int(draft.metadata.get("selected_k", selected_k)),
                 adaptive_state=adaptive_state,
+            )
+            attach_gate_source_evidence(
+                event,
+                draft,
+                gate_stage=getattr(
+                    args,
+                    "gate_stage",
+                    "controlled",
+                ),
+                draft_construction=getattr(
+                    args,
+                    "draft_construction",
+                    "negative_control",
+                ),
+                proposal_started_s=lookup_t0,
+                proposal_finished_s=proposal_finished_s,
             )
             event["draft_metadata"] = draft.metadata
             if sam_index is not None:
@@ -2485,6 +2563,8 @@ def validate_profile_args(args) -> None:
         raise ValueError("--max-commit-events must be >= 0; use 0 for unlimited")
     if args.warmup_output_len < 0:
         raise ValueError("--warmup-output-len must be >= 0")
+    if getattr(args, "warmup_repetitions", 1) < 0:
+        raise ValueError("--warmup-repetitions must be >= 0")
     if args.simulate_kv_upload_mb < 0:
         raise ValueError("--simulate-kv-upload-mb must be >= 0")
     if args.max_draft_tokens <= 0:
@@ -2499,6 +2579,28 @@ def validate_profile_args(args) -> None:
         "allow_incompatible_fallback",
         False,
     )
+    gate_stage = getattr(args, "gate_stage", "controlled")
+    draft_construction = getattr(
+        args,
+        "draft_construction",
+        "negative_control",
+    )
+    if (
+        gate_stage == "real-source"
+        and draft_construction == "controlled_target_derived"
+    ):
+        raise ValueError(
+            "gate-stage=real-source rejects "
+            "controlled_target_derived drafts"
+        )
+    if (
+        gate_stage == "real-source"
+        and draft_construction != "real_source"
+    ):
+        raise ValueError(
+            "gate-stage=real-source requires "
+            "draft-construction=real_source"
+        )
     if speculation_routing != "disabled":
         unsupported_routing = (
             ("--mode candidate-only", args.mode != "candidate-only"),

@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -356,6 +358,8 @@ def _profile_args(**overrides):
         "verifier_mode": "legacy_rematerialize",
         "speculation_routing": "fixed-profitability",
         "allow_incompatible_fallback": False,
+        "gate_stage": "controlled",
+        "draft_construction": "controlled_target_derived",
         "enforce_eager": True,
         "kv_quant_bits": 0,
         "kv_offload_mvp0": False,
@@ -396,6 +400,58 @@ def test_incompatible_fallback_requires_fixed_routing():
         raise AssertionError("always-native fallback was accepted")
 
 
+def test_real_source_stage_rejects_controlled_target_derived():
+    try:
+        profile.validate_profile_args(_profile_args(
+            gate_stage="real-source",
+            draft_construction="controlled_target_derived",
+        ))
+    except ValueError as exc:
+        assert "controlled_target_derived" in str(exc)
+    else:
+        raise AssertionError("controlled draft entered real-source gate")
+
+
+def test_real_source_event_records_proposal_and_route_evidence():
+    event = {
+        "route": "native_multi_token",
+        "route_fallback_reason": None,
+        "accepted_count": 3,
+        "target_forward_count": 1,
+    }
+    draft = profile.DraftProposal(
+        tokens=[10, 20, 30, 40],
+        source="fixture-learned-drafter",
+        metadata={"temperature": 0.0, "checkpoint": "fixture"},
+    )
+    result = profile.attach_gate_source_evidence(
+        event,
+        draft,
+        gate_stage="real-source",
+        draft_construction="real_source",
+        proposal_started_s=10.0,
+        proposal_finished_s=10.002,
+    )
+
+    expected_hash = hashlib.sha256(
+        json.dumps(
+            draft.metadata,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    assert result["proposal_started_s"] == 10.0
+    assert result["proposal_finished_s"] == 10.002
+    assert abs(result["proposal_elapsed_ms"] - 2.0) < 1e-9
+    assert result["proposed_tokens"] == [10, 20, 30, 40]
+    assert result["proposed_count"] == 4
+    assert result["accepted_count"] == 3
+    assert result["rejected_count"] == 1
+    assert result["source_metadata_sha256"] == expected_hash
+    assert result["route"] == "native_multi_token"
+    assert result["target_forward_count"] == 1
+
+
 def main():
     test_finished_precedes_every_other_decision()
     test_output_budget_precedes_short_draft()
@@ -413,6 +469,8 @@ def main():
     test_route_summary_counts_routes_and_fallback_reasons()
     test_routing_profile_args_require_candidate_single_sequence_eager()
     test_incompatible_fallback_requires_fixed_routing()
+    test_real_source_stage_rejects_controlled_target_derived()
+    test_real_source_event_records_proposal_and_route_evidence()
     print("speculation router tests passed")
 
 
