@@ -982,6 +982,10 @@ def test_remote_runner_uses_one_auditable_staged_source_snapshot():
     assert '--source-preflight "${REMOTE_DIR}/source_preflight.json"' in runner
     assert "--source-commit" not in runner
     assert "--source-dirty" not in runner
+    assert "gate.exitcode" in runner
+    assert "gate.pid" in runner
+    assert "REMOTE_GATE_STATE" in runner
+    assert "kill -0" in runner
 
 
 def main():

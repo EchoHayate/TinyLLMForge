@@ -311,15 +311,118 @@ if [[ "${RESUME:-0}" == "1" ]]; then
   RUN_ARGS+=(--resume)
 fi
 
-set +e
-"${SSH_CMD[@]}" "${REMOTE_HOST}" \
-  "cd '${REMOTE_DIR}/source' && \
-   CUDA_VISIBLE_DEVICES='${CUDA_DEVICE}' \
-   PYTHONDONTWRITEBYTECODE=1 \
-   PYTHONPATH='${REMOTE_DIR}/source' \
-   '${REMOTE_PYTHON}' tools/adaptive_ngram_gate.py $(printf "'%s' " "${RUN_ARGS[@]}")"
-REMOTE_RUN_STATUS=$?
-set -e
+REMOTE_GATE_PID="${REMOTE_DIR}/gate.pid"
+REMOTE_GATE_EXITCODE="${REMOTE_DIR}/gate.exitcode"
+REMOTE_GATE_STDOUT="${REMOTE_DIR}/gate.stdout.log"
+REMOTE_GATE_STDERR="${REMOTE_DIR}/gate.stderr.log"
+
+"${SSH_CMD[@]}" "${REMOTE_HOST}" bash -s -- \
+  "${REMOTE_DIR}" \
+  "${REMOTE_PYTHON}" \
+  "${CUDA_DEVICE}" \
+  "${RUN_ARGS[@]}" <<'REMOTE_LAUNCH'
+set -euo pipefail
+
+remote_dir="$1"
+remote_python="$2"
+cuda_device="$3"
+shift 3
+pid_path="${remote_dir}/gate.pid"
+exitcode_path="${remote_dir}/gate.exitcode"
+stdout_path="${remote_dir}/gate.stdout.log"
+stderr_path="${remote_dir}/gate.stderr.log"
+
+if [[ -f "${exitcode_path}" ]]; then
+  echo "COMPLETE $(cat "${exitcode_path}")"
+  exit 0
+fi
+if [[ -f "${pid_path}" ]] && kill -0 "$(cat "${pid_path}")" 2>/dev/null; then
+  echo "RUNNING $(cat "${pid_path}")"
+  exit 0
+fi
+
+rm -f "${pid_path}" "${exitcode_path}" "${exitcode_path}.tmp"
+nohup bash -c '
+  set +e
+  source_root="$1"
+  remote_python="$2"
+  cuda_device="$3"
+  remote_dir="$4"
+  shift 4
+  cd "${source_root}" || exit 125
+  CUDA_VISIBLE_DEVICES="${cuda_device}" \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH="${source_root}" \
+    "${remote_python}" tools/adaptive_ngram_gate.py "$@"
+  status=$?
+  printf "%s\n" "${status}" >"${remote_dir}/gate.exitcode.tmp"
+  mv "${remote_dir}/gate.exitcode.tmp" "${remote_dir}/gate.exitcode"
+  exit "${status}"
+' _ \
+  "${remote_dir}/source" \
+  "${remote_python}" \
+  "${cuda_device}" \
+  "${remote_dir}" \
+  "$@" \
+  </dev/null >"${stdout_path}" 2>"${stderr_path}" &
+gate_pid=$!
+printf "%s\n" "${gate_pid}" >"${pid_path}"
+echo "LAUNCHED ${gate_pid}"
+REMOTE_LAUNCH
+
+while true; do
+  set +e
+  REMOTE_GATE_STATE="$(
+    "${SSH_CMD[@]}" "${REMOTE_HOST}" bash -s -- "${REMOTE_DIR}" <<'REMOTE_POLL'
+set -euo pipefail
+remote_dir="$1"
+pid_path="${remote_dir}/gate.pid"
+exitcode_path="${remote_dir}/gate.exitcode"
+raw_path="${remote_dir}/artifacts/raw_rows.json"
+if [[ -f "${exitcode_path}" ]]; then
+  echo "COMPLETE $(cat "${exitcode_path}")"
+  exit 0
+fi
+rows=0
+if [[ -f "${raw_path}" ]]; then
+  rows="$(python3 - "${raw_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+print(len(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))))
+PY
+)"
+fi
+if [[ -f "${pid_path}" ]] && kill -0 "$(cat "${pid_path}")" 2>/dev/null; then
+  echo "RUNNING $(cat "${pid_path}") rows=${rows}"
+else
+  echo "LOST rows=${rows}"
+fi
+REMOTE_POLL
+  )"
+  POLL_STATUS=$?
+  set -e
+  if [[ "${POLL_STATUS}" != "0" ]]; then
+    echo "[adaptive-ngram] poll transport failed; retrying" >&2
+    sleep 10
+    continue
+  fi
+  echo "[adaptive-ngram] remote_gate=${REMOTE_GATE_STATE}"
+  case "${REMOTE_GATE_STATE}" in
+    COMPLETE\ *)
+      REMOTE_RUN_STATUS="${REMOTE_GATE_STATE#COMPLETE }"
+      break
+      ;;
+    RUNNING\ *)
+      sleep 20
+      ;;
+    *)
+      echo "[adaptive-ngram] remote gate lost without exitcode; retained ${REMOTE_DIR}" >&2
+      exit 3
+      ;;
+  esac
+done
 
 mkdir -p "${LOCAL_OUT}"
 "${SCP_CMD[@]}" -r "${REMOTE_HOST}:${REMOTE_OUT}/." "${LOCAL_OUT}/"
