@@ -203,6 +203,18 @@ def test_preflight_heredoc_uses_stdin_capable_transport():
     ) in runner
 
 
+def test_remote_run_heredoc_uses_stdin_capable_transport():
+    runner = RUNNER_PATH.read_text()
+
+    assert (
+        '"${SSH_STREAM[@]}" '
+        '"REMOTE_DIR=\'${REMOTE_DIR}\' REMOTE_PYTHON=\'${REMOTE_PYTHON}\' '
+        'CUDA_DEVICE=\'${CUDA_DEVICE}\' REMOTE_COMMAND_Q=\'${REMOTE_COMMAND_Q}\' '
+        'bash -s" '
+        "<<'REMOTE_RUN'"
+    ) in runner
+
+
 def main():
     test_remote_runner_contract()
     test_runner_modes_and_owned_source_boundary()
@@ -216,6 +228,7 @@ def main():
     test_raw_payload_download_uses_canonical_json_hash()
     test_transport_never_consumes_download_manifest_stdin()
     test_preflight_heredoc_uses_stdin_capable_transport()
+    test_remote_run_heredoc_uses_stdin_capable_transport()
     print("speculation router remote runner tests passed")
 
 

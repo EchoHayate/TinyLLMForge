@@ -403,7 +403,7 @@ if [[ "${RESUME}" == 1 ]]; then
 fi
 
 printf -v REMOTE_COMMAND_Q '%q ' "${REMOTE_COMMAND[@]}"
-"${SSH[@]}" "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' CUDA_DEVICE='${CUDA_DEVICE}' REMOTE_COMMAND_Q='${REMOTE_COMMAND_Q}' bash -s" <<'REMOTE_RUN'
+"${SSH_STREAM[@]}" "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' CUDA_DEVICE='${CUDA_DEVICE}' REMOTE_COMMAND_Q='${REMOTE_COMMAND_Q}' bash -s" <<'REMOTE_RUN'
 set -euo pipefail
 cd "${REMOTE_DIR}/staging/source"
 rm -rf "${REMOTE_DIR}/artifacts.work"
