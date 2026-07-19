@@ -293,6 +293,15 @@ def _percentiles(values: list[float], prefix: str) -> dict:
     }
 
 
+def _jain_index(values: list[float]) -> float:
+    if not values or any(value < 0.0 for value in values):
+        raise ValueError("invalid Jain index samples")
+    denominator = len(values) * sum(value * value for value in values)
+    if denominator == 0.0:
+        return 0.0
+    return (sum(values) ** 2) / denominator
+
+
 def _recompute_case(
     case_id: str,
     timeline_rows: list[dict],
@@ -352,6 +361,17 @@ def _recompute_case(
         "output_token_throughput_tps": sum(
             len(row["output_token_ids"]) for row in request_rows
         ) / duration_s,
+        "maximum_injection_lag_ns": max(
+            row["injection_lag_ns"] for row in request_rows
+        ),
+        **_percentiles(
+            [row["injection_lag_ns"] for row in request_rows],
+            "injection_lag_ns",
+        ),
+        **_percentiles(
+            [row["queue_delay_ns"] for row in request_rows],
+            "queue_delay_ns",
+        ),
         **_percentiles(
             [row["ttft_ns"] for row in request_rows],
             "ttft_ns",
@@ -366,8 +386,16 @@ def _recompute_case(
             for row in request_rows
             if row["maximum_decode_gap_ns"] is not None
         ),
+        "peak_cuda_allocated_bytes": int(max(
+            _finite(row.get("cuda_allocated_bytes"), "allocated memory")
+            for row in case_memory
+        )),
         "peak_cuda_reserved_bytes": int(max(
             _finite(row.get("cuda_reserved_bytes"), "reserved memory")
+            for row in case_memory
+        )),
+        "peak_used_kv_blocks": int(max(
+            _finite(row.get("used_kv_blocks"), "used KV blocks")
             for row in case_memory
         )),
         "peak_kv_bytes": int(max(
@@ -377,6 +405,7 @@ def _recompute_case(
         )),
     }
     service_buckets = {}
+    service_rates = []
     for bucket in sorted({
         row["service_time_bucket"] for row in request_rows
     }):
@@ -384,14 +413,25 @@ def _recompute_case(
             row for row in request_rows
             if row["service_time_bucket"] == bucket
         ]
-        service_buckets[bucket] = {
-            "p95_e2e_ns": _nearest_rank(
-                [row["e2e_ns"] for row in bucket_rows],
-                0.95,
-            ),
+        bucket_metrics = {
             "completed_requests": len(bucket_rows),
+            "request_throughput_rps": len(bucket_rows) / duration_s,
+            "worst_e2e_ns": max(
+                row["e2e_ns"] for row in bucket_rows
+            ),
+            **_percentiles(
+                [row["e2e_ns"] for row in bucket_rows],
+                "e2e_ns",
+            ),
         }
+        service_buckets[bucket] = bucket_metrics
+        service_rates.append(
+            bucket_metrics["request_throughput_rps"]
+        )
     metrics["service_buckets"] = service_buckets
+    metrics["jain_service_rate_index"] = _jain_index(
+        service_rates
+    )
     first = case_timeline[0]
     return {
         "case_id": case_id,
@@ -656,27 +696,31 @@ def _verify_output_equality(
     timeline_rows: list[dict],
     manifest: dict,
 ) -> None:
-    by_case_request = {
-        (row["case_id"], row["request_id"]): row
-        for row in timeline_rows
-    }
+    by_case = {}
+    for row in timeline_rows:
+        key = (
+            row.get("policy"),
+            row.get("scenario"),
+            row.get("repetition"),
+        )
+        requests = by_case.setdefault(key, {})
+        request_id = row.get("request_id")
+        if request_id in requests:
+            raise ValueError("duplicate request timeline")
+        requests[request_id] = row
     for scenario in manifest["required_scenarios"]:
         for repetition in range(manifest["measured_repetitions"]):
-            baseline_case = f"P0-{scenario}-r{repetition}"
-            baseline_rows = {
-                request_id: row
-                for (case_id, request_id), row
-                in by_case_request.items()
-                if case_id == baseline_case
-            }
+            baseline_rows = by_case.get(
+                ("P0", scenario, repetition),
+                {},
+            )
+            if not baseline_rows:
+                raise ValueError("missing baseline request timeline")
             for policy in ("P2", "P3"):
-                candidate_case = f"{policy}-{scenario}-r{repetition}"
-                candidate_rows = {
-                    request_id: row
-                    for (case_id, request_id), row
-                    in by_case_request.items()
-                    if case_id == candidate_case
-                }
+                candidate_rows = by_case.get(
+                    (policy, scenario, repetition),
+                    {},
+                )
                 if set(candidate_rows) != set(baseline_rows):
                     raise ValueError("request-set mismatch")
                 for request_id in baseline_rows:

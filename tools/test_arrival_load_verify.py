@@ -208,6 +208,13 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
                 "metrics": {
                     "request_throughput_rps": 1.0,
                     "output_token_throughput_tps": 2.0,
+                    "maximum_injection_lag_ns": 10.0,
+                    "p50_injection_lag_ns": 10.0,
+                    "p95_injection_lag_ns": 10.0,
+                    "p99_injection_lag_ns": 10.0,
+                    "p50_queue_delay_ns": 10.0,
+                    "p95_queue_delay_ns": 10.0,
+                    "p99_queue_delay_ns": 10.0,
                     "p50_ttft_ns": 100.0,
                     "p95_ttft_ns": 100.0,
                     "p50_itl_ns": 999_999_900.0,
@@ -218,14 +225,21 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
                     "p99_itl_ns": 999_999_900.0,
                     "p99_e2e_ns": 1_000_000_000.0,
                     "maximum_decode_gap_ns": 999_999_900.0,
+                    "peak_cuda_allocated_bytes": 100,
                     "peak_cuda_reserved_bytes": 200,
+                    "peak_used_kv_blocks": 2,
                     "peak_kv_bytes": 128,
                     "service_buckets": {
                         "short__short": {
+                            "p50_e2e_ns": 1_000_000_000.0,
                             "p95_e2e_ns": 1_000_000_000.0,
+                            "p99_e2e_ns": 1_000_000_000.0,
                             "completed_requests": 1,
+                            "request_throughput_rps": 1.0,
+                            "worst_e2e_ns": 1_000_000_000.0,
                         },
                     },
+                    "jain_service_rate_index": 1.0,
                 },
             })
     _write_json(root / "run_manifest.json", manifest)
@@ -339,6 +353,44 @@ def test_verifier_does_not_import_harness_aggregation():
     source = VERIFY_PATH.read_text()
     assert "import arrival_load_gate" not in source
     assert "from arrival_load_gate" not in source
+
+
+def test_output_equality_uses_recorded_case_metadata_not_case_id_format():
+    manifest = {
+        "required_scenarios": ["steady_moderate"],
+        "measured_repetitions": 1,
+    }
+    common = {
+        "scenario": "steady_moderate",
+        "repetition": 0,
+        "request_id": "request-0",
+    }
+    rows = [
+        {
+            **common,
+            "case_id": "steady_moderate__P0__r0",
+            "policy": "P0",
+            "output_token_ids": [1, 2],
+        },
+        {
+            **common,
+            "case_id": "steady_moderate__P2__r0",
+            "policy": "P2",
+            "output_token_ids": [1, 3],
+        },
+        {
+            **common,
+            "case_id": "steady_moderate__P3__r0",
+            "policy": "P3",
+            "output_token_ids": [1, 2],
+        },
+    ]
+    try:
+        verifier._verify_output_equality(rows, manifest)
+    except ValueError as exc:
+        assert "output token mismatch" in str(exc)
+    else:
+        raise AssertionError("canonical case-id output drift was missed")
 
 
 def test_verifier_recomputes_complete_artifact():
@@ -469,6 +521,7 @@ def test_verifier_rejects_rehashed_source_output_and_scheduler_tampering():
 
 def main():
     test_verifier_does_not_import_harness_aggregation()
+    test_output_equality_uses_recorded_case_metadata_not_case_id_format()
     test_verifier_recomputes_complete_artifact()
     test_verifier_rejects_summary_tampering_even_when_rehashed()
     test_verifier_rejects_truncated_jsonl_and_duplicate_ports()
