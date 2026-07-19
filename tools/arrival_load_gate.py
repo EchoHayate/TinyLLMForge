@@ -2655,7 +2655,7 @@ def _smoke_workload(prompt_bank: dict) -> list[dict]:
     ) in enumerate(specifications):
         prompt = prompts[prompt_class]
         output_tokens = (
-            8 if output_class == "long"
+            16 if output_class == "long"
             else 4
         )
         rows.append({

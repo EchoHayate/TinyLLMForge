@@ -1383,6 +1383,22 @@ def test_run_smoke_produces_independently_verified_lifecycle_artifact():
         ) == summary
 
 
+def test_smoke_workload_covers_original_ninth_token_failure_boundary():
+    prompt_bank = gate.build_prompt_bank(
+        FakeTokenizer(),
+        model_id="fake-model",
+    )
+
+    workload = gate._smoke_workload(prompt_bank)
+    decode_active = next(
+        row for row in workload
+        if row["request_id"] == "smoke-00-decode-active"
+    )
+
+    assert decode_active["requested_output_tokens"] == 16
+    assert decode_active["sampling"]["max_tokens"] == 16
+
+
 def _workload_row(
     request_id: str,
     *,
@@ -1801,6 +1817,7 @@ def main():
     test_cli_exposes_task6_subcommands()
     test_environment_identity_ignores_run_local_fields()
     test_run_smoke_produces_independently_verified_lifecycle_artifact()
+    test_smoke_workload_covers_original_ninth_token_failure_boundary()
     test_reconstructs_scheduled_arrival_metrics_and_shared_step_tokens()
     test_one_token_output_has_no_itl_sample()
     test_lifecycle_reconstruction_rejects_duplicate_binding_and_bad_time()
