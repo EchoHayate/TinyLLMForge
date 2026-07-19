@@ -357,9 +357,69 @@ def build_calibration_manifest(prompt_bank: dict) -> list[dict]:
     return rows
 
 
-def _ols_slope(samples: list[dict]) -> float:
+def reconstruct_calibration_backlog_samples(
+    timeline_rows: list[dict],
+    *,
+    sample_count: int = 33,
+) -> list[dict]:
+    if (
+        not isinstance(timeline_rows, list)
+        or not timeline_rows
+        or isinstance(sample_count, bool)
+        or not isinstance(sample_count, int)
+        or sample_count < 2
+    ):
+        raise ValueError("invalid calibration backlog inputs")
+    intervals = []
+    for row in timeline_rows:
+        if not isinstance(row, dict):
+            raise ValueError("timeline row must be an object")
+        scheduled_arrival_ns = int(_finite_number(
+            row.get("scheduled_arrival_ns"),
+            "scheduled_arrival_ns",
+        ))
+        completion_ns = int(_finite_number(
+            row.get("completion_ns"),
+            "completion_ns",
+        ))
+        if completion_ns < scheduled_arrival_ns:
+            raise ValueError("completion precedes scheduled arrival")
+        intervals.append((scheduled_arrival_ns, completion_ns))
+    window_start_ns = min(start for start, _ in intervals)
+    window_end_ns = max(start for start, _ in intervals)
+    if window_end_ns <= window_start_ns:
+        raise ValueError("offered arrival window must have duration")
+    window_duration_ns = window_end_ns - window_start_ns
+    samples = []
+    for index in range(sample_count):
+        sample_ns = (
+            window_start_ns
+            + (window_duration_ns * index) // (sample_count - 1)
+        )
+        samples.append({
+            "relative_time_s": (
+                sample_ns - window_start_ns
+            ) / 1_000_000_000.0,
+            "unfinished_count": sum(
+                start <= sample_ns < completion
+                for start, completion in intervals
+            ),
+        })
+    return samples
+
+
+def _ols_slope(
+    samples: list[dict],
+    offered_window_duration_s: float,
+) -> float:
     if not isinstance(samples, list) or len(samples) < 2:
         raise ValueError("backlog_samples require at least two rows")
+    window_duration_s = _finite_number(
+        offered_window_duration_s,
+        "offered_window_duration_s",
+    )
+    if window_duration_s <= 0.0:
+        raise ValueError("offered window duration must be positive")
     points = []
     for sample in samples:
         if not isinstance(sample, dict):
@@ -374,10 +434,18 @@ def _ols_slope(samples: list[dict]) -> float:
         )
         points.append((relative_time_s, unfinished_count))
     points.sort()
-    tail_start = (2 * len(points)) // 3
-    tail = points[tail_start:]
+    tail = [
+        point for point in points
+        if (
+            (2.0 * window_duration_s) / 3.0
+            <= point[0]
+            <= window_duration_s
+        )
+    ]
     if len(tail) < 2:
-        tail = points[-2:]
+        raise ValueError(
+            "backlog samples do not cover final offered window third"
+        )
     mean_x = statistics.fmean(point[0] for point in tail)
     mean_y = statistics.fmean(point[1] for point in tail)
     denominator = sum(
@@ -419,7 +487,10 @@ def select_lambda_ref(calibration_rows: list[dict]) -> dict:
                 raise ValueError(
                     "calibration rates must be non-negative"
                 )
-            slope = _ols_slope(evaluated.get("backlog_samples"))
+            slope = _ols_slope(
+                evaluated.get("backlog_samples"),
+                evaluated.get("offered_window_duration_s"),
+            )
             slope_threshold = max(
                 0.01,
                 0.02 * offered_rate,
@@ -1152,9 +1223,6 @@ def run_calibration(
         timeline = _read_jsonl(
             case_dir / "request_timeline.jsonl"
         )
-        scheduler = _read_jsonl(
-            case_dir / "scheduler_trace.jsonl"
-        )
         complete = (
             result.get("status") == "PASS"
             and len(timeline) == CALIBRATION_REQUESTS_PER_RATE
@@ -1187,25 +1255,16 @@ def run_calibration(
             if duration_s > 0.0
             else float("nan")
         )
-        backlog_samples = []
-        if scheduler:
-            first_step_ns = int(scheduler[0]["step_end_ns"])
-            for row in scheduler:
-                queue_after = row.get("queue_after", {})
-                unfinished = sum(
-                    len(queue_after.get(key, []))
-                    for key in (
-                        "waiting_seq_ids",
-                        "prefilling_seq_ids",
-                        "running_seq_ids",
-                    )
-                )
-                backlog_samples.append({
-                    "relative_time_s": (
-                        int(row["step_end_ns"]) - first_step_ns
-                    ) / 1_000_000_000.0,
-                    "unfinished_count": unfinished,
-                })
+        backlog_samples = reconstruct_calibration_backlog_samples(
+            timeline
+        )
+        offered_window_duration_s = (
+            (
+                max(int(row["scheduled_arrival_ns"]) for row in timeline)
+                - min(int(row["scheduled_arrival_ns"]) for row in timeline)
+            )
+            / 1_000_000_000.0
+        )
         return {
             "case_id": result.get("case_id"),
             "offered_rate_rps": rate,
@@ -1217,6 +1276,7 @@ def run_calibration(
                 and len(backlog_samples) >= 2
             ),
             "backlog_samples": backlog_samples,
+            "offered_window_duration_s": offered_window_duration_s,
         }
 
     def execute_rate(rate: float, index: int) -> dict:

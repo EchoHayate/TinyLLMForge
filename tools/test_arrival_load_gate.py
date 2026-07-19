@@ -283,7 +283,51 @@ def _calibration_row(
         "exact_outputs": exact,
         "finite_metrics": finite,
         "backlog_samples": samples,
+        "offered_window_duration_s": 8.0,
     }
+
+
+def test_select_lambda_ref_excludes_post_arrival_drain_from_slope():
+    overloaded = _calibration_row(4.0, 1.0, slope=0.20)
+    overloaded["backlog_samples"].append({
+        "relative_time_s": 100.0,
+        "unfinished_count": 0.0,
+    })
+
+    selected = gate.select_lambda_ref([
+        _calibration_row(1.0, 1.0, slope=0.0),
+        overloaded,
+    ])
+
+    assert selected["status"] == "PASS"
+    assert selected["lambda_ref"] == 1.0
+    assert selected["ceiling_rate_rps"] == 4.0
+    assert selected["evaluated_rows"][1]["stable"] is False
+
+
+def test_reconstruct_calibration_backlog_samples_uses_offered_window():
+    samples = gate.reconstruct_calibration_backlog_samples([
+        {
+            "scheduled_arrival_ns": 0,
+            "completion_ns": 10_000_000_000,
+        },
+        {
+            "scheduled_arrival_ns": 1_000_000_000,
+            "completion_ns": 10_000_000_000,
+        },
+        {
+            "scheduled_arrival_ns": 2_000_000_000,
+            "completion_ns": 10_000_000_000,
+        },
+    ], sample_count=5)
+
+    assert samples == [
+        {"relative_time_s": 0.0, "unfinished_count": 1},
+        {"relative_time_s": 0.5, "unfinished_count": 1},
+        {"relative_time_s": 1.0, "unfinished_count": 2},
+        {"relative_time_s": 1.5, "unfinished_count": 2},
+        {"relative_time_s": 2.0, "unfinished_count": 3},
+    ]
 
 
 def test_select_lambda_ref_recomputes_tail_slope_and_uses_95_percent_ceiling():
@@ -1739,6 +1783,8 @@ def main():
     test_unexpected_candidate_policy_collision_is_rejected()
     test_prompt_bank_hash_detects_drift()
     test_calibration_manifest_is_deterministic_and_p0_only()
+    test_select_lambda_ref_excludes_post_arrival_drain_from_slope()
+    test_reconstruct_calibration_backlog_samples_uses_offered_window()
     test_select_lambda_ref_recomputes_tail_slope_and_uses_95_percent_ceiling()
     test_select_lambda_ref_requires_stable_point_and_higher_ceiling()
     test_select_lambda_ref_rejects_structural_or_nonfinite_rows()
