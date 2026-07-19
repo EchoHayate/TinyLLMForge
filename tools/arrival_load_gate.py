@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import random
+import statistics
 from collections import Counter
 
 
@@ -515,3 +516,713 @@ def build_canonical_workload(
             + ", ".join(sorted(duplicates))
         )
     return rows
+
+
+def _finite_number(value, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be numeric")
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise ValueError(f"{label} must be finite")
+    return normalized
+
+
+def reconstruct_request_metrics(
+    workload_rows: list[dict],
+    timeline_rows: list[dict],
+    scheduler_rows: list[dict],
+) -> list[dict]:
+    del scheduler_rows
+    workload_by_id = {}
+    for row in workload_rows:
+        request_id = row.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            raise ValueError("invalid workload request id")
+        if request_id in workload_by_id:
+            raise ValueError(f"duplicate workload request: {request_id}")
+        workload_by_id[request_id] = row
+
+    timeline_by_id = {}
+    seq_ids = set()
+    for row in timeline_rows:
+        request_id = row.get("request_id")
+        if request_id in timeline_by_id:
+            raise ValueError(f"duplicate timeline request: {request_id}")
+        if request_id not in workload_by_id:
+            raise ValueError(f"unexpected timeline request: {request_id}")
+        seq_id = row.get("seq_id")
+        if not isinstance(seq_id, int) or seq_id < 0:
+            raise ValueError(f"invalid seq_id for {request_id}")
+        if seq_id in seq_ids:
+            raise ValueError(f"duplicate sequence binding: {seq_id}")
+        seq_ids.add(seq_id)
+        timeline_by_id[request_id] = row
+
+    if set(timeline_by_id) != set(workload_by_id):
+        missing = sorted(set(workload_by_id) - set(timeline_by_id))
+        raise ValueError(
+            "missing timeline requests: " + ", ".join(missing)
+        )
+
+    metrics = []
+    for request_id, workload in workload_by_id.items():
+        timeline = timeline_by_id[request_id]
+        timestamp_names = (
+            "scheduled_arrival_ns",
+            "actual_arrival_ns",
+            "first_scheduled_ns",
+            "first_token_ns",
+            "completion_ns",
+        )
+        timestamps = {
+            name: _finite_number(timeline.get(name), name)
+            for name in timestamp_names
+        }
+        if not (
+            timestamps["scheduled_arrival_ns"]
+            <= timestamps["actual_arrival_ns"]
+            <= timestamps["first_scheduled_ns"]
+            <= timestamps["first_token_ns"]
+            <= timestamps["completion_ns"]
+        ):
+            raise ValueError(
+                f"invalid timestamp ordering for {request_id}"
+            )
+        token_timestamps = [
+            _finite_number(value, "token timestamp")
+            for value in timeline.get("token_timestamps_ns", [])
+        ]
+        output_token_ids = timeline.get("output_token_ids")
+        if not isinstance(output_token_ids, list):
+            raise ValueError(
+                f"invalid output token ids for {request_id}"
+            )
+        if len(token_timestamps) != len(output_token_ids):
+            raise ValueError(
+                f"token timestamp count mismatch for {request_id}"
+            )
+        if (
+            len(output_token_ids)
+            != workload.get("requested_output_tokens")
+        ):
+            raise ValueError(
+                f"output token count mismatch for {request_id}"
+            )
+        if not token_timestamps:
+            raise ValueError(f"request has no output tokens: {request_id}")
+        if token_timestamps[0] != timestamps["first_token_ns"]:
+            raise ValueError(
+                f"first token timestamp mismatch for {request_id}"
+            )
+        if token_timestamps[-1] > timestamps["completion_ns"]:
+            raise ValueError(
+                f"token after completion for {request_id}"
+            )
+        if any(
+            current < previous
+            for previous, current in zip(
+                token_timestamps,
+                token_timestamps[1:],
+            )
+        ):
+            raise ValueError(
+                f"non-monotonic token timestamps for {request_id}"
+            )
+        if timeline.get("error") is not None:
+            raise ValueError(f"request error for {request_id}")
+        if timeline.get("finish_reason") != "length":
+            raise ValueError(
+                f"unexpected finish reason for {request_id}"
+            )
+        itl_ns = [
+            current - previous
+            for previous, current in zip(
+                token_timestamps,
+                token_timestamps[1:],
+            )
+        ]
+        metrics.append({
+            **workload,
+            "seq_id": timeline["seq_id"],
+            "output_token_ids": list(output_token_ids),
+            "finish_reason": timeline["finish_reason"],
+            "scheduled_arrival_ns": timestamps[
+                "scheduled_arrival_ns"
+            ],
+            "actual_arrival_ns": timestamps["actual_arrival_ns"],
+            "first_scheduled_ns": timestamps["first_scheduled_ns"],
+            "first_token_ns": timestamps["first_token_ns"],
+            "completion_ns": timestamps["completion_ns"],
+            "injection_lag_ns": (
+                timestamps["actual_arrival_ns"]
+                - timestamps["scheduled_arrival_ns"]
+            ),
+            "queue_delay_ns": (
+                timestamps["first_scheduled_ns"]
+                - timestamps["actual_arrival_ns"]
+            ),
+            "ttft_ns": (
+                timestamps["first_token_ns"]
+                - timestamps["scheduled_arrival_ns"]
+            ),
+            "e2e_ns": (
+                timestamps["completion_ns"]
+                - timestamps["scheduled_arrival_ns"]
+            ),
+            "itl_ns": itl_ns,
+            "maximum_decode_gap_ns": (
+                max(itl_ns) if itl_ns else None
+            ),
+        })
+    return metrics
+
+
+def _percentile_metrics(
+    rows: list[dict],
+    field: str,
+) -> dict[str, float]:
+    samples = [
+        float(row[field])
+        for row in rows
+        if row.get(field) is not None
+    ]
+    if not samples:
+        return {}
+    return {
+        f"p{percentile}_{field}": nearest_rank(
+            samples,
+            percentile / 100.0,
+        )
+        for percentile in (50, 95, 99)
+    }
+
+
+def _jain_index(values: list[float]) -> float:
+    if not values or any(value < 0.0 for value in values):
+        raise ValueError("invalid Jain index samples")
+    denominator = len(values) * sum(value * value for value in values)
+    if denominator == 0.0:
+        return 0.0
+    return (sum(values) ** 2) / denominator
+
+
+def summarize_repetition(
+    case: dict,
+    request_metrics: list[dict],
+    memory_rows: list[dict],
+) -> dict:
+    measured = [
+        row for row in request_metrics
+        if not row.get("warmup", False)
+    ]
+    if not measured:
+        raise ValueError("repetition has no measured requests")
+    start_ns = _finite_number(
+        case.get("measurement_start_ns"),
+        "measurement_start_ns",
+    )
+    end_ns = _finite_number(
+        case.get("measurement_end_ns"),
+        "measurement_end_ns",
+    )
+    if end_ns <= start_ns:
+        raise ValueError("invalid measurement interval")
+    duration_s = (end_ns - start_ns) / 1_000_000_000.0
+
+    metrics = {
+        "request_throughput_rps": len(measured) / duration_s,
+        "output_token_throughput_tps": sum(
+            len(row["output_token_ids"]) for row in measured
+        ) / duration_s,
+        "maximum_injection_lag_ns": max(
+            row["injection_lag_ns"] for row in measured
+        ),
+        "maximum_decode_gap_ns": max(
+            (
+                row["maximum_decode_gap_ns"]
+                for row in measured
+                if row["maximum_decode_gap_ns"] is not None
+            ),
+            default=None,
+        ),
+    }
+    for field in (
+        "injection_lag_ns",
+        "queue_delay_ns",
+        "ttft_ns",
+        "e2e_ns",
+    ):
+        metrics.update(_percentile_metrics(measured, field))
+    itl_samples = [
+        {"itl_ns": value}
+        for row in measured
+        for value in row["itl_ns"]
+    ]
+    metrics.update(_percentile_metrics(itl_samples, "itl_ns"))
+
+    service_buckets = {}
+    service_rates = []
+    for bucket in case.get("required_service_buckets", []):
+        bucket_rows = [
+            row for row in measured
+            if row["service_time_bucket"] == bucket
+        ]
+        if not bucket_rows:
+            raise ValueError(f"missing service bucket: {bucket}")
+        bucket_metrics = {
+            "completed_requests": len(bucket_rows),
+            "request_throughput_rps": len(bucket_rows) / duration_s,
+            "worst_e2e_ns": max(row["e2e_ns"] for row in bucket_rows),
+        }
+        bucket_metrics.update(
+            _percentile_metrics(bucket_rows, "e2e_ns")
+        )
+        service_buckets[bucket] = bucket_metrics
+        service_rates.append(bucket_metrics["request_throughput_rps"])
+    metrics["service_buckets"] = service_buckets
+    metrics["jain_service_rate_index"] = _jain_index(service_rates)
+
+    if not memory_rows:
+        raise ValueError("repetition has no memory rows")
+    for row in memory_rows:
+        for field in (
+            "cuda_allocated_bytes",
+            "cuda_reserved_bytes",
+            "used_kv_blocks",
+            "kv_block_bytes",
+        ):
+            _finite_number(row.get(field), field)
+    metrics["peak_cuda_allocated_bytes"] = int(max(
+        row["cuda_allocated_bytes"] for row in memory_rows
+    ))
+    metrics["peak_cuda_reserved_bytes"] = int(max(
+        row["cuda_reserved_bytes"] for row in memory_rows
+    ))
+    metrics["peak_used_kv_blocks"] = int(max(
+        row["used_kv_blocks"] for row in memory_rows
+    ))
+    metrics["peak_kv_bytes"] = int(max(
+        row["used_kv_blocks"] * row["kv_block_bytes"]
+        for row in memory_rows
+    ))
+
+    return {
+        "policy": case["policy"],
+        "scenario": case["scenario"],
+        "repetition": case["repetition"],
+        "status": "PASS",
+        "correctness": {
+            "exact_outputs": True,
+            "complete_requests": True,
+            "no_starvation": True,
+            "valid_lifecycle": True,
+            "stable_p0_outputs": True,
+        },
+        "metrics": metrics,
+    }
+
+
+def aggregate_case_repetitions(rows: list[dict]) -> dict:
+    if not rows:
+        raise ValueError("cannot aggregate empty repetitions")
+    if len({
+        (row.get("policy"), row.get("scenario"))
+        for row in rows
+    }) != 1:
+        raise ValueError("case aggregation requires one policy/scenario")
+    repetition_ids = [row.get("repetition") for row in rows]
+    if (
+        any(not isinstance(value, int) for value in repetition_ids)
+        or len(repetition_ids) != len(set(repetition_ids))
+    ):
+        raise ValueError("case repetitions must be unique integers")
+    metric_names = (
+        "request_throughput_rps",
+        "output_token_throughput_tps",
+        "p95_ttft_ns",
+        "p95_itl_ns",
+        "p99_ttft_ns",
+        "p99_itl_ns",
+        "p99_e2e_ns",
+        "maximum_decode_gap_ns",
+        "peak_cuda_reserved_bytes",
+        "peak_kv_bytes",
+    )
+    medians = {}
+    for metric_name in metric_names:
+        values = [
+            _finite_number(
+                row["metrics"].get(metric_name),
+                metric_name,
+            )
+            for row in rows
+            if row["metrics"].get(metric_name) is not None
+        ]
+        if values:
+            medians[metric_name] = statistics.median(values)
+    worst_repetition = min(
+        rows,
+        key=lambda row: (
+            _finite_number(
+                row["metrics"].get("request_throughput_rps"),
+                "request_throughput_rps",
+            ),
+            -_finite_number(
+                row["metrics"].get("p95_ttft_ns"),
+                "p95_ttft_ns",
+            ),
+            -_finite_number(
+                row["metrics"].get("p95_itl_ns"),
+                "p95_itl_ns",
+            ),
+        ),
+    )
+    return {
+        "policy": rows[0]["policy"],
+        "scenario": rows[0]["scenario"],
+        "repetitions": len(rows),
+        "median_metrics": medians,
+        "worst_repetition": worst_repetition,
+    }
+
+
+def _ratio(candidate: dict, baseline: dict, metric: str) -> float:
+    candidate_value = _finite_number(
+        candidate["metrics"].get(metric),
+        f"candidate {metric}",
+    )
+    baseline_value = _finite_number(
+        baseline["metrics"].get(metric),
+        f"baseline {metric}",
+    )
+    if baseline_value <= 0.0:
+        raise ValueError(f"baseline {metric} must be positive")
+    return candidate_value / baseline_value
+
+
+def _candidate_classification(
+    policy: str,
+    paired_rows: list[tuple[dict, dict]],
+) -> dict:
+    ratios = {
+        metric: [
+            _ratio(candidate, baseline, metric)
+            for baseline, candidate in paired_rows
+        ]
+        for metric in (
+            "request_throughput_rps",
+            "p95_ttft_ns",
+            "p95_itl_ns",
+            "p99_ttft_ns",
+            "p99_itl_ns",
+            "p99_e2e_ns",
+            "maximum_decode_gap_ns",
+            "peak_cuda_reserved_bytes",
+            "peak_kv_bytes",
+        )
+    }
+    bucket_ratios = []
+    for baseline, candidate in paired_rows:
+        baseline_buckets = baseline["metrics"]["service_buckets"]
+        candidate_buckets = candidate["metrics"]["service_buckets"]
+        if set(baseline_buckets) != set(candidate_buckets):
+            raise ValueError("service bucket set mismatch")
+        for bucket in sorted(baseline_buckets):
+            baseline_bucket = _finite_number(
+                baseline_buckets[bucket].get("p95_e2e_ns"),
+                "baseline bucket p95",
+            )
+            candidate_bucket = _finite_number(
+                candidate_buckets[bucket].get("p95_e2e_ns"),
+                "candidate bucket p95",
+            )
+            if baseline_bucket <= 0.0:
+                raise ValueError("baseline bucket p95 must be positive")
+            bucket_ratios.append(candidate_bucket / baseline_bucket)
+
+    median = {
+        metric: statistics.median(values)
+        for metric, values in ratios.items()
+    }
+    worst = {
+        "request_throughput_rps": min(
+            ratios["request_throughput_rps"]
+        ),
+        **{
+            metric: max(values)
+            for metric, values in ratios.items()
+            if metric != "request_throughput_rps"
+        },
+    }
+    guard_failures = []
+    for metric in (
+        "p99_ttft_ns",
+        "p99_itl_ns",
+        "p99_e2e_ns",
+        "maximum_decode_gap_ns",
+    ):
+        if max(ratios[metric]) > 1.10:
+            guard_failures.append(f"{metric} regression exceeds 10%")
+    if bucket_ratios and max(bucket_ratios) > 1.10:
+        guard_failures.append(
+            "service bucket p95 E2E regression exceeds 10%"
+        )
+
+    median_paths = {
+        "throughput": (
+            median["request_throughput_rps"] >= 1.05
+            and median["p95_ttft_ns"] <= 1.05
+            and median["p95_itl_ns"] <= 1.05
+        ),
+        "latency": (
+            (
+                median["p95_ttft_ns"] <= 0.90
+                and median["p95_itl_ns"] <= 1.05
+            )
+            or (
+                median["p95_itl_ns"] <= 0.90
+                and median["p95_ttft_ns"] <= 1.05
+            )
+        ) and median["request_throughput_rps"] >= 0.98,
+        "memory": (
+            min(
+                median["peak_cuda_reserved_bytes"],
+                median["peak_kv_bytes"],
+            ) <= 0.95
+            and median["request_throughput_rps"] >= 0.98
+            and median["p95_ttft_ns"] <= 1.02
+            and median["p95_itl_ns"] <= 1.02
+        ),
+    }
+    worst_paths = {
+        "throughput": (
+            worst["request_throughput_rps"] >= 1.05
+            and worst["p95_ttft_ns"] <= 1.05
+            and worst["p95_itl_ns"] <= 1.05
+        ),
+        "latency": (
+            (
+                worst["p95_ttft_ns"] <= 0.90
+                and worst["p95_itl_ns"] <= 1.05
+            )
+            or (
+                worst["p95_itl_ns"] <= 0.90
+                and worst["p95_ttft_ns"] <= 1.05
+            )
+        ) and worst["request_throughput_rps"] >= 0.98,
+        "memory": (
+            min(
+                worst["peak_cuda_reserved_bytes"],
+                worst["peak_kv_bytes"],
+            ) <= 0.95
+            and worst["request_throughput_rps"] >= 0.98
+            and worst["p95_ttft_ns"] <= 1.02
+            and worst["p95_itl_ns"] <= 1.02
+        ),
+    }
+    benefit_path = next(
+        (
+            path
+            for path in ("throughput", "latency", "memory")
+            if median_paths[path] and worst_paths[path]
+        ),
+        None,
+    )
+    favorable_direction = (
+        median["request_throughput_rps"] > 1.0
+        or median["p95_ttft_ns"] < 1.0
+        or median["p95_itl_ns"] < 1.0
+        or median["peak_cuda_reserved_bytes"] < 1.0
+        or median["peak_kv_bytes"] < 1.0
+    )
+    if guard_failures:
+        classification = "NO_GO"
+    elif benefit_path is not None:
+        classification = "GO"
+    elif favorable_direction:
+        classification = "PROMISING_NOT_PROVEN"
+    else:
+        classification = "NO_GO"
+    return {
+        "policy": policy,
+        "classification": classification,
+        "benefit_path": benefit_path,
+        "median_ratios": median,
+        "worst_repetition_ratios": worst,
+        "guard_failures": guard_failures,
+    }
+
+
+def classify_gate(
+    run_manifest: dict,
+    case_rows: list[dict],
+) -> dict:
+    structural_failures = []
+    correctness_failures = []
+    required_scenarios = run_manifest.get("required_scenarios")
+    repetitions = run_manifest.get("measured_repetitions")
+    canonical_by_name = run_manifest.get(
+        "canonical_policy_by_name",
+        {},
+    )
+    identities = run_manifest.get("policy_identity_by_name", {})
+    if (
+        not isinstance(required_scenarios, list)
+        or not required_scenarios
+        or not isinstance(repetitions, int)
+        or repetitions < 3
+    ):
+        structural_failures.append("invalid required case matrix")
+    if set(canonical_by_name) != {"P0", "P1", "P2", "P3"}:
+        structural_failures.append("invalid policy alias map")
+    if set(identities) != {"P0", "P1", "P2", "P3"}:
+        structural_failures.append("invalid policy identity map")
+    if (
+        canonical_by_name.get("P1") == "P0"
+        and identities.get("P1") != identities.get("P0")
+    ):
+        structural_failures.append("P1 alias identity mismatch")
+    if identities.get("P2") in {
+        identities.get("P0"),
+        identities.get("P3"),
+    }:
+        structural_failures.append("unexpected P2 identity collision")
+    if identities.get("P3") == identities.get("P0"):
+        structural_failures.append("unexpected P3 identity collision")
+
+    canonical_policies = []
+    for name in ("P0", "P1", "P2", "P3"):
+        canonical = canonical_by_name.get(name)
+        if canonical == name and name not in canonical_policies:
+            canonical_policies.append(name)
+    expected_keys = {
+        (policy, scenario, repetition)
+        for policy in canonical_policies
+        for scenario in required_scenarios or []
+        for repetition in range(repetitions or 0)
+    }
+    observed_keys = []
+    rows_by_key = {}
+    for row in case_rows:
+        key = (
+            row.get("policy"),
+            row.get("scenario"),
+            row.get("repetition"),
+        )
+        observed_keys.append(key)
+        rows_by_key[key] = row
+        if row.get("status") != "PASS":
+            structural_failures.append(
+                f"incomplete case row: {key}"
+            )
+        metrics = row.get("metrics", {})
+        for metric_name, metric_value in metrics.items():
+            if (
+                isinstance(metric_value, (int, float))
+                and not isinstance(metric_value, bool)
+                and not math.isfinite(float(metric_value))
+            ):
+                structural_failures.append(
+                    f"non-finite metric {metric_name}: {key}"
+                )
+        correctness = row.get("correctness", {})
+        for field in (
+            "exact_outputs",
+            "complete_requests",
+            "no_starvation",
+            "valid_lifecycle",
+            "stable_p0_outputs",
+        ):
+            if correctness.get(field) is not True:
+                correctness_failures.append(
+                    f"{key} failed {field}"
+                )
+    if len(observed_keys) != len(set(observed_keys)):
+        structural_failures.append("duplicate case rows")
+    if set(observed_keys) != expected_keys:
+        structural_failures.append("missing or unexpected case rows")
+
+    if structural_failures:
+        return {
+            "classification": "INCOMPLETE",
+            "structural_failures": sorted(set(structural_failures)),
+            "correctness_failures": sorted(set(correctness_failures)),
+            "candidate_results": {},
+        }
+    if correctness_failures:
+        return {
+            "classification": "NO_GO",
+            "structural_failures": [],
+            "correctness_failures": sorted(set(correctness_failures)),
+            "candidate_results": {},
+        }
+
+    candidate_results = {}
+    for policy in canonical_policies:
+        if policy == "P0":
+            continue
+        paired_rows = []
+        for scenario in required_scenarios:
+            for repetition in range(repetitions):
+                paired_rows.append((
+                    rows_by_key[("P0", scenario, repetition)],
+                    rows_by_key[(policy, scenario, repetition)],
+                ))
+        try:
+            candidate_results[policy] = _candidate_classification(
+                policy,
+                paired_rows,
+            )
+        except ValueError as exc:
+            structural_failures.append(f"{policy}: {exc}")
+    if structural_failures:
+        return {
+            "classification": "INCOMPLETE",
+            "structural_failures": sorted(set(structural_failures)),
+            "correctness_failures": [],
+            "candidate_results": candidate_results,
+        }
+    classifications = {
+        result["classification"]
+        for result in candidate_results.values()
+    }
+    if "GO" in classifications:
+        classification = "GO"
+    elif "PROMISING_NOT_PROVEN" in classifications:
+        classification = "PROMISING_NOT_PROVEN"
+    else:
+        classification = "NO_GO"
+    return {
+        "classification": classification,
+        "structural_failures": [],
+        "correctness_failures": [],
+        "candidate_results": candidate_results,
+    }
+
+
+def render_report(run_manifest: dict, summary: dict) -> str:
+    lines = [
+        "# Production Arrival-Load Gate",
+        "",
+        f"Classification: `{summary['classification']}`",
+        "",
+        "## Policies",
+        "",
+    ]
+    for policy, canonical in sorted(
+        run_manifest.get("canonical_policy_by_name", {}).items()
+    ):
+        lines.append(f"- `{policy}` -> `{canonical}`")
+    if summary.get("structural_failures"):
+        lines.extend(["", "## Structural Failures", ""])
+        lines.extend(
+            f"- {failure}"
+            for failure in summary["structural_failures"]
+        )
+    if summary.get("correctness_failures"):
+        lines.extend(["", "## Correctness Failures", ""])
+        lines.extend(
+            f"- {failure}"
+            for failure in summary["correctness_failures"]
+        )
+    return "\n".join(lines) + "\n"
