@@ -1156,15 +1156,19 @@ def test_cli_exposes_task6_subcommands():
         assert command in completed.stdout
 
 
-def test_environment_identity_ignores_run_tag_only():
+def test_environment_identity_ignores_run_local_fields():
     first = {
         "run_tag": "smoke-tag",
+        "tinyvllm_file": "/remote/smoke-tag/staging/source/tinyvllm/__init__.py",
         "gpu": "A100",
         "torch": "2.x",
     }
     second = {
         **first,
         "run_tag": "canonical-tag",
+        "tinyvllm_file": (
+            "/remote/canonical-tag/staging/source/tinyvllm/__init__.py"
+        ),
     }
     assert gate.environment_identity_sha256(first) == (
         gate.environment_identity_sha256(second)
@@ -1749,7 +1753,7 @@ def main():
     test_arrival_load_artifacts_are_the_only_new_ignored_experiment_root()
     test_finalize_artifacts_merges_classifies_and_hashes_deterministically()
     test_cli_exposes_task6_subcommands()
-    test_environment_identity_ignores_run_tag_only()
+    test_environment_identity_ignores_run_local_fields()
     test_run_smoke_produces_independently_verified_lifecycle_artifact()
     test_reconstructs_scheduled_arrival_metrics_and_shared_step_tokens()
     test_one_token_output_has_no_itl_sample()

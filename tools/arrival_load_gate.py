@@ -172,7 +172,7 @@ def environment_identity_sha256(evidence: dict) -> str:
     identity = {
         key: value
         for key, value in evidence.items()
-        if key != "run_tag"
+        if key not in {"run_tag", "tinyvllm_file"}
     }
     return canonical_json_sha256(identity)
 
