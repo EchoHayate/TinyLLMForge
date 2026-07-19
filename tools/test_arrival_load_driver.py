@@ -439,6 +439,28 @@ def test_driver_jsonl_files_preserve_final_newline():
         temporary.cleanup()
 
 
+def test_memory_row_derives_kv_block_bytes_from_capacity():
+    row = driver._memory_row(
+        {
+            "queue_after": {
+                "free_kv_blocks": 7,
+                "used_kv_blocks": 1,
+                "total_kv_blocks": 8,
+                "kv_block_size_tokens": 4,
+            },
+            "memory": {
+                "cuda_allocated_bytes": 1000,
+                "cuda_reserved_bytes": 1200,
+                "kv_capacity_bytes": 800,
+            },
+        },
+        step_index=3,
+        timestamp_ns=400,
+    )
+
+    assert row["kv_block_bytes"] == 100
+
+
 def main():
     test_driver_binds_new_waiting_sequence_and_accounts_injection_lag()
     test_driver_records_multiple_tokens_at_one_step_timestamp()
@@ -451,6 +473,7 @@ def main():
     test_driver_rejects_malformed_manifest_order_before_engine_start()
     test_driver_rejects_duplicate_request_ids()
     test_driver_jsonl_files_preserve_final_newline()
+    test_memory_row_derives_kv_block_bytes_from_capacity()
     print("arrival load driver tests passed")
 
 

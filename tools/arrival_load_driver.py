@@ -253,11 +253,27 @@ def _memory_row(observation: dict, step_index: int, timestamp_ns: int):
             "malformed_step_observation",
             "missing queue_after fields: " + ", ".join(missing),
         )
+    total_kv_blocks = queue_after["total_kv_blocks"]
+    kv_capacity_bytes = memory.get("kv_capacity_bytes")
+    if (
+        isinstance(total_kv_blocks, bool)
+        or not isinstance(total_kv_blocks, int)
+        or total_kv_blocks <= 0
+        or isinstance(kv_capacity_bytes, bool)
+        or not isinstance(kv_capacity_bytes, int)
+        or kv_capacity_bytes < 0
+        or kv_capacity_bytes % total_kv_blocks != 0
+    ):
+        raise DriverError(
+            "malformed_step_observation",
+            "kv_capacity_bytes must divide evenly across total_kv_blocks",
+        )
     return {
         "step_index": step_index,
         "timestamp_ns": timestamp_ns,
         **memory,
         **{key: queue_after[key] for key in block_fields},
+        "kv_block_bytes": kv_capacity_bytes // total_kv_blocks,
     }
 
 
