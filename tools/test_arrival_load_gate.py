@@ -934,7 +934,13 @@ def test_snapshot_source_stages_matching_bytes_and_archive():
                 assert extracted.read() == (
                     root / record["path"]
                 ).read_bytes()
-        _run_git(root, "maintenance", "stop")
+        subprocess.run(
+            ["git", "maintenance", "stop"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         _remove_tree_with_retries(root / ".git")
 
 
