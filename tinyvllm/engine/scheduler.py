@@ -18,6 +18,7 @@ class Scheduler:
         self.chunked_prefill_mixed_batch = getattr(config, "chunked_prefill_mixed_batch", False)
         self.chunked_prefill_mixed_min_prompt_tokens = getattr(config, "chunked_prefill_mixed_min_prompt_tokens", 0)
         self._consecutive_prefill_chunks = 0
+        self.last_policy_branch: str | None = None
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()     #未分配 KV 缓存块
@@ -30,6 +31,23 @@ class Scheduler:
 
     def is_finished(self):
         return not self.waiting and not self.prefilling and not self.running
+
+    def observation_snapshot(self) -> dict:
+        block_manager = self.block_manager
+        return {
+            "waiting_seq_ids": [seq.seq_id for seq in self.waiting],
+            "prefilling_seq_ids": [seq.seq_id for seq in self.prefilling],
+            "running_seq_ids": [seq.seq_id for seq in self.running],
+            "free_kv_blocks": len(block_manager.free_block_ids),
+            "used_kv_blocks": len(block_manager.used_block_ids),
+            "total_kv_blocks": len(block_manager.blocks),
+            "kv_block_size_tokens": block_manager.block_size,
+            "consecutive_prefill_chunks": self._consecutive_prefill_chunks,
+        }
+
+    def _return_schedule(self, scheduled: tuple, branch: str):
+        self.last_policy_branch = branch
+        return scheduled
 
     def add(self, seq: Sequence):
         self._validate_admission(seq)
@@ -63,29 +81,43 @@ class Scheduler:
         if self.chunked_prefill_enabled:
             if self.chunked_prefill_decode_first and self.running:
                 self._consecutive_prefill_chunks = 0
-                return (*self._schedule_decode(), True)
+                return self._return_schedule(
+                    (*self._schedule_decode(), True),
+                    "decode_first",
+                )
             if (self.running
                     and self.chunked_prefill_max_consecutive_chunks > 0
                     and self._consecutive_prefill_chunks >= self.chunked_prefill_max_consecutive_chunks):
                 self._consecutive_prefill_chunks = 0
-                return (*self._schedule_decode(), True)
+                return self._return_schedule(
+                    (*self._schedule_decode(), True),
+                    "bounded_prefill_yield",
+                )
             if self.chunked_prefill_mixed_batch and self.running:
                 if not self._mixed_prefill_admission_allowed():
                     self._consecutive_prefill_chunks = 0
-                    return (*self._schedule_decode(), True)
+                    return self._return_schedule(
+                        (*self._schedule_decode(), True),
+                        "decode_fallback",
+                    )
                 mixed = self._schedule_mixed_prefill_decode()
                 if mixed is not None:
                     if len(mixed) == 4:
                         self._consecutive_prefill_chunks = 0
+                        branch = "mixed_prefill_decode"
                     else:
                         self._consecutive_prefill_chunks += 1
-                    return mixed
+                        branch = "chunked_prefill"
+                    return self._return_schedule(mixed, branch)
             prefill = self._schedule_chunked_prefill()
             if prefill is not None:
                 self._consecutive_prefill_chunks += 1
-                return prefill
+                return self._return_schedule(prefill, "chunked_prefill")
             self._consecutive_prefill_chunks = 0
-            return (*self._schedule_decode(), True)
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "decode_fallback",
+            )
 
         # prefill, 从 waiting 队列中取出 seq   prefill阶段：处理输入 prompt 的所有 token（批量计算，生成初始 KV 缓存）。
         scheduled_seqs = [] #scheduled_seqs和waiting队列的区别：scheduled_seqs 是从 waiting 队列中筛选出来的、满足调度条件的序列集合
@@ -125,10 +157,16 @@ class Scheduler:
             self.running.append(seq)
             scheduled_seqs.append(seq)
         if scheduled_seqs:
-            return scheduled_seqs, True, True
+            return self._return_schedule(
+                (scheduled_seqs, True, True),
+                "legacy_prefill",
+            )
 
         # decode，从 running 队列中取出 seq   Decode 阶段：逐 token 生成（利用已有 KV 缓存，每次生成一个新 token）。
-        return (*self._schedule_decode(), True)
+        return self._return_schedule(
+            (*self._schedule_decode(), True),
+            "legacy_decode",
+        )
 
     def _schedule_decode(self) -> tuple[list[Sequence], bool]:
         scheduled_seqs = []

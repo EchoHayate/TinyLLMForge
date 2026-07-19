@@ -34,6 +34,7 @@ class LLMEngine:
         self.scheduler = Scheduler(config)
         self.last_batch_kind = None
         self.last_scheduled_seqs = []
+        self.last_step_observation = None
         atexit.register(self.exit)
         
     def exit(self):
@@ -53,6 +54,7 @@ class LLMEngine:
         self.scheduler.add(seq)           #直接加到waiting
 
     def step(self):     #decode阶段：每次step生成新的token加到seq后面
+        queue_before = self.scheduler.observation_snapshot()
         scheduled = self.scheduler.schedule()
         if len(scheduled) == 4:
             seqs, is_prefill, do_sample, batch_kind = scheduled
@@ -61,6 +63,26 @@ class LLMEngine:
             batch_kind = None
         self.last_batch_kind = batch_kind
         self.last_scheduled_seqs = seqs
+        completion_lengths_before = {
+            seq.seq_id: len(seq.completion_token_ids)
+            for seq in seqs
+        }
+        scheduled_rows = [{
+            "seq_id": seq.seq_id,
+            "is_decode": bool(
+                getattr(seq, "step_is_decode", False)
+                if batch_kind == "mixed"
+                else not is_prefill
+            ),
+            "do_sample": bool(
+                getattr(seq, "step_do_sample", do_sample)
+                if batch_kind == "mixed"
+                else do_sample
+            ),
+            "prefill_chunk_start": seq.prefill_chunk_start,
+            "prefill_chunk_end": seq.prefill_chunk_end,
+            "prefill_chunk_final": bool(seq.prefill_chunk_final),
+        } for seq in seqs]
         token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample, batch_kind)     
         if batch_kind == "mixed":
             prefill_tokens = sum(
@@ -75,6 +97,28 @@ class LLMEngine:
             num_tokens = -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
         self.scheduler.postprocess(seqs, token_ids, is_prefill, do_sample, batch_kind)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
+        token_deltas = {
+            seq.seq_id: list(
+                seq.completion_token_ids[
+                    completion_lengths_before[seq.seq_id]:
+                ]
+            )
+            for seq in seqs
+        }
+        self.last_step_observation = {
+            "policy_branch": self.scheduler.last_policy_branch,
+            "batch_kind": batch_kind,
+            "is_prefill": bool(is_prefill),
+            "do_sample": bool(do_sample),
+            "scheduled": scheduled_rows,
+            "queue_before": queue_before,
+            "queue_after": self.scheduler.observation_snapshot(),
+            "new_completion_tokens_by_seq": token_deltas,
+            "finished_seq_ids": [
+                seq.seq_id for seq in seqs if seq.is_finished
+            ],
+            "memory": self.model_runner.memory_snapshot(),
+        }
         return outputs, num_tokens      #计算的是每个step的单次增量
 
     def is_finished(self):

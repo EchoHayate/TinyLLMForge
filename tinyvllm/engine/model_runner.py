@@ -709,6 +709,30 @@ class ModelRunner:
         method = getattr(self, method_name, None)       #获取函数对象
         return method(*args)            #执行函数并返回结果
 
+    def memory_snapshot(self):
+        kv_bytes = int(
+            self.kv_cache.numel() * self.kv_cache.element_size()
+        )
+        if self.kv_scale is not None:
+            kv_bytes += int(
+                self.kv_scale.numel() * self.kv_scale.element_size()
+            )
+        if self.kv_zero is not None:
+            kv_bytes += int(
+                self.kv_zero.numel() * self.kv_zero.element_size()
+            )
+        return {
+            "cuda_allocated_bytes": int(torch.cuda.memory_allocated()),
+            "cuda_reserved_bytes": int(torch.cuda.memory_reserved()),
+            "cuda_peak_allocated_bytes": int(
+                torch.cuda.max_memory_allocated()
+            ),
+            "cuda_peak_reserved_bytes": int(
+                torch.cuda.max_memory_reserved()
+            ),
+            "kv_capacity_bytes": kv_bytes,
+        }
+
     def warmup_model(self): 
         torch.cuda.empty_cache()                                #[thinking]可以看一下源码的执行策略 可能会有优化的点  
         torch.cuda.reset_peak_memory_stats()                    # 从新统计GPU内存使用的峰值信息

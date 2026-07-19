@@ -7,6 +7,7 @@ import os
 import sys
 import types
 import importlib.util
+import ast
 import hashlib
 import pickle
 from types import SimpleNamespace
@@ -43,6 +44,36 @@ def load_module(module_name: str, relative_path: str):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_class_method(relative_path: str, class_name: str, method_name: str):
+    path = os.path.join(_REPO_ROOT, relative_path)
+    tree = ast.parse(open(path).read(), filename=path)
+    class_node = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    method_node = next((
+        node for node in class_node.body
+        if isinstance(node, ast.FunctionDef) and node.name == method_name
+    ), None)
+    assert method_node is not None, (
+        f"{class_name}.{method_name} is missing from {relative_path}"
+    )
+    function_node = ast.FunctionDef(
+        name=method_node.name,
+        args=method_node.args,
+        body=method_node.body,
+        decorator_list=[],
+        returns=method_node.returns,
+        type_comment=method_node.type_comment,
+    )
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(
+        body=[function_node],
+        type_ignores=[],
+    )), path, "exec"), namespace)
+    return namespace[method_name]
 
 
 config_mod = types.ModuleType("tinyvllm.config")
@@ -127,6 +158,7 @@ def test_intermediate_chunk_does_not_sample_or_append():
     assert seqs == [seq]
     assert is_prefill is True
     assert do_sample is False
+    assert scheduler.last_policy_branch == "chunked_prefill"
     assert seq.prefill_chunk_start == 0
     assert seq.prefill_chunk_end == 4
     scheduler.postprocess(seqs, None, is_prefill, do_sample)
@@ -242,6 +274,265 @@ def test_decode_first_prioritizes_existing_running_sequence():
     assert is_prefill is False
     assert do_sample is True
     assert list(scheduler.waiting) == [waiting]
+    assert scheduler.last_policy_branch == "decode_first"
+
+
+def test_scheduler_observation_snapshot_reports_queue_and_kv_state():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        num_kvcache_blocks=8,
+        kvcache_block_size=4,
+        chunked_prefill_max_consecutive_chunks=2,
+    ))
+    waiting = make_seq([1, 2, 3])
+    prefilling = make_seq([4, 5, 6])
+    running = make_seq([7, 8, 9])
+    scheduler.add(waiting)
+    scheduler.block_manager.allocate(prefilling)
+    scheduler.block_manager.allocate(running)
+    prefilling.status = SequenceStatus.PREFILLING
+    running.status = SequenceStatus.RUNNING
+    scheduler.prefilling.append(prefilling)
+    scheduler.running.append(running)
+    scheduler._consecutive_prefill_chunks = 2
+
+    snapshot = scheduler.observation_snapshot()
+
+    assert snapshot == {
+        "waiting_seq_ids": [waiting.seq_id],
+        "prefilling_seq_ids": [prefilling.seq_id],
+        "running_seq_ids": [running.seq_id],
+        "free_kv_blocks": 6,
+        "used_kv_blocks": 2,
+        "total_kv_blocks": 8,
+        "kv_block_size_tokens": 4,
+        "consecutive_prefill_chunks": 2,
+    }
+
+
+def test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage():
+    memory_snapshot = load_class_method(
+        "tinyvllm/engine/model_runner.py",
+        "ModelRunner",
+        "memory_snapshot",
+    )
+    cuda_calls = []
+    original_cuda = getattr(torch, "cuda", None) if torch is not None else None
+
+    class FakeCuda:
+        @staticmethod
+        def memory_allocated():
+            cuda_calls.append("memory_allocated")
+            return 101
+
+        @staticmethod
+        def memory_reserved():
+            cuda_calls.append("memory_reserved")
+            return 202
+
+        @staticmethod
+        def max_memory_allocated():
+            cuda_calls.append("max_memory_allocated")
+            return 303
+
+        @staticmethod
+        def max_memory_reserved():
+            cuda_calls.append("max_memory_reserved")
+            return 404
+
+        @staticmethod
+        def synchronize():
+            raise AssertionError("memory snapshot must not synchronize")
+
+        @staticmethod
+        def empty_cache():
+            raise AssertionError("memory snapshot must not empty cache")
+
+        @staticmethod
+        def reset_peak_memory_stats():
+            raise AssertionError("memory snapshot must not reset peaks")
+
+    class FakeTensor:
+        def __init__(self, elements, element_size):
+            self.elements = elements
+            self.bytes_per_element = element_size
+
+        def numel(self):
+            return self.elements
+
+        def element_size(self):
+            return self.bytes_per_element
+
+    fake_torch = SimpleNamespace(cuda=FakeCuda)
+    memory_snapshot.__globals__["torch"] = fake_torch
+    runner = SimpleNamespace(
+        kv_cache=FakeTensor(10, 2),
+        kv_scale=FakeTensor(3, 4),
+        kv_zero=FakeTensor(2, 4),
+    )
+
+    snapshot = memory_snapshot(runner)
+
+    assert snapshot == {
+        "cuda_allocated_bytes": 101,
+        "cuda_reserved_bytes": 202,
+        "cuda_peak_allocated_bytes": 303,
+        "cuda_peak_reserved_bytes": 404,
+        "kv_capacity_bytes": 40,
+    }
+    assert cuda_calls == [
+        "memory_allocated",
+        "memory_reserved",
+        "max_memory_allocated",
+        "max_memory_reserved",
+    ]
+    if torch is not None:
+        assert torch.cuda is original_cuda
+
+
+def test_llm_engine_step_records_observation_without_changing_return_value():
+    step = load_class_method(
+        "tinyvllm/engine/llm_engine.py",
+        "LLMEngine",
+        "step",
+    )
+
+    class FakeSequence:
+        def __init__(self):
+            self.seq_id = 17
+            self.status = SequenceStatus.RUNNING
+            self.prefill_chunk_start = 0
+            self.prefill_chunk_end = 3
+            self.prefill_chunk_final = True
+            self.step_is_decode = False
+            self.step_do_sample = True
+            self.completion_token_ids = []
+
+        @property
+        def is_finished(self):
+            return self.status == SequenceStatus.FINISHED
+
+    seq = FakeSequence()
+
+    class FakeScheduler:
+        last_policy_branch = "chunked_prefill"
+
+        def __init__(self):
+            self.snapshot_index = 0
+
+        def observation_snapshot(self):
+            self.snapshot_index += 1
+            return {"snapshot_index": self.snapshot_index}
+
+        def schedule(self):
+            return [seq], True, True
+
+        def postprocess(self, seqs, token_ids, is_prefill, do_sample, batch_kind):
+            assert seqs == [seq]
+            assert token_ids == [91]
+            seq.completion_token_ids.append(91)
+            seq.prefill_chunk_start = 3
+            seq.prefill_chunk_end = 4
+            seq.prefill_chunk_final = False
+            seq.status = SequenceStatus.FINISHED
+
+    class FakeModelRunner:
+        def call(self, method_name, *args):
+            assert method_name == "run"
+            return [91]
+
+        def memory_snapshot(self):
+            return {"cuda_allocated_bytes": 123}
+
+    engine = SimpleNamespace(
+        scheduler=FakeScheduler(),
+        model_runner=FakeModelRunner(),
+        last_batch_kind=None,
+        last_scheduled_seqs=[],
+        last_step_observation=None,
+    )
+
+    result = step(engine)
+
+    assert result == ([(17, [91])], 3)
+    assert engine.last_step_observation == {
+        "policy_branch": "chunked_prefill",
+        "batch_kind": None,
+        "is_prefill": True,
+        "do_sample": True,
+        "scheduled": [{
+            "seq_id": 17,
+            "is_decode": False,
+            "do_sample": True,
+            "prefill_chunk_start": 0,
+            "prefill_chunk_end": 3,
+            "prefill_chunk_final": True,
+        }],
+        "queue_before": {"snapshot_index": 1},
+        "queue_after": {"snapshot_index": 2},
+        "new_completion_tokens_by_seq": {17: [91]},
+        "finished_seq_ids": [17],
+        "memory": {"cuda_allocated_bytes": 123},
+    }
+
+
+def test_chunked_prefill_decode_fallback_reports_branch_without_changing_result():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=4,
+        chunked_prefill_decode_first=False,
+    ))
+    running = make_seq([1, 2, 3], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [running]
+    assert is_prefill is False
+    assert do_sample is True
+    assert list(scheduler.running) == [running]
+    assert scheduler.last_policy_branch == "decode_fallback"
+
+
+def test_legacy_prefill_reports_branch_without_changing_result():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+    ))
+    waiting = make_seq([1, 2, 3], max_tokens=4)
+    scheduler.add(waiting)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [waiting]
+    assert is_prefill is True
+    assert do_sample is True
+    assert list(scheduler.waiting) == []
+    assert list(scheduler.running) == [waiting]
+    assert scheduler.last_policy_branch == "legacy_prefill"
+
+
+def test_legacy_decode_reports_branch_without_changing_result():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_prefill_tokens_per_step=0,
+    ))
+    running = make_seq([1, 2, 3], max_tokens=4)
+    scheduler.block_manager.allocate(running)
+    running.status = SequenceStatus.RUNNING
+    running.num_computed_tokens = len(running)
+    scheduler.running.append(running)
+
+    seqs, is_prefill, do_sample = scheduler.schedule()
+
+    assert seqs == [running]
+    assert is_prefill is False
+    assert do_sample is True
+    assert list(scheduler.running) == [running]
+    assert scheduler.last_policy_branch == "legacy_decode"
 
 
 def test_add_rejects_request_beyond_max_model_len():
@@ -1114,6 +1405,7 @@ def test_max_consecutive_prefill_chunks_yields_to_decode():
     assert seqs == [running]
     assert is_prefill is False
     assert do_sample is True
+    assert scheduler.last_policy_branch == "bounded_prefill_yield"
     scheduler.postprocess(seqs, [123], is_prefill, do_sample)
 
     seqs, is_prefill, do_sample = scheduler.schedule()
@@ -1151,6 +1443,7 @@ def test_mixed_prefill_decode_schedules_prefill_chunk_with_decode():
     assert long_prefill.prefill_chunk_end == 4
     assert long_prefill.prefill_chunk_final is False
     assert list(scheduler.running) == []
+    assert scheduler.last_policy_branch == "mixed_prefill_decode"
 
 
 def test_mixed_short_prefill_batching_reserves_slot_for_decode():
@@ -1481,6 +1774,12 @@ def main():
     test_chunked_prefill_batches_multiple_short_final_prompts()
     test_chunked_prefill_batches_warm_prompt_by_uncached_tokens()
     test_decode_first_prioritizes_existing_running_sequence()
+    test_scheduler_observation_snapshot_reports_queue_and_kv_state()
+    test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage()
+    test_llm_engine_step_records_observation_without_changing_return_value()
+    test_chunked_prefill_decode_fallback_reports_branch_without_changing_result()
+    test_legacy_prefill_reports_branch_without_changing_result()
+    test_legacy_decode_reports_branch_without_changing_result()
     test_add_rejects_request_beyond_max_model_len()
     test_add_rejects_prompt_beyond_logical_kv_capacity()
     test_add_accounts_for_decode_kv_capacity_boundary()
