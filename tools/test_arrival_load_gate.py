@@ -944,6 +944,13 @@ def test_snapshot_source_stages_matching_bytes_and_archive():
         _remove_tree_with_retries(root / ".git")
 
 
+def test_arrival_load_artifacts_are_the_only_new_ignored_experiment_root():
+    assert "experiments/arrival_load" in (
+        gate.IGNORED_UNTRACKED_PREFIXES
+    )
+    assert "experiments" not in gate.IGNORED_UNTRACKED_PREFIXES
+
+
 def _finalization_fixture(root: Path) -> dict:
     manifest = _case_matrix_manifest()
     workload_rows = []
@@ -1739,6 +1746,7 @@ def main():
     test_run_canonical_requires_matching_smoke_and_frozen_calibration()
     test_run_calibration_doubles_bisects_and_freezes_workload()
     test_snapshot_source_stages_matching_bytes_and_archive()
+    test_arrival_load_artifacts_are_the_only_new_ignored_experiment_root()
     test_finalize_artifacts_merges_classifies_and_hashes_deterministically()
     test_cli_exposes_task6_subcommands()
     test_environment_identity_ignores_run_tag_only()

@@ -41,6 +41,7 @@ IGNORED_UNTRACKED_PREFIXES = (
     "experiments/adaptive_ngram/20260717-k1-sam-canonical",
     "experiments/adaptive_ngram/20260717-k1-sam-smoke-r2",
     "experiments/adaptive_ngram/20260717-k1-sam-smoke",
+    "experiments/arrival_load",
     "experiments/speculation_router",
 )
 
