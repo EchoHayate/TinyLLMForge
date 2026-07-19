@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -60,9 +61,39 @@ def _source_repo() -> tuple[tempfile.TemporaryDirectory, Path]:
     _run(["git", "init"], root)
     _run(["git", "config", "user.name", "Gate Test"], root)
     _run(["git", "config", "user.email", "gate@example.invalid"], root)
+    _run(["git", "config", "gc.auto", "0"], root)
+    _run(["git", "config", "maintenance.auto", "false"], root)
     _run(["git", "add", "."], root)
     _run(["git", "commit", "-m", "base"], root)
     return temporary, root
+
+
+def _cleanup_repo(
+    temporary: tempfile.TemporaryDirectory,
+    root: Path,
+) -> None:
+    for attempt in range(10):
+        if (root / ".git").exists():
+            subprocess.run(
+                ["git", "maintenance", "stop"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            try:
+                shutil.rmtree(root / ".git")
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        try:
+            temporary.cleanup()
+            return
+        except OSError:
+            if attempt == 9:
+                raise
+            time.sleep(0.05)
 
 
 def _build(root: Path, out_dir: Path) -> dict:
@@ -104,7 +135,7 @@ def test_generic_source_evidence_reconstructs_dirty_tree():
             reconstructed / "tools" / "profile_ngram_commit.py"
         ).read_text(encoding="utf-8") == "PROFILE = 2\n"
     finally:
-        temporary.cleanup()
+        _cleanup_repo(temporary, root)
 
 
 def test_generic_source_evidence_ignores_only_configured_artifacts():
@@ -132,7 +163,7 @@ def test_generic_source_evidence_ignores_only_configured_artifacts():
         else:
             raise AssertionError("unrelated untracked artifact must fail")
     finally:
-        temporary.cleanup()
+        _cleanup_repo(temporary, root)
 
 
 def test_generic_source_evidence_rejects_untracked_owned_file():
@@ -149,7 +180,7 @@ def test_generic_source_evidence_rejects_untracked_owned_file():
         else:
             raise AssertionError("untracked owned source must fail")
     finally:
-        temporary.cleanup()
+        _cleanup_repo(temporary, root)
 
 
 def test_generic_snapshot_rejects_patch_and_file_tampering():
@@ -191,7 +222,7 @@ def test_generic_snapshot_rejects_patch_and_file_tampering():
         else:
             raise AssertionError("changed source file must fail")
     finally:
-        temporary.cleanup()
+        _cleanup_repo(temporary, root)
 
 
 def test_generic_source_evidence_is_json_serializable():
@@ -200,7 +231,7 @@ def test_generic_source_evidence_is_json_serializable():
         evidence = _build(root, root / "snapshot")
         json.dumps(evidence, sort_keys=True)
     finally:
-        temporary.cleanup()
+        _cleanup_repo(temporary, root)
 
 
 def main():
