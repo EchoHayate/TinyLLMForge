@@ -2,16 +2,64 @@
 
 from __future__ import annotations
 
+import argparse
+import gzip
 import hashlib
+import importlib.util
 import json
 import math
+import os
 import random
+import shutil
+import socket
 import statistics
+import subprocess
+import tarfile
+import time
 from collections import Counter
+from pathlib import Path
 
 
 SCHEMA_VERSION = 1
 GENERATOR_VERSION = 1
+
+OWNED_SOURCE_ROOTS = (
+    "tinyvllm",
+    "tools/source_audit.py",
+    "tools/arrival_load_gate.py",
+    "tools/arrival_load_driver.py",
+    "tools/arrival_load_verify.py",
+    "tools/test_arrival_load_gate.py",
+    "tools/test_arrival_load_driver.py",
+    "tools/test_arrival_load_verify.py",
+    "tools/test_chunked_prefill.py",
+    "tools/run_arrival_load_gate_remote.sh",
+    "tools/test_run_arrival_load_gate_remote.py",
+)
+
+IGNORED_UNTRACKED_PREFIXES = (
+    "experiments/adaptive_ngram/20260717-k1-sam-canonical",
+    "experiments/adaptive_ngram/20260717-k1-sam-smoke-r2",
+    "experiments/adaptive_ngram/20260717-k1-sam-smoke",
+    "experiments/speculation_router",
+)
+
+FINAL_ARTIFACT_FILES = (
+    "run_manifest.json",
+    "calibration_manifest.jsonl",
+    "calibration_rows.jsonl",
+    "workload_manifest.jsonl",
+    "request_timeline.jsonl",
+    "scheduler_trace.jsonl",
+    "memory_trace.jsonl",
+    "case_rows.jsonl",
+    "summary.json",
+    "report.md",
+    "source_evidence.json",
+    "source.patch",
+    "source_snapshot.tar.gz",
+    "artifact_hashes.json",
+)
 
 COMMON_ENGINE_CONFIG = {
     "max_num_batched_tokens": 16384,
@@ -71,6 +119,12 @@ FAIRNESS_REQUESTS_PER_BUCKET = 20
 CANONICAL_DRAIN_TIMEOUT_NS = 120_000_000_000
 STARVATION_DEADLINE_NS = 5_000_000_000
 MEASURED_REPETITIONS = 3
+POLICY_ORDER_BY_REPETITION = {
+    0: ("P0", "P2", "P3"),
+    1: ("P2", "P3", "P0"),
+    2: ("P3", "P0", "P2"),
+}
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CANONICAL_SCENARIOS = (
     "steady_moderate",
@@ -289,6 +343,995 @@ def build_calibration_manifest(prompt_bank: dict) -> list[dict]:
             "drain_timeout_ns": CALIBRATION_DRAIN_TIMEOUT_NS,
         })
     return rows
+
+
+def _ols_slope(samples: list[dict]) -> float:
+    if not isinstance(samples, list) or len(samples) < 2:
+        raise ValueError("backlog_samples require at least two rows")
+    points = []
+    for sample in samples:
+        if not isinstance(sample, dict):
+            raise ValueError("backlog sample must be an object")
+        relative_time_s = _finite_number(
+            sample.get("relative_time_s"),
+            "relative_time_s",
+        )
+        unfinished_count = _finite_number(
+            sample.get("unfinished_count"),
+            "unfinished_count",
+        )
+        points.append((relative_time_s, unfinished_count))
+    points.sort()
+    tail_start = (2 * len(points)) // 3
+    tail = points[tail_start:]
+    if len(tail) < 2:
+        tail = points[-2:]
+    mean_x = statistics.fmean(point[0] for point in tail)
+    mean_y = statistics.fmean(point[1] for point in tail)
+    denominator = sum(
+        (point[0] - mean_x) ** 2
+        for point in tail
+    )
+    if denominator <= 0.0:
+        raise ValueError("backlog sample times must vary")
+    return sum(
+        (point[0] - mean_x) * (point[1] - mean_y)
+        for point in tail
+    ) / denominator
+
+
+def select_lambda_ref(calibration_rows: list[dict]) -> dict:
+    if not isinstance(calibration_rows, list) or not calibration_rows:
+        return {
+            "status": "INCOMPLETE",
+            "error_type": "no_stable_point",
+            "error": "calibration rows are empty",
+            "lambda_ref": None,
+            "evaluated_rows": [],
+        }
+    evaluated_rows = []
+    for row in calibration_rows:
+        evaluated = dict(row) if isinstance(row, dict) else {}
+        try:
+            offered_rate = _finite_number(
+                evaluated.get("offered_rate_rps"),
+                "offered_rate_rps",
+            )
+            throughput = _finite_number(
+                evaluated.get(
+                    "completed_request_throughput_rps"
+                ),
+                "completed_request_throughput_rps",
+            )
+            if offered_rate <= 0.0 or throughput < 0.0:
+                raise ValueError(
+                    "calibration rates must be non-negative"
+                )
+            slope = _ols_slope(evaluated.get("backlog_samples"))
+            slope_threshold = max(
+                0.01,
+                0.02 * offered_rate,
+            )
+            structural_ok = (
+                evaluated.get("complete_requests") is True
+                and evaluated.get("exact_outputs") is True
+                and evaluated.get("finite_metrics") is True
+            )
+            slope_within_threshold = (
+                slope <= slope_threshold
+                or math.isclose(
+                    slope,
+                    slope_threshold,
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+            )
+            stable = structural_ok and slope_within_threshold
+            evaluated.update({
+                "offered_rate_rps": offered_rate,
+                "completed_request_throughput_rps": throughput,
+                "backlog_slope_rps": slope,
+                "backlog_slope_threshold_rps": slope_threshold,
+                "stable": stable,
+                "stability_error": None,
+            })
+        except (TypeError, ValueError) as exc:
+            evaluated.update({
+                "stable": False,
+                "stability_error": str(exc),
+            })
+        evaluated_rows.append(evaluated)
+    evaluated_rows.sort(key=lambda row: (
+        float(row.get("offered_rate_rps", math.inf))
+        if isinstance(
+            row.get("offered_rate_rps"),
+            (int, float),
+        )
+        and not isinstance(row.get("offered_rate_rps"), bool)
+        and math.isfinite(float(row["offered_rate_rps"]))
+        else math.inf
+    ))
+    stable_rows = [
+        row for row in evaluated_rows
+        if row.get("stable") is True
+    ]
+    if not stable_rows:
+        return {
+            "status": "INCOMPLETE",
+            "error_type": "no_stable_point",
+            "error": "no structurally valid stable calibration rate",
+            "lambda_ref": None,
+            "evaluated_rows": evaluated_rows,
+        }
+    highest_stable_rate = max(
+        row["offered_rate_rps"] for row in stable_rows
+    )
+    higher_unstable = [
+        row for row in evaluated_rows
+        if (
+            isinstance(row.get("offered_rate_rps"), (int, float))
+            and not isinstance(row.get("offered_rate_rps"), bool)
+            and math.isfinite(float(row["offered_rate_rps"]))
+            and row["offered_rate_rps"] > highest_stable_rate
+            and row.get("stable") is not True
+        )
+    ]
+    if not higher_unstable:
+        return {
+            "status": "INCOMPLETE",
+            "error_type": "no_clear_ceiling",
+            "error": "no higher unstable calibration rate",
+            "lambda_ref": None,
+            "evaluated_rows": evaluated_rows,
+        }
+    maximum_stable_throughput = max(
+        row["completed_request_throughput_rps"]
+        for row in stable_rows
+    )
+    eligible = [
+        row for row in stable_rows
+        if row["completed_request_throughput_rps"] >= (
+            0.95 * maximum_stable_throughput
+        )
+    ]
+    selected = max(
+        eligible,
+        key=lambda row: row["offered_rate_rps"],
+    )
+    ceiling = min(
+        higher_unstable,
+        key=lambda row: row["offered_rate_rps"],
+    )
+    return {
+        "status": "PASS",
+        "error_type": None,
+        "error": None,
+        "lambda_ref": selected["offered_rate_rps"],
+        "maximum_stable_throughput_rps": (
+            maximum_stable_throughput
+        ),
+        "ceiling_rate_rps": ceiling["offered_rate_rps"],
+        "evaluated_rows": evaluated_rows,
+    }
+
+
+def build_case_matrix(run_manifest: dict) -> list[dict]:
+    if not isinstance(run_manifest, dict):
+        raise ValueError("run manifest must be an object")
+    scenarios = run_manifest.get("required_scenarios")
+    if scenarios != list(CANONICAL_SCENARIOS):
+        raise ValueError(
+            "required scenarios must match canonical order"
+        )
+    repetitions = run_manifest.get("measured_repetitions")
+    if repetitions != MEASURED_REPETITIONS:
+        raise ValueError(
+            "measured repetitions must equal "
+            f"{MEASURED_REPETITIONS}"
+        )
+    canonical_by_name = run_manifest.get(
+        "canonical_policy_by_name"
+    )
+    if canonical_by_name != {
+        "P0": "P0",
+        "P1": "P0",
+        "P2": "P2",
+        "P3": "P3",
+    }:
+        raise ValueError("invalid canonical policy alias map")
+    identities = run_manifest.get("policy_identity_by_name")
+    if (
+        not isinstance(identities, dict)
+        or identities.get("P0") != identities.get("P1")
+        or len({
+            identities.get("P0"),
+            identities.get("P2"),
+            identities.get("P3"),
+        }) != 3
+    ):
+        raise ValueError("invalid canonical policy identities")
+    resolved = run_manifest.get(
+        "resolved_policy_config_by_name"
+    )
+    if not isinstance(resolved, dict):
+        raise ValueError("missing resolved policy configs")
+    matrix = []
+    for repetition in range(repetitions):
+        policy_order = POLICY_ORDER_BY_REPETITION[repetition]
+        for scenario in scenarios:
+            for policy in policy_order:
+                case_id = (
+                    f"{scenario}__{policy}__r{repetition}"
+                )
+                matrix.append({
+                    "case_id": case_id,
+                    "run_tag": run_manifest.get("run_tag"),
+                    "scenario": scenario,
+                    "policy": policy,
+                    "repetition": repetition,
+                    "policy_order": list(policy_order).index(policy),
+                    "resolved_config": dict(resolved[policy]),
+                    "policy_identity": identities[policy],
+                    "workload_sha256": run_manifest.get(
+                        "workload_sha256"
+                    ),
+                    "source_tree_sha256": run_manifest.get(
+                        "source_tree_sha256"
+                    ),
+                    "environment_sha256": run_manifest.get(
+                        "environment_sha256"
+                    ),
+                    "drain_timeout_ns": run_manifest.get(
+                        "drain_timeout_ns",
+                        CANONICAL_DRAIN_TIMEOUT_NS,
+                    ),
+                })
+    keys = {
+        (
+            row["policy"],
+            row["scenario"],
+            row["repetition"],
+        )
+        for row in matrix
+    }
+    if len(matrix) != 54 or len(keys) != len(matrix):
+        raise ValueError("invalid canonical case matrix")
+    return matrix
+
+
+def allocate_port_pair() -> tuple[int, int]:
+    sockets = []
+    ports = []
+    try:
+        while len(ports) < 2:
+            handle = socket.socket(
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+            )
+            handle.bind(("127.0.0.1", 0))
+            port = int(handle.getsockname()[1])
+            sockets.append(handle)
+            if port not in ports:
+                ports.append(port)
+    finally:
+        for handle in sockets:
+            handle.close()
+    return ports[0], ports[1]
+
+
+def _write_json(path: Path, value: object) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(
+            value,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        "".join(
+            json.dumps(
+                row,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _read_json(path: Path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    payload = Path(path).read_bytes()
+    if payload and not payload.endswith(b"\n"):
+        raise ValueError(f"JSONL missing final newline: {path}")
+    return [
+        json.loads(line)
+        for line in payload.splitlines()
+    ]
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _load_local_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_deterministic_source_tar(
+    source_dir: Path,
+    archive_path: Path,
+) -> None:
+    temporary = archive_path.with_name(archive_path.name + ".tmp")
+    with temporary.open("wb") as raw_handle:
+        with gzip.GzipFile(
+            filename="",
+            mode="wb",
+            fileobj=raw_handle,
+            mtime=0,
+        ) as gzip_handle:
+            with tarfile.open(
+                fileobj=gzip_handle,
+                mode="w",
+                format=tarfile.PAX_FORMAT,
+            ) as archive:
+                for path in sorted(source_dir.rglob("*")):
+                    if not path.is_file():
+                        continue
+                    relative = path.relative_to(source_dir).as_posix()
+                    info = archive.gettarinfo(
+                        str(path),
+                        arcname=f"source/{relative}",
+                    )
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ""
+                    info.gname = ""
+                    info.mtime = 0
+                    info.mode = 0o644
+                    with path.open("rb") as handle:
+                        archive.addfile(info, handle)
+    temporary.replace(archive_path)
+
+
+def snapshot_source(
+    repo_root: Path,
+    out_dir: Path,
+) -> dict:
+    repo_root = Path(repo_root).resolve()
+    out_dir = Path(out_dir).resolve()
+    source_audit = _load_local_module(
+        "arrival_load_source_audit",
+        repo_root / "tools" / "source_audit.py",
+    )
+    evidence = source_audit.build_source_evidence(
+        repo_root,
+        out_dir,
+        owned_roots=OWNED_SOURCE_ROOTS,
+        ignored_untracked_prefixes=IGNORED_UNTRACKED_PREFIXES,
+    )
+    _write_deterministic_source_tar(
+        out_dir / "source",
+        out_dir / "source_snapshot.tar.gz",
+    )
+    return evidence
+
+
+def _run_identity(run_manifest: dict) -> dict:
+    fields = (
+        "run_tag",
+        "source_tree_sha256",
+        "workload_sha256",
+        "environment_sha256",
+        "policy_identity_by_name",
+        "canonical_policy_by_name",
+        "resolved_policy_config_by_name",
+    )
+    return {
+        field: run_manifest.get(field)
+        for field in fields
+    }
+
+
+def _validate_stored_run_identity(
+    run_dir: Path,
+    run_manifest: dict,
+) -> None:
+    manifest_path = Path(run_dir) / "run_manifest.json"
+    if not manifest_path.is_file():
+        return
+    stored = _read_json(manifest_path)
+    if _run_identity(stored) != _run_identity(run_manifest):
+        raise ValueError("resume identity mismatch")
+
+
+def _validate_smoke_marker(run_manifest: dict) -> None:
+    smoke = run_manifest.get("smoke_verification")
+    if not isinstance(smoke, dict) or smoke.get("status") != "PASS":
+        raise ValueError(
+            "canonical requires a verified smoke marker"
+        )
+    for field in (
+        "source_tree_sha256",
+        "environment_sha256",
+    ):
+        if smoke.get(field) != run_manifest.get(field):
+            raise ValueError(
+                f"smoke {field} identity mismatch"
+            )
+
+
+def _case_is_complete(
+    case_dir: Path,
+    case_spec: dict,
+    run_manifest: dict,
+) -> bool:
+    required = (
+        "case_result.json",
+        "process.json",
+        "exitcode",
+    )
+    if not all((case_dir / name).is_file() for name in required):
+        return False
+    try:
+        result = _read_json(case_dir / "case_result.json")
+        process = _read_json(case_dir / "process.json")
+        exitcode = int(
+            (case_dir / "exitcode").read_text().strip()
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        result.get("status") == "PASS"
+        and exitcode == 0
+        and process.get("case_id") == case_spec["case_id"]
+        and process.get("identity") == _run_identity(run_manifest)
+        and process.get("policy_identity")
+        == case_spec["policy_identity"]
+    )
+
+
+def _is_port_collision(returncode: int, output: str) -> bool:
+    return returncode != 0 and (
+        "EADDRINUSE" in output
+        or "address already in use" in output.lower()
+    )
+
+
+def _next_unused_port_pair(
+    used_pairs: set[tuple[int, int]],
+) -> tuple[int, int]:
+    for _ in range(100):
+        pair = allocate_port_pair()
+        if pair[0] != pair[1] and pair not in used_pairs:
+            used_pairs.add(pair)
+            return pair
+    raise RuntimeError("could not allocate a fresh port pair")
+
+
+def _case_workload(
+    workload_rows: list[dict],
+    scenario: str,
+) -> list[dict]:
+    selected = [
+        row for row in workload_rows
+        if row.get("scenario") == scenario
+    ]
+    if not selected:
+        raise ValueError(f"missing workload scenario: {scenario}")
+    return selected
+
+
+def _launch_case(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_manifest: dict,
+    case_spec: dict,
+    workload_rows: list[dict],
+    used_pairs: set[tuple[int, int]],
+) -> dict:
+    case_dir = Path(run_dir) / "processes" / case_spec["case_id"]
+    case_dir.mkdir(parents=True, exist_ok=True)
+    case_spec_path = case_dir / "case_spec.json"
+    workload_path = case_dir / "workload_manifest.jsonl"
+    _write_json(case_spec_path, case_spec)
+    _write_jsonl(workload_path, workload_rows)
+    command = [
+        str(python_bin),
+        str(_REPO_ROOT / "tools" / "arrival_load_driver.py"),
+        "--case-spec",
+        str(case_spec_path),
+        "--workload-manifest",
+        str(workload_path),
+        "--model",
+        str(model_path),
+        "--output-dir",
+        str(case_dir),
+    ]
+    attempts = []
+    completed = None
+    started_ns = time.time_ns()
+    for attempt in range(2):
+        dist_port, master_port = _next_unused_port_pair(
+            used_pairs
+        )
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PYTHONPATH"] = str(_REPO_ROOT)
+        environment["TINYVLLM_DIST_PORT"] = str(dist_port)
+        environment["MASTER_PORT"] = str(master_port)
+        completed = subprocess.run(
+            command,
+            cwd=_REPO_ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        attempts.append({
+            "attempt": attempt + 1,
+            "tinyvllm_dist_port": dist_port,
+            "master_port": master_port,
+            "returncode": int(completed.returncode),
+        })
+        combined = completed.stdout + "\n" + completed.stderr
+        if not _is_port_collision(
+            completed.returncode,
+            combined,
+        ):
+            break
+    finished_ns = time.time_ns()
+    (case_dir / "stdout.log").write_text(
+        completed.stdout,
+        encoding="utf-8",
+    )
+    (case_dir / "stderr.log").write_text(
+        completed.stderr,
+        encoding="utf-8",
+    )
+    final_attempt = attempts[-1]
+    process = {
+        "case_id": case_spec["case_id"],
+        "command": command,
+        "pid": getattr(completed, "pid", None),
+        "start_time_ns": started_ns,
+        "end_time_ns": finished_ns,
+        "returncode": int(completed.returncode),
+        "tinyvllm_dist_port": final_attempt[
+            "tinyvllm_dist_port"
+        ],
+        "master_port": final_attempt["master_port"],
+        "attempts": attempts,
+        "identity": _run_identity(run_manifest),
+        "policy_identity": case_spec["policy_identity"],
+        "source_tree_sha256": run_manifest.get(
+            "source_tree_sha256"
+        ),
+        "workload_sha256": run_manifest.get(
+            "workload_sha256"
+        ),
+        "environment_sha256": run_manifest.get(
+            "environment_sha256"
+        ),
+    }
+    _write_json(case_dir / "process.json", process)
+    if not (case_dir / "exitcode").is_file():
+        (case_dir / "exitcode").write_text(
+            f"{completed.returncode}\n",
+            encoding="utf-8",
+        )
+    return {
+        "case_id": case_spec["case_id"],
+        "status": (
+            "PASS"
+            if _case_is_complete(
+                case_dir,
+                case_spec,
+                run_manifest,
+            )
+            else "INCOMPLETE"
+        ),
+        "process": process,
+    }
+
+
+def run_canonical(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_manifest: dict,
+    resume: bool = False,
+) -> dict:
+    run_dir = Path(run_dir)
+    _validate_stored_run_identity(run_dir, run_manifest)
+    _validate_smoke_marker(run_manifest)
+    workload_path = run_dir / "workload_manifest.jsonl"
+    if not workload_path.is_file():
+        raise ValueError("missing frozen workload manifest")
+    workload_rows = _read_jsonl(workload_path)
+    matrix = build_case_matrix(run_manifest)
+    process_root = run_dir / "processes"
+    process_root.mkdir(parents=True, exist_ok=True)
+    used_pairs = set()
+    for process_path in process_root.glob("*/process.json"):
+        try:
+            process = _read_json(process_path)
+            used_pairs.add((
+                int(process["tinyvllm_dist_port"]),
+                int(process["master_port"]),
+            ))
+        except (OSError, KeyError, TypeError, ValueError):
+            continue
+    rows = []
+    for case_spec in matrix:
+        case_dir = process_root / case_spec["case_id"]
+        if case_dir.exists():
+            if (
+                resume
+                and _case_is_complete(
+                    case_dir,
+                    case_spec,
+                    run_manifest,
+                )
+            ):
+                rows.append({
+                    "case_id": case_spec["case_id"],
+                    "status": "PASS",
+                    "resumed": True,
+                })
+                continue
+            replacement = process_root / (
+                f"{case_spec['case_id']}.replaced."
+                f"{time.time_ns()}"
+            )
+            shutil.move(case_dir, replacement)
+        rows.append(_launch_case(
+            run_dir=run_dir,
+            python_bin=python_bin,
+            model_path=model_path,
+            run_manifest=run_manifest,
+            case_spec=case_spec,
+            workload_rows=_case_workload(
+                workload_rows,
+                case_spec["scenario"],
+            ),
+            used_pairs=used_pairs,
+        ))
+    status = (
+        "PASS"
+        if all(row["status"] == "PASS" for row in rows)
+        else "INCOMPLETE"
+    )
+    return {
+        "status": status,
+        "case_count": len(rows),
+        "case_results": rows,
+    }
+
+
+def run_calibration(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_manifest: dict,
+    resume: bool = False,
+) -> dict:
+    run_dir = Path(run_dir)
+    _validate_stored_run_identity(run_dir, run_manifest)
+    _validate_smoke_marker(run_manifest)
+    case_rows_path = run_dir / "case_rows.jsonl"
+    if (
+        case_rows_path.is_file()
+        and case_rows_path.read_bytes()
+    ):
+        raise ValueError(
+            "calibration cannot change after canonical rows exist"
+        )
+    prompt_bank_path = run_dir / "prompt_bank.json"
+    if not prompt_bank_path.is_file():
+        raise ValueError("missing prompt bank")
+    prompt_bank = _read_json(prompt_bank_path)
+    validate_prompt_bank(prompt_bank)
+    prompt = _prompt_by_class(prompt_bank)["short"]
+    calibration_rows_path = run_dir / "calibration_rows.jsonl"
+    existing_rows = (
+        _read_jsonl(calibration_rows_path)
+        if resume and calibration_rows_path.is_file()
+        else []
+    )
+    rows_by_rate = {
+        float(row["offered_rate_rps"]): row
+        for row in existing_rows
+        if isinstance(row.get("offered_rate_rps"), (int, float))
+    }
+    used_pairs = set()
+
+    def calibration_workload(rate: float, index: int) -> list[dict]:
+        offsets = _exponential_offsets(
+            CALIBRATION_REQUESTS_PER_RATE,
+            rate,
+            4000 + index,
+        )
+        return [{
+            "schema_version": SCHEMA_VERSION,
+            "generator_version": GENERATOR_VERSION,
+            "scenario": "calibration",
+            "request_id": (
+                f"calibration-{index:02d}-{request_index:04d}"
+            ),
+            "warmup": False,
+            "arrival_offset_ns": offset,
+            "requested_rate_rps": rate,
+            "seed": 4000 + index,
+            "prompt_id": prompt["prompt_id"],
+            "prompt": prompt["prompt"],
+            "prompt_sha256": prompt["prompt_sha256"],
+            "prompt_token_ids": list(prompt["prompt_token_ids"]),
+            "prompt_token_count": prompt["prompt_token_count"],
+            "prompt_class": "short",
+            "output_class": "short",
+            "service_time_bucket": "short__short",
+            "requested_output_tokens": OUTPUT_CLASS_TOKENS["short"],
+            "sampling": {
+                "temperature": 0.0,
+                "ignore_eos": True,
+                "max_tokens": OUTPUT_CLASS_TOKENS["short"],
+            },
+            "drain_timeout_ns": CALIBRATION_DRAIN_TIMEOUT_NS,
+            "starvation_deadline_ns": STARVATION_DEADLINE_NS,
+        } for request_index, offset in enumerate(offsets)]
+
+    def aggregate_calibration_case(
+        case_dir: Path,
+        rate: float,
+    ) -> dict:
+        result = _read_json(case_dir / "case_result.json")
+        timeline = _read_jsonl(
+            case_dir / "request_timeline.jsonl"
+        )
+        scheduler = _read_jsonl(
+            case_dir / "scheduler_trace.jsonl"
+        )
+        complete = (
+            result.get("status") == "PASS"
+            and len(timeline) == CALIBRATION_REQUESTS_PER_RATE
+            and all(
+                row.get("completion_ns") is not None
+                and row.get("error") is None
+                and len(row.get("output_token_ids", []))
+                == OUTPUT_CLASS_TOKENS["short"]
+                for row in timeline
+            )
+        )
+        timestamps = [
+            int(row["completion_ns"])
+            for row in timeline
+            if row.get("completion_ns") is not None
+        ]
+        scheduled = [
+            int(row["scheduled_arrival_ns"])
+            for row in timeline
+            if row.get("scheduled_arrival_ns") is not None
+        ]
+        duration_s = (
+            (max(timestamps) - min(scheduled))
+            / 1_000_000_000.0
+            if timestamps and scheduled
+            else float("nan")
+        )
+        throughput = (
+            len(timeline) / duration_s
+            if duration_s > 0.0
+            else float("nan")
+        )
+        backlog_samples = []
+        if scheduler:
+            first_step_ns = int(scheduler[0]["step_end_ns"])
+            for row in scheduler:
+                queue_after = row.get("queue_after", {})
+                unfinished = sum(
+                    len(queue_after.get(key, []))
+                    for key in (
+                        "waiting_seq_ids",
+                        "prefilling_seq_ids",
+                        "running_seq_ids",
+                    )
+                )
+                backlog_samples.append({
+                    "relative_time_s": (
+                        int(row["step_end_ns"]) - first_step_ns
+                    ) / 1_000_000_000.0,
+                    "unfinished_count": unfinished,
+                })
+        return {
+            "case_id": result.get("case_id"),
+            "offered_rate_rps": rate,
+            "completed_request_throughput_rps": throughput,
+            "complete_requests": complete,
+            "exact_outputs": complete,
+            "finite_metrics": (
+                math.isfinite(throughput)
+                and len(backlog_samples) >= 2
+            ),
+            "backlog_samples": backlog_samples,
+        }
+
+    def execute_rate(rate: float, index: int) -> dict:
+        if rate in rows_by_rate:
+            return rows_by_rate[rate]
+        case_id = f"calibration-p0-rate-{index:02d}"
+        case_spec = {
+            "case_id": case_id,
+            "scenario": "calibration",
+            "policy": "P0",
+            "repetition": index,
+            "requested_rate_rps": rate,
+            "resolved_config": dict(
+                run_manifest[
+                    "resolved_policy_config_by_name"
+                ]["P0"]
+            ),
+            "policy_identity": run_manifest[
+                "policy_identity_by_name"
+            ]["P0"],
+            "workload_sha256": None,
+            "source_tree_sha256": run_manifest.get(
+                "source_tree_sha256"
+            ),
+            "environment_sha256": run_manifest.get(
+                "environment_sha256"
+            ),
+            "drain_timeout_ns": CALIBRATION_DRAIN_TIMEOUT_NS,
+        }
+        workload = calibration_workload(rate, index)
+        launched = _launch_case(
+            run_dir=run_dir,
+            python_bin=python_bin,
+            model_path=model_path,
+            run_manifest=run_manifest,
+            case_spec=case_spec,
+            workload_rows=workload,
+            used_pairs=used_pairs,
+        )
+        row = aggregate_calibration_case(
+            run_dir / "processes" / case_id,
+            rate,
+        )
+        row["process_status"] = launched["status"]
+        rows_by_rate[rate] = row
+        _write_jsonl(
+            calibration_rows_path,
+            list(rows_by_rate.values()),
+        )
+        return row
+
+    stable_rate = None
+    unstable_rate = None
+    rate_index = 0
+    rate = CALIBRATION_INITIAL_RATE_RPS
+    while rate_index <= CALIBRATION_MAX_DOUBLINGS:
+        execute_rate(rate, rate_index)
+        evaluated = select_lambda_ref(list(rows_by_rate.values()))
+        stable_rates = [
+            row["offered_rate_rps"]
+            for row in evaluated["evaluated_rows"]
+            if row.get("stable") is True
+        ]
+        unstable_rates = [
+            row["offered_rate_rps"]
+            for row in evaluated["evaluated_rows"]
+            if (
+                row.get("stable") is not True
+                and isinstance(
+                    row.get("offered_rate_rps"),
+                    (int, float),
+                )
+            )
+        ]
+        stable_rate = max(stable_rates) if stable_rates else None
+        higher_unstable = [
+            value for value in unstable_rates
+            if stable_rate is not None and value > stable_rate
+        ]
+        if higher_unstable:
+            unstable_rate = min(higher_unstable)
+            break
+        rate_index += 1
+        rate *= 2.0
+
+    if stable_rate is not None and unstable_rate is not None:
+        for bisection_index in range(CALIBRATION_BISECTION_STEPS):
+            midpoint = (stable_rate + unstable_rate) / 2.0
+            execute_rate(
+                midpoint,
+                CALIBRATION_MAX_DOUBLINGS
+                + 1
+                + bisection_index,
+            )
+            evaluated = select_lambda_ref(
+                list(rows_by_rate.values())
+            )
+            midpoint_row = next(
+                row for row in evaluated["evaluated_rows"]
+                if math.isclose(
+                    row["offered_rate_rps"],
+                    midpoint,
+                )
+            )
+            if midpoint_row.get("stable") is True:
+                stable_rate = midpoint
+            else:
+                unstable_rate = midpoint
+
+    ordered_rows = sorted(
+        rows_by_rate.values(),
+        key=lambda row: row["offered_rate_rps"],
+    )
+    _write_jsonl(calibration_rows_path, ordered_rows)
+    selection = select_lambda_ref(ordered_rows)
+    if selection["status"] != "PASS":
+        return selection
+    lambda_ref = selection["lambda_ref"]
+    frozen_workload = build_canonical_workload(
+        lambda_ref=lambda_ref,
+        prompt_bank=prompt_bank,
+    )
+    _write_jsonl(
+        run_dir / "workload_manifest.jsonl",
+        frozen_workload,
+    )
+    workload_sha256 = canonical_json_sha256(frozen_workload)
+    updated_manifest = dict(run_manifest)
+    updated_manifest["workload_sha256"] = workload_sha256
+    updated_manifest["calibration"] = {
+        "status": "PASS",
+        "lambda_ref_rps": lambda_ref,
+        "stable_rate_rps": max(
+            row["offered_rate_rps"]
+            for row in selection["evaluated_rows"]
+            if row.get("stable") is True
+        ),
+        "unstable_rate_rps": selection["ceiling_rate_rps"],
+        "maximum_stable_throughput_rps": selection[
+            "maximum_stable_throughput_rps"
+        ],
+    }
+    _write_json(run_dir / "run_manifest.json", updated_manifest)
+    return {
+        **selection,
+        "workload_sha256": workload_sha256,
+    }
 
 
 def _prompt_by_class(prompt_bank: dict) -> dict[str, dict]:
@@ -1200,29 +2243,348 @@ def classify_gate(
     }
 
 
-def render_report(run_manifest: dict, summary: dict) -> str:
-    lines = [
-        "# Production Arrival-Load Gate",
-        "",
-        f"Classification: `{summary['classification']}`",
-        "",
-        "## Policies",
-        "",
-    ]
-    for policy, canonical in sorted(
-        run_manifest.get("canonical_policy_by_name", {}).items()
+def _case_metadata(case_spec: dict) -> dict:
+    return {
+        "case_id": case_spec["case_id"],
+        "policy": case_spec["policy"],
+        "scenario": case_spec["scenario"],
+        "repetition": case_spec["repetition"],
+    }
+
+
+def _merged_case_rows(
+    run_dir: Path,
+    matrix: list[dict],
+    filename: str,
+) -> list[dict]:
+    merged = []
+    for case_spec in matrix:
+        case_dir = run_dir / "processes" / case_spec["case_id"]
+        rows = _read_jsonl(case_dir / filename)
+        if filename == "request_timeline.jsonl":
+            rows.sort(key=lambda row: (
+                row.get("scheduled_arrival_ns", 0),
+                row.get("request_id", ""),
+            ))
+        else:
+            rows.sort(key=lambda row: (
+                row.get("step_index", 0),
+                row.get("step_end_ns", row.get("timestamp_ns", 0)),
+            ))
+        metadata = _case_metadata(case_spec)
+        merged.extend({**row, **metadata} for row in rows)
+    return merged
+
+
+def _case_summary(
+    run_dir: Path,
+    case_spec: dict,
+    workload_rows: list[dict],
+) -> dict:
+    case_dir = run_dir / "processes" / case_spec["case_id"]
+    result = _read_json(case_dir / "case_result.json")
+    process = _read_json(case_dir / "process.json")
+    exitcode = int((case_dir / "exitcode").read_text().strip())
+    if (
+        result.get("status") != "PASS"
+        or process.get("returncode") != 0
+        or exitcode != 0
     ):
-        lines.append(f"- `{policy}` -> `{canonical}`")
-    if summary.get("structural_failures"):
-        lines.extend(["", "## Structural Failures", ""])
-        lines.extend(
-            f"- {failure}"
-            for failure in summary["structural_failures"]
+        return {
+            **_case_metadata(case_spec),
+            "status": "INCOMPLETE",
+            "correctness": {
+                "exact_outputs": False,
+                "complete_requests": False,
+                "no_starvation": False,
+                "valid_lifecycle": False,
+                "stable_p0_outputs": False,
+            },
+            "metrics": {},
+        }
+    selected_workload = _case_workload(
+        workload_rows,
+        case_spec["scenario"],
+    )
+    timeline_rows = _read_jsonl(
+        case_dir / "request_timeline.jsonl"
+    )
+    scheduler_rows = _read_jsonl(
+        case_dir / "scheduler_trace.jsonl"
+    )
+    memory_rows = _read_jsonl(
+        case_dir / "memory_trace.jsonl"
+    )
+    request_metrics = reconstruct_request_metrics(
+        selected_workload,
+        timeline_rows,
+        scheduler_rows,
+    )
+    measured = [
+        row for row in request_metrics
+        if not row.get("warmup", False)
+    ]
+    case = {
+        **case_spec,
+        "measurement_start_ns": min(
+            row["scheduled_arrival_ns"] for row in measured
+        ),
+        "measurement_end_ns": max(
+            row["completion_ns"] for row in measured
+        ),
+        "required_service_buckets": sorted({
+            row["service_time_bucket"] for row in measured
+        }),
+    }
+    summary = summarize_repetition(
+        case,
+        request_metrics,
+        memory_rows,
+    )
+    return {
+        "case_id": case_spec["case_id"],
+        **summary,
+    }
+
+
+def _apply_output_correctness(
+    case_rows: list[dict],
+    timeline_rows: list[dict],
+) -> None:
+    outputs = {}
+    for row in timeline_rows:
+        outputs.setdefault(row["case_id"], {})[row["request_id"]] = (
+            row.get("output_token_ids")
         )
-    if summary.get("correctness_failures"):
-        lines.extend(["", "## Correctness Failures", ""])
-        lines.extend(
-            f"- {failure}"
-            for failure in summary["correctness_failures"]
+    by_key = {
+        (
+            row["policy"],
+            row["scenario"],
+            row["repetition"],
+        ): row
+        for row in case_rows
+    }
+    for scenario in CANONICAL_SCENARIOS:
+        baseline_by_repetition = []
+        for repetition in range(MEASURED_REPETITIONS):
+            baseline = by_key[("P0", scenario, repetition)]
+            baseline_outputs = outputs.get(baseline["case_id"], {})
+            baseline_by_repetition.append(baseline_outputs)
+            for policy in ("P2", "P3"):
+                candidate = by_key[(policy, scenario, repetition)]
+                candidate_outputs = outputs.get(
+                    candidate["case_id"],
+                    {},
+                )
+                candidate["correctness"]["exact_outputs"] = (
+                    candidate_outputs == baseline_outputs
+                )
+        stable = all(
+            value == baseline_by_repetition[0]
+            for value in baseline_by_repetition[1:]
         )
-    return "\n".join(lines) + "\n"
+        for repetition in range(MEASURED_REPETITIONS):
+            by_key[
+                ("P0", scenario, repetition)
+            ]["correctness"]["stable_p0_outputs"] = stable
+
+
+def finalize_artifacts(run_dir: Path) -> dict:
+    run_dir = Path(run_dir)
+    manifest = _read_json(run_dir / "run_manifest.json")
+    matrix = build_case_matrix(manifest)
+    workload_rows = _read_jsonl(
+        run_dir / "workload_manifest.jsonl"
+    )
+    timeline_rows = _merged_case_rows(
+        run_dir,
+        matrix,
+        "request_timeline.jsonl",
+    )
+    scheduler_rows = _merged_case_rows(
+        run_dir,
+        matrix,
+        "scheduler_trace.jsonl",
+    )
+    memory_rows = _merged_case_rows(
+        run_dir,
+        matrix,
+        "memory_trace.jsonl",
+    )
+    _write_jsonl(
+        run_dir / "request_timeline.jsonl",
+        timeline_rows,
+    )
+    _write_jsonl(
+        run_dir / "scheduler_trace.jsonl",
+        scheduler_rows,
+    )
+    _write_jsonl(
+        run_dir / "memory_trace.jsonl",
+        memory_rows,
+    )
+
+    case_rows = [
+        _case_summary(run_dir, case_spec, workload_rows)
+        for case_spec in matrix
+    ]
+    _apply_output_correctness(case_rows, timeline_rows)
+    _write_jsonl(run_dir / "case_rows.jsonl", case_rows)
+
+    process_rows = []
+    for case_spec in matrix:
+        process = _read_json(
+            run_dir
+            / "processes"
+            / case_spec["case_id"]
+            / "process.json"
+        )
+        process_rows.append({
+            "case_id": case_spec["case_id"],
+            "tinyvllm_dist_port": int(
+                process["tinyvllm_dist_port"]
+            ),
+            "master_port": int(process["master_port"]),
+        })
+    manifest["expected_case_ids"] = [
+        row["case_id"] for row in matrix
+    ]
+    manifest["process_port_pairs"] = process_rows
+    _write_json(run_dir / "run_manifest.json", manifest)
+
+    summary = classify_gate(manifest, case_rows)
+    _write_json(run_dir / "summary.json", summary)
+    (run_dir / "report.md").write_text(
+        render_report(manifest, summary),
+        encoding="utf-8",
+    )
+    required = set(FINAL_ARTIFACT_FILES) - {
+        "artifact_hashes.json"
+    }
+    missing = sorted(
+        filename
+        for filename in required
+        if not (run_dir / filename).is_file()
+    )
+    if missing:
+        raise ValueError(
+            "missing final artifacts: " + ", ".join(missing)
+        )
+    hashes = {
+        filename: sha256_file(run_dir / filename)
+        for filename in sorted(required)
+    }
+    _write_json(run_dir / "artifact_hashes.json", hashes)
+    return summary
+
+
+def render_report(run_manifest: dict, summary: dict) -> str:
+    del run_manifest
+    return (
+        "# Production Arrival-Load Gate\n\n"
+        f"Classification: `{summary['classification']}`\n"
+    )
+
+
+def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--python-bin", required=True)
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--resume", action="store_true")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Production arrival-load gate orchestrator",
+    )
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+    )
+    snapshot = subparsers.add_parser("snapshot-source")
+    snapshot.add_argument("--repo-root", type=Path, default=_REPO_ROOT)
+    snapshot.add_argument("--out-dir", type=Path, required=True)
+    for command in ("run-calibration", "run-canonical"):
+        _add_run_arguments(subparsers.add_parser(command))
+    freeze = subparsers.add_parser("freeze-workload")
+    freeze.add_argument("--run-dir", type=Path, required=True)
+    finalize = subparsers.add_parser("finalize-artifacts")
+    finalize.add_argument("--run-dir", type=Path, required=True)
+    verify = subparsers.add_parser("verify-harness")
+    verify.add_argument("--run-dir", type=Path, required=True)
+    return parser
+
+
+def _freeze_existing_calibration(run_dir: Path) -> dict:
+    manifest = _read_json(run_dir / "run_manifest.json")
+    selection = select_lambda_ref(
+        _read_jsonl(run_dir / "calibration_rows.jsonl")
+    )
+    if selection["status"] != "PASS":
+        return selection
+    prompt_bank = _read_json(run_dir / "prompt_bank.json")
+    workload = build_canonical_workload(
+        lambda_ref=selection["lambda_ref"],
+        prompt_bank=prompt_bank,
+    )
+    _write_jsonl(run_dir / "workload_manifest.jsonl", workload)
+    manifest["workload_sha256"] = canonical_json_sha256(workload)
+    manifest["calibration"] = {
+        "status": "PASS",
+        "lambda_ref_rps": selection["lambda_ref"],
+        "ceiling_rate_rps": selection["ceiling_rate_rps"],
+        "maximum_stable_throughput_rps": selection[
+            "maximum_stable_throughput_rps"
+        ],
+    }
+    _write_json(run_dir / "run_manifest.json", manifest)
+    return {
+        **selection,
+        "workload_sha256": manifest["workload_sha256"],
+    }
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.command == "snapshot-source":
+        result = snapshot_source(args.repo_root, args.out_dir)
+    elif args.command == "run-calibration":
+        run_dir = Path(args.run_dir)
+        result = run_calibration(
+            run_dir=run_dir,
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            run_manifest=_read_json(run_dir / "run_manifest.json"),
+            resume=args.resume,
+        )
+    elif args.command == "freeze-workload":
+        result = _freeze_existing_calibration(Path(args.run_dir))
+    elif args.command == "run-canonical":
+        run_dir = Path(args.run_dir)
+        result = run_canonical(
+            run_dir=run_dir,
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            run_manifest=_read_json(run_dir / "run_manifest.json"),
+            resume=args.resume,
+        )
+    elif args.command == "finalize-artifacts":
+        result = finalize_artifacts(Path(args.run_dir))
+    else:
+        verifier = _load_local_module(
+            "arrival_load_independent_verify",
+            _REPO_ROOT / "tools" / "arrival_load_verify.py",
+        )
+        result = verifier.verify_run(Path(args.run_dir))
+    print(json.dumps(
+        result,
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    ))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

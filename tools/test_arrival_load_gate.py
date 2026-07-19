@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 import importlib.util
+import json
 import math
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import time
 from pathlib import Path
 
 
@@ -249,6 +256,889 @@ def test_calibration_manifest_is_deterministic_and_p0_only():
         gate.CALIBRATION_INITIAL_RATE_RPS
         * (2 ** gate.CALIBRATION_MAX_DOUBLINGS),
     )
+
+
+def _calibration_row(
+    rate: float,
+    throughput: float,
+    *,
+    slope: float,
+    complete: bool = True,
+    exact: bool = True,
+    finite: bool = True,
+) -> dict:
+    samples = []
+    for index in range(9):
+        relative_time_s = float(index)
+        unfinished_count = 4.0 + slope * relative_time_s
+        samples.append({
+            "relative_time_s": relative_time_s,
+            "unfinished_count": unfinished_count,
+        })
+    return {
+        "calibration_id": f"rate-{rate}",
+        "offered_rate_rps": rate,
+        "completed_request_throughput_rps": throughput,
+        "complete_requests": complete,
+        "exact_outputs": exact,
+        "finite_metrics": finite,
+        "backlog_samples": samples,
+    }
+
+
+def test_select_lambda_ref_recomputes_tail_slope_and_uses_95_percent_ceiling():
+    rows = [
+        _calibration_row(1.0, 1.0, slope=0.02),
+        _calibration_row(2.0, 1.94, slope=0.02),
+        _calibration_row(3.0, 2.0, slope=0.05),
+        _calibration_row(4.0, 2.0, slope=0.20),
+    ]
+
+    selected = gate.select_lambda_ref(rows)
+
+    assert selected["status"] == "PASS"
+    assert selected["lambda_ref"] == 3.0
+    assert selected["maximum_stable_throughput_rps"] == 2.0
+    assert selected["ceiling_rate_rps"] == 4.0
+    by_rate = {
+        row["offered_rate_rps"]: row
+        for row in selected["evaluated_rows"]
+    }
+    assert math.isclose(
+        by_rate[2.0]["backlog_slope_rps"],
+        0.02,
+    )
+    assert by_rate[1.0]["stable"] is True
+    assert by_rate[3.0]["backlog_slope_threshold_rps"] == 0.06
+    assert by_rate[3.0]["stable"] is True
+    assert by_rate[4.0]["stable"] is False
+
+
+def test_select_lambda_ref_requires_stable_point_and_higher_ceiling():
+    no_stable = gate.select_lambda_ref([
+        _calibration_row(1.0, 1.0, slope=0.5),
+        _calibration_row(2.0, 1.5, slope=0.5),
+    ])
+    assert no_stable["status"] == "INCOMPLETE"
+    assert no_stable["error_type"] == "no_stable_point"
+
+    no_ceiling = gate.select_lambda_ref([
+        _calibration_row(1.0, 1.0, slope=0.0),
+        _calibration_row(2.0, 1.9, slope=0.0),
+        _calibration_row(3.0, 2.0, slope=0.0),
+    ])
+    assert no_ceiling["status"] == "INCOMPLETE"
+    assert no_ceiling["error_type"] == "no_clear_ceiling"
+
+
+def test_select_lambda_ref_rejects_structural_or_nonfinite_rows():
+    selected = gate.select_lambda_ref([
+        _calibration_row(1.0, 1.0, slope=0.0),
+        _calibration_row(
+            2.0,
+            2.0,
+            slope=0.0,
+            exact=False,
+        ),
+    ])
+    assert selected["status"] == "PASS"
+    assert selected["lambda_ref"] == 1.0
+    assert selected["evaluated_rows"][1]["stable"] is False
+
+    malformed = gate.select_lambda_ref([
+        {
+            **_calibration_row(1.0, 1.0, slope=0.0),
+            "completed_request_throughput_rps": float("nan"),
+        },
+        _calibration_row(2.0, 2.0, slope=0.5),
+    ])
+    assert malformed["status"] == "INCOMPLETE"
+    assert malformed["error_type"] == "no_stable_point"
+
+
+def _case_matrix_manifest() -> dict:
+    return {
+        "run_tag": "arrival-test",
+        "required_scenarios": list(gate.CANONICAL_SCENARIOS),
+        "measured_repetitions": 3,
+        "canonical_policy_by_name": {
+            "P0": "P0",
+            "P1": "P0",
+            "P2": "P2",
+            "P3": "P3",
+        },
+        "policy_identity_by_name": {
+            "P0": "identity-p0",
+            "P1": "identity-p0",
+            "P2": "identity-p2",
+            "P3": "identity-p3",
+        },
+        "resolved_policy_config_by_name": {
+            "P0": {"policy": "P0"},
+            "P1": {"policy": "P1"},
+            "P2": {"policy": "P2"},
+            "P3": {"policy": "P3"},
+        },
+        "workload_sha256": "workload-hash",
+        "source_tree_sha256": "source-hash",
+        "environment_sha256": "environment-hash",
+        "drain_timeout_ns": 123,
+    }
+
+
+def test_build_case_matrix_has_exact_interleaved_non_alias_cases():
+    matrix = gate.build_case_matrix(_case_matrix_manifest())
+
+    assert len(matrix) == 54
+    keys = [
+        (
+            row["policy"],
+            row["scenario"],
+            row["repetition"],
+        )
+        for row in matrix
+    ]
+    assert len(keys) == len(set(keys))
+    for repetition, expected_policy_order in (
+        gate.POLICY_ORDER_BY_REPETITION.items()
+    ):
+        rows = [
+            row for row in matrix
+            if row["repetition"] == repetition
+        ]
+        for scenario_index, scenario in enumerate(
+            gate.CANONICAL_SCENARIOS
+        ):
+            start = scenario_index * len(expected_policy_order)
+            scenario_rows = rows[
+                start:start + len(expected_policy_order)
+            ]
+            assert [
+                row["scenario"] for row in scenario_rows
+            ] == [scenario] * 3
+            assert [
+                row["policy"] for row in scenario_rows
+            ] == list(expected_policy_order)
+    assert all(row["policy"] != "P1" for row in matrix)
+    assert len({row["case_id"] for row in matrix}) == 54
+    assert all(
+        row["workload_sha256"] == "workload-hash"
+        and row["source_tree_sha256"] == "source-hash"
+        and row["environment_sha256"] == "environment-hash"
+        for row in matrix
+    )
+
+
+def test_build_case_matrix_rejects_bad_alias_or_repetition_contract():
+    bad_alias = _case_matrix_manifest()
+    bad_alias["canonical_policy_by_name"]["P2"] = "P0"
+    try:
+        gate.build_case_matrix(bad_alias)
+    except ValueError as exc:
+        assert "canonical policy" in str(exc)
+    else:
+        raise AssertionError("unexpected candidate alias accepted")
+
+    bad_repetitions = _case_matrix_manifest()
+    bad_repetitions["measured_repetitions"] = 2
+    try:
+        gate.build_case_matrix(bad_repetitions)
+    except ValueError as exc:
+        assert "repetitions" in str(exc)
+    else:
+        raise AssertionError("too few repetitions accepted")
+
+
+def _write_json(path: Path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, sort_keys=True) + "\n"
+    )
+
+
+def _write_jsonl(path: Path, rows: list[dict]):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(
+            json.dumps(row, sort_keys=True) + "\n"
+            for row in rows
+        )
+    )
+
+
+def _canonical_run_fixture(root: Path):
+    manifest = _case_matrix_manifest()
+    manifest["smoke_verification"] = {
+        "status": "PASS",
+        "source_tree_sha256": manifest["source_tree_sha256"],
+        "environment_sha256": manifest["environment_sha256"],
+    }
+    _write_json(root / "run_manifest.json", manifest)
+    workload = []
+    for scenario in gate.CANONICAL_SCENARIOS:
+        workload.append({
+            "request_id": f"{scenario}-request",
+            "scenario": scenario,
+            "arrival_offset_ns": 0,
+            "prompt_token_ids": [1, 2, 3],
+            "prompt_token_count": 3,
+            "requested_output_tokens": 1,
+            "sampling": {
+                "temperature": 0.0,
+                "ignore_eos": True,
+                "max_tokens": 1,
+            },
+        })
+    _write_jsonl(root / "workload_manifest.jsonl", workload)
+    return manifest
+
+
+def test_allocate_port_pair_returns_distinct_ephemeral_ports():
+    first = gate.allocate_port_pair()
+    second = gate.allocate_port_pair()
+    assert first[0] != first[1]
+    assert second[0] != second[1]
+    assert all(0 < port < 65536 for port in (*first, *second))
+
+
+def test_run_canonical_uses_unique_ports_and_resume_is_immutable():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        manifest = _canonical_run_fixture(root)
+        launched = []
+        next_ports = iter(
+            (20_000 + index * 2, 20_001 + index * 2)
+            for index in range(54)
+        )
+        original_ports = gate.allocate_port_pair
+        original_run = gate.subprocess.run
+
+        def fake_run(command, **kwargs):
+            launched.append({
+                "command": list(command),
+                "env": dict(kwargs["env"]),
+            })
+            output_dir = Path(
+                command[command.index("--output-dir") + 1]
+            )
+            case_spec = json.loads(
+                Path(
+                    command[command.index("--case-spec") + 1]
+                ).read_text()
+            )
+            _write_json(output_dir / "case_result.json", {
+                "case_id": case_spec["case_id"],
+                "status": "PASS",
+            })
+            (output_dir / "exitcode").write_text("0\n")
+            for filename in (
+                "request_timeline.jsonl",
+                "scheduler_trace.jsonl",
+                "memory_trace.jsonl",
+            ):
+                (output_dir / filename).write_text("{}\n")
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="driver stdout\n",
+                stderr="",
+            )
+
+        gate.allocate_port_pair = lambda: next(next_ports)
+        gate.subprocess.run = fake_run
+        try:
+            first = gate.run_canonical(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_manifest=manifest,
+                resume=False,
+            )
+            assert first["status"] == "PASS"
+            assert len(launched) == 54
+            pairs = {
+                (
+                    int(call["env"]["TINYVLLM_DIST_PORT"]),
+                    int(call["env"]["MASTER_PORT"]),
+                )
+                for call in launched
+            }
+            assert len(pairs) == 54
+            before = {
+                path: path.read_bytes()
+                for path in (root / "processes").glob(
+                    "*/process.json"
+                )
+            }
+            second = gate.run_canonical(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_manifest=manifest,
+                resume=True,
+            )
+            assert second["status"] == "PASS"
+            assert len(launched) == 54
+            assert before == {
+                path: path.read_bytes()
+                for path in (root / "processes").glob(
+                    "*/process.json"
+                )
+            }
+        finally:
+            gate.allocate_port_pair = original_ports
+            gate.subprocess.run = original_run
+
+
+def test_run_canonical_replaces_incomplete_case_and_rejects_identity_drift():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        manifest = _canonical_run_fixture(root)
+        matrix = gate.build_case_matrix(manifest)
+        failed_dir = root / "processes" / matrix[0]["case_id"]
+        failed_dir.mkdir(parents=True)
+        _write_json(failed_dir / "case_result.json", {
+            "status": "INCOMPLETE",
+        })
+        (failed_dir / "sentinel").write_text("preserve me")
+
+        original_time_ns = gate.time.time_ns
+        original_ports = gate.allocate_port_pair
+        original_run = gate.subprocess.run
+        ports = iter(
+            (30_000 + index * 2, 30_001 + index * 2)
+            for index in range(54)
+        )
+
+        def fake_run(command, **kwargs):
+            output_dir = Path(
+                command[command.index("--output-dir") + 1]
+            )
+            case_spec = json.loads(
+                Path(
+                    command[command.index("--case-spec") + 1]
+                ).read_text()
+            )
+            _write_json(output_dir / "case_result.json", {
+                "case_id": case_spec["case_id"],
+                "status": "PASS",
+            })
+            (output_dir / "exitcode").write_text("0\n")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="", stderr=""
+            )
+
+        gate.time.time_ns = lambda: 123456789
+        gate.allocate_port_pair = lambda: next(ports)
+        gate.subprocess.run = fake_run
+        try:
+            result = gate.run_canonical(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_manifest=manifest,
+                resume=True,
+            )
+            assert result["status"] == "PASS"
+            replaced = (
+                root
+                / "processes"
+                / f"{matrix[0]['case_id']}.replaced.123456789"
+            )
+            assert (replaced / "sentinel").read_text() == "preserve me"
+
+            drifted = dict(manifest)
+            drifted["source_tree_sha256"] = "changed-source"
+            try:
+                gate.run_canonical(
+                    run_dir=root,
+                    python_bin="/fake/python",
+                    model_path="/fake/model",
+                    run_manifest=drifted,
+                    resume=True,
+                )
+            except ValueError as exc:
+                assert "resume identity" in str(exc)
+            else:
+                raise AssertionError("identity drift accepted")
+        finally:
+            gate.time.time_ns = original_time_ns
+            gate.allocate_port_pair = original_ports
+            gate.subprocess.run = original_run
+
+
+def test_run_canonical_requires_matching_smoke_and_frozen_calibration():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        manifest = _canonical_run_fixture(root)
+        missing_smoke = dict(manifest)
+        missing_smoke.pop("smoke_verification")
+        try:
+            gate.run_canonical(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_manifest=missing_smoke,
+                resume=False,
+            )
+        except ValueError as exc:
+            assert "smoke" in str(exc)
+        else:
+            raise AssertionError("canonical started without smoke")
+
+        (root / "case_rows.jsonl").write_text("{}\n")
+        try:
+            gate.run_calibration(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_manifest=manifest,
+                resume=True,
+            )
+        except ValueError as exc:
+            assert "canonical rows" in str(exc)
+        else:
+            raise AssertionError("calibration changed after canonical")
+
+
+def test_run_calibration_doubles_bisects_and_freezes_workload():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        manifest = _canonical_run_fixture(root)
+        manifest["workload_sha256"] = None
+        _write_json(root / "run_manifest.json", manifest)
+        _write_json(root / "prompt_bank.json", _prompt_bank())
+        launched_rates = []
+        original_ports = gate.allocate_port_pair
+        original_run = gate.subprocess.run
+        ports = iter(
+            (40_000 + index * 2, 40_001 + index * 2)
+            for index in range(16)
+        )
+
+        def fake_run(command, **kwargs):
+            del kwargs
+            output_dir = Path(
+                command[command.index("--output-dir") + 1]
+            )
+            case_spec = json.loads(
+                Path(
+                    command[command.index("--case-spec") + 1]
+                ).read_text()
+            )
+            rate = case_spec["requested_rate_rps"]
+            launched_rates.append(rate)
+            workload = [
+                json.loads(line)
+                for line in Path(
+                    command[
+                        command.index("--workload-manifest") + 1
+                    ]
+                ).read_text().splitlines()
+            ]
+            stable = rate <= 2.5
+            timeline = []
+            for index, request in enumerate(workload):
+                scheduled = 1_000_000_000 + request[
+                    "arrival_offset_ns"
+                ]
+                completion = scheduled + 100_000_000
+                timeline.append({
+                    "request_id": request["request_id"],
+                    "seq_id": index,
+                    "scheduled_arrival_ns": scheduled,
+                    "actual_arrival_ns": scheduled,
+                    "first_scheduled_ns": scheduled,
+                    "first_token_ns": scheduled + 50_000_000,
+                    "token_timestamps_ns": [
+                        completion
+                    ] * request["requested_output_tokens"],
+                    "completion_ns": completion,
+                    "output_token_ids": list(range(
+                        request["requested_output_tokens"]
+                    )),
+                    "finish_reason": "length",
+                    "error": None,
+                })
+            _write_jsonl(
+                output_dir / "request_timeline.jsonl",
+                timeline,
+            )
+            samples = []
+            for index in range(9):
+                samples.append({
+                    "step_index": index,
+                    "step_end_ns": 1_000_000_000
+                    + index * 1_000_000_000,
+                    "queue_after": {
+                        "waiting_seq_ids": list(range(
+                            0 if stable else index
+                        )),
+                        "prefilling_seq_ids": [],
+                        "running_seq_ids": [],
+                    },
+                })
+            _write_jsonl(
+                output_dir / "scheduler_trace.jsonl",
+                samples,
+            )
+            _write_jsonl(
+                output_dir / "memory_trace.jsonl",
+                [{"step_index": 0}],
+            )
+            _write_json(output_dir / "case_result.json", {
+                "case_id": case_spec["case_id"],
+                "status": "PASS",
+            })
+            (output_dir / "exitcode").write_text("0\n")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="", stderr=""
+            )
+
+        gate.allocate_port_pair = lambda: next(ports)
+        gate.subprocess.run = fake_run
+        try:
+            result = gate.run_calibration(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_manifest=manifest,
+                resume=False,
+            )
+        finally:
+            gate.allocate_port_pair = original_ports
+            gate.subprocess.run = original_run
+
+        assert result["status"] == "PASS"
+        assert result["lambda_ref"] > 0
+        assert 4.0 in launched_rates
+        assert len(launched_rates) >= 6
+        assert any(
+            rate not in {
+                gate.CALIBRATION_INITIAL_RATE_RPS
+                * (2 ** index)
+                for index in range(
+                    gate.CALIBRATION_MAX_DOUBLINGS + 1
+                )
+            }
+            for rate in launched_rates
+        )
+        calibration_rows = [
+            json.loads(line)
+            for line in (
+                root / "calibration_rows.jsonl"
+            ).read_text().splitlines()
+        ]
+        assert len(calibration_rows) == len(launched_rates)
+        frozen = [
+            json.loads(line)
+            for line in (
+                root / "workload_manifest.jsonl"
+            ).read_text().splitlines()
+        ]
+        assert frozen
+        stored = json.loads(
+            (root / "run_manifest.json").read_text()
+        )
+        assert stored["calibration"]["status"] == "PASS"
+        assert stored["workload_sha256"] == (
+            gate.canonical_json_sha256(frozen)
+        )
+
+
+def _run_git(repo_root: Path, *args: str) -> None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr)
+
+
+def _remove_tree_with_retries(path: Path) -> None:
+    for attempt in range(10):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 9:
+                raise
+            time.sleep(0.05)
+
+
+def test_snapshot_source_stages_matching_bytes_and_archive():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary) / "repo"
+        output = Path(temporary) / "snapshot"
+        root.mkdir()
+        _run_git(root, "init")
+        _run_git(root, "config", "user.email", "test@example.com")
+        _run_git(root, "config", "user.name", "Arrival Test")
+        _run_git(root, "config", "gc.auto", "0")
+        _run_git(root, "config", "maintenance.auto", "false")
+        for index, owned_root in enumerate(
+            gate.OWNED_SOURCE_ROOTS
+        ):
+            path = root / owned_root
+            if Path(owned_root).suffix:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if owned_root == "tools/source_audit.py":
+                    path.write_bytes(
+                        (REPO_ROOT / owned_root).read_bytes()
+                    )
+                else:
+                    path.write_bytes(f"owned-{index}\n".encode())
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+                (path / "module.py").write_bytes(
+                    f"owned-dir-{index}\n".encode()
+                )
+        _run_git(root, "add", *gate.OWNED_SOURCE_ROOTS)
+        _run_git(root, "commit", "-m", "fixture")
+        changed = root / "tools" / "arrival_load_gate.py"
+        changed.write_bytes(changed.read_bytes() + b"dirty-owned\n")
+
+        evidence = gate.snapshot_source(root, output)
+
+        assert json.loads(
+            (output / "source_evidence.json").read_text()
+        ) == evidence
+        assert (output / "source.patch").is_file()
+        for record in evidence["files"]:
+            assert (
+                output / "source" / record["path"]
+            ).read_bytes() == (root / record["path"]).read_bytes()
+        with tarfile.open(
+            output / "source_snapshot.tar.gz",
+            "r:gz",
+        ) as archive:
+            names = sorted(
+                member.name
+                for member in archive.getmembers()
+                if member.isfile()
+            )
+            assert names == [
+                f"source/{record['path']}"
+                for record in evidence["files"]
+            ]
+            for record in evidence["files"]:
+                extracted = archive.extractfile(
+                    f"source/{record['path']}"
+                )
+                assert extracted is not None
+                assert extracted.read() == (
+                    root / record["path"]
+                ).read_bytes()
+        _run_git(root, "maintenance", "stop")
+        _remove_tree_with_retries(root / ".git")
+
+
+def _finalization_fixture(root: Path) -> dict:
+    manifest = _case_matrix_manifest()
+    workload_rows = []
+    for scenario in gate.CANONICAL_SCENARIOS:
+        workload_rows.append({
+            **_workload_row(
+                f"{scenario}-request",
+                output_tokens=2,
+            ),
+            "scenario": scenario,
+        })
+    manifest["workload_sha256"] = gate.canonical_json_sha256(
+        workload_rows
+    )
+    source_root = root / "source"
+    source_root.mkdir()
+    (source_root / "marker.txt").write_text("arrival source\n")
+    source_files = [{
+        "path": "marker.txt",
+        "size_bytes": (source_root / "marker.txt").stat().st_size,
+        "sha256": gate.sha256_file(source_root / "marker.txt"),
+    }]
+    manifest["source_tree_sha256"] = gate.canonical_json_sha256(
+        source_files
+    )
+    _write_json(root / "run_manifest.json", manifest)
+    _write_jsonl(root / "calibration_manifest.jsonl", [{
+        "offered_rate_rps": 1.0,
+    }])
+    _write_jsonl(root / "calibration_rows.jsonl", [{
+        "offered_rate_rps": 1.0,
+        "stable": True,
+    }])
+    _write_jsonl(root / "workload_manifest.jsonl", workload_rows)
+    _write_json(root / "source_evidence.json", {
+        "schema_version": 1,
+        "base_commit": "1" * 40,
+        "tree_sha256": manifest["source_tree_sha256"],
+        "files": source_files,
+        "patch_size_bytes": 0,
+        "patch_sha256": hashlib.sha256(b"").hexdigest(),
+    })
+    (root / "source.patch").write_bytes(b"")
+    with tarfile.open(
+        root / "source_snapshot.tar.gz",
+        "w:gz",
+    ) as archive:
+        archive.add(source_root, arcname="source")
+
+    for case_index, case_spec in enumerate(
+        gate.build_case_matrix(manifest)
+    ):
+        case_dir = root / "processes" / case_spec["case_id"]
+        workload = next(
+            row for row in workload_rows
+            if row["scenario"] == case_spec["scenario"]
+        )
+        start_ns = 1_000_000_000 + case_index * 10_000_000
+        timeline = {
+            **_timeline_row(
+                workload["request_id"],
+                [
+                    start_ns + 100_000_000,
+                    start_ns + 200_000_000,
+                ],
+                seq_id=case_index,
+                scheduled_arrival_ns=start_ns,
+                actual_arrival_ns=start_ns,
+                first_scheduled_ns=start_ns + 10_000_000,
+                completion_ns=start_ns + 300_000_000,
+            ),
+        }
+        _write_jsonl(
+            case_dir / "request_timeline.jsonl",
+            [timeline],
+        )
+        _write_jsonl(
+            case_dir / "scheduler_trace.jsonl",
+            [{
+                "step_index": 0,
+                "step_start_ns": start_ns,
+                "step_end_ns": start_ns + 300_000_000,
+            }],
+        )
+        _write_jsonl(
+            case_dir / "memory_trace.jsonl",
+            [{
+                "step_index": 0,
+                "timestamp_ns": start_ns + 300_000_000,
+                "cuda_allocated_bytes": 80,
+                "cuda_reserved_bytes": 100,
+                "used_kv_blocks": 5,
+                "kv_block_bytes": 20,
+            }],
+        )
+        _write_json(case_dir / "case_result.json", {
+            "case_id": case_spec["case_id"],
+            "status": "PASS",
+        })
+        _write_json(case_dir / "process.json", {
+            "case_id": case_spec["case_id"],
+            "returncode": 0,
+            "tinyvllm_dist_port": 20_000 + case_index * 2,
+            "master_port": 20_001 + case_index * 2,
+        })
+        (case_dir / "exitcode").write_text("0\n")
+    return manifest
+
+
+def test_finalize_artifacts_merges_classifies_and_hashes_deterministically():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        manifest = _finalization_fixture(root)
+
+        first = gate.finalize_artifacts(root)
+        first_bytes = {
+            path.name: path.read_bytes()
+            for path in root.iterdir()
+            if path.is_file()
+        }
+        second = gate.finalize_artifacts(root)
+
+        assert second == first
+        assert first_bytes == {
+            path.name: path.read_bytes()
+            for path in root.iterdir()
+            if path.is_file()
+        }
+        assert first["classification"] == "NO_GO"
+        case_rows = [
+            json.loads(line)
+            for line in (root / "case_rows.jsonl").read_text().splitlines()
+        ]
+        assert len(case_rows) == 54
+        assert [row["case_id"] for row in case_rows] == [
+            row["case_id"] for row in gate.build_case_matrix(manifest)
+        ]
+        for filename in (
+            "request_timeline.jsonl",
+            "scheduler_trace.jsonl",
+            "memory_trace.jsonl",
+        ):
+            rows = [
+                json.loads(line)
+                for line in (root / filename).read_text().splitlines()
+            ]
+            assert len(rows) == 54
+            assert all(
+                {"case_id", "policy", "scenario", "repetition"}
+                <= set(row)
+                for row in rows
+            )
+        stored_manifest = json.loads(
+            (root / "run_manifest.json").read_text()
+        )
+        assert stored_manifest["expected_case_ids"] == [
+            row["case_id"] for row in gate.build_case_matrix(manifest)
+        ]
+        assert len(stored_manifest["process_port_pairs"]) == 54
+        hashes = json.loads(
+            (root / "artifact_hashes.json").read_text()
+        )
+        assert set(hashes) == set(
+            gate.FINAL_ARTIFACT_FILES
+        ) - {"artifact_hashes.json"}
+        for filename, expected_hash in hashes.items():
+            assert expected_hash == gate.sha256_file(root / filename)
+        assert json.loads(
+            (root / "summary.json").read_text()
+        ) == first
+        assert (root / "report.md").read_text().startswith(
+            "# Production Arrival-Load Gate\n"
+        )
+        verifier = gate._load_local_module(
+            "arrival_load_verify_for_gate_test",
+            REPO_ROOT / "tools" / "arrival_load_verify.py",
+        )
+        assert verifier.verify_run(
+            root,
+            write_output=False,
+        ) == first
+
+
+def test_cli_exposes_task6_subcommands():
+    completed = subprocess.run(
+        ["python3", str(GATE_PATH), "--help"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    for command in (
+        "snapshot-source",
+        "run-calibration",
+        "freeze-workload",
+        "run-canonical",
+        "finalize-artifacts",
+        "verify-harness",
+    ):
+        assert command in completed.stdout
 
 
 def _workload_row(
@@ -651,6 +1541,19 @@ def main():
     test_unexpected_candidate_policy_collision_is_rejected()
     test_prompt_bank_hash_detects_drift()
     test_calibration_manifest_is_deterministic_and_p0_only()
+    test_select_lambda_ref_recomputes_tail_slope_and_uses_95_percent_ceiling()
+    test_select_lambda_ref_requires_stable_point_and_higher_ceiling()
+    test_select_lambda_ref_rejects_structural_or_nonfinite_rows()
+    test_build_case_matrix_has_exact_interleaved_non_alias_cases()
+    test_build_case_matrix_rejects_bad_alias_or_repetition_contract()
+    test_allocate_port_pair_returns_distinct_ephemeral_ports()
+    test_run_canonical_uses_unique_ports_and_resume_is_immutable()
+    test_run_canonical_replaces_incomplete_case_and_rejects_identity_drift()
+    test_run_canonical_requires_matching_smoke_and_frozen_calibration()
+    test_run_calibration_doubles_bisects_and_freezes_workload()
+    test_snapshot_source_stages_matching_bytes_and_archive()
+    test_finalize_artifacts_merges_classifies_and_hashes_deterministically()
+    test_cli_exposes_task6_subcommands()
     test_reconstructs_scheduled_arrival_metrics_and_shared_step_tokens()
     test_one_token_output_has_no_itl_sample()
     test_lifecycle_reconstruction_rejects_duplicate_binding_and_bad_time()
