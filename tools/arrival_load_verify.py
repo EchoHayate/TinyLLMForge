@@ -685,6 +685,32 @@ def _classify(manifest: dict, rows: list[dict]) -> dict:
     }
 
 
+def _smoke_summary(rows: list[dict]) -> dict:
+    lifecycle_complete = bool(rows) and all(
+        row.get("status") == "PASS"
+        and row.get("correctness", {}).get(
+            "complete_requests"
+        ) is True
+        and row.get("correctness", {}).get(
+            "no_starvation"
+        ) is True
+        and row.get("correctness", {}).get(
+            "valid_lifecycle"
+        ) is True
+        for row in rows
+    )
+    exact_outputs = bool(rows) and all(
+        row.get("correctness", {}).get("exact_outputs") is True
+        for row in rows
+    )
+    return {
+        "classification": "SMOKE_ONLY",
+        "lifecycle_complete": lifecycle_complete,
+        "exact_outputs": exact_outputs,
+        "case_count": len(rows),
+    }
+
+
 def _render_report(summary: dict) -> str:
     return (
         "# Production Arrival-Load Gate\n\n"
@@ -716,7 +742,19 @@ def _verify_output_equality(
             )
             if not baseline_rows:
                 raise ValueError("missing baseline request timeline")
-            for policy in ("P2", "P3"):
+            candidate_policies = (
+                [
+                    policy
+                    for policy in manifest.get(
+                        "smoke_policies",
+                        [],
+                    )
+                    if policy != "P0"
+                ]
+                if manifest.get("run_type") == "smoke"
+                else ["P2", "P3"]
+            )
+            for policy in candidate_policies:
                 candidate_rows = by_case.get(
                     (policy, scenario, repetition),
                     {},
@@ -773,7 +811,10 @@ def verify_run(
     ]
     if recorded_case_rows != recomputed_case_rows:
         raise ValueError("case row disagreement")
-    computed = _classify(manifest, recomputed_case_rows)
+    if manifest.get("run_type") == "smoke":
+        computed = _smoke_summary(recomputed_case_rows)
+    else:
+        computed = _classify(manifest, recomputed_case_rows)
     recorded = _read_json(run_dir / "summary.json")
     if recorded != computed:
         raise ValueError("classification disagreement")

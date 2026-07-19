@@ -165,6 +165,17 @@ def canonical_json_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def environment_identity_sha256(evidence: dict) -> str:
+    if not isinstance(evidence, dict):
+        raise ValueError("environment evidence must be an object")
+    identity = {
+        key: value
+        for key, value in evidence.items()
+        if key != "run_tag"
+    }
+    return canonical_json_sha256(identity)
+
+
 def nearest_rank(values: list[float], percentile: float) -> float:
     if not values:
         raise ValueError("nearest_rank requires finite samples")
@@ -786,6 +797,26 @@ def _validate_smoke_marker(run_manifest: dict) -> None:
             raise ValueError(
                 f"smoke {field} identity mismatch"
             )
+
+
+def validate_run_evidence(
+    run_manifest: dict,
+    *,
+    source_evidence_path: Path,
+    environment_evidence_path: Path,
+) -> None:
+    source_evidence = _read_json(source_evidence_path)
+    environment_evidence = _read_json(environment_evidence_path)
+    if (
+        run_manifest.get("source_tree_sha256")
+        != source_evidence.get("tree_sha256")
+    ):
+        raise ValueError("source identity mismatch")
+    if (
+        run_manifest.get("environment_sha256")
+        != environment_identity_sha256(environment_evidence)
+    ):
+        raise ValueError("environment identity mismatch")
 
 
 def _case_is_complete(
@@ -2478,6 +2509,354 @@ def finalize_artifacts(run_dir: Path) -> dict:
     return summary
 
 
+def initialize_remote_run(
+    *,
+    run_dir: Path,
+    model_path: str,
+    run_tag: str,
+    source_evidence_path: Path,
+    environment_evidence_path: Path,
+    smoke_verification: dict | None = None,
+    tokenizer=None,
+) -> dict:
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    source_evidence = _read_json(source_evidence_path)
+    environment_evidence = _read_json(environment_evidence_path)
+    if tokenizer is None:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            use_fast=True,
+        )
+    prompt_bank = build_prompt_bank(
+        tokenizer,
+        model_id=str(model_path),
+    )
+    defaults = {
+        "chunked_prefill_decode_first": True,
+        "chunked_prefill_max_consecutive_chunks": 0,
+        "chunked_prefill_mixed_batch": False,
+        "chunked_prefill_mixed_min_prompt_tokens": 0,
+    }
+    resolved = {
+        name: resolve_policy_config(name, defaults)
+        for name in ("P0", "P1", "P2", "P3")
+    }
+    aliases = deduplicate_policies(resolved)
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "run_tag": str(run_tag),
+        "model_path": str(model_path),
+        "source_tree_sha256": source_evidence["tree_sha256"],
+        "environment_sha256": environment_identity_sha256(
+            environment_evidence
+        ),
+        "prompt_bank_sha256": prompt_bank["prompt_bank_sha256"],
+        "workload_sha256": None,
+        "required_scenarios": list(CANONICAL_SCENARIOS),
+        "measured_repetitions": MEASURED_REPETITIONS,
+        "policy_identity_by_name": aliases["identity_by_name"],
+        "canonical_policy_by_name": aliases[
+            "canonical_policy_by_name"
+        ],
+        "resolved_policy_config_by_name": resolved,
+        "common_engine_config": dict(COMMON_ENGINE_CONFIG),
+        "drain_timeout_ns": CANONICAL_DRAIN_TIMEOUT_NS,
+    }
+    if smoke_verification is not None:
+        manifest["smoke_verification"] = dict(
+            smoke_verification
+        )
+    _write_json(run_dir / "prompt_bank.json", prompt_bank)
+    _write_jsonl(
+        run_dir / "calibration_manifest.jsonl",
+        build_calibration_manifest(prompt_bank),
+    )
+    _write_jsonl(run_dir / "calibration_rows.jsonl", [])
+    _write_json(run_dir / "run_manifest.json", manifest)
+    return manifest
+
+
+def _smoke_workload(prompt_bank: dict) -> list[dict]:
+    prompts = _prompt_by_class(prompt_bank)
+    specifications = (
+        ("decode-active", "short", "long", 0),
+        ("chunked-long", "long", "short", 50_000_000),
+        ("later-arrival", "medium", "short", 100_000_000),
+    )
+    rows = []
+    for index, (
+        name,
+        prompt_class,
+        output_class,
+        arrival_offset_ns,
+    ) in enumerate(specifications):
+        prompt = prompts[prompt_class]
+        output_tokens = (
+            8 if output_class == "long"
+            else 4
+        )
+        rows.append({
+            "schema_version": SCHEMA_VERSION,
+            "generator_version": GENERATOR_VERSION,
+            "scenario": "lifecycle_smoke",
+            "request_id": f"smoke-{index:02d}-{name}",
+            "warmup": False,
+            "arrival_offset_ns": arrival_offset_ns,
+            "requested_rate_rps": 0.0,
+            "seed": 0,
+            "prompt_id": prompt["prompt_id"],
+            "prompt": prompt["prompt"],
+            "prompt_sha256": prompt["prompt_sha256"],
+            "prompt_token_ids": list(prompt["prompt_token_ids"]),
+            "prompt_token_count": prompt["prompt_token_count"],
+            "prompt_class": prompt_class,
+            "output_class": output_class,
+            "service_time_bucket": (
+                f"{prompt_class}__{output_class}"
+            ),
+            "requested_output_tokens": output_tokens,
+            "sampling": {
+                "temperature": 0.0,
+                "ignore_eos": True,
+                "max_tokens": output_tokens,
+            },
+            "drain_timeout_ns": CANONICAL_DRAIN_TIMEOUT_NS,
+            "starvation_deadline_ns": STARVATION_DEADLINE_NS,
+        })
+    return rows
+
+
+def _write_final_hashes(run_dir: Path) -> None:
+    required = set(FINAL_ARTIFACT_FILES) - {
+        "artifact_hashes.json"
+    }
+    missing = sorted(
+        filename
+        for filename in required
+        if not (run_dir / filename).is_file()
+    )
+    if missing:
+        raise ValueError(
+            "missing final artifacts: " + ", ".join(missing)
+        )
+    _write_json(
+        run_dir / "artifact_hashes.json",
+        {
+            filename: sha256_file(run_dir / filename)
+            for filename in sorted(required)
+        },
+    )
+
+
+def run_smoke(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_tag: str,
+    source_evidence_path: Path,
+    environment_evidence_path: Path,
+) -> dict:
+    run_dir = Path(run_dir)
+    manifest = initialize_remote_run(
+        run_dir=run_dir,
+        model_path=model_path,
+        run_tag=run_tag,
+        source_evidence_path=source_evidence_path,
+        environment_evidence_path=environment_evidence_path,
+    )
+    prompt_bank = _read_json(run_dir / "prompt_bank.json")
+    workload = _smoke_workload(prompt_bank)
+    _write_jsonl(run_dir / "workload_manifest.jsonl", workload)
+    manifest["run_type"] = "smoke"
+    manifest["required_scenarios"] = ["lifecycle_smoke"]
+    manifest["measured_repetitions"] = 1
+    manifest["workload_sha256"] = canonical_json_sha256(workload)
+    smoke_policies = ("P0", "P2")
+    manifest["smoke_policies"] = list(smoke_policies)
+    used_pairs = set()
+    case_specs = []
+    for policy_order, policy in enumerate(smoke_policies):
+        case_specs.append({
+            "case_id": f"lifecycle_smoke__{policy}__r0",
+            "run_tag": run_tag,
+            "scenario": "lifecycle_smoke",
+            "policy": policy,
+            "repetition": 0,
+            "policy_order": policy_order,
+            "resolved_config": dict(
+                manifest["resolved_policy_config_by_name"][policy]
+            ),
+            "policy_identity": manifest[
+                "policy_identity_by_name"
+            ][policy],
+            "workload_sha256": manifest["workload_sha256"],
+            "source_tree_sha256": manifest[
+                "source_tree_sha256"
+            ],
+            "environment_sha256": manifest[
+                "environment_sha256"
+            ],
+            "drain_timeout_ns": CANONICAL_DRAIN_TIMEOUT_NS,
+        })
+    _write_json(run_dir / "run_manifest.json", manifest)
+    launch_rows = [
+        _launch_case(
+            run_dir=run_dir,
+            python_bin=python_bin,
+            model_path=model_path,
+            run_manifest=manifest,
+            case_spec=case_spec,
+            workload_rows=workload,
+            used_pairs=used_pairs,
+        )
+        for case_spec in case_specs
+    ]
+    timeline = _merged_case_rows(
+        run_dir,
+        case_specs,
+        "request_timeline.jsonl",
+    )
+    scheduler = _merged_case_rows(
+        run_dir,
+        case_specs,
+        "scheduler_trace.jsonl",
+    )
+    memory = _merged_case_rows(
+        run_dir,
+        case_specs,
+        "memory_trace.jsonl",
+    )
+    _write_jsonl(run_dir / "request_timeline.jsonl", timeline)
+    _write_jsonl(run_dir / "scheduler_trace.jsonl", scheduler)
+    _write_jsonl(run_dir / "memory_trace.jsonl", memory)
+    case_rows = [
+        _case_summary(run_dir, case_spec, workload)
+        for case_spec in case_specs
+    ]
+    _apply_output_correctness_smoke(case_rows, timeline)
+    _write_jsonl(run_dir / "case_rows.jsonl", case_rows)
+    process_rows = []
+    for case_spec in case_specs:
+        process = _read_json(
+            run_dir
+            / "processes"
+            / case_spec["case_id"]
+            / "process.json"
+        )
+        process_rows.append({
+            "case_id": case_spec["case_id"],
+            "tinyvllm_dist_port": int(
+                process["tinyvllm_dist_port"]
+            ),
+            "master_port": int(process["master_port"]),
+        })
+    manifest["expected_case_ids"] = [
+        row["case_id"] for row in case_specs
+    ]
+    manifest["process_port_pairs"] = process_rows
+    _write_json(run_dir / "run_manifest.json", manifest)
+    exact_outputs = all(
+        row["correctness"]["exact_outputs"]
+        for row in case_rows
+    )
+    lifecycle_complete = (
+        all(row["status"] == "PASS" for row in case_rows)
+        and all(row["status"] == "PASS" for row in launch_rows)
+        and bool(timeline)
+        and bool(scheduler)
+        and bool(memory)
+    )
+    summary = {
+        "classification": "SMOKE_ONLY",
+        "lifecycle_complete": lifecycle_complete,
+        "exact_outputs": exact_outputs,
+        "case_count": len(case_rows),
+    }
+    _write_json(run_dir / "summary.json", summary)
+    (run_dir / "report.md").write_text(
+        render_report(manifest, summary),
+        encoding="utf-8",
+    )
+    _write_final_hashes(run_dir)
+    return summary
+
+
+def _apply_output_correctness_smoke(
+    case_rows: list[dict],
+    timeline_rows: list[dict],
+) -> None:
+    outputs = {}
+    for row in timeline_rows:
+        outputs.setdefault(row["policy"], {})[
+            row["request_id"]
+        ] = row.get("output_token_ids")
+    exact = (
+        outputs.get("P0")
+        and outputs.get("P0") == outputs.get("P2")
+    )
+    for row in case_rows:
+        row["correctness"]["exact_outputs"] = bool(exact)
+
+
+def run_calibration_remote(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_tag: str,
+    source_evidence_path: Path,
+    environment_evidence_path: Path,
+    smoke_run_dir: Path,
+) -> dict:
+    smoke_manifest = _read_json(
+        Path(smoke_run_dir) / "run_manifest.json"
+    )
+    smoke_summary = _read_json(
+        Path(smoke_run_dir) / "summary.json"
+    )
+    if (
+        smoke_summary.get("classification") != "SMOKE_ONLY"
+        or smoke_summary.get("lifecycle_complete") is not True
+        or smoke_summary.get("exact_outputs") is not True
+    ):
+        raise ValueError("calibration requires verified smoke")
+    source_evidence = _read_json(source_evidence_path)
+    environment_evidence = _read_json(environment_evidence_path)
+    environment_sha256 = environment_identity_sha256(
+        environment_evidence
+    )
+    if (
+        smoke_manifest.get("source_tree_sha256")
+        != source_evidence.get("tree_sha256")
+        or smoke_manifest.get("environment_sha256")
+        != environment_sha256
+    ):
+        raise ValueError("smoke identity mismatch")
+    smoke_marker = {
+        "status": "PASS",
+        "run_tag": smoke_manifest["run_tag"],
+        "source_tree_sha256": source_evidence["tree_sha256"],
+        "environment_sha256": environment_sha256,
+    }
+    manifest = initialize_remote_run(
+        run_dir=run_dir,
+        model_path=model_path,
+        run_tag=run_tag,
+        source_evidence_path=source_evidence_path,
+        environment_evidence_path=environment_evidence_path,
+        smoke_verification=smoke_marker,
+    )
+    return run_calibration(
+        run_dir=run_dir,
+        python_bin=python_bin,
+        model_path=model_path,
+        run_manifest=manifest,
+    )
+
+
 def render_report(run_manifest: dict, summary: dict) -> str:
     del run_manifest
     return (
@@ -2504,8 +2883,50 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot = subparsers.add_parser("snapshot-source")
     snapshot.add_argument("--repo-root", type=Path, default=_REPO_ROOT)
     snapshot.add_argument("--out-dir", type=Path, required=True)
-    for command in ("run-calibration", "run-canonical"):
-        _add_run_arguments(subparsers.add_parser(command))
+    _add_run_arguments(subparsers.add_parser("run-calibration"))
+    canonical = subparsers.add_parser("run-canonical")
+    _add_run_arguments(canonical)
+    canonical.add_argument(
+        "--source-evidence",
+        type=Path,
+    )
+    canonical.add_argument(
+        "--environment-evidence",
+        type=Path,
+    )
+    smoke = subparsers.add_parser("run-smoke")
+    _add_run_arguments(smoke)
+    smoke.add_argument("--run-tag", required=True)
+    smoke.add_argument(
+        "--source-evidence",
+        type=Path,
+        required=True,
+    )
+    smoke.add_argument(
+        "--environment-evidence",
+        type=Path,
+        required=True,
+    )
+    remote_calibration = subparsers.add_parser(
+        "run-calibration-remote"
+    )
+    _add_run_arguments(remote_calibration)
+    remote_calibration.add_argument("--run-tag", required=True)
+    remote_calibration.add_argument(
+        "--source-evidence",
+        type=Path,
+        required=True,
+    )
+    remote_calibration.add_argument(
+        "--environment-evidence",
+        type=Path,
+        required=True,
+    )
+    remote_calibration.add_argument(
+        "--smoke-run-dir",
+        type=Path,
+        required=True,
+    )
     freeze = subparsers.add_parser("freeze-workload")
     freeze.add_argument("--run-dir", type=Path, required=True)
     finalize = subparsers.add_parser("finalize-artifacts")
@@ -2557,15 +2978,47 @@ def main(argv=None) -> int:
             run_manifest=_read_json(run_dir / "run_manifest.json"),
             resume=args.resume,
         )
+    elif args.command == "run-smoke":
+        result = run_smoke(
+            run_dir=Path(args.run_dir),
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            run_tag=args.run_tag,
+            source_evidence_path=args.source_evidence,
+            environment_evidence_path=args.environment_evidence,
+        )
+    elif args.command == "run-calibration-remote":
+        result = run_calibration_remote(
+            run_dir=Path(args.run_dir),
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            run_tag=args.run_tag,
+            source_evidence_path=args.source_evidence,
+            environment_evidence_path=args.environment_evidence,
+            smoke_run_dir=args.smoke_run_dir,
+        )
     elif args.command == "freeze-workload":
         result = _freeze_existing_calibration(Path(args.run_dir))
     elif args.command == "run-canonical":
         run_dir = Path(args.run_dir)
+        manifest = _read_json(run_dir / "run_manifest.json")
+        if (
+            args.source_evidence is None
+            or args.environment_evidence is None
+        ):
+            raise ValueError(
+                "run-canonical requires source and environment evidence"
+            )
+        validate_run_evidence(
+            manifest,
+            source_evidence_path=args.source_evidence,
+            environment_evidence_path=args.environment_evidence,
+        )
         result = run_canonical(
             run_dir=run_dir,
             python_bin=args.python_bin,
             model_path=args.model_path,
-            run_manifest=_read_json(run_dir / "run_manifest.json"),
+            run_manifest=manifest,
             resume=args.resume,
         )
     elif args.command == "finalize-artifacts":

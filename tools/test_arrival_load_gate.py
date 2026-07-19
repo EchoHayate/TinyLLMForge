@@ -1137,8 +1137,189 @@ def test_cli_exposes_task6_subcommands():
         "run-canonical",
         "finalize-artifacts",
         "verify-harness",
+        "run-smoke",
+        "run-calibration-remote",
     ):
         assert command in completed.stdout
+
+
+def test_environment_identity_ignores_run_tag_only():
+    first = {
+        "run_tag": "smoke-tag",
+        "gpu": "A100",
+        "torch": "2.x",
+    }
+    second = {
+        **first,
+        "run_tag": "canonical-tag",
+    }
+    assert gate.environment_identity_sha256(first) == (
+        gate.environment_identity_sha256(second)
+    )
+    changed = {
+        **second,
+        "gpu": "different",
+    }
+    assert gate.environment_identity_sha256(first) != (
+        gate.environment_identity_sha256(changed)
+    )
+
+
+def test_run_smoke_produces_independently_verified_lifecycle_artifact():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        source_root = root / "source"
+        source_root.mkdir()
+        (source_root / "marker.txt").write_text("arrival source\n")
+        source_files = [{
+            "path": "marker.txt",
+            "size_bytes": (source_root / "marker.txt").stat().st_size,
+            "sha256": gate.sha256_file(source_root / "marker.txt"),
+        }]
+        source_evidence = {
+            "schema_version": 1,
+            "base_commit": "1" * 40,
+            "tree_sha256": gate.canonical_json_sha256(source_files),
+            "files": source_files,
+            "patch_size_bytes": 0,
+            "patch_sha256": hashlib.sha256(b"").hexdigest(),
+        }
+        _write_json(root / "source_evidence.json", source_evidence)
+        (root / "source.patch").write_bytes(b"")
+        with tarfile.open(
+            root / "source_snapshot.tar.gz",
+            "w:gz",
+        ) as archive:
+            archive.add(source_root, arcname="source")
+        environment = {
+            "run_tag": "smoke-test",
+            "gpu": "fake-gpu",
+            "torch": "fake-torch",
+        }
+        _write_json(root / "capability.json", environment)
+
+        original_ports = gate.allocate_port_pair
+        original_run = gate.subprocess.run
+        original_initialize = gate.initialize_remote_run
+        ports = iter(((31_000, 31_001), (31_002, 31_003)))
+
+        def initialize_with_fake_tokenizer(**kwargs):
+            return original_initialize(
+                **kwargs,
+                tokenizer=FakeTokenizer(),
+            )
+
+        def fake_run(command, **kwargs):
+            del kwargs
+            output_dir = Path(
+                command[command.index("--output-dir") + 1]
+            )
+            case_spec = json.loads(
+                Path(
+                    command[command.index("--case-spec") + 1]
+                ).read_text()
+            )
+            workload = [
+                json.loads(line)
+                for line in Path(
+                    command[
+                        command.index("--workload-manifest") + 1
+                    ]
+                ).read_text().splitlines()
+            ]
+            timeline = []
+            for index, request in enumerate(workload):
+                scheduled = (
+                    1_000_000_000
+                    + request["arrival_offset_ns"]
+                )
+                token_times = [
+                    scheduled + 100_000_000
+                    + token_index * 10_000_000
+                    for token_index in range(
+                        request["requested_output_tokens"]
+                    )
+                ]
+                timeline.append({
+                    "request_id": request["request_id"],
+                    "seq_id": index,
+                    "scheduled_arrival_ns": scheduled,
+                    "actual_arrival_ns": scheduled,
+                    "first_scheduled_ns": scheduled + 10_000_000,
+                    "first_token_ns": token_times[0],
+                    "token_timestamps_ns": token_times,
+                    "completion_ns": token_times[-1] + 10_000_000,
+                    "output_token_ids": list(range(
+                        request["requested_output_tokens"]
+                    )),
+                    "finish_reason": "length",
+                    "error": None,
+                })
+            _write_jsonl(
+                output_dir / "request_timeline.jsonl",
+                timeline,
+            )
+            _write_jsonl(
+                output_dir / "scheduler_trace.jsonl",
+                [{
+                    "step_index": 0,
+                    "step_start_ns": 1_000_000_000,
+                    "step_end_ns": 2_000_000_000,
+                }],
+            )
+            _write_jsonl(
+                output_dir / "memory_trace.jsonl",
+                [{
+                    "step_index": 0,
+                    "cuda_allocated_bytes": 100,
+                    "cuda_reserved_bytes": 200,
+                    "used_kv_blocks": 2,
+                    "kv_block_bytes": 64,
+                }],
+            )
+            _write_json(output_dir / "case_result.json", {
+                "case_id": case_spec["case_id"],
+                "status": "PASS",
+            })
+            (output_dir / "exitcode").write_text("0\n")
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="",
+                stderr="",
+            )
+
+        gate.allocate_port_pair = lambda: next(ports)
+        gate.subprocess.run = fake_run
+        gate.initialize_remote_run = initialize_with_fake_tokenizer
+        try:
+            summary = gate.run_smoke(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_tag="smoke-test",
+                source_evidence_path=root / "source_evidence.json",
+                environment_evidence_path=root / "capability.json",
+            )
+        finally:
+            gate.allocate_port_pair = original_ports
+            gate.subprocess.run = original_run
+            gate.initialize_remote_run = original_initialize
+
+        assert summary == {
+            "classification": "SMOKE_ONLY",
+            "lifecycle_complete": True,
+            "exact_outputs": True,
+            "case_count": 2,
+        }
+        verifier = gate._load_local_module(
+            "arrival_load_verify_for_smoke_test",
+            REPO_ROOT / "tools" / "arrival_load_verify.py",
+        )
+        assert verifier.verify_run(
+            root,
+            write_output=False,
+        ) == summary
 
 
 def _workload_row(
@@ -1554,6 +1735,8 @@ def main():
     test_snapshot_source_stages_matching_bytes_and_archive()
     test_finalize_artifacts_merges_classifies_and_hashes_deterministically()
     test_cli_exposes_task6_subcommands()
+    test_environment_identity_ignores_run_tag_only()
+    test_run_smoke_produces_independently_verified_lifecycle_artifact()
     test_reconstructs_scheduled_arrival_metrics_and_shared_step_tokens()
     test_one_token_output_has_no_itl_sample()
     test_lifecycle_reconstruction_rejects_duplicate_binding_and_bad_time()

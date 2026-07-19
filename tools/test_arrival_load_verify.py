@@ -393,6 +393,46 @@ def test_output_equality_uses_recorded_case_metadata_not_case_id_format():
         raise AssertionError("canonical case-id output drift was missed")
 
 
+def test_smoke_summary_is_lifecycle_only():
+    rows = [
+        {
+            "case_id": "lifecycle_smoke__P0__r0",
+            "policy": "P0",
+            "scenario": "lifecycle_smoke",
+            "repetition": 0,
+            "status": "PASS",
+            "correctness": {
+                "exact_outputs": True,
+                "complete_requests": True,
+                "no_starvation": True,
+                "valid_lifecycle": True,
+                "stable_p0_outputs": True,
+            },
+        },
+        {
+            "case_id": "lifecycle_smoke__P2__r0",
+            "policy": "P2",
+            "scenario": "lifecycle_smoke",
+            "repetition": 0,
+            "status": "PASS",
+            "correctness": {
+                "exact_outputs": True,
+                "complete_requests": True,
+                "no_starvation": True,
+                "valid_lifecycle": True,
+                "stable_p0_outputs": True,
+            },
+        },
+    ]
+    summary = verifier._smoke_summary(rows)
+    assert summary == {
+        "classification": "SMOKE_ONLY",
+        "lifecycle_complete": True,
+        "exact_outputs": True,
+        "case_count": 2,
+    }
+
+
 def test_verifier_recomputes_complete_artifact():
     temporary, root = _complete_artifact()
     try:
@@ -522,6 +562,7 @@ def test_verifier_rejects_rehashed_source_output_and_scheduler_tampering():
 def main():
     test_verifier_does_not_import_harness_aggregation()
     test_output_equality_uses_recorded_case_metadata_not_case_id_format()
+    test_smoke_summary_is_lifecycle_only()
     test_verifier_recomputes_complete_artifact()
     test_verifier_rejects_summary_tampering_even_when_rehashed()
     test_verifier_rejects_truncated_jsonl_and_duplicate_ports()
