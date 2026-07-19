@@ -341,9 +341,13 @@ def _recompute_case(
         request_id = timeline.get("request_id")
         if request_id not in workload_by_id:
             raise ValueError(f"unexpected request id: {request_id}")
-        request_rows.append(
-            _request_metrics(workload_by_id[request_id], timeline)
-        )
+        workload = workload_by_id[request_id]
+        metrics = _request_metrics(workload, timeline)
+        if workload.get("warmup", False):
+            continue
+        request_rows.append(metrics)
+    if not request_rows:
+        raise ValueError(f"case has no measured requests: {case_id}")
     start_ns = min(row["scheduled_arrival_ns"] for row in request_rows)
     end_ns = max(row["completion_ns"] for row in request_rows)
     duration_s = (end_ns - start_ns) / 1_000_000_000.0

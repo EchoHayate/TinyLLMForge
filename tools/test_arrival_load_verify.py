@@ -349,6 +349,43 @@ def _refresh_hash(root: Path, name: str) -> None:
     _write_json(root / "artifact_hashes.json", hashes)
 
 
+def _add_warmup_request(root: Path) -> None:
+    workload_rows = verifier._read_jsonl(
+        root / "workload_manifest.jsonl"
+    )
+    warmup_request_id = "steady_moderate-warmup-0000"
+    workload_rows.append({
+        **workload_rows[0],
+        "request_id": warmup_request_id,
+        "warmup": True,
+        "arrival_offset_ns": -1_000_000_000,
+    })
+    _write_jsonl(root / "workload_manifest.jsonl", workload_rows)
+    _refresh_hash(root, "workload_manifest.jsonl")
+
+    timeline_rows = verifier._read_jsonl(
+        root / "request_timeline.jsonl"
+    )
+    warmup_rows = []
+    for row in timeline_rows:
+        warmup_rows.append({
+            **row,
+            "request_id": warmup_request_id,
+            "seq_id": row["seq_id"] + 1000,
+            "scheduled_arrival_ns": 0,
+            "actual_arrival_ns": 10,
+            "first_scheduled_ns": 20,
+            "first_token_ns": 30,
+            "token_timestamps_ns": [30, 40],
+            "completion_ns": 40,
+        })
+    _write_jsonl(
+        root / "request_timeline.jsonl",
+        warmup_rows + timeline_rows,
+    )
+    _refresh_hash(root, "request_timeline.jsonl")
+
+
 def test_verifier_does_not_import_harness_aggregation():
     source = VERIFY_PATH.read_text()
     assert "import arrival_load_gate" not in source
@@ -444,6 +481,41 @@ def test_verifier_recomputes_complete_artifact():
         assert (
             root / "independent-verify/verify.exitcode"
         ).read_text().strip() == "0"
+    finally:
+        temporary.cleanup()
+
+
+def test_verifier_excludes_warmup_requests_from_case_metrics():
+    temporary, root = _complete_artifact()
+    try:
+        _add_warmup_request(root)
+        result = verifier.verify_run(root, write_output=False)
+        assert result["classification"] == "NO_GO"
+    finally:
+        temporary.cleanup()
+
+
+def test_verifier_still_validates_warmup_request_lifecycle():
+    temporary, root = _complete_artifact()
+    try:
+        _add_warmup_request(root)
+        timeline_rows = verifier._read_jsonl(
+            root / "request_timeline.jsonl"
+        )
+        warmup = next(
+            row for row in timeline_rows
+            if row["request_id"] == "steady_moderate-warmup-0000"
+        )
+        warmup["first_scheduled_ns"] = warmup["actual_arrival_ns"] - 1
+        _write_jsonl(root / "request_timeline.jsonl", timeline_rows)
+        _refresh_hash(root, "request_timeline.jsonl")
+
+        try:
+            verifier.verify_run(root, write_output=False)
+        except ValueError as exc:
+            assert "impossible timestamp ordering" in str(exc)
+        else:
+            raise AssertionError("invalid warmup lifecycle must fail")
     finally:
         temporary.cleanup()
 
@@ -564,6 +636,8 @@ def main():
     test_output_equality_uses_recorded_case_metadata_not_case_id_format()
     test_smoke_summary_is_lifecycle_only()
     test_verifier_recomputes_complete_artifact()
+    test_verifier_excludes_warmup_requests_from_case_metrics()
+    test_verifier_still_validates_warmup_request_lifecycle()
     test_verifier_rejects_summary_tampering_even_when_rehashed()
     test_verifier_rejects_truncated_jsonl_and_duplicate_ports()
     test_verifier_rejects_rehashed_source_output_and_scheduler_tampering()
