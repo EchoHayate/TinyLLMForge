@@ -1539,7 +1539,12 @@ class ModelRunner:
         # cpu_offload：init 阶段已跳过 capture，这里也必须走 eager（否则 self.graphs 不存在）
         offload_active = self.config.cpu_offload
         kv_offload_active = self.config.kv_offload_mvp0
-        if (is_prefill or spec_verify_active or self.enforce_eager or input_ids.size(0) > 512
+        # FlashAttention decode replay is only correctness-validated for one
+        # sequence. Multi-sequence captured graphs can corrupt rows after the
+        # first one, so keep the batch-1 graph fast path and fail closed to
+        # eager execution for larger decode batches.
+        multi_sequence_decode = mode == "decode" and input_ids.size(0) > 1
+        if (is_prefill or spec_verify_active or self.enforce_eager or multi_sequence_decode
                 or quest_active or am_active or c4_active or offload_active or kv_offload_active
                 or input_embeds is not None or return_hidden):     #动态执行 eager mode
             hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)

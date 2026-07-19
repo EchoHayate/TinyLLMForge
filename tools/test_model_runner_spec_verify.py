@@ -42,6 +42,13 @@ class FakeTensor:
             return ()
         if dim == 0:
             return len(self.values)
+        if (
+            dim == 1
+            and isinstance(self.values, list)
+            and self.values
+            and isinstance(self.values[0], list)
+        ):
+            return len(self.values[0])
         raise IndexError(dim)
 
 
@@ -65,6 +72,22 @@ class FakeIndexedTensor:
     def clone(self):
         self.trace.append(("clone", None))
         return FakeIndexedTensor(("cloned", self.values), self.trace)
+
+
+class FakeGraphBuffer:
+    def __init__(self, values=None):
+        self.values = values
+        self.zero_calls = 0
+        self.assignments = []
+
+    def zero_(self):
+        self.zero_calls += 1
+
+    def __getitem__(self, index):
+        return FakeTensor(self.values[index])
+
+    def __setitem__(self, index, value):
+        self.assignments.append((index, value.values))
 
 
 def _install_module(name: str, **attributes):
@@ -385,6 +408,92 @@ def test_spec_verify_run_model_uses_eager_and_keeps_all_rows():
     assert logits.values == [[1], [2], [3]]
 
 
+def test_multi_sequence_decode_uses_eager_instead_of_cuda_graph():
+    calls = []
+
+    class FakeModel:
+        def __call__(self, input_ids, positions, input_embeds=None):
+            calls.append(("model", input_ids.values, positions.values))
+            return FakeTensor([[1], [2]])
+
+        def compute_logits(self, hidden):
+            calls.append(("logits", hidden.values))
+            return hidden
+
+    class ForbiddenGraph:
+        def replay(self):
+            raise AssertionError(
+                "multi-sequence decode must not replay a CUDA graph"
+            )
+
+    runner = make_runner()
+    runner.model = FakeModel()
+    runner.graphs = {2: ForbiddenGraph()}
+    runner.graph_bs = [2]
+    runner.graph_vars = {}
+
+    logits = runner.run_model(
+        FakeTensor([10, 20]),
+        FakeTensor([53, 54]),
+        is_prefill=False,
+    )
+
+    assert logits.values == [[1], [2]]
+    assert calls == [
+        ("model", [10, 20], [53, 54]),
+        ("logits", [[1], [2]]),
+    ]
+
+
+def test_single_sequence_decode_still_replays_cuda_graph():
+    calls = []
+
+    class FakeModel:
+        def __call__(self, input_ids, positions, input_embeds=None):
+            raise AssertionError(
+                "single-sequence decode should replay the CUDA graph"
+            )
+
+        def compute_logits(self, hidden):
+            calls.append(("logits", hidden.values))
+            return hidden
+
+    class FakeGraph:
+        def replay(self):
+            calls.append(("replay", None))
+
+    runner = make_runner()
+    runner.model = FakeModel()
+    runner.graphs = {1: FakeGraph()}
+    runner.graph_bs = [1]
+    runner.graph_vars = {
+        "input_ids": FakeGraphBuffer([0]),
+        "positions": FakeGraphBuffer([0]),
+        "slot_mapping": FakeGraphBuffer([0]),
+        "context_lens": FakeGraphBuffer([0]),
+        "block_tables": FakeGraphBuffer([[0]]),
+        "outputs": FakeGraphBuffer([[7]]),
+    }
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([4]),
+        context_lens=FakeTensor([65]),
+        block_tables=FakeTensor([[0]]),
+    )
+
+    logits = runner.run_model(
+        FakeTensor([10]),
+        FakeTensor([64]),
+        is_prefill=False,
+    )
+
+    assert logits.values == [[7]]
+    assert calls == [
+        ("replay", None),
+        ("logits", [[7]]),
+    ]
+
+
 def main():
     tests = (
         test_prepare_spec_verify_installs_reference_context,
@@ -394,6 +503,8 @@ def main():
         test_every_unsupported_feature_fails_closed,
         test_multi_sequence_nonlinear_and_nongreedy_fail,
         test_spec_verify_run_model_uses_eager_and_keeps_all_rows,
+        test_multi_sequence_decode_uses_eager_instead_of_cuda_graph,
+        test_single_sequence_decode_still_replays_cuda_graph,
     )
     for test in tests:
         context.reset_context()
