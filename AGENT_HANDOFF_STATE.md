@@ -2692,3 +2692,146 @@ reason: adaptive_vs_fixed_gate_failed
 保留 adaptive policy、两阶段 verifier、block-boundary regression、deterministic matrix、resume、artifact verifier 和报告生成器。不要在同一 4-prompt gate 上继续调 EMA/阈值以追赶 `0.0222` 个百分点，避免 benchmark overfit。
 
 短期只在已验证的高重复、greedy、单序列 regime 中把 fixed K4 作为可选 profiler policy，不能设为通用默认。下一主线优先做更高质量 draft source（例如真实小 draft model / 更强 retrieval draft）的 profiler-owned gate；进入 runtime 前仍须重新完成 exact-output、ragged batch、scheduler/load 和 memory-capacity gate。
+
+## 2026-07-20 P5 decode-SLO-aware mixed admission smoke
+
+### 当前状态
+
+- Branch：`feat/adaptive-ngram-speculation`
+- Source commit：`0fa05fd5a2e9534d0eeb17bb5c2108687e4488df`
+- Source dirty：`false`
+- Source tree SHA256：
+  `bcbba4261e76cf3559c45d67e27208c38104cda560caa32a46d440ada8a31d3f`
+- Fresh preflight：
+  `experiments/arrival_load/qwen3-06b-p5-preflight-20260720-233159/`
+- Fresh smoke：
+  `experiments/arrival_load/qwen3-06b-p5-smoke-20260720-233216/`
+- Remote：
+  `sitian@10.232.195.203`
+- Remote Python：
+  `/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`
+- Model：
+  `/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`
+
+### 本轮修复
+
+提交 `0fa05fd` 修复了 smoke independent verifier：
+
+1. smoke 顶层 hash contract 不再错误要求四个 authoritative cost
+   calibration artifacts；
+2. verifier 会从 `provisional_cost_calibration/` 独立重算 capacity、
+   shape manifest、raw rows 和 summary；
+3. provisional summary SHA、source/environment/engine identity、P5
+   coefficients 和 smoke manifest marker 必须一致；
+4. `actual_prefill_tokens` / `scheduled_decode_seq_ids` 按 scheduler
+   producer 的真实语义验证：仅 SLO mixed admission 决策记录这些局部
+   字段，普通 no-running prefill 和 decode-only branch 保持 `0` / `[]`；
+5. verifier 从 scheduler trace 独立重建完整 `p5_smoke` summary。
+
+严格 TDD：
+
+- RED 复现：
+  `ValueError: missing artifact: cost_calibration_capacity.json`
+- 第二条 RED 复现普通 no-running prefill 被误判：
+  `ValueError: P5 actual prefill mismatch`
+- GREEN 后完整本地 suite：
+  - `python3 tools/test_arrival_load_cost_calibration.py`
+  - `python3 tools/test_arrival_load_gate.py`
+  - `python3 tools/test_arrival_load_verify.py`
+  - `python3 tools/test_run_arrival_load_gate_remote.py`
+  - `python3 tools/test_chunked_prefill.py`
+  - relevant `python3 -m py_compile`
+  - `git diff --check`
+
+以上全部 PASS。
+
+### Fresh source-bound 远程结果
+
+Fresh preflight 在远端重新运行 cost/gate/driver/verifier/chunked-prefill
+tests，全部 PASS。
+
+Fresh smoke：
+
+- remote exit code：`0`
+- independent verifier exit code：`0`
+- provisional capacity：`2075` KV blocks
+- required calibration shapes：`40`
+- completed calibration shapes：`40/40`
+- raw calibration rows：`280`
+- failed attempts：`0`
+- lifecycle complete：`true`
+- exact outputs：`true`
+- case count：`2`
+
+Recorded summary 与 independent verifier 重建结果完全一致：
+
+```json
+{
+  "classification": "INCOMPLETE",
+  "lifecycle_complete": true,
+  "exact_outputs": true,
+  "case_count": 2,
+  "p5_smoke": {
+    "classification": "INCOMPLETE",
+    "demand_activation_count": 1,
+    "largest_chunk_admission_count": 0,
+    "smaller_chunk_admission_count": 0,
+    "distinct_selected_chunk_tokens": 0,
+    "slo_suppression_count": 150,
+    "draining_decision_count": 0
+  }
+}
+```
+
+### 为什么没有 mixed admission
+
+Fresh provisional envelope：
+
+- cost intercept：`59,859,958 ns`
+- cost per prefill token：`613,182 ns`
+- P5 target gap：`64,000,000 ns`
+- reserve：`8,000,000 ns`
+- minimum chunk：`16` tokens
+
+最大理论 remaining slack（decode age 为 0）：
+
+```text
+64,000,000 - 8,000,000 = 56,000,000 ns
+```
+
+最小 16-token chunk 的预测成本：
+
+```text
+59,859,958 + 16 * 613,182 = 69,670,870 ns
+```
+
+因此：
+
+```text
+69,670,870 ns > 56,000,000 ns
+```
+
+当前固定 SLO 合同下不存在任何可行 token ladder 项。150 次
+`cost_suppressed` 是 fail-closed 的正确结果，不是 smoke workload
+偶然没有覆盖 mixed path，也不能通过增加 waiting depth 修复。
+
+### 决策与边界
+
+- 当前 P5 smoke 结论严格为 `INCOMPLETE`，不是 `SMOKE_ONLY`。
+- 不得把该 smoke 用作 authoritative cost calibration predecessor。
+- 不继续 workload calibration 或 canonical 54 cases。
+- 不能宣称任何吞吐、延迟或显存性能提升。
+- README 不更新。
+- P4 仍为 `NO_GO`；P5 目前证明的是实现与证据链能正确 fail-closed，
+  不是性能收益。
+
+若继续 P5，必须先做新的书面设计决策，而不是调 smoke workload：
+
+1. 修改 target gap / reserve / minimum chunk 的产品 SLO contract；或
+2. 降低真实 mixed-step intercept，使最小 chunk 在 56ms budget 内可行；
+   或
+3. 明确放弃当前 P5 参数组合并转向其他优化。
+
+任一 source 或固定合同变更后，都必须重新 fresh preflight → smoke；
+只有 independent verifier 给出 `SMOKE_ONLY` 才能进入后续 authoritative
+cost/workload/canonical 链。
