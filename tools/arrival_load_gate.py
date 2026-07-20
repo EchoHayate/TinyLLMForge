@@ -3259,9 +3259,12 @@ def _launch_cost_calibration_shape(
     engine_config: dict,
     tinyvllm_dist_port: int,
     master_port: int,
+    allocate_retry_port_pair,
 ) -> list[dict]:
     shape_dir = Path(run_dir) / "processes" / shape["shape_id"]
     shape_dir.mkdir(parents=True, exist_ok=False)
+    attempts_dir = shape_dir / "attempts"
+    attempts_dir.mkdir()
     shape_path = shape_dir / "shape.json"
     engine_config_path = shape_dir / "engine_config.json"
     output_path = shape_dir / "rows.jsonl"
@@ -3283,22 +3286,77 @@ def _launch_cost_calibration_shape(
         "--output-jsonl",
         str(output_path),
     ]
-    environment = os.environ.copy()
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    environment["PYTHONPATH"] = str(_REPO_ROOT)
-    environment["TINYVLLM_DIST_PORT"] = str(
-        tinyvllm_dist_port
-    )
-    environment["MASTER_PORT"] = str(master_port)
     started_ns = time.time_ns()
-    completed = subprocess.run(
-        command,
-        cwd=_REPO_ROOT,
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    attempts = []
+    ports = (tinyvllm_dist_port, master_port)
+    used_ports = set(ports)
+    completed = None
+    for attempt in range(2):
+        if attempt:
+            ports = allocate_retry_port_pair()
+            if (
+                len(ports) != 2
+                or any(
+                    not isinstance(port, int)
+                    or isinstance(port, bool)
+                    or port <= 0
+                    or port > 65_535
+                    or port in used_ports
+                    for port in ports
+                )
+                or ports[0] == ports[1]
+            ):
+                raise ValueError(
+                    "invalid or reused calibration retry port"
+                )
+            used_ports.update(ports)
+        dist_port, attempt_master_port = ports
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PYTHONPATH"] = str(_REPO_ROOT)
+        environment["TINYVLLM_DIST_PORT"] = str(dist_port)
+        environment["MASTER_PORT"] = str(attempt_master_port)
+        output_path.unlink(missing_ok=True)
+        attempt_started_ns = time.time_ns()
+        completed = subprocess.run(
+            command,
+            cwd=_REPO_ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        attempt_finished_ns = time.time_ns()
+        attempt_process = {
+            "attempt": attempt + 1,
+            "command": command,
+            "start_time_ns": attempt_started_ns,
+            "end_time_ns": attempt_finished_ns,
+            "returncode": int(completed.returncode),
+            "tinyvllm_dist_port": dist_port,
+            "master_port": attempt_master_port,
+        }
+        attempts.append(attempt_process)
+        attempt_dir = attempts_dir / f"attempt-{attempt + 1}"
+        attempt_dir.mkdir()
+        (attempt_dir / "stdout.log").write_text(
+            completed.stdout,
+            encoding="utf-8",
+        )
+        (attempt_dir / "stderr.log").write_text(
+            completed.stderr,
+            encoding="utf-8",
+        )
+        _write_json(
+            attempt_dir / "process.json",
+            attempt_process,
+        )
+        combined = completed.stdout + "\n" + completed.stderr
+        if not _is_port_collision(
+            completed.returncode,
+            combined,
+        ):
+            break
     finished_ns = time.time_ns()
     (shape_dir / "stdout.log").write_text(
         completed.stdout,
@@ -3308,14 +3366,18 @@ def _launch_cost_calibration_shape(
         completed.stderr,
         encoding="utf-8",
     )
+    final_attempt = attempts[-1]
     _write_json(shape_dir / "process.json", {
         "shape_id": shape["shape_id"],
         "command": command,
         "start_time_ns": started_ns,
         "end_time_ns": finished_ns,
         "returncode": int(completed.returncode),
-        "tinyvllm_dist_port": tinyvllm_dist_port,
-        "master_port": master_port,
+        "tinyvllm_dist_port": final_attempt[
+            "tinyvllm_dist_port"
+        ],
+        "master_port": final_attempt["master_port"],
+        "attempts": attempts,
     })
     if completed.returncode != 0:
         raise RuntimeError(
@@ -3573,14 +3635,16 @@ def _run_cost_calibration_core(
             engine_config=engine_config,
             tinyvllm_dist_port=tinyvllm_dist_port,
             master_port=master_port,
+            allocate_retry_port_pair=allocate_shape_port_pair,
         )
 
-    used_probe_ports = set(probe_ports)
+    used_calibration_ports = set(probe_ports)
 
     def allocate_shape_port_pair() -> tuple[int, int]:
         while True:
             ports = allocate_port_pair()
-            if not used_probe_ports.intersection(ports):
+            if not used_calibration_ports.intersection(ports):
+                used_calibration_ports.update(ports)
                 return ports
 
     raw_rows = calibration.orchestrate_calibration_shapes(

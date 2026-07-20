@@ -1968,6 +1968,121 @@ def test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts():
         )
 
 
+def test_cost_calibration_shape_retries_port_collision_with_fresh_evidence():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        shape = {
+            "shape_id": "decode-short-d1",
+            "kind": "decode",
+            "prompt_class": "short",
+            "decode_count": 1,
+            "prefill_tokens": 0,
+            "warmup_iterations": 2,
+            "measured_iterations": 7,
+        }
+        engine_config = gate._cost_calibration_engine_config()
+        calls = []
+        retry_pairs = iter([(20_002, 20_003)])
+        original_run = gate.subprocess.run
+
+        def fake_run(command, **kwargs):
+            calls.append({
+                "command": list(command),
+                "dist_port": int(
+                    kwargs["env"]["TINYVLLM_DIST_PORT"]
+                ),
+                "master_port": int(
+                    kwargs["env"]["MASTER_PORT"]
+                ),
+            })
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="RuntimeError: EADDRINUSE",
+                )
+            output_path = Path(
+                command[command.index("--output-jsonl") + 1]
+            )
+            _write_jsonl(output_path, [{
+                **shape,
+                "iteration": iteration,
+                "duration_ns": 1_000_000 + iteration,
+            } for iteration in range(
+                shape["measured_iterations"]
+            )])
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="shape complete",
+                stderr="second-attempt-stderr",
+            )
+
+        gate.subprocess.run = fake_run
+        try:
+            rows = gate._launch_cost_calibration_shape(
+                run_dir=root,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                shape=shape,
+                engine_config=engine_config,
+                tinyvllm_dist_port=20_000,
+                master_port=20_001,
+                allocate_retry_port_pair=lambda: next(
+                    retry_pairs
+                ),
+            )
+        finally:
+            gate.subprocess.run = original_run
+
+        assert len(rows) == shape["measured_iterations"]
+        assert [
+            (call["dist_port"], call["master_port"])
+            for call in calls
+        ] == [
+            (20_000, 20_001),
+            (20_002, 20_003),
+        ]
+        shape_dir = root / "processes" / shape["shape_id"]
+        process = gate._read_json(shape_dir / "process.json")
+        assert [
+            (
+                attempt["tinyvllm_dist_port"],
+                attempt["master_port"],
+                attempt["returncode"],
+            )
+            for attempt in process["attempts"]
+        ] == [
+            (20_000, 20_001, 1),
+            (20_002, 20_003, 0),
+        ]
+        assert process["returncode"] == 0
+        assert process["tinyvllm_dist_port"] == 20_002
+        assert process["master_port"] == 20_003
+        assert (
+            shape_dir
+            / "attempts"
+            / "attempt-1"
+            / "stderr.log"
+        ).read_text() == "RuntimeError: EADDRINUSE"
+        assert (
+            shape_dir
+            / "attempts"
+            / "attempt-2"
+            / "stderr.log"
+        ).read_text() == "second-attempt-stderr"
+        assert all(
+            (
+                shape_dir
+                / "attempts"
+                / f"attempt-{attempt}"
+                / "process.json"
+            ).is_file()
+            for attempt in (1, 2)
+        )
+
+
 def test_workload_calibration_consumes_authoritative_not_provisional_envelope():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -3133,6 +3248,7 @@ def main():
     test_cli_exposes_separate_cost_and_workload_calibration_stages()
     test_predecessor_identity_binds_both_p4_and_p5()
     test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts()
+    test_cost_calibration_shape_retries_port_collision_with_fresh_evidence()
     test_workload_calibration_consumes_authoritative_not_provisional_envelope()
     test_environment_identity_ignores_run_local_fields()
     test_run_smoke_produces_p5_lifecycle_artifact()
