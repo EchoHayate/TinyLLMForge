@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,189 @@ def _expect_error(exception_type, message: str, callback):
         )
 
 
+class _IncrementingClock:
+    def __init__(self, step_ns: int = 100):
+        self.value = 0
+        self.step_ns = step_ns
+
+    def __call__(self):
+        self.value += self.step_ns
+        return self.value
+
+
+class _FakeShapeEngine:
+    def __init__(self, shape: dict):
+        self.shape = shape
+        self.last_step_observation = None
+        self.decode_request_count = 0
+        self.prefill_request_lengths = []
+        self.pending_prefill_lengths = []
+        self.next_seq_id = 0
+        self.decode_seq_ids = []
+
+    def add_request(self, prompt, sampling_params):
+        seq_id = self.next_seq_id
+        self.next_seq_id += 1
+        if sampling_params.max_tokens == 1:
+            prompt_length = len(prompt)
+            self.prefill_request_lengths.append(prompt_length)
+            self.pending_prefill_lengths.append((seq_id, prompt_length))
+        else:
+            self.decode_request_count += 1
+            self.decode_seq_ids.append(seq_id)
+
+    def step(self):
+        scheduled = [{
+            "seq_id": seq_id,
+            "is_decode": True,
+            "prefill_chunk_start": 0,
+            "prefill_chunk_end": 0,
+        } for seq_id in self.decode_seq_ids]
+        batch_kind = None
+        if self.pending_prefill_lengths:
+            batch_kind = "mixed"
+            scheduled.extend({
+                "seq_id": seq_id,
+                "is_decode": False,
+                "prefill_chunk_start": 0,
+                "prefill_chunk_end": prompt_length,
+            } for seq_id, prompt_length in self.pending_prefill_lengths)
+            self.pending_prefill_lengths.clear()
+        self.last_step_observation = {
+            "batch_kind": batch_kind,
+            "scheduled": scheduled,
+        }
+        return [], -len(self.decode_seq_ids)
+
+
+def _sampling_params_factory(*, max_tokens: int):
+    return SimpleNamespace(max_tokens=max_tokens)
+
+
+def test_execute_shape_uses_exact_engine_batch_and_excludes_warmup():
+    for shape in (
+        next(
+            row for row in _required_shapes()
+            if row["kind"] == "decode"
+            and row["context_class"] == "medium"
+            and row["decode_rows"] == 8
+        ),
+        next(
+            row for row in _required_shapes()
+            if row["kind"] == "mixed"
+            and row["prefill_tokens"] == 64
+            and row["prefill_rows"] == 4
+            and row["decode_rows"] == 32
+        ),
+    ):
+        engine = _FakeShapeEngine(shape)
+        synchronizations = []
+        rows = calibration.execute_calibration_shape(
+            shape,
+            engine=engine,
+            sampling_params_factory=_sampling_params_factory,
+            synchronize=lambda: synchronizations.append("sync"),
+            clock_ns=_IncrementingClock(),
+        )
+
+        assert engine.decode_request_count == shape["decode_rows"]
+        assert len(rows) == 7
+        assert [row["iteration"] for row in rows] == list(range(7))
+        assert all(row["duration_ns"] == 100 for row in rows)
+        assert all(
+            {
+                key: row[key]
+                for key in (
+                    "shape_id",
+                    "kind",
+                    "context_class",
+                    "decode_rows",
+                    "prefill_rows",
+                    "prefill_tokens",
+                    "warmup_iterations",
+                    "measured_iterations",
+                )
+            } == shape
+            for row in rows
+        )
+        assert len(synchronizations) == 2 * (
+            shape["warmup_iterations"]
+            + shape["measured_iterations"]
+        )
+        if shape["kind"] == "mixed":
+            measured_batches = (
+                shape["warmup_iterations"]
+                + shape["measured_iterations"]
+            )
+            assert len(engine.prefill_request_lengths) == (
+                measured_batches * shape["prefill_rows"]
+            )
+            assert all(
+                sum(engine.prefill_request_lengths[
+                    offset:offset + shape["prefill_rows"]
+                ]) == shape["prefill_tokens"]
+                for offset in range(
+                    0,
+                    len(engine.prefill_request_lengths),
+                    shape["prefill_rows"],
+                )
+            )
+        else:
+            assert engine.prefill_request_lengths == []
+
+
+def test_execute_shape_rejects_non_positive_synchronous_duration():
+    shape = next(
+        row for row in _required_shapes()
+        if row["kind"] == "decode"
+        and row["context_class"] == "short"
+        and row["decode_rows"] == 1
+    )
+    _expect_error(
+        ValueError,
+        "non-positive synchronous duration",
+        lambda: calibration.execute_calibration_shape(
+            shape,
+            engine=_FakeShapeEngine(shape),
+            sampling_params_factory=_sampling_params_factory,
+            synchronize=lambda: None,
+            clock_ns=lambda: 10,
+        ),
+    )
+
+
+def test_shape_orchestrator_uses_one_fresh_launch_and_port_pair_per_shape():
+    shapes = _required_shapes()[:4]
+    next_port = iter((19001, 19002, 19003, 19004, 19005, 19006, 19007, 19008))
+    launches = []
+
+    def allocate_port_pair():
+        return next(next_port), next(next_port)
+
+    def launch_shape(*, shape, tinyvllm_dist_port, master_port):
+        launches.append((
+            shape["shape_id"],
+            tinyvllm_dist_port,
+            master_port,
+        ))
+        return [{
+            **shape,
+            "iteration": iteration,
+            "duration_ns": 100 + iteration,
+        } for iteration in range(shape["measured_iterations"])]
+
+    rows = calibration.orchestrate_calibration_shapes(
+        shapes,
+        allocate_port_pair=allocate_port_pair,
+        launch_shape=launch_shape,
+    )
+    assert [row[0] for row in launches] == [
+        shape["shape_id"] for shape in shapes
+    ]
+    assert len({port for launch in launches for port in launch[1:]}) == 8
+    assert len(rows) == 4 * 7
+
+
 def test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product():
     shapes = _required_shapes()
     decode = [shape for shape in shapes if shape["kind"] == "decode"]
@@ -98,7 +282,23 @@ def test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product():
     assert {
         row["prefill_tokens"] for row in mixed
     } == {16, 32, 64, 128}
-    assert {row["decode_rows"] for row in mixed} == {1, 8, 32, 512}
+    assert all(
+        row["decode_rows"] + row["prefill_rows"] <= 512
+        for row in mixed
+    )
+    assert {
+        row["prefill_rows"]: max(
+            candidate["decode_rows"]
+            for candidate in mixed
+            if candidate["prefill_rows"] == row["prefill_rows"]
+        )
+        for row in mixed
+    } == {
+        1: 511,
+        2: 510,
+        4: 508,
+        8: 504,
+    }
     assert {
         (row["prefill_tokens"], row["prefill_rows"])
         for row in mixed
@@ -295,6 +495,9 @@ def test_gate_freezes_cost_calibration_artifact_and_source_contract():
 
 
 def main():
+    test_execute_shape_uses_exact_engine_batch_and_excludes_warmup()
+    test_execute_shape_rejects_non_positive_synchronous_duration()
+    test_shape_orchestrator_uses_one_fresh_launch_and_port_pair_per_shape()
     test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product()
     test_required_shapes_reject_unsupported_limits()
     test_nearest_rank_and_inflation_use_integer_contract()
