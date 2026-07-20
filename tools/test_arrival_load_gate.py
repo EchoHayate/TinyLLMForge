@@ -2542,6 +2542,14 @@ def test_p5_policy_counters_are_derived_from_scheduler_rows():
         "clock_invalid": False,
     }, {
         "selected_chunk_tokens": None,
+        "actual_prefill_tokens": 16,
+        "predicted_step_ns": None,
+        "actual_step_duration_ns": 4,
+        "demand_state_after": "active",
+        "suppression_reason": None,
+        "clock_invalid": False,
+    }, {
+        "selected_chunk_tokens": None,
         "actual_prefill_tokens": 0,
         "predicted_step_ns": None,
         "actual_step_duration_ns": 5,

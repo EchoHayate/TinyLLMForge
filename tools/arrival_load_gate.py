@@ -2108,9 +2108,12 @@ def summarize_p5_policy(scheduler_rows: list[dict]) -> dict:
     clock_invalid_count = 0
     for row in scheduler_rows:
         actual_prefill_tokens = row.get("actual_prefill_tokens", 0)
-        if actual_prefill_tokens > 0:
+        selected_chunk_tokens = row.get("selected_chunk_tokens")
+        if (
+            actual_prefill_tokens > 0
+            and selected_chunk_tokens is not None
+        ):
             mixed_decision_count += 1
-            selected_chunk_tokens = row.get("selected_chunk_tokens")
             key = str(selected_chunk_tokens)
             selected_chunk_histogram[key] = (
                 selected_chunk_histogram.get(key, 0) + 1
