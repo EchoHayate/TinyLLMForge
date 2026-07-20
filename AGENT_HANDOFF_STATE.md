@@ -2,6 +2,255 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-20 P4 SAM backlog-adaptive mixed-prefill canonical
+
+### 当前结论
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- 最终 source commit：
+  `6c416252d41b4ec8d9783fc9eb20a9fd7e2c22a2`
+- authoritative canonical：
+  `qwen3-06b-sam-p4-canonical-v2-20260720-142635`
+- 独立 verifier 最终分类：**NO_GO**，不是 `INCOMPLETE`
+- `correctness_failures=[]`、`structural_failures=[]`，但 P4 没有吞吐或
+  显存收益，并违反 decode-tail / fairness guards
+- P4 必须保持 disabled-by-default，不能 promotion，不能宣称
+  engine-wide speedup；`README.md` 按书面计划保持不变
+
+### 目标与实现
+
+本轮目标是把 production arrival-load 下的 backlog-adaptive
+mixed-prefill 做成 fail-closed 的 `P4` 候选，并用 source-bound
+`preflight → smoke → calibration → canonical → local independent verify`
+链路判断它是否真的让引擎更快或更省。
+
+P4 稳定名称为 `sam_backlog_adaptive_mixed_prefill`：
+
+- `waiting_depth >= 8` 连续两次后进入 `active`
+- `waiting_depth <= 2` 连续两次后停止新 admission
+- runnable decode 存在时最多连续两个 mixed step，然后强制一次
+  decode-only yield
+- mixed admission 在确认可保留 decode row 前不分配 prefill KV、不调用
+  `may_append()`、不改变队列所有权
+- adaptive 默认关闭，且与 always-on mixed-prefill、KV offload 互斥
+
+书面设计与计划：
+
+```text
+docs/superpowers/specs/2026-07-20-sam-adaptive-mixed-prefill-design.md
+docs/superpowers/plans/2026-07-20-sam-adaptive-mixed-prefill-implementation.md
+```
+
+实现提交：
+
+```text
+b9e4d0b feat(scheduler): add adaptive mixed configuration
+e08c52f feat(scheduler): add adaptive mixed state machine
+122d418 fix(scheduler): make mixed admission transactional
+0752016 feat(scheduler): route backlog adaptive mixed prefill
+9316292 feat(gate): add source-bound P4 policy matrix
+a9e8734 feat(verifier): reconstruct P4 scheduler state
+fc9e7c6 test(gate): bind P4 remote evidence chain
+6c41625 fix(eval): model adaptive draining normalization
+```
+
+### Final source-bound evidence
+
+```text
+host                 sitian@10.232.195.203
+python               /data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+model                /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B
+GPU                  NVIDIA A100 80GB PCIe
+source tree SHA256   9634f2362f5cbbcc7177dfbead6894878c257a149739b20c5395ee2a559521c4
+environment SHA256   2899270bf7c81f4ac940468bab240f9732ab20bc42b640e5c6affe15fe45c485
+workload SHA256      09e7a5a9839ec7397ca50259020e654e3a914b2ef55ae7d5783a91a0fd1094db
+remote exitcode      0
+independent exitcode 0
+classification       NO_GO
+```
+
+最终链路 run tags：
+
+```text
+preflight    qwen3-06b-sam-p4-preflight-v2-20260720-140858
+smoke        qwen3-06b-sam-p4-smoke-v2-20260720-140921
+calibration  qwen3-06b-sam-p4-calibration-v2-20260720-141438
+canonical    qwen3-06b-sam-p4-canonical-v2-20260720-142635
+```
+
+Calibration：
+
+```text
+lambda_ref_rps                    0.5625
+maximum stable throughput rps     0.6451410340387169
+```
+
+Canonical 结构审计：
+
+```text
+matrix                            P0/P3/P4 × 6 scenarios × 3 repetitions
+case rows                         54/54, all PASS
+unique case ids                   54/54
+request timeline rows             4,392
+scheduler trace rows              138,990
+memory trace rows                 138,990
+process port pairs                54/54 unique
+individual dynamic port values    108/108 unique
+artifact SHA-256                  13/13 matched
+exact/correct lifecycle failures  0
+structural failures               0
+```
+
+Authoritative artifacts：
+
+```text
+experiments/arrival_load/qwen3-06b-sam-p4-canonical-v2-20260720-142635/case_rows.jsonl
+experiments/arrival_load/qwen3-06b-sam-p4-canonical-v2-20260720-142635/run_manifest.json
+experiments/arrival_load/qwen3-06b-sam-p4-canonical-v2-20260720-142635/summary.json
+experiments/arrival_load/qwen3-06b-sam-p4-canonical-v2-20260720-142635/independent-verify/summary.json
+experiments/arrival_load/qwen3-06b-sam-p4-canonical-v2-20260720-142635/independent-verify/verify.exitcode
+```
+
+### P4 performance result
+
+以下均为同 scenario、同 repetition 的 `P4 / P0` 比值，由独立 verifier
+重算：
+
+| Metric | Median ratio | Worst ratio | Interpretation |
+|---|---:|---:|---|
+| request throughput | 0.999911 | 0.954690 | 无 aggregate throughput 收益，最坏低 4.53% |
+| p95 TTFT | 0.728248 | 2.164649 | aggregate TTFT 改善，但有严重离群 |
+| p99 TTFT | 0.852532 | 1.071182 | aggregate 改善 |
+| p95 ITL | 1.225369 | 12.327660 | median 已回退 22.54%，最坏 12.33x |
+| p99 ITL | 1.064474 | 5.889306 | 最坏违反 10% guard |
+| p99 E2E | 0.902166 | 1.072265 | aggregate 改善 |
+| maximum decode gap | 1.038452 | 7.641892 | 最坏违反 10% guard |
+| peak CUDA reserved | 1.000535 | 1.000817 | 无显存节省 |
+| peak KV bytes | 3.142857 | 5.142857 | KV footprint 显著增加 |
+
+P4 guard failures：
+
+```text
+p99_itl_ns regression exceeds 10%
+maximum_decode_gap_ns regression exceeds 10%
+service bucket p95 E2E regression exceeds 10%
+```
+
+因此 `benefit_path=null`。P4 的确降低 aggregate prefill/TTFT/E2E，但它
+没有吞吐或 memory benefit，并把部分 decode 请求推入严重 tail/fairness
+离群，不能推广。
+
+### Tail regression attribution
+
+最严重问题集中在 `mixed_service_fairness r0`：
+
+```text
+throughput ratio             0.954690
+p95 ITL ratio               12.327660
+p99 ITL ratio                5.889306
+maximum decode gap ratio     7.641892
+p95 TTFT ratio               2.164649
+```
+
+同一 case 的 service-bucket p95 E2E 离群：
+
+```text
+medium__short   38.662x   0.234 s -> 9.035 s
+long__short     28.908x   0.359 s -> 10.382 s
+short__long     16.291x   0.765 s -> 12.455 s
+long__long      14.096x   0.902 s -> 12.720 s
+medium__long     8.241x   1.729 s -> 14.245 s
+```
+
+`mixed_service_fairness r2` 仍有 `medium__short=1.610x` 和
+`long__short=1.115x` bucket 回退，说明问题不只是一项 metric 的计算噪声。
+此外 `long_prompt_pressure` 三个 repetition 的 p95 ITL 均约
+`3.77x–3.92x`，表明 mixed prefill 在长 prompt 压力下持续挤压 decode
+cadence。`burst` 虽有约 `1.99x–2.40x` throughput ratio 和显著 TTFT
+收益，但其三个 repetition 的 p95 ITL 仍为 `1.08x–1.28x`，不足以覆盖
+全 workload 的 tail guard。
+
+Trace 显示 P4 确实被执行而非 dormant：例如
+`mixed_service_fairness r0` 有 35 个 mixed prefill+decode step、16 个
+decode yield、76 个 decode fallback，最大 waiting depth 15。当前证据
+指向 controller 的 activation/admission 粒度和固定“两 mixed 后一
+yield”不足以保护 heterogeneous decode service，而不是状态机未触发。
+
+### Verifier fix history
+
+首个 canonical
+`qwen3-06b-sam-p4-canonical-20260720-104058` 的远端模型矩阵完成，但旧
+verifier 报：
+
+```text
+ValueError: adaptive state transition mismatch
+```
+
+根因是 verifier 漏建模 scheduler 在同一 scheduling decision 内把
+`draining + empty prefilling` 规范化为 `inactive` 的合法行为。通过 TDD
+新增 synthetic regression 并修复独立重建逻辑，提交 `6c41625`。由于
+verifier 也受 source identity 绑定，旧 canonical 没有被复用；修复后
+完整重跑 final-source v2 五阶段链路。
+
+### Prompt-to-artifact completion audit
+
+1. **Disabled-by-default/fail-closed config**：
+   `tinyvllm/config.py` 与 `tools/test_chunked_prefill.py` 覆盖五个字段、
+   阈值关系和 mixed/KV-offload 互斥。
+2. **Exact controller state machine**：
+   `tinyvllm/engine/scheduler.py` 与 dependency-light tests 覆盖
+   inactive/active/draining、enter/exit hysteresis、mixed-step cap 和
+   decode yield。
+3. **Transactional admission**：
+   scheduler tests 证明不能保证 decode row 时，不分配 prefill KV、不
+   `may_append()`、不转移 queue ownership。
+4. **P3/P4 shared execution path**：
+   P3 remains diagnostic；P4 是唯一可决定 top-level classification 的
+   candidate。
+5. **Exact canonical matrix**：
+   `run_manifest.json.expected_case_ids` 与 54 个 unique `case_rows`
+   一致，覆盖 6 scenarios × 3 policies × 3 repetitions。
+6. **Source/environment/workload binding**：
+   manifest、preflight、smoke identity 和 independent verifier 使用同一
+   三个 SHA-256；final source 是 clean commit `6c41625`。
+7. **Remote safety contract**：
+   只在指定 `sitian` host/runtime/model 运行；54 个 model process 使用
+   108 个互异动态端口；runner tests 禁止 rsync、远端 checkout mutation、
+   shared `/tmp` 清理和杀 unrelated processes。
+8. **Independent correctness/structure**：
+   verifier exit 0，54 cases 全 PASS，
+   `correctness_failures=[]`、`structural_failures=[]`。
+9. **Independent performance classification**：
+   verifier 从 timeline/scheduler/memory traces 重算 P4/P0 paired metrics，
+   得到 `NO_GO`、`benefit_path=null` 和三项 tail guards。
+10. **Claim and documentation boundary**：
+    本节记录负面结果；按计划只在 `GO` 时更新 README，因此 README 未改；
+    raw experiment artifacts 保持 untracked。
+
+本轮实现、source-bound 远程验证和审计均已完成，但产品性能目标没有达成：
+P4 是经过正确性验证的实验策略，不是可推广的性能优化。
+
+### 下一优化方向
+
+不要继续只调 enter/exit threshold 来包住这个 workload，也不要把 burst
+局部吞吐收益外推成 engine-wide speedup。下一轮应另建书面 spec 和 gate，
+优先验证 **decode-SLO-aware mixed admission**：
+
+1. admission 前读取 runnable decode 的 token age / recent decode gap；
+2. 只要任何 decode row 接近固定 gap budget，就立即 suppress mixed
+   admission，而不是等“两 mixed 后一 yield”；
+3. 对 short-output service bucket 设置更强保护，并把 long-prompt prefill
+   chunk budget 从固定 128 改为受 decode slack 约束；
+4. 先用现有 canonical workload 做 deterministic trace replay / counterfactual
+   gate，再运行全新 source-bound remote chain；
+5. promotion 仍要求 correctness/structure 全过、所有 tail guards ≤1.10，
+   且至少出现一个可重复的 throughput、latency 或 memory benefit path。
+
+若该方向仍没有吞吐/显存 benefit，应停止 scheduler-level mixed-prefill
+微调，转向更可能产生结构性收益的 kernel/CUDA Graph overhead 或
+quantization，并分别建立独立 gate。
+
 ## 2026-07-17 Speculation profitability router controlled canonical
 
 ### 当前结论
