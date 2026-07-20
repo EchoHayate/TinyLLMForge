@@ -628,6 +628,21 @@ def _download_tree(remote_path: str, local_path: Path) -> None:
     archive_path.unlink()
 
 
+def remove_downloaded_remote_case(remote_case: str) -> None:
+    remote_case = str(remote_case)
+    expected_prefix = "/tmp/tllm-cuda-graph-"
+    if (
+        not remote_case.startswith(expected_prefix)
+        or "/cases/" not in remote_case
+        or remote_case.endswith("/cases")
+    ):
+        raise ValueError(f"unsafe remote case path: {remote_case}")
+    _run_remote(
+        f"test -n {_quote(remote_case)} && "
+        f"rm -r -- {_quote(remote_case)}"
+    )
+
+
 def _case_spec_path(case_dir: Path) -> Path:
     return case_dir / "input" / "case_spec.json"
 
@@ -702,6 +717,7 @@ def _run_remote_case(
     _download_tree(remote_case, local_case.with_name(local_case.name + ".new"))
     shutil.rmtree(local_case)
     local_case.with_name(local_case.name + ".new").replace(local_case)
+    remove_downloaded_remote_case(remote_case)
     stderr_path = local_case / "output" / "launcher_stderr.txt"
     stderr = (
         stderr_path.read_text(encoding="utf-8", errors="replace")

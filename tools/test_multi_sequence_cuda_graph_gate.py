@@ -1426,6 +1426,31 @@ def test_remote_runner_promotes_source_evidence_artifacts():
         ).read_bytes() == b"snapshot"
 
 
+def test_remote_runner_removes_only_downloaded_remote_case():
+    runner = load_remote_runner()
+    commands = []
+    original = runner._run_remote
+    try:
+        runner._run_remote = lambda command, **kwargs: commands.append(
+            (command, kwargs)
+        )
+        runner.remove_downloaded_remote_case(
+            "/tmp/tllm-cuda-graph-run/cases/b2__uniform-short__eager__r0"
+        )
+    finally:
+        runner._run_remote = original
+    assert len(commands) == 1
+    command, kwargs = commands[0]
+    assert kwargs == {}
+    assert command == (
+        "test -n "
+        "/tmp/tllm-cuda-graph-run/cases/b2__uniform-short__eager__r0 "
+        "&& rm -r -- "
+        "/tmp/tllm-cuda-graph-run/cases/b2__uniform-short__eager__r0"
+    )
+    assert command != "rm -r -- /tmp"
+
+
 def test_remote_runner_orders_eager_before_matching_graph_cases():
     runner = load_remote_runner()
     cases = runner.build_smoke_cases()
@@ -1581,6 +1606,7 @@ if __name__ == "__main__":
         test_remote_runner_reallocates_duplicate_ephemeral_ports,
         test_remote_runner_exposes_resume_and_verifier_python_options,
         test_remote_runner_promotes_source_evidence_artifacts,
+        test_remote_runner_removes_only_downloaded_remote_case,
         test_remote_runner_orders_eager_before_matching_graph_cases,
         test_remote_runner_requires_eager_reference_before_graph_case,
         test_remote_runner_resume_requires_identity_and_artifact_hashes,
