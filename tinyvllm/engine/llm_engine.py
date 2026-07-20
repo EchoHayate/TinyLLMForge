@@ -38,6 +38,14 @@ class LLMEngine:
         self.last_scheduled_seqs = []
         self.last_step_observation = None
         atexit.register(self.exit)
+
+    def capacity_snapshot(self):
+        return {
+            "num_kvcache_blocks": int(
+                self.model_runner.config.num_kvcache_blocks
+            ),
+            "block_size": int(self.scheduler.block_manager.block_size),
+        }
         
     def exit(self):
         self.model_runner.call("exit")

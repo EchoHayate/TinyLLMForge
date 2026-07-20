@@ -967,6 +967,10 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
             **cost_contract,
         }
         _write_json(cost_dir / "run_manifest.json", cost_manifest)
+        _write_json(
+            cost_dir / "cost_calibration_capacity.json",
+            {"num_kvcache_blocks": 448, "block_size": 256},
+        )
         _write_jsonl(
             cost_dir / "cost_calibration_manifest.jsonl",
             [{"shape_id": "shape"}],
@@ -1210,6 +1214,10 @@ def test_run_canonical_remote_rejects_tampered_frozen_workload():
         _write_json(
             cost_dir / "run_manifest.json",
             cost_manifest,
+        )
+        _write_json(
+            cost_dir / "cost_calibration_capacity.json",
+            {"num_kvcache_blocks": 448, "block_size": 256},
         )
         _write_jsonl(
             cost_dir / "cost_calibration_manifest.jsonl",
@@ -1545,6 +1553,10 @@ def _finalization_fixture(root: Path) -> dict:
         "status": "PASS",
         "purpose": "authoritative",
     })
+    _write_json(root / "cost_calibration_capacity.json", {
+        "num_kvcache_blocks": 448,
+        "block_size": 256,
+    })
     _write_jsonl(root / "workload_manifest.jsonl", workload_rows)
     _write_json(root / "source_evidence.json", {
         "schema_version": 1,
@@ -1828,6 +1840,31 @@ def test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts():
             "_launch_cost_calibration_shape",
             None,
         )
+        original_probe = getattr(
+            gate,
+            "_launch_cost_capacity_probe",
+            None,
+        )
+        probe = {}
+
+        def fake_probe(**kwargs):
+            probe.update({
+                "tinyvllm_dist_port": kwargs[
+                    "tinyvllm_dist_port"
+                ],
+                "master_port": kwargs["master_port"],
+            })
+            calibration = gate._load_local_module(
+                "arrival_load_cost_calibration_for_test",
+                gate._REPO_ROOT
+                / "tools"
+                / "arrival_load_cost_calibration.py",
+            )
+            return calibration.build_capacity_evidence(
+                base_engine_config=kwargs["engine_config"],
+                num_kvcache_blocks=448,
+                block_size=256,
+            )
 
         def fake_launch(**kwargs):
             shape = kwargs["shape"]
@@ -1855,6 +1892,7 @@ def test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts():
         gate.allocate_port_pair = (
             lambda: (next(next_port), next(next_port))
         )
+        gate._launch_cost_capacity_probe = fake_probe
         gate._launch_cost_calibration_shape = fake_launch
         try:
             result = gate.run_cost_calibration_remote(
@@ -1872,6 +1910,10 @@ def test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts():
                 del gate._launch_cost_calibration_shape
             else:
                 gate._launch_cost_calibration_shape = original_launch
+            if original_probe is None:
+                del gate._launch_cost_capacity_probe
+            else:
+                gate._launch_cost_capacity_probe = original_probe
 
         assert result["status"] == "PASS"
         assert result["purpose"] == "authoritative"
@@ -1884,6 +1926,17 @@ def test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts():
                 launch["master_port"],
             )
         }) == 80
+        assert not {
+            probe["tinyvllm_dist_port"],
+            probe["master_port"],
+        }.intersection({
+            port
+            for launch in launches
+            for port in (
+                launch["tinyvllm_dist_port"],
+                launch["master_port"],
+            )
+        })
         assert all(
             (run_dir / filename).is_file()
             for filename in gate.COST_CALIBRATION_ARTIFACT_FILES

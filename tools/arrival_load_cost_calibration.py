@@ -33,6 +33,34 @@ def canonical_json_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def build_capacity_evidence(
+    *,
+    base_engine_config: dict,
+    num_kvcache_blocks: int,
+    block_size: int,
+) -> dict:
+    if (
+        not isinstance(base_engine_config, dict)
+        or not _is_int(num_kvcache_blocks)
+        or not _is_int(block_size)
+        or num_kvcache_blocks <= 0
+        or block_size <= 0
+    ):
+        raise ValueError("invalid calibration capacity")
+    return {
+        "schema_version": 1,
+        "base_engine_config_sha256": canonical_json_sha256(
+            base_engine_config
+        ),
+        "num_kvcache_blocks": num_kvcache_blocks,
+        "block_size": block_size,
+        "resolved_engine_config": {
+            **base_engine_config,
+            "num_kvcache_blocks": num_kvcache_blocks,
+        },
+    }
+
+
 def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -41,20 +69,36 @@ def build_required_shapes(
     *,
     max_num_seqs: int,
     max_prefill_tokens: int,
+    num_kvcache_blocks: int,
+    block_size: int,
 ) -> list[dict]:
     if (
         not _is_int(max_num_seqs)
         or not _is_int(max_prefill_tokens)
+        or not _is_int(num_kvcache_blocks)
+        or not _is_int(block_size)
         or max_num_seqs <= 0
+        or num_kvcache_blocks <= 0
+        or block_size <= 0
         or max_prefill_tokens != CANONICAL_MAX_PREFILL_TOKENS
     ):
         raise ValueError("unsupported P5 calibration limits")
-    decode_counts = sorted({
-        count for count in (1, 8, 32, max_num_seqs)
-        if count <= max_num_seqs
-    })
     shapes = []
     for context_class in ("short", "medium", "long"):
+        context_tokens = DECODE_CONTEXT_TOKENS[context_class]
+        blocks_per_decode_row = (
+            context_tokens + 1 + block_size - 1
+        ) // block_size
+        largest_feasible = min(
+            max_num_seqs,
+            num_kvcache_blocks // blocks_per_decode_row,
+        )
+        if largest_feasible < 32:
+            raise ValueError("infeasible required calibration shape")
+        decode_counts = sorted({
+            count for count in (1, 8, 32, largest_feasible)
+            if count <= largest_feasible
+        })
         for decode_rows in decode_counts:
             shapes.append({
                 "shape_id": f"decode-{context_class}-d{decode_rows}",
@@ -72,15 +116,38 @@ def build_required_shapes(
             min(8, prefill_tokens // 16),
         })
         for row_count in prefill_rows:
+            decode_blocks = (
+                DECODE_CONTEXT_TOKENS["medium"]
+                + 1
+                + block_size
+                - 1
+            ) // block_size
+            prefill_blocks = sum(
+                (length + block_size - 1) // block_size
+                for length in _prefill_row_lengths(
+                    prefill_tokens=prefill_tokens,
+                    prefill_rows=row_count,
+                )
+            )
+            largest_feasible = min(
+                max_num_seqs - row_count,
+                (
+                    num_kvcache_blocks - prefill_blocks
+                ) // decode_blocks,
+            )
+            if largest_feasible < 32:
+                raise ValueError(
+                    "infeasible required calibration shape"
+                )
             mixed_decode_counts = sorted({
                 count
                 for count in (
                     1,
                     8,
                     32,
-                    max_num_seqs - row_count,
+                    largest_feasible,
                 )
-                if 0 < count <= max_num_seqs - row_count
+                if 0 < count <= largest_feasible
             })
             for decode_rows in mixed_decode_counts:
                 shapes.append({
@@ -383,13 +450,10 @@ def orchestrate_calibration_shapes(
 def recompute_cost_envelope(
     rows: list[dict],
     *,
-    required_shapes: list[dict] | None = None,
+    required_shapes: list[dict],
 ) -> dict:
-    if required_shapes is None:
-        required_shapes = build_required_shapes(
-            max_num_seqs=CANONICAL_MAX_NUM_SEQS,
-            max_prefill_tokens=CANONICAL_MAX_PREFILL_TOKENS,
-        )
+    if not isinstance(required_shapes, list) or not required_shapes:
+        raise ValueError("calibration requires shapes")
     expected_by_id = {}
     for shape in required_shapes:
         contract = _shape_contract(shape)
@@ -556,23 +620,71 @@ def run_shape_process(
     )
 
 
+def run_capacity_process(
+    *,
+    model_path: str,
+    engine_config: dict,
+) -> dict:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from tinyvllm import LLM
+
+    engine = LLM(str(model_path), **dict(engine_config))
+    capacity = engine.capacity_snapshot()
+    return build_capacity_evidence(
+        base_engine_config=engine_config,
+        num_kvcache_blocks=capacity["num_kvcache_blocks"],
+        block_size=capacity["block_size"],
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Execute one isolated P5 cost-calibration shape",
+        description="Execute isolated P5 cost-calibration work",
     )
-    parser.add_argument("--shape-json", type=Path, required=True)
+    parser.add_argument("--shape-json", type=Path)
     parser.add_argument("--engine-config-json", type=Path, required=True)
     parser.add_argument("--model-path", required=True)
-    parser.add_argument("--output-jsonl", type=Path, required=True)
+    parser.add_argument("--output-jsonl", type=Path)
+    parser.add_argument("--capacity-output-json", type=Path)
     return parser
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    shape = json.loads(args.shape_json.read_text(encoding="utf-8"))
     engine_config = json.loads(
         args.engine_config_json.read_text(encoding="utf-8")
     )
+    if args.capacity_output_json is not None:
+        if args.shape_json is not None or args.output_jsonl is not None:
+            raise ValueError("capacity probe cannot execute shape")
+        evidence = run_capacity_process(
+            model_path=args.model_path,
+            engine_config=engine_config,
+        )
+        args.capacity_output_json.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        temporary = args.capacity_output_json.with_name(
+            args.capacity_output_json.name + ".tmp"
+        )
+        temporary.write_text(
+            json.dumps(
+                evidence,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(args.capacity_output_json)
+        return 0
+    if args.shape_json is None or args.output_jsonl is None:
+        raise ValueError("shape execution requires shape and output")
+    shape = json.loads(args.shape_json.read_text(encoding="utf-8"))
     rows = run_shape_process(
         shape=shape,
         model_path=args.model_path,

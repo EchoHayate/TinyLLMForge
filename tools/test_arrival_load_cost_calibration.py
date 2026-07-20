@@ -44,6 +44,8 @@ def _required_shapes():
     return calibration.build_required_shapes(
         max_num_seqs=512,
         max_prefill_tokens=128,
+        num_kvcache_blocks=448,
+        block_size=256,
     )
 
 
@@ -275,7 +277,18 @@ def test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product():
     shapes = _required_shapes()
     decode = [shape for shape in shapes if shape["kind"] == "decode"]
     mixed = [shape for shape in shapes if shape["kind"] == "mixed"]
-    assert {row["decode_rows"] for row in decode} == {1, 8, 32, 512}
+    assert {
+        row["context_class"]: max(
+            candidate["decode_rows"]
+            for candidate in decode
+            if candidate["context_class"] == row["context_class"]
+        )
+        for row in decode
+    } == {
+        "short": 448,
+        "medium": 149,
+        "long": 64,
+    }
     assert {
         row["context_class"] for row in decode
     } == {"short", "medium", "long"}
@@ -294,10 +307,10 @@ def test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product():
         )
         for row in mixed
     } == {
-        1: 511,
-        2: 510,
-        4: 508,
-        8: 504,
+        1: 149,
+        2: 148,
+        4: 148,
+        8: 146,
     }
     assert {
         (row["prefill_tokens"], row["prefill_rows"])
@@ -317,11 +330,20 @@ def test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product():
 
 
 def test_required_shapes_reject_unsupported_limits():
-    for max_num_seqs, max_prefill_tokens in (
-        (0, 128),
-        (512, 64),
-        (True, 128),
-        (512, True),
+    for (
+        max_num_seqs,
+        max_prefill_tokens,
+        num_kvcache_blocks,
+        block_size,
+    ) in (
+        (0, 128, 448, 256),
+        (512, 64, 448, 256),
+        (True, 128, 448, 256),
+        (512, True, 448, 256),
+        (512, 128, 0, 256),
+        (512, 128, True, 256),
+        (512, 128, 448, 0),
+        (512, 128, 448, True),
     ):
         _expect_error(
             ValueError,
@@ -331,9 +353,24 @@ def test_required_shapes_reject_unsupported_limits():
                 calibration.build_required_shapes(
                     max_num_seqs=max_num_seqs,
                     max_prefill_tokens=max_prefill_tokens,
+                    num_kvcache_blocks=num_kvcache_blocks,
+                    block_size=block_size,
                 )
             ),
         )
+
+
+def test_required_shapes_reject_infeasible_required_decode_counts():
+    _expect_error(
+        ValueError,
+        "infeasible required calibration shape",
+        lambda: calibration.build_required_shapes(
+            max_num_seqs=512,
+            max_prefill_tokens=128,
+            num_kvcache_blocks=31,
+            block_size=256,
+        ),
+    )
 
 
 def test_nearest_rank_and_inflation_use_integer_contract():
@@ -344,7 +381,10 @@ def test_nearest_rank_and_inflation_use_integer_contract():
 
 
 def test_integer_envelope_uses_observed_max_and_25_percent_ceiling():
-    result = calibration.recompute_cost_envelope(_complete_rows())
+    result = calibration.recompute_cost_envelope(
+        _complete_rows(),
+        required_shapes=_required_shapes(),
+    )
     decode = [
         row for row in result["shape_summaries"]
         if row["kind"] == "decode"
@@ -421,7 +461,10 @@ def test_calibration_rejects_missing_short_or_invalid_rows():
         _expect_error(
             ValueError,
             message,
-            lambda rows=rows: calibration.recompute_cost_envelope(rows),
+            lambda rows=rows: calibration.recompute_cost_envelope(
+                rows,
+                required_shapes=_required_shapes(),
+            ),
         )
 
 
@@ -445,7 +488,10 @@ def test_calibration_rejects_int64_overflow():
         _expect_error(
             OverflowError,
             "cost envelope overflows int64",
-            lambda: calibration.recompute_cost_envelope(rows),
+            lambda: calibration.recompute_cost_envelope(
+                rows,
+                required_shapes=_required_shapes(),
+            ),
         )
     finally:
         calibration.INT64_MAX = original_limit
@@ -454,7 +500,10 @@ def test_calibration_rejects_int64_overflow():
 def test_summary_binds_source_environment_engine_shapes_and_raw_rows():
     shapes = _required_shapes()
     rows = _complete_rows()
-    envelope = calibration.recompute_cost_envelope(rows)
+    envelope = calibration.recompute_cost_envelope(
+        rows,
+        required_shapes=shapes,
+    )
     summary = calibration.build_cost_calibration_summary(
         source_tree_sha256="a" * 64,
         environment_sha256="b" * 64,
@@ -484,6 +533,7 @@ def test_summary_binds_source_environment_engine_shapes_and_raw_rows():
 def test_gate_freezes_cost_calibration_artifact_and_source_contract():
     gate = _load_gate()
     assert gate.COST_CALIBRATION_ARTIFACT_FILES == (
+        "cost_calibration_capacity.json",
         "cost_calibration_manifest.jsonl",
         "cost_calibration_rows.jsonl",
         "cost_calibration_summary.json",
@@ -494,18 +544,59 @@ def test_gate_freezes_cost_calibration_artifact_and_source_contract():
     }.issubset(set(gate.OWNED_SOURCE_ROOTS))
 
 
+def test_capacity_evidence_binds_base_config_and_resolved_capacity():
+    base_config = {
+        "max_num_seqs": 512,
+        "max_num_prefill_tokens_per_step": 128,
+    }
+    evidence = calibration.build_capacity_evidence(
+        base_engine_config=base_config,
+        num_kvcache_blocks=448,
+        block_size=256,
+    )
+    assert evidence == {
+        "schema_version": 1,
+        "base_engine_config_sha256":
+            calibration.canonical_json_sha256(base_config),
+        "num_kvcache_blocks": 448,
+        "block_size": 256,
+        "resolved_engine_config": {
+            **base_config,
+            "num_kvcache_blocks": 448,
+        },
+    }
+    for num_kvcache_blocks, block_size in (
+        (0, 256),
+        (True, 256),
+        (448, 0),
+        (448, True),
+    ):
+        _expect_error(
+            ValueError,
+            "invalid calibration capacity",
+            lambda num_kvcache_blocks=num_kvcache_blocks,
+            block_size=block_size: calibration.build_capacity_evidence(
+                base_engine_config=base_config,
+                num_kvcache_blocks=num_kvcache_blocks,
+                block_size=block_size,
+            ),
+        )
+
+
 def main():
     test_execute_shape_uses_exact_engine_batch_and_excludes_warmup()
     test_execute_shape_rejects_non_positive_synchronous_duration()
     test_shape_orchestrator_uses_one_fresh_launch_and_port_pair_per_shape()
     test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product()
     test_required_shapes_reject_unsupported_limits()
+    test_required_shapes_reject_infeasible_required_decode_counts()
     test_nearest_rank_and_inflation_use_integer_contract()
     test_integer_envelope_uses_observed_max_and_25_percent_ceiling()
     test_calibration_rejects_missing_short_or_invalid_rows()
     test_calibration_rejects_int64_overflow()
     test_summary_binds_source_environment_engine_shapes_and_raw_rows()
     test_gate_freezes_cost_calibration_artifact_and_source_contract()
+    test_capacity_evidence_binds_base_config_and_resolved_capacity()
     print("arrival load cost calibration tests passed")
 
 

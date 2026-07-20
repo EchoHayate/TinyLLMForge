@@ -15,6 +15,7 @@ from pathlib import Path
 
 REQUIRED_FILES = (
     "run_manifest.json",
+    "cost_calibration_capacity.json",
     "cost_calibration_manifest.jsonl",
     "cost_calibration_rows.jsonl",
     "cost_calibration_summary.json",
@@ -249,6 +250,30 @@ def _verify_cost_calibration(
     p5_config: dict,
 ) -> dict:
     calibration = _load_cost_calibration_module()
+    capacity = _read_json(
+        run_dir / "cost_calibration_capacity.json"
+    )
+    expected_base_sha256 = _canonical_identity(
+        EXPECTED_COST_ENGINE_CONFIG
+    )
+    if (
+        capacity.get("schema_version") != 1
+        or capacity.get("base_engine_config_sha256")
+        != expected_base_sha256
+    ):
+        raise ValueError(
+            "cost calibration capacity identity mismatch"
+        )
+    num_kvcache_blocks = capacity.get("num_kvcache_blocks")
+    block_size = capacity.get("block_size")
+    expected_engine_config = {
+        **EXPECTED_COST_ENGINE_CONFIG,
+        "num_kvcache_blocks": num_kvcache_blocks,
+    }
+    if capacity.get("resolved_engine_config") != expected_engine_config:
+        raise ValueError(
+            "cost calibration resolved engine mismatch"
+        )
     required_shapes = _read_jsonl(
         run_dir / "cost_calibration_manifest.jsonl"
     )
@@ -257,6 +282,8 @@ def _verify_cost_calibration(
         max_prefill_tokens=EXPECTED_COST_ENGINE_CONFIG[
             "max_num_prefill_tokens_per_step"
         ],
+        num_kvcache_blocks=num_kvcache_blocks,
+        block_size=block_size,
     )
     if required_shapes != expected_shapes:
         raise ValueError("cost calibration shape manifest mismatch")
@@ -266,7 +293,7 @@ def _verify_cost_calibration(
     source_sha256 = manifest.get("source_tree_sha256")
     environment_sha256 = manifest.get("environment_sha256")
     engine_config_sha256 = _canonical_identity(
-        EXPECTED_COST_ENGINE_CONFIG
+        expected_engine_config
     )
     recomputed = calibration.build_cost_calibration_summary(
         source_tree_sha256=source_sha256,

@@ -900,9 +900,16 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
         archive.add(source_root, arcname="source")
 
     calibration = verifier._load_cost_calibration_module()
+    cost_capacity = calibration.build_capacity_evidence(
+        base_engine_config=verifier.EXPECTED_COST_ENGINE_CONFIG,
+        num_kvcache_blocks=448,
+        block_size=256,
+    )
     shapes = calibration.build_required_shapes(
         max_num_seqs=512,
         max_prefill_tokens=128,
+        num_kvcache_blocks=cost_capacity["num_kvcache_blocks"],
+        block_size=cost_capacity["block_size"],
     )
     cost_rows = []
     for shape_index, shape in enumerate(shapes):
@@ -921,12 +928,16 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
         source_tree_sha256=source_tree_sha256,
         environment_sha256=environment_sha256,
         engine_config_sha256=verifier._canonical_identity(
-            verifier.EXPECTED_COST_ENGINE_CONFIG
+            cost_capacity["resolved_engine_config"]
         ),
         required_shapes=shapes,
         raw_rows=cost_rows,
     )
     cost_summary["purpose"] = "authoritative"
+    _write_json(
+        root / "cost_calibration_capacity.json",
+        cost_capacity,
+    )
     _write_jsonl(root / "cost_calibration_manifest.jsonl", shapes)
     _write_jsonl(root / "cost_calibration_rows.jsonl", cost_rows)
     _write_json(root / "cost_calibration_summary.json", cost_summary)
@@ -1635,6 +1646,30 @@ def test_verifier_rejects_raw_cost_calibration_tamper():
         temporary.cleanup()
 
 
+def test_verifier_rejects_capacity_calibration_tamper():
+    temporary, root = _complete_artifact()
+    try:
+        capacity = json.loads(
+            (root / "cost_calibration_capacity.json").read_text()
+        )
+        capacity["num_kvcache_blocks"] += 1
+        _write_json(
+            root / "cost_calibration_capacity.json",
+            capacity,
+        )
+        _refresh_hash(root, "cost_calibration_capacity.json")
+        try:
+            verifier.verify_run(root, write_output=False)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                "capacity calibration tamper accepted"
+            )
+    finally:
+        temporary.cleanup()
+
+
 def test_verifier_rejects_source_environment_and_workload_identity_tamper():
     def tamper_source(root):
         manifest = json.loads((root / "run_manifest.json").read_text())
@@ -1707,6 +1742,7 @@ def main():
     test_verifier_rejects_rehashed_source_output_and_scheduler_tampering()
     test_verifier_rejects_each_p5_decision_field_tamper()
     test_verifier_rejects_raw_cost_calibration_tamper()
+    test_verifier_rejects_capacity_calibration_tamper()
     test_verifier_rejects_source_environment_and_workload_identity_tamper()
     test_verifier_rejects_p5_policy_identity_drift()
     print("arrival load verifier tests passed")

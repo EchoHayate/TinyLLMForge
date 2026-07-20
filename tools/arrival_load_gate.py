@@ -48,6 +48,7 @@ IGNORED_UNTRACKED_PREFIXES = (
 )
 
 COST_CALIBRATION_ARTIFACT_FILES = (
+    "cost_calibration_capacity.json",
     "cost_calibration_manifest.jsonl",
     "cost_calibration_rows.jsonl",
     "cost_calibration_summary.json",
@@ -3328,6 +3329,76 @@ def _launch_cost_calibration_shape(
     return _read_jsonl(output_path)
 
 
+def _launch_cost_capacity_probe(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    engine_config: dict,
+    tinyvllm_dist_port: int,
+    master_port: int,
+) -> dict:
+    probe_dir = Path(run_dir) / "capacity_probe"
+    probe_dir.mkdir(parents=True, exist_ok=False)
+    engine_config_path = probe_dir / "engine_config.json"
+    output_path = probe_dir / "capacity.json"
+    _write_json(engine_config_path, engine_config)
+    command = [
+        str(python_bin),
+        str(
+            _REPO_ROOT
+            / "tools"
+            / "arrival_load_cost_calibration.py"
+        ),
+        "--engine-config-json",
+        str(engine_config_path),
+        "--model-path",
+        str(model_path),
+        "--capacity-output-json",
+        str(output_path),
+    ]
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONPATH"] = str(_REPO_ROOT)
+    environment["TINYVLLM_DIST_PORT"] = str(
+        tinyvllm_dist_port
+    )
+    environment["MASTER_PORT"] = str(master_port)
+    started_ns = time.time_ns()
+    completed = subprocess.run(
+        command,
+        cwd=_REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    finished_ns = time.time_ns()
+    (probe_dir / "stdout.log").write_text(
+        completed.stdout,
+        encoding="utf-8",
+    )
+    (probe_dir / "stderr.log").write_text(
+        completed.stderr,
+        encoding="utf-8",
+    )
+    _write_json(probe_dir / "process.json", {
+        "command": command,
+        "start_time_ns": started_ns,
+        "end_time_ns": finished_ns,
+        "returncode": int(completed.returncode),
+        "tinyvllm_dist_port": tinyvllm_dist_port,
+        "master_port": master_port,
+    })
+    if completed.returncode != 0:
+        raise RuntimeError("cost calibration capacity probe failed")
+    if not output_path.is_file():
+        raise ValueError(
+            "cost calibration capacity probe missing output"
+        )
+    return _read_json(output_path)
+
+
 def _validate_smoke_for_cost_calibration(
     *,
     smoke_manifest: dict,
@@ -3432,13 +3503,56 @@ def _run_cost_calibration_core(
     environment_sha256 = environment_identity_sha256(
         environment_evidence
     )
-    engine_config = _cost_calibration_engine_config()
+    base_engine_config = _cost_calibration_engine_config()
+    probe_ports = allocate_port_pair()
+    capacity = _launch_cost_capacity_probe(
+        run_dir=run_dir,
+        python_bin=python_bin,
+        model_path=model_path,
+        engine_config=base_engine_config,
+        tinyvllm_dist_port=probe_ports[0],
+        master_port=probe_ports[1],
+    )
+    expected_base_sha256 = canonical_json_sha256(
+        base_engine_config
+    )
+    if (
+        capacity.get("schema_version") != 1
+        or capacity.get("base_engine_config_sha256")
+        != expected_base_sha256
+        or not isinstance(
+            capacity.get("resolved_engine_config"),
+            dict,
+        )
+    ):
+        raise ValueError(
+            "cost calibration capacity evidence mismatch"
+        )
+    engine_config = capacity["resolved_engine_config"]
+    if (
+        engine_config
+        != {
+            **base_engine_config,
+            "num_kvcache_blocks": capacity.get(
+                "num_kvcache_blocks"
+            ),
+        }
+    ):
+        raise ValueError(
+            "cost calibration resolved engine mismatch"
+        )
+    _write_json(
+        run_dir / "cost_calibration_capacity.json",
+        capacity,
+    )
     engine_config_sha256 = canonical_json_sha256(engine_config)
     required_shapes = calibration.build_required_shapes(
         max_num_seqs=engine_config["max_num_seqs"],
         max_prefill_tokens=engine_config[
             "max_num_prefill_tokens_per_step"
         ],
+        num_kvcache_blocks=capacity["num_kvcache_blocks"],
+        block_size=capacity["block_size"],
     )
     _write_jsonl(
         run_dir / "cost_calibration_manifest.jsonl",
@@ -3461,9 +3575,17 @@ def _run_cost_calibration_core(
             master_port=master_port,
         )
 
+    used_probe_ports = set(probe_ports)
+
+    def allocate_shape_port_pair() -> tuple[int, int]:
+        while True:
+            ports = allocate_port_pair()
+            if not used_probe_ports.intersection(ports):
+                return ports
+
     raw_rows = calibration.orchestrate_calibration_shapes(
         required_shapes,
-        allocate_port_pair=allocate_port_pair,
+        allocate_port_pair=allocate_shape_port_pair,
         launch_shape=launch_shape,
     )
     _write_jsonl(
