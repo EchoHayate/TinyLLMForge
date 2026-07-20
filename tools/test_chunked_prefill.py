@@ -77,6 +77,43 @@ def load_class_method(relative_path: str, class_name: str, method_name: str):
     return namespace[method_name]
 
 
+def load_function(relative_path: str, function_name: str):
+    path = os.path.join(_REPO_ROOT, relative_path)
+    tree = ast.parse(open(path).read(), filename=path)
+    function_node = next((
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == function_name
+    ), None)
+    assert function_node is not None, (
+        f"{function_name} is missing from {relative_path}"
+    )
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(
+        body=[function_node],
+        type_ignores=[],
+    )), path, "exec"), namespace)
+    return namespace[function_name]
+
+
+def test_explicit_kv_capacity_is_pinned_and_fails_closed():
+    resolve = load_function(
+        "tinyvllm/engine/model_runner.py",
+        "_resolve_kv_cache_blocks",
+    )
+    assert resolve(-1, 1819) == 1819
+    assert resolve(1819, 2075) == 1819
+    assert resolve(1819, 1819) == 1819
+    try:
+        resolve(2075, 1819)
+    except ValueError as exc:
+        assert "exceeds available KV cache capacity" in str(exc)
+    else:
+        raise AssertionError(
+            "explicit KV capacity above auto capacity was accepted"
+        )
+
+
 def test_adaptive_mixed_config_defaults_and_fail_closed_contract():
     source = open(
         os.path.join(_REPO_ROOT, "tinyvllm/config.py"),
@@ -2859,6 +2896,7 @@ def test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows():
 
 
 def main():
+    test_explicit_kv_capacity_is_pinned_and_fails_closed()
     test_adaptive_mixed_config_defaults_and_fail_closed_contract()
     test_adaptive_mixed_invalid_configurations_fail_before_model_start()
     test_slo_mixed_config_defaults_and_fail_closed_contract()

@@ -27,6 +27,21 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
 
+def _resolve_kv_cache_blocks(
+    requested_blocks: int,
+    auto_blocks: int,
+) -> int:
+    if requested_blocks == -1:
+        return auto_blocks
+    if requested_blocks > auto_blocks:
+        raise ValueError(
+            "explicit num_kvcache_blocks exceeds available KV cache "
+            f"capacity: requested={requested_blocks}, "
+            f"available={auto_blocks}"
+        )
+    return requested_blocks
+
+
 class KVOffloadMVP0:
     """Minimal logical-block -> GPU-slot KV offload prototype.
 
@@ -800,7 +815,10 @@ class ModelRunner:
             config.num_kvcache_blocks = logical_nb
             nb = gpu_nb
         else:
-            config.num_kvcache_blocks = auto_num_blocks
+            config.num_kvcache_blocks = _resolve_kv_cache_blocks(
+                config.num_kvcache_blocks,
+                auto_num_blocks,
+            )
             nb = config.num_kvcache_blocks
         L = hf_config.num_hidden_layers
         if kvq_bits == 0:
