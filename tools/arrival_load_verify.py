@@ -232,11 +232,20 @@ def _nearest_rank(values: list[float], percentile: float) -> float:
 
 
 def _verify_hashes(run_dir: Path) -> None:
-    for name in REQUIRED_FILES:
+    manifest = _read_json(run_dir / "run_manifest.json")
+    required_files = set(REQUIRED_FILES)
+    if manifest.get("run_type") == "smoke":
+        required_files -= {
+            "cost_calibration_capacity.json",
+            "cost_calibration_manifest.jsonl",
+            "cost_calibration_rows.jsonl",
+            "cost_calibration_summary.json",
+        }
+    for name in required_files:
         if not (run_dir / name).is_file():
             raise ValueError(f"missing artifact: {name}")
     hashes = _read_json(run_dir / "artifact_hashes.json")
-    expected_names = set(REQUIRED_FILES) - {"artifact_hashes.json"}
+    expected_names = required_files - {"artifact_hashes.json"}
     if set(hashes) != expected_names:
         raise ValueError("artifact hash manifest path set mismatch")
     for name in sorted(expected_names):
@@ -248,6 +257,8 @@ def _verify_cost_calibration(
     run_dir: Path,
     manifest: dict,
     p5_config: dict,
+    *,
+    purpose: str = "authoritative",
 ) -> dict:
     calibration = _load_cost_calibration_module()
     capacity = _read_json(
@@ -302,7 +313,7 @@ def _verify_cost_calibration(
         required_shapes=required_shapes,
         raw_rows=raw_rows,
     )
-    recomputed["purpose"] = "authoritative"
+    recomputed["purpose"] = purpose
     recorded = _read_json(
         run_dir / "cost_calibration_summary.json"
     )
@@ -322,20 +333,33 @@ def _verify_cost_calibration(
         ) != recomputed["cost_per_prefill_token_ns"]
     ):
         raise ValueError("P5 cost calibration identity mismatch")
-    marker = manifest.get("cost_calibration_verification")
-    if not isinstance(marker, dict):
-        raise ValueError("missing cost calibration verification")
-    expected_marker = {
-        "status": "PASS",
-        "run_tag": marker.get("run_tag"),
-        "artifact_sha256": artifact_sha256,
-        "source_tree_sha256": source_sha256,
-        "environment_sha256": environment_sha256,
-    }
-    if marker != expected_marker or not isinstance(
-        marker["run_tag"], str
-    ):
-        raise ValueError("cost calibration verification mismatch")
+    if purpose == "authoritative":
+        marker = manifest.get("cost_calibration_verification")
+        if not isinstance(marker, dict):
+            raise ValueError("missing cost calibration verification")
+        expected_marker = {
+            "status": "PASS",
+            "run_tag": marker.get("run_tag"),
+            "artifact_sha256": artifact_sha256,
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+        }
+        if marker != expected_marker or not isinstance(
+            marker["run_tag"], str
+        ):
+            raise ValueError(
+                "cost calibration verification mismatch"
+            )
+    else:
+        marker = manifest.get("provisional_cost_calibration")
+        if marker != {
+            "status": "PASS",
+            "purpose": "provisional_smoke",
+            "artifact_sha256": artifact_sha256,
+        }:
+            raise ValueError(
+                "provisional cost calibration mismatch"
+            )
     return recomputed
 
 
@@ -942,9 +966,21 @@ def _verify_p5_scheduler_trace(
                 f"{expected_step}: "
                 + json.dumps(mismatches, sort_keys=True)
             )
-        if row.get("actual_prefill_tokens") != actual_prefill_tokens:
+        recorded_prefill_tokens = row.get("actual_prefill_tokens")
+        if (
+            expected_selected is not None
+            and recorded_prefill_tokens != actual_prefill_tokens
+        ):
             raise ValueError("P5 actual prefill mismatch")
-        if row.get("scheduled_decode_seq_ids") != decode_ids:
+        if (
+            expected_selected is None
+            and recorded_prefill_tokens != 0
+        ):
+            raise ValueError("P5 decision prefill mismatch")
+        expected_decode_ids = (
+            decode_ids if expected_selected is not None else []
+        )
+        if row.get("scheduled_decode_seq_ids") != expected_decode_ids:
             raise ValueError("P5 scheduled decode mismatch")
         if expected_suppression is not None and (
             actual_prefill_tokens != 0 or prefill_rows != 0
@@ -1579,7 +1615,58 @@ def _classify(manifest: dict, rows: list[dict]) -> dict:
     }
 
 
-def _smoke_summary(rows: list[dict]) -> dict:
+def _summarize_p5_smoke(scheduler_rows: list[dict]) -> dict:
+    selected_chunks = [
+        row.get("selected_chunk_tokens")
+        for row in scheduler_rows
+        if row.get("selected_chunk_tokens") is not None
+    ]
+    for selected in selected_chunks:
+        if (
+            isinstance(selected, bool)
+            or not isinstance(selected, int)
+            or selected <= 0
+        ):
+            raise ValueError("invalid P5 smoke selected chunk")
+    summary = {
+        "demand_activation_count": sum(
+            row.get("demand_state_before") != "active"
+            and row.get("demand_state_after") == "active"
+            for row in scheduler_rows
+        ),
+        "largest_chunk_admission_count": selected_chunks.count(128),
+        "smaller_chunk_admission_count": sum(
+            selected < 128 for selected in selected_chunks
+        ),
+        "slo_suppression_count": sum(
+            row.get("suppression_reason") is not None
+            for row in scheduler_rows
+        ),
+        "draining_decision_count": sum(
+            row.get("demand_state_after") == "draining"
+            for row in scheduler_rows
+        ),
+        "distinct_selected_chunk_tokens": len(set(selected_chunks)),
+    }
+    summary["classification"] = (
+        "SMOKE_ONLY"
+        if all((
+            summary["demand_activation_count"] >= 1,
+            summary["largest_chunk_admission_count"] >= 1,
+            summary["smaller_chunk_admission_count"] >= 1,
+            summary["slo_suppression_count"] >= 1,
+            summary["draining_decision_count"] >= 1,
+            summary["distinct_selected_chunk_tokens"] >= 2,
+        ))
+        else "INCOMPLETE"
+    )
+    return summary
+
+
+def _smoke_summary(
+    rows: list[dict],
+    p5_smoke: dict | None = None,
+) -> dict:
     lifecycle_complete = bool(rows) and all(
         row.get("status") == "PASS"
         and row.get("correctness", {}).get(
@@ -1597,16 +1684,26 @@ def _smoke_summary(rows: list[dict]) -> dict:
         row.get("correctness", {}).get("exact_outputs") is True
         for row in rows
     )
-    return {
+    summary = {
         "classification": (
             "SMOKE_ONLY"
-            if lifecycle_complete and exact_outputs
+            if (
+                lifecycle_complete
+                and exact_outputs
+                and (
+                    p5_smoke is None
+                    or p5_smoke.get("classification") == "SMOKE_ONLY"
+                )
+            )
             else "INCOMPLETE"
         ),
         "lifecycle_complete": lifecycle_complete,
         "exact_outputs": exact_outputs,
         "case_count": len(rows),
     }
+    if p5_smoke is not None:
+        summary["p5_smoke"] = dict(p5_smoke)
+    return summary
 
 
 def _render_report(summary: dict) -> str:
@@ -1678,7 +1775,14 @@ def verify_run(
     _verify_source(run_dir, manifest)
     _verify_ports(manifest)
     p5_config = _verify_policy_manifest(manifest)
-    if manifest.get("run_type") != "smoke":
+    if manifest.get("run_type") == "smoke":
+        _verify_cost_calibration(
+            run_dir / "provisional_cost_calibration",
+            manifest,
+            p5_config,
+            purpose="provisional_smoke",
+        )
+    else:
         _verify_cost_calibration(
             run_dir,
             manifest,
@@ -1755,7 +1859,13 @@ def verify_run(
     if recorded_case_rows != recomputed_case_rows:
         raise ValueError("case row disagreement")
     if manifest.get("run_type") == "smoke":
-        computed = _smoke_summary(recomputed_case_rows)
+        computed = _smoke_summary(
+            recomputed_case_rows,
+            _summarize_p5_smoke([
+                row for row in scheduler_rows
+                if row.get("policy") == "P5"
+            ]),
+        )
     else:
         computed = _classify(manifest, recomputed_case_rows)
     recorded = _read_json(run_dir / "summary.json")

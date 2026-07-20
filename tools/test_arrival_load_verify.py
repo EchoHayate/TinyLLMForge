@@ -661,16 +661,24 @@ def _p5_trace(
             "remaining_slack_ns": slack,
             "predicted_step_ns": predicted,
             "selected_chunk_tokens": selected,
-            "actual_prefill_tokens": sum(
-                item["prefill_chunk_end"]
-                - item["prefill_chunk_start"]
-                for item in scheduled
-                if item["is_decode"] is False
+            "actual_prefill_tokens": (
+                sum(
+                    item["prefill_chunk_end"]
+                    - item["prefill_chunk_start"]
+                    for item in scheduled
+                    if item["is_decode"] is False
+                )
+                if selected is not None
+                else 0
             ),
-            "scheduled_decode_seq_ids": [
-                item["seq_id"] for item in scheduled
-                if item["is_decode"] is True
-            ],
+            "scheduled_decode_seq_ids": (
+                [
+                    item["seq_id"] for item in scheduled
+                    if item["is_decode"] is True
+                ]
+                if selected is not None
+                else []
+            ),
             "demand_state_before": demand_before,
             "demand_state_after": demand_after,
             "suppression_reason": suppression,
@@ -1221,6 +1229,92 @@ def _add_warmup_request(root: Path) -> None:
     _refresh_hash(root, "request_timeline.jsonl")
 
 
+def _convert_to_smoke_artifact(root: Path) -> dict:
+    provisional_dir = root / "provisional_cost_calibration"
+    provisional_dir.mkdir()
+    cost_files = (
+        "cost_calibration_capacity.json",
+        "cost_calibration_manifest.jsonl",
+        "cost_calibration_rows.jsonl",
+        "cost_calibration_summary.json",
+    )
+    for name in cost_files:
+        (root / name).replace(provisional_dir / name)
+    cost_summary_path = (
+        provisional_dir / "cost_calibration_summary.json"
+    )
+    cost_summary = json.loads(cost_summary_path.read_text())
+    cost_summary["purpose"] = "provisional_smoke"
+    _write_json(cost_summary_path, cost_summary)
+    artifact_sha256 = _sha256_file(cost_summary_path)
+
+    manifest = json.loads((root / "run_manifest.json").read_text())
+    manifest["run_type"] = "smoke"
+    manifest["smoke_policies"] = ["P0", "P5"]
+    manifest.pop("cost_calibration_verification")
+    manifest["provisional_cost_calibration"] = {
+        "status": "PASS",
+        "purpose": "provisional_smoke",
+        "artifact_sha256": artifact_sha256,
+    }
+    p5 = manifest["resolved_policy_config_by_name"]["P5"]
+    p5["cost_calibration_artifact_sha256"] = artifact_sha256
+    manifest["policy_identity_by_name"]["P5"] = _policy_id(p5)
+    _write_json(root / "run_manifest.json", manifest)
+
+    case_rows = verifier._read_jsonl(root / "case_rows.jsonl")
+    scheduler_rows = verifier._read_jsonl(
+        root / "scheduler_trace.jsonl"
+    )
+    p5_rows = [
+        row for row in scheduler_rows if row["policy"] == "P5"
+    ]
+    selected = [
+        row["selected_chunk_tokens"]
+        for row in p5_rows
+        if row["selected_chunk_tokens"] is not None
+    ]
+    p5_smoke = {
+        "demand_activation_count": sum(
+            row["demand_state_before"] != "active"
+            and row["demand_state_after"] == "active"
+            for row in p5_rows
+        ),
+        "largest_chunk_admission_count": selected.count(128),
+        "smaller_chunk_admission_count": sum(
+            chunk < 128 for chunk in selected
+        ),
+        "slo_suppression_count": sum(
+            row["suppression_reason"] is not None for row in p5_rows
+        ),
+        "draining_decision_count": sum(
+            row["demand_state_after"] == "draining"
+            for row in p5_rows
+        ),
+        "distinct_selected_chunk_tokens": len(set(selected)),
+        "classification": "SMOKE_ONLY",
+    }
+    summary = {
+        "classification": "SMOKE_ONLY",
+        "lifecycle_complete": True,
+        "exact_outputs": True,
+        "case_count": len(case_rows),
+        "p5_smoke": p5_smoke,
+    }
+    _write_json(root / "summary.json", summary)
+    (root / "report.md").write_text(verifier._render_report(summary))
+
+    required = set(verifier.REQUIRED_FILES) - {
+        "artifact_hashes.json",
+        *cost_files,
+    }
+    _write_json(root / "artifact_hashes.json", {
+        name: _sha256_file(root / name)
+        for name in sorted(required)
+    })
+    return summary
+
+
 def test_verifier_does_not_import_harness_aggregation():
     source = VERIFY_PATH.read_text()
     assert "import arrival_load_gate" not in source
@@ -1349,6 +1443,60 @@ def test_smoke_summary_is_lifecycle_only():
         "exact_outputs": True,
         "case_count": 2,
     }
+
+
+def test_p5_verifier_accepts_non_mixed_prefill_decision_accounting():
+    config = {
+        **verifier.EXPECTED_P5,
+        **ADAPTIVE_DEFAULTS,
+        "chunked_prefill_slo_mixed": True,
+        "chunked_prefill_slo_cost_intercept_ns": 4_000_000,
+        "chunked_prefill_slo_cost_per_prefill_token_ns": 100_000,
+    }
+    row = _p5_trace(
+        case_id="lifecycle_smoke__P5__r0",
+        scenario="lifecycle_smoke",
+        repetition=0,
+        decode_seq_id=1,
+        prefill_seq_id=2,
+        intercept_ns=4_000_000,
+        per_token_ns=100_000,
+    )[0]
+    row.update({
+        "policy_branch": "slo_mixed_no_running_prefill",
+        "scheduled": [{
+            "seq_id": 2,
+            "is_decode": False,
+            "prefill_chunk_start": 0,
+            "prefill_chunk_end": 128,
+        }],
+        "actual_prefill_tokens": 0,
+        "scheduled_decode_seq_ids": [],
+        "new_completion_tokens_by_seq": {},
+        "decode_progress_updates": {},
+        "queue_after": {
+            "waiting_seq_ids": row["queue_before"][
+                "waiting_seq_ids"
+            ][1:],
+            "prefilling_seq_ids": [2],
+            "running_seq_ids": [],
+        },
+    })
+    diagnostics = verifier._verify_p5_scheduler_trace(
+        [row],
+        config=config,
+    )
+    assert diagnostics["mixed_decision_count"] == 0
+
+
+def test_verifier_validates_provisional_smoke_cost_artifacts():
+    temporary, root = _complete_artifact()
+    try:
+        expected = _convert_to_smoke_artifact(root)
+        result = verifier.verify_run(root, write_output=False)
+        assert result == expected
+    finally:
+        temporary.cleanup()
 
 
 def test_verifier_recomputes_complete_artifact():
@@ -1733,6 +1881,8 @@ def main():
     test_p5_verifier_contract_replaces_p3_and_requires_cost_artifacts()
     test_output_equality_uses_recorded_case_metadata_not_case_id_format()
     test_smoke_summary_is_lifecycle_only()
+    test_p5_verifier_accepts_non_mixed_prefill_decision_accounting()
+    test_verifier_validates_provisional_smoke_cost_artifacts()
     test_verifier_recomputes_complete_artifact()
     test_p5_fixture_covers_required_structural_paths()
     test_verifier_excludes_warmup_requests_from_case_metrics()
