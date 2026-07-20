@@ -6,6 +6,11 @@ from tinyvllm.config import Config
 from tinyvllm.engine.sequence import Sequence, SequenceStatus
 from tinyvllm.engine.block_manager import BlockManager
 
+ADAPTIVE_MIXED_INACTIVE = "inactive"
+ADAPTIVE_MIXED_ACTIVE = "active"
+ADAPTIVE_MIXED_DRAINING = "draining"
+
+
 class Scheduler:
 
     def __init__(self, config: Config):
@@ -17,6 +22,25 @@ class Scheduler:
         self.chunked_prefill_max_consecutive_chunks = getattr(config, "chunked_prefill_max_consecutive_chunks", 0)
         self.chunked_prefill_mixed_batch = getattr(config, "chunked_prefill_mixed_batch", False)
         self.chunked_prefill_mixed_min_prompt_tokens = getattr(config, "chunked_prefill_mixed_min_prompt_tokens", 0)
+        self.chunked_prefill_adaptive_mixed = getattr(
+            config, "chunked_prefill_adaptive_mixed", False
+        )
+        self.chunked_prefill_adaptive_enter_waiting = getattr(
+            config, "chunked_prefill_adaptive_enter_waiting", 8
+        )
+        self.chunked_prefill_adaptive_exit_waiting = getattr(
+            config, "chunked_prefill_adaptive_exit_waiting", 2
+        )
+        self.chunked_prefill_adaptive_transition_steps = getattr(
+            config, "chunked_prefill_adaptive_transition_steps", 2
+        )
+        self.chunked_prefill_adaptive_max_mixed_steps = getattr(
+            config, "chunked_prefill_adaptive_max_mixed_steps", 2
+        )
+        self.adaptive_mixed_state = ADAPTIVE_MIXED_INACTIVE
+        self.adaptive_high_streak = 0
+        self.adaptive_low_streak = 0
+        self.adaptive_consecutive_mixed_steps = 0
         self._consecutive_prefill_chunks = 0
         self.last_policy_branch: str | None = None
         self.eos = config.eos
@@ -43,7 +67,74 @@ class Scheduler:
             "total_kv_blocks": len(block_manager.blocks),
             "kv_block_size_tokens": block_manager.block_size,
             "consecutive_prefill_chunks": self._consecutive_prefill_chunks,
+            "adaptive_mixed_state": self.adaptive_mixed_state,
+            "adaptive_high_streak": self.adaptive_high_streak,
+            "adaptive_low_streak": self.adaptive_low_streak,
+            "adaptive_consecutive_mixed_steps": self.adaptive_consecutive_mixed_steps,
         }
+
+    def _reset_adaptive_mixed_controller(self) -> None:
+        self.adaptive_mixed_state = ADAPTIVE_MIXED_INACTIVE
+        self.adaptive_high_streak = 0
+        self.adaptive_low_streak = 0
+        self.adaptive_consecutive_mixed_steps = 0
+
+    def _maybe_reset_adaptive_mixed_controller(self) -> None:
+        if not self.waiting and not self.prefilling and not self.running:
+            self._reset_adaptive_mixed_controller()
+
+    def _adaptive_transition_eligible(self) -> bool:
+        return bool(
+            self.chunked_prefill_adaptive_mixed
+            and self.chunked_prefill_enabled
+            and self.running
+            and (self.waiting or self.prefilling)
+        )
+
+    def _update_adaptive_mixed_state(self, waiting_depth: int) -> None:
+        if not self._adaptive_transition_eligible():
+            self.adaptive_high_streak = 0
+            self.adaptive_low_streak = 0
+            return
+
+        transition_steps = self.chunked_prefill_adaptive_transition_steps
+        if self.adaptive_mixed_state == ADAPTIVE_MIXED_INACTIVE:
+            self.adaptive_low_streak = 0
+            if waiting_depth >= self.chunked_prefill_adaptive_enter_waiting:
+                self.adaptive_high_streak += 1
+            else:
+                self.adaptive_high_streak = 0
+            if self.adaptive_high_streak >= transition_steps:
+                self.adaptive_mixed_state = ADAPTIVE_MIXED_ACTIVE
+                self.adaptive_high_streak = 0
+            return
+
+        if self.adaptive_mixed_state == ADAPTIVE_MIXED_ACTIVE:
+            self.adaptive_high_streak = 0
+            if waiting_depth <= self.chunked_prefill_adaptive_exit_waiting:
+                self.adaptive_low_streak += 1
+            else:
+                self.adaptive_low_streak = 0
+            if self.adaptive_low_streak >= transition_steps:
+                self.adaptive_mixed_state = (
+                    ADAPTIVE_MIXED_DRAINING
+                    if self.prefilling
+                    else ADAPTIVE_MIXED_INACTIVE
+                )
+                self.adaptive_low_streak = 0
+            return
+
+        self.adaptive_low_streak = 0
+        if waiting_depth >= self.chunked_prefill_adaptive_enter_waiting:
+            self.adaptive_high_streak += 1
+        else:
+            self.adaptive_high_streak = 0
+        if self.adaptive_high_streak >= transition_steps:
+            self.adaptive_mixed_state = ADAPTIVE_MIXED_ACTIVE
+            self.adaptive_high_streak = 0
+        elif not self.prefilling:
+            self.adaptive_mixed_state = ADAPTIVE_MIXED_INACTIVE
+            self.adaptive_consecutive_mixed_steps = 0
 
     def _return_schedule(self, scheduled: tuple, branch: str):
         self.last_policy_branch = branch
@@ -343,9 +434,11 @@ class Scheduler:
                     batch_kind: str | None = None):
         if batch_kind == "mixed":
             self._postprocess_mixed(seqs, token_ids)
+            self._maybe_reset_adaptive_mixed_controller()
             return
         if is_prefill and self.chunked_prefill_enabled:
             self._postprocess_chunked_prefill(seqs, token_ids, do_sample)
+            self._maybe_reset_adaptive_mixed_controller()
             return
         if is_prefill:
             for seq in seqs:
@@ -366,6 +459,7 @@ class Scheduler:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
+        self._maybe_reset_adaptive_mixed_controller()
 
     def _postprocess_chunked_prefill(self, seqs: list[Sequence], token_ids: list[int] | None, do_sample: bool):
         token_iter = iter(token_ids or [])

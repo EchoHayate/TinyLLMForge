@@ -261,8 +261,110 @@ def make_seq(token_ids, max_tokens: int = 4):
     return Sequence(list(token_ids), SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=False))
 
 
+def make_running(scheduler, token_ids=(90, 91, 92, 93), max_tokens=8):
+    seq = make_seq(token_ids, max_tokens=max_tokens)
+    scheduler.block_manager.allocate(seq)
+    seq.status = SequenceStatus.RUNNING
+    seq.num_computed_tokens = len(seq)
+    scheduler.running.append(seq)
+    return seq
+
+
+def add_waiting(scheduler, count, prompt_tokens=12):
+    rows = []
+    for offset in range(count):
+        seq = make_seq(range(offset * 100, offset * 100 + prompt_tokens))
+        scheduler.add(seq)
+        rows.append(seq)
+    return rows
+
+
 def assert_queue_contains(queue, seq):
     assert list(queue) == [seq]
+
+
+def test_adaptive_state_requires_two_high_observations_and_resets_streak():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+        chunked_prefill_adaptive_enter_waiting=8,
+        chunked_prefill_adaptive_exit_waiting=2,
+        chunked_prefill_adaptive_transition_steps=2,
+        chunked_prefill_adaptive_max_mixed_steps=2,
+    ))
+    make_running(scheduler)
+    add_waiting(scheduler, 8)
+
+    scheduler._update_adaptive_mixed_state(8)
+    assert scheduler.adaptive_mixed_state == "inactive"
+    assert scheduler.adaptive_high_streak == 1
+
+    scheduler._update_adaptive_mixed_state(7)
+    assert scheduler.adaptive_high_streak == 0
+
+    scheduler._update_adaptive_mixed_state(8)
+    scheduler._update_adaptive_mixed_state(8)
+    assert scheduler.adaptive_mixed_state == "active"
+    assert scheduler.adaptive_high_streak == 0
+
+
+def test_adaptive_state_low_hysteresis_enters_inactive_or_draining():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    make_running(scheduler)
+    add_waiting(scheduler, 2)
+    scheduler.adaptive_mixed_state = "active"
+
+    scheduler._update_adaptive_mixed_state(2)
+    assert scheduler.adaptive_mixed_state == "active"
+    assert scheduler.adaptive_low_streak == 1
+    scheduler._update_adaptive_mixed_state(2)
+    assert scheduler.adaptive_mixed_state == "inactive"
+
+    scheduler.adaptive_mixed_state = "active"
+    prefilling = scheduler.waiting.popleft()
+    scheduler.block_manager.allocate(prefilling)
+    prefilling.status = SequenceStatus.PREFILLING
+    scheduler.prefilling.append(prefilling)
+    scheduler._update_adaptive_mixed_state(1)
+    scheduler._update_adaptive_mixed_state(1)
+    assert scheduler.adaptive_mixed_state == "draining"
+
+
+def test_adaptive_ineligible_decision_clears_transition_streaks():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    scheduler.adaptive_high_streak = 1
+    scheduler.adaptive_low_streak = 1
+    scheduler._update_adaptive_mixed_state(9)
+    assert scheduler.adaptive_high_streak == 0
+    assert scheduler.adaptive_low_streak == 0
+
+
+def test_adaptive_observation_and_empty_reset_are_exact():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    scheduler.adaptive_mixed_state = "draining"
+    scheduler.adaptive_high_streak = 1
+    scheduler.adaptive_low_streak = 0
+    scheduler.adaptive_consecutive_mixed_steps = 2
+    snapshot = scheduler.observation_snapshot()
+    assert snapshot["adaptive_mixed_state"] == "draining"
+    assert snapshot["adaptive_high_streak"] == 1
+    assert snapshot["adaptive_low_streak"] == 0
+    assert snapshot["adaptive_consecutive_mixed_steps"] == 2
+
+    scheduler._maybe_reset_adaptive_mixed_controller()
+    assert scheduler.adaptive_mixed_state == "inactive"
+    assert scheduler.adaptive_high_streak == 0
+    assert scheduler.adaptive_low_streak == 0
+    assert scheduler.adaptive_consecutive_mixed_steps == 0
 
 
 def test_intermediate_chunk_does_not_sample_or_append():
@@ -425,6 +527,10 @@ def test_scheduler_observation_snapshot_reports_queue_and_kv_state():
         "total_kv_blocks": 8,
         "kv_block_size_tokens": 4,
         "consecutive_prefill_chunks": 2,
+        "adaptive_mixed_state": "inactive",
+        "adaptive_high_streak": 0,
+        "adaptive_low_streak": 0,
+        "adaptive_consecutive_mixed_steps": 0,
     }
 
 
@@ -1889,6 +1995,10 @@ def test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows():
 def main():
     test_adaptive_mixed_config_defaults_and_fail_closed_contract()
     test_adaptive_mixed_invalid_configurations_fail_before_model_start()
+    test_adaptive_state_requires_two_high_observations_and_resets_streak()
+    test_adaptive_state_low_hysteresis_enters_inactive_or_draining()
+    test_adaptive_ineligible_decision_clears_transition_streaks()
+    test_adaptive_observation_and_empty_reset_are_exact()
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
     test_chunked_prefill_batches_multiple_short_final_prompts()
