@@ -63,6 +63,12 @@ class Config:
     chunked_prefill_adaptive_exit_waiting: int = 2
     chunked_prefill_adaptive_transition_steps: int = 2
     chunked_prefill_adaptive_max_mixed_steps: int = 2
+    chunked_prefill_slo_mixed: bool = False
+    chunked_prefill_slo_target_gap_ns: int = 0
+    chunked_prefill_slo_reserve_ns: int = 0
+    chunked_prefill_slo_cost_intercept_ns: int = 0
+    chunked_prefill_slo_cost_per_prefill_token_ns: int = 0
+    chunked_prefill_slo_min_chunk_tokens: int = 16
 
     # KV cache 量化（C4 等）相关配置
     kv_quant_bits: int = 0                              # 0 / 4 / 8，KV cache 量化位宽，0 表示不量化
@@ -164,6 +170,48 @@ class Config:
             "KV offload MVP-0 暂不支持 adaptive mixed prefill+decode"
         assert not self.chunked_prefill_adaptive_mixed or self.max_num_prefill_tokens_per_step > 0, \
             "adaptive mixed 需要开启 chunked prefill"
+        int64_max = (1 << 63) - 1
+        for value in (
+            self.chunked_prefill_slo_target_gap_ns,
+            self.chunked_prefill_slo_reserve_ns,
+            self.chunked_prefill_slo_cost_intercept_ns,
+            self.chunked_prefill_slo_cost_per_prefill_token_ns,
+        ):
+            assert isinstance(value, int) and not isinstance(value, bool)
+            assert 0 <= value <= int64_max
+        assert (
+            isinstance(self.chunked_prefill_slo_min_chunk_tokens, int)
+            and not isinstance(self.chunked_prefill_slo_min_chunk_tokens, bool)
+            and self.chunked_prefill_slo_min_chunk_tokens > 0
+        )
+        if self.chunked_prefill_slo_mixed:
+            assert self.chunked_prefill_slo_target_gap_ns > 0
+            assert self.chunked_prefill_slo_reserve_ns > 0
+            assert (
+                self.chunked_prefill_slo_reserve_ns
+                < self.chunked_prefill_slo_target_gap_ns
+            )
+            assert self.chunked_prefill_slo_cost_intercept_ns > 0
+            assert self.chunked_prefill_slo_cost_per_prefill_token_ns > 0
+            assert self.max_num_prefill_tokens_per_step > 0
+            assert (
+                self.chunked_prefill_slo_min_chunk_tokens
+                <= self.max_num_prefill_tokens_per_step
+            )
+            assert (
+                self.max_num_prefill_tokens_per_step
+                % self.chunked_prefill_slo_min_chunk_tokens
+                == 0
+            )
+            assert not self.chunked_prefill_mixed_batch
+            assert not self.chunked_prefill_adaptive_mixed
+            assert not self.kv_offload_mvp0
+            assert (
+                self.chunked_prefill_slo_cost_per_prefill_token_ns
+                <= (
+                    int64_max - self.chunked_prefill_slo_cost_intercept_ns
+                ) // self.max_num_prefill_tokens_per_step
+            )
         assert 0.0 <= self.smoothquant_alpha <= 1.0
         if self.smoothquant_scale_path is not None:
             assert os.path.isfile(self.smoothquant_scale_path), \

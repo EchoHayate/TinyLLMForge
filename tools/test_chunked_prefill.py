@@ -194,6 +194,66 @@ def test_adaptive_mixed_invalid_configurations_fail_before_model_start():
                 )
 
 
+def test_slo_mixed_config_defaults_and_fail_closed_contract():
+    Config = load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        common = {
+            "model": model,
+            "max_num_batched_tokens": 4096,
+            "max_model_len": 4096,
+            "kvcache_block_size": 256,
+        }
+        config = Config(**common)
+        assert config.chunked_prefill_slo_mixed is False
+        assert config.chunked_prefill_slo_target_gap_ns == 0
+        assert config.chunked_prefill_slo_reserve_ns == 0
+        assert config.chunked_prefill_slo_cost_intercept_ns == 0
+        assert config.chunked_prefill_slo_cost_per_prefill_token_ns == 0
+        assert config.chunked_prefill_slo_min_chunk_tokens == 16
+
+        enabled = {
+            "chunked_prefill_slo_mixed": True,
+            "chunked_prefill_slo_target_gap_ns": 64_000_000,
+            "chunked_prefill_slo_reserve_ns": 8_000_000,
+            "chunked_prefill_slo_cost_intercept_ns": 4_000_000,
+            "chunked_prefill_slo_cost_per_prefill_token_ns": 100_000,
+            "chunked_prefill_slo_min_chunk_tokens": 16,
+            "max_num_prefill_tokens_per_step": 128,
+        }
+        Config(**common, **enabled)
+        invalid = (
+            {**enabled, "chunked_prefill_slo_target_gap_ns": 0},
+            {**enabled, "chunked_prefill_slo_reserve_ns": 0},
+            {**enabled, "chunked_prefill_slo_reserve_ns": 64_000_000},
+            {**enabled, "chunked_prefill_slo_cost_intercept_ns": 0},
+            {**enabled, "chunked_prefill_slo_cost_per_prefill_token_ns": 0},
+            {**enabled, "chunked_prefill_slo_min_chunk_tokens": 0},
+            {**enabled, "chunked_prefill_slo_min_chunk_tokens": 256},
+            {**enabled, "max_num_prefill_tokens_per_step": 120},
+            {**enabled, "chunked_prefill_mixed_batch": True},
+            {**enabled, "chunked_prefill_adaptive_mixed": True},
+            {**enabled, "kv_offload_mvp0": True},
+            {
+                **enabled,
+                "chunked_prefill_slo_cost_intercept_ns": 1 << 63,
+            },
+            {
+                **enabled,
+                "chunked_prefill_slo_cost_per_prefill_token_ns":
+                    ((1 << 63) - 1) // 128 + 1,
+            },
+        )
+        for overrides in invalid:
+            try:
+                Config(**common, **overrides)
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError(
+                    f"invalid P5 config accepted: {overrides}"
+                )
+
+
 config_mod = types.ModuleType("tinyvllm.config")
 config_mod.Config = object
 sys.modules["tinyvllm.config"] = config_mod
@@ -235,6 +295,29 @@ SamplingParams = sampling_mod.SamplingParams
 ParallelLMHead = embed_head_mod.ParallelLMHead if embed_head_mod is not None else None
 set_context = context_mod.set_context if context_mod is not None else None
 reset_context_global = context_mod.reset_context if context_mod is not None else None
+
+
+def test_slo_chunk_ladder_and_largest_safe_boundary():
+    ladder = scheduler_mod.build_slo_chunk_ladder(128, 16)
+    assert ladder == (128, 112, 96, 80, 64, 48, 32, 16)
+    assert scheduler_mod.select_slo_chunk(
+        remaining_slack_ns=16_800_000,
+        cost_intercept_ns=4_000_000,
+        cost_per_prefill_token_ns=100_000,
+        token_ladder=ladder,
+    ) == (128, 16_800_000)
+    assert scheduler_mod.select_slo_chunk(
+        remaining_slack_ns=15_200_000,
+        cost_intercept_ns=4_000_000,
+        cost_per_prefill_token_ns=100_000,
+        token_ladder=ladder,
+    ) == (112, 15_200_000)
+    assert scheduler_mod.select_slo_chunk(
+        remaining_slack_ns=5_599_999,
+        cost_intercept_ns=4_000_000,
+        cost_per_prefill_token_ns=100_000,
+        token_ladder=ladder,
+    ) == (None, None)
 
 
 def make_config(**overrides):
@@ -2268,6 +2351,8 @@ def test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows():
 def main():
     test_adaptive_mixed_config_defaults_and_fail_closed_contract()
     test_adaptive_mixed_invalid_configurations_fail_before_model_start()
+    test_slo_mixed_config_defaults_and_fail_closed_contract()
+    test_slo_chunk_ladder_and_largest_safe_boundary()
     test_adaptive_state_requires_two_high_observations_and_resets_streak()
     test_adaptive_state_low_hysteresis_enters_inactive_or_draining()
     test_adaptive_ineligible_decision_clears_transition_streaks()

@@ -9,6 +9,45 @@ from tinyvllm.engine.block_manager import BlockManager
 ADAPTIVE_MIXED_INACTIVE = "inactive"
 ADAPTIVE_MIXED_ACTIVE = "active"
 ADAPTIVE_MIXED_DRAINING = "draining"
+INT64_MAX = (1 << 63) - 1
+
+
+def build_slo_chunk_ladder(
+    max_chunk_tokens: int,
+    min_chunk_tokens: int,
+) -> tuple[int, ...]:
+    if (
+        isinstance(max_chunk_tokens, bool)
+        or isinstance(min_chunk_tokens, bool)
+        or not isinstance(max_chunk_tokens, int)
+        or not isinstance(min_chunk_tokens, int)
+        or min_chunk_tokens <= 0
+        or max_chunk_tokens < min_chunk_tokens
+        or max_chunk_tokens % min_chunk_tokens != 0
+    ):
+        raise ValueError("invalid SLO chunk ladder")
+    return tuple(
+        range(max_chunk_tokens, min_chunk_tokens - 1, -min_chunk_tokens)
+    )
+
+
+def select_slo_chunk(
+    *,
+    remaining_slack_ns: int,
+    cost_intercept_ns: int,
+    cost_per_prefill_token_ns: int,
+    token_ladder: tuple[int, ...],
+) -> tuple[int | None, int | None]:
+    for tokens in token_ladder:
+        if (
+            cost_per_prefill_token_ns
+            > (INT64_MAX - cost_intercept_ns) // tokens
+        ):
+            raise OverflowError("P5 predicted step cost overflows int64")
+        predicted = cost_intercept_ns + tokens * cost_per_prefill_token_ns
+        if predicted <= remaining_slack_ns:
+            return tokens, predicted
+    return None, None
 
 
 class Scheduler:
