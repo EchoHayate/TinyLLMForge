@@ -28,6 +28,18 @@ def _load_verifier():
 
 verifier = _load_verifier()
 
+ADAPTIVE_DEFAULTS = {
+    "chunked_prefill_decode_first": True,
+    "chunked_prefill_max_consecutive_chunks": 0,
+    "chunked_prefill_mixed_batch": False,
+    "chunked_prefill_mixed_min_prompt_tokens": 0,
+    "chunked_prefill_adaptive_mixed": False,
+    "chunked_prefill_adaptive_enter_waiting": 8,
+    "chunked_prefill_adaptive_exit_waiting": 2,
+    "chunked_prefill_adaptive_transition_steps": 2,
+    "chunked_prefill_adaptive_max_mixed_steps": 2,
+}
+
 
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
@@ -62,8 +74,8 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             handle.write(_canonical_bytes(row).decode("utf-8") + "\n")
 
 
-def _policy_id(name: str) -> str:
-    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+def _policy_id(config: dict) -> str:
+    return hashlib.sha256(_canonical_bytes(config)).hexdigest()
 
 
 def _case_id(policy: str, repetition: int) -> str:
@@ -97,11 +109,21 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
     with tarfile.open(root / "source_snapshot.tar.gz", "w:gz") as archive:
         archive.add(source_root, arcname="source")
 
+    resolved_policy_config_by_name = {
+        "P0": dict(ADAPTIVE_DEFAULTS),
+        "P3": {
+            **ADAPTIVE_DEFAULTS,
+            "chunked_prefill_decode_first": False,
+            "chunked_prefill_mixed_batch": True,
+        },
+        "P4": {
+            **ADAPTIVE_DEFAULTS,
+            "chunked_prefill_adaptive_mixed": True,
+        },
+    }
     policy_identity_by_name = {
-        "P0": _policy_id("P0"),
-        "P1": _policy_id("P0"),
-        "P2": _policy_id("P2"),
-        "P3": _policy_id("P3"),
+        name: _policy_id(config)
+        for name, config in resolved_policy_config_by_name.items()
     }
     manifest = {
         "schema_version": 1,
@@ -112,10 +134,12 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
         "policy_identity_by_name": policy_identity_by_name,
         "canonical_policy_by_name": {
             "P0": "P0",
-            "P1": "P0",
-            "P2": "P2",
             "P3": "P3",
+            "P4": "P4",
         },
+        "resolved_policy_config_by_name": (
+            resolved_policy_config_by_name
+        ),
         "process_port_pairs": [],
         "expected_case_ids": [],
     }
@@ -148,7 +172,7 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
     case_rows = []
     ports = 31000
     for repetition in range(3):
-        for policy in ("P0", "P2", "P3"):
+        for policy in ("P0", "P3", "P4"):
             case_id = _case_id(policy, repetition)
             manifest["expected_case_ids"].append(case_id)
             manifest["process_port_pairs"].append({
@@ -158,7 +182,7 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
             })
             ports += 2
             duration_ns = 1_000_000_000
-            seq_id = repetition * 10 + {"P0": 0, "P2": 1, "P3": 2}[policy]
+            seq_id = repetition * 10 + {"P0": 0, "P3": 1, "P4": 2}[policy]
             timeline_rows.append({
                 "case_id": case_id,
                 "policy": policy,
@@ -176,14 +200,175 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
                 "finish_reason": "length",
                 "error": None,
             })
-            scheduler_rows.append({
-                "case_id": case_id,
-                "step_index": 0,
-                "step_start_ns": 120,
-                "step_end_ns": duration_ns + 100,
-                "scheduled_seq_ids": [seq_id],
-                "finished_seq_ids": [seq_id],
-            })
+            if policy == "P4":
+                waiting_high = list(range(100, 108))
+                waiting_low = [100, 101]
+                running_ids = [seq_id]
+                prefilling_ids = [200]
+                scheduler_rows.extend([
+                    {
+                        "case_id": case_id,
+                        "step_index": 0,
+                        "policy_branch": "adaptive_mixed_decode_first",
+                        "scheduled": [{"seq_id": seq_id, "is_decode": True}],
+                        "queue_before": {
+                            "adaptive_mixed_state": "inactive",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 0,
+                            "waiting_seq_ids": waiting_high,
+                            "prefilling_seq_ids": [],
+                            "running_seq_ids": running_ids,
+                        },
+                        "queue_after": {
+                            "adaptive_mixed_state": "inactive",
+                            "adaptive_high_streak": 1,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 0,
+                            "waiting_seq_ids": waiting_high,
+                            "prefilling_seq_ids": [],
+                            "running_seq_ids": running_ids,
+                        },
+                    },
+                    {
+                        "case_id": case_id,
+                        "step_index": 1,
+                        "policy_branch": "adaptive_mixed_prefill_decode",
+                        "scheduled": [
+                            {"seq_id": 100, "is_decode": False},
+                            {"seq_id": seq_id, "is_decode": True},
+                        ],
+                        "queue_before": {
+                            "adaptive_mixed_state": "inactive",
+                            "adaptive_high_streak": 1,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 0,
+                            "waiting_seq_ids": waiting_high,
+                            "prefilling_seq_ids": [],
+                            "running_seq_ids": running_ids,
+                        },
+                        "queue_after": {
+                            "adaptive_mixed_state": "active",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 1,
+                            "waiting_seq_ids": waiting_high[1:],
+                            "prefilling_seq_ids": [100],
+                            "running_seq_ids": running_ids,
+                        },
+                    },
+                    {
+                        "case_id": case_id,
+                        "step_index": 2,
+                        "policy_branch": "adaptive_mixed_prefill_decode",
+                        "scheduled": [
+                            {"seq_id": 100, "is_decode": False},
+                            {"seq_id": seq_id, "is_decode": True},
+                        ],
+                        "queue_before": {
+                            "adaptive_mixed_state": "active",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 1,
+                            "waiting_seq_ids": waiting_high[1:],
+                            "prefilling_seq_ids": [100],
+                            "running_seq_ids": running_ids,
+                        },
+                        "queue_after": {
+                            "adaptive_mixed_state": "active",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 2,
+                            "waiting_seq_ids": waiting_high[1:],
+                            "prefilling_seq_ids": [100],
+                            "running_seq_ids": running_ids,
+                        },
+                    },
+                    {
+                        "case_id": case_id,
+                        "step_index": 3,
+                        "policy_branch": "adaptive_mixed_decode_yield",
+                        "scheduled": [{"seq_id": seq_id, "is_decode": True}],
+                        "queue_before": {
+                            "adaptive_mixed_state": "active",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 2,
+                            "waiting_seq_ids": waiting_low,
+                            "prefilling_seq_ids": prefilling_ids,
+                            "running_seq_ids": running_ids,
+                        },
+                        "queue_after": {
+                            "adaptive_mixed_state": "active",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 1,
+                            "adaptive_consecutive_mixed_steps": 0,
+                            "waiting_seq_ids": waiting_low,
+                            "prefilling_seq_ids": prefilling_ids,
+                            "running_seq_ids": running_ids,
+                        },
+                    },
+                    {
+                        "case_id": case_id,
+                        "step_index": 4,
+                        "policy_branch": "adaptive_mixed_prefill_decode",
+                        "scheduled": [
+                            {"seq_id": 200, "is_decode": False},
+                            {"seq_id": seq_id, "is_decode": True},
+                        ],
+                        "queue_before": {
+                            "adaptive_mixed_state": "active",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 1,
+                            "adaptive_consecutive_mixed_steps": 0,
+                            "waiting_seq_ids": waiting_low,
+                            "prefilling_seq_ids": prefilling_ids,
+                            "running_seq_ids": running_ids,
+                        },
+                        "queue_after": {
+                            "adaptive_mixed_state": "draining",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 1,
+                            "waiting_seq_ids": waiting_low,
+                            "prefilling_seq_ids": [],
+                            "running_seq_ids": running_ids,
+                        },
+                    },
+                    {
+                        "case_id": case_id,
+                        "step_index": 5,
+                        "policy_branch": "adaptive_mixed_decode_first",
+                        "scheduled": [{"seq_id": seq_id, "is_decode": True}],
+                        "queue_before": {
+                            "adaptive_mixed_state": "draining",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 1,
+                            "waiting_seq_ids": waiting_low,
+                            "prefilling_seq_ids": [],
+                            "running_seq_ids": running_ids,
+                        },
+                        "queue_after": {
+                            "adaptive_mixed_state": "inactive",
+                            "adaptive_high_streak": 0,
+                            "adaptive_low_streak": 0,
+                            "adaptive_consecutive_mixed_steps": 0,
+                            "waiting_seq_ids": waiting_low,
+                            "prefilling_seq_ids": [],
+                            "running_seq_ids": running_ids,
+                        },
+                    },
+                ])
+            else:
+                scheduler_rows.append({
+                    "case_id": case_id,
+                    "step_index": 0,
+                    "step_start_ns": 120,
+                    "step_end_ns": duration_ns + 100,
+                    "scheduled_seq_ids": [seq_id],
+                    "finished_seq_ids": [seq_id],
+                })
             memory_rows.append({
                 "case_id": case_id,
                 "step_index": 0,
@@ -258,8 +443,8 @@ def _complete_artifact() -> tuple[tempfile.TemporaryDirectory, Path]:
         "structural_failures": [],
         "correctness_failures": [],
         "candidate_results": {
-            "P2": {
-                "policy": "P2",
+            "P4": {
+                "policy": "P4",
                 "classification": "NO_GO",
                 "benefit_path": None,
                 "median_ratios": {
@@ -411,8 +596,8 @@ def test_output_equality_uses_recorded_case_metadata_not_case_id_format():
         },
         {
             **common,
-            "case_id": "steady_moderate__P2__r0",
-            "policy": "P2",
+            "case_id": "steady_moderate__P4__r0",
+            "policy": "P4",
             "output_token_ids": [1, 3],
         },
         {
@@ -447,8 +632,8 @@ def test_smoke_summary_is_lifecycle_only():
             },
         },
         {
-            "case_id": "lifecycle_smoke__P2__r0",
-            "policy": "P2",
+            "case_id": "lifecycle_smoke__P4__r0",
+            "policy": "P4",
             "scenario": "lifecycle_smoke",
             "repetition": 0,
             "status": "PASS",
@@ -595,7 +780,7 @@ def test_verifier_rejects_rehashed_source_output_and_scheduler_tampering():
         ]
         candidate = next(
             row for row in rows
-            if row["case_id"] == "P2-steady_moderate-r0"
+            if row["case_id"] == "P4-steady_moderate-r0"
         )
         candidate["output_token_ids"][-1] = 99
         _write_jsonl(root / "request_timeline.jsonl", rows)
@@ -631,6 +816,181 @@ def test_verifier_rejects_rehashed_source_output_and_scheduler_tampering():
         temporary.cleanup()
 
 
+def _mutate_first_p4_trace(root: Path, mutate) -> None:
+    rows = verifier._read_jsonl(root / "scheduler_trace.jsonl")
+    row = next(
+        row for row in rows
+        if row["case_id"] == "P4-steady_moderate-r0"
+    )
+    mutate(row)
+    _write_jsonl(root / "scheduler_trace.jsonl", rows)
+    _refresh_hash(root, "scheduler_trace.jsonl")
+
+
+def test_verifier_rejects_invalid_p4_controller_values():
+    mutations = (
+        (
+            lambda row: row["queue_before"].__setitem__(
+                "adaptive_mixed_state", "illegal"
+            ),
+            "illegal adaptive state",
+        ),
+        (
+            lambda row: row["queue_before"].__setitem__(
+                "adaptive_high_streak", -1
+            ),
+            "invalid adaptive counter",
+        ),
+        (
+            lambda row: row["queue_before"].__setitem__(
+                "adaptive_consecutive_mixed_steps", 3
+            ),
+            "invalid adaptive counter",
+        ),
+    )
+    for mutate, expected in mutations:
+        temporary, root = _complete_artifact()
+        try:
+            _mutate_first_p4_trace(root, mutate)
+            try:
+                verifier.verify_run(root, write_output=False)
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(f"P4 tamper accepted: {expected}")
+        finally:
+            temporary.cleanup()
+
+
+def test_verifier_rejects_adaptive_mixed_without_decode_role():
+    temporary, root = _complete_artifact()
+    try:
+        rows = verifier._read_jsonl(root / "scheduler_trace.jsonl")
+        row = next(
+            row for row in rows
+            if row["case_id"] == "P4-steady_moderate-r0"
+            and row["policy_branch"] == "adaptive_mixed_prefill_decode"
+        )
+        row["scheduled"] = [
+            item for item in row["scheduled"]
+            if item["is_decode"] is False
+        ]
+        _write_jsonl(root / "scheduler_trace.jsonl", rows)
+        _refresh_hash(root, "scheduler_trace.jsonl")
+        try:
+            verifier.verify_run(root, write_output=False)
+        except ValueError as exc:
+            assert "adaptive mixed branch role mismatch" in str(exc)
+        else:
+            raise AssertionError("mixed branch without decode accepted")
+    finally:
+        temporary.cleanup()
+
+
+def test_verifier_rejects_illegal_p4_transition_sequences():
+    mutations = (
+        (
+            lambda rows: rows[0]["queue_after"].__setitem__(
+                "adaptive_mixed_state", "active"
+            ),
+            "adaptive state transition mismatch",
+        ),
+        (
+            lambda rows: (
+                rows[3].__setitem__(
+                    "policy_branch", "adaptive_mixed_prefill_decode"
+                ),
+                rows[3].__setitem__(
+                    "scheduled",
+                    [
+                        {"seq_id": 100, "is_decode": False},
+                        {"seq_id": 2, "is_decode": True},
+                    ],
+                ),
+            ),
+            "adaptive mixed service bound exceeded",
+        ),
+        (
+            lambda rows: (
+                rows[4]["queue_after"].__setitem__(
+                    "waiting_seq_ids", [100]
+                ),
+                rows[4]["queue_after"].__setitem__(
+                    "prefilling_seq_ids", [101]
+                ),
+            ),
+            "new waiting admission during draining",
+        ),
+        (
+            lambda rows: rows[0]["queue_before"].pop(
+                "adaptive_low_streak"
+            ),
+            "missing P4 controller field",
+        ),
+    )
+    for mutate, expected in mutations:
+        temporary, root = _complete_artifact()
+        try:
+            all_rows = verifier._read_jsonl(
+                root / "scheduler_trace.jsonl"
+            )
+            rows = [
+                row for row in all_rows
+                if row["case_id"] == "P4-steady_moderate-r0"
+            ]
+            mutate(rows)
+            _write_jsonl(root / "scheduler_trace.jsonl", all_rows)
+            _refresh_hash(root, "scheduler_trace.jsonl")
+            try:
+                verifier.verify_run(root, write_output=False)
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(
+                    f"illegal P4 transition accepted: {expected}"
+                )
+        finally:
+            temporary.cleanup()
+
+
+def test_verifier_rejects_p4_threshold_drift_without_identity_update():
+    temporary, root = _complete_artifact()
+    try:
+        manifest = json.loads((root / "run_manifest.json").read_text())
+        manifest["resolved_policy_config_by_name"]["P4"][
+            "chunked_prefill_adaptive_enter_waiting"
+        ] = 9
+        _write_json(root / "run_manifest.json", manifest)
+        _refresh_hash(root, "run_manifest.json")
+        try:
+            verifier.verify_run(root, write_output=False)
+        except ValueError as exc:
+            assert "policy identity mismatch" in str(exc)
+        else:
+            raise AssertionError("P4 threshold drift accepted")
+    finally:
+        temporary.cleanup()
+
+
+def test_verifier_rejects_diagnostic_p3_top_level_go():
+    temporary, root = _complete_artifact()
+    try:
+        summary = json.loads((root / "summary.json").read_text())
+        summary["candidate_results"]["P3"]["classification"] = "GO"
+        summary["candidate_results"]["P3"]["benefit_path"] = "throughput"
+        summary["classification"] = "GO"
+        _write_json(root / "summary.json", summary)
+        _refresh_hash(root, "summary.json")
+        try:
+            verifier.verify_run(root, write_output=False)
+        except ValueError as exc:
+            assert "classification disagreement" in str(exc)
+        else:
+            raise AssertionError("diagnostic P3 promoted top-level GO")
+    finally:
+        temporary.cleanup()
+
+
 def main():
     test_verifier_does_not_import_harness_aggregation()
     test_output_equality_uses_recorded_case_metadata_not_case_id_format()
@@ -641,6 +1001,11 @@ def main():
     test_verifier_rejects_summary_tampering_even_when_rehashed()
     test_verifier_rejects_truncated_jsonl_and_duplicate_ports()
     test_verifier_rejects_rehashed_source_output_and_scheduler_tampering()
+    test_verifier_rejects_invalid_p4_controller_values()
+    test_verifier_rejects_adaptive_mixed_without_decode_role()
+    test_verifier_rejects_illegal_p4_transition_sequences()
+    test_verifier_rejects_p4_threshold_drift_without_identity_update()
+    test_verifier_rejects_diagnostic_p3_top_level_go()
     print("arrival load verifier tests passed")
 
 

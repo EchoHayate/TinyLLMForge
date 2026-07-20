@@ -410,6 +410,10 @@ def test_select_lambda_ref_rejects_structural_or_nonfinite_rows():
 
 
 def _case_matrix_manifest() -> dict:
+    resolved = {
+        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
+        for name in ("P0", "P3", "P4")
+    }
     return {
         "run_tag": "arrival-test",
         "required_scenarios": list(gate.CANONICAL_SCENARIOS),
@@ -420,15 +424,10 @@ def _case_matrix_manifest() -> dict:
             "P4": "P4",
         },
         "policy_identity_by_name": {
-            "P0": "identity-p0",
-            "P3": "identity-p3",
-            "P4": "identity-p4",
+            name: gate.policy_identity(config)
+            for name, config in resolved.items()
         },
-        "resolved_policy_config_by_name": {
-            "P0": {"policy": "P0"},
-            "P3": {"policy": "P3"},
-            "P4": {"policy": "P4"},
-        },
+        "resolved_policy_config_by_name": resolved,
         "workload_sha256": "workload-hash",
         "source_tree_sha256": "source-hash",
         "environment_sha256": "environment-hash",
@@ -1114,13 +1113,40 @@ def _finalization_fixture(root: Path) -> dict:
             case_dir / "request_timeline.jsonl",
             [timeline],
         )
+        scheduler_row = {
+            "step_index": 0,
+            "step_start_ns": start_ns,
+            "step_end_ns": start_ns + 300_000_000,
+        }
+        if case_spec["policy"] == "P4":
+            scheduler_row.update({
+                "policy_branch": "adaptive_mixed_chunked_prefill",
+                "scheduled": [{
+                    "seq_id": case_index,
+                    "is_decode": False,
+                }],
+                "queue_before": {
+                    "adaptive_mixed_state": "inactive",
+                    "adaptive_high_streak": 0,
+                    "adaptive_low_streak": 0,
+                    "adaptive_consecutive_mixed_steps": 0,
+                    "waiting_seq_ids": [case_index],
+                    "prefilling_seq_ids": [],
+                    "running_seq_ids": [],
+                },
+                "queue_after": {
+                    "adaptive_mixed_state": "inactive",
+                    "adaptive_high_streak": 0,
+                    "adaptive_low_streak": 0,
+                    "adaptive_consecutive_mixed_steps": 0,
+                    "waiting_seq_ids": [],
+                    "prefilling_seq_ids": [],
+                    "running_seq_ids": [],
+                },
+            })
         _write_jsonl(
             case_dir / "scheduler_trace.jsonl",
-            [{
-                "step_index": 0,
-                "step_start_ns": start_ns,
-                "step_end_ns": start_ns + 300_000_000,
-            }],
+            [scheduler_row],
         )
         _write_jsonl(
             case_dir / "memory_trace.jsonl",
@@ -1363,13 +1389,40 @@ def test_run_smoke_produces_independently_verified_lifecycle_artifact():
                 output_dir / "request_timeline.jsonl",
                 timeline,
             )
+            scheduler_row = {
+                "step_index": 0,
+                "step_start_ns": 1_000_000_000,
+                "step_end_ns": 2_000_000_000,
+            }
+            if case_spec["policy"] == "P4":
+                scheduler_row.update({
+                    "policy_branch": "adaptive_mixed_chunked_prefill",
+                    "scheduled": [{
+                        "seq_id": 0,
+                        "is_decode": False,
+                    }],
+                    "queue_before": {
+                        "adaptive_mixed_state": "inactive",
+                        "adaptive_high_streak": 0,
+                        "adaptive_low_streak": 0,
+                        "adaptive_consecutive_mixed_steps": 0,
+                        "waiting_seq_ids": [0],
+                        "prefilling_seq_ids": [],
+                        "running_seq_ids": [],
+                    },
+                    "queue_after": {
+                        "adaptive_mixed_state": "inactive",
+                        "adaptive_high_streak": 0,
+                        "adaptive_low_streak": 0,
+                        "adaptive_consecutive_mixed_steps": 0,
+                        "waiting_seq_ids": [],
+                        "prefilling_seq_ids": [],
+                        "running_seq_ids": [],
+                    },
+                })
             _write_jsonl(
                 output_dir / "scheduler_trace.jsonl",
-                [{
-                    "step_index": 0,
-                    "step_start_ns": 1_000_000_000,
-                    "step_end_ns": 2_000_000_000,
-                }],
+                [scheduler_row],
             )
             _write_jsonl(
                 output_dir / "memory_trace.jsonl",

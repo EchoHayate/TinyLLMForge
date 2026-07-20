@@ -29,6 +29,26 @@ REQUIRED_FILES = (
     "artifact_hashes.json",
 )
 
+P4_FIELDS = (
+    "chunked_prefill_adaptive_mixed",
+    "chunked_prefill_adaptive_enter_waiting",
+    "chunked_prefill_adaptive_exit_waiting",
+    "chunked_prefill_adaptive_transition_steps",
+    "chunked_prefill_adaptive_max_mixed_steps",
+)
+
+EXPECTED_P4 = {
+    "chunked_prefill_decode_first": True,
+    "chunked_prefill_max_consecutive_chunks": 0,
+    "chunked_prefill_mixed_batch": False,
+    "chunked_prefill_mixed_min_prompt_tokens": 0,
+    "chunked_prefill_adaptive_mixed": True,
+    "chunked_prefill_adaptive_enter_waiting": 8,
+    "chunked_prefill_adaptive_exit_waiting": 2,
+    "chunked_prefill_adaptive_transition_steps": 2,
+    "chunked_prefill_adaptive_max_mixed_steps": 2,
+}
+
 
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
@@ -42,6 +62,41 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_identity(value: object) -> str:
+    return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _verify_policy_manifest(manifest: dict) -> dict:
+    names = ("P0", "P3", "P4")
+    aliases = manifest.get("canonical_policy_by_name")
+    identities = manifest.get("policy_identity_by_name")
+    resolved = manifest.get("resolved_policy_config_by_name")
+    if (
+        not isinstance(aliases, dict)
+        or not isinstance(identities, dict)
+        or not isinstance(resolved, dict)
+        or tuple(aliases) != names
+        or tuple(identities) != names
+        or tuple(resolved) != names
+        or any(aliases[name] != name for name in names)
+    ):
+        raise ValueError("invalid policy or case manifest")
+    recomputed = {
+        name: _canonical_identity(resolved[name])
+        for name in names
+    }
+    if recomputed != identities:
+        raise ValueError("policy identity mismatch")
+    if len(set(identities.values())) != len(names):
+        raise ValueError("unexpected policy identity collision")
+    p4 = resolved["P4"]
+    if any(p4.get(key) != value for key, value in EXPECTED_P4.items()):
+        raise ValueError("invalid P4 resolved policy")
+    if any(field not in p4 for field in P4_FIELDS):
+        raise ValueError("invalid P4 resolved policy")
+    return p4
 
 
 def _read_json(path: Path):
@@ -208,6 +263,197 @@ def _verify_ports(manifest: dict) -> None:
         raise ValueError("duplicate process case id")
     if set(case_ids) != set(manifest.get("expected_case_ids", [])):
         raise ValueError("process case matrix mismatch")
+
+
+def _verify_p4_scheduler_trace(
+    rows: list[dict],
+    *,
+    enter_waiting: int,
+    exit_waiting: int,
+    transition_steps: int,
+    max_mixed_steps: int,
+) -> None:
+    if not rows:
+        raise ValueError("missing P4 scheduler trace")
+    expected_state = "inactive"
+    expected_high = 0
+    expected_low = 0
+    expected_mixed = 0
+    previous_controller_after = None
+    controller_fields = (
+        "adaptive_mixed_state",
+        "adaptive_high_streak",
+        "adaptive_low_streak",
+        "adaptive_consecutive_mixed_steps",
+    )
+    required_fields = controller_fields + (
+        "waiting_seq_ids",
+        "prefilling_seq_ids",
+        "running_seq_ids",
+    )
+    for expected_step, row in enumerate(rows):
+        if row.get("step_index") != expected_step:
+            raise ValueError("invalid P4 scheduler step sequence")
+        before = row.get("queue_before")
+        after = row.get("queue_after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise ValueError("missing P4 queue snapshot")
+        if any(field not in before for field in required_fields):
+            raise ValueError("missing P4 controller field")
+        if any(field not in after for field in required_fields):
+            raise ValueError("missing P4 controller field")
+        controller_before = tuple(before[field] for field in controller_fields)
+        if (
+            previous_controller_after is not None
+            and controller_before != previous_controller_after
+        ):
+            raise ValueError("P4 controller snapshots are not contiguous")
+        for snapshot in (before, after):
+            if snapshot["adaptive_mixed_state"] not in {
+                "inactive",
+                "active",
+                "draining",
+            }:
+                raise ValueError("illegal adaptive state")
+            counters = tuple(snapshot[field] for field in controller_fields[1:])
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                for value in counters
+            ):
+                raise ValueError("invalid adaptive counter")
+            if (
+                counters[0] >= transition_steps
+                or counters[1] >= transition_steps
+                or counters[2] > max_mixed_steps
+            ):
+                raise ValueError("invalid adaptive counter")
+            queue_sets = [
+                set(snapshot[name])
+                for name in (
+                    "waiting_seq_ids",
+                    "prefilling_seq_ids",
+                    "running_seq_ids",
+                )
+            ]
+            if (
+                queue_sets[0] & queue_sets[1]
+                or queue_sets[0] & queue_sets[2]
+                or queue_sets[1] & queue_sets[2]
+            ):
+                raise ValueError("duplicate P4 queue ownership")
+        if controller_before != (
+            expected_state,
+            expected_high,
+            expected_low,
+            expected_mixed,
+        ):
+            raise ValueError("P4 controller continuity mismatch")
+
+        waiting_depth = len(before["waiting_seq_ids"])
+        eligible = bool(
+            before["running_seq_ids"]
+            and (
+                before["waiting_seq_ids"]
+                or before["prefilling_seq_ids"]
+            )
+        )
+        state = expected_state
+        high = expected_high
+        low = expected_low
+        if not eligible:
+            high = 0
+            low = 0
+        elif state == "inactive":
+            low = 0
+            high = high + 1 if waiting_depth >= enter_waiting else 0
+            if high >= transition_steps:
+                state = "active"
+                high = 0
+        elif state == "active":
+            high = 0
+            low = low + 1 if waiting_depth <= exit_waiting else 0
+            if low >= transition_steps:
+                state = (
+                    "draining"
+                    if before["prefilling_seq_ids"]
+                    else "inactive"
+                )
+                low = 0
+        else:
+            low = 0
+            high = high + 1 if waiting_depth >= enter_waiting else 0
+            if high >= transition_steps:
+                state = "active"
+                high = 0
+            elif not before["prefilling_seq_ids"]:
+                state = "inactive"
+                expected_mixed = 0
+
+        branch = row.get("policy_branch")
+        scheduled = row.get("scheduled")
+        if not isinstance(scheduled, list):
+            raise ValueError("invalid P4 scheduled rows")
+        has_prefill = any(
+            item.get("is_decode") is False for item in scheduled
+        )
+        has_decode = any(
+            item.get("is_decode") is True for item in scheduled
+        )
+        if branch == "adaptive_mixed_prefill_decode":
+            if not has_prefill or not has_decode:
+                raise ValueError("adaptive mixed branch role mismatch")
+            expected_mixed += 1
+            if expected_mixed > max_mixed_steps:
+                raise ValueError("adaptive mixed service bound exceeded")
+        elif branch in {
+            "adaptive_mixed_decode_first",
+            "adaptive_mixed_decode_yield",
+            "adaptive_mixed_decode_fallback",
+        }:
+            if has_prefill:
+                raise ValueError("decode-only adaptive branch has prefill")
+            expected_mixed = 0
+        elif branch == "adaptive_mixed_chunked_prefill":
+            if before["running_seq_ids"] or has_decode:
+                raise ValueError("adaptive chunked prefill has decode")
+            expected_mixed = 0
+        else:
+            raise ValueError("illegal P4 policy branch")
+
+        if state == "draining":
+            newly_prefilling = (
+                set(after["prefilling_seq_ids"])
+                - set(before["prefilling_seq_ids"])
+            )
+            if newly_prefilling & set(before["waiting_seq_ids"]):
+                raise ValueError("new waiting admission during draining")
+
+        if (
+            not after["waiting_seq_ids"]
+            and not after["prefilling_seq_ids"]
+            and not after["running_seq_ids"]
+        ):
+            state = "inactive"
+            high = 0
+            low = 0
+            expected_mixed = 0
+
+        if after["adaptive_mixed_state"] != state:
+            raise ValueError("adaptive state transition mismatch")
+        if after["adaptive_high_streak"] != high:
+            raise ValueError("adaptive high streak mismatch")
+        if after["adaptive_low_streak"] != low:
+            raise ValueError("adaptive low streak mismatch")
+        if after["adaptive_consecutive_mixed_steps"] != expected_mixed:
+            raise ValueError("adaptive mixed counter mismatch")
+        expected_state = state
+        expected_high = high
+        expected_low = low
+        previous_controller_after = tuple(
+            after[field] for field in controller_fields
+        )
 
 
 def _request_metrics(workload: dict, timeline: dict) -> dict:
@@ -773,6 +1019,7 @@ def verify_run(
     manifest = _read_json(run_dir / "run_manifest.json")
     _verify_source(run_dir, manifest)
     _verify_ports(manifest)
+    p4_config = _verify_policy_manifest(manifest)
     _read_jsonl(run_dir / "calibration_manifest.jsonl")
     _read_jsonl(run_dir / "calibration_rows.jsonl")
     workload_rows = _read_jsonl(
@@ -790,6 +1037,29 @@ def verify_run(
     scheduler_rows = _read_jsonl(
         run_dir / "scheduler_trace.jsonl"
     )
+    for case_id in manifest["expected_case_ids"]:
+        case_rows = [
+            row for row in scheduler_rows
+            if row.get("case_id") == case_id
+        ]
+        if case_id.startswith("P4-") or (
+            case_rows and case_rows[0].get("policy") == "P4"
+        ):
+            _verify_p4_scheduler_trace(
+                case_rows,
+                enter_waiting=p4_config[
+                    "chunked_prefill_adaptive_enter_waiting"
+                ],
+                exit_waiting=p4_config[
+                    "chunked_prefill_adaptive_exit_waiting"
+                ],
+                transition_steps=p4_config[
+                    "chunked_prefill_adaptive_transition_steps"
+                ],
+                max_mixed_steps=p4_config[
+                    "chunked_prefill_adaptive_max_mixed_steps"
+                ],
+            )
     memory_rows = _read_jsonl(run_dir / "memory_trace.jsonl")
     recorded_case_rows = _read_jsonl(run_dir / "case_rows.jsonl")
     _verify_output_equality(timeline_rows, manifest)
