@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "tools" / "multi_sequence_cuda_graph_contract.py"
+DIAGNOSTIC_PATH = ROOT / "tools" / "diagnose_multi_sequence_cuda_graph.py"
 
 
 def load_contract():
@@ -25,6 +26,22 @@ def load_contract():
 
 
 contract = load_contract()
+
+
+def load_diagnostic_module_without_gpu():
+    spec = importlib.util.spec_from_file_location(
+        "cuda_graph_diagnostic",
+        DIAGNOSTIC_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeTokenizer:
+    def encode(self, text):
+        return [ord(character) for character in text]
 
 
 def test_diagnostic_matrix_is_exact_and_unique():
@@ -296,6 +313,161 @@ def test_production_gate_fails_closed_on_structure_and_correctness():
     assert contract.classify_production_gate(rows)["classification"] == "NO_GO"
 
 
+def test_prompt_plan_is_deterministic_and_covers_required_trajectories():
+    diagnostic = load_diagnostic_module_without_gpu()
+    tokenizer = FakeTokenizer()
+    first = diagnostic.build_prompt_plan(tokenizer=tokenizer, batch_size=16)
+    second = diagnostic.build_prompt_plan(tokenizer=tokenizer, batch_size=16)
+    assert first == second
+    assert set(first) == {
+        "uniform-short",
+        "ragged-context",
+        "duplicate-and-distinct",
+    }
+    assert all(len(rows) == 16 for rows in first.values())
+    ragged = first["ragged-context"]
+    assert min(len(row) for row in ragged) < 256
+    assert max(len(row) for row in ragged) > 256
+    duplicate = first["duplicate-and-distinct"]
+    assert duplicate[0] == duplicate[1]
+    assert duplicate[0] != duplicate[2]
+
+
+def test_kv_observation_plan_covers_active_zero_inactive_and_sentinels():
+    diagnostic = load_diagnostic_module_without_gpu()
+    plan = diagnostic.build_kv_observation_plan(
+        active_slots=(300, 557, 814),
+        graph_size=4,
+        inactive_slots=(0,),
+        total_slots=4096,
+    )
+    assert plan["active_write_slots"] == [300, 557, 814]
+    assert plan["slot_zero"] == 0
+    assert plan["inactive_declared_slots"] == [0]
+    assert len(plan["sentinel_slots"]) >= 3
+    assert set(plan["sentinel_slots"]).isdisjoint({0, 300, 557, 814})
+
+
+def test_teacher_forcing_records_observed_and_reference_tokens_separately():
+    diagnostic = load_diagnostic_module_without_gpu()
+    row = diagnostic.build_step_row(
+        observed_argmax_token_ids=[7, 8],
+        reference_next_input_token_ids=[7, 9],
+    )
+    assert row["observed_argmax_token_ids"] == [7, 8]
+    assert row["reference_next_input_token_ids"] == [7, 9]
+    assert row["teacher_forcing_diverged"] is True
+
+
+def test_tensor_shard_schema_rejects_missing_order_fields():
+    diagnostic = load_diagnostic_module_without_gpu()
+    shard = {
+        "schema_version": 1,
+        "case_id": "b2__uniform-short__eager__r0",
+        "tensor": object(),
+    }
+    try:
+        diagnostic.validate_tensor_shard(shard)
+    except ValueError as exc:
+        assert "step_ids" in str(exc)
+    else:
+        raise AssertionError("missing step_ids accepted")
+
+
+def test_tensor_shard_schema_accepts_ordered_complete_metadata():
+    diagnostic = load_diagnostic_module_without_gpu()
+    shard = {
+        "schema_version": 1,
+        "case_id": "b2__uniform-short__eager__r0",
+        "dtype": "torch.float32",
+        "shape": [2, 2],
+        "step_ids": [0, 1],
+        "row_ids": [0, 1],
+        "tensor": object(),
+    }
+    assert diagnostic.validate_tensor_shard(shard) is None
+
+
+def test_direct_model_forward_disables_autograd():
+    import torch
+
+    diagnostic = load_diagnostic_module_without_gpu()
+
+    class GradObservingModel:
+        def __call__(self, input_ids, positions):
+            del input_ids, positions
+            return torch.tensor([torch.is_grad_enabled()])
+
+    observed = diagnostic._forward_without_autograd(
+        GradObservingModel(),
+        torch.tensor([1]),
+        torch.tensor([0]),
+    )
+    assert observed.tolist() == [False]
+
+
+def test_direct_model_forward_and_logits_disable_autograd():
+    import torch
+
+    diagnostic = load_diagnostic_module_without_gpu()
+
+    class GradObservingModel:
+        def __call__(self, input_ids, positions):
+            del input_ids, positions
+            return torch.tensor([torch.is_grad_enabled()])
+
+        def compute_logits(self, hidden_states):
+            return torch.tensor(
+                [
+                    bool(hidden_states.item()),
+                    torch.is_grad_enabled(),
+                ]
+            )
+
+    observed = diagnostic._forward_and_logits_without_autograd(
+        GradObservingModel(),
+        torch.tensor([1]),
+        torch.tensor([0]),
+    )
+    assert observed.tolist() == [False, False]
+
+
+def test_artifact_record_path_is_relative_and_resolves_after_relocation():
+    diagnostic = load_diagnostic_module_without_gpu()
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_dir = Path(temporary_directory) / "remote-case-output"
+        artifact = (
+            output_dir
+            / "tensors"
+            / "logits"
+            / "b2__uniform-short__eager__r0.pt"
+        )
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"portable cuda graph artifact")
+
+        record = diagnostic._artifact_record(
+            output_dir=output_dir,
+            path=artifact,
+        )
+
+        recorded_path = Path(record["path"])
+        assert recorded_path == Path(
+            "tensors/logits/b2__uniform-short__eager__r0.pt"
+        )
+        assert recorded_path.is_absolute() is False
+
+        relocated_output_dir = (
+            Path(temporary_directory) / "downloaded-case-output"
+        )
+        relocated_artifact = relocated_output_dir / recorded_path
+        relocated_artifact.parent.mkdir(parents=True)
+        relocated_artifact.write_bytes(artifact.read_bytes())
+
+        assert relocated_artifact.is_file()
+        assert record["sha256"] == contract.sha256_file(relocated_artifact)
+
+
 if __name__ == "__main__":
     tests = [
         test_diagnostic_matrix_is_exact_and_unique,
@@ -308,6 +480,14 @@ if __name__ == "__main__":
         test_diagnostic_classification_rejects_duplicate_evidence,
         test_production_gate_frozen_boundaries,
         test_production_gate_fails_closed_on_structure_and_correctness,
+        test_prompt_plan_is_deterministic_and_covers_required_trajectories,
+        test_kv_observation_plan_covers_active_zero_inactive_and_sentinels,
+        test_teacher_forcing_records_observed_and_reference_tokens_separately,
+        test_tensor_shard_schema_rejects_missing_order_fields,
+        test_tensor_shard_schema_accepts_ordered_complete_metadata,
+        test_direct_model_forward_disables_autograd,
+        test_direct_model_forward_and_logits_disable_autograd,
+        test_artifact_record_path_is_relative_and_resolves_after_relocation,
     ]
     for test in tests:
         test()
