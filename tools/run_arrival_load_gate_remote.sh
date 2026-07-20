@@ -3,7 +3,7 @@ set -euo pipefail
 
 MODE="${1:-}"
 if [[ -z "${MODE}" ]]; then
-  echo "usage: $0 preflight|smoke|calibration|canonical|download-only|verify-only" >&2
+  echo "usage: $0 preflight|smoke|cost-calibration|workload-calibration|canonical|download-only|verify-only" >&2
   exit 2
 fi
 
@@ -175,7 +175,7 @@ cleanup_staging() {
 trap cleanup_staging EXIT
 
 case "${MODE}" in
-  preflight|smoke|calibration|canonical|download-only|verify-only) ;;
+  preflight|smoke|cost-calibration|workload-calibration|canonical|download-only|verify-only) ;;
   *)
     echo "unsupported mode: ${MODE}" >&2
     exit 2
@@ -287,6 +287,7 @@ capability = {
 )
 PY
 
+"${REMOTE_PYTHON}" tools/test_arrival_load_cost_calibration.py
 "${REMOTE_PYTHON}" tools/test_arrival_load_gate.py
 "${REMOTE_PYTHON}" tools/test_arrival_load_driver.py
 "${REMOTE_PYTHON}" tools/test_arrival_load_verify.py
@@ -333,16 +334,29 @@ case "${MODE}" in
       --environment-evidence "${REMOTE_DIR}/staging/capability.json"
     )
     ;;
-  calibration)
+  cost-calibration)
     REMOTE_COMMAND+=(
-      run-calibration-remote
+      run-cost-calibration-remote
       --run-dir "${REMOTE_DIR}/artifacts.work"
       --python-bin "${REMOTE_PYTHON}"
       --model-path "${MODEL_PATH}"
       --run-tag "${RUN_TAG}"
       --source-evidence "${REMOTE_DIR}/staging/source_evidence.json"
       --environment-evidence "${REMOTE_DIR}/staging/capability.json"
-      --smoke-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${SMOKE_RUN_TAG:?calibration requires SMOKE_RUN_TAG}/artifacts"
+      --smoke-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${SMOKE_RUN_TAG:?cost-calibration requires SMOKE_RUN_TAG}/artifacts"
+    )
+    ;;
+  workload-calibration)
+    REMOTE_COMMAND+=(
+      run-workload-calibration-remote
+      --run-dir "${REMOTE_DIR}/artifacts.work"
+      --python-bin "${REMOTE_PYTHON}"
+      --model-path "${MODEL_PATH}"
+      --run-tag "${RUN_TAG}"
+      --source-evidence "${REMOTE_DIR}/staging/source_evidence.json"
+      --environment-evidence "${REMOTE_DIR}/staging/capability.json"
+      --smoke-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${SMOKE_RUN_TAG:?workload-calibration requires SMOKE_RUN_TAG}/artifacts"
+      --cost-calibration-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${COST_CALIBRATION_RUN_TAG:?workload-calibration requires COST_CALIBRATION_RUN_TAG}/artifacts"
     )
     ;;
   canonical)
@@ -355,7 +369,8 @@ case "${MODE}" in
       --source-evidence "${REMOTE_DIR}/staging/source_evidence.json"
       --environment-evidence "${REMOTE_DIR}/staging/capability.json"
       --smoke-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${SMOKE_RUN_TAG:?canonical requires SMOKE_RUN_TAG}/artifacts"
-      --calibration-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${CALIBRATION_RUN_TAG:?canonical requires CALIBRATION_RUN_TAG}/artifacts"
+      --cost-calibration-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${COST_CALIBRATION_RUN_TAG:?canonical requires COST_CALIBRATION_RUN_TAG}/artifacts"
+      --workload-calibration-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${WORKLOAD_CALIBRATION_RUN_TAG:?canonical requires WORKLOAD_CALIBRATION_RUN_TAG}/artifacts"
     )
     if [[ "${RESUME}" == 1 ]]; then
       REMOTE_COMMAND+=(--resume)

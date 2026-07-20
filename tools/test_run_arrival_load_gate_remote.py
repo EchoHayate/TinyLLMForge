@@ -22,14 +22,18 @@ def test_remote_runner_has_exact_host_runtime_and_modes():
         "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
         "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${RUN_TAG}",
         "experiments/arrival_load/${RUN_TAG}",
+    ):
+        assert required in runner, required
+    for mode in (
         "preflight",
         "smoke",
-        "calibration",
+        "cost-calibration",
+        "workload-calibration",
         "canonical",
         "download-only",
         "verify-only",
     ):
-        assert required in runner, required
+        assert mode in runner, mode
 
 
 def test_only_immutable_staging_is_uploaded_before_preflight():
@@ -54,6 +58,7 @@ def test_preflight_is_run_local_and_dependency_light():
     assert "source_audit.validate_source_snapshot" in runner
     assert "capability.json" in runner
     for test_file in (
+        "tools/test_arrival_load_cost_calibration.py",
         "tools/test_arrival_load_gate.py",
         "tools/test_arrival_load_driver.py",
         "tools/test_arrival_load_verify.py",
@@ -182,15 +187,42 @@ def test_canonical_validates_current_source_and_environment_identity():
     assert "--environment-evidence" in runner[canonical:]
 
 
-def test_p4_chain_requires_explicit_predecessor_run_tags():
+def test_p5_chain_requires_explicit_predecessor_run_tags():
     runner = _runner()
+    cost = runner.index("run-cost-calibration-remote")
+    workload = runner.index("run-workload-calibration-remote")
     canonical = runner.index("run-canonical")
-    assert "calibration requires SMOKE_RUN_TAG" in runner
+    assert "cost-calibration requires SMOKE_RUN_TAG" in runner
+    assert "workload-calibration requires SMOKE_RUN_TAG" in runner
+    assert (
+        "workload-calibration requires COST_CALIBRATION_RUN_TAG"
+        in runner
+    )
     assert "canonical requires SMOKE_RUN_TAG" in runner
-    assert "canonical requires CALIBRATION_RUN_TAG" in runner
+    assert (
+        "canonical requires COST_CALIBRATION_RUN_TAG"
+        in runner
+    )
+    assert (
+        "canonical requires WORKLOAD_CALIBRATION_RUN_TAG"
+        in runner
+    )
+    assert "--smoke-run-dir" in runner[cost:]
+    assert "--smoke-run-dir" in runner[workload:]
+    assert "--cost-calibration-run-dir" in runner[workload:]
     assert "--run-tag" in runner[canonical:]
     assert "--smoke-run-dir" in runner[canonical:]
-    assert "--calibration-run-dir" in runner[canonical:]
+    assert "--cost-calibration-run-dir" in runner[canonical:]
+    assert "--workload-calibration-run-dir" in runner[canonical:]
+
+
+def test_success_verifies_smoke_and_canonical_only():
+    runner = _runner()
+    assert (
+        'if [[ "${MODE}" == canonical || "${MODE}" == smoke ]]'
+        in runner
+    )
+    assert "verify_local_artifacts" in runner
 
 
 def test_runner_forbids_shared_or_checkout_mutation():
@@ -220,7 +252,8 @@ def main():
     test_success_runs_independent_local_verifier_and_checks_exitcode()
     test_ports_are_allocated_only_by_python_orchestrator()
     test_canonical_validates_current_source_and_environment_identity()
-    test_p4_chain_requires_explicit_predecessor_run_tags()
+    test_p5_chain_requires_explicit_predecessor_run_tags()
+    test_success_verifies_smoke_and_canonical_only()
     test_runner_forbids_shared_or_checkout_mutation()
     print("arrival load remote runner tests passed")
 
