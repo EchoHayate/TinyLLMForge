@@ -354,6 +354,42 @@ def make_running(scheduler, token_ids=(90, 91, 92, 93), max_tokens=8):
     return seq
 
 
+def make_slo_scheduler(**overrides):
+    config = {
+        "max_num_seqs": 4,
+        "max_num_batched_tokens": 128,
+        "max_model_len": 512,
+        "num_kvcache_blocks": 256,
+        "kvcache_block_size": 4,
+        "max_num_prefill_tokens_per_step": 128,
+        "chunked_prefill_decode_first": False,
+        "chunked_prefill_max_consecutive_chunks": 0,
+        "chunked_prefill_slo_mixed": True,
+        "chunked_prefill_slo_target_gap_ns": 64_000_000,
+        "chunked_prefill_slo_reserve_ns": 8_000_000,
+        "chunked_prefill_slo_cost_intercept_ns": 4_000_000,
+        "chunked_prefill_slo_cost_per_prefill_token_ns": 100_000,
+        "chunked_prefill_slo_min_chunk_tokens": 16,
+    }
+    config.update(overrides)
+    return Scheduler(make_config(**config))
+
+
+def make_running_with_id(
+    scheduler,
+    seq_id,
+    token_ids=(90, 91, 92, 93),
+    max_tokens=8,
+):
+    seq = make_running(
+        scheduler,
+        token_ids=token_ids,
+        max_tokens=max_tokens,
+    )
+    seq.seq_id = seq_id
+    return seq
+
+
 def add_waiting(scheduler, count, prompt_tokens=12):
     rows = []
     for offset in range(count):
@@ -1115,6 +1151,119 @@ def test_p5_decision_snapshot_is_immutable_until_postprocess_copy():
         pass
     else:
         raise AssertionError("P5 decision snapshot is mutable")
+
+
+def test_decode_progress_updates_only_for_completion_tokens():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    first = make_seq([1, 2, 3, 4], max_tokens=2)
+    first.seq_id = 1
+    scheduler.block_manager.allocate(first)
+    first.status = SequenceStatus.PREFILLING
+    first.prefill_chunk_start = 0
+    first.prefill_chunk_end = 4
+    first.prefill_chunk_final = True
+    scheduler._postprocess_chunked_prefill(
+        [first],
+        [101],
+        True,
+        step_end_ns=1_000,
+    )
+    assert scheduler.decode_progress_ns_by_seq_id == {1: 1_000}
+
+    intermediate = make_seq(range(8), max_tokens=4)
+    intermediate.seq_id = 2
+    scheduler.block_manager.allocate(intermediate)
+    intermediate.status = SequenceStatus.PREFILLING
+    intermediate.prefill_chunk_start = 0
+    intermediate.prefill_chunk_end = 4
+    intermediate.prefill_chunk_final = False
+    scheduler._postprocess_chunked_prefill(
+        [intermediate],
+        None,
+        False,
+        step_end_ns=1_100,
+    )
+    assert 2 not in scheduler.decode_progress_ns_by_seq_id
+
+    scheduler.running.remove(first)
+    first.step_is_decode = True
+    scheduler._postprocess_mixed(
+        [first],
+        [102],
+        step_end_ns=1_200,
+    )
+    assert first.is_finished
+    assert 1 not in scheduler.decode_progress_ns_by_seq_id
+
+    scheduler.prefilling.remove(intermediate)
+    scheduler.block_manager.deallocate(intermediate)
+    scheduler._maybe_reset_adaptive_mixed_controller()
+    assert scheduler.decode_progress_ns_by_seq_id == {}
+    assert scheduler._last_slo_decision_now_ns is None
+
+
+def test_progress_survives_preemption_but_is_excluded_until_running():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    seq = make_running_with_id(scheduler, seq_id=7)
+    scheduler.decode_progress_ns_by_seq_id[7] = 1_000
+    scheduler.running.remove(seq)
+    scheduler.preempt(seq)
+    assert scheduler.decode_progress_ns_by_seq_id[7] == 1_000
+    assert scheduler._oldest_runnable_decode(2_000) is None
+    scheduler.waiting.remove(seq)
+    scheduler.block_manager.allocate(seq)
+    seq.status = SequenceStatus.RUNNING
+    scheduler.running.append(seq)
+    assert scheduler._oldest_runnable_decode(2_000) == (7, 1_000, 1_000)
+
+
+def test_clock_regression_is_sticky_and_forces_decode_only():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    running = make_running_with_id(scheduler, seq_id=5, max_tokens=16)
+    scheduler.decode_progress_ns_by_seq_id[running.seq_id] = 1_000
+
+    first = scheduler.schedule(1_000)
+    scheduler.postprocess(
+        first[0],
+        [101],
+        first[1],
+        first[2],
+        decision_now_ns=1_000,
+        step_end_ns=1_100,
+    )
+    assert scheduler.decode_progress_ns_by_seq_id[running.seq_id] == 1_100
+    second = scheduler.schedule(999)
+    scheduler.postprocess(
+        second[0],
+        [102],
+        second[1],
+        second[2],
+        decision_now_ns=999,
+        step_end_ns=1_200,
+    )
+
+    assert scheduler.slo_clock_invalid is True
+    assert scheduler.slo_clock_invalid_reason == "decision_clock_regressed"
+    assert scheduler.last_policy_branch == "slo_mixed_clock_invalid_decode"
+    scheduler.schedule(2_000)
+    assert scheduler.last_policy_branch == "slo_mixed_clock_invalid_decode"
+
+
+def test_missing_runnable_progress_fails_closed():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    make_running_with_id(scheduler, seq_id=9, max_tokens=16)
+    add_waiting(scheduler, 8)
+
+    scheduler.schedule(10_000)
+
+    assert scheduler.last_policy_branch == "slo_mixed_missing_progress_decode"
+    assert scheduler.last_slo_decision["suppression_reason"] == (
+        "missing_decode_progress"
+    )
 
 
 def test_chunked_prefill_decode_fallback_reports_branch_without_changing_result():
@@ -2513,6 +2662,10 @@ def main():
     test_llm_engine_step_records_observation_without_changing_return_value()
     test_engine_samples_one_decision_and_one_step_end_timestamp()
     test_p5_decision_snapshot_is_immutable_until_postprocess_copy()
+    test_decode_progress_updates_only_for_completion_tokens()
+    test_progress_survives_preemption_but_is_excluded_until_running()
+    test_clock_regression_is_sticky_and_forces_decode_only()
+    test_missing_runnable_progress_fails_closed()
     test_chunked_prefill_decode_fallback_reports_branch_without_changing_result()
     test_legacy_prefill_reports_branch_without_changing_result()
     test_legacy_decode_reports_branch_without_changing_result()

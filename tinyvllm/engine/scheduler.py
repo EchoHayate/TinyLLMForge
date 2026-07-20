@@ -77,6 +77,9 @@ class Scheduler:
         self.chunked_prefill_adaptive_max_mixed_steps = getattr(
             config, "chunked_prefill_adaptive_max_mixed_steps", 2
         )
+        self.chunked_prefill_slo_mixed = getattr(
+            config, "chunked_prefill_slo_mixed", False
+        )
         self.adaptive_mixed_state = ADAPTIVE_MIXED_INACTIVE
         self.adaptive_high_streak = 0
         self.adaptive_low_streak = 0
@@ -85,6 +88,10 @@ class Scheduler:
         self.last_policy_branch: str | None = None
         self.last_slo_decision = MappingProxyType({})
         self._last_slo_postprocess: dict = {}
+        self.decode_progress_ns_by_seq_id: dict[int, int] = {}
+        self.slo_clock_invalid = False
+        self.slo_clock_invalid_reason: str | None = None
+        self._last_slo_decision_now_ns: int | None = None
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()     #未分配 KV 缓存块
@@ -124,6 +131,8 @@ class Scheduler:
     def _maybe_reset_adaptive_mixed_controller(self) -> None:
         if not self.waiting and not self.prefilling and not self.running:
             self._reset_adaptive_mixed_controller()
+            self.decode_progress_ns_by_seq_id.clear()
+            self._last_slo_decision_now_ns = None
 
     def _adaptive_transition_eligible(self) -> bool:
         return bool(
@@ -192,6 +201,112 @@ class Scheduler:
             **dict(self._last_slo_postprocess),
         }
 
+    def _invalidate_slo_clock(self, reason: str) -> None:
+        if not self.slo_clock_invalid:
+            self.slo_clock_invalid = True
+            self.slo_clock_invalid_reason = reason
+
+    def _validate_slo_decision_time(
+        self,
+        decision_now_ns: int | None,
+    ) -> bool:
+        if (
+            isinstance(decision_now_ns, bool)
+            or not isinstance(decision_now_ns, int)
+            or decision_now_ns < 0
+        ):
+            self._invalidate_slo_clock("invalid_decision_timestamp")
+            return False
+        if (
+            self._last_slo_decision_now_ns is not None
+            and decision_now_ns < self._last_slo_decision_now_ns
+        ):
+            self._invalidate_slo_clock("decision_clock_regressed")
+            return False
+        self._last_slo_decision_now_ns = decision_now_ns
+        return not self.slo_clock_invalid
+
+    def _validate_slo_step_end(
+        self,
+        decision_now_ns: int | None,
+        step_end_ns: int | None,
+    ) -> bool:
+        if (
+            isinstance(step_end_ns, bool)
+            or not isinstance(step_end_ns, int)
+            or step_end_ns < 0
+            or isinstance(decision_now_ns, bool)
+            or not isinstance(decision_now_ns, int)
+            or step_end_ns < decision_now_ns
+        ):
+            self._invalidate_slo_clock("invalid_step_end_timestamp")
+            return False
+        return True
+
+    def _oldest_runnable_decode(
+        self,
+        decision_now_ns: int,
+    ) -> tuple[int, int, int] | None:
+        oldest = None
+        for seq in self.running:
+            progress_ns = self.decode_progress_ns_by_seq_id.get(seq.seq_id)
+            if progress_ns is None:
+                return None
+            if progress_ns > decision_now_ns:
+                self._invalidate_slo_clock("progress_timestamp_in_future")
+                return None
+            candidate = (progress_ns, seq.seq_id)
+            if oldest is None or candidate < oldest:
+                oldest = candidate
+        if oldest is None:
+            return None
+        progress_ns, seq_id = oldest
+        return seq_id, progress_ns, decision_now_ns - progress_ns
+
+    def _schedule_slo_progress_guard(
+        self,
+        decision_now_ns: int | None,
+    ) -> tuple[list[Sequence], bool, bool] | None:
+        if not self.running:
+            return None
+        decision = {
+            "decision_now_ns": decision_now_ns,
+            "suppression_reason": None,
+            "clock_invalid": self.slo_clock_invalid,
+            "clock_invalid_reason": self.slo_clock_invalid_reason,
+        }
+        if not self._validate_slo_decision_time(decision_now_ns):
+            decision.update({
+                "suppression_reason": "clock_invalid",
+                "clock_invalid": self.slo_clock_invalid,
+                "clock_invalid_reason": self.slo_clock_invalid_reason,
+            })
+            self._publish_slo_decision(decision)
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "slo_mixed_clock_invalid_decode",
+            )
+        oldest = self._oldest_runnable_decode(decision_now_ns)
+        if self.slo_clock_invalid:
+            decision.update({
+                "suppression_reason": "clock_invalid",
+                "clock_invalid": True,
+                "clock_invalid_reason": self.slo_clock_invalid_reason,
+            })
+            self._publish_slo_decision(decision)
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "slo_mixed_clock_invalid_decode",
+            )
+        if oldest is None:
+            decision["suppression_reason"] = "missing_decode_progress"
+            self._publish_slo_decision(decision)
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "slo_mixed_missing_progress_decode",
+            )
+        return None
+
     def add(self, seq: Sequence):
         self._validate_admission(seq)
         self.waiting.append(seq)
@@ -224,9 +339,12 @@ class Scheduler:
         self,
         decision_now_ns: int | None = None,
     ) -> tuple[list[Sequence], bool, bool]:
-        del decision_now_ns
         waiting_depth = len(self.waiting)
         self._maybe_reset_adaptive_mixed_controller()
+        if self.chunked_prefill_enabled and self.chunked_prefill_slo_mixed:
+            guarded = self._schedule_slo_progress_guard(decision_now_ns)
+            if guarded is not None:
+                return guarded
         if self.chunked_prefill_enabled and self.chunked_prefill_adaptive_mixed:
             return self._schedule_adaptive_mixed(waiting_depth)
 
@@ -604,21 +722,49 @@ class Scheduler:
                     decision_now_ns: int | None = None,
                     step_end_ns: int | None = None):
         self._last_slo_postprocess = {}
-        if decision_now_ns is not None or step_end_ns is not None:
-            assert decision_now_ns is not None
-            assert step_end_ns is not None
-            assert step_end_ns >= decision_now_ns
-            self._last_slo_postprocess = {
-                "decision_now_ns": decision_now_ns,
-                "step_end_ns": step_end_ns,
-                "actual_step_duration_ns": step_end_ns - decision_now_ns,
-            }
+        timestamps_present = (
+            decision_now_ns is not None or step_end_ns is not None
+        )
+        timestamp_valid = (
+            self._validate_slo_step_end(decision_now_ns, step_end_ns)
+            if timestamps_present
+            else False
+        )
+        progress_updates = {}
+        finished_progress_entries_removed = []
         if batch_kind == "mixed":
-            self._postprocess_mixed(seqs, token_ids)
+            progress_updates, finished_progress_entries_removed = (
+                self._postprocess_mixed(
+                    seqs,
+                    token_ids,
+                    step_end_ns=step_end_ns if timestamp_valid else None,
+                )
+            )
+            self._publish_slo_postprocess(
+                decision_now_ns,
+                step_end_ns,
+                timestamp_valid,
+                progress_updates,
+                finished_progress_entries_removed,
+            )
             self._maybe_reset_adaptive_mixed_controller()
             return
         if is_prefill and self.chunked_prefill_enabled:
-            self._postprocess_chunked_prefill(seqs, token_ids, do_sample)
+            progress_updates, finished_progress_entries_removed = (
+                self._postprocess_chunked_prefill(
+                    seqs,
+                    token_ids,
+                    do_sample,
+                    step_end_ns=step_end_ns if timestamp_valid else None,
+                )
+            )
+            self._publish_slo_postprocess(
+                decision_now_ns,
+                step_end_ns,
+                timestamp_valid,
+                progress_updates,
+                finished_progress_entries_removed,
+            )
             self._maybe_reset_adaptive_mixed_controller()
             return
         if is_prefill:
@@ -634,16 +780,84 @@ class Scheduler:
                 seq.num_computed_tokens = new_end
         for seq, token_id in zip(seqs, token_ids):
             seq.append_token(token_id)
+            self._record_decode_progress(
+                seq,
+                step_end_ns if timestamp_valid else None,
+                progress_updates,
+            )
             # 如果不能忽略句子终止符号，并且遇到了终止符号
             # 或者生成的长度已经达到了最大值
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
+                self._remove_finished_progress(
+                    seq,
+                    finished_progress_entries_removed,
+                )
+        self._publish_slo_postprocess(
+            decision_now_ns,
+            step_end_ns,
+            timestamp_valid,
+            progress_updates,
+            finished_progress_entries_removed,
+        )
         self._maybe_reset_adaptive_mixed_controller()
 
-    def _postprocess_chunked_prefill(self, seqs: list[Sequence], token_ids: list[int] | None, do_sample: bool):
+    def _publish_slo_postprocess(
+        self,
+        decision_now_ns: int | None,
+        step_end_ns: int | None,
+        timestamp_valid: bool,
+        progress_updates: dict[int, int],
+        finished_progress_entries_removed: list[int],
+    ) -> None:
+        self._last_slo_postprocess = {
+            "step_end_ns": step_end_ns,
+            "actual_step_duration_ns": (
+                step_end_ns - decision_now_ns
+                if timestamp_valid
+                else None
+            ),
+            "decode_progress_updates": {
+                str(seq_id): timestamp
+                for seq_id, timestamp in sorted(progress_updates.items())
+            },
+            "finished_progress_entries_removed": sorted(
+                finished_progress_entries_removed
+            ),
+        }
+
+    def _record_decode_progress(
+        self,
+        seq: Sequence,
+        step_end_ns: int | None,
+        progress_updates: dict[int, int],
+    ) -> None:
+        if not self.chunked_prefill_slo_mixed or step_end_ns is None:
+            return
+        self.decode_progress_ns_by_seq_id[seq.seq_id] = step_end_ns
+        progress_updates[seq.seq_id] = step_end_ns
+
+    def _remove_finished_progress(
+        self,
+        seq: Sequence,
+        finished_progress_entries_removed: list[int],
+    ) -> None:
+        if self.decode_progress_ns_by_seq_id.pop(seq.seq_id, None) is not None:
+            finished_progress_entries_removed.append(seq.seq_id)
+
+    def _postprocess_chunked_prefill(
+        self,
+        seqs: list[Sequence],
+        token_ids: list[int] | None,
+        do_sample: bool,
+        *,
+        step_end_ns: int | None = None,
+    ) -> tuple[dict[int, int], list[int]]:
         token_iter = iter(token_ids or [])
+        progress_updates = {}
+        finished_progress_entries_removed = []
         for seq in seqs:
             old_end = seq.num_computed_tokens
             new_end = max(seq.num_computed_tokens, seq.prefill_chunk_end)
@@ -657,22 +871,49 @@ class Scheduler:
 
             token_id = next(token_iter)
             seq.append_token(token_id)
+            self._record_decode_progress(
+                seq,
+                step_end_ns,
+                progress_updates,
+            )
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
+                self._remove_finished_progress(
+                    seq,
+                    finished_progress_entries_removed,
+                )
             else:
                 seq.status = SequenceStatus.RUNNING
                 self.running.append(seq)
+        return progress_updates, finished_progress_entries_removed
 
-    def _postprocess_mixed(self, seqs: list[Sequence], token_ids: list[int] | None):
+    def _postprocess_mixed(
+        self,
+        seqs: list[Sequence],
+        token_ids: list[int] | None,
+        *,
+        step_end_ns: int | None = None,
+    ) -> tuple[dict[int, int], list[int]]:
         token_iter = iter(token_ids or [])
+        progress_updates = {}
+        finished_progress_entries_removed = []
         for seq in seqs:
             if getattr(seq, "step_is_decode", False):
                 token_id = next(token_iter)
                 seq.append_token(token_id)
+                self._record_decode_progress(
+                    seq,
+                    step_end_ns,
+                    progress_updates,
+                )
                 if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                     seq.status = SequenceStatus.FINISHED
                     self.block_manager.deallocate(seq)
+                    self._remove_finished_progress(
+                        seq,
+                        finished_progress_entries_removed,
+                    )
                 else:
                     seq.status = SequenceStatus.RUNNING
                     self.running.append(seq)
@@ -690,11 +931,21 @@ class Scheduler:
             else:
                 token_id = next(token_iter)
                 seq.append_token(token_id)
+                self._record_decode_progress(
+                    seq,
+                    step_end_ns,
+                    progress_updates,
+                )
                 if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                     seq.status = SequenceStatus.FINISHED
                     self.block_manager.deallocate(seq)
+                    self._remove_finished_progress(
+                        seq,
+                        finished_progress_entries_removed,
+                    )
                 else:
                     seq.status = SequenceStatus.RUNNING
                     self.running.append(seq)
             seq.step_is_decode = False
             seq.step_do_sample = True
+        return progress_updates, finished_progress_entries_removed
