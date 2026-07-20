@@ -264,6 +264,7 @@ def make_seq(token_ids, max_tokens: int = 4):
 def make_running(scheduler, token_ids=(90, 91, 92, 93), max_tokens=8):
     seq = make_seq(token_ids, max_tokens=max_tokens)
     scheduler.block_manager.allocate(seq)
+    seq.append_token(max(token_ids) + 1)
     seq.status = SequenceStatus.RUNNING
     seq.num_computed_tokens = len(seq)
     scheduler.running.append(seq)
@@ -1670,6 +1671,85 @@ def test_mixed_prefill_decode_schedules_prefill_chunk_with_decode():
     assert scheduler.last_policy_branch == "mixed_prefill_decode"
 
 
+def test_required_mixed_decode_failure_is_transactional():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=1,
+        max_num_batched_tokens=4,
+        chunked_prefill_mixed_batch=False,
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    running = make_running(scheduler)
+    waiting = add_waiting(scheduler, 1)[0]
+    queue_before = scheduler.observation_snapshot()
+    waiting_blocks_before = list(waiting.block_table)
+
+    result = scheduler._schedule_mixed_prefill_decode(
+        allow_waiting_admission=True,
+        require_decode=True,
+    )
+
+    assert result is None
+    assert scheduler.observation_snapshot() == queue_before
+    assert waiting.block_table == waiting_blocks_before
+    assert list(scheduler.running) == [running]
+    assert list(scheduler.waiting) == [waiting]
+
+
+def test_required_mixed_reserves_kv_block_for_decode_before_prefill():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=2,
+        max_num_batched_tokens=8,
+        num_kvcache_blocks=3,
+        kvcache_block_size=4,
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    running = make_running(
+        scheduler,
+        token_ids=(90, 91, 92, 93, 94),
+    )
+    waiting = add_waiting(scheduler, 1, prompt_tokens=8)[0]
+    free_before = len(scheduler.block_manager.free_block_ids)
+
+    result = scheduler._schedule_mixed_prefill_decode(
+        allow_waiting_admission=True,
+        require_decode=True,
+    )
+
+    assert result is None
+    assert len(scheduler.block_manager.free_block_ids) == free_before
+    assert list(scheduler.running) == [running]
+    assert list(scheduler.waiting) == [waiting]
+
+
+def test_required_mixed_success_contains_both_roles():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=4,
+        max_num_batched_tokens=16,
+        num_kvcache_blocks=16,
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    running = make_running(scheduler)
+    waiting = add_waiting(scheduler, 1)[0]
+
+    seqs, is_prefill, do_sample, batch_kind = (
+        scheduler._schedule_mixed_prefill_decode(
+            allow_waiting_admission=True,
+            require_decode=True,
+        )
+    )
+
+    assert is_prefill is True
+    assert do_sample is True
+    assert batch_kind == "mixed"
+    assert waiting in seqs
+    assert running in seqs
+    assert any(not seq.step_is_decode for seq in seqs)
+    assert any(seq.step_is_decode for seq in seqs)
+
+
 def test_mixed_short_prefill_batching_reserves_slot_for_decode():
     reset_sequence_state()
     scheduler = Scheduler(make_config(
@@ -2045,6 +2125,9 @@ def main():
     test_commit_accepted_tokens_leaves_just_filled_last_block_for_scheduler_publish()
     test_max_consecutive_prefill_chunks_yields_to_decode()
     test_mixed_prefill_decode_schedules_prefill_chunk_with_decode()
+    test_required_mixed_decode_failure_is_transactional()
+    test_required_mixed_reserves_kv_block_for_decode_before_prefill()
+    test_required_mixed_success_contains_both_roles()
     test_mixed_short_prefill_batching_reserves_slot_for_decode()
     test_mixed_prefill_reserves_token_budget_for_decode_queries()
     test_mixed_decode_rows_respect_remaining_token_budget()

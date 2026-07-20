@@ -294,18 +294,28 @@ class Scheduler:
     def _schedule_chunked_prefill(
             self,
             max_prefill_seqs: int | None = None,
-            max_prefill_tokens: int | None = None) -> tuple[list[Sequence], bool, bool] | None:
+            max_prefill_tokens: int | None = None,
+            *,
+            allow_waiting_admission: bool = True,
+            reserved_free_blocks: int = 0) -> tuple[list[Sequence], bool, bool] | None:
         max_prefill_seqs = self.max_num_seqs if max_prefill_seqs is None else max_prefill_seqs
         max_prefill_tokens = self.max_num_batched_tokens if max_prefill_tokens is None else max_prefill_tokens
         if self.prefilling:
             seq = self.prefilling.popleft()
             return self._schedule_one_prefill_chunk(seq, max_chunk_tokens=max_prefill_tokens)
 
-        if not self.waiting:
+        if not allow_waiting_admission or not self.waiting:
             return None
 
         candidate = self.waiting[0]
-        if not self.block_manager.can_allocate(candidate):
+        _, required_free_blocks = self.block_manager.estimate_admission(
+            candidate
+        )
+        if (
+            len(self.block_manager.free_block_ids)
+            - required_free_blocks
+            < reserved_free_blocks
+        ):
             return None
         seq = self.waiting.popleft()
         max_cached_tokens = self.block_manager.max_reusable_tokens(seq)
@@ -338,7 +348,8 @@ class Scheduler:
                 break
             if (
                 len(self.block_manager.free_block_ids)
-                < required_free_blocks
+                - required_free_blocks
+                < reserved_free_blocks
             ):
                 break
             seq = self.waiting.popleft()
@@ -383,13 +394,38 @@ class Scheduler:
             )
         return [seq], True, seq.prefill_chunk_final
 
-    def _schedule_mixed_prefill_decode(self) -> tuple[list[Sequence], bool, bool, str] | None:
+    def _mixed_decode_reservation(self) -> tuple[int, int] | None:
+        if self.max_num_seqs < 2 or self.max_num_batched_tokens < 2:
+            return None
+        for seq in self.running:
+            required_free_blocks = int(
+                len(seq) % self.block_manager.block_size == 1
+            )
+            if len(self.block_manager.free_block_ids) >= required_free_blocks:
+                return seq.seq_id, required_free_blocks
+        return None
+
+    def _schedule_mixed_prefill_decode(
+            self,
+            *,
+            allow_waiting_admission: bool = True,
+            require_decode: bool = False) -> tuple[list[Sequence], bool, bool, str] | tuple[list[Sequence], bool, bool] | None:
+        reserved_seq_id = None
+        reserved_free_blocks = 0
+        if require_decode:
+            reservation = self._mixed_decode_reservation()
+            if reservation is None:
+                return None
+            reserved_seq_id, reserved_free_blocks = reservation
+
         prefill_slots = max(1, self.max_num_seqs - 1)
         decode_query_tokens = 1 if self.running else 0
         max_prefill_tokens = max(1, self.max_num_batched_tokens - decode_query_tokens)
         prefill = self._schedule_chunked_prefill(
             max_prefill_seqs=prefill_slots,
             max_prefill_tokens=max_prefill_tokens,
+            allow_waiting_admission=allow_waiting_admission,
+            reserved_free_blocks=reserved_free_blocks,
         )
         if prefill is None:
             return None
@@ -397,6 +433,16 @@ class Scheduler:
         assert is_prefill
         prefill_tokens = sum(seq.prefill_chunk_end - seq.prefill_chunk_start for seq in prefill_seqs)
         decode_seqs = []
+        if reserved_seq_id is not None:
+            reserved_index = next(
+                index for index, seq in enumerate(self.running)
+                if seq.seq_id == reserved_seq_id
+            )
+            reserved_seq = self.running[reserved_index]
+            del self.running[reserved_index]
+            self.block_manager.may_append(reserved_seq)
+            decode_seqs.append(reserved_seq)
+
         while (self.running
                and len(prefill_seqs) + len(decode_seqs) < self.max_num_seqs
                and prefill_tokens + len(decode_seqs) < self.max_num_batched_tokens):
@@ -414,8 +460,10 @@ class Scheduler:
             decode_seqs.append(seq)
 
         if not decode_seqs:
+            assert not require_decode
             return prefill
 
+        assert prefill_seqs
         for seq in prefill_seqs:
             seq.step_is_decode = False
             seq.step_do_sample = prefill_do_sample
