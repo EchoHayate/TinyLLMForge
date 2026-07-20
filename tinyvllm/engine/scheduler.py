@@ -169,6 +169,11 @@ class Scheduler:
             )
 
     def schedule(self) -> tuple[list[Sequence], bool, bool]:
+        waiting_depth = len(self.waiting)
+        self._maybe_reset_adaptive_mixed_controller()
+        if self.chunked_prefill_enabled and self.chunked_prefill_adaptive_mixed:
+            return self._schedule_adaptive_mixed(waiting_depth)
+
         if self.chunked_prefill_enabled:
             if self.chunked_prefill_decode_first and self.running:
                 self._consecutive_prefill_chunks = 0
@@ -257,6 +262,66 @@ class Scheduler:
         return self._return_schedule(
             (*self._schedule_decode(), True),
             "legacy_decode",
+        )
+
+    def _schedule_adaptive_mixed(
+            self,
+            waiting_depth: int) -> tuple[list[Sequence], bool, bool] | tuple[list[Sequence], bool, bool, str]:
+        self._update_adaptive_mixed_state(waiting_depth)
+
+        if not self.running:
+            self.adaptive_consecutive_mixed_steps = 0
+            prefill = self._schedule_chunked_prefill()
+            if prefill is not None:
+                return self._return_schedule(
+                    prefill,
+                    "adaptive_mixed_chunked_prefill",
+                )
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "adaptive_mixed_decode_fallback",
+            )
+
+        if (
+            self.adaptive_mixed_state == ADAPTIVE_MIXED_DRAINING
+            and not self.prefilling
+        ):
+            self.adaptive_mixed_state = ADAPTIVE_MIXED_INACTIVE
+            self.adaptive_consecutive_mixed_steps = 0
+
+        if self.adaptive_mixed_state == ADAPTIVE_MIXED_INACTIVE:
+            self.adaptive_consecutive_mixed_steps = 0
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "adaptive_mixed_decode_first",
+            )
+
+        if (
+            self.adaptive_consecutive_mixed_steps
+            >= self.chunked_prefill_adaptive_max_mixed_steps
+        ):
+            self.adaptive_consecutive_mixed_steps = 0
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "adaptive_mixed_decode_yield",
+            )
+
+        mixed = self._schedule_mixed_prefill_decode(
+            allow_waiting_admission=(
+                self.adaptive_mixed_state == ADAPTIVE_MIXED_ACTIVE
+            ),
+            require_decode=True,
+        )
+        if mixed is None:
+            self.adaptive_consecutive_mixed_steps = 0
+            return self._return_schedule(
+                (*self._schedule_decode(), True),
+                "adaptive_mixed_decode_fallback",
+            )
+        self.adaptive_consecutive_mixed_steps += 1
+        return self._return_schedule(
+            mixed,
+            "adaptive_mixed_prefill_decode",
         )
 
     def _schedule_decode(self) -> tuple[list[Sequence], bool]:

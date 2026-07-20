@@ -368,6 +368,181 @@ def test_adaptive_observation_and_empty_reset_are_exact():
     assert scheduler.adaptive_consecutive_mixed_steps == 0
 
 
+def test_adaptive_disabled_matches_decode_first_schedule_and_snapshot():
+    reset_sequence_state()
+    baseline = Scheduler(make_config(
+        chunked_prefill_decode_first=True,
+        chunked_prefill_adaptive_mixed=False,
+    ))
+    baseline_running = make_running(baseline)
+    baseline_waiting = add_waiting(baseline, 8)
+
+    baseline_result = baseline.schedule()
+    assert baseline.last_policy_branch == "decode_first"
+    baseline_metadata = {
+        "scheduled_roles": [
+            (
+                seq is baseline_running,
+                seq.prefill_chunk_start,
+                seq.prefill_chunk_end,
+                seq.prefill_chunk_final,
+            )
+            for seq in baseline_result[0]
+        ],
+        "is_prefill": baseline_result[1],
+        "do_sample": baseline_result[2],
+        "branch": baseline.last_policy_branch,
+        "waiting": list(baseline.waiting),
+        "prefilling": list(baseline.prefilling),
+        "running": list(baseline.running),
+        "free_blocks": list(baseline.block_manager.free_block_ids),
+        "used_blocks": list(baseline.block_manager.used_block_ids),
+    }
+
+    reset_sequence_state()
+    candidate = Scheduler(make_config(
+        chunked_prefill_decode_first=True,
+        chunked_prefill_adaptive_mixed=False,
+    ))
+    candidate_running = make_running(candidate)
+    candidate_waiting = add_waiting(candidate, 8)
+    candidate_result = candidate.schedule()
+    candidate_metadata = {
+        "scheduled_roles": [
+            (
+                seq is candidate_running,
+                seq.prefill_chunk_start,
+                seq.prefill_chunk_end,
+                seq.prefill_chunk_final,
+            )
+            for seq in candidate_result[0]
+        ],
+        "is_prefill": candidate_result[1],
+        "do_sample": candidate_result[2],
+        "branch": candidate.last_policy_branch,
+        "waiting": list(candidate.waiting),
+        "prefilling": list(candidate.prefilling),
+        "running": list(candidate.running),
+        "free_blocks": list(candidate.block_manager.free_block_ids),
+        "used_blocks": list(candidate.block_manager.used_block_ids),
+    }
+
+    assert baseline_metadata["scheduled_roles"] == (
+        candidate_metadata["scheduled_roles"]
+    )
+    assert baseline_metadata["is_prefill"] == candidate_metadata["is_prefill"]
+    assert baseline_metadata["do_sample"] == candidate_metadata["do_sample"]
+    assert baseline_metadata["branch"] == candidate_metadata["branch"]
+    assert len(baseline_metadata["waiting"]) == len(
+        candidate_metadata["waiting"]
+    ) == 8
+    assert not baseline_metadata["prefilling"]
+    assert not candidate_metadata["prefilling"]
+    assert baseline_metadata["free_blocks"] == candidate_metadata["free_blocks"]
+    assert baseline_metadata["used_blocks"] == candidate_metadata["used_blocks"]
+    assert baseline_running.status == candidate_running.status
+    assert len(baseline_waiting) == len(candidate_waiting)
+
+
+def test_adaptive_second_high_observation_activates_and_mixes():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_decode_first=True,
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    running = make_running(scheduler)
+    add_waiting(scheduler, 8)
+
+    first = scheduler.schedule()
+    assert first[0] == [running]
+    assert scheduler.last_policy_branch == "adaptive_mixed_decode_first"
+    assert scheduler.adaptive_high_streak == 1
+    scheduler.postprocess(first[0], [100], first[1], first[2])
+
+    second = scheduler.schedule()
+    assert len(second) == 4
+    assert second[3] == "mixed"
+    assert scheduler.last_policy_branch == "adaptive_mixed_prefill_decode"
+    assert scheduler.adaptive_mixed_state == "active"
+    assert scheduler.adaptive_consecutive_mixed_steps == 1
+
+
+def test_adaptive_two_mixed_steps_force_decode_yield():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+        chunked_prefill_adaptive_max_mixed_steps=2,
+    ))
+    make_running(scheduler, max_tokens=16)
+    add_waiting(scheduler, 10)
+    scheduler.adaptive_mixed_state = "active"
+
+    first = scheduler.schedule()
+    assert first[3] == "mixed"
+    scheduler.postprocess(first[0], [101], first[1], first[2], first[3])
+    second = scheduler.schedule()
+    assert second[3] == "mixed"
+    scheduler.postprocess(second[0], [102], second[1], second[2], second[3])
+    third = scheduler.schedule()
+
+    assert len(third) == 3
+    assert third[1] is False
+    assert scheduler.last_policy_branch == "adaptive_mixed_decode_yield"
+    assert scheduler.adaptive_consecutive_mixed_steps == 0
+    assert scheduler.adaptive_mixed_state == "active"
+
+
+def test_adaptive_draining_never_admits_waiting_and_returns_inactive():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    make_running(scheduler, max_tokens=16)
+    prefilling = add_waiting(scheduler, 1)[0]
+    scheduler.waiting.popleft()
+    scheduler.block_manager.allocate(prefilling)
+    prefilling.status = SequenceStatus.PREFILLING
+    scheduler.prefilling.append(prefilling)
+    waiting = add_waiting(scheduler, 1)[0]
+    scheduler.adaptive_mixed_state = "draining"
+
+    result = scheduler.schedule()
+    assert result[3] == "mixed"
+    assert result[0][0] is prefilling
+    assert list(scheduler.waiting) == [waiting]
+    assert scheduler.last_policy_branch == "adaptive_mixed_prefill_decode"
+
+
+def test_adaptive_no_running_uses_chunked_prefill_without_fake_decode():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    waiting = add_waiting(scheduler, 1)[0]
+    result = scheduler.schedule()
+    assert len(result) == 3
+    assert result[0] == [waiting]
+    assert scheduler.last_policy_branch == "adaptive_mixed_chunked_prefill"
+    assert scheduler.adaptive_consecutive_mixed_steps == 0
+
+
+def test_adaptive_required_mixed_failure_falls_back_to_decode():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config(
+        max_num_seqs=1,
+        chunked_prefill_adaptive_mixed=True,
+    ))
+    running = make_running(scheduler)
+    waiting = add_waiting(scheduler, 8)
+    scheduler.adaptive_mixed_state = "active"
+    queue_before = list(scheduler.waiting)
+    result = scheduler.schedule()
+    assert result[0] == [running]
+    assert scheduler.last_policy_branch == "adaptive_mixed_decode_fallback"
+    assert list(scheduler.waiting) == queue_before
+    assert all(not seq.block_table for seq in waiting)
+
+
 def test_intermediate_chunk_does_not_sample_or_append():
     reset_sequence_state()
     scheduler = Scheduler(make_config(max_num_prefill_tokens_per_step=4))
@@ -647,7 +822,13 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
 
         def observation_snapshot(self):
             self.snapshot_index += 1
-            return {"snapshot_index": self.snapshot_index}
+            return {
+                "snapshot_index": self.snapshot_index,
+                "adaptive_mixed_state": "active",
+                "adaptive_high_streak": 0,
+                "adaptive_low_streak": 1,
+                "adaptive_consecutive_mixed_steps": 2,
+            }
 
         def schedule(self):
             return [seq], True, True
@@ -693,8 +874,20 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
             "prefill_chunk_end": 3,
             "prefill_chunk_final": True,
         }],
-        "queue_before": {"snapshot_index": 1},
-        "queue_after": {"snapshot_index": 2},
+        "queue_before": {
+            "snapshot_index": 1,
+            "adaptive_mixed_state": "active",
+            "adaptive_high_streak": 0,
+            "adaptive_low_streak": 1,
+            "adaptive_consecutive_mixed_steps": 2,
+        },
+        "queue_after": {
+            "snapshot_index": 2,
+            "adaptive_mixed_state": "active",
+            "adaptive_high_streak": 0,
+            "adaptive_low_streak": 1,
+            "adaptive_consecutive_mixed_steps": 2,
+        },
         "new_completion_tokens_by_seq": {17: [91]},
         "finished_seq_ids": [17],
         "memory": {"cuda_allocated_bytes": 123},
@@ -2079,6 +2272,12 @@ def main():
     test_adaptive_state_low_hysteresis_enters_inactive_or_draining()
     test_adaptive_ineligible_decision_clears_transition_streaks()
     test_adaptive_observation_and_empty_reset_are_exact()
+    test_adaptive_disabled_matches_decode_first_schedule_and_snapshot()
+    test_adaptive_second_high_observation_activates_and_mixes()
+    test_adaptive_two_mixed_steps_force_decode_yield()
+    test_adaptive_draining_never_admits_waiting_and_returns_inactive()
+    test_adaptive_no_running_uses_chunked_prefill_without_fake_decode()
+    test_adaptive_required_mixed_failure_falls_back_to_decode()
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
     test_chunked_prefill_batches_multiple_short_final_prompts()
