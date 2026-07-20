@@ -103,12 +103,16 @@ class _IncrementingClock:
 class _FakeShapeEngine:
     def __init__(self, shape: dict):
         self.shape = shape
+        self.scheduler = SimpleNamespace(
+            chunked_prefill_mixed_batch=True,
+        )
         self.last_step_observation = None
         self.decode_request_count = 0
         self.prefill_request_lengths = []
         self.pending_prefill_lengths = []
         self.next_seq_id = 0
         self.decode_seq_ids = []
+        self.mixed_batch_during_steps = []
 
     def add_request(self, prompt, sampling_params):
         seq_id = self.next_seq_id
@@ -122,6 +126,9 @@ class _FakeShapeEngine:
             self.decode_seq_ids.append(seq_id)
 
     def step(self):
+        self.mixed_batch_during_steps.append(
+            self.scheduler.chunked_prefill_mixed_batch
+        )
         scheduled = [{
             "seq_id": seq_id,
             "is_decode": True,
@@ -176,6 +183,12 @@ def test_execute_shape_uses_exact_engine_batch_and_excludes_warmup():
         )
 
         assert engine.decode_request_count == shape["decode_rows"]
+        assert engine.mixed_batch_during_steps[0] is False
+        assert all(
+            mixed_batch is True
+            for mixed_batch in engine.mixed_batch_during_steps[1:]
+        )
+        assert engine.scheduler.chunked_prefill_mixed_batch is True
         assert len(rows) == 7
         assert [row["iteration"] for row in rows] == list(range(7))
         assert all(row["duration_ns"] == 100 for row in rows)
@@ -239,6 +252,39 @@ def test_execute_shape_rejects_non_positive_synchronous_duration():
             clock_ns=lambda: 10,
         ),
     )
+
+
+def test_prime_decode_rows_restores_mixed_batch_after_failure():
+    shape = next(
+        row for row in _required_shapes()
+        if row["kind"] == "decode"
+        and row["context_class"] == "short"
+        and row["decode_rows"] == 1
+    )
+    engine = _FakeShapeEngine(shape)
+
+    def never_runnable_step():
+        engine.mixed_batch_during_steps.append(
+            engine.scheduler.chunked_prefill_mixed_batch
+        )
+        engine.last_step_observation = {"scheduled": []}
+
+    engine.step = never_runnable_step
+    _expect_error(
+        ValueError,
+        "decode calibration rows did not become runnable",
+        lambda: calibration._prime_decode_rows(
+            shape,
+            engine=engine,
+            sampling_params_factory=_sampling_params_factory,
+        ),
+    )
+    assert engine.mixed_batch_during_steps
+    assert all(
+        mixed_batch is False
+        for mixed_batch in engine.mixed_batch_during_steps
+    )
+    assert engine.scheduler.chunked_prefill_mixed_batch is True
 
 
 def test_shape_orchestrator_uses_one_fresh_launch_and_port_pair_per_shape():
@@ -586,6 +632,7 @@ def test_capacity_evidence_binds_base_config_and_resolved_capacity():
 def main():
     test_execute_shape_uses_exact_engine_batch_and_excludes_warmup()
     test_execute_shape_rejects_non_positive_synchronous_duration()
+    test_prime_decode_rows_restores_mixed_batch_after_failure()
     test_shape_orchestrator_uses_one_fresh_launch_and_port_pair_per_shape()
     test_required_shapes_cover_decode_rows_contexts_and_mixed_cross_product()
     test_required_shapes_reject_unsupported_limits()

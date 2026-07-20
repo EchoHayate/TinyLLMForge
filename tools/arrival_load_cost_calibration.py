@@ -281,6 +281,9 @@ def _prime_decode_rows(
     engine,
     sampling_params_factory,
 ) -> None:
+    scheduler = engine.scheduler
+    mixed_batch_enabled = scheduler.chunked_prefill_mixed_batch
+    scheduler.chunked_prefill_mixed_batch = False
     context_tokens = DECODE_CONTEXT_TOKENS.get(shape["context_class"])
     if context_tokens is None:
         if shape["kind"] != "mixed":
@@ -307,18 +310,21 @@ def _prime_decode_rows(
         + shape["decode_rows"]
         + 16
     )
-    for _ in range(max_prime_steps):
-        engine.step()
-        try:
-            _assert_observed_shape({
-                **shape,
-                "prefill_rows": 0,
-                "prefill_tokens": 0,
-            }, engine.last_step_observation)
-        except ValueError:
-            continue
-        return
-    raise ValueError("decode calibration rows did not become runnable")
+    try:
+        for _ in range(max_prime_steps):
+            engine.step()
+            try:
+                _assert_observed_shape({
+                    **shape,
+                    "prefill_rows": 0,
+                    "prefill_tokens": 0,
+                }, engine.last_step_observation)
+            except ValueError:
+                continue
+            return
+        raise ValueError("decode calibration rows did not become runnable")
+    finally:
+        scheduler.chunked_prefill_mixed_batch = mixed_batch_enabled
 
 
 def execute_calibration_shape(
