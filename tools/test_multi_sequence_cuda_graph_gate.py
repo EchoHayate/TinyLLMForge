@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import sys
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "tools" / "multi_sequence_cuda_graph_contract.py"
 DIAGNOSTIC_PATH = ROOT / "tools" / "diagnose_multi_sequence_cuda_graph.py"
+VERIFIER_PATH = (
+    ROOT / "tools" / "verify_multi_sequence_cuda_graph_diagnostic.py"
+)
 
 
 def load_contract():
@@ -32,6 +37,17 @@ def load_diagnostic_module_without_gpu():
     spec = importlib.util.spec_from_file_location(
         "cuda_graph_diagnostic",
         DIAGNOSTIC_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_verifier():
+    spec = importlib.util.spec_from_file_location(
+        "cuda_graph_independent_verifier",
+        VERIFIER_PATH,
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -468,6 +484,728 @@ def test_artifact_record_path_is_relative_and_resolves_after_relocation():
         assert record["sha256"] == contract.sha256_file(relocated_artifact)
 
 
+def _write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(contract.canonical_json_bytes(value) + b"\n")
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        b"".join(
+            contract.canonical_json_bytes(row) + b"\n" for row in rows
+        )
+    )
+
+
+def _artifact_record(run_dir: Path, path: Path) -> dict:
+    return {
+        "path": path.relative_to(run_dir).as_posix(),
+        "sha256": contract.sha256_file(path),
+    }
+
+
+def _case_identity(case) -> tuple[int, str, int]:
+    return case.batch_size, case.trajectory, case.repetition
+
+
+def _reference_name(case) -> str:
+    return (
+        f"b{case.batch_size}__{case.trajectory}__"
+        f"r{case.repetition}.json"
+    )
+
+
+def _refresh_sha256sums(run_dir: Path) -> None:
+    hashed_paths = [
+        path
+        for path in run_dir.rglob("*")
+        if path.is_file()
+        and path.name != "sha256sums.txt"
+        and "independent-verification" not in path.parts
+    ]
+    (run_dir / "sha256sums.txt").write_text(
+        "".join(
+            f"{contract.sha256_file(path)}  "
+            f"{path.relative_to(run_dir).as_posix()}\n"
+            for path in sorted(hashed_paths)
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_complete_diagnostic_fixture(root: Path) -> Path:
+    import torch
+
+    run_dir = root / "canonical-diagnostic"
+    run_dir.mkdir()
+    source_tree_sha256 = "a" * 64
+    environment = {
+        "schema_version": 1,
+        "host": "synthetic-gpu-host",
+        "python": "3.11.synthetic",
+        "pytorch": "2.synthetic",
+        "cuda_runtime": "12.synthetic",
+        "nvidia_driver": "synthetic",
+        "gpu_name": "Synthetic GPU",
+        "flash_attention": "synthetic",
+        "transformers": "synthetic",
+        "model_identifier": "Qwen3-0.6B-synthetic",
+        "bf16_supported": True,
+        "source_tree_sha256": source_tree_sha256,
+    }
+    environment_sha256 = contract.canonical_json_sha256(environment)
+    source_evidence = {
+        "schema_version": 1,
+        "base_commit": "b" * 40,
+        "dirty": False,
+        "tree_sha256": source_tree_sha256,
+        "files": [],
+    }
+    prompt_manifest = {
+        "schema_version": 1,
+        "trajectories": {
+            trajectory: {
+                str(batch_size): contract.canonical_json_sha256(
+                    {
+                        "trajectory": trajectory,
+                        "batch_size": batch_size,
+                    }
+                )
+                for batch_size in contract.DIAGNOSTIC_BATCH_SIZES
+            }
+            for trajectory in contract.DIAGNOSTIC_TRAJECTORIES
+        },
+    }
+    prompt_manifest_sha256 = contract.canonical_json_sha256(prompt_manifest)
+    manifest = {
+        "schema_version": 1,
+        "kind": "diagnostic",
+        "canonical": True,
+        "source_tree_sha256": source_tree_sha256,
+        "environment_sha256": environment_sha256,
+        "prompt_manifest_sha256": prompt_manifest_sha256,
+        "case_ids": [
+            case.case_id for case in contract.build_diagnostic_matrix()
+        ],
+        "warmup_steps": contract.WARMUP_STEPS,
+        "measured_steps": contract.MEASURED_STEPS,
+        "logit_rtol": contract.LOGIT_RTOL,
+        "logit_atol": contract.LOGIT_ATOL,
+    }
+    _write_json(run_dir / "source_evidence.json", source_evidence)
+    _write_json(run_dir / "environment.json", environment)
+    _write_json(run_dir / "prompt_manifest.json", prompt_manifest)
+    _write_json(run_dir / "manifest.json", manifest)
+
+    eager_tensors = {}
+    eager_reference_hashes = {}
+    process_rows = []
+    raw_rows = []
+    layer_rows = []
+    kv_rows = []
+    used_ports = set()
+    for case_index, case in enumerate(contract.build_diagnostic_matrix()):
+        identity = _case_identity(case)
+        base = torch.arange(
+            contract.MEASURED_STEPS * case.batch_size * 3,
+            dtype=torch.float32,
+        ).reshape(contract.MEASURED_STEPS, case.batch_size, 3)
+        logits = base / 100.0
+        layers = torch.stack(
+            (logits[..., :2], logits[..., 1:3]),
+            dim=1,
+        ).unsqueeze(2).repeat(1, 1, 2, 1, 1)
+        active_slots = list(range(10, 10 + case.batch_size))
+        observed_slots = active_slots + [0, 1000, 2000, 3000]
+        slot_count = len(observed_slots)
+        keys_before = torch.zeros(
+            contract.MEASURED_STEPS,
+            2,
+            slot_count,
+            1,
+            dtype=torch.float32,
+        )
+        keys_after = keys_before.clone()
+        keys_after[:, :, :case.batch_size] = 1.0
+        values_before = keys_before.clone()
+        values_after = keys_after.clone()
+        reference_tokens = [
+            [step + row for row in range(case.batch_size)]
+            for step in range(
+                contract.WARMUP_STEPS + contract.MEASURED_STEPS
+            )
+        ]
+        reference_sha256 = contract.canonical_json_sha256(reference_tokens)
+        reference_path = (
+            run_dir / "reference_tokens" / _reference_name(case)
+        )
+        if case.mode == "eager":
+            _write_json(reference_path, reference_tokens)
+        prompt_sha256 = prompt_manifest["trajectories"][case.trajectory][
+            str(case.batch_size)
+        ]
+        if case.mode == "eager":
+            eager_tensors[identity] = {
+                "logits": logits.clone(),
+                "layers": layers.clone(),
+                "keys_before": keys_before.clone(),
+                "keys_after": keys_after.clone(),
+                "values_before": values_before.clone(),
+                "values_after": values_after.clone(),
+                "observed_slots": list(observed_slots),
+            }
+            eager_reference_hashes[identity] = reference_sha256
+        else:
+            logits = eager_tensors[identity]["logits"].clone()
+            layers = eager_tensors[identity]["layers"].clone()
+            keys_before = eager_tensors[identity]["keys_before"].clone()
+            keys_after = eager_tensors[identity]["keys_after"].clone()
+            values_before = eager_tensors[identity]["values_before"].clone()
+            values_after = eager_tensors[identity]["values_after"].clone()
+            observed_slots = list(eager_tensors[identity]["observed_slots"])
+            reference_sha256 = eager_reference_hashes[identity]
+
+        logits_path = run_dir / "tensors" / "logits" / f"{case.case_id}.pt"
+        layers_path = run_dir / "tensors" / "layers" / f"{case.case_id}.pt"
+        kv_path = run_dir / "tensors" / "kv" / f"{case.case_id}.pt"
+        logits_path.parent.mkdir(parents=True, exist_ok=True)
+        layers_path.parent.mkdir(parents=True, exist_ok=True)
+        kv_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "schema_version": 1,
+                "case_id": case.case_id,
+                "dtype": str(logits.dtype),
+                "shape": list(logits.shape),
+                "step_ids": list(range(contract.MEASURED_STEPS)),
+                "row_ids": list(range(case.batch_size)),
+                "tensor": logits,
+            },
+            logits_path,
+        )
+        torch.save(
+            {
+                "schema_version": 1,
+                "case_id": case.case_id,
+                "dtype": str(layers.dtype),
+                "shape": list(layers.shape),
+                "step_ids": list(range(contract.MEASURED_STEPS)),
+                "row_ids": list(range(case.batch_size)),
+                "layer_ids": [0, 1],
+                "component_ids": ["hidden_states", "residual"],
+                "tensor": layers,
+            },
+            layers_path,
+        )
+        torch.save(
+            {
+                "schema_version": 1,
+                "case_id": case.case_id,
+                "step_ids": list(range(contract.MEASURED_STEPS)),
+                "row_ids": list(range(case.batch_size)),
+                "slot_ids": [
+                    list(observed_slots)
+                    for _ in range(contract.MEASURED_STEPS)
+                ],
+                "plans": [
+                    {
+                        "active_write_slots": list(active_slots),
+                        "slot_zero": 0,
+                        "inactive_declared_slots": (
+                            [0]
+                            if case.graph_size > case.batch_size
+                            else []
+                        ),
+                        "sentinel_slots": [1000, 2000, 3000],
+                    }
+                    for _ in range(contract.MEASURED_STEPS)
+                ],
+                "keys_before": keys_before,
+                "values_before": values_before,
+                "keys_after": keys_after,
+                "values_after": values_after,
+            },
+            kv_path,
+        )
+        tiny_port = 20000 + case_index * 2
+        master_port = tiny_port + 1
+        assert tiny_port not in used_ports
+        assert master_port not in used_ports
+        used_ports.update((tiny_port, master_port))
+        process_rows.append(
+            {
+                **asdict(case),
+                "case_id": case.case_id,
+                "status": "PASS",
+                "source_tree_sha256": source_tree_sha256,
+                "environment_sha256": environment_sha256,
+                "prompt_sha256": prompt_sha256,
+                "reference_token_sha256": reference_sha256,
+                "reference_tokens": _artifact_record(
+                    run_dir,
+                    reference_path,
+                ),
+                "tinyvllm_dist_port": tiny_port,
+                "master_port": master_port,
+                "artifacts": {
+                    "logits": _artifact_record(run_dir, logits_path),
+                    "layers": _artifact_record(run_dir, layers_path),
+                    "kv": _artifact_record(run_dir, kv_path),
+                },
+            }
+        )
+        for step_id in range(contract.MEASURED_STEPS):
+            raw_rows.append(
+                {
+                    "case_id": case.case_id,
+                    "step_id": step_id,
+                    "observed_argmax_token_ids": torch.argmax(
+                        logits[step_id],
+                        dim=-1,
+                    ).tolist(),
+                    "reference_next_input_token_ids": reference_tokens[
+                        contract.WARMUP_STEPS + step_id
+                    ],
+                }
+            )
+            layer_rows.append(
+                {
+                    "case_id": case.case_id,
+                    "step_id": step_id,
+                    "required_layer_count": 2,
+                    "observed_layer_count": 2,
+                    "layer_ids": [0, 1],
+                    "finite": True,
+                }
+            )
+            kv_rows.append(
+                {
+                    "case_id": case.case_id,
+                    "step_id": step_id,
+                    "active_write_slots": list(active_slots),
+                    "slot_zero": 0,
+                    "inactive_declared_slots": (
+                        [0] if case.graph_size > case.batch_size else []
+                    ),
+                    "sentinel_slots": [1000, 2000, 3000],
+                    "observed_slot_ids": list(observed_slots),
+                }
+            )
+
+    _write_jsonl(run_dir / "process_rows.jsonl", process_rows)
+    _write_jsonl(run_dir / "raw_rows.jsonl", raw_rows)
+    _write_jsonl(run_dir / "layer_observations.jsonl", layer_rows)
+    _write_jsonl(run_dir / "kv_observations.jsonl", kv_rows)
+    producer_summary = {
+        "schema_version": 1,
+        "classification": "EXACT_REPLAY_CORRECT",
+        "rounded_classification": "ROUNDED_REPLAY_CORRECT",
+        "case_count": len(process_rows),
+    }
+    _write_json(run_dir / "summary.json", producer_summary)
+    _refresh_sha256sums(run_dir)
+    return run_dir
+
+
+def _rewrite_jsonl(path: Path, rows: list[dict]) -> None:
+    _write_jsonl(path, rows)
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def test_verifier_reconstructs_complete_diagnostic():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRECT"
+        assert (
+            summary["rounded_classification"]
+            == "ROUNDED_REPLAY_CORRECT"
+        )
+        assert summary["case_count"] == 189
+
+
+def test_verifier_is_independent_from_diagnostic_producer():
+    source = VERIFIER_PATH.read_text(encoding="utf-8")
+    assert "diagnose_multi_sequence_cuda_graph" not in source
+
+
+def test_verifier_rejects_missing_matrix_case():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        _rewrite_jsonl(process_path, rows[:-1])
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("missing" in failure for failure in summary["failures"])
+
+
+def test_verifier_detects_rehashed_exact_logit_mutation():
+    import torch
+
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        target = next(row for row in rows if row["mode"] == "exact_graph")
+        artifact = run_dir / target["artifacts"]["logits"]["path"]
+        shard = torch.load(artifact, weights_only=False)
+        shard["tensor"][0, 0, 0] += 10.0
+        torch.save(shard, artifact)
+        target["artifacts"]["logits"]["sha256"] = contract.sha256_file(
+            artifact
+        )
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        assert target["case_id"] in summary["corrupt_exact_case_ids"]
+
+
+def test_verifier_rejects_source_and_environment_drift():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        rows[0]["source_tree_sha256"] = "f" * 64
+        rows[1]["environment_sha256"] = "e" * 64
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any(
+            "source_tree_sha256" in failure
+            for failure in summary["failures"]
+        )
+        assert any(
+            "environment_sha256" in failure
+            for failure in summary["failures"]
+        )
+
+
+def test_verifier_rejects_duplicate_matrix_key_and_port():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        duplicate = dict(rows[0])
+        duplicate["tinyvllm_dist_port"] = rows[1]["tinyvllm_dist_port"]
+        rows.append(duplicate)
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("duplicate case_id" in item for item in summary["failures"])
+        assert any("reused port" in item for item in summary["failures"])
+
+
+def test_verifier_rejects_graph_size_mismatch():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        rows[0]["graph_size"] += 1
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("graph_size" in item for item in summary["failures"])
+
+
+def test_verifier_rejects_prompt_and_reference_hash_drift():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        rows[0]["prompt_sha256"] = "1" * 64
+        rows[1]["reference_token_sha256"] = "2" * 64
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("prompt_sha256" in item for item in summary["failures"])
+        assert any(
+            "reference_token_sha256" in item
+            for item in summary["failures"]
+        )
+
+
+def test_verifier_rejects_truncated_raw_jsonl():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        raw_path = run_dir / "raw_rows.jsonl"
+        rows = _read_jsonl(raw_path)
+        _rewrite_jsonl(raw_path, rows[:-1])
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("raw_rows" in item for item in summary["failures"])
+
+
+def test_verifier_detects_nonfinite_exact_logit():
+    import torch
+
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        target = next(row for row in rows if row["mode"] == "exact_graph")
+        artifact = run_dir / target["artifacts"]["logits"]["path"]
+        shard = torch.load(artifact, weights_only=False)
+        shard["tensor"][0, 0, 0] = float("nan")
+        torch.save(shard, artifact)
+        target["artifacts"]["logits"]["sha256"] = contract.sha256_file(
+            artifact
+        )
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        detail = summary["first_divergence"]
+        assert detail["evidence"] == "logits"
+        assert detail["case_id"] == target["case_id"]
+        assert detail["step_id"] == 0
+        assert detail["row_id"] == 0
+
+
+def test_verifier_detects_exact_argmax_mismatch():
+    import torch
+
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        target = next(row for row in rows if row["mode"] == "exact_graph")
+        artifact = run_dir / target["artifacts"]["logits"]["path"]
+        shard = torch.load(artifact, weights_only=False)
+        shard["tensor"][0, 0] = torch.tensor([100.0, 0.0, 0.0])
+        torch.save(shard, artifact)
+        target["artifacts"]["logits"]["sha256"] = contract.sha256_file(
+            artifact
+        )
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        assert summary["first_divergence"]["kind"] == "argmax_mismatch"
+
+
+def test_verifier_detects_exact_close_threshold_failure():
+    import torch
+
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        target = next(row for row in rows if row["mode"] == "exact_graph")
+        artifact = run_dir / target["artifacts"]["logits"]["path"]
+        shard = torch.load(artifact, weights_only=False)
+        shard["tensor"][0, 0] += torch.tensor([0.1, 0.1, 0.1])
+        torch.save(shard, artifact)
+        target["artifacts"]["logits"]["sha256"] = contract.sha256_file(
+            artifact
+        )
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        assert summary["first_divergence"]["kind"] == "close_failure"
+
+
+def test_verifier_rejects_missing_layer_index():
+    import torch
+
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        target = next(row for row in rows if row["mode"] == "exact_graph")
+        artifact = run_dir / target["artifacts"]["layers"]["path"]
+        shard = torch.load(artifact, weights_only=False)
+        shard["layer_ids"] = [0]
+        shard["tensor"] = shard["tensor"][:, :, :1]
+        shard["shape"] = list(shard["tensor"].shape)
+        torch.save(shard, artifact)
+        target["artifacts"]["layers"]["sha256"] = contract.sha256_file(
+            artifact
+        )
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("layer_ids" in item for item in summary["failures"])
+
+
+def test_verifier_detects_rehashed_layer_tensor_mutation():
+    import torch
+
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        target = next(row for row in rows if row["mode"] == "exact_graph")
+        artifact = run_dir / target["artifacts"]["layers"]["path"]
+        shard = torch.load(artifact, weights_only=False)
+        shard["tensor"][0, 0, 0, 0, 0] += 1.0
+        torch.save(shard, artifact)
+        target["artifacts"]["layers"]["sha256"] = contract.sha256_file(
+            artifact
+        )
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        detail = summary["first_divergence"]
+        assert detail["evidence"] == "layers"
+        assert detail["layer_id"] == 0
+
+
+def _mutate_kv_evidence(run_dir: Path, mutation: str) -> str:
+    import torch
+
+    process_path = run_dir / "process_rows.jsonl"
+    rows = _read_jsonl(process_path)
+    target = next(row for row in rows if row["mode"] == "exact_graph")
+    artifact = run_dir / target["artifacts"]["kv"]["path"]
+    shard = torch.load(artifact, weights_only=False)
+    if mutation == "active":
+        shard["keys_after"][0, 0, 0, 0] += 1.0
+    elif mutation == "slot_zero":
+        slot_index = shard["slot_ids"][0].index(0)
+        shard["keys_after"][0, 0, slot_index, 0] += 1.0
+    elif mutation == "sentinel":
+        sentinel = shard["plans"][0]["sentinel_slots"][0]
+        slot_index = shard["slot_ids"][0].index(sentinel)
+        shard["keys_after"][0, 0, slot_index, 0] += 1.0
+    else:
+        raise AssertionError(mutation)
+    torch.save(shard, artifact)
+    target["artifacts"]["kv"]["sha256"] = contract.sha256_file(artifact)
+    _rewrite_jsonl(process_path, rows)
+    _refresh_sha256sums(run_dir)
+    return target["case_id"]
+
+
+def test_verifier_detects_active_kv_mismatch():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        target_case_id = _mutate_kv_evidence(run_dir, "active")
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        assert summary["first_divergence"]["evidence"] == "kv"
+        assert summary["first_divergence"]["case_id"] == target_case_id
+        assert summary["first_divergence"]["kind"] == "active_kv_mismatch"
+
+
+def test_verifier_detects_unexpected_slot_zero_mutation():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        _mutate_kv_evidence(run_dir, "slot_zero")
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        assert summary["first_divergence"]["slot_id"] == 0
+
+
+def test_verifier_detects_unexpected_sentinel_mutation():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        _mutate_kv_evidence(run_dir, "sentinel")
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRUPT"
+        assert summary["first_divergence"]["kind"] == "sentinel_mutation"
+
+
+def test_verifier_rejects_producer_classification_tamper():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        summary_path = run_dir / "summary.json"
+        producer = json.loads(summary_path.read_text(encoding="utf-8"))
+        producer["classification"] = "EXACT_REPLAY_CORRUPT"
+        _write_json(summary_path, producer)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any(
+            "producer classification" in item
+            for item in summary["failures"]
+        )
+
+
+def test_verifier_rejects_missing_artifact_hash():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        del rows[0]["artifacts"]["logits"]["sha256"]
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+        assert any("missing artifact hash" in item for item in summary["failures"])
+
+
 if __name__ == "__main__":
     tests = [
         test_diagnostic_matrix_is_exact_and_unique,
@@ -488,6 +1226,25 @@ if __name__ == "__main__":
         test_direct_model_forward_disables_autograd,
         test_direct_model_forward_and_logits_disable_autograd,
         test_artifact_record_path_is_relative_and_resolves_after_relocation,
+        test_verifier_reconstructs_complete_diagnostic,
+        test_verifier_is_independent_from_diagnostic_producer,
+        test_verifier_rejects_missing_matrix_case,
+        test_verifier_detects_rehashed_exact_logit_mutation,
+        test_verifier_rejects_source_and_environment_drift,
+        test_verifier_rejects_duplicate_matrix_key_and_port,
+        test_verifier_rejects_graph_size_mismatch,
+        test_verifier_rejects_prompt_and_reference_hash_drift,
+        test_verifier_rejects_truncated_raw_jsonl,
+        test_verifier_detects_nonfinite_exact_logit,
+        test_verifier_detects_exact_argmax_mismatch,
+        test_verifier_detects_exact_close_threshold_failure,
+        test_verifier_rejects_missing_layer_index,
+        test_verifier_detects_rehashed_layer_tensor_mutation,
+        test_verifier_detects_active_kv_mismatch,
+        test_verifier_detects_unexpected_slot_zero_mutation,
+        test_verifier_detects_unexpected_sentinel_mutation,
+        test_verifier_rejects_producer_classification_tamper,
+        test_verifier_rejects_missing_artifact_hash,
     ]
     for test in tests:
         test()
