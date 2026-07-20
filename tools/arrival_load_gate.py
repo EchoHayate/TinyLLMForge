@@ -26,9 +26,11 @@ GENERATOR_VERSION = 1
 OWNED_SOURCE_ROOTS = (
     "tinyvllm",
     "tools/source_audit.py",
+    "tools/arrival_load_cost_calibration.py",
     "tools/arrival_load_gate.py",
     "tools/arrival_load_driver.py",
     "tools/arrival_load_verify.py",
+    "tools/test_arrival_load_cost_calibration.py",
     "tools/test_arrival_load_gate.py",
     "tools/test_arrival_load_driver.py",
     "tools/test_arrival_load_verify.py",
@@ -43,6 +45,12 @@ IGNORED_UNTRACKED_PREFIXES = (
     "experiments/adaptive_ngram/20260717-k1-sam-smoke",
     "experiments/arrival_load",
     "experiments/speculation_router",
+)
+
+COST_CALIBRATION_ARTIFACT_FILES = (
+    "cost_calibration_manifest.jsonl",
+    "cost_calibration_rows.jsonl",
+    "cost_calibration_summary.json",
 )
 
 FINAL_ARTIFACT_FILES = (
