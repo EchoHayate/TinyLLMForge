@@ -55,6 +55,7 @@ COST_CALIBRATION_ARTIFACT_FILES = (
 
 FINAL_ARTIFACT_FILES = (
     "run_manifest.json",
+    *COST_CALIBRATION_ARTIFACT_FILES,
     "calibration_manifest.jsonl",
     "calibration_rows.jsonl",
     "workload_manifest.jsonl",
@@ -77,7 +78,7 @@ COMMON_ENGINE_CONFIG = {
     "enforce_eager": False,
 }
 
-POLICY_NAMES = ("P0", "P3", "P4")
+POLICY_NAMES = ("P0", "P4", "P5")
 
 POLICY_FIELDS = (
     "chunked_prefill_decode_first",
@@ -89,17 +90,16 @@ POLICY_FIELDS = (
     "chunked_prefill_adaptive_exit_waiting",
     "chunked_prefill_adaptive_transition_steps",
     "chunked_prefill_adaptive_max_mixed_steps",
+    "chunked_prefill_slo_mixed",
+    "chunked_prefill_slo_target_gap_ns",
+    "chunked_prefill_slo_reserve_ns",
+    "chunked_prefill_slo_cost_intercept_ns",
+    "chunked_prefill_slo_cost_per_prefill_token_ns",
+    "chunked_prefill_slo_min_chunk_tokens",
 )
 
 POLICY_OVERRIDES = {
     "P0": {},
-    "P3": {
-        "chunked_prefill_decode_first": False,
-        "chunked_prefill_max_consecutive_chunks": 0,
-        "chunked_prefill_mixed_batch": True,
-        "chunked_prefill_mixed_min_prompt_tokens": 0,
-        "chunked_prefill_adaptive_mixed": False,
-    },
     "P4": {
         "chunked_prefill_decode_first": True,
         "chunked_prefill_max_consecutive_chunks": 0,
@@ -110,6 +110,17 @@ POLICY_OVERRIDES = {
         "chunked_prefill_adaptive_exit_waiting": 2,
         "chunked_prefill_adaptive_transition_steps": 2,
         "chunked_prefill_adaptive_max_mixed_steps": 2,
+    },
+    "P5": {
+        "chunked_prefill_decode_first": True,
+        "chunked_prefill_max_consecutive_chunks": 0,
+        "chunked_prefill_mixed_batch": False,
+        "chunked_prefill_mixed_min_prompt_tokens": 0,
+        "chunked_prefill_adaptive_mixed": False,
+        "chunked_prefill_slo_mixed": True,
+        "chunked_prefill_slo_target_gap_ns": 64_000_000,
+        "chunked_prefill_slo_reserve_ns": 8_000_000,
+        "chunked_prefill_slo_min_chunk_tokens": 16,
     },
 }
 
@@ -136,9 +147,9 @@ CANONICAL_DRAIN_TIMEOUT_NS = 120_000_000_000
 STARVATION_DEADLINE_NS = 5_000_000_000
 MEASURED_REPETITIONS = 3
 POLICY_ORDER_BY_REPETITION = {
-    0: ("P0", "P3", "P4"),
-    1: ("P3", "P4", "P0"),
-    2: ("P4", "P0", "P3"),
+    0: ("P0", "P4", "P5"),
+    1: ("P4", "P5", "P0"),
+    2: ("P5", "P0", "P4"),
 }
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -192,7 +203,25 @@ def environment_identity_sha256(evidence: dict) -> str:
     return canonical_json_sha256(identity)
 
 
-def _resolved_policy_contract() -> dict:
+def _resolved_policy_contract(*, cost_envelope: dict) -> dict:
+    if not isinstance(cost_envelope, dict):
+        raise ValueError("P5 requires cost calibration envelope")
+    artifact_sha256 = cost_envelope.get("artifact_sha256")
+    cost_intercept_ns = cost_envelope.get("cost_intercept_ns")
+    cost_per_prefill_token_ns = cost_envelope.get(
+        "cost_per_prefill_token_ns"
+    )
+    if (
+        not isinstance(artifact_sha256, str)
+        or len(artifact_sha256) != 64
+        or isinstance(cost_intercept_ns, bool)
+        or not isinstance(cost_intercept_ns, int)
+        or cost_intercept_ns <= 0
+        or isinstance(cost_per_prefill_token_ns, bool)
+        or not isinstance(cost_per_prefill_token_ns, int)
+        or cost_per_prefill_token_ns <= 0
+    ):
+        raise ValueError("invalid P5 cost calibration envelope")
     defaults = {
         "chunked_prefill_decode_first": True,
         "chunked_prefill_max_consecutive_chunks": 0,
@@ -203,11 +232,27 @@ def _resolved_policy_contract() -> dict:
         "chunked_prefill_adaptive_exit_waiting": 2,
         "chunked_prefill_adaptive_transition_steps": 2,
         "chunked_prefill_adaptive_max_mixed_steps": 2,
+        "chunked_prefill_slo_mixed": False,
+        "chunked_prefill_slo_target_gap_ns": 0,
+        "chunked_prefill_slo_reserve_ns": 0,
+        "chunked_prefill_slo_cost_intercept_ns": 0,
+        "chunked_prefill_slo_cost_per_prefill_token_ns": 0,
+        "chunked_prefill_slo_min_chunk_tokens": 16,
     }
     resolved = {
         name: resolve_policy_config(name, defaults)
         for name in POLICY_NAMES
     }
+    resolved["P5"].update({
+        "chunked_prefill_slo_cost_intercept_ns":
+            cost_intercept_ns,
+        "chunked_prefill_slo_cost_per_prefill_token_ns":
+            cost_per_prefill_token_ns,
+        "chunked_prefill_slo_token_ladder": [
+            128, 112, 96, 80, 64, 48, 32, 16,
+        ],
+        "cost_calibration_artifact_sha256": artifact_sha256,
+    })
     aliases = deduplicate_policies(resolved)
     return {
         "resolved_policy_config_by_name": resolved,
@@ -215,6 +260,28 @@ def _resolved_policy_contract() -> dict:
         "canonical_policy_by_name": aliases[
             "canonical_policy_by_name"
         ],
+    }
+
+
+def _cost_envelope_from_manifest(run_manifest: dict) -> dict:
+    if not isinstance(run_manifest, dict):
+        raise ValueError("run manifest must be an object")
+    resolved = run_manifest.get("resolved_policy_config_by_name")
+    if not isinstance(resolved, dict):
+        raise ValueError("run manifest missing policy configs")
+    p5 = resolved.get("P5")
+    if not isinstance(p5, dict):
+        raise ValueError("run manifest missing P5 policy config")
+    return {
+        "artifact_sha256": p5.get(
+            "cost_calibration_artifact_sha256"
+        ),
+        "cost_intercept_ns": p5.get(
+            "chunked_prefill_slo_cost_intercept_ns"
+        ),
+        "cost_per_prefill_token_ns": p5.get(
+            "chunked_prefill_slo_cost_per_prefill_token_ns"
+        ),
     }
 
 
@@ -338,6 +405,18 @@ def resolve_policy_config(policy_name: str, defaults: dict) -> dict:
     }
 
 
+def engine_policy_config(resolved_config: dict) -> dict:
+    evidence_only = {
+        "chunked_prefill_slo_token_ladder",
+        "cost_calibration_artifact_sha256",
+    }
+    return {
+        key: value
+        for key, value in resolved_config.items()
+        if key not in evidence_only
+    }
+
+
 def policy_identity(resolved_config: dict) -> str:
     return canonical_json_sha256(resolved_config)
 
@@ -345,7 +424,7 @@ def policy_identity(resolved_config: dict) -> str:
 def deduplicate_policies(resolved: dict[str, dict]) -> dict:
     expected_names = POLICY_NAMES
     if tuple(resolved) != expected_names:
-        raise ValueError("policies must be ordered P0, P3, P4")
+        raise ValueError("policies must be ordered P0, P4, P5")
     identity_by_name = {
         name: policy_identity(resolved[name])
         for name in expected_names
@@ -658,8 +737,8 @@ def build_case_matrix(run_manifest: dict) -> list[dict]:
     )
     if canonical_by_name != {
         "P0": "P0",
-        "P3": "P3",
         "P4": "P4",
+        "P5": "P5",
     }:
         raise ValueError("invalid canonical policy alias map")
     identities = run_manifest.get("policy_identity_by_name")
@@ -689,7 +768,9 @@ def build_case_matrix(run_manifest: dict) -> list[dict]:
                     "policy": policy,
                     "repetition": repetition,
                     "policy_order": list(policy_order).index(policy),
-                    "resolved_config": dict(resolved[policy]),
+                    "resolved_config": engine_policy_config(
+                        resolved[policy]
+                    ),
                     "policy_identity": identities[policy],
                     "workload_sha256": run_manifest.get(
                         "workload_sha256"
@@ -918,14 +999,17 @@ def _validate_predecessor_identity(
     ):
         if predecessor.get(field) != current.get(field):
             raise ValueError(f"{label} {field} identity mismatch")
-    current_p4 = current.get(
-        "policy_identity_by_name", {}
-    ).get("P4")
-    predecessor_p4 = predecessor.get(
-        "policy_identity_by_name", {}
-    ).get("P4")
-    if predecessor_p4 != current_p4:
-        raise ValueError(f"{label} P4 policy identity mismatch")
+    for policy in ("P4", "P5"):
+        current_policy = current.get(
+            "policy_identity_by_name", {}
+        ).get(policy)
+        predecessor_policy = predecessor.get(
+            "policy_identity_by_name", {}
+        ).get(policy)
+        if predecessor_policy != current_policy:
+            raise ValueError(
+                f"{label} {policy} policy identity mismatch"
+            )
 
 
 def validate_run_evidence(
@@ -2014,6 +2098,57 @@ def summarize_repetition(
     }
 
 
+def summarize_p5_policy(scheduler_rows: list[dict]) -> dict:
+    selected_chunk_histogram = {}
+    mixed_decision_count = 0
+    slo_suppression_count = 0
+    draining_decision_count = 0
+    envelope_underprediction_count = 0
+    missing_progress_count = 0
+    clock_invalid_count = 0
+    for row in scheduler_rows:
+        actual_prefill_tokens = row.get("actual_prefill_tokens", 0)
+        if actual_prefill_tokens > 0:
+            mixed_decision_count += 1
+            selected_chunk_tokens = row.get("selected_chunk_tokens")
+            key = str(selected_chunk_tokens)
+            selected_chunk_histogram[key] = (
+                selected_chunk_histogram.get(key, 0) + 1
+            )
+            predicted_step_ns = row.get("predicted_step_ns")
+            actual_step_duration_ns = row.get(
+                "actual_step_duration_ns"
+            )
+            if (
+                actual_step_duration_ns is not None
+                and predicted_step_ns is not None
+                and actual_step_duration_ns > predicted_step_ns
+            ):
+                envelope_underprediction_count += 1
+        suppression_reason = row.get("suppression_reason")
+        if suppression_reason in ("no_slack", "cost_suppressed"):
+            slo_suppression_count += 1
+        if suppression_reason == "missing_decode_progress":
+            missing_progress_count += 1
+        if row.get("demand_state_after") == "draining":
+            draining_decision_count += 1
+        if row.get("clock_invalid") is True:
+            clock_invalid_count += 1
+    return {
+        "mixed_decision_count": mixed_decision_count,
+        "slo_suppression_count": slo_suppression_count,
+        "draining_decision_count": draining_decision_count,
+        "selected_chunk_histogram": dict(sorted(
+            selected_chunk_histogram.items(),
+            key=lambda item: int(item[0]),
+        )),
+        "envelope_underprediction_count":
+            envelope_underprediction_count,
+        "missing_progress_count": missing_progress_count,
+        "clock_invalid_count": clock_invalid_count,
+    }
+
+
 def aggregate_case_repetitions(rows: list[dict]) -> dict:
     if not rows:
         raise ValueError("cannot aggregate empty repetitions")
@@ -2092,6 +2227,76 @@ def _ratio(candidate: dict, baseline: dict, metric: str) -> float:
     return candidate_value / baseline_value
 
 
+def _p5_promotion_guard_failures(
+    paired_rows: list[tuple[dict, dict]],
+) -> list[str]:
+    scenarios = {
+        candidate.get("scenario")
+        for _, candidate in paired_rows
+    }
+    if scenarios != set(CANONICAL_SCENARIOS):
+        return []
+    failures = []
+    burst_throughput_ratios = []
+    burst_has_three_chunk_sizes = False
+    non_burst_suppression_count = 0
+    envelope_underprediction_count = 0
+    missing_progress_count = 0
+    clock_invalid_count = 0
+    for baseline, candidate in paired_rows:
+        scenario = candidate["scenario"]
+        if scenario == "long_prompt_pressure":
+            if _ratio(candidate, baseline, "p95_itl_ns") > 1.05:
+                failures.append(
+                    "long_prompt_pressure p95 ITL exceeds 5%"
+                )
+        if scenario == "burst":
+            burst_throughput_ratios.append(_ratio(
+                candidate,
+                baseline,
+                "request_throughput_rps",
+            ))
+        p5_policy = candidate.get("p5_policy")
+        if not isinstance(p5_policy, dict):
+            raise ValueError("P5 canonical row missing p5_policy")
+        histogram = p5_policy.get("selected_chunk_histogram")
+        if not isinstance(histogram, dict):
+            raise ValueError("invalid P5 selected chunk histogram")
+        if scenario == "burst" and len(histogram) >= 3:
+            burst_has_three_chunk_sizes = True
+        if scenario != "burst":
+            non_burst_suppression_count += int(
+                p5_policy.get("slo_suppression_count", 0)
+            )
+        envelope_underprediction_count += int(
+            p5_policy.get("envelope_underprediction_count", 0)
+        )
+        missing_progress_count += int(
+            p5_policy.get("missing_progress_count", 0)
+        )
+        clock_invalid_count += int(
+            p5_policy.get("clock_invalid_count", 0)
+        )
+    if (
+        not burst_throughput_ratios
+        or statistics.median(burst_throughput_ratios) < 1.25
+    ):
+        failures.append("burst median throughput below 1.25x")
+    if not burst_has_three_chunk_sizes:
+        failures.append(
+            "no burst repetition selected three chunk sizes"
+        )
+    if non_burst_suppression_count <= 0:
+        failures.append("no non-burst SLO suppression")
+    if envelope_underprediction_count > 0:
+        failures.append("P5 envelope underprediction detected")
+    if missing_progress_count > 0:
+        failures.append("P5 missing decode progress detected")
+    if clock_invalid_count > 0:
+        failures.append("P5 clock violation detected")
+    return failures
+
+
 def _candidate_classification(
     policy: str,
     paired_rows: list[tuple[dict, dict]],
@@ -2158,6 +2363,10 @@ def _candidate_classification(
     if bucket_ratios and max(bucket_ratios) > 1.10:
         guard_failures.append(
             "service bucket p95 E2E regression exceeds 10%"
+        )
+    if policy == "P5":
+        guard_failures.extend(
+            _p5_promotion_guard_failures(paired_rows)
         )
 
     median_paths = {
@@ -2375,14 +2584,14 @@ def classify_gate(
             "correctness_failures": [],
             "candidate_results": candidate_results,
         }
-    if "P4" not in candidate_results:
+    if "P5" not in candidate_results:
         return {
             "classification": "INCOMPLETE",
-            "structural_failures": ["missing P4 candidate result"],
+            "structural_failures": ["missing P5 candidate result"],
             "correctness_failures": [],
             "candidate_results": candidate_results,
         }
-    classification = candidate_results["P4"]["classification"]
+    classification = candidate_results["P5"]["classification"]
     return {
         "classification": classification,
         "structural_failures": [],
@@ -2489,6 +2698,10 @@ def _case_summary(
         request_metrics,
         memory_rows,
     )
+    if case_spec["policy"] == "P5":
+        summary["p5_policy"] = summarize_p5_policy(
+            scheduler_rows
+        )
     return {
         "case_id": case_spec["case_id"],
         **summary,
@@ -2518,7 +2731,7 @@ def _apply_output_correctness(
             baseline = by_key[("P0", scenario, repetition)]
             baseline_outputs = outputs.get(baseline["case_id"], {})
             baseline_by_repetition.append(baseline_outputs)
-            for policy in ("P3", "P4"):
+            for policy in ("P4", "P5"):
                 candidate = by_key[(policy, scenario, repetition)]
                 candidate_outputs = outputs.get(
                     candidate["case_id"],
@@ -2633,6 +2846,7 @@ def initialize_remote_run(
     run_tag: str,
     source_evidence_path: Path,
     environment_evidence_path: Path,
+    cost_envelope: dict,
     smoke_verification: dict | None = None,
     tokenizer=None,
 ) -> dict:
@@ -2650,7 +2864,9 @@ def initialize_remote_run(
         tokenizer,
         model_id=str(model_path),
     )
-    policy_contract = _resolved_policy_contract()
+    policy_contract = _resolved_policy_contract(
+        cost_envelope=cost_envelope,
+    )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "run_tag": str(run_tag),
@@ -2721,8 +2937,12 @@ def _smoke_workload(prompt_bank: dict) -> list[dict]:
     return rows
 
 
-def _write_final_hashes(run_dir: Path) -> None:
-    required = set(FINAL_ARTIFACT_FILES) - {
+def _write_final_hashes(
+    run_dir: Path,
+    *,
+    artifact_files: tuple[str, ...] = FINAL_ARTIFACT_FILES,
+) -> None:
+    required = set(artifact_files) - {
         "artifact_hashes.json"
     }
     missing = sorted(
@@ -2753,13 +2973,41 @@ def run_smoke(
     environment_evidence_path: Path,
 ) -> dict:
     run_dir = Path(run_dir)
+    provisional_dir = run_dir / "provisional_cost_calibration"
+    provisional = _run_cost_calibration_core(
+        run_dir=provisional_dir,
+        python_bin=python_bin,
+        model_path=model_path,
+        run_tag=f"{run_tag}-provisional-cost",
+        source_evidence_path=source_evidence_path,
+        environment_evidence_path=environment_evidence_path,
+        purpose="provisional_smoke",
+        predecessor_run_tag=None,
+    )
+    provisional_cost_envelope = {
+        "artifact_sha256": provisional[
+            "cost_calibration_artifact_sha256"
+        ],
+        "cost_intercept_ns": provisional["cost_intercept_ns"],
+        "cost_per_prefill_token_ns": provisional[
+            "cost_per_prefill_token_ns"
+        ],
+    }
     manifest = initialize_remote_run(
         run_dir=run_dir,
         model_path=model_path,
         run_tag=run_tag,
         source_evidence_path=source_evidence_path,
         environment_evidence_path=environment_evidence_path,
+        cost_envelope=provisional_cost_envelope,
     )
+    manifest["provisional_cost_calibration"] = {
+        "status": "PASS",
+        "purpose": "provisional_smoke",
+        "artifact_sha256": provisional[
+            "cost_calibration_artifact_sha256"
+        ],
+    }
     prompt_bank = _read_json(run_dir / "prompt_bank.json")
     workload = _smoke_workload(prompt_bank)
     _write_jsonl(run_dir / "workload_manifest.jsonl", workload)
@@ -2767,7 +3015,7 @@ def run_smoke(
     manifest["required_scenarios"] = ["lifecycle_smoke"]
     manifest["measured_repetitions"] = 1
     manifest["workload_sha256"] = canonical_json_sha256(workload)
-    smoke_policies = ("P0", "P4")
+    smoke_policies = ("P0", "P5")
     manifest["smoke_policies"] = list(smoke_policies)
     used_pairs = set()
     case_specs = []
@@ -2779,7 +3027,7 @@ def run_smoke(
             "policy": policy,
             "repetition": 0,
             "policy_order": policy_order,
-            "resolved_config": dict(
+            "resolved_config": engine_policy_config(
                 manifest["resolved_policy_config_by_name"][policy]
             ),
             "policy_identity": manifest[
@@ -2862,18 +3110,30 @@ def run_smoke(
         and bool(scheduler)
         and bool(memory)
     )
-    summary = {
-        "classification": "SMOKE_ONLY",
-        "lifecycle_complete": lifecycle_complete,
-        "exact_outputs": exact_outputs,
-        "case_count": len(case_rows),
-    }
+    p5_smoke = summarize_p5_smoke([
+        row for row in scheduler
+        if row.get("policy") == "P5"
+    ])
+    summary = build_smoke_summary(
+        lifecycle_complete=lifecycle_complete,
+        exact_outputs=exact_outputs,
+        case_count=len(case_rows),
+        p5_smoke=p5_smoke,
+    )
     _write_json(run_dir / "summary.json", summary)
     (run_dir / "report.md").write_text(
         render_report(manifest, summary),
         encoding="utf-8",
     )
-    _write_final_hashes(run_dir)
+    smoke_artifact_files = tuple(
+        filename
+        for filename in FINAL_ARTIFACT_FILES
+        if filename not in COST_CALIBRATION_ARTIFACT_FILES
+    )
+    _write_final_hashes(
+        run_dir,
+        artifact_files=smoke_artifact_files,
+    )
     return summary
 
 
@@ -2888,13 +3148,221 @@ def _apply_output_correctness_smoke(
         ] = row.get("output_token_ids")
     exact = (
         outputs.get("P0")
-        and outputs.get("P0") == outputs.get("P4")
+        and outputs.get("P0") == outputs.get("P5")
     )
     for row in case_rows:
         row["correctness"]["exact_outputs"] = bool(exact)
 
 
-def run_calibration_remote(
+def summarize_p5_smoke(scheduler_rows: list[dict]) -> dict:
+    if not isinstance(scheduler_rows, list):
+        raise ValueError("P5 smoke rows must be a list")
+    selected_chunks = []
+    demand_activation_count = 0
+    largest_chunk_admission_count = 0
+    smaller_chunk_admission_count = 0
+    slo_suppression_count = 0
+    draining_decision_count = 0
+    for row in scheduler_rows:
+        if not isinstance(row, dict):
+            raise ValueError("P5 smoke row must be an object")
+        before = row.get("demand_state_before")
+        after = row.get("demand_state_after")
+        if before != "active" and after == "active":
+            demand_activation_count += 1
+        if after == "draining":
+            draining_decision_count += 1
+        selected = row.get("selected_chunk_tokens")
+        if selected is not None:
+            if (
+                isinstance(selected, bool)
+                or not isinstance(selected, int)
+                or selected <= 0
+            ):
+                raise ValueError("invalid P5 smoke selected chunk")
+            selected_chunks.append(selected)
+            if selected == 128:
+                largest_chunk_admission_count += 1
+            elif selected < 128:
+                smaller_chunk_admission_count += 1
+        if row.get("suppression_reason") is not None:
+            slo_suppression_count += 1
+    summary = {
+        "demand_activation_count": demand_activation_count,
+        "largest_chunk_admission_count":
+            largest_chunk_admission_count,
+        "smaller_chunk_admission_count":
+            smaller_chunk_admission_count,
+        "slo_suppression_count": slo_suppression_count,
+        "draining_decision_count": draining_decision_count,
+        "distinct_selected_chunk_tokens": len(set(selected_chunks)),
+    }
+    complete = all((
+        demand_activation_count >= 1,
+        largest_chunk_admission_count >= 1,
+        smaller_chunk_admission_count >= 1,
+        slo_suppression_count >= 1,
+        draining_decision_count >= 1,
+        len(set(selected_chunks)) >= 2,
+    ))
+    summary["classification"] = (
+        "SMOKE_ONLY" if complete else "INCOMPLETE"
+    )
+    return summary
+
+
+def build_smoke_summary(
+    *,
+    lifecycle_complete: bool,
+    exact_outputs: bool,
+    case_count: int,
+    p5_smoke: dict,
+) -> dict:
+    complete = (
+        lifecycle_complete is True
+        and exact_outputs is True
+        and p5_smoke.get("classification") == "SMOKE_ONLY"
+    )
+    return {
+        "classification": (
+            "SMOKE_ONLY" if complete else "INCOMPLETE"
+        ),
+        "lifecycle_complete": bool(lifecycle_complete),
+        "exact_outputs": bool(exact_outputs),
+        "case_count": int(case_count),
+        "p5_smoke": dict(p5_smoke),
+    }
+
+
+def _cost_calibration_engine_config() -> dict:
+    return {
+        **COMMON_ENGINE_CONFIG,
+        "chunked_prefill_decode_first": False,
+        "chunked_prefill_max_consecutive_chunks": 0,
+        "chunked_prefill_mixed_batch": True,
+        "chunked_prefill_mixed_min_prompt_tokens": 0,
+        "chunked_prefill_adaptive_mixed": False,
+        "chunked_prefill_slo_mixed": False,
+    }
+
+
+def _launch_cost_calibration_shape(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    shape: dict,
+    engine_config: dict,
+    tinyvllm_dist_port: int,
+    master_port: int,
+) -> list[dict]:
+    shape_dir = Path(run_dir) / "processes" / shape["shape_id"]
+    shape_dir.mkdir(parents=True, exist_ok=False)
+    shape_path = shape_dir / "shape.json"
+    engine_config_path = shape_dir / "engine_config.json"
+    output_path = shape_dir / "rows.jsonl"
+    _write_json(shape_path, shape)
+    _write_json(engine_config_path, engine_config)
+    command = [
+        str(python_bin),
+        str(
+            _REPO_ROOT
+            / "tools"
+            / "arrival_load_cost_calibration.py"
+        ),
+        "--shape-json",
+        str(shape_path),
+        "--engine-config-json",
+        str(engine_config_path),
+        "--model-path",
+        str(model_path),
+        "--output-jsonl",
+        str(output_path),
+    ]
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONPATH"] = str(_REPO_ROOT)
+    environment["TINYVLLM_DIST_PORT"] = str(
+        tinyvllm_dist_port
+    )
+    environment["MASTER_PORT"] = str(master_port)
+    started_ns = time.time_ns()
+    completed = subprocess.run(
+        command,
+        cwd=_REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    finished_ns = time.time_ns()
+    (shape_dir / "stdout.log").write_text(
+        completed.stdout,
+        encoding="utf-8",
+    )
+    (shape_dir / "stderr.log").write_text(
+        completed.stderr,
+        encoding="utf-8",
+    )
+    _write_json(shape_dir / "process.json", {
+        "shape_id": shape["shape_id"],
+        "command": command,
+        "start_time_ns": started_ns,
+        "end_time_ns": finished_ns,
+        "returncode": int(completed.returncode),
+        "tinyvllm_dist_port": tinyvllm_dist_port,
+        "master_port": master_port,
+    })
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"cost calibration shape failed: {shape['shape_id']}"
+        )
+    if not output_path.is_file():
+        raise ValueError(
+            f"cost calibration shape missing rows: "
+            f"{shape['shape_id']}"
+        )
+    return _read_jsonl(output_path)
+
+
+def _validate_smoke_for_cost_calibration(
+    *,
+    smoke_manifest: dict,
+    smoke_summary: dict,
+    source_tree_sha256: str,
+    environment_sha256: str,
+) -> None:
+    if (
+        smoke_summary.get("classification") != "SMOKE_ONLY"
+        or smoke_summary.get("lifecycle_complete") is not True
+        or smoke_summary.get("exact_outputs") is not True
+    ):
+        raise ValueError(
+            "cost calibration requires verified smoke"
+        )
+    for field, value in (
+        ("source_tree_sha256", source_tree_sha256),
+        ("environment_sha256", environment_sha256),
+    ):
+        if smoke_manifest.get(field) != value:
+            raise ValueError(
+                f"smoke {field} identity mismatch"
+            )
+    expected_p4 = _resolved_policy_contract(
+        cost_envelope=_cost_envelope_from_manifest(
+            smoke_manifest
+        ),
+    )["policy_identity_by_name"]["P4"]
+    if (
+        smoke_manifest.get("policy_identity_by_name", {}).get(
+            "P4"
+        )
+        != expected_p4
+    ):
+        raise ValueError("smoke P4 policy identity mismatch")
+
+
+def run_cost_calibration_remote(
     *,
     run_dir: Path,
     python_bin: str,
@@ -2903,38 +3371,262 @@ def run_calibration_remote(
     source_evidence_path: Path,
     environment_evidence_path: Path,
     smoke_run_dir: Path,
+    purpose: str = "authoritative",
 ) -> dict:
+    smoke_run_dir = Path(smoke_run_dir)
     smoke_manifest = _read_json(
-        Path(smoke_run_dir) / "run_manifest.json"
+        smoke_run_dir / "run_manifest.json"
+    )
+    smoke_summary = _read_json(smoke_run_dir / "summary.json")
+    source_evidence = _read_json(source_evidence_path)
+    environment_evidence = _read_json(environment_evidence_path)
+    source_tree_sha256 = source_evidence["tree_sha256"]
+    environment_sha256 = environment_identity_sha256(
+        environment_evidence
+    )
+    _validate_smoke_for_cost_calibration(
+        smoke_manifest=smoke_manifest,
+        smoke_summary=smoke_summary,
+        source_tree_sha256=source_tree_sha256,
+        environment_sha256=environment_sha256,
+    )
+    return _run_cost_calibration_core(
+        run_dir=run_dir,
+        python_bin=python_bin,
+        model_path=model_path,
+        run_tag=run_tag,
+        source_evidence_path=source_evidence_path,
+        environment_evidence_path=environment_evidence_path,
+        purpose=purpose,
+        predecessor_run_tag=smoke_manifest["run_tag"],
+    )
+
+
+def _run_cost_calibration_core(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_tag: str,
+    source_evidence_path: Path,
+    environment_evidence_path: Path,
+    purpose: str,
+    predecessor_run_tag: str | None,
+) -> dict:
+    if purpose not in ("authoritative", "provisional_smoke"):
+        raise ValueError("invalid cost calibration purpose")
+    calibration = _load_local_module(
+        "arrival_load_cost_calibration_for_gate",
+        _REPO_ROOT / "tools" / "arrival_load_cost_calibration.py",
+    )
+    run_dir = Path(run_dir)
+    if run_dir.exists() and any(run_dir.iterdir()):
+        raise ValueError("cost calibration run directory not empty")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    source_evidence = _read_json(source_evidence_path)
+    environment_evidence = _read_json(environment_evidence_path)
+    source_tree_sha256 = source_evidence["tree_sha256"]
+    environment_sha256 = environment_identity_sha256(
+        environment_evidence
+    )
+    engine_config = _cost_calibration_engine_config()
+    engine_config_sha256 = canonical_json_sha256(engine_config)
+    required_shapes = calibration.build_required_shapes(
+        max_num_seqs=engine_config["max_num_seqs"],
+        max_prefill_tokens=engine_config[
+            "max_num_prefill_tokens_per_step"
+        ],
+    )
+    _write_jsonl(
+        run_dir / "cost_calibration_manifest.jsonl",
+        required_shapes,
+    )
+
+    def launch_shape(
+        *,
+        shape: dict,
+        tinyvllm_dist_port: int,
+        master_port: int,
+    ) -> list[dict]:
+        return _launch_cost_calibration_shape(
+            run_dir=run_dir,
+            python_bin=python_bin,
+            model_path=model_path,
+            shape=shape,
+            engine_config=engine_config,
+            tinyvllm_dist_port=tinyvllm_dist_port,
+            master_port=master_port,
+        )
+
+    raw_rows = calibration.orchestrate_calibration_shapes(
+        required_shapes,
+        allocate_port_pair=allocate_port_pair,
+        launch_shape=launch_shape,
+    )
+    _write_jsonl(
+        run_dir / "cost_calibration_rows.jsonl",
+        raw_rows,
+    )
+    summary = calibration.build_cost_calibration_summary(
+        source_tree_sha256=source_tree_sha256,
+        environment_sha256=environment_sha256,
+        engine_config_sha256=engine_config_sha256,
+        required_shapes=required_shapes,
+        raw_rows=raw_rows,
+    )
+    summary["purpose"] = purpose
+    _write_json(
+        run_dir / "cost_calibration_summary.json",
+        summary,
+    )
+    artifact_sha256 = sha256_file(
+        run_dir / "cost_calibration_summary.json"
+    )
+    cost_envelope = {
+        "artifact_sha256": artifact_sha256,
+        "cost_intercept_ns": summary["cost_intercept_ns"],
+        "cost_per_prefill_token_ns": summary[
+            "cost_per_prefill_token_ns"
+        ],
+    }
+    run_manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "run_type": "cost_calibration",
+        "purpose": purpose,
+        "run_tag": str(run_tag),
+        "model_path": str(model_path),
+        "source_tree_sha256": source_tree_sha256,
+        "environment_sha256": environment_sha256,
+        "engine_config": engine_config,
+        "engine_config_sha256": engine_config_sha256,
+        "cost_calibration_artifact_sha256": artifact_sha256,
+        **_resolved_policy_contract(
+            cost_envelope=cost_envelope,
+        ),
+    }
+    if predecessor_run_tag is not None:
+        run_manifest["predecessor_run_tag"] = (
+            predecessor_run_tag
+        )
+    _write_json(run_dir / "run_manifest.json", run_manifest)
+    return {
+        **summary,
+        "cost_calibration_artifact_sha256": artifact_sha256,
+    }
+
+
+def run_workload_calibration_remote(
+    *,
+    run_dir: Path,
+    python_bin: str,
+    model_path: str,
+    run_tag: str,
+    source_evidence_path: Path,
+    environment_evidence_path: Path,
+    smoke_run_dir: Path,
+    cost_calibration_run_dir: Path,
+) -> dict:
+    smoke_run_dir = Path(smoke_run_dir)
+    cost_calibration_run_dir = Path(
+        cost_calibration_run_dir
+    )
+    smoke_manifest = _read_json(
+        smoke_run_dir / "run_manifest.json"
     )
     smoke_summary = _read_json(
-        Path(smoke_run_dir) / "summary.json"
+        smoke_run_dir / "summary.json"
     )
     if (
         smoke_summary.get("classification") != "SMOKE_ONLY"
         or smoke_summary.get("lifecycle_complete") is not True
         or smoke_summary.get("exact_outputs") is not True
     ):
-        raise ValueError("calibration requires verified smoke")
+        raise ValueError(
+            "workload calibration requires verified smoke"
+        )
     source_evidence = _read_json(source_evidence_path)
     environment_evidence = _read_json(environment_evidence_path)
+    source_tree_sha256 = source_evidence["tree_sha256"]
     environment_sha256 = environment_identity_sha256(
         environment_evidence
     )
-    current_identity = {
-        "source_tree_sha256": source_evidence["tree_sha256"],
-        "environment_sha256": environment_sha256,
-        **_resolved_policy_contract(),
+    cost_manifest = _read_json(
+        cost_calibration_run_dir / "run_manifest.json"
+    )
+    cost_summary_path = (
+        cost_calibration_run_dir
+        / "cost_calibration_summary.json"
+    )
+    cost_summary = _read_json(cost_summary_path)
+    artifact_sha256 = sha256_file(cost_summary_path)
+    if (
+        cost_summary.get("status") != "PASS"
+        or cost_summary.get("purpose") != "authoritative"
+        or cost_manifest.get("run_type") != "cost_calibration"
+        or cost_manifest.get("purpose") != "authoritative"
+        or cost_manifest.get(
+            "cost_calibration_artifact_sha256"
+        )
+        != artifact_sha256
+    ):
+        raise ValueError(
+            "workload calibration requires authoritative cost calibration"
+        )
+    for field, value in (
+        ("source_tree_sha256", source_tree_sha256),
+        ("environment_sha256", environment_sha256),
+    ):
+        if (
+            cost_summary.get(field) != value
+            or cost_manifest.get(field) != value
+        ):
+            raise ValueError(
+                f"cost calibration {field} identity mismatch"
+            )
+    cost_envelope = {
+        "artifact_sha256": artifact_sha256,
+        "cost_intercept_ns": cost_summary.get(
+            "cost_intercept_ns"
+        ),
+        "cost_per_prefill_token_ns": cost_summary.get(
+            "cost_per_prefill_token_ns"
+        ),
     }
+    current_identity = {
+        "source_tree_sha256": source_tree_sha256,
+        "environment_sha256": environment_sha256,
+        **_resolved_policy_contract(
+            cost_envelope=cost_envelope,
+        ),
+    }
+    for policy in ("P4",):
+        if (
+            smoke_manifest.get(
+                "policy_identity_by_name", {}
+            ).get(policy)
+            != current_identity[
+                "policy_identity_by_name"
+            ][policy]
+        ):
+            raise ValueError(
+                f"smoke {policy} policy identity mismatch"
+            )
     _validate_predecessor_identity(
         current_identity,
-        smoke_manifest,
-        "smoke",
+        cost_manifest,
+        "cost calibration",
     )
     smoke_marker = {
         "status": "PASS",
         "run_tag": smoke_manifest["run_tag"],
-        "source_tree_sha256": source_evidence["tree_sha256"],
+        "source_tree_sha256": source_tree_sha256,
+        "environment_sha256": environment_sha256,
+    }
+    cost_marker = {
+        "status": "PASS",
+        "run_tag": cost_manifest["run_tag"],
+        "artifact_sha256": artifact_sha256,
+        "source_tree_sha256": source_tree_sha256,
         "environment_sha256": environment_sha256,
     }
     manifest = initialize_remote_run(
@@ -2943,8 +3635,12 @@ def run_calibration_remote(
         run_tag=run_tag,
         source_evidence_path=source_evidence_path,
         environment_evidence_path=environment_evidence_path,
+        cost_envelope=cost_envelope,
         smoke_verification=smoke_marker,
     )
+    manifest["run_type"] = "workload_calibration"
+    manifest["cost_calibration_verification"] = cost_marker
+    _write_json(Path(run_dir) / "run_manifest.json", manifest)
     return run_calibration(
         run_dir=run_dir,
         python_bin=python_bin,
@@ -2962,12 +3658,18 @@ def run_canonical_remote(
     source_evidence_path: Path,
     environment_evidence_path: Path,
     smoke_run_dir: Path,
-    calibration_run_dir: Path,
+    cost_calibration_run_dir: Path,
+    workload_calibration_run_dir: Path,
     resume: bool = False,
 ) -> dict:
     run_dir = Path(run_dir)
     smoke_run_dir = Path(smoke_run_dir)
-    calibration_run_dir = Path(calibration_run_dir)
+    cost_calibration_run_dir = Path(
+        cost_calibration_run_dir
+    )
+    workload_calibration_run_dir = Path(
+        workload_calibration_run_dir
+    )
     smoke_manifest = _read_json(
         smoke_run_dir / "run_manifest.json"
     )
@@ -2978,39 +3680,135 @@ def run_canonical_remote(
         or smoke_summary.get("exact_outputs") is not True
     ):
         raise ValueError("canonical requires verified smoke")
-    calibration_manifest = _read_json(
-        calibration_run_dir / "run_manifest.json"
+    cost_manifest = _read_json(
+        cost_calibration_run_dir / "run_manifest.json"
+    )
+    cost_summary_path = (
+        cost_calibration_run_dir
+        / "cost_calibration_summary.json"
+    )
+    cost_summary = _read_json(cost_summary_path)
+    cost_artifact_sha256 = sha256_file(cost_summary_path)
+    if (
+        cost_summary.get("status") != "PASS"
+        or cost_summary.get("purpose") != "authoritative"
+        or cost_manifest.get("run_type") != "cost_calibration"
+        or cost_manifest.get("purpose") != "authoritative"
+        or cost_manifest.get(
+            "cost_calibration_artifact_sha256"
+        )
+        != cost_artifact_sha256
+    ):
+        raise ValueError(
+            "canonical requires authoritative cost calibration"
+        )
+    workload_manifest = _read_json(
+        workload_calibration_run_dir / "run_manifest.json"
     )
     if (
-        calibration_manifest.get("calibration", {}).get("status")
-        != "PASS"
+        workload_manifest.get("run_type")
+        != "workload_calibration"
+        or workload_manifest.get(
+            "calibration", {}
+        ).get("status") != "PASS"
     ):
-        raise ValueError("canonical requires frozen calibration")
+        raise ValueError(
+            "canonical requires frozen workload calibration"
+        )
 
     source_evidence = _read_json(source_evidence_path)
     environment_evidence = _read_json(environment_evidence_path)
-    current = json.loads(json.dumps(calibration_manifest))
-    current["run_tag"] = str(run_tag)
-    current["source_tree_sha256"] = source_evidence["tree_sha256"]
-    current["environment_sha256"] = environment_identity_sha256(
+    source_tree_sha256 = source_evidence["tree_sha256"]
+    environment_sha256 = environment_identity_sha256(
         environment_evidence
     )
-    current.update(_resolved_policy_contract())
-    _validate_predecessor_identity(current, smoke_manifest, "smoke")
+    cost_envelope = {
+        "artifact_sha256": cost_artifact_sha256,
+        "cost_intercept_ns": cost_summary.get(
+            "cost_intercept_ns"
+        ),
+        "cost_per_prefill_token_ns": cost_summary.get(
+            "cost_per_prefill_token_ns"
+        ),
+    }
+    current = json.loads(json.dumps(workload_manifest))
+    current["run_tag"] = str(run_tag)
+    current["run_type"] = "canonical"
+    current["source_tree_sha256"] = source_tree_sha256
+    current["environment_sha256"] = environment_sha256
+    current.update(_resolved_policy_contract(
+        cost_envelope=cost_envelope,
+    ))
+    for predecessor, label in (
+        (cost_summary, "cost calibration summary"),
+        (cost_manifest, "cost calibration"),
+        (workload_manifest, "workload calibration"),
+    ):
+        for field, value in (
+            ("source_tree_sha256", source_tree_sha256),
+            ("environment_sha256", environment_sha256),
+        ):
+            if predecessor.get(field) != value:
+                raise ValueError(
+                    f"{label} {field} identity mismatch"
+                )
+    if (
+        smoke_manifest.get("source_tree_sha256")
+        != source_tree_sha256
+        or smoke_manifest.get("environment_sha256")
+        != environment_sha256
+    ):
+        raise ValueError("smoke identity mismatch")
+    if (
+        smoke_manifest.get("policy_identity_by_name", {}).get(
+            "P4"
+        )
+        != current.get("policy_identity_by_name", {}).get("P4")
+    ):
+        raise ValueError("smoke P4 policy identity mismatch")
     _validate_predecessor_identity(
         current,
-        calibration_manifest,
-        "calibration",
+        cost_manifest,
+        "cost calibration",
+    )
+    _validate_predecessor_identity(
+        current,
+        workload_manifest,
+        "workload calibration",
     )
     _validate_smoke_marker(current)
+    cost_marker = workload_manifest.get(
+        "cost_calibration_verification"
+    )
+    expected_cost_marker = {
+        "status": "PASS",
+        "run_tag": cost_manifest["run_tag"],
+        "artifact_sha256": cost_artifact_sha256,
+        "source_tree_sha256": source_tree_sha256,
+        "environment_sha256": environment_sha256,
+    }
+    if cost_marker != expected_cost_marker:
+        raise ValueError(
+            "workload cost calibration marker mismatch"
+        )
+    current["cost_calibration_verification"] = (
+        expected_cost_marker
+    )
 
-    workload_path = calibration_run_dir / "workload_manifest.jsonl"
+    workload_path = (
+        workload_calibration_run_dir
+        / "workload_manifest.jsonl"
+    )
     if not workload_path.is_file():
-        raise ValueError("calibration missing frozen workload manifest")
+        raise ValueError(
+            "workload calibration missing frozen workload manifest"
+        )
     workload_rows = _read_jsonl(workload_path)
     workload_sha256 = canonical_json_sha256(workload_rows)
-    if calibration_manifest.get("workload_sha256") != workload_sha256:
-        raise ValueError("calibration workload identity mismatch")
+    if workload_manifest.get("workload_sha256") != workload_sha256:
+        raise ValueError(
+            "workload calibration identity mismatch"
+        )
     current["workload_sha256"] = workload_sha256
 
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -3021,10 +3819,21 @@ def run_canonical_remote(
         "calibration_rows.jsonl",
         "workload_manifest.jsonl",
     ):
-        predecessor_path = calibration_run_dir / filename
+        predecessor_path = (
+            workload_calibration_run_dir / filename
+        )
         if not predecessor_path.is_file():
             raise ValueError(
-                f"calibration missing frozen artifact: {filename}"
+                "workload calibration missing frozen artifact: "
+                f"{filename}"
+            )
+        shutil.copyfile(predecessor_path, run_dir / filename)
+    for filename in COST_CALIBRATION_ARTIFACT_FILES:
+        predecessor_path = cost_calibration_run_dir / filename
+        if not predecessor_path.is_file():
+            raise ValueError(
+                "cost calibration missing frozen artifact: "
+                f"{filename}"
             )
         shutil.copyfile(predecessor_path, run_dir / filename)
     _write_json(run_dir / "run_manifest.json", current)
@@ -3063,7 +3872,6 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot = subparsers.add_parser("snapshot-source")
     snapshot.add_argument("--repo-root", type=Path, default=_REPO_ROOT)
     snapshot.add_argument("--out-dir", type=Path, required=True)
-    _add_run_arguments(subparsers.add_parser("run-calibration"))
     canonical = subparsers.add_parser("run-canonical")
     _add_run_arguments(canonical)
     canonical.add_argument(
@@ -3081,7 +3889,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     canonical.add_argument(
-        "--calibration-run-dir",
+        "--cost-calibration-run-dir",
+        type=Path,
+        required=True,
+    )
+    canonical.add_argument(
+        "--workload-calibration-run-dir",
         type=Path,
         required=True,
     )
@@ -3098,23 +3911,51 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
     )
-    remote_calibration = subparsers.add_parser(
-        "run-calibration-remote"
+    remote_cost_calibration = subparsers.add_parser(
+        "run-cost-calibration-remote"
     )
-    _add_run_arguments(remote_calibration)
-    remote_calibration.add_argument("--run-tag", required=True)
-    remote_calibration.add_argument(
+    _add_run_arguments(remote_cost_calibration)
+    remote_cost_calibration.add_argument("--run-tag", required=True)
+    remote_cost_calibration.add_argument(
         "--source-evidence",
         type=Path,
         required=True,
     )
-    remote_calibration.add_argument(
+    remote_cost_calibration.add_argument(
         "--environment-evidence",
         type=Path,
         required=True,
     )
-    remote_calibration.add_argument(
+    remote_cost_calibration.add_argument(
         "--smoke-run-dir",
+        type=Path,
+        required=True,
+    )
+    remote_workload_calibration = subparsers.add_parser(
+        "run-workload-calibration-remote"
+    )
+    _add_run_arguments(remote_workload_calibration)
+    remote_workload_calibration.add_argument(
+        "--run-tag",
+        required=True,
+    )
+    remote_workload_calibration.add_argument(
+        "--source-evidence",
+        type=Path,
+        required=True,
+    )
+    remote_workload_calibration.add_argument(
+        "--environment-evidence",
+        type=Path,
+        required=True,
+    )
+    remote_workload_calibration.add_argument(
+        "--smoke-run-dir",
+        type=Path,
+        required=True,
+    )
+    remote_workload_calibration.add_argument(
+        "--cost-calibration-run-dir",
         type=Path,
         required=True,
     )
@@ -3160,15 +4001,6 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "snapshot-source":
         result = snapshot_source(args.repo_root, args.out_dir)
-    elif args.command == "run-calibration":
-        run_dir = Path(args.run_dir)
-        result = run_calibration(
-            run_dir=run_dir,
-            python_bin=args.python_bin,
-            model_path=args.model_path,
-            run_manifest=_read_json(run_dir / "run_manifest.json"),
-            resume=args.resume,
-        )
     elif args.command == "run-smoke":
         result = run_smoke(
             run_dir=Path(args.run_dir),
@@ -3178,8 +4010,8 @@ def main(argv=None) -> int:
             source_evidence_path=args.source_evidence,
             environment_evidence_path=args.environment_evidence,
         )
-    elif args.command == "run-calibration-remote":
-        result = run_calibration_remote(
+    elif args.command == "run-cost-calibration-remote":
+        result = run_cost_calibration_remote(
             run_dir=Path(args.run_dir),
             python_bin=args.python_bin,
             model_path=args.model_path,
@@ -3187,6 +4019,19 @@ def main(argv=None) -> int:
             source_evidence_path=args.source_evidence,
             environment_evidence_path=args.environment_evidence,
             smoke_run_dir=args.smoke_run_dir,
+        )
+    elif args.command == "run-workload-calibration-remote":
+        result = run_workload_calibration_remote(
+            run_dir=Path(args.run_dir),
+            python_bin=args.python_bin,
+            model_path=args.model_path,
+            run_tag=args.run_tag,
+            source_evidence_path=args.source_evidence,
+            environment_evidence_path=args.environment_evidence,
+            smoke_run_dir=args.smoke_run_dir,
+            cost_calibration_run_dir=(
+                args.cost_calibration_run_dir
+            ),
         )
     elif args.command == "freeze-workload":
         result = _freeze_existing_calibration(Path(args.run_dir))
@@ -3206,7 +4051,12 @@ def main(argv=None) -> int:
             source_evidence_path=args.source_evidence,
             environment_evidence_path=args.environment_evidence,
             smoke_run_dir=args.smoke_run_dir,
-            calibration_run_dir=args.calibration_run_dir,
+            cost_calibration_run_dir=(
+                args.cost_calibration_run_dir
+            ),
+            workload_calibration_run_dir=(
+                args.workload_calibration_run_dir
+            ),
             resume=args.resume,
         )
     elif args.command == "finalize-artifacts":

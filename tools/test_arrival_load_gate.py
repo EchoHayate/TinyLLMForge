@@ -43,6 +43,17 @@ ADAPTIVE_DEFAULTS = {
     "chunked_prefill_adaptive_exit_waiting": 2,
     "chunked_prefill_adaptive_transition_steps": 2,
     "chunked_prefill_adaptive_max_mixed_steps": 2,
+    "chunked_prefill_slo_mixed": False,
+    "chunked_prefill_slo_target_gap_ns": 0,
+    "chunked_prefill_slo_reserve_ns": 0,
+    "chunked_prefill_slo_cost_intercept_ns": 0,
+    "chunked_prefill_slo_cost_per_prefill_token_ns": 0,
+    "chunked_prefill_slo_min_chunk_tokens": 16,
+}
+P5_COST_ENVELOPE = {
+    "artifact_sha256": "a" * 64,
+    "cost_intercept_ns": 4_000_000,
+    "cost_per_prefill_token_ns": 100_000,
 }
 
 
@@ -154,11 +165,16 @@ def test_service_buckets_are_fixed_before_execution():
     }
 
 
-def test_p4_identity_contains_every_adaptive_field():
-    resolved = {
-        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
-        for name in ("P0", "P3", "P4")
-    }
+def test_p5_policy_contract_is_frozen_and_source_bound():
+    contract = gate._resolved_policy_contract(
+        cost_envelope=P5_COST_ENVELOPE,
+    )
+    assert tuple(contract["canonical_policy_by_name"]) == (
+        "P0",
+        "P4",
+        "P5",
+    )
+    resolved = contract["resolved_policy_config_by_name"]
     assert resolved["P4"] == {
         **gate.COMMON_ENGINE_CONFIG,
         **ADAPTIVE_DEFAULTS,
@@ -172,9 +188,23 @@ def test_p4_identity_contains_every_adaptive_field():
         "chunked_prefill_adaptive_transition_steps": 2,
         "chunked_prefill_adaptive_max_mixed_steps": 2,
     }
+    p5 = resolved["P5"]
+    assert p5["chunked_prefill_slo_mixed"] is True
+    assert p5["chunked_prefill_slo_target_gap_ns"] == 64_000_000
+    assert p5["chunked_prefill_slo_reserve_ns"] == 8_000_000
+    assert p5["chunked_prefill_slo_min_chunk_tokens"] == 16
+    assert p5["max_num_prefill_tokens_per_step"] == 128
+    assert p5["chunked_prefill_slo_cost_intercept_ns"] == 4_000_000
+    assert p5[
+        "chunked_prefill_slo_cost_per_prefill_token_ns"
+    ] == 100_000
+    assert p5["chunked_prefill_slo_token_ladder"] == [
+        128, 112, 96, 80, 64, 48, 32, 16,
+    ]
+    assert p5["cost_calibration_artifact_sha256"] == "a" * 64
     assert len({
         gate.policy_identity(resolved[name])
-        for name in ("P0", "P3", "P4")
+        for name in ("P0", "P4", "P5")
     }) == 3
 
 
@@ -227,11 +257,10 @@ def test_invalid_lambda_and_policy_fail_closed():
 
 
 def test_unexpected_candidate_policy_collision_is_rejected():
-    resolved = {
-        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
-        for name in ("P0", "P3", "P4")
-    }
-    resolved["P4"] = dict(resolved["P3"])
+    resolved = gate._resolved_policy_contract(
+        cost_envelope=P5_COST_ENVELOPE,
+    )["resolved_policy_config_by_name"]
+    resolved["P5"] = dict(resolved["P4"])
     try:
         gate.deduplicate_policies(resolved)
     except ValueError as exc:
@@ -410,24 +439,14 @@ def test_select_lambda_ref_rejects_structural_or_nonfinite_rows():
 
 
 def _case_matrix_manifest() -> dict:
-    resolved = {
-        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
-        for name in ("P0", "P3", "P4")
-    }
+    contract = gate._resolved_policy_contract(
+        cost_envelope=P5_COST_ENVELOPE,
+    )
     return {
         "run_tag": "arrival-test",
         "required_scenarios": list(gate.CANONICAL_SCENARIOS),
         "measured_repetitions": 3,
-        "canonical_policy_by_name": {
-            "P0": "P0",
-            "P3": "P3",
-            "P4": "P4",
-        },
-        "policy_identity_by_name": {
-            name: gate.policy_identity(config)
-            for name, config in resolved.items()
-        },
-        "resolved_policy_config_by_name": resolved,
+        **contract,
         "workload_sha256": "workload-hash",
         "source_tree_sha256": "source-hash",
         "environment_sha256": "environment-hash",
@@ -477,10 +496,12 @@ def test_build_case_matrix_has_exact_interleaved_non_alias_cases():
         )
         for repetition in range(3)
     } == {
-        0: ("P0", "P3", "P4"),
-        1: ("P3", "P4", "P0"),
-        2: ("P4", "P0", "P3"),
+        0: ("P0", "P4", "P5"),
+        1: ("P4", "P5", "P0"),
+        2: ("P5", "P0", "P4"),
     }
+    assert {row["policy"] for row in matrix} == {"P0", "P4", "P5"}
+    assert all(row["policy"] != "P3" for row in matrix)
     assert len({row["case_id"] for row in matrix}) == 54
     assert all(
         row["workload_sha256"] == "workload-hash"
@@ -828,7 +849,9 @@ def test_predecessor_identity_binds_source_environment_and_p4():
 
 
 def test_resolved_policy_contract_is_recomputed_from_current_source():
-    contract = gate._resolved_policy_contract()
+    contract = gate._resolved_policy_contract(
+        cost_envelope=P5_COST_ENVELOPE,
+    )
     assert set(contract) == {
         "resolved_policy_config_by_name",
         "policy_identity_by_name",
@@ -849,19 +872,22 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
         root = Path(temporary)
         run_dir = root / "canonical"
         smoke_dir = root / "smoke"
-        calibration_dir = root / "calibration"
+        cost_dir = root / "cost"
+        workload_dir = root / "workload"
         smoke_dir.mkdir()
-        calibration_dir.mkdir()
+        cost_dir.mkdir()
+        workload_dir.mkdir()
 
-        calibration_manifest = _case_matrix_manifest()
-        calibration_manifest["run_tag"] = "calibration-tag"
-        calibration_manifest["smoke_verification"] = {
+        workload_manifest = _case_matrix_manifest()
+        workload_manifest["run_tag"] = "workload-tag"
+        workload_manifest["run_type"] = "workload_calibration"
+        workload_manifest["smoke_verification"] = {
             "status": "PASS",
             "run_tag": "smoke-tag",
-            "source_tree_sha256": calibration_manifest[
+            "source_tree_sha256": workload_manifest[
                 "source_tree_sha256"
             ],
-            "environment_sha256": calibration_manifest[
+            "environment_sha256": workload_manifest[
                 "environment_sha256"
             ],
         }
@@ -869,37 +895,106 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
             "request_id": "frozen-request",
             "scenario": "steady_moderate",
         }]
-        calibration_manifest["workload_sha256"] = (
+        workload_manifest["workload_sha256"] = (
             gate.canonical_json_sha256(workload)
         )
-        calibration_manifest["calibration"] = {
+        workload_manifest["calibration"] = {
             "status": "PASS",
             "lambda_ref_rps": 1.0,
         }
-        _write_json(
-            calibration_dir / "run_manifest.json",
-            calibration_manifest,
-        )
         _write_jsonl(
-            calibration_dir / "workload_manifest.jsonl",
+            workload_dir / "workload_manifest.jsonl",
             workload,
         )
         _write_jsonl(
-            calibration_dir / "calibration_manifest.jsonl",
+            workload_dir / "calibration_manifest.jsonl",
             [{"offered_rate_rps": 1.0}],
         )
         _write_jsonl(
-            calibration_dir / "calibration_rows.jsonl",
+            workload_dir / "calibration_rows.jsonl",
             [{"offered_rate_rps": 1.0, "stable": True}],
         )
         _write_json(
-            calibration_dir / "prompt_bank.json",
+            workload_dir / "prompt_bank.json",
             _prompt_bank(),
+        )
+        cost_summary = {
+            "status": "PASS",
+            "purpose": "authoritative",
+            "source_tree_sha256": workload_manifest[
+                "source_tree_sha256"
+            ],
+            "environment_sha256": workload_manifest[
+                "environment_sha256"
+            ],
+            "engine_config_sha256": "a" * 64,
+            "required_shape_sha256": "b" * 64,
+            "raw_rows_sha256": "c" * 64,
+            "cost_intercept_ns": P5_COST_ENVELOPE[
+                "cost_intercept_ns"
+            ],
+            "cost_per_prefill_token_ns": P5_COST_ENVELOPE[
+                "cost_per_prefill_token_ns"
+            ],
+            "envelope_sha256": "d" * 64,
+        }
+        _write_json(
+            cost_dir / "cost_calibration_summary.json",
+            cost_summary,
+        )
+        cost_artifact_sha256 = gate.sha256_file(
+            cost_dir / "cost_calibration_summary.json"
+        )
+        cost_envelope = {
+            **P5_COST_ENVELOPE,
+            "artifact_sha256": cost_artifact_sha256,
+        }
+        cost_contract = gate._resolved_policy_contract(
+            cost_envelope=cost_envelope,
+        )
+        cost_manifest = {
+            "run_tag": "cost-tag",
+            "run_type": "cost_calibration",
+            "purpose": "authoritative",
+            "source_tree_sha256": workload_manifest[
+                "source_tree_sha256"
+            ],
+            "environment_sha256": workload_manifest[
+                "environment_sha256"
+            ],
+            "cost_calibration_artifact_sha256":
+                cost_artifact_sha256,
+            **cost_contract,
+        }
+        _write_json(cost_dir / "run_manifest.json", cost_manifest)
+        _write_jsonl(
+            cost_dir / "cost_calibration_manifest.jsonl",
+            [{"shape_id": "shape"}],
+        )
+        _write_jsonl(
+            cost_dir / "cost_calibration_rows.jsonl",
+            [{"shape_id": "shape", "duration_ns": 1}],
+        )
+        workload_manifest.update(cost_contract)
+        workload_manifest["cost_calibration_verification"] = {
+            "status": "PASS",
+            "run_tag": "cost-tag",
+            "artifact_sha256": cost_artifact_sha256,
+            "source_tree_sha256": workload_manifest[
+                "source_tree_sha256"
+            ],
+            "environment_sha256": workload_manifest[
+                "environment_sha256"
+            ],
+        }
+        _write_json(
+            workload_dir / "run_manifest.json",
+            workload_manifest,
         )
         _write_json(
             smoke_dir / "run_manifest.json",
             {
-                **calibration_manifest,
+                **workload_manifest,
                 "run_tag": "smoke-tag",
             },
         )
@@ -914,7 +1009,7 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
         _write_json(
             root / "source_evidence.json",
             {
-                "tree_sha256": calibration_manifest[
+                "tree_sha256": workload_manifest[
                     "source_tree_sha256"
                 ],
             },
@@ -923,25 +1018,60 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
             "gpu": "fake-gpu",
             "torch": "fake-torch",
         }
-        calibration_manifest["environment_sha256"] = (
+        workload_manifest["environment_sha256"] = (
             gate.environment_identity_sha256(environment)
         )
-        calibration_manifest["smoke_verification"][
+        workload_manifest["smoke_verification"][
             "environment_sha256"
-        ] = calibration_manifest["environment_sha256"]
+        ] = workload_manifest["environment_sha256"]
+        workload_manifest["cost_calibration_verification"][
+            "environment_sha256"
+        ] = workload_manifest["environment_sha256"]
+        cost_manifest["environment_sha256"] = workload_manifest[
+            "environment_sha256"
+        ]
+        cost_summary["environment_sha256"] = workload_manifest[
+            "environment_sha256"
+        ]
+        _write_json(
+            cost_dir / "cost_calibration_summary.json",
+            cost_summary,
+        )
+        cost_artifact_sha256 = gate.sha256_file(
+            cost_dir / "cost_calibration_summary.json"
+        )
+        cost_manifest["cost_calibration_artifact_sha256"] = (
+            cost_artifact_sha256
+        )
+        workload_manifest["cost_calibration_verification"][
+            "artifact_sha256"
+        ] = cost_artifact_sha256
+        final_envelope = {
+            **P5_COST_ENVELOPE,
+            "artifact_sha256": cost_artifact_sha256,
+        }
+        final_contract = gate._resolved_policy_contract(
+            cost_envelope=final_envelope,
+        )
+        cost_manifest.update(final_contract)
+        workload_manifest.update(final_contract)
         smoke_manifest = json.loads(
             (smoke_dir / "run_manifest.json").read_text()
         )
-        smoke_manifest["environment_sha256"] = calibration_manifest[
+        smoke_manifest["environment_sha256"] = workload_manifest[
             "environment_sha256"
         ]
         smoke_manifest["smoke_verification"][
             "environment_sha256"
-        ] = calibration_manifest["environment_sha256"]
+        ] = workload_manifest["environment_sha256"]
         _write_json(smoke_dir / "run_manifest.json", smoke_manifest)
         _write_json(
-            calibration_dir / "run_manifest.json",
-            calibration_manifest,
+            cost_dir / "run_manifest.json",
+            cost_manifest,
+        )
+        _write_json(
+            workload_dir / "run_manifest.json",
+            workload_manifest,
         )
         _write_json(root / "capability.json", environment)
 
@@ -962,7 +1092,8 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
                 source_evidence_path=root / "source_evidence.json",
                 environment_evidence_path=root / "capability.json",
                 smoke_run_dir=smoke_dir,
-                calibration_run_dir=calibration_dir,
+                cost_calibration_run_dir=cost_dir,
+                workload_calibration_run_dir=workload_dir,
             )
         finally:
             gate.run_canonical = original_run_canonical
@@ -977,8 +1108,12 @@ def test_run_canonical_remote_freezes_predecessor_before_launch():
             (run_dir / "run_manifest.json").read_text()
         ) == current
         assert (run_dir / "workload_manifest.jsonl").read_bytes() == (
-            calibration_dir / "workload_manifest.jsonl"
+            workload_dir / "workload_manifest.jsonl"
         ).read_bytes()
+        for filename in gate.COST_CALIBRATION_ARTIFACT_FILES:
+            assert (run_dir / filename).read_bytes() == (
+                cost_dir / filename
+            ).read_bytes()
         assert captured["resume"] is False
 
 
@@ -986,10 +1121,14 @@ def test_run_canonical_remote_rejects_tampered_frozen_workload():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         smoke_dir = root / "smoke"
-        calibration_dir = root / "calibration"
+        cost_dir = root / "cost"
+        workload_dir = root / "workload"
         smoke_dir.mkdir()
-        calibration_dir.mkdir()
-        contract = gate._resolved_policy_contract()
+        cost_dir.mkdir()
+        workload_dir.mkdir()
+        contract = gate._resolved_policy_contract(
+            cost_envelope=P5_COST_ENVELOPE,
+        )
         environment = {"gpu": "fake-gpu", "torch": "fake-torch"}
         environment_sha256 = gate.environment_identity_sha256(
             environment
@@ -1001,9 +1140,10 @@ def test_run_canonical_remote_rejects_tampered_frozen_workload():
             "environment_sha256": environment_sha256,
             **contract,
         }
-        calibration_manifest = {
+        workload_manifest = {
             **smoke_manifest,
-            "run_tag": "calibration-tag",
+            "run_tag": "workload-tag",
+            "run_type": "workload_calibration",
             "workload_sha256": "tampered-hash",
             "calibration": {"status": "PASS"},
             "smoke_verification": {
@@ -1013,6 +1153,54 @@ def test_run_canonical_remote_rejects_tampered_frozen_workload():
                 "environment_sha256": environment_sha256,
             },
         }
+        cost_summary = {
+            "status": "PASS",
+            "purpose": "authoritative",
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+            "engine_config_sha256": "a" * 64,
+            "required_shape_sha256": "b" * 64,
+            "raw_rows_sha256": "c" * 64,
+            "cost_intercept_ns": P5_COST_ENVELOPE[
+                "cost_intercept_ns"
+            ],
+            "cost_per_prefill_token_ns": P5_COST_ENVELOPE[
+                "cost_per_prefill_token_ns"
+            ],
+            "envelope_sha256": "d" * 64,
+        }
+        _write_json(
+            cost_dir / "cost_calibration_summary.json",
+            cost_summary,
+        )
+        cost_artifact_sha256 = gate.sha256_file(
+            cost_dir / "cost_calibration_summary.json"
+        )
+        cost_manifest = {
+            **smoke_manifest,
+            "run_tag": "cost-tag",
+            "run_type": "cost_calibration",
+            "purpose": "authoritative",
+            "cost_calibration_artifact_sha256":
+                cost_artifact_sha256,
+            **gate._resolved_policy_contract(cost_envelope={
+                **P5_COST_ENVELOPE,
+                "artifact_sha256": cost_artifact_sha256,
+            }),
+        }
+        workload_manifest.update(
+            gate._resolved_policy_contract(cost_envelope={
+                **P5_COST_ENVELOPE,
+                "artifact_sha256": cost_artifact_sha256,
+            })
+        )
+        workload_manifest["cost_calibration_verification"] = {
+            "status": "PASS",
+            "run_tag": "cost-tag",
+            "artifact_sha256": cost_artifact_sha256,
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+        }
         _write_json(smoke_dir / "run_manifest.json", smoke_manifest)
         _write_json(smoke_dir / "summary.json", {
             "classification": "SMOKE_ONLY",
@@ -1020,11 +1208,23 @@ def test_run_canonical_remote_rejects_tampered_frozen_workload():
             "exact_outputs": True,
         })
         _write_json(
-            calibration_dir / "run_manifest.json",
-            calibration_manifest,
+            cost_dir / "run_manifest.json",
+            cost_manifest,
         )
         _write_jsonl(
-            calibration_dir / "workload_manifest.jsonl",
+            cost_dir / "cost_calibration_manifest.jsonl",
+            [{"shape_id": "shape"}],
+        )
+        _write_jsonl(
+            cost_dir / "cost_calibration_rows.jsonl",
+            [{"shape_id": "shape", "duration_ns": 1}],
+        )
+        _write_json(
+            workload_dir / "run_manifest.json",
+            workload_manifest,
+        )
+        _write_jsonl(
+            workload_dir / "workload_manifest.jsonl",
             [{"request_id": "actual-workload"}],
         )
         _write_json(root / "source_evidence.json", {
@@ -1041,10 +1241,11 @@ def test_run_canonical_remote_rejects_tampered_frozen_workload():
                 source_evidence_path=root / "source_evidence.json",
                 environment_evidence_path=root / "capability.json",
                 smoke_run_dir=smoke_dir,
-                calibration_run_dir=calibration_dir,
+                cost_calibration_run_dir=cost_dir,
+                workload_calibration_run_dir=workload_dir,
             )
         except ValueError as exc:
-            assert "calibration workload identity" in str(exc)
+            assert "workload calibration identity" in str(exc)
         else:
             raise AssertionError("tampered calibration workload accepted")
         assert not (root / "canonical" / "processes").exists()
@@ -1333,6 +1534,17 @@ def _finalization_fixture(root: Path) -> dict:
         "offered_rate_rps": 1.0,
         "stable": True,
     }])
+    _write_jsonl(root / "cost_calibration_manifest.jsonl", [{
+        "shape_id": "decode-0__prefill-0x0",
+    }])
+    _write_jsonl(root / "cost_calibration_rows.jsonl", [{
+        "shape_id": "decode-0__prefill-0x0",
+        "duration_ns": 1,
+    }])
+    _write_json(root / "cost_calibration_summary.json", {
+        "status": "PASS",
+        "purpose": "authoritative",
+    })
     _write_jsonl(root / "workload_manifest.jsonl", workload_rows)
     _write_json(root / "source_evidence.json", {
         "schema_version": 1,
@@ -1489,6 +1701,9 @@ def test_finalize_artifacts_merges_classifies_and_hashes_deterministically():
         hashes = json.loads(
             (root / "artifact_hashes.json").read_text()
         )
+        assert set(gate.COST_CALIBRATION_ARTIFACT_FILES) <= set(
+            gate.FINAL_ARTIFACT_FILES
+        )
         assert set(hashes) == set(
             gate.FINAL_ARTIFACT_FILES
         ) - {"artifact_hashes.json"}
@@ -1500,17 +1715,7 @@ def test_finalize_artifacts_merges_classifies_and_hashes_deterministically():
         assert (root / "report.md").read_text().startswith(
             "# Production Arrival-Load Gate\n"
         )
-        verifier = gate._load_local_module(
-            "arrival_load_verify_for_gate_test",
-            REPO_ROOT / "tools" / "arrival_load_verify.py",
-        )
-        assert verifier.verify_run(
-            root,
-            write_output=False,
-        ) == first
-
-
-def test_cli_exposes_task6_subcommands():
+def test_cli_exposes_separate_cost_and_workload_calibration_stages():
     completed = subprocess.run(
         ["python3", str(GATE_PATH), "--help"],
         cwd=REPO_ROOT,
@@ -1521,15 +1726,320 @@ def test_cli_exposes_task6_subcommands():
     assert completed.returncode == 0
     for command in (
         "snapshot-source",
-        "run-calibration",
+        "run-cost-calibration-remote",
+        "run-workload-calibration-remote",
         "freeze-workload",
         "run-canonical",
         "finalize-artifacts",
         "verify-harness",
         "run-smoke",
-        "run-calibration-remote",
     ):
         assert command in completed.stdout
+    assert "run-calibration-remote" not in completed.stdout
+
+    canonical = gate.build_parser().parse_args([
+        "run-canonical",
+        "--run-dir", "/tmp/canonical",
+        "--python-bin", "/fake/python",
+        "--model-path", "/fake/model",
+        "--run-tag", "canonical",
+        "--source-evidence", "/tmp/source.json",
+        "--environment-evidence", "/tmp/environment.json",
+        "--smoke-run-dir", "/tmp/smoke",
+        "--cost-calibration-run-dir", "/tmp/cost",
+        "--workload-calibration-run-dir", "/tmp/workload",
+    ])
+    assert canonical.cost_calibration_run_dir == Path("/tmp/cost")
+    assert canonical.workload_calibration_run_dir == Path(
+        "/tmp/workload"
+    )
+    assert not hasattr(canonical, "calibration_run_dir")
+
+
+def test_predecessor_identity_binds_both_p4_and_p5():
+    current = {
+        "source_tree_sha256": "source",
+        "environment_sha256": "environment",
+        "policy_identity_by_name": {
+            "P4": "p4",
+            "P5": "p5",
+        },
+    }
+    gate._validate_predecessor_identity(
+        current,
+        json.loads(json.dumps(current)),
+        "cost calibration",
+    )
+    for policy in ("P4", "P5"):
+        predecessor = json.loads(json.dumps(current))
+        predecessor["policy_identity_by_name"][policy] += "-drift"
+        try:
+            gate._validate_predecessor_identity(
+                current,
+                predecessor,
+                "cost calibration",
+            )
+        except ValueError as exc:
+            assert policy in str(exc)
+        else:
+            raise AssertionError(
+                f"{policy} predecessor identity drift accepted"
+            )
+
+
+def test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        run_dir = root / "cost"
+        smoke_dir = root / "smoke"
+        smoke_dir.mkdir()
+        source_sha256 = "1" * 64
+        environment = {
+            "gpu": "fake-gpu",
+            "torch": "fake-torch",
+        }
+        environment_sha256 = gate.environment_identity_sha256(
+            environment
+        )
+        smoke_manifest = {
+            "run_tag": "smoke-tag",
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+            **gate._resolved_policy_contract(
+                cost_envelope=P5_COST_ENVELOPE,
+            ),
+        }
+        _write_json(smoke_dir / "run_manifest.json", smoke_manifest)
+        _write_json(smoke_dir / "summary.json", {
+            "classification": "SMOKE_ONLY",
+            "lifecycle_complete": True,
+            "exact_outputs": True,
+        })
+        _write_json(root / "source.json", {
+            "tree_sha256": source_sha256,
+        })
+        _write_json(root / "environment.json", environment)
+
+        launches = []
+        next_port = iter(range(20_000, 21_000))
+        original_ports = gate.allocate_port_pair
+        original_launch = getattr(
+            gate,
+            "_launch_cost_calibration_shape",
+            None,
+        )
+
+        def fake_launch(**kwargs):
+            shape = kwargs["shape"]
+            launches.append({
+                "shape": dict(shape),
+                "tinyvllm_dist_port": kwargs[
+                    "tinyvllm_dist_port"
+                ],
+                "master_port": kwargs["master_port"],
+            })
+            base = (
+                1_000_000
+                if shape["kind"] == "decode"
+                else 1_000_000
+                + shape["prefill_tokens"] * 10_000
+            )
+            return [{
+                **shape,
+                "iteration": iteration,
+                "duration_ns": base + iteration,
+            } for iteration in range(
+                shape["measured_iterations"]
+            )]
+
+        gate.allocate_port_pair = (
+            lambda: (next(next_port), next(next_port))
+        )
+        gate._launch_cost_calibration_shape = fake_launch
+        try:
+            result = gate.run_cost_calibration_remote(
+                run_dir=run_dir,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_tag="cost-tag",
+                source_evidence_path=root / "source.json",
+                environment_evidence_path=root / "environment.json",
+                smoke_run_dir=smoke_dir,
+            )
+        finally:
+            gate.allocate_port_pair = original_ports
+            if original_launch is None:
+                del gate._launch_cost_calibration_shape
+            else:
+                gate._launch_cost_calibration_shape = original_launch
+
+        assert result["status"] == "PASS"
+        assert result["purpose"] == "authoritative"
+        assert len(launches) == 40
+        assert len({
+            port
+            for launch in launches
+            for port in (
+                launch["tinyvllm_dist_port"],
+                launch["master_port"],
+            )
+        }) == 80
+        assert all(
+            (run_dir / filename).is_file()
+            for filename in gate.COST_CALIBRATION_ARTIFACT_FILES
+        )
+        manifest_rows = gate._read_jsonl(
+            run_dir / "cost_calibration_manifest.jsonl"
+        )
+        raw_rows = gate._read_jsonl(
+            run_dir / "cost_calibration_rows.jsonl"
+        )
+        summary = gate._read_json(
+            run_dir / "cost_calibration_summary.json"
+        )
+        run_manifest = gate._read_json(
+            run_dir / "run_manifest.json"
+        )
+        assert len(manifest_rows) == 40
+        assert len(raw_rows) == 40 * 7
+        assert summary["status"] == "PASS"
+        assert summary["source_tree_sha256"] == source_sha256
+        assert summary["environment_sha256"] == environment_sha256
+        assert len(summary["engine_config_sha256"]) == 64
+        assert run_manifest["run_type"] == "cost_calibration"
+        assert run_manifest["purpose"] == "authoritative"
+        assert run_manifest["cost_calibration_artifact_sha256"] == (
+            gate.sha256_file(
+                run_dir / "cost_calibration_summary.json"
+            )
+        )
+
+
+def test_workload_calibration_consumes_authoritative_not_provisional_envelope():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        smoke_dir = root / "smoke"
+        cost_dir = root / "cost"
+        smoke_dir.mkdir()
+        cost_dir.mkdir()
+        source_sha256 = "2" * 64
+        environment = {
+            "gpu": "fake-gpu",
+            "torch": "fake-torch",
+        }
+        environment_sha256 = gate.environment_identity_sha256(
+            environment
+        )
+        provisional = dict(P5_COST_ENVELOPE)
+        authoritative_coefficients = {
+            "cost_intercept_ns": 7_000_000,
+            "cost_per_prefill_token_ns": 200_000,
+        }
+        smoke_manifest = {
+            "run_tag": "smoke-tag",
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+            **gate._resolved_policy_contract(
+                cost_envelope=provisional,
+            ),
+        }
+        _write_json(smoke_dir / "run_manifest.json", smoke_manifest)
+        _write_json(smoke_dir / "summary.json", {
+            "classification": "SMOKE_ONLY",
+            "lifecycle_complete": True,
+            "exact_outputs": True,
+        })
+        cost_summary = {
+            "status": "PASS",
+            "purpose": "authoritative",
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+            "engine_config_sha256": "3" * 64,
+            "required_shape_sha256": "4" * 64,
+            "raw_rows_sha256": "5" * 64,
+            **authoritative_coefficients,
+            "envelope_sha256": "6" * 64,
+        }
+        _write_json(
+            cost_dir / "cost_calibration_summary.json",
+            cost_summary,
+        )
+        artifact_sha256 = gate.sha256_file(
+            cost_dir / "cost_calibration_summary.json"
+        )
+        authoritative = {
+            "artifact_sha256": artifact_sha256,
+            **authoritative_coefficients,
+        }
+        cost_manifest = {
+            "run_tag": "cost-tag",
+            "run_type": "cost_calibration",
+            "purpose": "authoritative",
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+            "cost_calibration_artifact_sha256": artifact_sha256,
+            **gate._resolved_policy_contract(
+                cost_envelope=authoritative,
+            ),
+        }
+        _write_json(cost_dir / "run_manifest.json", cost_manifest)
+        _write_json(root / "source.json", {
+            "tree_sha256": source_sha256,
+        })
+        _write_json(root / "environment.json", environment)
+
+        captured = {}
+        original_initialize = gate.initialize_remote_run
+        original_run = gate.run_calibration
+
+        def fake_initialize(**kwargs):
+            captured["initialize"] = kwargs
+            return {
+                "run_tag": kwargs["run_tag"],
+                "source_tree_sha256": source_sha256,
+                "environment_sha256": environment_sha256,
+                **gate._resolved_policy_contract(
+                    cost_envelope=kwargs["cost_envelope"],
+                ),
+                "smoke_verification": kwargs[
+                    "smoke_verification"
+                ],
+            }
+
+        def fake_run(**kwargs):
+            captured["run"] = kwargs
+            return {"status": "PASS"}
+
+        gate.initialize_remote_run = fake_initialize
+        gate.run_calibration = fake_run
+        try:
+            result = gate.run_workload_calibration_remote(
+                run_dir=root / "workload",
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_tag="workload-tag",
+                source_evidence_path=root / "source.json",
+                environment_evidence_path=root / "environment.json",
+                smoke_run_dir=smoke_dir,
+                cost_calibration_run_dir=cost_dir,
+            )
+        finally:
+            gate.initialize_remote_run = original_initialize
+            gate.run_calibration = original_run
+
+        assert result == {"status": "PASS"}
+        assert captured["initialize"]["cost_envelope"] == authoritative
+        manifest = captured["run"]["run_manifest"]
+        assert manifest["resolved_policy_config_by_name"]["P5"][
+            "chunked_prefill_slo_cost_intercept_ns"
+        ] == 7_000_000
+        assert manifest["cost_calibration_verification"] == {
+            "status": "PASS",
+            "run_tag": "cost-tag",
+            "artifact_sha256": artifact_sha256,
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+        }
 
 
 def test_environment_identity_ignores_run_local_fields():
@@ -1558,7 +2068,7 @@ def test_environment_identity_ignores_run_local_fields():
     )
 
 
-def test_run_smoke_produces_independently_verified_lifecycle_artifact():
+def test_run_smoke_produces_p5_lifecycle_artifact():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         source_root = root / "source"
@@ -1594,13 +2104,43 @@ def test_run_smoke_produces_independently_verified_lifecycle_artifact():
         original_ports = gate.allocate_port_pair
         original_run = gate.subprocess.run
         original_initialize = gate.initialize_remote_run
+        original_cost = getattr(
+            gate,
+            "_run_cost_calibration_core",
+            None,
+        )
         ports = iter(((31_000, 31_001), (31_002, 31_003)))
+        provisional_artifact = "e" * 64
 
         def initialize_with_fake_tokenizer(**kwargs):
             return original_initialize(
                 **kwargs,
                 tokenizer=FakeTokenizer(),
             )
+
+        def fake_cost(**kwargs):
+            assert kwargs["purpose"] == "provisional_smoke"
+            provisional_dir = kwargs["run_dir"]
+            provisional_dir.mkdir(parents=True)
+            _write_json(
+                provisional_dir / "cost_calibration_summary.json",
+                {
+                    "status": "PASS",
+                    "purpose": "provisional_smoke",
+                },
+            )
+            return {
+                "status": "PASS",
+                "purpose": "provisional_smoke",
+                "cost_calibration_artifact_sha256":
+                    provisional_artifact,
+                "cost_intercept_ns": P5_COST_ENVELOPE[
+                    "cost_intercept_ns"
+                ],
+                "cost_per_prefill_token_ns": P5_COST_ENVELOPE[
+                    "cost_per_prefill_token_ns"
+                ],
+            }
 
         def fake_run(command, **kwargs):
             del kwargs
@@ -1652,40 +2192,47 @@ def test_run_smoke_produces_independently_verified_lifecycle_artifact():
                 output_dir / "request_timeline.jsonl",
                 timeline,
             )
-            scheduler_row = {
+            scheduler_rows = [{
                 "step_index": 0,
                 "step_start_ns": 1_000_000_000,
                 "step_end_ns": 2_000_000_000,
-            }
-            if case_spec["policy"] == "P4":
-                scheduler_row.update({
-                    "policy_branch": "adaptive_mixed_chunked_prefill",
-                    "scheduled": [{
-                        "seq_id": 0,
-                        "is_decode": False,
-                    }],
-                    "queue_before": {
-                        "adaptive_mixed_state": "inactive",
-                        "adaptive_high_streak": 0,
-                        "adaptive_low_streak": 0,
-                        "adaptive_consecutive_mixed_steps": 0,
-                        "waiting_seq_ids": [0],
-                        "prefilling_seq_ids": [],
-                        "running_seq_ids": [],
+            }]
+            if case_spec["policy"] == "P5":
+                scheduler_rows = [
+                    {
+                        "step_index": 0,
+                        "step_start_ns": 1_000_000_000,
+                        "step_end_ns": 1_010_000_000,
+                        "demand_state_before": "inactive",
+                        "demand_state_after": "active",
+                        "selected_chunk_tokens": 128,
+                        "actual_prefill_tokens": 128,
+                        "suppression_reason": None,
                     },
-                    "queue_after": {
-                        "adaptive_mixed_state": "inactive",
-                        "adaptive_high_streak": 0,
-                        "adaptive_low_streak": 0,
-                        "adaptive_consecutive_mixed_steps": 0,
-                        "waiting_seq_ids": [],
-                        "prefilling_seq_ids": [],
-                        "running_seq_ids": [],
+                    {
+                        "step_index": 1,
+                        "step_start_ns": 1_010_000_000,
+                        "step_end_ns": 1_020_000_000,
+                        "demand_state_before": "active",
+                        "demand_state_after": "active",
+                        "selected_chunk_tokens": 64,
+                        "actual_prefill_tokens": 64,
+                        "suppression_reason": None,
                     },
-                })
+                    {
+                        "step_index": 2,
+                        "step_start_ns": 1_020_000_000,
+                        "step_end_ns": 1_030_000_000,
+                        "demand_state_before": "active",
+                        "demand_state_after": "draining",
+                        "selected_chunk_tokens": None,
+                        "actual_prefill_tokens": 0,
+                        "suppression_reason": "no_slack",
+                    },
+                ]
             _write_jsonl(
                 output_dir / "scheduler_trace.jsonl",
-                [scheduler_row],
+                scheduler_rows,
             )
             _write_jsonl(
                 output_dir / "memory_trace.jsonl",
@@ -1712,6 +2259,7 @@ def test_run_smoke_produces_independently_verified_lifecycle_artifact():
         gate.allocate_port_pair = lambda: next(ports)
         gate.subprocess.run = fake_run
         gate.initialize_remote_run = initialize_with_fake_tokenizer
+        gate._run_cost_calibration_core = fake_cost
         try:
             summary = gate.run_smoke(
                 run_dir=root,
@@ -1725,21 +2273,53 @@ def test_run_smoke_produces_independently_verified_lifecycle_artifact():
             gate.allocate_port_pair = original_ports
             gate.subprocess.run = original_run
             gate.initialize_remote_run = original_initialize
+            if original_cost is None:
+                del gate._run_cost_calibration_core
+            else:
+                gate._run_cost_calibration_core = original_cost
 
         assert summary == {
             "classification": "SMOKE_ONLY",
             "lifecycle_complete": True,
             "exact_outputs": True,
             "case_count": 2,
+            "p5_smoke": {
+                "demand_activation_count": 1,
+                "largest_chunk_admission_count": 1,
+                "smaller_chunk_admission_count": 1,
+                "slo_suppression_count": 1,
+                "draining_decision_count": 1,
+                "distinct_selected_chunk_tokens": 2,
+                "classification": "SMOKE_ONLY",
+            },
         }
-        verifier = gate._load_local_module(
-            "arrival_load_verify_for_smoke_test",
-            REPO_ROOT / "tools" / "arrival_load_verify.py",
-        )
-        assert verifier.verify_run(
-            root,
-            write_output=False,
-        ) == summary
+        manifest = gate._read_json(root / "run_manifest.json")
+        assert manifest["smoke_policies"] == ["P0", "P5"]
+        assert manifest["provisional_cost_calibration"] == {
+            "status": "PASS",
+            "purpose": "provisional_smoke",
+            "artifact_sha256": provisional_artifact,
+        }
+        assert manifest["resolved_policy_config_by_name"]["P5"][
+            "cost_calibration_artifact_sha256"
+        ] == provisional_artifact
+
+
+def test_run_smoke_is_incomplete_without_preregistered_p5_paths():
+    scheduler_rows = _synthetic_p5_smoke_rows()
+    scheduler_rows = [
+        row for row in scheduler_rows
+        if row["selected_chunk_tokens"] != 64
+    ]
+    p5_smoke = gate.summarize_p5_smoke(scheduler_rows)
+    summary = gate.build_smoke_summary(
+        lifecycle_complete=True,
+        exact_outputs=True,
+        case_count=2,
+        p5_smoke=p5_smoke,
+    )
+    assert summary["classification"] == "INCOMPLETE"
+    assert summary["p5_smoke"]["classification"] == "INCOMPLETE"
 
 
 def test_smoke_workload_covers_original_ninth_token_failure_boundary():
@@ -1943,19 +2523,75 @@ def test_case_aggregation_reports_median_and_worst_repetition():
     )
 
 
-def _classification_manifest() -> dict:
-    resolved = {
-        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
-        for name in ("P0", "P3", "P4")
+def test_p5_policy_counters_are_derived_from_scheduler_rows():
+    rows = [{
+        "selected_chunk_tokens": 128,
+        "actual_prefill_tokens": 128,
+        "predicted_step_ns": 20,
+        "actual_step_duration_ns": 19,
+        "demand_state_after": "active",
+        "suppression_reason": None,
+        "clock_invalid": False,
+    }, {
+        "selected_chunk_tokens": 64,
+        "actual_prefill_tokens": 48,
+        "predicted_step_ns": 10,
+        "actual_step_duration_ns": 11,
+        "demand_state_after": "active",
+        "suppression_reason": None,
+        "clock_invalid": False,
+    }, {
+        "selected_chunk_tokens": None,
+        "actual_prefill_tokens": 0,
+        "predicted_step_ns": None,
+        "actual_step_duration_ns": 5,
+        "demand_state_after": "draining",
+        "suppression_reason": "no_slack",
+        "clock_invalid": False,
+    }, {
+        "selected_chunk_tokens": None,
+        "actual_prefill_tokens": 0,
+        "predicted_step_ns": None,
+        "actual_step_duration_ns": 5,
+        "demand_state_after": "active",
+        "suppression_reason": "missing_decode_progress",
+        "clock_invalid": False,
+    }, {
+        "selected_chunk_tokens": None,
+        "actual_prefill_tokens": 0,
+        "predicted_step_ns": None,
+        "actual_step_duration_ns": None,
+        "demand_state_after": "active",
+        "suppression_reason": "clock_invalid",
+        "clock_invalid": True,
+    }]
+    assert gate.summarize_p5_policy(rows) == {
+        "mixed_decision_count": 2,
+        "slo_suppression_count": 1,
+        "draining_decision_count": 1,
+        "selected_chunk_histogram": {
+            "64": 1,
+            "128": 1,
+        },
+        "envelope_underprediction_count": 1,
+        "missing_progress_count": 1,
+        "clock_invalid_count": 1,
     }
-    aliases = gate.deduplicate_policies(resolved)
+
+
+def _classification_manifest() -> dict:
+    contract = gate._resolved_policy_contract(
+        cost_envelope=P5_COST_ENVELOPE,
+    )
     return {
         "required_scenarios": ["steady_moderate"],
         "measured_repetitions": 3,
-        "policy_identity_by_name": aliases["identity_by_name"],
-        "canonical_policy_by_name": (
-            aliases["canonical_policy_by_name"]
-        ),
+        "policy_identity_by_name": contract[
+            "policy_identity_by_name"
+        ],
+        "canonical_policy_by_name": contract[
+            "canonical_policy_by_name"
+        ],
     }
 
 
@@ -1963,14 +2599,18 @@ def _case_row(
     policy: str,
     repetition: int,
     *,
+    scenario: str = "steady_moderate",
     throughput: float = 100.0,
     ttft: float = 100.0,
     itl: float = 100.0,
+    p99_ttft: float | None = None,
+    p99_itl: float | None = None,
     e2e: float = 100.0,
     gap: float = 100.0,
     cuda_reserved: float = 100.0,
     kv_bytes: float = 100.0,
     bucket_p95: float = 100.0,
+    p5_policy: dict | None = None,
     status: str = "PASS",
     exact_outputs: bool = True,
     complete_requests: bool = True,
@@ -1978,7 +2618,7 @@ def _case_row(
 ) -> dict:
     return {
         "policy": policy,
-        "scenario": "steady_moderate",
+        "scenario": scenario,
         "repetition": repetition,
         "status": status,
         "correctness": {
@@ -1993,8 +2633,12 @@ def _case_row(
             "output_token_throughput_tps": throughput * 10.0,
             "p95_ttft_ns": ttft,
             "p95_itl_ns": itl,
-            "p99_ttft_ns": ttft,
-            "p99_itl_ns": itl,
+            "p99_ttft_ns": (
+                ttft if p99_ttft is None else p99_ttft
+            ),
+            "p99_itl_ns": (
+                itl if p99_itl is None else p99_itl
+            ),
             "p99_e2e_ns": e2e,
             "maximum_decode_gap_ns": gap,
             "peak_cuda_reserved_bytes": cuda_reserved,
@@ -2006,28 +2650,188 @@ def _case_row(
                 },
             },
         },
+        **({"p5_policy": p5_policy} if p5_policy is not None else {}),
     }
 
 
 def _rows_with_candidate(
     candidate_values: list[dict],
     *,
-    p3_values: list[dict] | None = None,
+    p4_values: list[dict] | None = None,
 ) -> list[dict]:
     rows = []
     for repetition in range(3):
         rows.append(_case_row("P0", repetition))
         rows.append(_case_row(
-            "P4",
+            "P5",
             repetition,
             **candidate_values[repetition],
         ))
         rows.append(_case_row(
-            "P3",
+            "P4",
             repetition,
-            **((p3_values or [{}, {}, {}])[repetition]),
+            **((p4_values or [{}, {}, {}])[repetition]),
         ))
     return rows
+
+
+def _canonical_classification_manifest() -> dict:
+    manifest = _classification_manifest()
+    manifest["required_scenarios"] = list(
+        gate.CANONICAL_SCENARIOS
+    )
+    return manifest
+
+
+def _p5_policy_evidence(
+    scenario: str,
+    repetition: int,
+) -> dict:
+    histogram = {"128": 1}
+    if scenario == "burst" and repetition == 0:
+        histogram = {"16": 1, "64": 1, "128": 1}
+    return {
+        "mixed_decision_count": sum(histogram.values()),
+        "slo_suppression_count": (
+            1
+            if scenario == "steady_moderate" and repetition == 0
+            else 0
+        ),
+        "draining_decision_count": 1,
+        "selected_chunk_histogram": histogram,
+        "envelope_underprediction_count": 0,
+        "missing_progress_count": 0,
+        "clock_invalid_count": 0,
+    }
+
+
+def _canonical_p5_rows() -> list[dict]:
+    rows = []
+    for scenario in gate.CANONICAL_SCENARIOS:
+        for repetition in range(3):
+            rows.append(_case_row(
+                "P0",
+                repetition,
+                scenario=scenario,
+            ))
+            rows.append(_case_row(
+                "P4",
+                repetition,
+                scenario=scenario,
+            ))
+            rows.append(_case_row(
+                "P5",
+                repetition,
+                scenario=scenario,
+                throughput=(
+                    125.0 if scenario == "burst" else 106.0
+                ),
+                p5_policy=_p5_policy_evidence(
+                    scenario,
+                    repetition,
+                ),
+            ))
+    return rows
+
+
+def _p5_rows(
+    rows: list[dict],
+    scenario: str | None = None,
+) -> list[dict]:
+    return [
+        row for row in rows
+        if row["policy"] == "P5"
+        and (scenario is None or row["scenario"] == scenario)
+    ]
+
+
+def test_p5_canonical_promotion_requirements_pass_at_boundaries():
+    summary = gate.classify_gate(
+        _canonical_classification_manifest(),
+        _canonical_p5_rows(),
+    )
+    assert summary["classification"] == "GO"
+    assert summary["candidate_results"]["P5"]["guard_failures"] == []
+
+
+def test_p5_canonical_tail_and_fairness_guards_are_exact():
+    mutations = (
+        ("p99 TTFT", lambda rows: rows[0]["metrics"].__setitem__(
+            "p99_ttft_ns", 110.001
+        )),
+        ("p99 ITL", lambda rows: rows[0]["metrics"].__setitem__(
+            "p99_itl_ns", 110.001
+        )),
+        ("p99 E2E", lambda rows: rows[0]["metrics"].__setitem__(
+            "p99_e2e_ns", 110.001
+        )),
+        ("max gap", lambda rows: rows[0]["metrics"].__setitem__(
+            "maximum_decode_gap_ns", 110.001
+        )),
+        ("mixed fairness", lambda rows: _p5_rows(
+            rows, "mixed_service_fairness"
+        )[0]["metrics"]["service_buckets"]["short__short"].__setitem__(
+            "p95_e2e_ns", 110.001
+        )),
+    )
+    for label, mutate in mutations:
+        rows = _canonical_p5_rows()
+        mutate(_p5_rows(rows))
+        summary = gate.classify_gate(
+            _canonical_classification_manifest(),
+            rows,
+        )
+        assert summary["classification"] == "NO_GO", label
+
+
+def test_p5_canonical_long_prompt_and_burst_guards_are_exact():
+    rows = _canonical_p5_rows()
+    _p5_rows(rows, "long_prompt_pressure")[0]["metrics"][
+        "p95_itl_ns"
+    ] = 105.001
+    assert gate.classify_gate(
+        _canonical_classification_manifest(),
+        rows,
+    )["classification"] == "NO_GO"
+
+    rows = _canonical_p5_rows()
+    for row in _p5_rows(rows, "burst")[:2]:
+        row["metrics"]["request_throughput_rps"] = 124.999
+    assert gate.classify_gate(
+        _canonical_classification_manifest(),
+        rows,
+    )["classification"] == "NO_GO"
+
+
+def test_p5_canonical_structural_promotion_guards_are_exact():
+    rows = _canonical_p5_rows()
+    for row in _p5_rows(rows, "burst"):
+        row["p5_policy"]["selected_chunk_histogram"] = {
+            "64": 1,
+            "128": 1,
+        }
+    assert gate.classify_gate(
+        _canonical_classification_manifest(),
+        rows,
+    )["classification"] == "NO_GO"
+
+    rows = _canonical_p5_rows()
+    for row in _p5_rows(rows):
+        if row["scenario"] != "burst":
+            row["p5_policy"]["slo_suppression_count"] = 0
+    assert gate.classify_gate(
+        _canonical_classification_manifest(),
+        rows,
+    )["classification"] == "NO_GO"
+
+    rows = _canonical_p5_rows()
+    _p5_rows(rows)[0]["p5_policy"][
+        "envelope_underprediction_count"
+    ] = 1
+    assert gate.classify_gate(
+        _canonical_classification_manifest(),
+        rows,
+    )["classification"] == "NO_GO"
 
 
 def test_classification_throughput_boundary_is_go():
@@ -2040,7 +2844,7 @@ def test_classification_throughput_boundary_is_go():
         ]),
     )
     assert summary["classification"] == "GO"
-    assert summary["candidate_results"]["P4"]["benefit_path"] == (
+    assert summary["candidate_results"]["P5"]["benefit_path"] == (
         "throughput"
     )
 
@@ -2067,7 +2871,7 @@ def test_classification_latency_and_memory_boundaries_are_go():
         ]),
     )
     assert latency["classification"] == "GO"
-    assert latency["candidate_results"]["P4"]["benefit_path"] == (
+    assert latency["candidate_results"]["P5"]["benefit_path"] == (
         "latency"
     )
 
@@ -2093,7 +2897,7 @@ def test_classification_latency_and_memory_boundaries_are_go():
         ]),
     )
     assert memory["classification"] == "GO"
-    assert memory["candidate_results"]["P4"]["benefit_path"] == (
+    assert memory["candidate_results"]["P5"]["benefit_path"] == (
         "memory"
     )
 
@@ -2108,7 +2912,7 @@ def test_tail_guard_or_bad_worst_repetition_prevents_go():
         ]),
     )
     assert tail["classification"] == "NO_GO"
-    assert tail["candidate_results"]["P4"]["guard_failures"]
+    assert tail["candidate_results"]["P5"]["guard_failures"]
 
     bad_worst = gate.classify_gate(
         _classification_manifest(),
@@ -2149,23 +2953,23 @@ def test_structural_and_correctness_failures_take_precedence():
     assert no_go["correctness_failures"]
 
 
-def test_p4_is_the_only_promotion_authority():
-    p3_go_p4_no_go = gate.classify_gate(
+def test_p5_is_the_only_promotion_authority():
+    p4_go_p5_no_go = gate.classify_gate(
         _classification_manifest(),
         _rows_with_candidate(
             [{}, {}, {}],
-            p3_values=[
+            p4_values=[
                 {"throughput": 106.0},
                 {"throughput": 106.0},
                 {"throughput": 106.0},
             ],
         ),
     )
-    assert p3_go_p4_no_go["candidate_results"]["P3"]["classification"] == "GO"
-    assert p3_go_p4_no_go["candidate_results"]["P4"]["classification"] == "NO_GO"
-    assert p3_go_p4_no_go["classification"] == "NO_GO"
+    assert p4_go_p5_no_go["candidate_results"]["P4"]["classification"] == "GO"
+    assert p4_go_p5_no_go["candidate_results"]["P5"]["classification"] == "NO_GO"
+    assert p4_go_p5_no_go["classification"] == "NO_GO"
 
-    p3_no_go_p4_go = gate.classify_gate(
+    p4_no_go_p5_go = gate.classify_gate(
         _classification_manifest(),
         _rows_with_candidate([
             {"throughput": 106.0},
@@ -2173,9 +2977,9 @@ def test_p4_is_the_only_promotion_authority():
             {"throughput": 106.0},
         ]),
     )
-    assert p3_no_go_p4_go["candidate_results"]["P3"]["classification"] == "NO_GO"
-    assert p3_no_go_p4_go["candidate_results"]["P4"]["classification"] == "GO"
-    assert p3_no_go_p4_go["classification"] == "GO"
+    assert p4_no_go_p5_go["candidate_results"]["P4"]["classification"] == "NO_GO"
+    assert p4_no_go_p5_go["candidate_results"]["P5"]["classification"] == "GO"
+    assert p4_no_go_p5_go["classification"] == "GO"
 
 
 def test_smoke_workload_can_activate_p4_and_cross_ninth_token():
@@ -2188,11 +2992,58 @@ def test_smoke_workload_can_activate_p4_and_cross_ninth_token():
     assert all(row["requested_output_tokens"] >= 16 for row in workload)
 
 
+def _synthetic_p5_smoke_rows() -> list[dict]:
+    return [
+        {
+            "demand_state_before": "inactive",
+            "demand_state_after": "active",
+            "selected_chunk_tokens": 128,
+            "actual_prefill_tokens": 128,
+            "suppression_reason": None,
+        },
+        {
+            "demand_state_before": "active",
+            "demand_state_after": "active",
+            "selected_chunk_tokens": 64,
+            "actual_prefill_tokens": 64,
+            "suppression_reason": None,
+        },
+        {
+            "demand_state_before": "active",
+            "demand_state_after": "draining",
+            "selected_chunk_tokens": None,
+            "actual_prefill_tokens": 0,
+            "suppression_reason": "no_slack",
+        },
+    ]
+
+
+def test_p5_smoke_requires_all_preregistered_policy_paths():
+    summary = gate.summarize_p5_smoke(
+        _synthetic_p5_smoke_rows()
+    )
+    assert summary["demand_activation_count"] >= 1
+    assert summary["largest_chunk_admission_count"] >= 1
+    assert summary["smaller_chunk_admission_count"] >= 1
+    assert summary["slo_suppression_count"] >= 1
+    assert summary["draining_decision_count"] >= 1
+    assert summary["distinct_selected_chunk_tokens"] >= 2
+    assert summary["classification"] == "SMOKE_ONLY"
+
+
+def test_p5_smoke_without_mixed_admission_is_incomplete():
+    summary = gate.summarize_p5_smoke([
+        row for row in _synthetic_p5_smoke_rows()
+        if row["selected_chunk_tokens"] is None
+    ])
+    assert summary["classification"] == "INCOMPLETE"
+
+
 def main():
     test_seeded_steady_and_burst_workloads_are_byte_stable()
     test_built_prompt_bank_is_sorted_hashed_and_valid()
     test_service_buckets_are_fixed_before_execution()
-    test_p4_identity_contains_every_adaptive_field()
+    test_p5_policy_contract_is_frozen_and_source_bound()
     test_nearest_rank_boundaries()
     test_canonical_rates_and_sampling_contract_are_frozen()
     test_invalid_lambda_and_policy_fail_closed()
@@ -2218,22 +3069,33 @@ def main():
     test_snapshot_source_stages_matching_bytes_and_archive()
     test_arrival_load_artifacts_are_the_only_new_ignored_experiment_root()
     test_finalize_artifacts_merges_classifies_and_hashes_deterministically()
-    test_cli_exposes_task6_subcommands()
+    test_cli_exposes_separate_cost_and_workload_calibration_stages()
+    test_predecessor_identity_binds_both_p4_and_p5()
+    test_authoritative_cost_calibration_stage_writes_complete_bound_artifacts()
+    test_workload_calibration_consumes_authoritative_not_provisional_envelope()
     test_environment_identity_ignores_run_local_fields()
-    test_run_smoke_produces_independently_verified_lifecycle_artifact()
+    test_run_smoke_produces_p5_lifecycle_artifact()
+    test_run_smoke_is_incomplete_without_preregistered_p5_paths()
     test_smoke_workload_covers_original_ninth_token_failure_boundary()
     test_reconstructs_scheduled_arrival_metrics_and_shared_step_tokens()
     test_one_token_output_has_no_itl_sample()
     test_lifecycle_reconstruction_rejects_duplicate_binding_and_bad_time()
     test_repetition_summary_reports_percentiles_fairness_and_memory()
     test_case_aggregation_reports_median_and_worst_repetition()
+    test_p5_policy_counters_are_derived_from_scheduler_rows()
+    test_p5_canonical_promotion_requirements_pass_at_boundaries()
+    test_p5_canonical_tail_and_fairness_guards_are_exact()
+    test_p5_canonical_long_prompt_and_burst_guards_are_exact()
+    test_p5_canonical_structural_promotion_guards_are_exact()
     test_classification_throughput_boundary_is_go()
     test_classification_favorable_but_subthreshold_is_promising()
     test_classification_latency_and_memory_boundaries_are_go()
     test_tail_guard_or_bad_worst_repetition_prevents_go()
     test_structural_and_correctness_failures_take_precedence()
-    test_p4_is_the_only_promotion_authority()
+    test_p5_is_the_only_promotion_authority()
     test_smoke_workload_can_activate_p4_and_cross_ninth_token()
+    test_p5_smoke_requires_all_preregistered_policy_paths()
+    test_p5_smoke_without_mixed_admission_is_incomplete()
     print("arrival load gate tests passed")
 
 

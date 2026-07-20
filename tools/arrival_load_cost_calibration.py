@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
+import os
+from pathlib import Path
+import sys
 import time
 
 
@@ -520,3 +524,81 @@ def build_cost_calibration_summary(
         ],
         "envelope_sha256": canonical_json_sha256(envelope),
     }
+
+
+def _cuda_synchronize() -> None:
+    import torch
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def run_shape_process(
+    *,
+    shape: dict,
+    model_path: str,
+    engine_config: dict,
+) -> list[dict]:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from tinyvllm import LLM, SamplingParams
+
+    engine = LLM(str(model_path), **dict(engine_config))
+    return execute_calibration_shape(
+        shape,
+        engine=engine,
+        sampling_params_factory=lambda max_tokens: SamplingParams(
+            temperature=0.0,
+            max_tokens=max_tokens,
+            ignore_eos=True,
+        ),
+        synchronize=_cuda_synchronize,
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Execute one isolated P5 cost-calibration shape",
+    )
+    parser.add_argument("--shape-json", type=Path, required=True)
+    parser.add_argument("--engine-config-json", type=Path, required=True)
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--output-jsonl", type=Path, required=True)
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    shape = json.loads(args.shape_json.read_text(encoding="utf-8"))
+    engine_config = json.loads(
+        args.engine_config_json.read_text(encoding="utf-8")
+    )
+    rows = run_shape_process(
+        shape=shape,
+        model_path=args.model_path,
+        engine_config=engine_config,
+    )
+    args.output_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    temporary = args.output_jsonl.with_name(
+        args.output_jsonl.name + ".tmp"
+    )
+    temporary.write_text(
+        "".join(
+            json.dumps(
+                row,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(args.output_jsonl)
+    return 0
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    raise SystemExit(main())
