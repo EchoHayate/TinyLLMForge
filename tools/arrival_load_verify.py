@@ -391,6 +391,10 @@ def _verify_p4_scheduler_trace(
                 state = "inactive"
                 expected_mixed = 0
 
+        if state == "draining" and not before["prefilling_seq_ids"]:
+            state = "inactive"
+            expected_mixed = 0
+
         branch = row.get("policy_branch")
         scheduled = row.get("scheduled")
         if not isinstance(scheduled, list):

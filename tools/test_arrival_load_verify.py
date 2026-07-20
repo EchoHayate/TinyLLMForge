@@ -953,6 +953,26 @@ def test_verifier_rejects_illegal_p4_transition_sequences():
             temporary.cleanup()
 
 
+def test_verifier_accepts_draining_normalization_without_pending_prefill():
+    temporary, root = _complete_artifact()
+    try:
+        rows = verifier._read_jsonl(root / "scheduler_trace.jsonl")
+        for repetition in range(3):
+            case_id = _case_id("P4", repetition)
+            case_rows = [
+                row for row in rows
+                if row["case_id"] == case_id
+            ]
+            case_rows[4]["queue_after"]["waiting_seq_ids"] = []
+            case_rows[5]["queue_before"]["waiting_seq_ids"] = []
+            case_rows[5]["queue_after"]["waiting_seq_ids"] = []
+        _write_jsonl(root / "scheduler_trace.jsonl", rows)
+        _refresh_hash(root, "scheduler_trace.jsonl")
+        verifier.verify_run(root, write_output=False)
+    finally:
+        temporary.cleanup()
+
+
 def test_verifier_rejects_p4_threshold_drift_without_identity_update():
     temporary, root = _complete_artifact()
     try:
@@ -1004,6 +1024,7 @@ def main():
     test_verifier_rejects_invalid_p4_controller_values()
     test_verifier_rejects_adaptive_mixed_without_decode_role()
     test_verifier_rejects_illegal_p4_transition_sequences()
+    test_verifier_accepts_draining_normalization_without_pending_prefill()
     test_verifier_rejects_p4_threshold_drift_without_identity_update()
     test_verifier_rejects_diagnostic_p3_top_level_go()
     print("arrival load verifier tests passed")
