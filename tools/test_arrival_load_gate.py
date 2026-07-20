@@ -33,6 +33,18 @@ def _load_gate():
 
 gate = _load_gate()
 
+ADAPTIVE_DEFAULTS = {
+    "chunked_prefill_decode_first": True,
+    "chunked_prefill_max_consecutive_chunks": 0,
+    "chunked_prefill_mixed_batch": False,
+    "chunked_prefill_mixed_min_prompt_tokens": 0,
+    "chunked_prefill_adaptive_mixed": False,
+    "chunked_prefill_adaptive_enter_waiting": 8,
+    "chunked_prefill_adaptive_exit_waiting": 2,
+    "chunked_prefill_adaptive_transition_steps": 2,
+    "chunked_prefill_adaptive_max_mixed_steps": 2,
+}
+
 
 class FakeTokenizer:
     def encode(self, prompt: str) -> list[int]:
@@ -142,25 +154,28 @@ def test_service_buckets_are_fixed_before_execution():
     }
 
 
-def test_policy_identity_aliases_explicit_default_only():
-    defaults = {
+def test_p4_identity_contains_every_adaptive_field():
+    resolved = {
+        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
+        for name in ("P0", "P3", "P4")
+    }
+    assert resolved["P4"] == {
+        **gate.COMMON_ENGINE_CONFIG,
+        **ADAPTIVE_DEFAULTS,
         "chunked_prefill_decode_first": True,
         "chunked_prefill_max_consecutive_chunks": 0,
         "chunked_prefill_mixed_batch": False,
         "chunked_prefill_mixed_min_prompt_tokens": 0,
+        "chunked_prefill_adaptive_mixed": True,
+        "chunked_prefill_adaptive_enter_waiting": 8,
+        "chunked_prefill_adaptive_exit_waiting": 2,
+        "chunked_prefill_adaptive_transition_steps": 2,
+        "chunked_prefill_adaptive_max_mixed_steps": 2,
     }
-    resolved = {
-        name: gate.resolve_policy_config(name, defaults)
-        for name in ("P0", "P1", "P2", "P3")
-    }
-    aliases = gate.deduplicate_policies(resolved)
-    assert aliases["canonical_policy_by_name"] == {
-        "P0": "P0",
-        "P1": "P0",
-        "P2": "P2",
-        "P3": "P3",
-    }
-    assert len(set(aliases["identity_by_name"].values())) == 3
+    assert len({
+        gate.policy_identity(resolved[name])
+        for name in ("P0", "P3", "P4")
+    }) == 3
 
 
 def test_nearest_rank_boundaries():
@@ -212,17 +227,11 @@ def test_invalid_lambda_and_policy_fail_closed():
 
 
 def test_unexpected_candidate_policy_collision_is_rejected():
-    defaults = {
-        "chunked_prefill_decode_first": True,
-        "chunked_prefill_max_consecutive_chunks": 0,
-        "chunked_prefill_mixed_batch": False,
-        "chunked_prefill_mixed_min_prompt_tokens": 0,
-    }
     resolved = {
-        name: gate.resolve_policy_config(name, defaults)
-        for name in ("P0", "P1", "P2", "P3")
+        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
+        for name in ("P0", "P3", "P4")
     }
-    resolved["P3"] = dict(resolved["P2"])
+    resolved["P4"] = dict(resolved["P3"])
     try:
         gate.deduplicate_policies(resolved)
     except ValueError as exc:
@@ -407,21 +416,18 @@ def _case_matrix_manifest() -> dict:
         "measured_repetitions": 3,
         "canonical_policy_by_name": {
             "P0": "P0",
-            "P1": "P0",
-            "P2": "P2",
             "P3": "P3",
+            "P4": "P4",
         },
         "policy_identity_by_name": {
             "P0": "identity-p0",
-            "P1": "identity-p0",
-            "P2": "identity-p2",
             "P3": "identity-p3",
+            "P4": "identity-p4",
         },
         "resolved_policy_config_by_name": {
             "P0": {"policy": "P0"},
-            "P1": {"policy": "P1"},
-            "P2": {"policy": "P2"},
             "P3": {"policy": "P3"},
+            "P4": {"policy": "P4"},
         },
         "workload_sha256": "workload-hash",
         "source_tree_sha256": "source-hash",
@@ -463,7 +469,19 @@ def test_build_case_matrix_has_exact_interleaved_non_alias_cases():
             assert [
                 row["policy"] for row in scenario_rows
             ] == list(expected_policy_order)
-    assert all(row["policy"] != "P1" for row in matrix)
+    assert {
+        repetition: tuple(
+            row["policy"]
+            for row in matrix
+            if row["repetition"] == repetition
+            and row["scenario"] == gate.CANONICAL_SCENARIOS[0]
+        )
+        for repetition in range(3)
+    } == {
+        0: ("P0", "P3", "P4"),
+        1: ("P3", "P4", "P0"),
+        2: ("P4", "P0", "P3"),
+    }
     assert len({row["case_id"] for row in matrix}) == 54
     assert all(
         row["workload_sha256"] == "workload-hash"
@@ -475,7 +493,7 @@ def test_build_case_matrix_has_exact_interleaved_non_alias_cases():
 
 def test_build_case_matrix_rejects_bad_alias_or_repetition_contract():
     bad_alias = _case_matrix_manifest()
-    bad_alias["canonical_policy_by_name"]["P2"] = "P0"
+    bad_alias["canonical_policy_by_name"]["P4"] = "P0"
     try:
         gate.build_case_matrix(bad_alias)
     except ValueError as exc:
@@ -705,6 +723,31 @@ def test_run_canonical_replaces_incomplete_case_and_rejects_identity_drift():
                 assert "resume identity" in str(exc)
             else:
                 raise AssertionError("identity drift accepted")
+
+            threshold_drifted = {
+                **manifest,
+                "resolved_policy_config_by_name": {
+                    name: dict(config)
+                    for name, config in manifest[
+                        "resolved_policy_config_by_name"
+                    ].items()
+                },
+            }
+            threshold_drifted[
+                "resolved_policy_config_by_name"
+            ]["P4"]["chunked_prefill_adaptive_enter_waiting"] = 9
+            try:
+                gate.run_canonical(
+                    run_dir=root,
+                    python_bin="/fake/python",
+                    model_path="/fake/model",
+                    run_manifest=threshold_drifted,
+                    resume=True,
+                )
+            except ValueError as exc:
+                assert "resume identity" in str(exc)
+            else:
+                raise AssertionError("P4 threshold drift accepted")
         finally:
             gate.time.time_ns = original_time_ns
             gate.allocate_port_pair = original_ports
@@ -1390,13 +1433,13 @@ def test_smoke_workload_covers_original_ninth_token_failure_boundary():
     )
 
     workload = gate._smoke_workload(prompt_bank)
-    decode_active = next(
-        row for row in workload
-        if row["request_id"] == "smoke-00-decode-active"
+    assert workload
+    assert all(row["requested_output_tokens"] >= 16 for row in workload)
+    assert all(
+        row["sampling"]["max_tokens"]
+        == row["requested_output_tokens"]
+        for row in workload
     )
-
-    assert decode_active["requested_output_tokens"] == 16
-    assert decode_active["sampling"]["max_tokens"] == 16
 
 
 def _workload_row(
@@ -1585,15 +1628,9 @@ def test_case_aggregation_reports_median_and_worst_repetition():
 
 
 def _classification_manifest() -> dict:
-    defaults = {
-        "chunked_prefill_decode_first": True,
-        "chunked_prefill_max_consecutive_chunks": 0,
-        "chunked_prefill_mixed_batch": False,
-        "chunked_prefill_mixed_min_prompt_tokens": 0,
-    }
     resolved = {
-        name: gate.resolve_policy_config(name, defaults)
-        for name in ("P0", "P1", "P2", "P3")
+        name: gate.resolve_policy_config(name, ADAPTIVE_DEFAULTS)
+        for name in ("P0", "P3", "P4")
     }
     aliases = gate.deduplicate_policies(resolved)
     return {
@@ -1656,16 +1693,24 @@ def _case_row(
     }
 
 
-def _rows_with_candidate(candidate_values: list[dict]) -> list[dict]:
+def _rows_with_candidate(
+    candidate_values: list[dict],
+    *,
+    p3_values: list[dict] | None = None,
+) -> list[dict]:
     rows = []
     for repetition in range(3):
         rows.append(_case_row("P0", repetition))
         rows.append(_case_row(
-            "P2",
+            "P4",
             repetition,
             **candidate_values[repetition],
         ))
-        rows.append(_case_row("P3", repetition))
+        rows.append(_case_row(
+            "P3",
+            repetition,
+            **((p3_values or [{}, {}, {}])[repetition]),
+        ))
     return rows
 
 
@@ -1679,7 +1724,7 @@ def test_classification_throughput_boundary_is_go():
         ]),
     )
     assert summary["classification"] == "GO"
-    assert summary["candidate_results"]["P2"]["benefit_path"] == (
+    assert summary["candidate_results"]["P4"]["benefit_path"] == (
         "throughput"
     )
 
@@ -1706,7 +1751,7 @@ def test_classification_latency_and_memory_boundaries_are_go():
         ]),
     )
     assert latency["classification"] == "GO"
-    assert latency["candidate_results"]["P2"]["benefit_path"] == (
+    assert latency["candidate_results"]["P4"]["benefit_path"] == (
         "latency"
     )
 
@@ -1732,7 +1777,7 @@ def test_classification_latency_and_memory_boundaries_are_go():
         ]),
     )
     assert memory["classification"] == "GO"
-    assert memory["candidate_results"]["P2"]["benefit_path"] == (
+    assert memory["candidate_results"]["P4"]["benefit_path"] == (
         "memory"
     )
 
@@ -1747,7 +1792,7 @@ def test_tail_guard_or_bad_worst_repetition_prevents_go():
         ]),
     )
     assert tail["classification"] == "NO_GO"
-    assert tail["candidate_results"]["P2"]["guard_failures"]
+    assert tail["candidate_results"]["P4"]["guard_failures"]
 
     bad_worst = gate.classify_gate(
         _classification_manifest(),
@@ -1788,11 +1833,50 @@ def test_structural_and_correctness_failures_take_precedence():
     assert no_go["correctness_failures"]
 
 
+def test_p4_is_the_only_promotion_authority():
+    p3_go_p4_no_go = gate.classify_gate(
+        _classification_manifest(),
+        _rows_with_candidate(
+            [{}, {}, {}],
+            p3_values=[
+                {"throughput": 106.0},
+                {"throughput": 106.0},
+                {"throughput": 106.0},
+            ],
+        ),
+    )
+    assert p3_go_p4_no_go["candidate_results"]["P3"]["classification"] == "GO"
+    assert p3_go_p4_no_go["candidate_results"]["P4"]["classification"] == "NO_GO"
+    assert p3_go_p4_no_go["classification"] == "NO_GO"
+
+    p3_no_go_p4_go = gate.classify_gate(
+        _classification_manifest(),
+        _rows_with_candidate([
+            {"throughput": 106.0},
+            {"throughput": 106.0},
+            {"throughput": 106.0},
+        ]),
+    )
+    assert p3_no_go_p4_go["candidate_results"]["P3"]["classification"] == "NO_GO"
+    assert p3_no_go_p4_go["candidate_results"]["P4"]["classification"] == "GO"
+    assert p3_no_go_p4_go["classification"] == "GO"
+
+
+def test_smoke_workload_can_activate_p4_and_cross_ninth_token():
+    workload = gate._smoke_workload(_prompt_bank())
+    assert len(workload) >= 10
+    assert sum(row["arrival_offset_ns"] == 0 for row in workload) >= 10
+    assert sum(row["prompt_class"] == "long" for row in workload) >= 10
+    assert all(row["sampling"]["temperature"] == 0.0 for row in workload)
+    assert all(row["sampling"]["ignore_eos"] is True for row in workload)
+    assert all(row["requested_output_tokens"] >= 16 for row in workload)
+
+
 def main():
     test_seeded_steady_and_burst_workloads_are_byte_stable()
     test_built_prompt_bank_is_sorted_hashed_and_valid()
     test_service_buckets_are_fixed_before_execution()
-    test_policy_identity_aliases_explicit_default_only()
+    test_p4_identity_contains_every_adaptive_field()
     test_nearest_rank_boundaries()
     test_canonical_rates_and_sampling_contract_are_frozen()
     test_invalid_lambda_and_policy_fail_closed()
@@ -1828,6 +1912,8 @@ def main():
     test_classification_latency_and_memory_boundaries_are_go()
     test_tail_guard_or_bad_worst_repetition_prevents_go()
     test_structural_and_correctness_failures_take_precedence()
+    test_p4_is_the_only_promotion_authority()
+    test_smoke_workload_can_activate_p4_and_cross_ninth_token()
     print("arrival load gate tests passed")
 
 

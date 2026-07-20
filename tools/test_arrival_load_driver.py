@@ -103,7 +103,13 @@ class FakeEngine:
                 "prefill_chunk_end": 0,
                 "prefill_chunk_final": False,
             }],
-            "queue_before": {"waiting_seq_ids": []},
+            "queue_before": {
+                "waiting_seq_ids": [],
+                "adaptive_mixed_state": "active",
+                "adaptive_high_streak": 0,
+                "adaptive_low_streak": 1,
+                "adaptive_consecutive_mixed_steps": 2,
+            },
             "queue_after": {
                 "waiting_seq_ids": [
                     waiting.seq_id
@@ -118,6 +124,10 @@ class FakeEngine:
                 "total_kv_blocks": 8,
                 "kv_block_size_tokens": 4,
                 "consecutive_prefill_chunks": 0,
+                "adaptive_mixed_state": "active",
+                "adaptive_high_streak": 0,
+                "adaptive_low_streak": 1,
+                "adaptive_consecutive_mixed_steps": 2,
             },
             "new_completion_tokens_by_seq": {
                 seq.seq_id: delta,
@@ -305,6 +315,25 @@ def test_driver_records_multiple_tokens_at_one_step_timestamp():
         temporary.cleanup()
 
 
+def test_driver_preserves_adaptive_controller_snapshots():
+    temporary, output_dir, result = _run()
+    try:
+        assert result["status"] == "PASS"
+        row = json.loads(
+            (output_dir / "scheduler_trace.jsonl")
+            .read_text()
+            .splitlines()[0]
+        )
+        for snapshot_name in ("queue_before", "queue_after"):
+            snapshot = row[snapshot_name]
+            assert snapshot["adaptive_mixed_state"] == "active"
+            assert snapshot["adaptive_high_streak"] == 0
+            assert snapshot["adaptive_low_streak"] == 1
+            assert snapshot["adaptive_consecutive_mixed_steps"] == 2
+    finally:
+        temporary.cleanup()
+
+
 def test_driver_watchdog_preserves_partial_append_only_evidence():
     temporary, output_dir, result = _run(
         StuckFakeEngine,
@@ -464,6 +493,7 @@ def test_memory_row_derives_kv_block_bytes_from_capacity():
 def main():
     test_driver_binds_new_waiting_sequence_and_accounts_injection_lag()
     test_driver_records_multiple_tokens_at_one_step_timestamp()
+    test_driver_preserves_adaptive_controller_snapshots()
     test_driver_watchdog_preserves_partial_append_only_evidence()
     test_driver_drain_timeout_starts_after_final_scheduled_arrival()
     test_driver_fails_closed_on_admission_exception()

@@ -69,32 +69,39 @@ COMMON_ENGINE_CONFIG = {
     "enforce_eager": False,
 }
 
+POLICY_NAMES = ("P0", "P3", "P4")
+
 POLICY_FIELDS = (
     "chunked_prefill_decode_first",
     "chunked_prefill_max_consecutive_chunks",
     "chunked_prefill_mixed_batch",
     "chunked_prefill_mixed_min_prompt_tokens",
+    "chunked_prefill_adaptive_mixed",
+    "chunked_prefill_adaptive_enter_waiting",
+    "chunked_prefill_adaptive_exit_waiting",
+    "chunked_prefill_adaptive_transition_steps",
+    "chunked_prefill_adaptive_max_mixed_steps",
 )
 
 POLICY_OVERRIDES = {
     "P0": {},
-    "P1": {
-        "chunked_prefill_decode_first": True,
-        "chunked_prefill_max_consecutive_chunks": 0,
-        "chunked_prefill_mixed_batch": False,
-        "chunked_prefill_mixed_min_prompt_tokens": 0,
-    },
-    "P2": {
-        "chunked_prefill_decode_first": False,
-        "chunked_prefill_max_consecutive_chunks": 2,
-        "chunked_prefill_mixed_batch": False,
-        "chunked_prefill_mixed_min_prompt_tokens": 0,
-    },
     "P3": {
         "chunked_prefill_decode_first": False,
         "chunked_prefill_max_consecutive_chunks": 0,
         "chunked_prefill_mixed_batch": True,
         "chunked_prefill_mixed_min_prompt_tokens": 0,
+        "chunked_prefill_adaptive_mixed": False,
+    },
+    "P4": {
+        "chunked_prefill_decode_first": True,
+        "chunked_prefill_max_consecutive_chunks": 0,
+        "chunked_prefill_mixed_batch": False,
+        "chunked_prefill_mixed_min_prompt_tokens": 0,
+        "chunked_prefill_adaptive_mixed": True,
+        "chunked_prefill_adaptive_enter_waiting": 8,
+        "chunked_prefill_adaptive_exit_waiting": 2,
+        "chunked_prefill_adaptive_transition_steps": 2,
+        "chunked_prefill_adaptive_max_mixed_steps": 2,
     },
 }
 
@@ -121,9 +128,9 @@ CANONICAL_DRAIN_TIMEOUT_NS = 120_000_000_000
 STARVATION_DEADLINE_NS = 5_000_000_000
 MEASURED_REPETITIONS = 3
 POLICY_ORDER_BY_REPETITION = {
-    0: ("P0", "P2", "P3"),
-    1: ("P2", "P3", "P0"),
-    2: ("P3", "P0", "P2"),
+    0: ("P0", "P3", "P4"),
+    1: ("P3", "P4", "P0"),
+    2: ("P4", "P0", "P3"),
 }
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -302,9 +309,9 @@ def policy_identity(resolved_config: dict) -> str:
 
 
 def deduplicate_policies(resolved: dict[str, dict]) -> dict:
-    expected_names = ("P0", "P1", "P2", "P3")
+    expected_names = POLICY_NAMES
     if tuple(resolved) != expected_names:
-        raise ValueError("policies must be ordered P0, P1, P2, P3")
+        raise ValueError("policies must be ordered P0, P3, P4")
     identity_by_name = {
         name: policy_identity(resolved[name])
         for name in expected_names
@@ -316,7 +323,7 @@ def deduplicate_policies(resolved: dict[str, dict]) -> dict:
             [],
         ).append(name)
     for names in names_by_identity.values():
-        if len(names) > 1 and names != ["P0", "P1"]:
+        if len(names) > 1:
             raise ValueError(
                 "unexpected policy identity collision: "
                 + ", ".join(names)
@@ -617,20 +624,15 @@ def build_case_matrix(run_manifest: dict) -> list[dict]:
     )
     if canonical_by_name != {
         "P0": "P0",
-        "P1": "P0",
-        "P2": "P2",
         "P3": "P3",
+        "P4": "P4",
     }:
         raise ValueError("invalid canonical policy alias map")
     identities = run_manifest.get("policy_identity_by_name")
     if (
         not isinstance(identities, dict)
-        or identities.get("P0") != identities.get("P1")
-        or len({
-            identities.get("P0"),
-            identities.get("P2"),
-            identities.get("P3"),
-        }) != 3
+        or set(identities) != set(POLICY_NAMES)
+        or len(set(identities.values())) != len(POLICY_NAMES)
     ):
         raise ValueError("invalid canonical policy identities")
     resolved = run_manifest.get(
@@ -2208,25 +2210,26 @@ def classify_gate(
         or repetitions < 3
     ):
         structural_failures.append("invalid required case matrix")
-    if set(canonical_by_name) != {"P0", "P1", "P2", "P3"}:
+    if set(canonical_by_name) != set(POLICY_NAMES):
         structural_failures.append("invalid policy alias map")
-    if set(identities) != {"P0", "P1", "P2", "P3"}:
+    if set(identities) != set(POLICY_NAMES):
         structural_failures.append("invalid policy identity map")
     if (
-        canonical_by_name.get("P1") == "P0"
-        and identities.get("P1") != identities.get("P0")
+        set(canonical_by_name) == set(POLICY_NAMES)
+        and any(
+            canonical_by_name.get(name) != name
+            for name in POLICY_NAMES
+        )
     ):
-        structural_failures.append("P1 alias identity mismatch")
-    if identities.get("P2") in {
-        identities.get("P0"),
-        identities.get("P3"),
-    }:
-        structural_failures.append("unexpected P2 identity collision")
-    if identities.get("P3") == identities.get("P0"):
-        structural_failures.append("unexpected P3 identity collision")
+        structural_failures.append("invalid canonical policy mapping")
+    if (
+        set(identities) == set(POLICY_NAMES)
+        and len(set(identities.values())) != len(POLICY_NAMES)
+    ):
+        structural_failures.append("unexpected policy identity collision")
 
     canonical_policies = []
-    for name in ("P0", "P1", "P2", "P3"):
+    for name in POLICY_NAMES:
         canonical = canonical_by_name.get(name)
         if canonical == name and name not in canonical_policies:
             canonical_policies.append(name)
@@ -2317,16 +2320,14 @@ def classify_gate(
             "correctness_failures": [],
             "candidate_results": candidate_results,
         }
-    classifications = {
-        result["classification"]
-        for result in candidate_results.values()
-    }
-    if "GO" in classifications:
-        classification = "GO"
-    elif "PROMISING_NOT_PROVEN" in classifications:
-        classification = "PROMISING_NOT_PROVEN"
-    else:
-        classification = "NO_GO"
+    if "P4" not in candidate_results:
+        return {
+            "classification": "INCOMPLETE",
+            "structural_failures": ["missing P4 candidate result"],
+            "correctness_failures": [],
+            "candidate_results": candidate_results,
+        }
+    classification = candidate_results["P4"]["classification"]
     return {
         "classification": classification,
         "structural_failures": [],
@@ -2462,7 +2463,7 @@ def _apply_output_correctness(
             baseline = by_key[("P0", scenario, repetition)]
             baseline_outputs = outputs.get(baseline["case_id"], {})
             baseline_by_repetition.append(baseline_outputs)
-            for policy in ("P2", "P3"):
+            for policy in ("P3", "P4"):
                 candidate = by_key[(policy, scenario, repetition)]
                 candidate_outputs = outputs.get(
                     candidate["case_id"],
@@ -2599,10 +2600,15 @@ def initialize_remote_run(
         "chunked_prefill_max_consecutive_chunks": 0,
         "chunked_prefill_mixed_batch": False,
         "chunked_prefill_mixed_min_prompt_tokens": 0,
+        "chunked_prefill_adaptive_mixed": False,
+        "chunked_prefill_adaptive_enter_waiting": 8,
+        "chunked_prefill_adaptive_exit_waiting": 2,
+        "chunked_prefill_adaptive_transition_steps": 2,
+        "chunked_prefill_adaptive_max_mixed_steps": 2,
     }
     resolved = {
         name: resolve_policy_config(name, defaults)
-        for name in ("P0", "P1", "P2", "P3")
+        for name in POLICY_NAMES
     }
     aliases = deduplicate_policies(resolved)
     manifest = {
@@ -2641,28 +2647,18 @@ def initialize_remote_run(
 
 def _smoke_workload(prompt_bank: dict) -> list[dict]:
     prompts = _prompt_by_class(prompt_bank)
-    specifications = (
-        ("decode-active", "short", "long", 0),
-        ("chunked-long", "long", "short", 50_000_000),
-        ("later-arrival", "medium", "short", 100_000_000),
-    )
     rows = []
-    for index, (
-        name,
-        prompt_class,
-        output_class,
-        arrival_offset_ns,
-    ) in enumerate(specifications):
-        prompt = prompts[prompt_class]
-        output_tokens = (
-            16 if output_class == "long"
-            else 4
-        )
+    for index in range(10):
+        prompt_class = "long"
+        output_class = "long"
+        arrival_offset_ns = 0
+        prompt = prompts["long"]
+        output_tokens = 16
         rows.append({
             "schema_version": SCHEMA_VERSION,
             "generator_version": GENERATOR_VERSION,
             "scenario": "lifecycle_smoke",
-            "request_id": f"smoke-{index:02d}-{name}",
+            "request_id": f"smoke-{index:02d}-p4-activation",
             "warmup": False,
             "arrival_offset_ns": arrival_offset_ns,
             "requested_rate_rps": 0.0,
@@ -2735,7 +2731,7 @@ def run_smoke(
     manifest["required_scenarios"] = ["lifecycle_smoke"]
     manifest["measured_repetitions"] = 1
     manifest["workload_sha256"] = canonical_json_sha256(workload)
-    smoke_policies = ("P0", "P2")
+    smoke_policies = ("P0", "P4")
     manifest["smoke_policies"] = list(smoke_policies)
     used_pairs = set()
     case_specs = []
@@ -2856,7 +2852,7 @@ def _apply_output_correctness_smoke(
         ] = row.get("output_token_ids")
     exact = (
         outputs.get("P0")
-        and outputs.get("P0") == outputs.get("P2")
+        and outputs.get("P0") == outputs.get("P4")
     )
     for row in case_rows:
         row["correctness"]["exact_outputs"] = bool(exact)

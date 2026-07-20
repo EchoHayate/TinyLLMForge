@@ -628,18 +628,16 @@ def _classify(manifest: dict, rows: list[dict]) -> dict:
         or not required_scenarios
         or not isinstance(repetitions, int)
         or repetitions < 3
-        or set(aliases or {}) != {"P0", "P1", "P2", "P3"}
-        or set(identities or {}) != {"P0", "P1", "P2", "P3"}
+        or set(aliases or {}) != {"P0", "P3", "P4"}
+        or set(identities or {}) != {"P0", "P3", "P4"}
     ):
         raise ValueError("invalid policy or case manifest")
-    if aliases["P1"] == "P0" and identities["P1"] != identities["P0"]:
-        raise ValueError("P1 alias identity mismatch")
-    if identities["P2"] in {identities["P0"], identities["P3"]}:
-        raise ValueError("unexpected P2 identity collision")
-    if identities["P3"] == identities["P0"]:
-        raise ValueError("unexpected P3 identity collision")
+    if any(aliases[name] != name for name in ("P0", "P3", "P4")):
+        raise ValueError("invalid canonical policy mapping")
+    if len(set(identities.values())) != 3:
+        raise ValueError("unexpected policy identity collision")
     canonical_policies = [
-        name for name in ("P0", "P1", "P2", "P3")
+        name for name in ("P0", "P3", "P4")
         if aliases[name] == name
     ]
     expected = {
@@ -672,15 +670,7 @@ def _classify(manifest: dict, rows: list[dict]) -> dict:
                     by_key[(policy, scenario, repetition)],
                 ))
         candidate_results[policy] = _candidate_result(policy, paired)
-    classifications = {
-        row["classification"] for row in candidate_results.values()
-    }
-    if "GO" in classifications:
-        classification = "GO"
-    elif "PROMISING_NOT_PROVEN" in classifications:
-        classification = "PROMISING_NOT_PROVEN"
-    else:
-        classification = "NO_GO"
+    classification = candidate_results["P4"]["classification"]
     return {
         "classification": classification,
         "structural_failures": [],
@@ -756,7 +746,7 @@ def _verify_output_equality(
                     if policy != "P0"
                 ]
                 if manifest.get("run_type") == "smoke"
-                else ["P2", "P3"]
+                else ["P3", "P4"]
             )
             for policy in candidate_policies:
                 candidate_rows = by_case.get(
