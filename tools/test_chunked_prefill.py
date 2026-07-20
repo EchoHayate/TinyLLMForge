@@ -390,6 +390,39 @@ def make_running_with_id(
     return seq
 
 
+def scheduler_prefill_digest(scheduler):
+    return {
+        "waiting_seq_ids": [seq.seq_id for seq in scheduler.waiting],
+        "prefilling_seq_ids": [seq.seq_id for seq in scheduler.prefilling],
+        "waiting_state": [
+            (
+                seq.seq_id,
+                seq.status,
+                tuple(seq.block_table),
+                seq.num_cached_tokens,
+                seq.num_computed_tokens,
+                seq.prefill_chunk_start,
+                seq.prefill_chunk_end,
+                seq.prefill_chunk_final,
+            )
+            for seq in scheduler.waiting
+        ],
+        "prefilling_state": [
+            (
+                seq.seq_id,
+                seq.status,
+                tuple(seq.block_table),
+                seq.num_cached_tokens,
+                seq.num_computed_tokens,
+                seq.prefill_chunk_start,
+                seq.prefill_chunk_end,
+                seq.prefill_chunk_final,
+            )
+            for seq in scheduler.prefilling
+        ],
+    }
+
+
 def add_waiting(scheduler, count, prompt_tokens=12):
     rows = []
     for offset in range(count):
@@ -1133,13 +1166,7 @@ def test_engine_samples_one_decision_and_one_step_end_timestamp():
 
 
 def test_p5_decision_snapshot_is_immutable_until_postprocess_copy():
-    scheduler = Scheduler(make_config(
-        chunked_prefill_slo_mixed=True,
-        chunked_prefill_slo_target_gap_ns=64_000_000,
-        chunked_prefill_slo_reserve_ns=8_000_000,
-        chunked_prefill_slo_cost_intercept_ns=4_000_000,
-        chunked_prefill_slo_cost_per_prefill_token_ns=100_000,
-    ))
+    scheduler = make_slo_scheduler()
     scheduler._publish_slo_decision({
         "decision_now_ns": 100,
         "suppression_reason": "inactive",
@@ -1263,6 +1290,200 @@ def test_missing_runnable_progress_fails_closed():
     assert scheduler.last_policy_branch == "slo_mixed_missing_progress_decode"
     assert scheduler.last_slo_decision["suppression_reason"] == (
         "missing_decode_progress"
+    )
+
+
+def test_active_demand_never_overrides_no_slack():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    running = make_running_with_id(scheduler, seq_id=1, max_tokens=16)
+    scheduler.decode_progress_ns_by_seq_id[running.seq_id] = 1_000
+    add_waiting(scheduler, 8, prompt_tokens=32)
+    scheduler.adaptive_mixed_state = "active"
+    before = scheduler_prefill_digest(scheduler)
+
+    scheduler.schedule(56_001_001)
+
+    assert scheduler.last_policy_branch == "slo_mixed_no_slack_decode"
+    assert scheduler.last_slo_decision["remaining_slack_ns"] == -1
+    assert scheduler.last_slo_decision["selected_chunk_tokens"] is None
+    assert scheduler_prefill_digest(scheduler) == before
+
+
+def test_largest_safe_chunk_is_selected_with_exact_integer_math():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    running = make_running_with_id(scheduler, seq_id=1, max_tokens=16)
+    scheduler.decode_progress_ns_by_seq_id[running.seq_id] = 1_000
+    add_waiting(scheduler, 8, prompt_tokens=128)
+    scheduler.adaptive_mixed_state = "active"
+
+    scheduler.schedule(41_800_000)
+
+    decision = scheduler.last_slo_decision
+    assert decision["oldest_decode_age_ns"] == 41_799_000
+    assert decision["remaining_slack_ns"] == 14_201_000
+    assert decision["candidate_chunk_tokens"] == [
+        128, 112, 96, 80, 64, 48, 32, 16
+    ]
+    assert decision["selected_chunk_tokens"] == 96
+    assert decision["predicted_step_ns"] == 13_600_000
+    assert set(decision) == {
+        "decision_now_ns",
+        "target_gap_ns",
+        "reserve_ns",
+        "oldest_decode_seq_id",
+        "oldest_decode_progress_ns",
+        "oldest_decode_age_ns",
+        "remaining_slack_ns",
+        "cost_intercept_ns",
+        "cost_per_prefill_token_ns",
+        "candidate_chunk_tokens",
+        "predicted_step_ns",
+        "selected_chunk_tokens",
+        "actual_prefill_tokens",
+        "scheduled_decode_seq_ids",
+        "demand_state_before",
+        "demand_state_after",
+        "suppression_reason",
+        "clock_invalid",
+        "clock_invalid_reason",
+    }
+    try:
+        decision["selected_chunk_tokens"] = 128
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("published P5 decision is mutable")
+
+
+def test_mixed_batch_contains_exact_oldest_runnable_decode_row():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler()
+    older = make_running_with_id(scheduler, seq_id=11, max_tokens=16)
+    younger = make_running_with_id(
+        scheduler,
+        seq_id=12,
+        token_ids=(80, 81, 82, 83),
+        max_tokens=16,
+    )
+    scheduler.running.clear()
+    scheduler.running.extend([younger, older])
+    scheduler.decode_progress_ns_by_seq_id.update({
+        11: 1_000,
+        12: 5_000,
+    })
+    add_waiting(scheduler, 8, prompt_tokens=64)
+    scheduler.adaptive_mixed_state = "active"
+
+    scheduled = scheduler.schedule(10_000_000)
+
+    seqs = scheduled[0]
+    decode_ids = [
+        seq.seq_id for seq in seqs if seq.step_is_decode
+    ]
+    assert 11 in decode_ids
+    assert scheduler.last_slo_decision["oldest_decode_seq_id"] == 11
+    assert scheduler.last_slo_decision["scheduled_decode_seq_ids"] == (
+        decode_ids
+    )
+
+
+def test_protected_row_reservation_failure_does_not_substitute_younger():
+    reset_sequence_state()
+    scheduler = make_slo_scheduler(num_kvcache_blocks=4)
+    older = make_running_with_id(scheduler, seq_id=21, max_tokens=16)
+    younger = make_running_with_id(
+        scheduler,
+        seq_id=22,
+        token_ids=(80, 81, 82),
+        max_tokens=16,
+    )
+    scheduler.running.clear()
+    scheduler.running.extend([older, younger])
+    scheduler.decode_progress_ns_by_seq_id.update({
+        21: 1_000,
+        22: 2_000,
+    })
+    add_waiting(scheduler, 1, prompt_tokens=8)
+    scheduler.adaptive_mixed_state = "active"
+    before = scheduler_prefill_digest(scheduler)
+
+    scheduler.schedule(10_000_000)
+
+    assert scheduler.last_policy_branch == (
+        "slo_mixed_transaction_fallback_decode"
+    )
+    assert scheduler.last_slo_decision["selected_chunk_tokens"] is not None
+    assert scheduler.last_slo_decision["actual_prefill_tokens"] == 0
+    assert scheduler_prefill_digest(scheduler) == before
+
+
+def test_p0_p3_p4_scheduling_is_unchanged_by_p5_support():
+    reset_sequence_state()
+    p0 = Scheduler(make_config(max_num_prefill_tokens_per_step=0))
+    p0_waiting = add_waiting(p0, 1, prompt_tokens=4)[0]
+    p0_result = p0.schedule()
+    assert (
+        [seq is p0_waiting for seq in p0_result[0]],
+        p0_result[1:],
+        p0.last_policy_branch,
+        len(p0.waiting),
+        len(p0.prefilling),
+        [seq is p0_waiting for seq in p0.running],
+    ) == (
+        [True],
+        (True, True),
+        "legacy_prefill",
+        0,
+        0,
+        [True],
+    )
+
+    reset_sequence_state()
+    p3 = Scheduler(make_config(chunked_prefill_mixed_batch=True))
+    p3_running = make_running(p3, max_tokens=16)
+    p3_waiting = add_waiting(p3, 1, prompt_tokens=8)[0]
+    p3_result = p3.schedule()
+    assert (
+        [
+            "waiting" if seq is p3_waiting else "running"
+            for seq in p3_result[0]
+        ],
+        p3_result[1:],
+        p3.last_policy_branch,
+        len(p3.waiting),
+        len(p3.prefilling),
+        len(p3.running),
+    ) == (
+        ["waiting", "running"],
+        (True, True, "mixed"),
+        "mixed_prefill_decode",
+        0,
+        0,
+        0,
+    )
+
+    reset_sequence_state()
+    p4 = Scheduler(make_config(chunked_prefill_adaptive_mixed=True))
+    p4_running = make_running(p4, max_tokens=16)
+    add_waiting(p4, 8)
+    p4.adaptive_mixed_state = "active"
+    p4_result = p4.schedule()
+    assert (
+        p4_result[0][-1] is p4_running,
+        p4_result[1:],
+        p4.last_policy_branch,
+        len(p4.waiting),
+        len(p4.prefilling),
+        len(p4.running),
+    ) == (
+        True,
+        (True, True, "mixed"),
+        "adaptive_mixed_prefill_decode",
+        7,
+        0,
+        0,
     )
 
 
@@ -2666,6 +2887,11 @@ def main():
     test_progress_survives_preemption_but_is_excluded_until_running()
     test_clock_regression_is_sticky_and_forces_decode_only()
     test_missing_runnable_progress_fails_closed()
+    test_active_demand_never_overrides_no_slack()
+    test_largest_safe_chunk_is_selected_with_exact_integer_math()
+    test_mixed_batch_contains_exact_oldest_runnable_decode_row()
+    test_protected_row_reservation_failure_does_not_substitute_younger()
+    test_p0_p3_p4_scheduling_is_unchanged_by_p5_support()
     test_chunked_prefill_decode_fallback_reports_branch_without_changing_result()
     test_legacy_prefill_reports_branch_without_changing_result()
     test_legacy_decode_reports_branch_without_changing_result()

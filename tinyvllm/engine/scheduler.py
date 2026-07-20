@@ -80,6 +80,29 @@ class Scheduler:
         self.chunked_prefill_slo_mixed = getattr(
             config, "chunked_prefill_slo_mixed", False
         )
+        self.chunked_prefill_slo_target_gap_ns = getattr(
+            config, "chunked_prefill_slo_target_gap_ns", 0
+        )
+        self.chunked_prefill_slo_reserve_ns = getattr(
+            config, "chunked_prefill_slo_reserve_ns", 0
+        )
+        self.chunked_prefill_slo_cost_intercept_ns = getattr(
+            config, "chunked_prefill_slo_cost_intercept_ns", 0
+        )
+        self.chunked_prefill_slo_cost_per_prefill_token_ns = getattr(
+            config, "chunked_prefill_slo_cost_per_prefill_token_ns", 0
+        )
+        self.chunked_prefill_slo_min_chunk_tokens = getattr(
+            config, "chunked_prefill_slo_min_chunk_tokens", 16
+        )
+        self.slo_chunk_ladder = (
+            build_slo_chunk_ladder(
+                self.max_num_prefill_tokens_per_step,
+                self.chunked_prefill_slo_min_chunk_tokens,
+            )
+            if self.chunked_prefill_slo_mixed
+            else ()
+        )
         self.adaptive_mixed_state = ADAPTIVE_MIXED_INACTIVE
         self.adaptive_high_streak = 0
         self.adaptive_low_streak = 0
@@ -136,7 +159,10 @@ class Scheduler:
 
     def _adaptive_transition_eligible(self) -> bool:
         return bool(
-            self.chunked_prefill_adaptive_mixed
+            (
+                self.chunked_prefill_adaptive_mixed
+                or self.chunked_prefill_slo_mixed
+            )
             and self.chunked_prefill_enabled
             and self.running
             and (self.waiting or self.prefilling)
@@ -263,49 +289,189 @@ class Scheduler:
         progress_ns, seq_id = oldest
         return seq_id, progress_ns, decision_now_ns - progress_ns
 
-    def _schedule_slo_progress_guard(
+    def _new_slo_decision(
         self,
+        *,
         decision_now_ns: int | None,
-    ) -> tuple[list[Sequence], bool, bool] | None:
-        if not self.running:
-            return None
-        decision = {
+        demand_state_before: str,
+    ) -> dict:
+        return {
             "decision_now_ns": decision_now_ns,
+            "target_gap_ns": self.chunked_prefill_slo_target_gap_ns,
+            "reserve_ns": self.chunked_prefill_slo_reserve_ns,
+            "oldest_decode_seq_id": None,
+            "oldest_decode_progress_ns": None,
+            "oldest_decode_age_ns": None,
+            "remaining_slack_ns": None,
+            "cost_intercept_ns":
+                self.chunked_prefill_slo_cost_intercept_ns,
+            "cost_per_prefill_token_ns":
+                self.chunked_prefill_slo_cost_per_prefill_token_ns,
+            "candidate_chunk_tokens": list(self.slo_chunk_ladder),
+            "predicted_step_ns": None,
+            "selected_chunk_tokens": None,
+            "actual_prefill_tokens": 0,
+            "scheduled_decode_seq_ids": [],
+            "demand_state_before": demand_state_before,
+            "demand_state_after": demand_state_before,
             "suppression_reason": None,
             "clock_invalid": self.slo_clock_invalid,
             "clock_invalid_reason": self.slo_clock_invalid_reason,
         }
-        if not self._validate_slo_decision_time(decision_now_ns):
-            decision.update({
-                "suppression_reason": "clock_invalid",
-                "clock_invalid": self.slo_clock_invalid,
-                "clock_invalid_reason": self.slo_clock_invalid_reason,
-            })
+
+    def _return_slo_decode(
+        self,
+        decision: dict,
+        *,
+        branch: str,
+        suppression_reason: str,
+    ) -> tuple[list[Sequence], bool, bool]:
+        decision.update({
+            "suppression_reason": suppression_reason,
+            "clock_invalid": self.slo_clock_invalid,
+            "clock_invalid_reason": self.slo_clock_invalid_reason,
+        })
+        self._publish_slo_decision(decision)
+        return self._return_schedule(
+            (*self._schedule_decode(), True),
+            branch,
+        )
+
+    def _schedule_slo_mixed(
+        self,
+        waiting_depth: int,
+        decision_now_ns: int | None,
+    ) -> tuple[list[Sequence], bool, bool] | tuple[
+        list[Sequence], bool, bool, str
+    ]:
+        demand_state_before = self.adaptive_mixed_state
+        decision = self._new_slo_decision(
+            decision_now_ns=decision_now_ns,
+            demand_state_before=demand_state_before,
+        )
+        if not self.running:
+            self._update_adaptive_mixed_state(waiting_depth)
+            decision["demand_state_after"] = self.adaptive_mixed_state
+            prefill = self._schedule_chunked_prefill()
             self._publish_slo_decision(decision)
+            if prefill is not None:
+                return self._return_schedule(
+                    prefill,
+                    "slo_mixed_no_running_prefill",
+                )
             return self._return_schedule(
                 (*self._schedule_decode(), True),
-                "slo_mixed_clock_invalid_decode",
+                "slo_mixed_no_running_prefill",
+            )
+
+        if not self._validate_slo_decision_time(decision_now_ns):
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_clock_invalid_decode",
+                suppression_reason="clock_invalid",
             )
         oldest = self._oldest_runnable_decode(decision_now_ns)
         if self.slo_clock_invalid:
-            decision.update({
-                "suppression_reason": "clock_invalid",
-                "clock_invalid": True,
-                "clock_invalid_reason": self.slo_clock_invalid_reason,
-            })
-            self._publish_slo_decision(decision)
-            return self._return_schedule(
-                (*self._schedule_decode(), True),
-                "slo_mixed_clock_invalid_decode",
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_clock_invalid_decode",
+                suppression_reason="clock_invalid",
             )
         if oldest is None:
-            decision["suppression_reason"] = "missing_decode_progress"
-            self._publish_slo_decision(decision)
-            return self._return_schedule(
-                (*self._schedule_decode(), True),
-                "slo_mixed_missing_progress_decode",
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_missing_progress_decode",
+                suppression_reason="missing_decode_progress",
             )
-        return None
+        (
+            oldest_decode_seq_id,
+            oldest_decode_progress_ns,
+            oldest_decode_age_ns,
+        ) = oldest
+        remaining_slack_ns = (
+            self.chunked_prefill_slo_target_gap_ns
+            - self.chunked_prefill_slo_reserve_ns
+            - oldest_decode_age_ns
+        )
+        decision.update({
+            "oldest_decode_seq_id": oldest_decode_seq_id,
+            "oldest_decode_progress_ns": oldest_decode_progress_ns,
+            "oldest_decode_age_ns": oldest_decode_age_ns,
+            "remaining_slack_ns": remaining_slack_ns,
+        })
+
+        self._update_adaptive_mixed_state(waiting_depth)
+        decision["demand_state_after"] = self.adaptive_mixed_state
+        if self.adaptive_mixed_state == ADAPTIVE_MIXED_INACTIVE:
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_inactive_decode",
+                suppression_reason="inactive",
+            )
+        if remaining_slack_ns <= 0:
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_no_slack_decode",
+                suppression_reason="no_slack",
+            )
+
+        selected_chunk_tokens, predicted_step_ns = select_slo_chunk(
+            remaining_slack_ns=remaining_slack_ns,
+            cost_intercept_ns=self.chunked_prefill_slo_cost_intercept_ns,
+            cost_per_prefill_token_ns=(
+                self.chunked_prefill_slo_cost_per_prefill_token_ns
+            ),
+            token_ladder=self.slo_chunk_ladder,
+        )
+        if selected_chunk_tokens is None:
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_cost_suppressed_decode",
+                suppression_reason="cost_suppressed",
+            )
+        decision.update({
+            "selected_chunk_tokens": selected_chunk_tokens,
+            "predicted_step_ns": predicted_step_ns,
+        })
+
+        mixed = self._schedule_mixed_prefill_decode(
+            allow_waiting_admission=(
+                self.adaptive_mixed_state == ADAPTIVE_MIXED_ACTIVE
+            ),
+            require_decode=True,
+            required_decode_seq_id=oldest_decode_seq_id,
+            max_prefill_tokens=selected_chunk_tokens,
+        )
+        if mixed is None:
+            return self._return_slo_decode(
+                decision,
+                branch="slo_mixed_transaction_fallback_decode",
+                suppression_reason="transaction_fallback",
+            )
+
+        actual_prefill_tokens = sum(
+            seq.prefill_chunk_end - seq.prefill_chunk_start
+            for seq in mixed[0]
+            if not getattr(seq, "step_is_decode", False)
+        )
+        scheduled_decode_seq_ids = [
+            seq.seq_id
+            for seq in mixed[0]
+            if getattr(seq, "step_is_decode", False)
+        ]
+        assert actual_prefill_tokens <= selected_chunk_tokens
+        assert oldest_decode_seq_id in scheduled_decode_seq_ids
+        decision.update({
+            "actual_prefill_tokens": actual_prefill_tokens,
+            "scheduled_decode_seq_ids": scheduled_decode_seq_ids,
+        })
+        self._publish_slo_decision(decision)
+        branch = (
+            "slo_mixed_draining_prefill_decode"
+            if self.adaptive_mixed_state == ADAPTIVE_MIXED_DRAINING
+            else "slo_mixed_prefill_decode"
+        )
+        return self._return_schedule(mixed, branch)
 
     def add(self, seq: Sequence):
         self._validate_admission(seq)
@@ -342,9 +508,10 @@ class Scheduler:
         waiting_depth = len(self.waiting)
         self._maybe_reset_adaptive_mixed_controller()
         if self.chunked_prefill_enabled and self.chunked_prefill_slo_mixed:
-            guarded = self._schedule_slo_progress_guard(decision_now_ns)
-            if guarded is not None:
-                return guarded
+            return self._schedule_slo_mixed(
+                waiting_depth,
+                decision_now_ns,
+            )
         if self.chunked_prefill_enabled and self.chunked_prefill_adaptive_mixed:
             return self._schedule_adaptive_mixed(waiting_depth)
 
@@ -633,10 +800,21 @@ class Scheduler:
             )
         return [seq], True, seq.prefill_chunk_final
 
-    def _mixed_decode_reservation(self) -> tuple[int, int] | None:
+    def _mixed_decode_reservation(
+        self,
+        required_decode_seq_id: int | None = None,
+    ) -> tuple[int, int] | None:
         if self.max_num_seqs < 2 or self.max_num_batched_tokens < 2:
             return None
-        for seq in self.running:
+        candidates = (
+            [
+                seq for seq in self.running
+                if seq.seq_id == required_decode_seq_id
+            ]
+            if required_decode_seq_id is not None
+            else list(self.running)
+        )
+        for seq in candidates:
             required_free_blocks = int(
                 len(seq) % self.block_manager.block_size == 1
             )
@@ -648,21 +826,32 @@ class Scheduler:
             self,
             *,
             allow_waiting_admission: bool = True,
-            require_decode: bool = False) -> tuple[list[Sequence], bool, bool, str] | tuple[list[Sequence], bool, bool] | None:
+            require_decode: bool = False,
+            required_decode_seq_id: int | None = None,
+            max_prefill_tokens: int | None = None) -> tuple[list[Sequence], bool, bool, str] | tuple[list[Sequence], bool, bool] | None:
         reserved_seq_id = None
         reserved_free_blocks = 0
-        if require_decode:
-            reservation = self._mixed_decode_reservation()
+        if require_decode or required_decode_seq_id is not None:
+            reservation = self._mixed_decode_reservation(
+                required_decode_seq_id
+            )
             if reservation is None:
                 return None
             reserved_seq_id, reserved_free_blocks = reservation
 
         prefill_slots = max(1, self.max_num_seqs - 1)
         decode_query_tokens = 1 if self.running else 0
-        max_prefill_tokens = max(1, self.max_num_batched_tokens - decode_query_tokens)
+        prefill_budget = (
+            max(1, self.max_num_batched_tokens - decode_query_tokens)
+            if max_prefill_tokens is None
+            else min(
+                max_prefill_tokens,
+                max(1, self.max_num_batched_tokens - decode_query_tokens),
+            )
+        )
         prefill = self._schedule_chunked_prefill(
             max_prefill_seqs=prefill_slots,
-            max_prefill_tokens=max_prefill_tokens,
+            max_prefill_tokens=prefill_budget,
             allow_waiting_admission=allow_waiting_admission,
             reserved_free_blocks=reserved_free_blocks,
         )
