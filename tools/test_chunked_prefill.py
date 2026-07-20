@@ -10,6 +10,7 @@ import importlib.util
 import ast
 import hashlib
 import pickle
+import tempfile
 from types import SimpleNamespace
 
 try:
@@ -74,6 +75,123 @@ def load_class_method(relative_path: str, class_name: str, method_name: str):
         type_ignores=[],
     )), path, "exec"), namespace)
     return namespace[method_name]
+
+
+def test_adaptive_mixed_config_defaults_and_fail_closed_contract():
+    source = open(
+        os.path.join(_REPO_ROOT, "tinyvllm/config.py"),
+        encoding="utf-8",
+    ).read()
+    tree = ast.parse(source)
+    config_class = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Config"
+    )
+    defaults = {
+        node.target.id: ast.literal_eval(node.value)
+        for node in config_class.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.value is not None
+    }
+    assert defaults["chunked_prefill_adaptive_mixed"] is False
+    assert defaults["chunked_prefill_adaptive_enter_waiting"] == 8
+    assert defaults["chunked_prefill_adaptive_exit_waiting"] == 2
+    assert defaults["chunked_prefill_adaptive_transition_steps"] == 2
+    assert defaults["chunked_prefill_adaptive_max_mixed_steps"] == 2
+    for fragment in (
+        "chunked_prefill_adaptive_enter_waiting > 0",
+        "chunked_prefill_adaptive_exit_waiting >= 0",
+        "chunked_prefill_adaptive_transition_steps > 0",
+        "chunked_prefill_adaptive_max_mixed_steps > 0",
+        "chunked_prefill_adaptive_exit_waiting < self.chunked_prefill_adaptive_enter_waiting",
+        "not (self.chunked_prefill_adaptive_mixed and self.chunked_prefill_mixed_batch)",
+        "not (self.chunked_prefill_adaptive_mixed and self.kv_offload_mvp0)",
+        "not self.chunked_prefill_adaptive_mixed or self.max_num_prefill_tokens_per_step > 0",
+    ):
+        assert fragment in source
+
+
+def load_real_config_class():
+    module_name = "tinyvllm_config_contract_under_test"
+    module_path = os.path.join(_REPO_ROOT, "tinyvllm/config.py")
+    fake_transformers = types.ModuleType("transformers")
+
+    class FakeAutoConfig:
+        @staticmethod
+        def from_pretrained(model):
+            del model
+            return SimpleNamespace(
+                max_position_embeddings=4096,
+                num_hidden_layers=4,
+            )
+
+    fake_transformers.AutoConfig = FakeAutoConfig
+    original = sys.modules.get("transformers")
+    sys.modules["transformers"] = fake_transformers
+    try:
+        module = types.ModuleType(module_name)
+        module.__file__ = module_path
+        sys.modules[module_name] = module
+        source = open(module_path, encoding="utf-8").read()
+        exec(
+            compile(
+                "from __future__ import annotations\n" + source,
+                module_path,
+                "exec",
+            ),
+            module.__dict__,
+        )
+        return module.Config
+    finally:
+        if original is None:
+            sys.modules.pop("transformers", None)
+        else:
+            sys.modules["transformers"] = original
+
+
+def test_adaptive_mixed_invalid_configurations_fail_before_model_start():
+    Config = load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        common = {
+            "model": model,
+            "max_num_batched_tokens": 4096,
+            "max_model_len": 4096,
+            "kvcache_block_size": 256,
+        }
+        invalid = (
+            {"chunked_prefill_adaptive_enter_waiting": 0},
+            {"chunked_prefill_adaptive_exit_waiting": -1},
+            {"chunked_prefill_adaptive_transition_steps": 0},
+            {"chunked_prefill_adaptive_max_mixed_steps": 0},
+            {
+                "chunked_prefill_adaptive_enter_waiting": 2,
+                "chunked_prefill_adaptive_exit_waiting": 2,
+            },
+            {
+                "chunked_prefill_adaptive_mixed": True,
+                "max_num_prefill_tokens_per_step": 0,
+            },
+            {
+                "chunked_prefill_adaptive_mixed": True,
+                "max_num_prefill_tokens_per_step": 128,
+                "chunked_prefill_mixed_batch": True,
+            },
+            {
+                "chunked_prefill_adaptive_mixed": True,
+                "max_num_prefill_tokens_per_step": 128,
+                "kv_offload_mvp0": True,
+            },
+        )
+        for overrides in invalid:
+            try:
+                Config(**common, **overrides)
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError(
+                    f"invalid adaptive config accepted: {overrides}"
+                )
 
 
 config_mod = types.ModuleType("tinyvllm.config")
@@ -1769,6 +1887,8 @@ def test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows():
 
 
 def main():
+    test_adaptive_mixed_config_defaults_and_fail_closed_contract()
+    test_adaptive_mixed_invalid_configurations_fail_before_model_start()
     test_intermediate_chunk_does_not_sample_or_append()
     test_final_chunk_samples_once_and_moves_to_running()
     test_chunked_prefill_batches_multiple_short_final_prompts()

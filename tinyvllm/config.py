@@ -58,6 +58,11 @@ class Config:
     chunked_prefill_max_consecutive_chunks: int = 0       # >0 时 prefill 连续 N 个 chunk 后若有 running decode，则让出 1 次 decode
     chunked_prefill_mixed_batch: bool = False             # True 时允许一个 prefill chunk 和 running decode 走同一次 varlen prefill forward
     chunked_prefill_mixed_min_prompt_tokens: int = 0       # >0 时 mixed 只接纳剩余 prompt token >= 该阈值的 prefill，短 prompt 等 decode 空闲后再 prefill
+    chunked_prefill_adaptive_mixed: bool = False
+    chunked_prefill_adaptive_enter_waiting: int = 8
+    chunked_prefill_adaptive_exit_waiting: int = 2
+    chunked_prefill_adaptive_transition_steps: int = 2
+    chunked_prefill_adaptive_max_mixed_steps: int = 2
 
     # KV cache 量化（C4 等）相关配置
     kv_quant_bits: int = 0                              # 0 / 4 / 8，KV cache 量化位宽，0 表示不量化
@@ -148,6 +153,17 @@ class Config:
         assert self.max_num_prefill_tokens_per_step >= 0
         assert self.chunked_prefill_max_consecutive_chunks >= 0
         assert self.chunked_prefill_mixed_min_prompt_tokens >= 0
+        assert self.chunked_prefill_adaptive_enter_waiting > 0
+        assert self.chunked_prefill_adaptive_exit_waiting >= 0
+        assert self.chunked_prefill_adaptive_transition_steps > 0
+        assert self.chunked_prefill_adaptive_max_mixed_steps > 0
+        assert self.chunked_prefill_adaptive_exit_waiting < self.chunked_prefill_adaptive_enter_waiting
+        assert not (self.chunked_prefill_adaptive_mixed and self.chunked_prefill_mixed_batch), \
+            "adaptive mixed 和 always-on mixed 必须分开评测"
+        assert not (self.chunked_prefill_adaptive_mixed and self.kv_offload_mvp0), \
+            "KV offload MVP-0 暂不支持 adaptive mixed prefill+decode"
+        assert not self.chunked_prefill_adaptive_mixed or self.max_num_prefill_tokens_per_step > 0, \
+            "adaptive mixed 需要开启 chunked prefill"
         assert 0.0 <= self.smoothquant_alpha <= 1.0
         if self.smoothquant_scale_path is not None:
             assert os.path.isfile(self.smoothquant_scale_path), \
