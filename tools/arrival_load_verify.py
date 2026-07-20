@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import statistics
@@ -14,6 +15,9 @@ from pathlib import Path
 
 REQUIRED_FILES = (
     "run_manifest.json",
+    "cost_calibration_manifest.jsonl",
+    "cost_calibration_rows.jsonl",
+    "cost_calibration_summary.json",
     "calibration_manifest.jsonl",
     "calibration_rows.jsonl",
     "workload_manifest.jsonl",
@@ -49,6 +53,34 @@ EXPECTED_P4 = {
     "chunked_prefill_adaptive_max_mixed_steps": 2,
 }
 
+EXPECTED_P5 = {
+    "chunked_prefill_decode_first": True,
+    "chunked_prefill_max_consecutive_chunks": 0,
+    "chunked_prefill_mixed_batch": False,
+    "chunked_prefill_mixed_min_prompt_tokens": 0,
+    "chunked_prefill_adaptive_mixed": False,
+    "chunked_prefill_slo_mixed": True,
+    "chunked_prefill_slo_target_gap_ns": 64_000_000,
+    "chunked_prefill_slo_reserve_ns": 8_000_000,
+    "chunked_prefill_slo_min_chunk_tokens": 16,
+    "chunked_prefill_slo_token_ladder": [
+        128, 112, 96, 80, 64, 48, 32, 16,
+    ],
+}
+
+EXPECTED_COST_ENGINE_CONFIG = {
+    "max_num_batched_tokens": 16384,
+    "max_num_seqs": 512,
+    "max_num_prefill_tokens_per_step": 128,
+    "enforce_eager": False,
+    "chunked_prefill_decode_first": False,
+    "chunked_prefill_max_consecutive_chunks": 0,
+    "chunked_prefill_mixed_batch": True,
+    "chunked_prefill_mixed_min_prompt_tokens": 0,
+    "chunked_prefill_adaptive_mixed": False,
+    "chunked_prefill_slo_mixed": False,
+}
+
 
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
@@ -68,8 +100,23 @@ def _canonical_identity(value: object) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 
 
+def _load_cost_calibration_module():
+    path = Path(__file__).with_name(
+        "arrival_load_cost_calibration.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "arrival_load_cost_calibration_for_verifier",
+        path,
+    )
+    if spec is None or spec.loader is None:
+        raise ValueError("could not load cost calibration module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _verify_policy_manifest(manifest: dict) -> dict:
-    names = ("P0", "P3", "P4")
+    names = ("P0", "P4", "P5")
     aliases = manifest.get("canonical_policy_by_name")
     identities = manifest.get("policy_identity_by_name")
     resolved = manifest.get("resolved_policy_config_by_name")
@@ -96,7 +143,27 @@ def _verify_policy_manifest(manifest: dict) -> dict:
         raise ValueError("invalid P4 resolved policy")
     if any(field not in p4 for field in P4_FIELDS):
         raise ValueError("invalid P4 resolved policy")
-    return p4
+    p5 = resolved["P5"]
+    if any(p5.get(key) != value for key, value in EXPECTED_P5.items()):
+        raise ValueError("invalid P5 resolved policy")
+    for field in (
+        "chunked_prefill_slo_cost_intercept_ns",
+        "chunked_prefill_slo_cost_per_prefill_token_ns",
+    ):
+        value = p5.get(field)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+        ):
+            raise ValueError("invalid P5 resolved policy")
+    artifact_sha256 = p5.get("cost_calibration_artifact_sha256")
+    if (
+        not isinstance(artifact_sha256, str)
+        or len(artifact_sha256) != 64
+    ):
+        raise ValueError("invalid P5 resolved policy")
+    return p5
 
 
 def _read_json(path: Path):
@@ -174,6 +241,75 @@ def _verify_hashes(run_dir: Path) -> None:
     for name in sorted(expected_names):
         if hashes[name] != _sha256_file(run_dir / name):
             raise ValueError(f"artifact hash mismatch: {name}")
+
+
+def _verify_cost_calibration(
+    run_dir: Path,
+    manifest: dict,
+    p5_config: dict,
+) -> dict:
+    calibration = _load_cost_calibration_module()
+    required_shapes = _read_jsonl(
+        run_dir / "cost_calibration_manifest.jsonl"
+    )
+    expected_shapes = calibration.build_required_shapes(
+        max_num_seqs=EXPECTED_COST_ENGINE_CONFIG["max_num_seqs"],
+        max_prefill_tokens=EXPECTED_COST_ENGINE_CONFIG[
+            "max_num_prefill_tokens_per_step"
+        ],
+    )
+    if required_shapes != expected_shapes:
+        raise ValueError("cost calibration shape manifest mismatch")
+    raw_rows = _read_jsonl(
+        run_dir / "cost_calibration_rows.jsonl"
+    )
+    source_sha256 = manifest.get("source_tree_sha256")
+    environment_sha256 = manifest.get("environment_sha256")
+    engine_config_sha256 = _canonical_identity(
+        EXPECTED_COST_ENGINE_CONFIG
+    )
+    recomputed = calibration.build_cost_calibration_summary(
+        source_tree_sha256=source_sha256,
+        environment_sha256=environment_sha256,
+        engine_config_sha256=engine_config_sha256,
+        required_shapes=required_shapes,
+        raw_rows=raw_rows,
+    )
+    recomputed["purpose"] = "authoritative"
+    recorded = _read_json(
+        run_dir / "cost_calibration_summary.json"
+    )
+    if recorded != recomputed:
+        raise ValueError("cost calibration summary disagreement")
+    artifact_sha256 = _sha256_file(
+        run_dir / "cost_calibration_summary.json"
+    )
+    if (
+        p5_config.get("cost_calibration_artifact_sha256")
+        != artifact_sha256
+        or p5_config.get(
+            "chunked_prefill_slo_cost_intercept_ns"
+        ) != recomputed["cost_intercept_ns"]
+        or p5_config.get(
+            "chunked_prefill_slo_cost_per_prefill_token_ns"
+        ) != recomputed["cost_per_prefill_token_ns"]
+    ):
+        raise ValueError("P5 cost calibration identity mismatch")
+    marker = manifest.get("cost_calibration_verification")
+    if not isinstance(marker, dict):
+        raise ValueError("missing cost calibration verification")
+    expected_marker = {
+        "status": "PASS",
+        "run_tag": marker.get("run_tag"),
+        "artifact_sha256": artifact_sha256,
+        "source_tree_sha256": source_sha256,
+        "environment_sha256": environment_sha256,
+    }
+    if marker != expected_marker or not isinstance(
+        marker["run_tag"], str
+    ):
+        raise ValueError("cost calibration verification mismatch")
+    return recomputed
 
 
 def _safe_extract_snapshot(archive_path: Path, output_dir: Path) -> Path:
@@ -460,6 +596,410 @@ def _verify_p4_scheduler_trace(
         )
 
 
+def _integer(value, label: str, *, nullable: bool = False):
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _scheduled_shape(row: dict) -> tuple[list[int], int, int]:
+    scheduled = row.get("scheduled")
+    if not isinstance(scheduled, list):
+        raise ValueError("invalid P5 scheduled rows")
+    scheduled_ids = []
+    decode_ids = []
+    prefill_tokens = 0
+    for item in scheduled:
+        if not isinstance(item, dict):
+            raise ValueError("invalid P5 scheduled row")
+        seq_id = _integer(item.get("seq_id"), "scheduled seq id")
+        scheduled_ids.append(seq_id)
+        if item.get("is_decode") is True:
+            decode_ids.append(seq_id)
+            continue
+        if item.get("is_decode") is not False:
+            raise ValueError("invalid P5 scheduled role")
+        start = _integer(
+            item.get("prefill_chunk_start"),
+            "prefill chunk start",
+        )
+        end = _integer(
+            item.get("prefill_chunk_end"),
+            "prefill chunk end",
+        )
+        if end <= start:
+            raise ValueError("invalid P5 prefill chunk")
+        prefill_tokens += end - start
+    if len(scheduled_ids) != len(set(scheduled_ids)):
+        raise ValueError("duplicate P5 scheduled sequence")
+    return decode_ids, prefill_tokens, len(scheduled) - len(decode_ids)
+
+
+def _next_demand_state(
+    *,
+    state: str,
+    high_streak: int,
+    low_streak: int,
+    queue_before: dict,
+    enter_waiting: int,
+    exit_waiting: int,
+    transition_steps: int,
+) -> tuple[str, int, int]:
+    running = queue_before["running_seq_ids"]
+    waiting = queue_before["waiting_seq_ids"]
+    prefilling = queue_before["prefilling_seq_ids"]
+    if not running or not (waiting or prefilling):
+        return state, 0, 0
+    waiting_depth = len(waiting)
+    if state == "inactive":
+        low_streak = 0
+        high_streak = (
+            high_streak + 1
+            if waiting_depth >= enter_waiting
+            else 0
+        )
+        if high_streak >= transition_steps:
+            return "active", 0, low_streak
+        return state, high_streak, low_streak
+    if state == "active":
+        high_streak = 0
+        low_streak = (
+            low_streak + 1
+            if waiting_depth <= exit_waiting
+            else 0
+        )
+        if low_streak >= transition_steps:
+            return (
+                "draining" if prefilling else "inactive",
+                high_streak,
+                0,
+            )
+        return state, high_streak, low_streak
+    low_streak = 0
+    high_streak = (
+        high_streak + 1
+        if waiting_depth >= enter_waiting
+        else 0
+    )
+    if high_streak >= transition_steps:
+        return "active", 0, low_streak
+    if not prefilling:
+        return "inactive", high_streak, low_streak
+    return state, high_streak, low_streak
+
+
+def _select_p5_chunk(
+    remaining_slack_ns: int,
+    *,
+    cost_intercept_ns: int,
+    cost_per_prefill_token_ns: int,
+    token_ladder: list[int],
+) -> tuple[int | None, int | None]:
+    for tokens in token_ladder:
+        predicted = (
+            cost_intercept_ns
+            + tokens * cost_per_prefill_token_ns
+        )
+        if predicted <= remaining_slack_ns:
+            return tokens, predicted
+    return None, None
+
+
+def _verify_p5_scheduler_trace(
+    rows: list[dict],
+    *,
+    config: dict,
+) -> dict:
+    if not rows:
+        raise ValueError("missing P5 scheduler trace")
+    progress_by_seq_id = {}
+    demand_state = "inactive"
+    high_streak = 0
+    low_streak = 0
+    last_decision_now_ns = None
+    previous_queue_after = None
+    histogram = {}
+    diagnostics = {
+        "mixed_decision_count": 0,
+        "slo_suppression_count": 0,
+        "draining_decision_count": 0,
+        "selected_chunk_histogram": histogram,
+        "envelope_underprediction_count": 0,
+        "missing_progress_count": 0,
+        "clock_invalid_count": 0,
+    }
+    target_gap_ns = config["chunked_prefill_slo_target_gap_ns"]
+    reserve_ns = config["chunked_prefill_slo_reserve_ns"]
+    intercept_ns = config[
+        "chunked_prefill_slo_cost_intercept_ns"
+    ]
+    per_token_ns = config[
+        "chunked_prefill_slo_cost_per_prefill_token_ns"
+    ]
+    ladder = config["chunked_prefill_slo_token_ladder"]
+    for expected_step, row in enumerate(rows):
+        if row.get("step_index") != expected_step:
+            raise ValueError("invalid P5 scheduler step sequence")
+        before = row.get("queue_before")
+        after = row.get("queue_after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise ValueError("missing P5 queue snapshot")
+        queue_fields = (
+            "waiting_seq_ids",
+            "prefilling_seq_ids",
+            "running_seq_ids",
+        )
+        if any(
+            not isinstance(snapshot.get(field), list)
+            for snapshot in (before, after)
+            for field in queue_fields
+        ):
+            raise ValueError("invalid P5 queue snapshot")
+        if (
+            previous_queue_after is not None
+            and before != previous_queue_after
+        ):
+            raise ValueError("P5 queue snapshots are not contiguous")
+        for snapshot in (before, after):
+            queue_sets = [set(snapshot[field]) for field in queue_fields]
+            if (
+                queue_sets[0] & queue_sets[1]
+                or queue_sets[0] & queue_sets[2]
+                or queue_sets[1] & queue_sets[2]
+            ):
+                raise ValueError("duplicate P5 queue ownership")
+
+        decision_now_ns = _integer(
+            row.get("decision_now_ns"),
+            "P5 decision time",
+        )
+        step_end_ns = _integer(
+            row.get("step_end_ns"),
+            "P5 step end",
+        )
+        if (
+            step_end_ns < decision_now_ns
+            or (
+                last_decision_now_ns is not None
+                and decision_now_ns < last_decision_now_ns
+            )
+        ):
+            raise ValueError("invalid P5 decision clock")
+        last_decision_now_ns = decision_now_ns
+        if row.get("clock_invalid") is not False:
+            raise ValueError("P5 clock violation")
+        if row.get("clock_invalid_reason") is not None:
+            raise ValueError("P5 clock reason mismatch")
+        if (
+            row.get("target_gap_ns") != target_gap_ns
+            or row.get("reserve_ns") != reserve_ns
+            or row.get("cost_intercept_ns") != intercept_ns
+            or row.get("cost_per_prefill_token_ns") != per_token_ns
+            or row.get("candidate_chunk_tokens") != ladder
+        ):
+            raise ValueError("P5 decision coefficient mismatch")
+        if row.get("demand_state_before") != demand_state:
+            raise ValueError("P5 demand state continuity mismatch")
+
+        decode_ids, actual_prefill_tokens, prefill_rows = (
+            _scheduled_shape(row)
+        )
+        running_ids = list(before["running_seq_ids"])
+        suppression = row.get("suppression_reason")
+        expected_selected = None
+        expected_predicted = None
+        expected_oldest = None
+        expected_progress = None
+        expected_age = None
+        expected_slack = None
+        expected_suppression = None
+
+        if running_ids:
+            missing = [
+                seq_id for seq_id in running_ids
+                if seq_id not in progress_by_seq_id
+            ]
+            if missing:
+                expected_suppression = "missing_decode_progress"
+                diagnostics["missing_progress_count"] += 1
+            else:
+                expected_progress, expected_oldest = min(
+                    (progress_by_seq_id[seq_id], seq_id)
+                    for seq_id in running_ids
+                )
+                if expected_progress > decision_now_ns:
+                    raise ValueError("P5 progress timestamp in future")
+                expected_age = decision_now_ns - expected_progress
+                expected_slack = (
+                    target_gap_ns - reserve_ns - expected_age
+                )
+                (
+                    demand_state,
+                    high_streak,
+                    low_streak,
+                ) = _next_demand_state(
+                    state=demand_state,
+                    high_streak=high_streak,
+                    low_streak=low_streak,
+                    queue_before=before,
+                    enter_waiting=config[
+                        "chunked_prefill_adaptive_enter_waiting"
+                    ],
+                    exit_waiting=config[
+                        "chunked_prefill_adaptive_exit_waiting"
+                    ],
+                    transition_steps=config[
+                        "chunked_prefill_adaptive_transition_steps"
+                    ],
+                )
+                if demand_state == "inactive":
+                    expected_suppression = "inactive"
+                elif expected_slack <= 0:
+                    expected_suppression = "no_slack"
+                else:
+                    (
+                        expected_selected,
+                        expected_predicted,
+                    ) = _select_p5_chunk(
+                        expected_slack,
+                        cost_intercept_ns=intercept_ns,
+                        cost_per_prefill_token_ns=per_token_ns,
+                        token_ladder=ladder,
+                    )
+                    if expected_selected is None:
+                        expected_suppression = "cost_suppressed"
+        else:
+            (
+                demand_state,
+                high_streak,
+                low_streak,
+            ) = _next_demand_state(
+                state=demand_state,
+                high_streak=high_streak,
+                low_streak=low_streak,
+                queue_before=before,
+                enter_waiting=config[
+                    "chunked_prefill_adaptive_enter_waiting"
+                ],
+                exit_waiting=config[
+                    "chunked_prefill_adaptive_exit_waiting"
+                ],
+                transition_steps=config[
+                    "chunked_prefill_adaptive_transition_steps"
+                ],
+            )
+
+        expected_fields = {
+            "oldest_decode_seq_id": expected_oldest,
+            "oldest_decode_progress_ns": expected_progress,
+            "oldest_decode_age_ns": expected_age,
+            "remaining_slack_ns": expected_slack,
+            "predicted_step_ns": expected_predicted,
+            "selected_chunk_tokens": expected_selected,
+            "suppression_reason": expected_suppression,
+            "demand_state_after": demand_state,
+        }
+        mismatches = {
+            field: {
+                "recorded": row.get(field),
+                "expected": value,
+            }
+            for field, value in expected_fields.items()
+            if row.get(field) != value
+        }
+        if mismatches:
+            raise ValueError(
+                "P5 decision reconstruction mismatch at step "
+                f"{expected_step}: "
+                + json.dumps(mismatches, sort_keys=True)
+            )
+        if row.get("actual_prefill_tokens") != actual_prefill_tokens:
+            raise ValueError("P5 actual prefill mismatch")
+        if row.get("scheduled_decode_seq_ids") != decode_ids:
+            raise ValueError("P5 scheduled decode mismatch")
+        if expected_suppression is not None and (
+            actual_prefill_tokens != 0 or prefill_rows != 0
+        ):
+            raise ValueError("suppressed P5 decision admitted prefill")
+        if expected_selected is not None:
+            if (
+                not decode_ids
+                or prefill_rows <= 0
+                or expected_oldest not in decode_ids
+                or actual_prefill_tokens <= 0
+                or actual_prefill_tokens > expected_selected
+            ):
+                raise ValueError("invalid P5 mixed admission")
+            diagnostics["mixed_decision_count"] += 1
+            key = str(expected_selected)
+            histogram[key] = histogram.get(key, 0) + 1
+            if row.get("actual_step_duration_ns") > expected_predicted:
+                diagnostics["envelope_underprediction_count"] += 1
+        if expected_suppression in ("no_slack", "cost_suppressed"):
+            diagnostics["slo_suppression_count"] += 1
+        if demand_state == "draining":
+            diagnostics["draining_decision_count"] += 1
+
+        duration_ns = _integer(
+            row.get("actual_step_duration_ns"),
+            "P5 actual step duration",
+        )
+        if duration_ns != step_end_ns - decision_now_ns:
+            raise ValueError("P5 step duration mismatch")
+        token_deltas = row.get("new_completion_tokens_by_seq")
+        progress_updates = row.get("decode_progress_updates")
+        if not isinstance(token_deltas, dict) or not isinstance(
+            progress_updates, dict
+        ):
+            raise ValueError("invalid P5 progress evidence")
+        scheduled_ids = {
+            item["seq_id"] for item in row["scheduled"]
+        }
+        expected_progress_updates = {}
+        for raw_seq_id, tokens in token_deltas.items():
+            try:
+                seq_id = int(raw_seq_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid P5 progress sequence") from exc
+            if (
+                not isinstance(tokens, list)
+                or seq_id not in scheduled_ids
+            ):
+                raise ValueError("invalid P5 token delta")
+            if tokens:
+                expected_progress_updates[str(seq_id)] = step_end_ns
+        if progress_updates != expected_progress_updates:
+            raise ValueError("invalid P5 progress update")
+        for raw_seq_id, timestamp_ns in progress_updates.items():
+            seq_id = int(raw_seq_id)
+            progress_by_seq_id[seq_id] = timestamp_ns
+        finished = row.get("finished_progress_entries_removed")
+        if not isinstance(finished, list):
+            raise ValueError("invalid P5 finished progress evidence")
+        queue_after_ids = {
+            seq_id
+            for field in queue_fields
+            for seq_id in after[field]
+        }
+        expected_finished = sorted(
+            int(raw_seq_id)
+            for raw_seq_id in expected_progress_updates
+            if int(raw_seq_id) not in queue_after_ids
+        )
+        if finished != expected_finished:
+            raise ValueError("invalid P5 finished progress evidence")
+        for seq_id in finished:
+            progress_by_seq_id.pop(seq_id, None)
+        previous_queue_after = after
+    diagnostics["selected_chunk_histogram"] = dict(sorted(
+        histogram.items(),
+        key=lambda item: int(item[0]),
+    ))
+    return diagnostics
+
+
 def _request_metrics(workload: dict, timeline: dict) -> dict:
     names = (
         "scheduled_arrival_ns",
@@ -558,6 +1098,7 @@ def _recompute_case(
     scheduler_rows: list[dict],
     memory_rows: list[dict],
     workload_by_id: dict[str, dict],
+    p5_policy: dict | None = None,
 ) -> dict:
     case_timeline = [
         row for row in timeline_rows if row.get("case_id") == case_id
@@ -687,7 +1228,7 @@ def _recompute_case(
         service_rates
     )
     first = case_timeline[0]
-    return {
+    result = {
         "case_id": case_id,
         "policy": first["policy"],
         "scenario": first["scenario"],
@@ -702,6 +1243,9 @@ def _recompute_case(
         },
         "metrics": metrics,
     }
+    if p5_policy is not None:
+        result["p5_policy"] = p5_policy
+    return result
 
 
 def _ratio(candidate: dict, baseline: dict, metric: str) -> float:
@@ -782,6 +1326,10 @@ def _candidate_result(
     if bucket_ratios and max(bucket_ratios) > 1.10:
         guard_failures.append(
             "service bucket p95 E2E regression exceeds 10%"
+        )
+    if policy == "P5":
+        guard_failures.extend(
+            _p5_guard_failures(paired)
         )
     median_paths = {
         "throughput": (
@@ -868,6 +1416,81 @@ def _candidate_result(
     }
 
 
+def _p5_guard_failures(
+    paired: list[tuple[dict, dict]],
+) -> list[str]:
+    scenarios = {
+        candidate["scenario"] for _, candidate in paired
+    }
+    if scenarios != {
+        "steady_moderate",
+        "steady_high",
+        "burst",
+        "long_prompt_pressure",
+        "decode_heavy",
+        "mixed_service_fairness",
+    }:
+        return []
+    failures = []
+    burst_ratios = []
+    burst_has_three_chunk_sizes = False
+    non_burst_suppression_count = 0
+    envelope_underprediction_count = 0
+    missing_progress_count = 0
+    clock_invalid_count = 0
+    for baseline, candidate in paired:
+        scenario = candidate["scenario"]
+        if (
+            scenario == "long_prompt_pressure"
+            and _ratio(candidate, baseline, "p95_itl_ns") > 1.05
+        ):
+            failures.append(
+                "long_prompt_pressure p95 ITL exceeds 5%"
+            )
+        if scenario == "burst":
+            burst_ratios.append(_ratio(
+                candidate,
+                baseline,
+                "request_throughput_rps",
+            ))
+        policy = candidate.get("p5_policy")
+        if not isinstance(policy, dict):
+            raise ValueError("P5 canonical row missing p5_policy")
+        histogram = policy.get("selected_chunk_histogram")
+        if not isinstance(histogram, dict):
+            raise ValueError("invalid P5 selected chunk histogram")
+        if scenario == "burst" and len(histogram) >= 3:
+            burst_has_three_chunk_sizes = True
+        if scenario != "burst":
+            non_burst_suppression_count += int(
+                policy.get("slo_suppression_count", 0)
+            )
+        envelope_underprediction_count += int(
+            policy.get("envelope_underprediction_count", 0)
+        )
+        missing_progress_count += int(
+            policy.get("missing_progress_count", 0)
+        )
+        clock_invalid_count += int(
+            policy.get("clock_invalid_count", 0)
+        )
+    if not burst_ratios or statistics.median(burst_ratios) < 1.25:
+        failures.append("burst median throughput below 1.25x")
+    if not burst_has_three_chunk_sizes:
+        failures.append(
+            "no burst repetition selected three chunk sizes"
+        )
+    if non_burst_suppression_count <= 0:
+        failures.append("no non-burst SLO suppression")
+    if envelope_underprediction_count > 0:
+        failures.append("P5 envelope underprediction detected")
+    if missing_progress_count > 0:
+        failures.append("P5 missing decode progress detected")
+    if clock_invalid_count > 0:
+        failures.append("P5 clock violation detected")
+    return failures
+
+
 def _classify(manifest: dict, rows: list[dict]) -> dict:
     required_scenarios = manifest.get("required_scenarios")
     repetitions = manifest.get("measured_repetitions")
@@ -878,16 +1501,16 @@ def _classify(manifest: dict, rows: list[dict]) -> dict:
         or not required_scenarios
         or not isinstance(repetitions, int)
         or repetitions < 3
-        or set(aliases or {}) != {"P0", "P3", "P4"}
-        or set(identities or {}) != {"P0", "P3", "P4"}
+        or set(aliases or {}) != {"P0", "P4", "P5"}
+        or set(identities or {}) != {"P0", "P4", "P5"}
     ):
         raise ValueError("invalid policy or case manifest")
-    if any(aliases[name] != name for name in ("P0", "P3", "P4")):
+    if any(aliases[name] != name for name in ("P0", "P4", "P5")):
         raise ValueError("invalid canonical policy mapping")
     if len(set(identities.values())) != 3:
         raise ValueError("unexpected policy identity collision")
     canonical_policies = [
-        name for name in ("P0", "P3", "P4")
+        name for name in ("P0", "P4", "P5")
         if aliases[name] == name
     ]
     expected = {
@@ -920,7 +1543,7 @@ def _classify(manifest: dict, rows: list[dict]) -> dict:
                     by_key[(policy, scenario, repetition)],
                 ))
         candidate_results[policy] = _candidate_result(policy, paired)
-    classification = candidate_results["P4"]["classification"]
+    classification = candidate_results["P5"]["classification"]
     return {
         "classification": classification,
         "structural_failures": [],
@@ -948,7 +1571,11 @@ def _smoke_summary(rows: list[dict]) -> dict:
         for row in rows
     )
     return {
-        "classification": "SMOKE_ONLY",
+        "classification": (
+            "SMOKE_ONLY"
+            if lifecycle_complete and exact_outputs
+            else "INCOMPLETE"
+        ),
         "lifecycle_complete": lifecycle_complete,
         "exact_outputs": exact_outputs,
         "case_count": len(rows),
@@ -996,7 +1623,7 @@ def _verify_output_equality(
                     if policy != "P0"
                 ]
                 if manifest.get("run_type") == "smoke"
-                else ["P3", "P4"]
+                else ["P4", "P5"]
             )
             for policy in candidate_policies:
                 candidate_rows = by_case.get(
@@ -1023,12 +1650,22 @@ def verify_run(
     manifest = _read_json(run_dir / "run_manifest.json")
     _verify_source(run_dir, manifest)
     _verify_ports(manifest)
-    p4_config = _verify_policy_manifest(manifest)
+    p5_config = _verify_policy_manifest(manifest)
+    if manifest.get("run_type") != "smoke":
+        _verify_cost_calibration(
+            run_dir,
+            manifest,
+            p5_config,
+        )
     _read_jsonl(run_dir / "calibration_manifest.jsonl")
     _read_jsonl(run_dir / "calibration_rows.jsonl")
     workload_rows = _read_jsonl(
         run_dir / "workload_manifest.jsonl"
     )
+    if manifest.get("workload_sha256") != _canonical_identity(
+        workload_rows
+    ):
+        raise ValueError("workload identity mismatch")
     workload_by_id = {}
     for row in workload_rows:
         request_id = row.get("request_id")
@@ -1041,14 +1678,24 @@ def verify_run(
     scheduler_rows = _read_jsonl(
         run_dir / "scheduler_trace.jsonl"
     )
+    p5_policy_by_case = {}
     for case_id in manifest["expected_case_ids"]:
         case_rows = [
             row for row in scheduler_rows
             if row.get("case_id") == case_id
         ]
-        if case_id.startswith("P4-") or (
-            case_rows and case_rows[0].get("policy") == "P4"
-        ):
+        policy = case_rows[0].get("policy") if case_rows else None
+        if policy == "P5":
+            p5_policy_by_case[case_id] = (
+                _verify_p5_scheduler_trace(
+                    case_rows,
+                    config=p5_config,
+                )
+            )
+        elif policy == "P4":
+            p4_config = manifest[
+                "resolved_policy_config_by_name"
+            ]["P4"]
             _verify_p4_scheduler_trace(
                 case_rows,
                 enter_waiting=p4_config[
@@ -1074,6 +1721,7 @@ def verify_run(
             scheduler_rows,
             memory_rows,
             workload_by_id,
+            p5_policy=p5_policy_by_case.get(case_id),
         )
         for case_id in manifest["expected_case_ids"]
     ]
