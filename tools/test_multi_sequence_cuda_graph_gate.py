@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shlex
 import sys
 import tempfile
 from dataclasses import asdict
@@ -16,6 +17,9 @@ CONTRACT_PATH = ROOT / "tools" / "multi_sequence_cuda_graph_contract.py"
 DIAGNOSTIC_PATH = ROOT / "tools" / "diagnose_multi_sequence_cuda_graph.py"
 VERIFIER_PATH = (
     ROOT / "tools" / "verify_multi_sequence_cuda_graph_diagnostic.py"
+)
+REMOTE_RUNNER_PATH = (
+    ROOT / "tools" / "run_multi_sequence_cuda_graph_diagnostic_remote.py"
 )
 
 
@@ -48,6 +52,17 @@ def load_verifier():
     spec = importlib.util.spec_from_file_location(
         "cuda_graph_independent_verifier",
         VERIFIER_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_remote_runner():
+    spec = importlib.util.spec_from_file_location(
+        "cuda_graph_remote_runner",
+        REMOTE_RUNNER_PATH,
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -1206,6 +1221,316 @@ def test_verifier_rejects_missing_artifact_hash():
         assert any("missing artifact hash" in item for item in summary["failures"])
 
 
+def test_remote_runner_has_frozen_transport_and_safety_contract():
+    source = REMOTE_RUNNER_PATH.read_text(encoding="utf-8")
+    for required in (
+        "sitian@10.232.195.203",
+        "/tmp/ssh-sitian-10.232.195.203",
+        "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+        "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+        "TINYVLLM_DIST_PORT",
+        "MASTER_PORT",
+        "EADDRINUSE",
+        "source_audit.build_source_evidence",
+        "source_audit.validate_source_snapshot",
+        "diagnostic-smoke",
+        "diagnostic-canonical",
+        "download-only",
+        "verify-only",
+    ):
+        assert required in source, required
+    for forbidden in (
+        "rsync",
+        "pkill",
+        "killall",
+        "rm -rf /tmp",
+        "git checkout",
+        "git reset",
+        "git clean",
+        "git add -A",
+    ):
+        assert forbidden not in source, forbidden
+
+
+def test_remote_runner_allocates_globally_unique_port_pairs():
+    runner = load_remote_runner()
+    allocated = iter(
+        [
+            (21000, 21001),
+            (21002, 21003),
+            (21004, 21005),
+        ]
+    )
+    pairs = runner.allocate_unique_port_pairs(
+        count=3,
+        allocator=lambda: next(allocated),
+    )
+    assert pairs == [
+        (21000, 21001),
+        (21002, 21003),
+        (21004, 21005),
+    ]
+    assert len({port for pair in pairs for port in pair}) == 6
+
+
+def test_remote_runner_rejects_duplicate_or_equal_ports():
+    runner = load_remote_runner()
+    duplicate = iter([(22000, 22001), (22001, 22002)])
+    try:
+        runner.allocate_unique_port_pairs(
+            count=2,
+            allocator=lambda: next(duplicate),
+        )
+    except ValueError as exc:
+        assert "duplicate port" in str(exc)
+    else:
+        raise AssertionError("duplicate port pair accepted")
+
+    try:
+        runner.allocate_unique_port_pairs(
+            count=1,
+            allocator=lambda: (23000, 23000),
+        )
+    except ValueError as exc:
+        assert "distinct" in str(exc)
+    else:
+        raise AssertionError("equal port pair accepted")
+
+
+def test_remote_runner_retries_only_eaddrinuse():
+    runner = load_remote_runner()
+    assert runner.is_retryable_port_collision(
+        returncode=1,
+        stderr="RuntimeError: server failed to listen: EADDRINUSE",
+    )
+    assert not runner.is_retryable_port_collision(
+        returncode=0,
+        stderr="EADDRINUSE",
+    )
+    assert not runner.is_retryable_port_collision(
+        returncode=1,
+        stderr="CUDA out of memory",
+    )
+
+
+def test_remote_runner_preserves_remote_shell_command_as_one_argument():
+    runner = load_remote_runner()
+    remote_command = "cd /tmp/example && printf 'OK\\n'"
+    command = runner._ssh_command(remote_command)
+    assert command[-3:] == [
+        "bash",
+        "-lc",
+        shlex.quote(remote_command),
+    ]
+
+
+def test_remote_runner_disables_bytecode_during_source_validation():
+    source = REMOTE_RUNNER_PATH.read_text(encoding="utf-8")
+    start = source.index("def _remote_python_script(")
+    end = source.index("\ndef _remote_validate_source(", start)
+    helper = source[start:end]
+    assert "PYTHONDONTWRITEBYTECODE=1" in helper
+
+
+def test_remote_runner_requires_explicit_resume_for_existing_run():
+    runner = load_remote_runner()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_root = Path(temporary_directory)
+        existing = output_root / "existing-run"
+        existing.mkdir()
+        try:
+            runner.prepare_run_directory(
+                output_root=output_root,
+                run_tag="existing-run",
+                resume=False,
+            )
+        except ValueError as exc:
+            assert "already exists" in str(exc)
+        else:
+            raise AssertionError("existing run accepted without --resume")
+        assert runner.prepare_run_directory(
+            output_root=output_root,
+            run_tag="existing-run",
+            resume=True,
+        ) == existing
+
+
+def test_remote_runner_reserves_resumed_ports_globally():
+    runner = load_remote_runner()
+    used_ports = set()
+    runner.reserve_unique_port_pair(
+        used_ports=used_ports,
+        pair=(24000, 24001),
+        owner="resumed-case",
+    )
+    assert used_ports == {24000, 24001}
+    try:
+        runner.reserve_unique_port_pair(
+            used_ports=used_ports,
+            pair=(24001, 24002),
+            owner="new-case",
+        )
+    except ValueError as exc:
+        assert "duplicate port" in str(exc)
+    else:
+        raise AssertionError("resumed port was reused")
+
+
+def test_remote_runner_reallocates_duplicate_ephemeral_ports():
+    runner = load_remote_runner()
+    allocated = iter(
+        [
+            (25000, 25001),
+            (25001, 25002),
+            (25003, 25004),
+        ]
+    )
+    used_ports = {25000, 25001}
+    pair = runner.allocate_fresh_unique_port_pair(
+        used_ports=used_ports,
+        allocator=lambda: next(allocated),
+        max_attempts=3,
+    )
+    assert pair == (25003, 25004)
+    assert used_ports == {25000, 25001, 25003, 25004}
+
+
+def test_remote_runner_exposes_resume_and_verifier_python_options():
+    runner = load_remote_runner()
+    args = runner._parse_args(
+        [
+            "diagnostic-canonical",
+            "--run-tag",
+            "resume-run",
+            "--resume",
+            "--verifier-python",
+            "/tmp/verifier-python",
+        ]
+    )
+    assert args.resume is True
+    assert args.verifier_python == Path("/tmp/verifier-python")
+
+
+def test_remote_runner_promotes_source_evidence_artifacts():
+    runner = load_remote_runner()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = Path(temporary_directory)
+        staging = run_dir / "staging"
+        staging.mkdir()
+        (staging / "source.patch").write_bytes(b"source patch")
+        (staging / "source_snapshot.tar.gz").write_bytes(b"snapshot")
+        runner.promote_source_evidence_artifacts(run_dir)
+        assert (run_dir / "source.patch").read_bytes() == b"source patch"
+        assert (
+            run_dir / "source_snapshot.tar.gz"
+        ).read_bytes() == b"snapshot"
+
+
+def test_remote_runner_orders_eager_before_matching_graph_cases():
+    runner = load_remote_runner()
+    cases = runner.build_smoke_cases()
+    assert len(cases) == 18
+    positions = {case.case_id: index for index, case in enumerate(cases)}
+    for case in cases:
+        if case.mode == "eager":
+            continue
+        eager_id = (
+            f"b{case.batch_size}__{case.trajectory}__"
+            f"eager__r{case.repetition}"
+        )
+        assert positions[eager_id] < positions[case.case_id]
+
+
+def test_remote_runner_requires_eager_reference_before_graph_case():
+    runner = load_remote_runner()
+    case = next(
+        case
+        for case in contract.build_diagnostic_matrix()
+        if case.mode == "exact_graph"
+    )
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = Path(temporary_directory)
+        assert runner.graph_case_ready(case, run_dir) is False
+        eager_case_id = (
+            f"b{case.batch_size}__{case.trajectory}__"
+            f"eager__r{case.repetition}"
+        )
+        reference = (
+            run_dir
+            / "cases"
+            / eager_case_id
+            / "input"
+            / "reference_tokens.json"
+        )
+        reference.parent.mkdir(parents=True)
+        _write_json(
+            reference,
+            [
+                [step + row for row in range(case.batch_size)]
+                for step in range(
+                    contract.WARMUP_STEPS + contract.MEASURED_STEPS
+                )
+            ],
+        )
+        assert runner.graph_case_ready(case, run_dir) is True
+
+
+def test_remote_runner_resume_requires_identity_and_artifact_hashes():
+    runner = load_remote_runner()
+    case = contract.build_diagnostic_matrix()[0]
+    source_tree_sha256 = "a" * 64
+    environment_sha256 = "b" * 64
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        case_dir = Path(temporary_directory) / case.case_id
+        artifact = case_dir / "output" / "artifact.bin"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"completed case")
+        _write_json(
+            case_dir / "case_result.json",
+            {
+                "schema_version": 1,
+                "status": "PASS",
+                "case": asdict(case),
+                "case_id": case.case_id,
+                "source_tree_sha256": source_tree_sha256,
+                "environment_sha256": environment_sha256,
+                "artifacts": {
+                    "payload": _artifact_record(case_dir, artifact),
+                },
+            },
+        )
+        assert runner.completed_case_is_resumable(
+            case_dir=case_dir,
+            case=case,
+            source_tree_sha256=source_tree_sha256,
+            environment_sha256=environment_sha256,
+        )
+        artifact.write_bytes(b"tampered")
+        assert not runner.completed_case_is_resumable(
+            case_dir=case_dir,
+            case=case,
+            source_tree_sha256=source_tree_sha256,
+            environment_sha256=environment_sha256,
+        )
+
+
+def test_remote_runner_failed_case_preservation_manifest():
+    runner = load_remote_runner()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        case_dir = Path(temporary_directory) / "failed-case"
+        output_dir = case_dir / "output"
+        output_dir.mkdir(parents=True)
+        (output_dir / "stdout.txt").write_text("partial stdout\n")
+        (output_dir / "stderr.txt").write_text("partial stderr\n")
+        _write_json(output_dir / "case_result.json", {"status": "FAIL"})
+        manifest = runner.available_case_artifacts(case_dir)
+        assert manifest == [
+            "output/case_result.json",
+            "output/stderr.txt",
+            "output/stdout.txt",
+        ]
+
+
 if __name__ == "__main__":
     tests = [
         test_diagnostic_matrix_is_exact_and_unique,
@@ -1245,6 +1570,21 @@ if __name__ == "__main__":
         test_verifier_detects_unexpected_sentinel_mutation,
         test_verifier_rejects_producer_classification_tamper,
         test_verifier_rejects_missing_artifact_hash,
+        test_remote_runner_has_frozen_transport_and_safety_contract,
+        test_remote_runner_allocates_globally_unique_port_pairs,
+        test_remote_runner_rejects_duplicate_or_equal_ports,
+        test_remote_runner_retries_only_eaddrinuse,
+        test_remote_runner_preserves_remote_shell_command_as_one_argument,
+        test_remote_runner_disables_bytecode_during_source_validation,
+        test_remote_runner_requires_explicit_resume_for_existing_run,
+        test_remote_runner_reserves_resumed_ports_globally,
+        test_remote_runner_reallocates_duplicate_ephemeral_ports,
+        test_remote_runner_exposes_resume_and_verifier_python_options,
+        test_remote_runner_promotes_source_evidence_artifacts,
+        test_remote_runner_orders_eager_before_matching_graph_cases,
+        test_remote_runner_requires_eager_reference_before_graph_case,
+        test_remote_runner_resume_requires_identity_and_artifact_hashes,
+        test_remote_runner_failed_case_preservation_manifest,
     ]
     for test in tests:
         test()
