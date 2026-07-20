@@ -902,6 +902,7 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
 
         def __init__(self):
             self.snapshot_index = 0
+            self.timing = {}
 
         def observation_snapshot(self):
             self.snapshot_index += 1
@@ -913,17 +914,36 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
                 "adaptive_consecutive_mixed_steps": 2,
             }
 
-        def schedule(self):
+        def schedule(self, decision_now_ns):
+            assert decision_now_ns == 10
             return [seq], True, True
 
-        def postprocess(self, seqs, token_ids, is_prefill, do_sample, batch_kind):
+        def postprocess(
+            self,
+            seqs,
+            token_ids,
+            is_prefill,
+            do_sample,
+            batch_kind,
+            *,
+            decision_now_ns,
+            step_end_ns,
+        ):
             assert seqs == [seq]
             assert token_ids == [91]
+            self.timing = {
+                "decision_now_ns": decision_now_ns,
+                "step_end_ns": step_end_ns,
+                "actual_step_duration_ns": step_end_ns - decision_now_ns,
+            }
             seq.completion_token_ids.append(91)
             seq.prefill_chunk_start = 3
             seq.prefill_chunk_end = 4
             seq.prefill_chunk_final = False
             seq.status = SequenceStatus.FINISHED
+
+        def last_slo_observation(self):
+            return dict(self.timing)
 
     class FakeModelRunner:
         def call(self, method_name, *args):
@@ -934,6 +954,7 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
             return {"cuda_allocated_bytes": 123}
 
     engine = SimpleNamespace(
+        _clock_ns=IntegerClock([10, 20]),
         scheduler=FakeScheduler(),
         model_runner=FakeModelRunner(),
         last_batch_kind=None,
@@ -974,7 +995,126 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
         "new_completion_tokens_by_seq": {17: [91]},
         "finished_seq_ids": [17],
         "memory": {"cuda_allocated_bytes": 123},
+        "decision_now_ns": 10,
+        "step_end_ns": 20,
+        "actual_step_duration_ns": 10,
     }
+
+
+class IntegerClock:
+    def __init__(self, values):
+        self.values = iter(values)
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return next(self.values)
+
+
+def test_engine_samples_one_decision_and_one_step_end_timestamp():
+    step = load_class_method(
+        "tinyvllm/engine/llm_engine.py",
+        "LLMEngine",
+        "step",
+    )
+
+    class FakeTimedScheduler:
+        last_policy_branch = "legacy_decode"
+
+        def __init__(self):
+            self.schedule_calls = []
+            self.postprocess_calls = []
+
+        def observation_snapshot(self):
+            return {}
+
+        def schedule(self, decision_now_ns):
+            self.schedule_calls.append(decision_now_ns)
+            return [], False, True
+
+        def postprocess(
+            self,
+            seqs,
+            token_ids,
+            is_prefill,
+            do_sample,
+            batch_kind,
+            *,
+            decision_now_ns,
+            step_end_ns,
+        ):
+            assert seqs == []
+            assert token_ids == []
+            assert is_prefill is False
+            assert do_sample is True
+            assert batch_kind is None
+            self.postprocess_calls.append({
+                "decision_now_ns": decision_now_ns,
+                "step_end_ns": step_end_ns,
+            })
+
+        def last_slo_observation(self):
+            return {
+                "decision_now_ns": self.postprocess_calls[-1][
+                    "decision_now_ns"
+                ],
+                "step_end_ns": self.postprocess_calls[-1]["step_end_ns"],
+                "actual_step_duration_ns": (
+                    self.postprocess_calls[-1]["step_end_ns"]
+                    - self.postprocess_calls[-1]["decision_now_ns"]
+                ),
+            }
+
+    class FakeTimedModelRunner:
+        def call(self, method_name, *args):
+            assert method_name == "run"
+            return []
+
+        def memory_snapshot(self):
+            return {}
+
+    engine = SimpleNamespace(
+        _clock_ns=IntegerClock([100, 175]),
+        scheduler=FakeTimedScheduler(),
+        model_runner=FakeTimedModelRunner(),
+        last_batch_kind=None,
+        last_scheduled_seqs=[],
+        last_step_observation=None,
+    )
+
+    outputs, _ = step(engine)
+
+    assert outputs == []
+    assert engine._clock_ns.calls == 2
+    assert engine.scheduler.schedule_calls == [100]
+    assert engine.scheduler.postprocess_calls == [{
+        "decision_now_ns": 100,
+        "step_end_ns": 175,
+    }]
+    assert engine.last_step_observation["decision_now_ns"] == 100
+    assert engine.last_step_observation["step_end_ns"] == 175
+    assert engine.last_step_observation["actual_step_duration_ns"] == 75
+
+
+def test_p5_decision_snapshot_is_immutable_until_postprocess_copy():
+    scheduler = Scheduler(make_config(
+        chunked_prefill_slo_mixed=True,
+        chunked_prefill_slo_target_gap_ns=64_000_000,
+        chunked_prefill_slo_reserve_ns=8_000_000,
+        chunked_prefill_slo_cost_intercept_ns=4_000_000,
+        chunked_prefill_slo_cost_per_prefill_token_ns=100_000,
+    ))
+    scheduler._publish_slo_decision({
+        "decision_now_ns": 100,
+        "suppression_reason": "inactive",
+    })
+    snapshot = scheduler.last_slo_decision
+    try:
+        snapshot["decision_now_ns"] = 200
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("P5 decision snapshot is mutable")
 
 
 def test_chunked_prefill_decode_fallback_reports_branch_without_changing_result():
@@ -2371,6 +2511,8 @@ def main():
     test_scheduler_observation_snapshot_reports_queue_and_kv_state()
     test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage()
     test_llm_engine_step_records_observation_without_changing_return_value()
+    test_engine_samples_one_decision_and_one_step_end_timestamp()
+    test_p5_decision_snapshot_is_immutable_until_postprocess_copy()
     test_chunked_prefill_decode_fallback_reports_branch_without_changing_result()
     test_legacy_prefill_reports_branch_without_changing_result()
     test_legacy_decode_reports_branch_without_changing_result()

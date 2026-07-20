@@ -7,6 +7,7 @@ from tinyvllm.engine.sequence import Sequence
 from dataclasses import fields
 
 from time import perf_counter
+import time
 import atexit
 from tqdm.auto import tqdm
 import torch.multiprocessing as mp
@@ -15,6 +16,7 @@ from transformers import AutoTokenizer
 class LLMEngine:
     
     def __init__(self, model, **kwargs):
+        self._clock_ns = kwargs.pop("_clock_ns", time.monotonic_ns)
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}    #过滤掉和config无关的参数
         config  = Config(model, **config_kwargs)       
@@ -55,7 +57,8 @@ class LLMEngine:
 
     def step(self):     #decode阶段：每次step生成新的token加到seq后面
         queue_before = self.scheduler.observation_snapshot()
-        scheduled = self.scheduler.schedule()
+        decision_now_ns = self._clock_ns()
+        scheduled = self.scheduler.schedule(decision_now_ns)
         if len(scheduled) == 4:
             seqs, is_prefill, do_sample, batch_kind = scheduled
         else:
@@ -83,7 +86,8 @@ class LLMEngine:
             "prefill_chunk_end": seq.prefill_chunk_end,
             "prefill_chunk_final": bool(seq.prefill_chunk_final),
         } for seq in seqs]
-        token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample, batch_kind)     
+        token_ids = self.model_runner.call("run", seqs, is_prefill, do_sample, batch_kind)
+        step_end_ns = self._clock_ns()
         if batch_kind == "mixed":
             prefill_tokens = sum(
                 seq.prefill_chunk_end - seq.prefill_chunk_start
@@ -95,7 +99,15 @@ class LLMEngine:
             num_tokens = sum(seq.prefill_chunk_end - seq.prefill_chunk_start for seq in seqs)
         else:
             num_tokens = -(len(seqs))      #因为decode每个sequence只生成一个token 所以seqs的数量就是token的数量        
-        self.scheduler.postprocess(seqs, token_ids, is_prefill, do_sample, batch_kind)
+        self.scheduler.postprocess(
+            seqs,
+            token_ids,
+            is_prefill,
+            do_sample,
+            batch_kind,
+            decision_now_ns=decision_now_ns,
+            step_end_ns=step_end_ns,
+        )
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
         token_deltas = {
             seq.seq_id: list(
@@ -105,6 +117,7 @@ class LLMEngine:
             )
             for seq in seqs
         }
+        timing_observation = self.scheduler.last_slo_observation()
         self.last_step_observation = {
             "policy_branch": self.scheduler.last_policy_branch,
             "batch_kind": batch_kind,
@@ -118,6 +131,7 @@ class LLMEngine:
                 seq.seq_id for seq in seqs if seq.is_finished
             ],
             "memory": self.model_runner.memory_snapshot(),
+            **timing_observation,
         }
         return outputs, num_tokens      #计算的是每个step的单次增量
 

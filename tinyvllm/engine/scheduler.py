@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from types import MappingProxyType
 
 from tinyvllm.config import Config
 from tinyvllm.engine.sequence import Sequence, SequenceStatus
@@ -82,6 +83,8 @@ class Scheduler:
         self.adaptive_consecutive_mixed_steps = 0
         self._consecutive_prefill_chunks = 0
         self.last_policy_branch: str | None = None
+        self.last_slo_decision = MappingProxyType({})
+        self._last_slo_postprocess: dict = {}
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()     #未分配 KV 缓存块
@@ -179,6 +182,16 @@ class Scheduler:
         self.last_policy_branch = branch
         return scheduled
 
+    def _publish_slo_decision(self, values: dict) -> None:
+        self.last_slo_decision = MappingProxyType(dict(values))
+        self._last_slo_postprocess = {}
+
+    def last_slo_observation(self) -> dict:
+        return {
+            **dict(self.last_slo_decision),
+            **dict(self._last_slo_postprocess),
+        }
+
     def add(self, seq: Sequence):
         self._validate_admission(seq)
         self.waiting.append(seq)
@@ -207,7 +220,11 @@ class Scheduler:
                 f"available_blocks={available_blocks}, block_size={self.block_manager.block_size}"
             )
 
-    def schedule(self) -> tuple[list[Sequence], bool, bool]:
+    def schedule(
+        self,
+        decision_now_ns: int | None = None,
+    ) -> tuple[list[Sequence], bool, bool]:
+        del decision_now_ns
         waiting_depth = len(self.waiting)
         self._maybe_reset_adaptive_mixed_controller()
         if self.chunked_prefill_enabled and self.chunked_prefill_adaptive_mixed:
@@ -583,7 +600,19 @@ class Scheduler:
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int] | None,
                     is_prefill: bool = False, do_sample: bool = True,
-                    batch_kind: str | None = None):
+                    batch_kind: str | None = None, *,
+                    decision_now_ns: int | None = None,
+                    step_end_ns: int | None = None):
+        self._last_slo_postprocess = {}
+        if decision_now_ns is not None or step_end_ns is not None:
+            assert decision_now_ns is not None
+            assert step_end_ns is not None
+            assert step_end_ns >= decision_now_ns
+            self._last_slo_postprocess = {
+                "decision_now_ns": decision_now_ns,
+                "step_end_ns": step_end_ns,
+                "actual_step_duration_ns": step_end_ns - decision_now_ns,
+            }
         if batch_kind == "mixed":
             self._postprocess_mixed(seqs, token_ids)
             self._maybe_reset_adaptive_mixed_controller()
