@@ -182,6 +182,17 @@ def test_canonical_validates_current_source_and_environment_identity():
     assert "--environment-evidence" in runner[canonical:]
 
 
+def test_p4_chain_requires_explicit_predecessor_run_tags():
+    runner = _runner()
+    canonical = runner.index("run-canonical")
+    assert "calibration requires SMOKE_RUN_TAG" in runner
+    assert "canonical requires SMOKE_RUN_TAG" in runner
+    assert "canonical requires CALIBRATION_RUN_TAG" in runner
+    assert "--run-tag" in runner[canonical:]
+    assert "--smoke-run-dir" in runner[canonical:]
+    assert "--calibration-run-dir" in runner[canonical:]
+
+
 def test_runner_forbids_shared_or_checkout_mutation():
     runner = _runner()
     for forbidden in (
@@ -209,6 +220,7 @@ def main():
     test_success_runs_independent_local_verifier_and_checks_exitcode()
     test_ports_are_allocated_only_by_python_orchestrator()
     test_canonical_validates_current_source_and_environment_identity()
+    test_p4_chain_requires_explicit_predecessor_run_tags()
     test_runner_forbids_shared_or_checkout_mutation()
     print("arrival load remote runner tests passed")
 

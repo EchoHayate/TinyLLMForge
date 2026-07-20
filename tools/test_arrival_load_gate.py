@@ -787,6 +787,269 @@ def test_run_canonical_requires_matching_smoke_and_frozen_calibration():
             raise AssertionError("calibration changed after canonical")
 
 
+def test_predecessor_identity_binds_source_environment_and_p4():
+    current = _case_matrix_manifest()
+    predecessor = json.loads(json.dumps(current))
+    gate._validate_predecessor_identity(
+        current,
+        predecessor,
+        "smoke",
+    )
+
+    for field, expected_error in (
+        ("source_tree_sha256", "smoke source_tree_sha256"),
+        ("environment_sha256", "smoke environment_sha256"),
+    ):
+        drifted = json.loads(json.dumps(predecessor))
+        drifted[field] = f"changed-{field}"
+        try:
+            gate._validate_predecessor_identity(
+                current,
+                drifted,
+                "smoke",
+            )
+        except ValueError as exc:
+            assert expected_error in str(exc)
+        else:
+            raise AssertionError(f"{field} drift accepted")
+
+    drifted = json.loads(json.dumps(predecessor))
+    drifted["policy_identity_by_name"]["P4"] = "changed-p4"
+    try:
+        gate._validate_predecessor_identity(
+            current,
+            drifted,
+            "calibration",
+        )
+    except ValueError as exc:
+        assert "calibration P4 policy identity" in str(exc)
+    else:
+        raise AssertionError("P4 predecessor drift accepted")
+
+
+def test_resolved_policy_contract_is_recomputed_from_current_source():
+    contract = gate._resolved_policy_contract()
+    assert set(contract) == {
+        "resolved_policy_config_by_name",
+        "policy_identity_by_name",
+        "canonical_policy_by_name",
+    }
+    assert contract["resolved_policy_config_by_name"]["P4"] == (
+        gate.resolve_policy_config("P4", ADAPTIVE_DEFAULTS)
+    )
+    assert contract["policy_identity_by_name"]["P4"] == (
+        gate.policy_identity(
+            contract["resolved_policy_config_by_name"]["P4"]
+        )
+    )
+
+
+def test_run_canonical_remote_freezes_predecessor_before_launch():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        run_dir = root / "canonical"
+        smoke_dir = root / "smoke"
+        calibration_dir = root / "calibration"
+        smoke_dir.mkdir()
+        calibration_dir.mkdir()
+
+        calibration_manifest = _case_matrix_manifest()
+        calibration_manifest["run_tag"] = "calibration-tag"
+        calibration_manifest["smoke_verification"] = {
+            "status": "PASS",
+            "run_tag": "smoke-tag",
+            "source_tree_sha256": calibration_manifest[
+                "source_tree_sha256"
+            ],
+            "environment_sha256": calibration_manifest[
+                "environment_sha256"
+            ],
+        }
+        workload = [{
+            "request_id": "frozen-request",
+            "scenario": "steady_moderate",
+        }]
+        calibration_manifest["workload_sha256"] = (
+            gate.canonical_json_sha256(workload)
+        )
+        calibration_manifest["calibration"] = {
+            "status": "PASS",
+            "lambda_ref_rps": 1.0,
+        }
+        _write_json(
+            calibration_dir / "run_manifest.json",
+            calibration_manifest,
+        )
+        _write_jsonl(
+            calibration_dir / "workload_manifest.jsonl",
+            workload,
+        )
+        _write_jsonl(
+            calibration_dir / "calibration_manifest.jsonl",
+            [{"offered_rate_rps": 1.0}],
+        )
+        _write_jsonl(
+            calibration_dir / "calibration_rows.jsonl",
+            [{"offered_rate_rps": 1.0, "stable": True}],
+        )
+        _write_json(
+            calibration_dir / "prompt_bank.json",
+            _prompt_bank(),
+        )
+        _write_json(
+            smoke_dir / "run_manifest.json",
+            {
+                **calibration_manifest,
+                "run_tag": "smoke-tag",
+            },
+        )
+        _write_json(
+            smoke_dir / "summary.json",
+            {
+                "classification": "SMOKE_ONLY",
+                "lifecycle_complete": True,
+                "exact_outputs": True,
+            },
+        )
+        _write_json(
+            root / "source_evidence.json",
+            {
+                "tree_sha256": calibration_manifest[
+                    "source_tree_sha256"
+                ],
+            },
+        )
+        environment = {
+            "gpu": "fake-gpu",
+            "torch": "fake-torch",
+        }
+        calibration_manifest["environment_sha256"] = (
+            gate.environment_identity_sha256(environment)
+        )
+        calibration_manifest["smoke_verification"][
+            "environment_sha256"
+        ] = calibration_manifest["environment_sha256"]
+        smoke_manifest = json.loads(
+            (smoke_dir / "run_manifest.json").read_text()
+        )
+        smoke_manifest["environment_sha256"] = calibration_manifest[
+            "environment_sha256"
+        ]
+        smoke_manifest["smoke_verification"][
+            "environment_sha256"
+        ] = calibration_manifest["environment_sha256"]
+        _write_json(smoke_dir / "run_manifest.json", smoke_manifest)
+        _write_json(
+            calibration_dir / "run_manifest.json",
+            calibration_manifest,
+        )
+        _write_json(root / "capability.json", environment)
+
+        original_run_canonical = gate.run_canonical
+        captured = {}
+
+        def fake_run_canonical(**kwargs):
+            captured.update(kwargs)
+            return {"status": "PASS", "case_count": 54}
+
+        gate.run_canonical = fake_run_canonical
+        try:
+            result = gate.run_canonical_remote(
+                run_dir=run_dir,
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_tag="canonical-tag",
+                source_evidence_path=root / "source_evidence.json",
+                environment_evidence_path=root / "capability.json",
+                smoke_run_dir=smoke_dir,
+                calibration_run_dir=calibration_dir,
+            )
+        finally:
+            gate.run_canonical = original_run_canonical
+
+        assert result == {"status": "PASS", "case_count": 54}
+        current = captured["run_manifest"]
+        assert current["run_tag"] == "canonical-tag"
+        assert current["workload_sha256"] == (
+            gate.canonical_json_sha256(workload)
+        )
+        assert json.loads(
+            (run_dir / "run_manifest.json").read_text()
+        ) == current
+        assert (run_dir / "workload_manifest.jsonl").read_bytes() == (
+            calibration_dir / "workload_manifest.jsonl"
+        ).read_bytes()
+        assert captured["resume"] is False
+
+
+def test_run_canonical_remote_rejects_tampered_frozen_workload():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        smoke_dir = root / "smoke"
+        calibration_dir = root / "calibration"
+        smoke_dir.mkdir()
+        calibration_dir.mkdir()
+        contract = gate._resolved_policy_contract()
+        environment = {"gpu": "fake-gpu", "torch": "fake-torch"}
+        environment_sha256 = gate.environment_identity_sha256(
+            environment
+        )
+        source_sha256 = "source-hash"
+        smoke_manifest = {
+            "run_tag": "smoke-tag",
+            "source_tree_sha256": source_sha256,
+            "environment_sha256": environment_sha256,
+            **contract,
+        }
+        calibration_manifest = {
+            **smoke_manifest,
+            "run_tag": "calibration-tag",
+            "workload_sha256": "tampered-hash",
+            "calibration": {"status": "PASS"},
+            "smoke_verification": {
+                "status": "PASS",
+                "run_tag": "smoke-tag",
+                "source_tree_sha256": source_sha256,
+                "environment_sha256": environment_sha256,
+            },
+        }
+        _write_json(smoke_dir / "run_manifest.json", smoke_manifest)
+        _write_json(smoke_dir / "summary.json", {
+            "classification": "SMOKE_ONLY",
+            "lifecycle_complete": True,
+            "exact_outputs": True,
+        })
+        _write_json(
+            calibration_dir / "run_manifest.json",
+            calibration_manifest,
+        )
+        _write_jsonl(
+            calibration_dir / "workload_manifest.jsonl",
+            [{"request_id": "actual-workload"}],
+        )
+        _write_json(root / "source_evidence.json", {
+            "tree_sha256": source_sha256,
+        })
+        _write_json(root / "capability.json", environment)
+
+        try:
+            gate.run_canonical_remote(
+                run_dir=root / "canonical",
+                python_bin="/fake/python",
+                model_path="/fake/model",
+                run_tag="canonical-tag",
+                source_evidence_path=root / "source_evidence.json",
+                environment_evidence_path=root / "capability.json",
+                smoke_run_dir=smoke_dir,
+                calibration_run_dir=calibration_dir,
+            )
+        except ValueError as exc:
+            assert "calibration workload identity" in str(exc)
+        else:
+            raise AssertionError("tampered calibration workload accepted")
+        assert not (root / "canonical" / "processes").exists()
+
+
 def test_run_calibration_doubles_bisects_and_freezes_workload():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -1947,6 +2210,10 @@ def main():
     test_run_canonical_uses_unique_ports_and_resume_is_immutable()
     test_run_canonical_replaces_incomplete_case_and_rejects_identity_drift()
     test_run_canonical_requires_matching_smoke_and_frozen_calibration()
+    test_predecessor_identity_binds_source_environment_and_p4()
+    test_resolved_policy_contract_is_recomputed_from_current_source()
+    test_run_canonical_remote_freezes_predecessor_before_launch()
+    test_run_canonical_remote_rejects_tampered_frozen_workload()
     test_run_calibration_doubles_bisects_and_freezes_workload()
     test_snapshot_source_stages_matching_bytes_and_archive()
     test_arrival_load_artifacts_are_the_only_new_ignored_experiment_root()

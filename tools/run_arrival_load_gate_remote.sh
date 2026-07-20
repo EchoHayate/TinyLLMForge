@@ -351,8 +351,11 @@ case "${MODE}" in
       --run-dir "${REMOTE_DIR}/artifacts.work"
       --python-bin "${REMOTE_PYTHON}"
       --model-path "${MODEL_PATH}"
+      --run-tag "${RUN_TAG}"
       --source-evidence "${REMOTE_DIR}/staging/source_evidence.json"
       --environment-evidence "${REMOTE_DIR}/staging/capability.json"
+      --smoke-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${SMOKE_RUN_TAG:?canonical requires SMOKE_RUN_TAG}/artifacts"
+      --calibration-run-dir "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/${CALIBRATION_RUN_TAG:?canonical requires CALIBRATION_RUN_TAG}/artifacts"
     )
     if [[ "${RESUME}" == 1 ]]; then
       REMOTE_COMMAND+=(--resume)
