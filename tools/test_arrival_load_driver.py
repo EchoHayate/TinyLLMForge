@@ -214,6 +214,59 @@ class TokenMismatchEngine(FakeEngine):
         return outputs, num_tokens
 
 
+class P5FakeEngine(FakeEngine):
+    def step(self):
+        outputs, num_tokens = super().step()
+        observation = self.last_step_observation
+        scheduled_seq_id = observation["scheduled"][0]["seq_id"]
+        observation.update({
+            "decision_now_ns": 1_000,
+            "target_gap_ns": 64_000_000,
+            "reserve_ns": 8_000_000,
+            "oldest_decode_seq_id": scheduled_seq_id,
+            "oldest_decode_progress_ns": 900,
+            "oldest_decode_age_ns": 100,
+            "remaining_slack_ns": 55_999_900,
+            "cost_intercept_ns": 4_000_000,
+            "cost_per_prefill_token_ns": 100_000,
+            "candidate_chunk_tokens": [
+                128, 112, 96, 80, 64, 48, 32, 16,
+            ],
+            "predicted_step_ns": 10_400_000,
+            "selected_chunk_tokens": 64,
+            "actual_prefill_tokens": 64,
+            "scheduled_decode_seq_ids": [scheduled_seq_id],
+            "demand_state_before": "active",
+            "demand_state_after": "active",
+            "suppression_reason": None,
+            "clock_invalid": False,
+            "clock_invalid_reason": None,
+            "step_end_ns": 1_075,
+            "actual_step_duration_ns": 75,
+            "decode_progress_updates": {
+                str(scheduled_seq_id): 1_075,
+            },
+            "finished_progress_entries_removed": (
+                [scheduled_seq_id] if outputs else []
+            ),
+        })
+        return outputs, num_tokens
+
+
+class MissingP5EvidenceEngine(P5FakeEngine):
+    def step(self):
+        outputs, num_tokens = super().step()
+        del self.last_step_observation["remaining_slack_ns"]
+        return outputs, num_tokens
+
+
+class InvalidP5EvidenceTypeEngine(P5FakeEngine):
+    def step(self):
+        outputs, num_tokens = super().step()
+        self.last_step_observation["clock_invalid"] = 0
+        return outputs, num_tokens
+
+
 def _case_spec(**overrides):
     spec = {
         "case_id": "steady-P0-r0",
@@ -332,6 +385,63 @@ def test_driver_preserves_adaptive_controller_snapshots():
             assert snapshot["adaptive_consecutive_mixed_steps"] == 2
     finally:
         temporary.cleanup()
+
+
+def test_driver_preserves_complete_p5_decision_and_postprocess_evidence():
+    temporary, output_dir, result = _run(
+        engine_factory=P5FakeEngine,
+        policy="P5",
+    )
+    try:
+        assert result["status"] == "PASS"
+        row = _jsonl(output_dir / "scheduler_trace.jsonl")[0]
+        scheduled_seq_id = row["scheduled"][0]["seq_id"]
+        assert row["decision_now_ns"] == 1_000
+        assert row["step_end_ns"] == 1_075
+        assert row["actual_step_duration_ns"] == 75
+        assert row["oldest_decode_seq_id"] == scheduled_seq_id
+        assert row["selected_chunk_tokens"] == 64
+        assert row["scheduled_decode_seq_ids"] == [scheduled_seq_id]
+        assert row["decode_progress_updates"] == {
+            str(scheduled_seq_id): 1_075,
+        }
+        assert row["driver_step_start_ns"] < row["driver_step_end_ns"]
+    finally:
+        temporary.cleanup()
+
+
+def test_driver_never_overwrites_engine_owned_timestamps():
+    temporary, output_dir, result = _run(
+        engine_factory=P5FakeEngine,
+        policy="P5",
+    )
+    try:
+        assert result["status"] == "PASS"
+        row = _jsonl(output_dir / "scheduler_trace.jsonl")[0]
+        assert row["decision_now_ns"] == 1_000
+        assert row["step_end_ns"] == 1_075
+        assert row["driver_step_start_ns"] != row["decision_now_ns"]
+        timeline = _jsonl(output_dir / "request_timeline.jsonl")
+        assert timeline[0]["first_token_ns"] == 1_075
+    finally:
+        temporary.cleanup()
+
+
+def test_driver_rejects_missing_or_mistyped_p5_evidence():
+    for engine_factory, expected_error in (
+        (MissingP5EvidenceEngine, "remaining_slack_ns"),
+        (InvalidP5EvidenceTypeEngine, "clock_invalid"),
+    ):
+        temporary, output_dir, result = _run(
+            engine_factory=engine_factory,
+            policy="P5",
+        )
+        try:
+            assert result["status"] == "INCOMPLETE"
+            assert result["error_type"] == "malformed_step_observation"
+            assert expected_error in result["error"]
+        finally:
+            temporary.cleanup()
 
 
 def test_driver_watchdog_preserves_partial_append_only_evidence():
@@ -494,6 +604,9 @@ def main():
     test_driver_binds_new_waiting_sequence_and_accounts_injection_lag()
     test_driver_records_multiple_tokens_at_one_step_timestamp()
     test_driver_preserves_adaptive_controller_snapshots()
+    test_driver_preserves_complete_p5_decision_and_postprocess_evidence()
+    test_driver_never_overwrites_engine_owned_timestamps()
+    test_driver_rejects_missing_or_mistyped_p5_evidence()
     test_driver_watchdog_preserves_partial_append_only_evidence()
     test_driver_drain_timeout_starts_after_final_scheduled_arrival()
     test_driver_fails_closed_on_admission_exception()

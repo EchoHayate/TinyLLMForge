@@ -15,6 +15,34 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+P5_DECISION_FIELDS = (
+    "decision_now_ns",
+    "target_gap_ns",
+    "reserve_ns",
+    "oldest_decode_seq_id",
+    "oldest_decode_progress_ns",
+    "oldest_decode_age_ns",
+    "remaining_slack_ns",
+    "cost_intercept_ns",
+    "cost_per_prefill_token_ns",
+    "candidate_chunk_tokens",
+    "predicted_step_ns",
+    "selected_chunk_tokens",
+    "actual_prefill_tokens",
+    "scheduled_decode_seq_ids",
+    "demand_state_before",
+    "demand_state_after",
+    "suppression_reason",
+    "clock_invalid",
+    "clock_invalid_reason",
+)
+P5_POSTPROCESS_FIELDS = (
+    "step_end_ns",
+    "actual_step_duration_ns",
+    "decode_progress_updates",
+    "finished_progress_entries_removed",
+)
+
 
 class DriverError(RuntimeError):
     def __init__(self, error_type: str, message: str):
@@ -277,6 +305,101 @@ def _memory_row(observation: dict, step_index: int, timestamp_ns: int):
     }
 
 
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_int_list(observation: dict, field: str):
+    value = observation[field]
+    if not isinstance(value, list) or any(
+        not _is_int(item) for item in value
+    ):
+        raise DriverError(
+            "malformed_step_observation",
+            f"{field} must be a list of integers",
+        )
+
+
+def _validate_p5_observation(observation: dict):
+    required_fields = P5_DECISION_FIELDS + P5_POSTPROCESS_FIELDS
+    missing = [
+        field for field in required_fields
+        if field not in observation
+    ]
+    if missing:
+        raise DriverError(
+            "malformed_step_observation",
+            "missing P5 observation fields: " + ", ".join(missing),
+        )
+
+    required_int_fields = (
+        "decision_now_ns",
+        "target_gap_ns",
+        "reserve_ns",
+        "cost_intercept_ns",
+        "cost_per_prefill_token_ns",
+        "actual_prefill_tokens",
+        "step_end_ns",
+        "actual_step_duration_ns",
+    )
+    nullable_int_fields = (
+        "oldest_decode_seq_id",
+        "oldest_decode_progress_ns",
+        "oldest_decode_age_ns",
+        "remaining_slack_ns",
+        "predicted_step_ns",
+        "selected_chunk_tokens",
+    )
+    for field in required_int_fields:
+        if not _is_int(observation[field]):
+            raise DriverError(
+                "malformed_step_observation",
+                f"{field} must be an integer",
+            )
+    for field in nullable_int_fields:
+        value = observation[field]
+        if value is not None and not _is_int(value):
+            raise DriverError(
+                "malformed_step_observation",
+                f"{field} must be an integer or null",
+            )
+
+    for field in (
+        "candidate_chunk_tokens",
+        "scheduled_decode_seq_ids",
+        "finished_progress_entries_removed",
+    ):
+        _validate_int_list(observation, field)
+    for field in ("demand_state_before", "demand_state_after"):
+        if not isinstance(observation[field], str):
+            raise DriverError(
+                "malformed_step_observation",
+                f"{field} must be a string",
+            )
+    for field in ("suppression_reason", "clock_invalid_reason"):
+        value = observation[field]
+        if value is not None and not isinstance(value, str):
+            raise DriverError(
+                "malformed_step_observation",
+                f"{field} must be a string or null",
+            )
+    if not isinstance(observation["clock_invalid"], bool):
+        raise DriverError(
+            "malformed_step_observation",
+            "clock_invalid must be a boolean",
+        )
+
+    progress_updates = observation["decode_progress_updates"]
+    if not isinstance(progress_updates, dict) or any(
+        not isinstance(seq_id, str) or not _is_int(timestamp_ns)
+        for seq_id, timestamp_ns in progress_updates.items()
+    ):
+        raise DriverError(
+            "malformed_step_observation",
+            "decode_progress_updates must map strings to integers",
+        )
+
+
 def run_case(
     *,
     case_spec: dict,
@@ -400,24 +523,30 @@ def run_case(
                 now_ns = clock_ns()
 
             if not engine.is_finished():
-                step_start_ns = clock_ns()
+                driver_step_start_ns = clock_ns()
                 outputs, num_tokens = engine.step()
-                step_end_ns = clock_ns()
+                driver_step_end_ns = clock_ns()
                 observation = dict(
                     engine.last_step_observation or {}
                 )
                 observation.update({
                     "step_index": step_index,
-                    "step_start_ns": step_start_ns,
-                    "step_end_ns": step_end_ns,
+                    "driver_step_start_ns": driver_step_start_ns,
+                    "driver_step_end_ns": driver_step_end_ns,
                     "num_tokens_returned": num_tokens,
                 })
+                if case_spec["policy"] == "P5":
+                    _validate_p5_observation(observation)
+                token_event_ns = observation.get(
+                    "step_end_ns",
+                    driver_step_end_ns,
+                )
                 scheduler_writer.append(observation)
                 memory_writer.append(
                     _memory_row(
                         observation,
                         step_index,
-                        step_end_ns,
+                        driver_step_end_ns,
                     )
                 )
 
@@ -440,7 +569,7 @@ def run_case(
                     lifecycle = lifecycle_by_request[request_id]
                     if lifecycle["first_scheduled_ns"] is None:
                         lifecycle["first_scheduled_ns"] = (
-                            step_start_ns
+                            driver_step_start_ns
                         )
 
                 token_deltas = observation.get(
@@ -475,9 +604,9 @@ def run_case(
                     lifecycle = lifecycle_by_request[request_id]
                     if delta:
                         if lifecycle["first_token_ns"] is None:
-                            lifecycle["first_token_ns"] = step_end_ns
+                            lifecycle["first_token_ns"] = token_event_ns
                         lifecycle["token_timestamps_ns"].extend(
-                            [step_end_ns] * len(delta)
+                            [token_event_ns] * len(delta)
                         )
                         lifecycle["output_token_ids"].extend(delta)
 
@@ -517,7 +646,7 @@ def run_case(
                             f"output token count mismatch for sequence "
                             f"{seq_id}",
                         )
-                    lifecycle["completion_ns"] = step_end_ns
+                    lifecycle["completion_ns"] = token_event_ns
                     lifecycle["finish_reason"] = "length"
                 step_index += 1
                 result["step_count"] = step_index
