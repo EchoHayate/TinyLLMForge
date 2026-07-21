@@ -258,34 +258,68 @@ def _load_json(path: Path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _parse_case(case_spec: dict):
-    required = {
-        "batch_size",
-        "trajectory",
-        "mode",
-        "repetition",
-        "graph_size",
-    }
-    missing = sorted(required - set(case_spec))
-    if missing:
-        raise ValueError(f"case spec missing fields: {missing}")
-    case = contract.DiagnosticCase(
-        batch_size=int(case_spec["batch_size"]),
-        trajectory=str(case_spec["trajectory"]),
-        mode=str(case_spec["mode"]),
-        repetition=int(case_spec["repetition"]),
-        graph_size=int(case_spec["graph_size"]),
+def _all_frozen_cases():
+    return (
+        tuple(contract.build_diagnostic_matrix())
+        + tuple(contract.build_legacy_compatibility_matrix())
     )
-    expected = {candidate.case_id: candidate for candidate in (
-        contract.build_diagnostic_matrix()
-    )}
-    if case.case_id not in expected or case != expected[case.case_id]:
-        raise ValueError(f"case is outside frozen diagnostic matrix: {case}")
+
+
+def _parse_case(case_spec: dict):
+    case_id = str(case_spec.get("case_id", ""))
+    expected = {case.case_id: case for case in _all_frozen_cases()}
+    if case_id not in expected:
+        raise ValueError(f"case is outside frozen matrices: {case_id}")
+    case = expected[case_id]
+    if case_spec != {"case_id": case.case_id, **asdict(case)}:
+        raise ValueError(f"case identity drift: {case.case_id}")
     return case
 
 
+def execution_split_count(case) -> int:
+    return int(case.flash_attn_num_splits)
+
+
+def _execution_name(case) -> str:
+    if hasattr(case, "mode"):
+        return case.mode
+    return case.policy
+
+
+def _is_reference_case(case) -> bool:
+    return _execution_name(case) in {
+        "candidate_eager",
+        "legacy_eager_auto",
+    }
+
+
+def _is_graph_case(case) -> bool:
+    return hasattr(case, "mode") and case.mode != "candidate_eager"
+
+
+def policy_evidence(case, flash_attn_version: str) -> dict:
+    return {
+        "flash_attn_version": str(flash_attn_version),
+        "split_policy_name": case.split_policy_name,
+        "flash_attn_num_splits": case.flash_attn_num_splits,
+        "comparison_policy_name": (
+            "same_policy_fixed16"
+            if hasattr(case, "mode")
+            else "legacy_auto_vs_fixed16"
+        ),
+    }
+
+
+def _flash_attn_version() -> str:
+    try:
+        import flash_attn
+    except Exception as exc:
+        return f"unavailable:{type(exc).__name__}"
+    return str(getattr(flash_attn, "__version__", "unknown"))
+
+
 def _load_reference_tokens(path: Path, case) -> list[list[int]] | None:
-    if case.mode == "eager":
+    if _is_reference_case(case):
         return None
     value = _load_json(path)
     if not isinstance(value, list):
@@ -361,12 +395,13 @@ def _validate_runtime_config(llm, case) -> None:
         raise ValueError("diagnostic requires max_num_seqs >= 32")
     if config.hf_config.torch_dtype != torch.bfloat16:
         raise ValueError("diagnostic requires actual BF16 model dtype")
-    expected_graph_size = contract.diagnostic_graph_size(
-        case.batch_size,
-        case.mode,
-    )
-    if case.graph_size != expected_graph_size:
-        raise ValueError("case graph size does not match frozen contract")
+    if hasattr(case, "mode"):
+        expected_graph_size = contract.diagnostic_graph_size(
+            case.batch_size,
+            case.mode,
+        )
+        if case.graph_size != expected_graph_size:
+            raise ValueError("case graph size does not match frozen contract")
     unsupported = {
         "quantization": config.quantization is not None,
         "cpu_offload": config.cpu_offload,
@@ -482,6 +517,13 @@ def _compute_logits_without_autograd(model, hidden_states):
         return model.compute_logits(hidden_states)
 
 
+def _run_with_split_policy(num_splits: int, operation):
+    from tinyvllm.utils.context import temporary_flash_attn_num_splits
+
+    with temporary_flash_attn_num_splits(num_splits):
+        return operation()
+
+
 def _capture_decode_graph(runner, case, dynamic_context):
     import torch
 
@@ -558,15 +600,7 @@ def _capture_decode_graph(runner, case, dynamic_context):
             context_lens=context_lens,
             block_tables=block_tables,
         )
-        outputs.copy_(
-            _forward_without_autograd(
-                runner.model,
-                input_ids,
-                positions,
-            )
-        )
-        torch.cuda.synchronize()
-        with torch.cuda.graph(graph):
+        def capture():
             outputs.copy_(
                 _forward_without_autograd(
                     runner.model,
@@ -574,7 +608,18 @@ def _capture_decode_graph(runner, case, dynamic_context):
                     positions,
                 )
             )
-        torch.cuda.synchronize()
+            torch.cuda.synchronize()
+            with torch.cuda.graph(graph):
+                outputs.copy_(
+                    _forward_without_autograd(
+                        runner.model,
+                        input_ids,
+                        positions,
+                    )
+                )
+            torch.cuda.synchronize()
+
+        _run_with_split_policy(execution_split_count(case), capture)
     finally:
         for handle in handles:
             handle.remove()
@@ -607,7 +652,7 @@ def _dynamic_decode_inputs(runner, seqs) -> dict:
     }
 
 
-def _run_eager_step(runner, dynamic):
+def _run_eager_step(runner, dynamic, case):
     import torch
 
     layers = runner.model.model.layers
@@ -621,10 +666,13 @@ def _run_eager_step(runner, dynamic):
     )
     handles = _register_layer_hooks(layers, layer_outputs)
     try:
-        logits = _forward_and_logits_without_autograd(
-            runner.model,
-            dynamic["input_ids"],
-            dynamic["positions"],
+        logits = _run_with_split_policy(
+            execution_split_count(case),
+            lambda: _forward_and_logits_without_autograd(
+                runner.model,
+                dynamic["input_ids"],
+                dynamic["positions"],
+            ),
         )
         torch.cuda.synchronize()
         return (
@@ -636,7 +684,7 @@ def _run_eager_step(runner, dynamic):
             handle.remove()
 
 
-def _run_graph_step(runner, captured, dynamic, active_size: int):
+def _run_graph_step(runner, captured, dynamic, active_size: int, case):
     import torch
 
     from tinyvllm.utils.context import set_context
@@ -665,17 +713,23 @@ def _run_graph_step(runner, captured, dynamic, active_size: int):
         context_lens=captured.context_lens,
         block_tables=captured.block_tables,
     )
-    captured.graph.replay()
-    logits = _compute_logits_without_autograd(
-        runner.model,
-        captured.outputs[:active_size],
-    )
-    torch.cuda.synchronize()
-    return (
-        logits.detach().cpu().contiguous(),
-        captured.layer_outputs[
-            :, :, :active_size
-        ].detach().cpu().contiguous(),
+    def replay():
+        captured.graph.replay()
+        logits = _compute_logits_without_autograd(
+            runner.model,
+            captured.outputs[:active_size],
+        )
+        torch.cuda.synchronize()
+        return (
+            logits.detach().cpu().contiguous(),
+            captured.layer_outputs[
+                :, :, :active_size
+            ].detach().cpu().contiguous(),
+        )
+
+    return _run_with_split_policy(
+        execution_split_count(case),
+        replay,
     )
 
 
@@ -714,10 +768,12 @@ def _save_tensor_shard(
     path: Path,
     case,
     tensor,
+    evidence: dict,
 ) -> dict:
     shard = {
         "schema_version": 1,
         "case_id": case.case_id,
+        **evidence,
         "dtype": str(tensor.dtype),
         "shape": list(tensor.shape),
         "step_ids": list(range(contract.MEASURED_STEPS)),
@@ -738,12 +794,14 @@ def _save_kv_shard(
     path: Path,
     case,
     step_payloads: list[dict],
+    evidence: dict,
 ) -> dict:
     import torch
 
     shard = {
         "schema_version": 1,
         "case_id": case.case_id,
+        **evidence,
         "step_ids": list(range(contract.MEASURED_STEPS)),
         "row_ids": list(range(case.batch_size)),
         "slot_ids": [payload["slot_ids"] for payload in step_payloads],
@@ -805,10 +863,12 @@ def run_case(
     case = _parse_case(_load_json(case_spec_path))
     reference_tokens = _load_reference_tokens(reference_tokens_path, case)
     model_preflight = _validate_model_preflight(model_path)
+    evidence = policy_evidence(case, _flash_attn_version())
     _atomic_write_json(
         output_dir / "process_environment.json",
         {
             **_process_environment(),
+            **evidence,
             "model_preflight": model_preflight,
             "case": asdict(case),
         },
@@ -828,7 +888,7 @@ def run_case(
         _reserve_decode_slots(llm, seqs)
         first_dynamic = _dynamic_decode_inputs(runner, seqs)
         captured = None
-        if case.mode != "eager":
+        if _is_graph_case(case):
             captured = _capture_decode_graph(
                 runner,
                 case,
@@ -853,11 +913,14 @@ def run_case(
                 int(slot) for slot in dynamic["slot_mapping"].tolist()
             ]
             inactive_slots = (
-                [0] if case.graph_size > case.batch_size else []
+                [0]
+                if getattr(case, "graph_size", case.batch_size)
+                > case.batch_size
+                else []
             )
             observation_plan = build_kv_observation_plan(
                 active_slots=active_slots,
-                graph_size=case.graph_size,
+                graph_size=getattr(case, "graph_size", case.batch_size),
                 inactive_slots=inactive_slots,
                 total_slots=(
                     runner.kv_cache.size(2) * runner.block_size
@@ -868,14 +931,15 @@ def run_case(
             )
             before = runner.snapshot_kv_slots(observation_slots)
 
-            if case.mode == "eager":
-                logits, layers = _run_eager_step(runner, dynamic)
+            if not _is_graph_case(case):
+                logits, layers = _run_eager_step(runner, dynamic, case)
             else:
                 logits, layers = _run_graph_step(
                     runner,
                     captured,
                     dynamic,
                     case.batch_size,
+                    case,
                 )
             after = runner.snapshot_kv_slots(observation_slots)
             observed_tokens = [
@@ -892,14 +956,17 @@ def run_case(
 
             if absolute_step >= contract.WARMUP_STEPS:
                 measured_step = absolute_step - contract.WARMUP_STEPS
+                case_identity = {
+                    **asdict(case),
+                    **evidence,
+                }
                 raw_rows.append(
                     build_step_row(
+                        **case_identity,
                         case_id=case.case_id,
                         step_id=measured_step,
                         absolute_step=absolute_step,
-                        mode=case.mode,
-                        batch_size=case.batch_size,
-                        graph_size=case.graph_size,
+                        execution_name=_execution_name(case),
                         active_write_slots=active_slots,
                         observed_argmax_token_ids=observed_tokens,
                         reference_next_input_token_ids=reference_row,
@@ -907,6 +974,7 @@ def run_case(
                 )
                 layer_rows.append(
                     {
+                        **evidence,
                         "case_id": case.case_id,
                         "step_id": measured_step,
                         "required_layer_count": (
@@ -919,6 +987,7 @@ def run_case(
                 )
                 kv_rows.append(
                     {
+                        **evidence,
                         "case_id": case.case_id,
                         "step_id": measured_step,
                         **observation_plan,
@@ -936,7 +1005,7 @@ def run_case(
                 )
             reset_context()
 
-        if case.mode == "eager":
+        if _is_reference_case(case):
             _atomic_write_json(
                 reference_tokens_path,
                 observed_reference_tokens,
@@ -955,6 +1024,7 @@ def run_case(
             ),
             case=case,
             tensor=logits_tensor,
+            evidence=evidence,
         )
         artifact_records["layers"] = _save_tensor_shard(
             output_dir=output_dir,
@@ -966,6 +1036,7 @@ def run_case(
             ),
             case=case,
             tensor=layers_tensor,
+            evidence=evidence,
         )
         artifact_records["kv"] = _save_kv_shard(
             output_dir=output_dir,
@@ -977,6 +1048,7 @@ def run_case(
             ),
             case=case,
             step_payloads=kv_step_payloads,
+            evidence=evidence,
         )
         _write_jsonl(output_dir / "raw_rows.jsonl", raw_rows)
         _write_jsonl(
@@ -998,6 +1070,7 @@ def run_case(
         result = {
             "schema_version": 1,
             "status": "PASS",
+            **evidence,
             "case": asdict(case),
             "case_id": case.case_id,
             "artifacts": artifact_records,

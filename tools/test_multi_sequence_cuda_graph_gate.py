@@ -10,6 +10,8 @@ import json
 import shlex
 import sys
 import tempfile
+import types
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -48,6 +50,41 @@ def load_diagnostic_module_without_gpu():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def install_fake_context_module():
+    module_name = "tinyvllm.utils.context"
+    tinyvllm_package = types.ModuleType("tinyvllm")
+    tinyvllm_package.__path__ = [str(ROOT / "tinyvllm")]
+    utils_package = types.ModuleType("tinyvllm.utils")
+    utils_package.__path__ = [str(ROOT / "tinyvllm" / "utils")]
+    context_module = types.ModuleType(module_name)
+    state = types.SimpleNamespace(flash_attn_num_splits=0)
+
+    def get_context():
+        return state
+
+    def reset_context():
+        state.flash_attn_num_splits = 0
+
+    @contextmanager
+    def temporary_flash_attn_num_splits(num_splits):
+        previous = state.flash_attn_num_splits
+        state.flash_attn_num_splits = int(num_splits)
+        try:
+            yield state
+        finally:
+            state.flash_attn_num_splits = previous
+
+    context_module.get_context = get_context
+    context_module.reset_context = reset_context
+    context_module.temporary_flash_attn_num_splits = (
+        temporary_flash_attn_num_splits
+    )
+    sys.modules["tinyvllm"] = tinyvllm_package
+    sys.modules["tinyvllm.utils"] = utils_package
+    sys.modules[module_name] = context_module
+    return context_module
 
 
 def load_verifier():
@@ -600,6 +637,94 @@ def test_direct_model_forward_and_logits_disable_autograd():
         torch.tensor([0]),
     )
     assert observed.tolist() == [False, False]
+
+
+def test_diagnostic_case_parser_rejects_split_policy_drift():
+    diagnostic = load_diagnostic_module_without_gpu()
+    case = contract.build_diagnostic_matrix()[0]
+    case_spec = {"case_id": case.case_id, **asdict(case)}
+    case_spec["flash_attn_num_splits"] = 0
+
+    try:
+        diagnostic._parse_case(case_spec)
+    except ValueError as exc:
+        assert "drift" in str(exc) or "outside frozen" in str(exc)
+    else:
+        raise AssertionError("split policy drift was accepted")
+
+
+def test_execution_policy_maps_gate_cases_to_expected_split():
+    diagnostic = load_diagnostic_module_without_gpu()
+
+    for case in contract.build_diagnostic_matrix():
+        assert diagnostic.execution_split_count(case) == 16
+    for case in contract.build_legacy_compatibility_matrix():
+        expected = 0 if case.policy == "legacy_eager_auto" else 16
+        assert diagnostic.execution_split_count(case) == expected
+
+
+def test_candidate_eager_forward_observes_fixed16_and_restores_auto():
+    diagnostic = load_diagnostic_module_without_gpu()
+    context = install_fake_context_module()
+    context.reset_context()
+    seen = []
+    try:
+        result = diagnostic._run_with_split_policy(
+            16,
+            lambda: seen.append(
+                context.get_context().flash_attn_num_splits
+            ),
+        )
+        assert result is None
+        assert seen == [16]
+        assert context.get_context().flash_attn_num_splits == 0
+    finally:
+        context.reset_context()
+
+
+def test_legacy_eager_forward_observes_auto():
+    diagnostic = load_diagnostic_module_without_gpu()
+    context = install_fake_context_module()
+    context.reset_context()
+    seen = []
+    try:
+        diagnostic._run_with_split_policy(
+            0,
+            lambda: seen.append(
+                context.get_context().flash_attn_num_splits
+            ),
+        )
+        assert seen == [0]
+        assert context.get_context().flash_attn_num_splits == 0
+    finally:
+        context.reset_context()
+
+
+def test_policy_evidence_distinguishes_same_policy_and_legacy_comparison():
+    diagnostic = load_diagnostic_module_without_gpu()
+    diagnostic_case = contract.build_diagnostic_matrix()[0]
+    compatibility_cases = contract.build_legacy_compatibility_matrix()
+    legacy_case = next(
+        case
+        for case in compatibility_cases
+        if case.policy == "legacy_eager_auto"
+    )
+
+    assert diagnostic.policy_evidence(
+        diagnostic_case,
+        "2.7.4",
+    ) == {
+        "flash_attn_version": "2.7.4",
+        "split_policy_name": "fixed16",
+        "flash_attn_num_splits": 16,
+        "comparison_policy_name": "same_policy_fixed16",
+    }
+    assert diagnostic.policy_evidence(legacy_case, "2.7.4") == {
+        "flash_attn_version": "2.7.4",
+        "split_policy_name": "auto",
+        "flash_attn_num_splits": 0,
+        "comparison_policy_name": "legacy_auto_vs_fixed16",
+    }
 
 
 def test_artifact_record_path_is_relative_and_resolves_after_relocation():
@@ -1744,6 +1869,11 @@ if __name__ == "__main__":
         test_tensor_shard_schema_accepts_ordered_complete_metadata,
         test_direct_model_forward_disables_autograd,
         test_direct_model_forward_and_logits_disable_autograd,
+        test_diagnostic_case_parser_rejects_split_policy_drift,
+        test_execution_policy_maps_gate_cases_to_expected_split,
+        test_candidate_eager_forward_observes_fixed16_and_restores_auto,
+        test_legacy_eager_forward_observes_auto,
+        test_policy_evidence_distinguishes_same_policy_and_legacy_comparison,
         test_artifact_record_path_is_relative_and_resolves_after_relocation,
         test_verifier_reconstructs_complete_diagnostic,
         test_verifier_is_independent_from_diagnostic_producer,
