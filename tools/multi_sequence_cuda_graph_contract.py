@@ -16,44 +16,33 @@ DIAGNOSTIC_TRAJECTORIES = (
     "duplicate-and-distinct",
 )
 AUTO_FLASH_ATTN_NUM_SPLITS = 0
-MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS = 16
+HEURISTIC_POLICY_NAME = "fa2_263_heuristic_exact_width"
+HEURISTIC_POLICY_CASE_ID = "fa2-263-exact-width"
 SAME_POLICY_MODES = (
-    "candidate_eager",
-    "exact_graph_fixed16",
-    "rounded_graph_fixed16",
+    "candidate_eager_heuristic",
+    "exact_graph_heuristic",
+    "rounded_graph_heuristic",
 )
 LEGACY_COMPATIBILITY_POLICIES = (
     "legacy_eager_auto",
-    "candidate_eager_fixed16",
+    "candidate_eager_heuristic",
 )
 SPLIT_POLICIES = {
     "legacy_eager_auto": {
         "split_policy_name": "auto",
         "flash_attn_num_splits": AUTO_FLASH_ATTN_NUM_SPLITS,
     },
-    "candidate_eager_fixed16": {
-        "split_policy_name": "fixed16",
-        "flash_attn_num_splits": (
-            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-        ),
+    "candidate_eager_heuristic": {
+        "split_policy_name": HEURISTIC_POLICY_NAME,
+        "flash_attn_num_splits": None,
     },
-    "candidate_eager": {
-        "split_policy_name": "fixed16",
-        "flash_attn_num_splits": (
-            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-        ),
+    "exact_graph_heuristic": {
+        "split_policy_name": HEURISTIC_POLICY_NAME,
+        "flash_attn_num_splits": None,
     },
-    "exact_graph_fixed16": {
-        "split_policy_name": "fixed16",
-        "flash_attn_num_splits": (
-            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-        ),
-    },
-    "rounded_graph_fixed16": {
-        "split_policy_name": "fixed16",
-        "flash_attn_num_splits": (
-            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-        ),
+    "rounded_graph_heuristic": {
+        "split_policy_name": HEURISTIC_POLICY_NAME,
+        "flash_attn_num_splits": None,
     },
 }
 ROUNDED_GRAPH_SIZE = {2: 4, 3: 4, 4: 8, 5: 8, 8: 16, 9: 16, 16: 32}
@@ -95,14 +84,14 @@ class DiagnosticCase:
     repetition: int
     graph_size: int
     split_policy_name: str
-    flash_attn_num_splits: int
+    flash_attn_num_splits: int | None
 
     @property
     def case_id(self) -> str:
         return (
             f"b{self.batch_size}__{self.trajectory}__"
-            f"{self.mode}__{self.split_policy_name}"
-            f"-s{self.flash_attn_num_splits}__r{self.repetition}"
+            f"{self.mode}__{_case_id_policy_name(self.split_policy_name)}"
+            f"__r{self.repetition}"
         )
 
 
@@ -113,7 +102,7 @@ class LegacyCompatibilityCase:
     policy: str
     repetition: int
     split_policy_name: str
-    flash_attn_num_splits: int
+    flash_attn_num_splits: int | None
 
     @property
     def pair_id(self) -> str:
@@ -124,13 +113,25 @@ class LegacyCompatibilityCase:
 
     @property
     def case_id(self) -> str:
+        split_suffix = (
+            ""
+            if self.flash_attn_num_splits is None
+            else f"-s{self.flash_attn_num_splits}"
+        )
         return (
             f"{self.pair_id}__{self.policy}"
-            f"__{self.split_policy_name}-s{self.flash_attn_num_splits}"
+            f"__{_case_id_policy_name(self.split_policy_name)}"
+            f"{split_suffix}"
         )
 
 
-def split_policy_for(execution_name: str) -> tuple[str, int]:
+def _case_id_policy_name(split_policy_name: str) -> str:
+    if split_policy_name == HEURISTIC_POLICY_NAME:
+        return HEURISTIC_POLICY_CASE_ID
+    return split_policy_name
+
+
+def split_policy_for(execution_name: str) -> tuple[str, int | None]:
     try:
         policy = SPLIT_POLICIES[execution_name]
     except KeyError as exc:
@@ -139,7 +140,11 @@ def split_policy_for(execution_name: str) -> tuple[str, int]:
         ) from exc
     return (
         str(policy["split_policy_name"]),
-        int(policy["flash_attn_num_splits"]),
+        (
+            None
+            if policy["flash_attn_num_splits"] is None
+            else int(policy["flash_attn_num_splits"])
+        ),
     )
 
 
@@ -148,7 +153,7 @@ def diagnostic_graph_size(batch_size: int, mode: str) -> int:
         raise ValueError(f"unsupported batch size: {batch_size}")
     if mode not in SAME_POLICY_MODES:
         raise ValueError(f"unsupported mode: {mode}")
-    if mode == "rounded_graph_fixed16":
+    if mode == "rounded_graph_heuristic":
         return ROUNDED_GRAPH_SIZE[batch_size]
     return batch_size
 
@@ -368,7 +373,9 @@ def classify_diagnostic(
     matrix = build_diagnostic_matrix()
     expected_matrix_ids = {case.case_id for case in matrix}
     candidate_cases = tuple(
-        case for case in matrix if case.mode != "candidate_eager"
+        case
+        for case in matrix
+        if case.mode != "candidate_eager_heuristic"
     )
     expected_candidate_ids = {case.case_id for case in candidate_cases}
 
@@ -436,12 +443,12 @@ def classify_diagnostic(
         }
 
     mode_correctness = {
-        "exact_graph_fixed16": True,
-        "rounded_graph_fixed16": True,
+        "exact_graph_heuristic": True,
+        "rounded_graph_heuristic": True,
     }
     corrupt_case_ids = {
-        "exact_graph_fixed16": [],
-        "rounded_graph_fixed16": [],
+        "exact_graph_heuristic": [],
+        "rounded_graph_heuristic": [],
     }
     for case in candidate_cases:
         correct = _candidate_row_correct(
@@ -456,18 +463,20 @@ def classify_diagnostic(
     return {
         "classification": (
             "EXACT_REPLAY_CORRECT"
-            if mode_correctness["exact_graph_fixed16"]
+            if mode_correctness["exact_graph_heuristic"]
             else "EXACT_REPLAY_CORRUPT"
         ),
         "rounded_classification": (
             "ROUNDED_REPLAY_CORRECT"
-            if mode_correctness["rounded_graph_fixed16"]
+            if mode_correctness["rounded_graph_heuristic"]
             else "ROUNDED_REPLAY_CORRUPT"
         ),
         "failures": [],
-        "corrupt_exact_case_ids": corrupt_case_ids["exact_graph_fixed16"],
+        "corrupt_exact_case_ids": corrupt_case_ids[
+            "exact_graph_heuristic"
+        ],
         "corrupt_rounded_case_ids": corrupt_case_ids[
-            "rounded_graph_fixed16"
+            "rounded_graph_heuristic"
         ],
     }
 
@@ -485,7 +494,7 @@ def _validate_legacy_process_row(
         "repetition": case.repetition,
         "split_policy_name": case.split_policy_name,
         "flash_attn_num_splits": case.flash_attn_num_splits,
-        "comparison_policy_name": "legacy_auto_vs_fixed16",
+        "comparison_policy_name": "legacy_auto_vs_heuristic",
         "status": "PASS",
     }
     return [
@@ -509,7 +518,7 @@ def _validate_legacy_pair_row(
         "batch_size": case.batch_size,
         "trajectory": case.trajectory,
         "repetition": case.repetition,
-        "comparison_policy_name": "legacy_auto_vs_fixed16",
+        "comparison_policy_name": "legacy_auto_vs_heuristic",
     }
     return [
         (
@@ -550,7 +559,7 @@ def classify_legacy_compatibility(
     candidate_cases = tuple(
         case
         for case in matrix
-        if case.policy == "candidate_eager_fixed16"
+        if case.policy == "candidate_eager_heuristic"
     )
     expected_pair_ids = {case.pair_id for case in candidate_cases}
 

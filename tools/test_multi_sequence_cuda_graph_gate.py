@@ -263,15 +263,17 @@ def test_same_policy_matrix_is_exact_policy_aware_and_unique():
         "duplicate-and-distinct",
     }
     assert {case.mode for case in matrix} == {
-        "candidate_eager",
-        "exact_graph_fixed16",
-        "rounded_graph_fixed16",
+        "candidate_eager_heuristic",
+        "exact_graph_heuristic",
+        "rounded_graph_heuristic",
     }
     assert {case.repetition for case in matrix} == {0, 1, 2}
-    assert {
-        (case.split_policy_name, case.flash_attn_num_splits)
-        for case in matrix
-    } == {("fixed16", 16)}
+    assert {case.split_policy_name for case in matrix} == {
+        contract.HEURISTIC_POLICY_NAME
+    }
+    assert all(case.flash_attn_num_splits is None for case in matrix)
+    assert all("fa2-263-exact-width" in case.case_id for case in matrix)
+    assert all("-s16" not in case.case_id for case in matrix)
 
 
 def test_legacy_compatibility_matrix_is_63_pairs_126_processes():
@@ -286,28 +288,67 @@ def test_legacy_compatibility_matrix_is_63_pairs_126_processes():
         for case in matrix
     } == {
         ("legacy_eager_auto", "auto", 0),
-        ("candidate_eager_fixed16", "fixed16", 16),
+        (
+            "candidate_eager_heuristic",
+            contract.HEURISTIC_POLICY_NAME,
+            None,
+        ),
     }
 
 
 def test_case_ids_bind_split_policy_identity():
     case = contract.build_diagnostic_matrix()[0]
-    assert "fixed16-s16" in case.case_id
+    assert "__fa2-263-exact-width__r" in case.case_id
+    assert "fa2-263-exact-width-s" not in case.case_id
     compatibility = contract.build_legacy_compatibility_matrix()
     assert any("auto-s0" in case.case_id for case in compatibility)
-    assert any("fixed16-s16" in case.case_id for case in compatibility)
+    assert any(
+        "__fa2-263-exact-width" in case.case_id
+        and "fa2-263-exact-width-s" not in case.case_id
+        for case in compatibility
+        if case.policy == "candidate_eager_heuristic"
+    )
+
+
+def test_gate_matrix_cardinality_and_frozen_thresholds():
+    diagnostic = contract.build_diagnostic_matrix()
+    compatibility = contract.build_legacy_compatibility_matrix()
+    all_cases = diagnostic + compatibility
+
+    assert len(diagnostic) == 189
+    assert len(compatibility) == 126
+    assert len(all_cases) == 315
+    assert len({case.case_id for case in all_cases}) == 315
+    assert {
+        case.batch_size for case in all_cases
+    } == {2, 3, 4, 5, 8, 9, 16}
+    assert {
+        case.trajectory for case in all_cases
+    } == {
+        "uniform-short",
+        "ragged-context",
+        "duplicate-and-distinct",
+    }
+    assert {case.repetition for case in all_cases} == {0, 1, 2}
+    assert contract.WARMUP_STEPS == 2
+    assert contract.MEASURED_STEPS == 16
+    assert contract.LOGIT_RTOL == 1e-3
+    assert contract.LOGIT_ATOL == 1e-2
 
 
 def test_exact_and_rounded_graph_sizes_are_frozen():
     for batch_size in (2, 3, 4, 5, 8, 9, 16):
         assert (
-            contract.diagnostic_graph_size(batch_size, "candidate_eager")
+            contract.diagnostic_graph_size(
+                batch_size,
+                "candidate_eager_heuristic",
+            )
             == batch_size
         )
         assert (
             contract.diagnostic_graph_size(
                 batch_size,
-                "exact_graph_fixed16",
+                "exact_graph_heuristic",
             )
             == batch_size
         )
@@ -368,7 +409,11 @@ def test_tensor_metadata_hashes_contiguous_bytes_and_reports_nonfinite():
 
 def test_graph_size_contract_rejects_unknown_inputs():
     for batch_size, mode, expected_message in (
-        (1, "candidate_eager", "unsupported batch size"),
+        (
+            1,
+            "candidate_eager_heuristic",
+            "unsupported batch size",
+        ),
         (2, "larger_graph", "unsupported mode"),
     ):
         try:
@@ -2275,6 +2320,7 @@ if __name__ == "__main__":
         test_same_policy_matrix_is_exact_policy_aware_and_unique,
         test_legacy_compatibility_matrix_is_63_pairs_126_processes,
         test_case_ids_bind_split_policy_identity,
+        test_gate_matrix_cardinality_and_frozen_thresholds,
         test_exact_and_rounded_graph_sizes_are_frozen,
         test_canonical_json_and_file_hashes_are_stable_and_strict,
         test_tensor_metadata_hashes_contiguous_bytes_and_reports_nonfinite,
