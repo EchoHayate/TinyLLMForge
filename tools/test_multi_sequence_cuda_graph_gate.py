@@ -983,6 +983,166 @@ def test_build_step_split_policy_rejects_version_and_missing_inputs():
         torch.cuda.get_device_properties = original
 
 
+def make_graph_identity(
+    *,
+    active_batch_size=8,
+    graph_batch_size=8,
+    page_table_width=2,
+    effective_num_splits=2,
+):
+    split_policy = load_split_policy()
+    return split_policy.FlashAttentionGraphIdentity(
+        graph_batch_size=graph_batch_size,
+        active_batch_size=active_batch_size,
+        page_table_width=page_table_width,
+        effective_num_splits=effective_num_splits,
+        flash_attn_version="2.6.3",
+        multi_processor_count=108,
+        num_query_heads=16,
+        num_kv_heads=8,
+        head_dim=128,
+        page_block_size=256,
+        max_seqlen_q=1,
+    )
+
+
+def test_decode_graph_allocations_use_exact_identity_width():
+    diagnostic = load_diagnostic_module_without_gpu()
+    runner = make_fake_policy_runner()
+    runner.config.hf_config.hidden_size = 1024
+    runner.config.hf_config.torch_dtype = "bf16"
+    runner.config.hf_config.num_hidden_layers = 28
+    identity = make_graph_identity(
+        active_batch_size=8,
+        graph_batch_size=16,
+        page_table_width=3,
+    )
+    allocations = []
+
+    class FakeTorch:
+        int64 = "int64"
+        int32 = "int32"
+
+        @staticmethod
+        def zeros(*shape, dtype, device):
+            allocations.append((shape, dtype, device))
+            return FakeSizedTensor(shape, device=device)
+
+    tensors = diagnostic._allocate_decode_graph_tensors(
+        runner,
+        identity,
+        torch_module=FakeTorch,
+    )
+
+    assert tensors["block_tables"].size() == (16, 3)
+    assert ((16, 3), "int32", "cuda:0") in allocations
+    assert all(
+        shape != (16, 4)
+        for shape, _dtype, _device in allocations
+    )
+
+
+def test_graph_cache_reuses_only_identical_identity():
+    diagnostic = load_diagnostic_module_without_gpu()
+    graph_cache = {}
+    captures = []
+
+    def capture(identity):
+        captures.append(identity)
+        return types.SimpleNamespace(identity=identity)
+
+    first_identity = make_graph_identity()
+    first = diagnostic._get_or_capture_decode_graph(
+        graph_cache,
+        first_identity,
+        capture,
+    )
+    reused = diagnostic._get_or_capture_decode_graph(
+        graph_cache,
+        first_identity,
+        capture,
+    )
+    wider_identity = make_graph_identity(page_table_width=3)
+    wider = diagnostic._get_or_capture_decode_graph(
+        graph_cache,
+        wider_identity,
+        capture,
+    )
+    split_identity = make_graph_identity(effective_num_splits=3)
+    split = diagnostic._get_or_capture_decode_graph(
+        graph_cache,
+        split_identity,
+        capture,
+    )
+
+    assert first is reused
+    assert wider is not first
+    assert split is not first
+    assert captures == [first_identity, wider_identity, split_identity]
+    assert len(graph_cache) == 3
+
+
+def test_graph_cache_and_replay_reject_identity_mismatch():
+    diagnostic = load_diagnostic_module_without_gpu()
+    expected = make_graph_identity()
+    mismatched = make_graph_identity(page_table_width=3)
+
+    try:
+        diagnostic._get_or_capture_decode_graph(
+            {},
+            expected,
+            lambda identity: types.SimpleNamespace(identity=mismatched),
+        )
+    except ValueError as exc:
+        assert "identity" in str(exc)
+    else:
+        raise AssertionError("mismatched captured graph was cached")
+
+    try:
+        diagnostic._validate_graph_replay_identity(
+            types.SimpleNamespace(identity=expected),
+            mismatched,
+        )
+    except ValueError as exc:
+        assert "identity" in str(exc)
+    else:
+        raise AssertionError("mismatched graph replay was accepted")
+
+
+def test_capture_operation_restores_all_active_write_slots_on_failure():
+    diagnostic = load_diagnostic_module_without_gpu()
+    runner = types.SimpleNamespace()
+    restored = []
+    snapshot = {"keys": object(), "values": object()}
+
+    def snapshot_kv_slots(slots):
+        assert slots == [7, 11, 19]
+        return snapshot
+
+    runner.snapshot_kv_slots = snapshot_kv_slots
+    original_restore = diagnostic._restore_kv_slots
+    diagnostic._restore_kv_slots = (
+        lambda observed_runner, slots, observed_snapshot: restored.append(
+            (observed_runner, slots, observed_snapshot)
+        )
+    )
+    try:
+        try:
+            diagnostic._run_with_kv_slot_restore(
+                runner,
+                [19, 7, 11, 7],
+                lambda: (_ for _ in ()).throw(RuntimeError("capture failed")),
+            )
+        except RuntimeError as exc:
+            assert str(exc) == "capture failed"
+        else:
+            raise AssertionError("capture failure was swallowed")
+    finally:
+        diagnostic._restore_kv_slots = original_restore
+
+    assert restored == [(runner, [7, 11, 19], snapshot)]
+
+
 def test_diagnostic_case_parser_rejects_split_policy_drift():
     diagnostic = load_diagnostic_module_without_gpu()
     case = contract.build_diagnostic_matrix()[0]
@@ -2503,6 +2663,10 @@ if __name__ == "__main__":
         test_build_step_split_policy_uses_exact_runtime_width_and_batch_identity,
         test_build_step_split_policy_matches_qwen3_a100_vectors,
         test_build_step_split_policy_rejects_version_and_missing_inputs,
+        test_decode_graph_allocations_use_exact_identity_width,
+        test_graph_cache_reuses_only_identical_identity,
+        test_graph_cache_and_replay_reject_identity_mismatch,
+        test_capture_operation_restores_all_active_write_slots_on_failure,
         test_diagnostic_case_parser_rejects_split_policy_drift,
         test_execution_policy_maps_gate_cases_to_expected_split,
         test_candidate_eager_forward_observes_fixed16_and_restores_auto,

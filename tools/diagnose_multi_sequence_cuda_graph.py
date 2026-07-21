@@ -90,7 +90,7 @@ class StepSplitPolicy:
 
 @dataclass
 class CapturedDecodeGraph:
-    graph_size: int
+    identity: split_policy.FlashAttentionGraphIdentity
     graph: object
     input_ids: object
     positions: object
@@ -380,6 +380,10 @@ def _parse_case(case_spec: dict):
 
 
 def execution_split_count(case) -> int:
+    if case.flash_attn_num_splits is None:
+        raise ValueError(
+            "heuristic cases derive flash_attn_num_splits per step"
+        )
     return int(case.flash_attn_num_splits)
 
 
@@ -391,13 +395,16 @@ def _execution_name(case) -> str:
 
 def _is_reference_case(case) -> bool:
     return _execution_name(case) in {
-        "candidate_eager",
+        "candidate_eager_heuristic",
         "legacy_eager_auto",
     }
 
 
 def _is_graph_case(case) -> bool:
-    return hasattr(case, "mode") and case.mode != "candidate_eager"
+    return (
+        hasattr(case, "mode")
+        and case.mode != "candidate_eager_heuristic"
+    )
 
 
 def policy_evidence(case, flash_attn_version: str) -> dict:
@@ -581,6 +588,15 @@ def _restore_kv_slots(runner, physical_slots: list[int], snapshot) -> None:
     torch.cuda.synchronize()
 
 
+def _run_with_kv_slot_restore(runner, physical_slots, operation):
+    slots = sorted(set(int(slot) for slot in physical_slots))
+    snapshot = runner.snapshot_kv_slots(slots)
+    try:
+        return operation()
+    finally:
+        _restore_kv_slots(runner, slots, snapshot)
+
+
 def _register_layer_hooks(layers, layer_outputs):
     handles = []
     graph_size = layer_outputs.size(2)
@@ -627,72 +643,118 @@ def _run_with_split_policy(num_splits: int, operation):
         return operation()
 
 
-def _capture_decode_graph(runner, case, dynamic_context):
+def _allocate_decode_graph_tensors(
+    runner,
+    identity: split_policy.FlashAttentionGraphIdentity,
+    *,
+    torch_module=None,
+) -> dict:
+    if torch_module is None:
+        import torch as torch_module
+
+    config = runner.config
+    device = runner.kv_cache.device
+    graph_size = identity.graph_batch_size
+    return {
+        "input_ids": torch_module.zeros(
+            graph_size,
+            dtype=torch_module.int64,
+            device=device,
+        ),
+        "positions": torch_module.zeros(
+            graph_size,
+            dtype=torch_module.int64,
+            device=device,
+        ),
+        "slot_mapping": torch_module.zeros(
+            graph_size,
+            dtype=torch_module.int32,
+            device=device,
+        ),
+        "context_lens": torch_module.zeros(
+            graph_size,
+            dtype=torch_module.int32,
+            device=device,
+        ),
+        "block_tables": torch_module.zeros(
+            graph_size,
+            identity.page_table_width,
+            dtype=torch_module.int32,
+            device=device,
+        ),
+        "outputs": torch_module.zeros(
+            graph_size,
+            config.hf_config.hidden_size,
+            dtype=config.hf_config.torch_dtype,
+            device=device,
+        ),
+        "layer_outputs": torch_module.zeros(
+            2,
+            config.hf_config.num_hidden_layers,
+            graph_size,
+            config.hf_config.hidden_size,
+            dtype=config.hf_config.torch_dtype,
+            device=device,
+        ),
+    }
+
+
+def _validate_graph_replay_identity(
+    captured: CapturedDecodeGraph,
+    identity: split_policy.FlashAttentionGraphIdentity,
+) -> None:
+    if captured.identity != identity:
+        raise ValueError("captured graph identity mismatch")
+
+
+def _get_or_capture_decode_graph(
+    graph_cache: dict,
+    identity: split_policy.FlashAttentionGraphIdentity,
+    capture,
+):
+    captured = graph_cache.get(identity)
+    if captured is None:
+        captured = capture(identity)
+        _validate_graph_replay_identity(captured, identity)
+        graph_cache[identity] = captured
+    else:
+        _validate_graph_replay_identity(captured, identity)
+    return captured
+
+
+def _capture_decode_graph(
+    runner,
+    identity: split_policy.FlashAttentionGraphIdentity,
+    dynamic_context,
+):
     import torch
 
     from tinyvllm.utils.context import reset_context, set_context
 
-    graph_size = case.graph_size
-    config = runner.config
-    device = runner.kv_cache.device
-    max_blocks = (
-        config.max_model_len + runner.block_size - 1
-    ) // runner.block_size
-    input_ids = torch.zeros(
-        graph_size,
-        dtype=torch.int64,
-        device=device,
-    )
-    positions = torch.zeros(
-        graph_size,
-        dtype=torch.int64,
-        device=device,
-    )
-    slot_mapping = torch.zeros(
-        graph_size,
-        dtype=torch.int32,
-        device=device,
-    )
-    context_lens = torch.zeros(
-        graph_size,
-        dtype=torch.int32,
-        device=device,
-    )
-    block_tables = torch.zeros(
-        graph_size,
-        max_blocks,
-        dtype=torch.int32,
-        device=device,
-    )
-    outputs = torch.zeros(
-        graph_size,
-        config.hf_config.hidden_size,
-        dtype=config.hf_config.torch_dtype,
-        device=device,
-    )
-    layer_outputs = torch.zeros(
-        2,
-        config.hf_config.num_hidden_layers,
-        graph_size,
-        config.hf_config.hidden_size,
-        dtype=config.hf_config.torch_dtype,
-        device=device,
-    )
+    tensors = _allocate_decode_graph_tensors(runner, identity)
+    input_ids = tensors["input_ids"]
+    positions = tensors["positions"]
+    slot_mapping = tensors["slot_mapping"]
+    context_lens = tensors["context_lens"]
+    block_tables = tensors["block_tables"]
+    outputs = tensors["outputs"]
+    layer_outputs = tensors["layer_outputs"]
 
-    active_size = case.batch_size
+    active_size = identity.active_batch_size
+    active_columns = dynamic_context["block_tables"].size(1)
+    if active_columns != identity.page_table_width:
+        raise ValueError("capture page-table width does not match identity")
     input_ids[:active_size].copy_(dynamic_context["input_ids"])
     positions[:active_size].copy_(dynamic_context["positions"])
     slot_mapping[:active_size].copy_(dynamic_context["slot_mapping"])
     context_lens[:active_size].copy_(dynamic_context["context_lens"])
-    active_columns = dynamic_context["block_tables"].size(1)
-    block_tables[:active_size, :active_columns].copy_(
+    block_tables[:active_size].copy_(
         dynamic_context["block_tables"]
     )
 
     capture_slots = sorted(
-        set(int(slot) for slot in slot_mapping.tolist())
+        set(int(slot) for slot in slot_mapping[:active_size].tolist())
     )
-    capture_snapshot = runner.snapshot_kv_slots(capture_slots)
     layers = runner.model.model.layers
     handles = _register_layer_hooks(layers, layer_outputs)
     graph = torch.cuda.CUDAGraph()
@@ -722,14 +784,20 @@ def _capture_decode_graph(runner, case, dynamic_context):
                 )
             torch.cuda.synchronize()
 
-        _run_with_split_policy(execution_split_count(case), capture)
+        _run_with_kv_slot_restore(
+            runner,
+            capture_slots,
+            lambda: _run_with_split_policy(
+                identity.effective_num_splits,
+                capture,
+            ),
+        )
     finally:
         for handle in handles:
             handle.remove()
         reset_context()
-        _restore_kv_slots(runner, capture_slots, capture_snapshot)
     return CapturedDecodeGraph(
-        graph_size=graph_size,
+        identity=identity,
         graph=graph,
         input_ids=input_ids,
         positions=positions,
@@ -755,7 +823,7 @@ def _dynamic_decode_inputs(runner, seqs) -> dict:
     }
 
 
-def _run_eager_step(runner, dynamic, case):
+def _run_eager_step(runner, dynamic, num_splits: int):
     import torch
 
     layers = runner.model.model.layers
@@ -770,7 +838,7 @@ def _run_eager_step(runner, dynamic, case):
     handles = _register_layer_hooks(layers, layer_outputs)
     try:
         logits = _run_with_split_policy(
-            execution_split_count(case),
+            num_splits,
             lambda: _forward_and_logits_without_autograd(
                 runner.model,
                 dynamic["input_ids"],
@@ -787,11 +855,21 @@ def _run_eager_step(runner, dynamic, case):
             handle.remove()
 
 
-def _run_graph_step(runner, captured, dynamic, active_size: int, case):
+def _run_graph_step(
+    runner,
+    captured,
+    dynamic,
+    identity: split_policy.FlashAttentionGraphIdentity,
+):
     import torch
 
     from tinyvllm.utils.context import set_context
 
+    _validate_graph_replay_identity(captured, identity)
+    active_size = identity.active_batch_size
+    active_columns = dynamic["block_tables"].size(1)
+    if active_columns != identity.page_table_width:
+        raise ValueError("replay page-table width does not match identity")
     for tensor in (
         captured.input_ids,
         captured.positions,
@@ -806,8 +884,7 @@ def _run_graph_step(runner, captured, dynamic, active_size: int, case):
     captured.positions[:active_size].copy_(dynamic["positions"])
     captured.slot_mapping[:active_size].copy_(dynamic["slot_mapping"])
     captured.context_lens[:active_size].copy_(dynamic["context_lens"])
-    active_columns = dynamic["block_tables"].size(1)
-    captured.block_tables[:active_size, :active_columns].copy_(
+    captured.block_tables[:active_size].copy_(
         dynamic["block_tables"]
     )
     set_context(
@@ -831,7 +908,7 @@ def _run_graph_step(runner, captured, dynamic, active_size: int, case):
         )
 
     return _run_with_split_policy(
-        execution_split_count(case),
+        identity.effective_num_splits,
         replay,
     )
 
@@ -966,7 +1043,8 @@ def run_case(
     case = _parse_case(_load_json(case_spec_path))
     reference_tokens = _load_reference_tokens(reference_tokens_path, case)
     model_preflight = _validate_model_preflight(model_path)
-    evidence = policy_evidence(case, _flash_attn_version())
+    flash_attn_version = _flash_attn_version()
+    evidence = policy_evidence(case, flash_attn_version)
     _atomic_write_json(
         output_dir / "process_environment.json",
         {
@@ -989,14 +1067,7 @@ def run_case(
         runner = llm.model_runner
 
         _reserve_decode_slots(llm, seqs)
-        first_dynamic = _dynamic_decode_inputs(runner, seqs)
-        captured = None
-        if _is_graph_case(case):
-            captured = _capture_decode_graph(
-                runner,
-                case,
-                first_dynamic,
-            )
+        graph_cache = {}
         reset_context()
 
         total_steps = contract.WARMUP_STEPS + contract.MEASURED_STEPS
@@ -1034,16 +1105,47 @@ def run_case(
             )
             before = runner.snapshot_kv_slots(observation_slots)
 
-            if not _is_graph_case(case):
-                logits, layers = _run_eager_step(runner, dynamic, case)
-            else:
-                logits, layers = _run_graph_step(
+            if _execution_name(case) == "legacy_eager_auto":
+                step_policy = None
+                logits, layers = _run_eager_step(
                     runner,
-                    captured,
                     dynamic,
-                    case.batch_size,
-                    case,
+                    contract.AUTO_FLASH_ATTN_NUM_SPLITS,
                 )
+            else:
+                step_policy = build_step_split_policy(
+                    runner=runner,
+                    dynamic_context=dynamic,
+                    active_batch_size=case.batch_size,
+                    graph_batch_size=getattr(
+                        case,
+                        "graph_size",
+                        case.batch_size,
+                    ),
+                    flash_attn_version=flash_attn_version,
+                )
+                if not _is_graph_case(case):
+                    logits, layers = _run_eager_step(
+                        runner,
+                        dynamic,
+                        step_policy.effective_num_splits,
+                    )
+                else:
+                    captured = _get_or_capture_decode_graph(
+                        graph_cache,
+                        step_policy.identity,
+                        lambda identity: _capture_decode_graph(
+                            runner,
+                            identity,
+                            dynamic,
+                        ),
+                    )
+                    logits, layers = _run_graph_step(
+                        runner,
+                        captured,
+                        dynamic,
+                        step_policy.identity,
+                    )
             after = runner.snapshot_kv_slots(observation_slots)
             observed_tokens = [
                 int(token_id)
