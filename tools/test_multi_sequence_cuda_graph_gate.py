@@ -1243,6 +1243,128 @@ def test_graph_identity_summary_is_ordered_unique_and_complete():
     ]
 
 
+def make_complete_policy_integrity_fixture():
+    identity = make_graph_identity()
+    evidence = {
+        "split_policy_name": "fa2_263_heuristic_exact_width",
+        "flash_attn_version": "2.6.3",
+        "page_table_width": 2,
+        "effective_num_splits": 2,
+        "heuristic_batch_size": 8,
+        "heuristic_num_query_heads": 16,
+        "heuristic_num_kv_heads": 8,
+        "heuristic_head_dim": 128,
+        "heuristic_page_block_size": 256,
+        "heuristic_max_seqlen_q": 1,
+        "heuristic_multi_processor_count": 108,
+        "graph_batch_size": 8,
+        "graph_identity_sha256": identity.sha256,
+    }
+    case_id = (
+        "b8__ragged-context__exact_graph_heuristic"
+        "__fa2-263-exact-width__r0"
+    )
+    row = {"case_id": case_id, "step_id": 0, **evidence}
+    return {
+        "raw_rows": [dict(row)],
+        "layer_rows": [dict(row)],
+        "kv_rows": [dict(row)],
+        "process_rows": {
+            case_id: {
+                "case_id": case_id,
+                "mode": "exact_graph_heuristic",
+                "graph_identities": [
+                    {
+                        "sha256": identity.sha256,
+                        "page_table_width": 2,
+                        "effective_num_splits": 2,
+                        "graph_batch_size": 8,
+                    }
+                ],
+            }
+        },
+    }
+
+
+def test_verifier_recomputes_exact_policy_integrity():
+    verifier = load_verifier()
+    fixture = make_complete_policy_integrity_fixture()
+    result = verifier.verify_policy_integrity(**fixture)
+    assert result == {"classification": "POLICY_EXACT", "failures": []}
+
+
+def test_verifier_rejects_policy_integrity_mutations():
+    verifier = load_verifier()
+    mutations = (
+        ("missing width", "raw_rows", "page_table_width", None),
+        ("wrong split", "raw_rows", "effective_num_splits", 1),
+        (
+            "wrong sm count",
+            "raw_rows",
+            "heuristic_multi_processor_count",
+            107,
+        ),
+        (
+            "wrong identity hash",
+            "raw_rows",
+            "graph_identity_sha256",
+            "f" * 64,
+        ),
+        (
+            "row disagreement",
+            "layer_rows",
+            "page_table_width",
+            3,
+        ),
+        (
+            "wrong version",
+            "raw_rows",
+            "flash_attn_version",
+            "2.6.4",
+        ),
+        (
+            "graph auto split",
+            "raw_rows",
+            "effective_num_splits",
+            0,
+        ),
+    )
+    for name, collection, field, value in mutations:
+        fixture = make_complete_policy_integrity_fixture()
+        if value is None:
+            fixture[collection][0].pop(field)
+        else:
+            fixture[collection][0][field] = value
+        result = verifier.verify_policy_integrity(**fixture)
+        assert result["classification"] in {"POLICY_DRIFT", "INCOMPLETE"}, (
+            name,
+            result,
+        )
+
+    split_mismatch = make_complete_policy_integrity_fixture()
+    eager = copy.deepcopy(split_mismatch["raw_rows"][0])
+    eager["case_id"] = (
+        "b8__ragged-context__candidate_eager_heuristic"
+        "__fa2-263-exact-width__r0"
+    )
+    eager["effective_num_splits"] = 3
+    split_mismatch["raw_rows"].append(eager)
+    split_mismatch["layer_rows"].append(copy.deepcopy(eager))
+    split_mismatch["kv_rows"].append(copy.deepcopy(eager))
+    split_mismatch["process_rows"][eager["case_id"]] = {
+        "case_id": eager["case_id"],
+        "mode": "candidate_eager_heuristic",
+        "graph_identities": [],
+    }
+    result = verifier.verify_policy_integrity(**split_mismatch)
+    assert result["classification"] == "POLICY_DRIFT"
+
+    omitted = make_complete_policy_integrity_fixture()
+    next(iter(omitted["process_rows"].values()))["graph_identities"] = []
+    result = verifier.verify_policy_integrity(**omitted)
+    assert result["classification"] == "POLICY_DRIFT"
+
+
 def test_diagnostic_case_parser_rejects_split_policy_drift():
     diagnostic = load_diagnostic_module_without_gpu()
     case = contract.build_diagnostic_matrix()[0]
@@ -2770,6 +2892,8 @@ if __name__ == "__main__":
         test_step_policy_evidence_is_complete_and_stable,
         test_step_policy_evidence_matches_raw_layer_and_kv_rows,
         test_graph_identity_summary_is_ordered_unique_and_complete,
+        test_verifier_recomputes_exact_policy_integrity,
+        test_verifier_rejects_policy_integrity_mutations,
         test_diagnostic_case_parser_rejects_split_policy_drift,
         test_execution_policy_maps_gate_cases_to_expected_split,
         test_candidate_eager_forward_observes_fixed16_and_restores_auto,

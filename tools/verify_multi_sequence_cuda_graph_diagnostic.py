@@ -15,6 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "tools" / "multi_sequence_cuda_graph_contract.py"
+SPLIT_POLICY_PATH = (
+    ROOT / "tinyvllm" / "engine" / "flash_attn_split_policy.py"
+)
 
 
 def _load_contract():
@@ -29,6 +32,234 @@ def _load_contract():
 
 
 contract = _load_contract()
+
+
+def _load_split_policy():
+    spec = importlib.util.spec_from_file_location(
+        "flash_attn_split_policy_for_verifier",
+        SPLIT_POLICY_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+split_policy = _load_split_policy()
+
+
+POLICY_EVIDENCE_FIELDS = (
+    "split_policy_name",
+    "flash_attn_version",
+    "page_table_width",
+    "effective_num_splits",
+    "heuristic_batch_size",
+    "heuristic_num_query_heads",
+    "heuristic_num_kv_heads",
+    "heuristic_head_dim",
+    "heuristic_page_block_size",
+    "heuristic_max_seqlen_q",
+    "heuristic_multi_processor_count",
+    "graph_batch_size",
+    "graph_identity_sha256",
+)
+
+
+def _policy_row_key(row: dict) -> tuple[str, int] | None:
+    case_id = row.get("case_id")
+    step_id = row.get("step_id")
+    if not isinstance(case_id, str) or not isinstance(step_id, int):
+        return None
+    return case_id, step_id
+
+
+def _expected_policy_from_row(row: dict):
+    inputs = split_policy.FlashAttentionSplitInputs(
+        batch_size=int(row["heuristic_batch_size"]),
+        num_query_heads=int(row["heuristic_num_query_heads"]),
+        num_kv_heads=int(row["heuristic_num_kv_heads"]),
+        head_dim=int(row["heuristic_head_dim"]),
+        page_block_size=int(row["heuristic_page_block_size"]),
+        page_table_width=int(row["page_table_width"]),
+        max_seqlen_q=int(row["heuristic_max_seqlen_q"]),
+        multi_processor_count=int(
+            row["heuristic_multi_processor_count"]
+        ),
+    )
+    identity = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=int(row["graph_batch_size"]),
+        inputs=inputs,
+        flash_attn_version=str(row["flash_attn_version"]),
+    )
+    return inputs, identity
+
+
+def _identity_summary_entry(identity) -> dict:
+    return {
+        "sha256": identity.sha256,
+        "page_table_width": identity.page_table_width,
+        "effective_num_splits": identity.effective_num_splits,
+        "graph_batch_size": identity.graph_batch_size,
+    }
+
+
+def verify_policy_integrity(
+    *,
+    raw_rows: list[dict],
+    layer_rows: list[dict],
+    kv_rows: list[dict],
+    process_rows: dict[str, dict],
+) -> dict:
+    failures = []
+    incomplete = False
+    indexed_sets = {}
+    for evidence_name, rows in (
+        ("raw_rows", raw_rows),
+        ("layer_rows", layer_rows),
+        ("kv_rows", kv_rows),
+    ):
+        indexed = {}
+        for row_index, row in enumerate(rows):
+            key = _policy_row_key(row)
+            if key is None:
+                failures.append(
+                    f"{evidence_name}: row {row_index} missing key"
+                )
+                incomplete = True
+                continue
+            if key in indexed:
+                failures.append(f"{evidence_name}: duplicate {key}")
+                incomplete = True
+                continue
+            missing = [
+                field
+                for field in POLICY_EVIDENCE_FIELDS
+                if field not in row
+            ]
+            if missing:
+                failures.append(
+                    f"{evidence_name}: {key} missing {missing}"
+                )
+                incomplete = True
+            indexed[key] = row
+        indexed_sets[evidence_name] = indexed
+
+    expected_keys = set(indexed_sets["raw_rows"])
+    for evidence_name in ("layer_rows", "kv_rows"):
+        actual_keys = set(indexed_sets[evidence_name])
+        if actual_keys != expected_keys:
+            failures.append(
+                f"{evidence_name}: policy row keys disagree"
+            )
+            incomplete = True
+
+    identities_by_case = {}
+    splits_by_case_role = {}
+    for key in sorted(expected_keys):
+        rows = [
+            indexed_sets[evidence_name].get(key)
+            for evidence_name in ("raw_rows", "layer_rows", "kv_rows")
+        ]
+        if any(row is None for row in rows):
+            continue
+        raw = rows[0]
+        if any(
+            tuple(row.get(field) for field in POLICY_EVIDENCE_FIELDS)
+            != tuple(raw.get(field) for field in POLICY_EVIDENCE_FIELDS)
+            for row in rows[1:]
+        ):
+            failures.append(f"policy evidence disagreement for {key}")
+            continue
+        if any(field not in raw for field in POLICY_EVIDENCE_FIELDS):
+            continue
+        if raw["split_policy_name"] != contract.HEURISTIC_POLICY_NAME:
+            failures.append(f"{key}: split_policy_name drift")
+            continue
+        try:
+            inputs, identity = _expected_policy_from_row(raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            failures.append(f"{key}: invalid policy inputs: {exc}")
+            continue
+        expected_values = {
+            "page_table_width": inputs.page_table_width,
+            "effective_num_splits": identity.effective_num_splits,
+            "heuristic_batch_size": inputs.batch_size,
+            "heuristic_num_query_heads": inputs.num_query_heads,
+            "heuristic_num_kv_heads": inputs.num_kv_heads,
+            "heuristic_head_dim": inputs.head_dim,
+            "heuristic_page_block_size": inputs.page_block_size,
+            "heuristic_max_seqlen_q": inputs.max_seqlen_q,
+            "heuristic_multi_processor_count": (
+                inputs.multi_processor_count
+            ),
+            "graph_batch_size": identity.graph_batch_size,
+            "graph_identity_sha256": identity.sha256,
+        }
+        for field, expected in expected_values.items():
+            if raw.get(field) != expected:
+                failures.append(
+                    f"{key}: {field}={raw.get(field)!r}, "
+                    f"expected {expected!r}"
+                )
+        if raw.get("effective_num_splits") == 0:
+            failures.append(f"{key}: heuristic candidate uses auto split")
+        identities_by_case.setdefault(key[0], []).append(identity)
+
+        process = process_rows.get(key[0], {})
+        role = process.get("mode")
+        if role in {
+            "candidate_eager_heuristic",
+            "exact_graph_heuristic",
+            "rounded_graph_heuristic",
+        }:
+            comparison_key = (
+                raw["heuristic_batch_size"],
+                key[1],
+                raw["page_table_width"],
+            )
+            splits_by_case_role.setdefault(comparison_key, {})[role] = (
+                raw["effective_num_splits"]
+            )
+
+    for comparison_key, role_splits in splits_by_case_role.items():
+        eager_split = role_splits.get("candidate_eager_heuristic")
+        if eager_split is None:
+            continue
+        for role in ("exact_graph_heuristic", "rounded_graph_heuristic"):
+            graph_split = role_splits.get(role)
+            if graph_split is not None and graph_split != eager_split:
+                failures.append(
+                    f"{comparison_key}: eager/graph split disagreement"
+                )
+
+    for case_id, identities in identities_by_case.items():
+        process = process_rows.get(case_id)
+        if process is None:
+            failures.append(f"{case_id}: process row missing")
+            incomplete = True
+            continue
+        expected_summary = []
+        seen = set()
+        for identity in identities:
+            if identity in seen:
+                continue
+            seen.add(identity)
+            expected_summary.append(_identity_summary_entry(identity))
+        if process.get("mode") == "candidate_eager_heuristic":
+            expected_summary = []
+        if process.get("graph_identities") != expected_summary:
+            failures.append(f"{case_id}: graph identity summary drift")
+
+    return {
+        "classification": (
+            "INCOMPLETE"
+            if incomplete
+            else "POLICY_DRIFT"
+            if failures
+            else "POLICY_EXACT"
+        ),
+        "failures": failures,
+    }
 
 
 def _read_json(path: Path) -> dict:
@@ -1280,6 +1511,7 @@ def _report_markdown(summary: dict) -> str:
             "- Legacy compatibility: "
             f"`{summary['legacy_compatibility']}`"
         ),
+        f"- Policy integrity: `{summary['policy_integrity']}`",
         f"- Case count: `{summary['case_count']}`",
         (
             "- Same-policy case count: "
@@ -1326,6 +1558,8 @@ def _write_verification_outputs(run_dir: Path, summary: dict) -> None:
     exitcode = 0 if (
         summary["classification"] == "EXACT_REPLAY_CORRECT"
         and summary["legacy_compatibility"] == "LEGACY_COMPATIBLE"
+        and summary["policy_integrity"] == "POLICY_EXACT"
+        and not summary["failures"]
     ) else 1
     _atomic_write_bytes(
         output_dir / "verify.exitcode",
@@ -1427,12 +1661,18 @@ def verify_diagnostic(run_dir: Path) -> dict:
         process_rows=process_rows,
     )
     failures.extend(layer_failures)
-    _, kv_row_failures = _validate_step_evidence(
+    kv_rows, kv_row_failures = _validate_step_evidence(
         jsonl_rows["kv_observations.jsonl"],
         evidence_name="kv_rows",
         process_rows=process_rows,
     )
     failures.extend(kv_row_failures)
+    policy_integrity = verify_policy_integrity(
+        raw_rows=list(raw_rows.values()),
+        layer_rows=list(layer_rows.values()),
+        kv_rows=list(kv_rows.values()),
+        process_rows=process_rows,
+    )
     failures.extend(_verify_layer_rows(layer_rows, process_rows))
     failures.extend(
         _verify_raw_rows_against_logits(raw_rows, process_rows, run_dir)
@@ -1561,6 +1801,8 @@ def verify_diagnostic(run_dir: Path) -> dict:
         "classification": final_classification,
         "rounded_classification": rounded_classification,
         "legacy_compatibility": legacy_compatibility,
+        "policy_integrity": policy_integrity["classification"],
+        "policy_failures": policy_integrity["failures"],
         "case_count": len(process_rows),
         "same_policy_case_count": len(same_policy_cases),
         "compatibility_process_count": len(compatibility_cases),
@@ -1608,6 +1850,8 @@ def main(argv=None) -> int:
     return 0 if (
         summary["classification"] == "EXACT_REPLAY_CORRECT"
         and summary["legacy_compatibility"] == "LEGACY_COMPATIBLE"
+        and summary["policy_integrity"] == "POLICY_EXACT"
+        and not summary["failures"]
     ) else 1
 
 
