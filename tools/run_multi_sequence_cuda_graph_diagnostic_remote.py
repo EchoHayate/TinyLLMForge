@@ -184,6 +184,19 @@ def is_retryable_port_collision(returncode: int, stderr: str) -> bool:
     return returncode != 0 and PORT_COLLISION in stderr
 
 
+def read_remote_case_stderr(*, case_dir: Path, fallback: bytes) -> str:
+    stderr_parts = []
+    for name in ("launcher_stderr.txt", "stderr.txt"):
+        path = case_dir / "output" / name
+        if path.is_file():
+            stderr_parts.append(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+    if stderr_parts:
+        return "\n".join(stderr_parts)
+    return fallback.decode("utf-8", errors="replace")
+
+
 def build_smoke_cases():
     allowed_batches = {2, 3, 4}
     allowed_trajectories = {"uniform-short", "ragged-context"}
@@ -718,11 +731,9 @@ def _run_remote_case(
     shutil.rmtree(local_case)
     local_case.with_name(local_case.name + ".new").replace(local_case)
     remove_downloaded_remote_case(remote_case)
-    stderr_path = local_case / "output" / "launcher_stderr.txt"
-    stderr = (
-        stderr_path.read_text(encoding="utf-8", errors="replace")
-        if stderr_path.is_file()
-        else result.stderr.decode("utf-8", errors="replace")
+    stderr = read_remote_case_stderr(
+        case_dir=local_case,
+        fallback=result.stderr,
     )
     return result.returncode, stderr
 

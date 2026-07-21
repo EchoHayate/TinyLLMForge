@@ -1313,6 +1313,32 @@ def test_remote_runner_retries_only_eaddrinuse():
     )
 
 
+def test_remote_runner_reads_diagnostic_stderr_for_port_collision():
+    runner = load_remote_runner()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        case_dir = Path(temporary_directory)
+        output_dir = case_dir / "output"
+        output_dir.mkdir()
+        (output_dir / "launcher_stderr.txt").write_text(
+            "[transformers] torch_dtype is deprecated\n",
+            encoding="utf-8",
+        )
+        (output_dir / "stderr.txt").write_text(
+            "RuntimeError: address already in use: EADDRINUSE\n",
+            encoding="utf-8",
+        )
+        stderr = runner.read_remote_case_stderr(
+            case_dir=case_dir,
+            fallback=b"",
+        )
+        assert "torch_dtype is deprecated" in stderr
+        assert "EADDRINUSE" in stderr
+        assert runner.is_retryable_port_collision(
+            returncode=1,
+            stderr=stderr,
+        )
+
+
 def test_remote_runner_preserves_remote_shell_command_as_one_argument():
     runner = load_remote_runner()
     remote_command = "cd /tmp/example && printf 'OK\\n'"
@@ -1599,6 +1625,7 @@ if __name__ == "__main__":
         test_remote_runner_allocates_globally_unique_port_pairs,
         test_remote_runner_rejects_duplicate_or_equal_ports,
         test_remote_runner_retries_only_eaddrinuse,
+        test_remote_runner_reads_diagnostic_stderr_for_port_collision,
         test_remote_runner_preserves_remote_shell_command_as_one_argument,
         test_remote_runner_disables_bytecode_during_source_validation,
         test_remote_runner_requires_explicit_resume_for_existing_run,
