@@ -878,7 +878,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
     prompt_manifest_sha256 = contract.canonical_json_sha256(prompt_manifest)
     manifest = {
         "schema_version": 1,
-        "kind": "diagnostic",
+        "kind": "fixed_split_recovery",
         "canonical": True,
         "source_tree_sha256": source_tree_sha256,
         "environment_sha256": environment_sha256,
@@ -897,6 +897,18 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             case.case_id
             for case in contract.build_legacy_compatibility_matrix()
         ],
+        "legacy_compatibility_case_ids": [
+            case.case_id
+            for case in contract.build_legacy_compatibility_matrix()
+        ],
+        "same_policy_process_count": 189,
+        "compatibility_process_count": 126,
+        "compatibility_pair_count": 63,
+        "flash_attn_version": environment["flash_attention"],
+        "fixed_split_count": (
+            contract.MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+        ),
+        "auto_split_count": contract.AUTO_FLASH_ATTN_NUM_SPLITS,
         "warmup_steps": contract.WARMUP_STEPS,
         "measured_steps": contract.MEASURED_STEPS,
         "logit_rtol": contract.LOGIT_RTOL,
@@ -1179,6 +1191,45 @@ def test_verifier_reconstructs_complete_diagnostic():
         assert summary["same_policy_case_count"] == 189
         assert summary["compatibility_process_count"] == 126
         assert summary["compatibility_pair_count"] == 63
+
+
+def test_verifier_rejects_fixed_split_manifest_contract_drift():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        manifest = json.loads(
+            (run_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        source_evidence = json.loads(
+            (run_dir / "source_evidence.json").read_text(encoding="utf-8")
+        )
+        environment = json.loads(
+            (run_dir / "environment.json").read_text(encoding="utf-8")
+        )
+        prompt_manifest = json.loads(
+            (run_dir / "prompt_manifest.json").read_text(encoding="utf-8")
+        )
+        mutations = (
+            ("legacy_compatibility_case_ids", []),
+            ("same_policy_process_count", 188),
+            ("compatibility_process_count", 125),
+            ("compatibility_pair_count", 62),
+            ("flash_attn_version", "different"),
+            ("fixed_split_count", 8),
+            ("auto_split_count", 1),
+        )
+        for field, value in mutations:
+            mutated = copy.deepcopy(manifest)
+            mutated[field] = value
+            failures = verifier._validate_manifest(
+                mutated,
+                source_evidence,
+                environment,
+                prompt_manifest,
+            )
+            assert any(f"manifest {field}=" in failure for failure in failures)
 
 
 def test_verifier_rejects_missing_split_identity():
@@ -1637,8 +1688,8 @@ def test_remote_runner_has_frozen_transport_and_safety_contract():
         "EADDRINUSE",
         "source_audit.build_source_evidence",
         "source_audit.validate_source_snapshot",
-        "diagnostic-smoke",
-        "diagnostic-canonical",
+        "fixed-split-smoke",
+        "fixed-split-canonical",
         "download-only",
         "verify-only",
     ):
@@ -1829,7 +1880,7 @@ def test_remote_runner_exposes_resume_and_verifier_python_options():
     runner = load_remote_runner()
     args = runner._parse_args(
         [
-            "diagnostic-canonical",
+            "fixed-split-canonical",
             "--run-tag",
             "resume-run",
             "--resume",
@@ -1881,43 +1932,100 @@ def test_remote_runner_removes_only_downloaded_remote_case():
     assert command != "rm -r -- /tmp"
 
 
-def test_remote_runner_orders_eager_before_matching_graph_cases():
+def test_remote_runner_builds_fixed_split_smoke_for_both_gates():
     runner = load_remote_runner()
-    cases = runner.build_smoke_cases()
-    assert len(cases) == 18
+    same_policy, compatibility = runner.build_smoke_cases()
+    assert same_policy
+    assert compatibility
+    assert len(same_policy) == 18
+    assert len(compatibility) == 12
+    assert all(case.repetition == 0 for case in same_policy)
+    assert all(case.repetition == 0 for case in compatibility)
+    assert {case.mode for case in same_policy} == {
+        "candidate_eager",
+        "exact_graph_fixed16",
+        "rounded_graph_fixed16",
+    }
+    assert {case.policy for case in compatibility} == {
+        "legacy_eager_auto",
+        "candidate_eager_fixed16",
+    }
+
+
+def test_remote_runner_orders_each_reference_before_candidates():
+    runner = load_remote_runner()
+    cases = runner.ordered_canonical_cases()
+    assert len(cases) == 315
     positions = {case.case_id: index for index, case in enumerate(cases)}
-    for case in cases:
+    for case in contract.build_diagnostic_matrix():
         if case.mode == "candidate_eager":
             continue
-        eager_id = (
-            f"b{case.batch_size}__{case.trajectory}__"
-            f"eager__r{case.repetition}"
-        )
-        assert positions[eager_id] < positions[case.case_id]
+        reference = runner.same_policy_reference_case(case)
+        assert reference.mode == "candidate_eager"
+        assert positions[reference.case_id] < positions[case.case_id]
+    for case in contract.build_legacy_compatibility_matrix():
+        if case.policy == "legacy_eager_auto":
+            continue
+        reference = runner.compatibility_reference_case(case)
+        assert reference.policy == "legacy_eager_auto"
+        assert positions[reference.case_id] < positions[case.case_id]
 
 
-def test_remote_runner_requires_eager_reference_before_graph_case():
+def test_remote_runner_requires_paired_reference_before_candidate():
     runner = load_remote_runner()
-    case = next(
-        case
-        for case in contract.build_diagnostic_matrix()
-        if case.mode == "exact_graph_fixed16"
+    candidates = (
+        next(
+            case
+            for case in contract.build_diagnostic_matrix()
+            if case.mode == "exact_graph_fixed16"
+        ),
+        next(
+            case
+            for case in contract.build_legacy_compatibility_matrix()
+            if case.policy == "candidate_eager_fixed16"
+        ),
     )
     with tempfile.TemporaryDirectory() as temporary_directory:
         run_dir = Path(temporary_directory)
-        assert runner.graph_case_ready(case, run_dir) is False
-        eager_case_id = (
-            f"b{case.batch_size}__{case.trajectory}__"
-            f"eager__r{case.repetition}"
-        )
-        reference = (
-            run_dir
-            / "cases"
-            / eager_case_id
-            / "input"
-            / "reference_tokens.json"
-        )
-        reference.parent.mkdir(parents=True)
+        for case in candidates:
+            assert runner.candidate_case_ready(case, run_dir) is False
+            reference_case = runner.reference_case(case)
+            reference = (
+                run_dir
+                / "cases"
+                / reference_case.case_id
+                / "input"
+                / "reference_tokens.json"
+            )
+            reference.parent.mkdir(parents=True)
+            _write_json(
+                reference,
+                [
+                    [step + row for row in range(case.batch_size)]
+                    for step in range(
+                        contract.WARMUP_STEPS + contract.MEASURED_STEPS
+                    )
+                ],
+            )
+            assert runner.candidate_case_ready(case, run_dir) is True
+
+
+def test_remote_runner_resume_requires_policy_identity_and_artifact_hashes():
+    runner = load_remote_runner()
+    case = next(
+        case
+        for case in contract.build_legacy_compatibility_matrix()
+        if case.policy == "candidate_eager_fixed16"
+    )
+    source_tree_sha256 = "a" * 64
+    environment_sha256 = "b" * 64
+    flash_attn_version = "2.8.0"
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        case_dir = Path(temporary_directory) / case.case_id
+        artifact = case_dir / "output" / "artifact.bin"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"completed case")
+        reference = case_dir / "input" / "reference_tokens.json"
         _write_json(
             reference,
             [
@@ -1927,19 +2035,9 @@ def test_remote_runner_requires_eager_reference_before_graph_case():
                 )
             ],
         )
-        assert runner.graph_case_ready(case, run_dir) is True
-
-
-def test_remote_runner_resume_requires_identity_and_artifact_hashes():
-    runner = load_remote_runner()
-    case = contract.build_diagnostic_matrix()[0]
-    source_tree_sha256 = "a" * 64
-    environment_sha256 = "b" * 64
-    with tempfile.TemporaryDirectory() as temporary_directory:
-        case_dir = Path(temporary_directory) / case.case_id
-        artifact = case_dir / "output" / "artifact.bin"
-        artifact.parent.mkdir(parents=True)
-        artifact.write_bytes(b"completed case")
+        reference_token_sha256 = contract.canonical_json_sha256(
+            json.loads(reference.read_text(encoding="utf-8"))
+        )
         _write_json(
             case_dir / "case_result.json",
             {
@@ -1947,8 +2045,13 @@ def test_remote_runner_resume_requires_identity_and_artifact_hashes():
                 "status": "PASS",
                 "case": asdict(case),
                 "case_id": case.case_id,
+                "flash_attn_version": flash_attn_version,
+                "split_policy_name": case.split_policy_name,
+                "flash_attn_num_splits": case.flash_attn_num_splits,
+                "comparison_policy_name": "legacy_auto_vs_fixed16",
                 "source_tree_sha256": source_tree_sha256,
                 "environment_sha256": environment_sha256,
+                "reference_token_sha256": reference_token_sha256,
                 "artifacts": {
                     "payload": _artifact_record(case_dir, artifact),
                 },
@@ -1959,14 +2062,54 @@ def test_remote_runner_resume_requires_identity_and_artifact_hashes():
             case=case,
             source_tree_sha256=source_tree_sha256,
             environment_sha256=environment_sha256,
+            flash_attn_version=flash_attn_version,
         )
+        baseline = json.loads(
+            (case_dir / "case_result.json").read_text(encoding="utf-8")
+        )
+        mutations = (
+            ("flash_attn_version", "2.7.0"),
+            ("split_policy_name", "auto"),
+            ("flash_attn_num_splits", 0),
+            ("comparison_policy_name", "same_policy_fixed16"),
+            ("source_tree_sha256", "c" * 64),
+            ("environment_sha256", "d" * 64),
+        )
+        for field, value in mutations:
+            mutated = copy.deepcopy(baseline)
+            mutated[field] = value
+            _write_json(case_dir / "case_result.json", mutated)
+            assert not runner.completed_case_is_resumable(
+                case_dir=case_dir,
+                case=case,
+                source_tree_sha256=source_tree_sha256,
+                environment_sha256=environment_sha256,
+                flash_attn_version=flash_attn_version,
+            ), field
+        _write_json(case_dir / "case_result.json", baseline)
         artifact.write_bytes(b"tampered")
         assert not runner.completed_case_is_resumable(
             case_dir=case_dir,
             case=case,
             source_tree_sha256=source_tree_sha256,
             environment_sha256=environment_sha256,
+            flash_attn_version=flash_attn_version,
         )
+
+
+def test_remote_runner_exposes_fixed_split_cli_modes():
+    runner = load_remote_runner()
+    for mode in (
+        "preflight",
+        "fixed-split-smoke",
+        "fixed-split-canonical",
+        "download-only",
+        "verify-only",
+    ):
+        args = [mode]
+        if mode in {"download-only", "verify-only"}:
+            args.extend(["--run-tag", "existing-run"])
+        assert runner._parse_args(args).mode == mode
 
 
 def test_remote_runner_failed_case_preservation_manifest():
@@ -2016,6 +2159,7 @@ if __name__ == "__main__":
         test_policy_evidence_distinguishes_same_policy_and_legacy_comparison,
         test_artifact_record_path_is_relative_and_resolves_after_relocation,
         test_verifier_reconstructs_complete_diagnostic,
+        test_verifier_rejects_fixed_split_manifest_contract_drift,
         test_verifier_rejects_missing_split_identity,
         test_verifier_rejects_auto_graph_as_fixed16_evidence,
         test_verifier_rejects_step_policy_identity_drift,
@@ -2051,9 +2195,11 @@ if __name__ == "__main__":
         test_remote_runner_exposes_resume_and_verifier_python_options,
         test_remote_runner_promotes_source_evidence_artifacts,
         test_remote_runner_removes_only_downloaded_remote_case,
-        test_remote_runner_orders_eager_before_matching_graph_cases,
-        test_remote_runner_requires_eager_reference_before_graph_case,
-        test_remote_runner_resume_requires_identity_and_artifact_hashes,
+        test_remote_runner_builds_fixed_split_smoke_for_both_gates,
+        test_remote_runner_orders_each_reference_before_candidates,
+        test_remote_runner_requires_paired_reference_before_candidate,
+        test_remote_runner_resume_requires_policy_identity_and_artifact_hashes,
+        test_remote_runner_exposes_fixed_split_cli_modes,
         test_remote_runner_failed_case_preservation_manifest,
     ]
     for test in tests:

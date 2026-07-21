@@ -239,7 +239,7 @@ def _validate_manifest(
     expected_ids = same_policy_ids + compatibility_ids
     expected_values = {
         "schema_version": 1,
-        "kind": "diagnostic",
+        "kind": "fixed_split_recovery",
         "canonical": True,
         "source_tree_sha256": source_evidence.get("tree_sha256"),
         "environment_sha256": contract.canonical_json_sha256(environment),
@@ -249,6 +249,15 @@ def _validate_manifest(
         "case_ids": expected_ids,
         "same_policy_case_ids": same_policy_ids,
         "compatibility_case_ids": compatibility_ids,
+        "legacy_compatibility_case_ids": compatibility_ids,
+        "same_policy_process_count": len(same_policy_ids),
+        "compatibility_process_count": len(compatibility_ids),
+        "compatibility_pair_count": len(compatibility_ids) // 2,
+        "flash_attn_version": environment.get("flash_attention"),
+        "fixed_split_count": (
+            contract.MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+        ),
+        "auto_split_count": contract.AUTO_FLASH_ATTN_NUM_SPLITS,
         "warmup_steps": contract.WARMUP_STEPS,
         "measured_steps": contract.MEASURED_STEPS,
         "logit_rtol": contract.LOGIT_RTOL,

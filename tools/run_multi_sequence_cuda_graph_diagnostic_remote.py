@@ -200,29 +200,88 @@ def read_remote_case_stderr(*, case_dir: Path, fallback: bytes) -> str:
 def build_smoke_cases():
     allowed_batches = {2, 3, 4}
     allowed_trajectories = {"uniform-short", "ragged-context"}
-    return tuple(
+    same_policy = tuple(
         case
         for case in contract.build_diagnostic_matrix()
         if case.batch_size in allowed_batches
         and case.trajectory in allowed_trajectories
         and case.repetition == 0
     )
+    compatibility = tuple(
+        case
+        for case in contract.build_legacy_compatibility_matrix()
+        if case.batch_size in allowed_batches
+        and case.trajectory in allowed_trajectories
+        and case.repetition == 0
+    )
+    return same_policy, compatibility
 
 
-def _eager_case_id(case) -> str:
-    return (
-        f"b{case.batch_size}__{case.trajectory}__"
-        f"eager__r{case.repetition}"
+def same_policy_reference_case(case):
+    return next(
+        candidate
+        for candidate in contract.build_diagnostic_matrix()
+        if candidate.batch_size == case.batch_size
+        and candidate.trajectory == case.trajectory
+        and candidate.repetition == case.repetition
+        and candidate.mode == "candidate_eager"
     )
 
 
-def graph_case_ready(case, run_dir: Path) -> bool:
-    if case.mode == "eager":
+def compatibility_reference_case(case):
+    return next(
+        candidate
+        for candidate in contract.build_legacy_compatibility_matrix()
+        if candidate.pair_id == case.pair_id
+        and candidate.policy == "legacy_eager_auto"
+    )
+
+
+def reference_case(case):
+    if hasattr(case, "mode"):
+        return same_policy_reference_case(case)
+    return compatibility_reference_case(case)
+
+
+def _is_reference_case(case) -> bool:
+    return (
+        getattr(case, "mode", None) == "candidate_eager"
+        or getattr(case, "policy", None) == "legacy_eager_auto"
+    )
+
+
+def _comparison_policy_name(case) -> str:
+    return (
+        "same_policy_fixed16"
+        if hasattr(case, "mode")
+        else "legacy_auto_vs_fixed16"
+    )
+
+
+def _policy_identity(case, flash_attn_version: str) -> dict:
+    return {
+        "flash_attn_version": flash_attn_version,
+        "split_policy_name": case.split_policy_name,
+        "flash_attn_num_splits": case.flash_attn_num_splits,
+        "comparison_policy_name": _comparison_policy_name(case),
+    }
+
+
+def ordered_canonical_cases():
+    return (
+        contract.build_diagnostic_matrix()
+        + contract.build_legacy_compatibility_matrix()
+    )
+
+
+def candidate_case_ready(case, run_dir: Path) -> bool:
+    if _is_reference_case(case):
         return True
+    producer = reference_case(case)
     reference = (
         Path(run_dir)
         / "cases"
-        / _eager_case_id(case)
+        / producer.case_id
         / "input"
         / "reference_tokens.json"
     )
@@ -248,6 +307,7 @@ def completed_case_is_resumable(
     case,
     source_tree_sha256: str,
     environment_sha256: str,
+    flash_attn_version: str,
 ) -> bool:
     result_path = Path(case_dir) / "case_result.json"
     if not result_path.is_file():
@@ -261,10 +321,23 @@ def completed_case_is_resumable(
     expected = {
         "case": asdict(case),
         "case_id": case.case_id,
+        **_policy_identity(case, flash_attn_version),
         "source_tree_sha256": source_tree_sha256,
         "environment_sha256": environment_sha256,
     }
     if any(result.get(key) != value for key, value in expected.items()):
+        return False
+    reference = _reference_path(Path(case_dir))
+    if not reference.is_file():
+        return False
+    try:
+        reference_tokens = _read_json(reference)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    if (
+        result.get("reference_token_sha256")
+        != contract.canonical_json_sha256(reference_tokens)
+    ):
         return False
     artifacts = result.get("artifacts")
     if not isinstance(artifacts, dict) or not artifacts:
@@ -668,21 +741,24 @@ def _prepare_case_input(run_dir: Path, case) -> Path:
     case_dir = run_dir / "cases" / case.case_id
     input_dir = case_dir / "input"
     input_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(_case_spec_path(case_dir), asdict(case))
+    _write_json(
+        _case_spec_path(case_dir),
+        {"case_id": case.case_id, **asdict(case)},
+    )
     reference = _reference_path(case_dir)
-    if case.mode != "eager":
-        eager_reference = (
+    if not _is_reference_case(case):
+        producer_reference = (
             run_dir
             / "cases"
-            / _eager_case_id(case)
+            / reference_case(case).case_id
             / "input"
             / "reference_tokens.json"
         )
-        if not graph_case_ready(case, run_dir):
+        if not candidate_case_ready(case, run_dir):
             raise RuntimeError(
-                f"eager reference is not ready for {case.case_id}"
+                f"paired reference is not ready for {case.case_id}"
             )
-        shutil.copyfile(eager_reference, reference)
+        shutil.copyfile(producer_reference, reference)
     elif not reference.exists():
         _write_json(reference, None)
     return case_dir
@@ -782,6 +858,10 @@ def _finalize_case_record(
         "status": "PASS",
         "case": asdict(case),
         "case_id": case.case_id,
+        **_policy_identity(
+            case,
+            str(producer.get("flash_attn_version")),
+        ),
         "source_tree_sha256": source_hash,
         "environment_sha256": environment_hash,
         "prompt_sha256": prompt_hash,
@@ -859,6 +939,7 @@ def _merge_cases(
         )
         kv_rows.extend(_read_jsonl(output_dir / "kv_observations.jsonl"))
         identity = (
+            _comparison_policy_name(case),
             case.batch_size,
             case.trajectory,
             case.repetition,
@@ -868,6 +949,7 @@ def _merge_cases(
             / "reference_tokens"
             / (
                 f"b{case.batch_size}__{case.trajectory}"
+                f"__{_comparison_policy_name(case)}"
                 f"__r{case.repetition}.json"
             )
         )
@@ -881,6 +963,15 @@ def _merge_cases(
         process_rows.append(
             {
                 **asdict(case),
+                **(
+                    {"pair_id": case.pair_id}
+                    if hasattr(case, "pair_id")
+                    else {}
+                ),
+                **_policy_identity(
+                    case,
+                    str(environment["flash_attention"]),
+                ),
                 "case_id": case.case_id,
                 "status": orchestration["status"],
                 "source_tree_sha256": orchestration[
@@ -909,11 +1000,17 @@ def _merge_cases(
     _write_json(run_dir / "source_evidence.json", source_evidence)
     _write_json(run_dir / "environment.json", environment)
     _write_json(run_dir / "prompt_manifest.json", prompt_manifest)
+    same_policy_case_ids = [
+        case.case_id for case in cases if hasattr(case, "mode")
+    ]
+    compatibility_case_ids = [
+        case.case_id for case in cases if hasattr(case, "policy")
+    ]
     _write_json(
         run_dir / "manifest.json",
         {
             "schema_version": 1,
-            "kind": "diagnostic",
+            "kind": "fixed_split_recovery",
             "canonical": canonical,
             "source_tree_sha256": source_evidence["tree_sha256"],
             "environment_sha256": contract.canonical_json_sha256(
@@ -923,6 +1020,25 @@ def _merge_cases(
                 prompt_manifest
             ),
             "case_ids": [case.case_id for case in cases],
+            "same_policy_case_ids": same_policy_case_ids,
+            "compatibility_case_ids": compatibility_case_ids,
+            "legacy_compatibility_case_ids": compatibility_case_ids,
+            "same_policy_process_count": len(same_policy_case_ids),
+            "compatibility_process_count": len(
+                compatibility_case_ids
+            ),
+            "compatibility_pair_count": len(
+                {
+                    case.pair_id
+                    for case in cases
+                    if hasattr(case, "pair_id")
+                }
+            ),
+            "flash_attn_version": environment["flash_attention"],
+            "fixed_split_count": (
+                contract.MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+            ),
+            "auto_split_count": contract.AUTO_FLASH_ATTN_NUM_SPLITS,
             "warmup_steps": contract.WARMUP_STEPS,
             "measured_steps": contract.MEASURED_STEPS,
             "logit_rtol": contract.LOGIT_RTOL,
@@ -932,16 +1048,26 @@ def _merge_cases(
     if canonical:
         classification = "EXACT_REPLAY_CORRECT"
         rounded = "ROUNDED_REPLAY_CORRECT"
+        legacy_compatibility = "LEGACY_COMPATIBLE"
     else:
         classification = "NON_AUTHORITATIVE_SMOKE"
         rounded = "NON_AUTHORITATIVE_SMOKE"
+        legacy_compatibility = "NON_AUTHORITATIVE_SMOKE"
     _write_json(
         run_dir / "summary.json",
         {
             "schema_version": 1,
             "classification": classification,
             "rounded_classification": rounded,
+            "legacy_compatibility": legacy_compatibility,
             "case_count": len(process_rows),
+            "same_policy_case_count": len(same_policy_case_ids),
+            "compatibility_process_count": len(
+                compatibility_case_ids
+            ),
+            "compatibility_pair_count": len(
+                compatibility_case_ids
+            ) // 2,
         },
     )
     report = (
@@ -1013,12 +1139,12 @@ def _run_diagnostic(
     resume: bool,
     verifier_python: Path,
 ) -> tuple[Path, int]:
-    canonical = kind == "diagnostic-canonical"
-    cases = (
-        contract.build_diagnostic_matrix()
-        if canonical
-        else build_smoke_cases()
-    )
+    canonical = kind == "fixed-split-canonical"
+    if canonical:
+        cases = ordered_canonical_cases()
+    else:
+        same_policy, compatibility = build_smoke_cases()
+        cases = same_policy + compatibility
     run_tag = run_tag or _make_run_tag(kind)
     run_dir = prepare_run_directory(
         output_root=output_root,
@@ -1056,6 +1182,7 @@ def _run_diagnostic(
                 case,
                 source_hash,
                 environment_hash,
+                str(environment["flash_attention"]),
             ):
                 resumed = _read_json(case_dir / "case_result.json")
                 reserve_unique_port_pair(
@@ -1067,9 +1194,9 @@ def _run_diagnostic(
                     owner=f"resumed case {case.case_id}",
                 )
                 continue
-            if case.mode != "eager" and not graph_case_ready(case, run_dir):
+            if not candidate_case_ready(case, run_dir):
                 raise RuntimeError(
-                    f"graph dependency missing for {case.case_id}"
+                    f"paired reference missing for {case.case_id}"
                 )
             attempts = 0
             while True:
@@ -1228,8 +1355,8 @@ def _parse_args(argv=None):
         "mode",
         choices=(
             "preflight",
-            "diagnostic-smoke",
-            "diagnostic-canonical",
+            "fixed-split-smoke",
+            "fixed-split-canonical",
             "download-only",
             "verify-only",
         ),
@@ -1256,8 +1383,8 @@ def main(argv=None) -> int:
     if args.mode in {"download-only", "verify-only"} and not args.run_tag:
         raise SystemExit(f"{args.mode} requires --run-tag")
     if args.resume and args.mode not in {
-        "diagnostic-smoke",
-        "diagnostic-canonical",
+        "fixed-split-smoke",
+        "fixed-split-canonical",
     }:
         raise SystemExit("--resume is only valid for diagnostic runs")
     if args.mode == "preflight":
