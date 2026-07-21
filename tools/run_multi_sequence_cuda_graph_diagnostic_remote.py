@@ -202,7 +202,7 @@ def read_remote_case_stderr(*, case_dir: Path, fallback: bytes) -> str:
 
 
 def build_smoke_cases():
-    allowed_batches = {2, 3, 4}
+    allowed_batches = {5, 8, 16}
     allowed_trajectories = {"uniform-short", "ragged-context"}
     same_policy = tuple(
         case

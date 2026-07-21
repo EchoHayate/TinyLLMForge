@@ -761,6 +761,22 @@ def test_prompt_plan_is_deterministic_and_covers_required_trajectories():
     assert duplicate[0] != duplicate[2]
 
 
+def test_ragged_prompts_cross_page_boundaries_during_measured_decode():
+    diagnostic = load_diagnostic_module_without_gpu()
+    plan = diagnostic.build_prompt_plan(FakeTokenizer(), 16)
+    lengths = [len(prompt) for prompt in plan["ragged-context"]]
+    measured_start = contract.WARMUP_STEPS
+    measured_end = measured_start + contract.MEASURED_STEPS
+
+    assert 253 in lengths
+    assert 510 in lengths
+    assert any(
+        (length + measured_start) // 256
+        != (length + measured_end) // 256
+        for length in lengths
+    )
+
+
 def test_kv_observation_plan_covers_active_zero_inactive_and_sentinels():
     diagnostic = load_diagnostic_module_without_gpu()
     plan = diagnostic.build_kv_observation_plan(
@@ -2737,6 +2753,8 @@ def test_remote_runner_builds_heuristic_smoke_for_both_gates():
     assert compatibility
     assert len(same_policy) == 18
     assert len(compatibility) == 12
+    assert {case.batch_size for case in same_policy} == {5, 8, 16}
+    assert {case.batch_size for case in compatibility} == {5, 8, 16}
     assert all(case.repetition == 0 for case in same_policy)
     assert all(case.repetition == 0 for case in compatibility)
     assert {case.mode for case in same_policy} == {
@@ -2962,6 +2980,7 @@ if __name__ == "__main__":
         test_production_gate_frozen_boundaries,
         test_production_gate_fails_closed_on_structure_and_correctness,
         test_prompt_plan_is_deterministic_and_covers_required_trajectories,
+        test_ragged_prompts_cross_page_boundaries_during_measured_decode,
         test_kv_observation_plan_covers_active_zero_inactive_and_sentinels,
         test_teacher_forcing_records_observed_and_reference_tokens_separately,
         test_tensor_shard_schema_rejects_missing_order_fields,
