@@ -2,6 +2,227 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-22 Fixed-split multi-sequence CUDA Graph recovery hard checkpoint
+
+### 最终结论
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- Source base commit：`a482f0ee44c43ac46aa6cc256a6f14649714414e`
+- Source tree SHA256：
+  `afcb22ada96e9341717d93ee51e4b5d1e87332c4d79744f9650cbfc4799fb842`
+- Authoritative canonical：
+  `experiments/cuda_graph/qwen3-06b-fixed-split-canonical-20260721-174406/`
+- Independent verifier：
+  `experiments/cuda_graph/qwen3-06b-fixed-split-canonical-20260721-174406/independent-verification/summary.json`
+- Gate A：`EXACT_REPLAY_CORRECT`
+- Rounded diagnostic：`ROUNDED_REPLAY_CORRUPT`
+- Gate B：`LEGACY_INCOMPATIBLE`
+- Hard checkpoint 未通过：**Tasks 8-10 未授权，production batch>1 eager
+  guard 必须保持，README 不更新。**
+
+该结果证明：当 candidate eager、capture 和 replay 都固定使用
+`flash_attn_num_splits=16` 时，exact-key multi-sequence graph replay 在冻结的
+189-process matrix 上与 fixed16 eager 一致。它不证明 fixed16 与现有
+auto-split eager 语义兼容，也不证明 production 吞吐、延迟或显存有提升。
+
+### 书面设计与执行入口
+
+设计：
+
+```text
+docs/superpowers/specs/2026-07-21-fixed-split-multi-sequence-cuda-graph-recovery-design.md
+```
+
+批准计划：
+
+```text
+docs/superpowers/plans/2026-07-21-fixed-split-multi-sequence-cuda-graph-recovery.md
+```
+
+Canonical 初始命令：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/run_multi_sequence_cuda_graph_diagnostic_remote.py \
+  fixed-split-canonical \
+  --run-tag qwen3-06b-fixed-split-canonical-20260721-174406 \
+  --verifier-python /Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python
+```
+
+同一 source-bound run 的恢复命令：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/run_multi_sequence_cuda_graph_diagnostic_remote.py \
+  fixed-split-canonical \
+  --run-tag qwen3-06b-fixed-split-canonical-20260721-174406 \
+  --resume \
+  --verifier-python /Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python
+```
+
+执行期间 GPU 0 受到共享服务的瞬态显存竞争。仅当 traceback 同时包含
+`allocate_kv_cache` 和 `auto_num_blocks > 0` 时，外部 supervisor 才等待
+GPU 0 连续三次 `<=31000 MiB` 后恢复同一 run；没有吞掉任何算法、tensor、
+token、KV 或 verifier 失败。
+
+### 环境与冻结合同
+
+- Remote：`sitian@10.232.195.203`
+- Host：`n232-195-203`
+- GPU：`NVIDIA A100 80GB PCIe`
+- Driver：`535.261.03`
+- CUDA runtime：`12.1`
+- Python：`3.11.15`
+- PyTorch：`2.4.1+cu121`
+- FlashAttention：`2.6.3`
+- Transformers：`5.8.1`
+- Model：
+  `/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`
+- Gate A：`7 batches × 3 trajectories × 3 modes × 3 repetitions = 189`
+- Gate B：`7 batches × 3 trajectories × 2 policies × 3 repetitions = 126`
+- Batch：`2, 3, 4, 5, 8, 9, 16`
+- Trajectory：`uniform-short`、`ragged-context`、
+  `duplicate-and-distinct`
+- Warmup / measured decode steps：`2 / 16`
+- Auto split：`0`
+- Fixed split：`16`
+- Logit tolerance：`rtol=1e-3`、`atol=1e-2`
+- Greedy token arrays：exact comparison
+
+### Canonical 完整性审计
+
+除 verifier 自身外，另一次只读审计逐项验证并重算：
+
+- `315` 个 unique case IDs；
+- `630` 个 unique dynamic ports；
+- `189` 个 same-policy process rows；
+- `126` 个 compatibility process rows；
+- `63` 个完整 compatibility pairs；
+- `5040` 个 raw rows；
+- `5040` 个 layer rows；
+- `5040` 个 KV rows；
+- 每个 layer row 都有完整 `28/28` layers 且 finite；
+- source/environment/prompt identity 一致；
+- fixed graph 只与 fixed16 eager 比较；
+- fixed16 eager 只与 auto eager 做 compatibility 比较；
+- `sha256sums.txt` 中 `1083` 个文件 hash 全部从磁盘重算一致；
+- independent verifier structural failures：`0`。
+
+关键 hash：
+
+```text
+manifest.json
+8950dc3fdd8ec9b9cf7e137dd717a61113212f9639c8be1dc02a00c6a92360b7
+
+process_rows.jsonl
+169694a82c6529e992453b1dea8bfea02026a00955e91f9544f9c0ff5884cc51
+
+independent-verification/summary.json
+9168f4273d4e672ef772344f42266d08d2b18b4d837e4b92ddf3275bd30121d1
+```
+
+### Gate A 与 rounded 结果
+
+Gate A 的 `63` 个 exact graph cases 全部通过 fixed16 eager 对照：
+
+```text
+classification=EXACT_REPLAY_CORRECT
+corrupt_exact_case_ids=[]
+```
+
+这支持原 multi-sequence corruption 与 capture/replay 期间
+FlashAttention auto split identity 不稳定有关；显式 fixed16 后
+exact-key replay correctness 恢复，但本 gate 不证明它是唯一根因。
+
+Rounded graph 的 `63/63` cases 全部 corruption：
+
+```text
+rounded_classification=ROUNDED_REPLAY_CORRUPT
+```
+
+首个 independent divergence：
+
+```json
+{
+  "case_id": "b16__duplicate-and-distinct__rounded_graph_fixed16__fixed16-s16__r0",
+  "evidence": "logits",
+  "kind": "close_failure",
+  "row_id": 0,
+  "step_id": 0
+}
+```
+
+因此 rounded replay 仍只能作为 diagnostic negative control，绝不能进入
+production。
+
+### Gate B 失败模式
+
+Gate B 的 `54/63` pairs 完全兼容；`9/63` pairs 不兼容，且模式跨三次
+repetition 完全一致：
+
+```text
+b8__ragged-context__compat__r0/r1/r2
+b9__ragged-context__compat__r0/r1/r2
+b16__ragged-context__compat__r0/r1/r2
+```
+
+只读 raw tensor 复算得到：
+
+- `9/63` pairs 的 logits 超出冻结 tolerance；
+- 同 `9/63` pairs 的 intermediate layer tensors 超出 tolerance；
+- `6/63` pairs 发生 greedy argmax/token 改变：
+  batch `8/9`、ragged-context、全部三次 repetition；
+- batch `16` ragged-context 的三次 repetition 虽然 greedy token 暂时相同，
+  但 logits 最大绝对差达到 `5.75`，仍不满足兼容合同；
+- uniform-short、duplicate-and-distinct，以及 ragged-context batch
+  `2/3/4/5` 的所有 repetitions 都是 tensor-exact compatible。
+
+batch `8/9` 的首个 token divergence 均为 measured step `2`、row `6`：
+
+```text
+auto token=19357
+fixed16 token=840
+```
+
+该失败不是“容差略紧”这么简单：固定 split 已在可复现 workload 上改变
+greedy 输出，因此不能用放宽 tolerance、忽略 logits mismatch 或只看
+producer PASS 的方式解除 production guard。
+
+### Producer 与 independent verifier 边界
+
+顶层 producer `summary.json` 自报：
+
+```text
+EXACT_REPLAY_CORRECT / ROUNDED_REPLAY_CORRECT / LEGACY_COMPATIBLE
+```
+
+它只汇总 process-level producer 状态，不能替代 tensor comparison。独立
+verifier 从 hashed raw logits/layers/KV/token artifacts 重算后给出：
+
+```text
+EXACT_REPLAY_CORRECT / ROUNDED_REPLAY_CORRUPT / LEGACY_INCOMPATIBLE
+```
+
+因此 authoritative 结论只能使用
+`independent-verification/summary.json`，不能使用 producer
+`summary.json`。
+
+### Production 决策与后续边界
+
+- `tinyvllm/engine/model_runner.py` 中
+  `multi_sequence_decode = mode == "decode" and input_ids.size(0) > 1`
+  的 eager guard 保持不变。
+- 未修改 `tinyvllm/config.py`、production graph capture/dispatch、
+  `tinyvllm/engine/llm_engine.py`、arrival-load evidence 或 README。
+- 没有运行 production performance gate，因此当前没有新的 production
+  性能提升数字；fixed16 exact replay correctness 不能等价为性能收益。
+- Tasks 8-10 不得继续，除非另起书面 root-cause/design，解决
+  auto-vs-fixed16 的 ragged batch semantic drift，并重新跑 fresh
+  source-bound Gate A/Gate B canonical。
+- 不能通过放宽 tolerance、删除 ragged-context、缩小 batch matrix、
+  忽略 token mismatch 或把 eager fallback 改成 fixed16 来绕过 Gate B。
+
 ## 2026-07-21 Multi-sequence CUDA Graph canonical hard gate
 
 ### 当前结论
