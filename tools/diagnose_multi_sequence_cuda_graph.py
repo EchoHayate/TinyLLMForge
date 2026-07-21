@@ -18,6 +18,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "tools" / "multi_sequence_cuda_graph_contract.py"
+SPLIT_POLICY_PATH = (
+    ROOT / "tinyvllm" / "engine" / "flash_attn_split_policy.py"
+)
 RAGGED_TARGETS = (
     32,
     64,
@@ -61,6 +64,30 @@ def _load_contract():
 contract = _load_contract()
 
 
+def _load_split_policy():
+    spec = importlib.util.spec_from_file_location(
+        "flash_attn_split_policy",
+        SPLIT_POLICY_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+split_policy = _load_split_policy()
+
+
+@dataclass(frozen=True)
+class StepSplitPolicy:
+    inputs: split_policy.FlashAttentionSplitInputs
+    identity: split_policy.FlashAttentionGraphIdentity
+
+    @property
+    def effective_num_splits(self) -> int:
+        return self.identity.effective_num_splits
+
+
 @dataclass
 class CapturedDecodeGraph:
     graph_size: int
@@ -72,6 +99,82 @@ class CapturedDecodeGraph:
     block_tables: object
     outputs: object
     layer_outputs: object
+
+
+def _required_int_attribute(owner, field: str) -> int:
+    try:
+        value = getattr(owner, field)
+    except AttributeError as exc:
+        raise ValueError(f"missing {field}") from exc
+    if isinstance(value, bool):
+        raise ValueError(f"{field} must be an integer")
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be an integer") from exc
+    if normalized <= 0:
+        raise ValueError(f"{field} must be positive")
+    return normalized
+
+
+def build_step_split_policy(
+    *,
+    runner,
+    dynamic_context: dict,
+    active_batch_size: int,
+    graph_batch_size: int,
+    flash_attn_version: str,
+) -> StepSplitPolicy:
+    if flash_attn_version != split_policy.FLASH_ATTN_VERSION:
+        raise ValueError(
+            "step split policy requires FlashAttention 2.6.3"
+        )
+    try:
+        hf_config = runner.config.hf_config
+    except AttributeError as exc:
+        raise ValueError("missing runner.config.hf_config") from exc
+    try:
+        block_tables = dynamic_context["block_tables"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("missing dynamic block_tables") from exc
+    try:
+        page_table_width = int(block_tables.size(1))
+    except (AttributeError, TypeError, ValueError, IndexError) as exc:
+        raise ValueError("invalid block_tables page-table width") from exc
+    try:
+        kv_cache_device = runner.kv_cache.device
+    except AttributeError as exc:
+        raise ValueError("missing runner.kv_cache.device") from exc
+
+    import torch
+
+    device_properties = torch.cuda.get_device_properties(kv_cache_device)
+    multi_processor_count = _required_int_attribute(
+        device_properties,
+        "multi_processor_count",
+    )
+    inputs = split_policy.FlashAttentionSplitInputs(
+        batch_size=int(active_batch_size),
+        num_query_heads=_required_int_attribute(
+            hf_config,
+            "num_attention_heads",
+        ),
+        num_kv_heads=_required_int_attribute(
+            hf_config,
+            "num_key_value_heads",
+        ),
+        head_dim=_required_int_attribute(hf_config, "head_dim"),
+        page_block_size=_required_int_attribute(runner, "block_size"),
+        page_table_width=page_table_width,
+        max_seqlen_q=1,
+        multi_processor_count=multi_processor_count,
+    )
+    identity = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=int(graph_batch_size),
+        inputs=inputs,
+        flash_attn_version=flash_attn_version,
+    )
+    return StepSplitPolicy(inputs=inputs, identity=identity)
 
 
 def repeat_to_exact_token_count(seed: list[int], target_count: int) -> list[int]:

@@ -128,6 +128,44 @@ class FakeTokenizer:
         return [ord(character) for character in text]
 
 
+class FakeSizedTensor:
+    def __init__(self, shape, *, device="cuda:0"):
+        self._shape = tuple(shape)
+        self.device = device
+
+    def size(self, dimension=None):
+        if dimension is None:
+            return self._shape
+        return self._shape[dimension]
+
+
+def make_fake_policy_runner():
+    hf_config = types.SimpleNamespace(
+        num_attention_heads=16,
+        num_key_value_heads=8,
+        head_dim=128,
+    )
+    return types.SimpleNamespace(
+        config=types.SimpleNamespace(hf_config=hf_config),
+        block_size=256,
+        kv_cache=FakeSizedTensor((2, 28, 64, 256, 128)),
+    )
+
+
+@contextmanager
+def fake_cuda_device_properties(multi_processor_count=108):
+    import torch
+
+    original = torch.cuda.get_device_properties
+    torch.cuda.get_device_properties = lambda device: types.SimpleNamespace(
+        multi_processor_count=multi_processor_count,
+    )
+    try:
+        yield
+    finally:
+        torch.cuda.get_device_properties = original
+
+
 def test_flash_attn_263_known_qwen3_a100_vectors():
     split_policy = load_split_policy()
     vectors = {
@@ -820,6 +858,129 @@ def test_direct_model_forward_and_logits_disable_autograd():
         torch.tensor([0]),
     )
     assert observed.tolist() == [False, False]
+
+
+def test_build_step_split_policy_uses_exact_runtime_width_and_batch_identity():
+    diagnostic = load_diagnostic_module_without_gpu()
+    runner = make_fake_policy_runner()
+    dynamic_context = {"block_tables": FakeSizedTensor((8, 2))}
+
+    with fake_cuda_device_properties():
+        policy = diagnostic.build_step_split_policy(
+            runner=runner,
+            dynamic_context=dynamic_context,
+            active_batch_size=8,
+            graph_batch_size=16,
+            flash_attn_version="2.6.3",
+        )
+
+    assert policy.inputs.page_table_width == 2
+    assert policy.inputs.batch_size == 8
+    assert policy.identity.active_batch_size == 8
+    assert policy.identity.graph_batch_size == 16
+    assert policy.identity.page_table_width == 2
+    assert policy.effective_num_splits == 2
+
+
+def test_build_step_split_policy_matches_qwen3_a100_vectors():
+    diagnostic = load_diagnostic_module_without_gpu()
+    runner = make_fake_policy_runner()
+    vectors = (
+        (2, 1, 2),
+        (8, 2, 2),
+        (9, 2, 2),
+        (16, 3, 3),
+    )
+
+    with fake_cuda_device_properties():
+        for active_batch_size, page_table_width, expected in vectors:
+            policy = diagnostic.build_step_split_policy(
+                runner=runner,
+                dynamic_context={
+                    "block_tables": FakeSizedTensor(
+                        (active_batch_size, page_table_width)
+                    )
+                },
+                active_batch_size=active_batch_size,
+                graph_batch_size=active_batch_size,
+                flash_attn_version="2.6.3",
+            )
+            assert policy.effective_num_splits == expected
+
+
+def test_build_step_split_policy_rejects_version_and_missing_inputs():
+    diagnostic = load_diagnostic_module_without_gpu()
+    runner = make_fake_policy_runner()
+    dynamic_context = {"block_tables": FakeSizedTensor((8, 2))}
+
+    with fake_cuda_device_properties():
+        try:
+            diagnostic.build_step_split_policy(
+                runner=runner,
+                dynamic_context=dynamic_context,
+                active_batch_size=8,
+                graph_batch_size=8,
+                flash_attn_version="2.6.4",
+            )
+        except ValueError as exc:
+            assert "2.6.3" in str(exc)
+        else:
+            raise AssertionError("unsupported FlashAttention version accepted")
+
+        for field in (
+            "num_attention_heads",
+            "num_key_value_heads",
+            "head_dim",
+        ):
+            broken = make_fake_policy_runner()
+            delattr(broken.config.hf_config, field)
+            try:
+                diagnostic.build_step_split_policy(
+                    runner=broken,
+                    dynamic_context=dynamic_context,
+                    active_batch_size=8,
+                    graph_batch_size=8,
+                    flash_attn_version="2.6.3",
+                )
+            except ValueError as exc:
+                assert field in str(exc)
+            else:
+                raise AssertionError(f"missing {field} accepted")
+
+        broken = make_fake_policy_runner()
+        delattr(broken, "block_size")
+        try:
+            diagnostic.build_step_split_policy(
+                runner=broken,
+                dynamic_context=dynamic_context,
+                active_batch_size=8,
+                graph_batch_size=8,
+                flash_attn_version="2.6.3",
+            )
+        except ValueError as exc:
+            assert "block_size" in str(exc)
+        else:
+            raise AssertionError("missing block_size accepted")
+
+    import torch
+
+    original = torch.cuda.get_device_properties
+    torch.cuda.get_device_properties = lambda device: types.SimpleNamespace()
+    try:
+        try:
+            diagnostic.build_step_split_policy(
+                runner=runner,
+                dynamic_context=dynamic_context,
+                active_batch_size=8,
+                graph_batch_size=8,
+                flash_attn_version="2.6.3",
+            )
+        except ValueError as exc:
+            assert "multi_processor_count" in str(exc)
+        else:
+            raise AssertionError("missing multi_processor_count accepted")
+    finally:
+        torch.cuda.get_device_properties = original
 
 
 def test_diagnostic_case_parser_rejects_split_policy_drift():
@@ -2339,6 +2500,9 @@ if __name__ == "__main__":
         test_tensor_shard_schema_accepts_ordered_complete_metadata,
         test_direct_model_forward_disables_autograd,
         test_direct_model_forward_and_logits_disable_autograd,
+        test_build_step_split_policy_uses_exact_runtime_width_and_batch_identity,
+        test_build_step_split_policy_matches_qwen3_a100_vectors,
+        test_build_step_split_policy_rejects_version_and_missing_inputs,
         test_diagnostic_case_parser_rejects_split_policy_drift,
         test_execution_policy_maps_gate_cases_to_expected_split,
         test_candidate_eager_forward_observes_fixed16_and_restores_auto,
