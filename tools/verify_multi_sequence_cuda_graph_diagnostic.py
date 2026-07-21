@@ -127,6 +127,9 @@ def verify_policy_integrity(
                 )
                 incomplete = True
                 continue
+            process = process_rows.get(key[0], {})
+            if process.get("policy") == "legacy_eager_auto":
+                continue
             if key in indexed:
                 failures.append(f"{evidence_name}: duplicate {key}")
                 incomplete = True
@@ -245,8 +248,6 @@ def verify_policy_integrity(
                 continue
             seen.add(identity)
             expected_summary.append(_identity_summary_entry(identity))
-        if process.get("mode") == "candidate_eager_heuristic":
-            expected_summary = []
         if process.get("graph_identities") != expected_summary:
             failures.append(f"{case_id}: graph identity summary drift")
 
@@ -331,9 +332,9 @@ def _all_expected_cases():
 
 def _comparison_policy_name(case) -> str:
     return (
-        "same_policy_fixed16"
+        "same_policy_heuristic_exact_width"
         if hasattr(case, "mode")
-        else "legacy_auto_vs_fixed16"
+        else "legacy_auto_vs_heuristic"
     )
 
 
@@ -470,7 +471,7 @@ def _validate_manifest(
     expected_ids = same_policy_ids + compatibility_ids
     expected_values = {
         "schema_version": 1,
-        "kind": "fixed_split_recovery",
+        "kind": "heuristic_exact_width_recovery",
         "canonical": True,
         "source_tree_sha256": source_evidence.get("tree_sha256"),
         "environment_sha256": contract.canonical_json_sha256(environment),
@@ -485,9 +486,7 @@ def _validate_manifest(
         "compatibility_process_count": len(compatibility_ids),
         "compatibility_pair_count": len(compatibility_ids) // 2,
         "flash_attn_version": environment.get("flash_attention"),
-        "fixed_split_count": (
-            contract.MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-        ),
+        "policy_name": contract.HEURISTIC_POLICY_NAME,
         "auto_split_count": contract.AUTO_FLASH_ATTN_NUM_SPLITS,
         "warmup_steps": contract.WARMUP_STEPS,
         "measured_steps": contract.MEASURED_STEPS,
@@ -570,7 +569,7 @@ def _validate_process_rows(
             "source_tree_sha256": source_hash,
             "environment_sha256": environment_hash,
         }.items():
-            if row.get(field) != expected:
+            if field not in row or row.get(field) != expected:
                 failures.append(
                     f"process_rows: {case_id} {field}="
                     f"{row.get(field)!r}, expected {expected!r}"
@@ -898,7 +897,7 @@ def _compare_logits_and_layers(
                     f"{case.case_id} layers: component_ids mismatch"
                 )
         identity = _case_identity(case)
-        if case.mode == "candidate_eager":
+        if case.mode == "candidate_eager_heuristic":
             eager_shards[identity] = loaded
             continue
         eager = eager_shards.get(identity)
@@ -1051,7 +1050,7 @@ def _compare_kv(
                 failures.append(f"{case.case_id} kv: step metadata mismatch")
                 shard = None
         identity = _case_identity(case)
-        if case.mode == "candidate_eager":
+        if case.mode == "candidate_eager_heuristic":
             eager_shards[identity] = shard
             continue
         common = {
@@ -1283,18 +1282,18 @@ def _compare_legacy_compatibility(
     candidate_cases = (
         case
         for case in contract.build_legacy_compatibility_matrix()
-        if case.policy == "candidate_eager_fixed16"
+        if case.policy == "candidate_eager_heuristic"
     )
     for case in candidate_cases:
         pair = loaded_by_pair.get(case.pair_id, {})
         legacy = pair.get("legacy_eager_auto", {})
-        candidate = pair.get("candidate_eager_fixed16", {})
+        candidate = pair.get("candidate_eager_heuristic", {})
         common = {
             "pair_id": case.pair_id,
             "batch_size": case.batch_size,
             "trajectory": case.trajectory,
             "repetition": case.repetition,
-            "comparison_policy_name": "legacy_auto_vs_fixed16",
+            "comparison_policy_name": "legacy_auto_vs_heuristic",
         }
 
         logit_comparison = {

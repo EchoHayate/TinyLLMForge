@@ -500,7 +500,7 @@ def make_complete_diagnostic_evidence():
                 "status": "PASS",
             }
         )
-        if case.mode == "candidate_eager":
+        if case.mode == "candidate_eager_heuristic":
             continue
         common = {
             "case_id": case.case_id,
@@ -553,7 +553,7 @@ def test_diagnostic_classification_separates_exact_and_rounded():
     rounded_bad = make_complete_diagnostic_evidence()
     rounded_kv = _first_result_for_mode(
         rounded_bad["kv_results"],
-        "rounded_graph_fixed16",
+        "rounded_graph_heuristic",
     )
     rounded_kv["unexpected_slot_mutations"] = [0]
     result = contract.classify_diagnostic(**rounded_bad)
@@ -563,7 +563,7 @@ def test_diagnostic_classification_separates_exact_and_rounded():
     exact_bad = make_complete_diagnostic_evidence()
     exact_logits = _first_result_for_mode(
         exact_bad["logit_results"],
-        "exact_graph_fixed16",
+        "exact_graph_heuristic",
     )
     exact_logits["close"] = False
     result = contract.classify_diagnostic(**exact_bad)
@@ -598,18 +598,18 @@ def make_complete_legacy_compatibility_evidence():
                 "repetition": case.repetition,
                 "split_policy_name": case.split_policy_name,
                 "flash_attn_num_splits": case.flash_attn_num_splits,
-                "comparison_policy_name": "legacy_auto_vs_fixed16",
+                "comparison_policy_name": "legacy_auto_vs_heuristic",
                 "status": "PASS",
             }
         )
-        if case.policy != "candidate_eager_fixed16":
+        if case.policy != "candidate_eager_heuristic":
             continue
         common = {
             "pair_id": case.pair_id,
             "batch_size": case.batch_size,
             "trajectory": case.trajectory,
             "repetition": case.repetition,
-            "comparison_policy_name": "legacy_auto_vs_fixed16",
+            "comparison_policy_name": "legacy_auto_vs_heuristic",
         }
         logit_results.append(
             {
@@ -1379,30 +1379,42 @@ def test_diagnostic_case_parser_rejects_split_policy_drift():
         raise AssertionError("split policy drift was accepted")
 
 
-def test_execution_policy_maps_gate_cases_to_expected_split():
+def test_execution_policy_rejects_case_level_heuristic_split():
     diagnostic = load_diagnostic_module_without_gpu()
 
     for case in contract.build_diagnostic_matrix():
-        assert diagnostic.execution_split_count(case) == 16
+        try:
+            diagnostic.execution_split_count(case)
+        except ValueError as exc:
+            assert "per step" in str(exc)
+        else:
+            raise AssertionError("heuristic case exposed a frozen split")
     for case in contract.build_legacy_compatibility_matrix():
-        expected = 0 if case.policy == "legacy_eager_auto" else 16
-        assert diagnostic.execution_split_count(case) == expected
+        if case.policy == "legacy_eager_auto":
+            assert diagnostic.execution_split_count(case) == 0
+        else:
+            try:
+                diagnostic.execution_split_count(case)
+            except ValueError as exc:
+                assert "per step" in str(exc)
+            else:
+                raise AssertionError("heuristic case exposed a frozen split")
 
 
-def test_candidate_eager_forward_observes_fixed16_and_restores_auto():
+def test_candidate_eager_forward_observes_step_split_and_restores_auto():
     diagnostic = load_diagnostic_module_without_gpu()
     context = install_fake_context_module()
     context.reset_context()
     seen = []
     try:
         result = diagnostic._run_with_split_policy(
-            16,
+            2,
             lambda: seen.append(
                 context.get_context().flash_attn_num_splits
             ),
         )
         assert result is None
-        assert seen == [16]
+        assert seen == [2]
         assert context.get_context().flash_attn_num_splits == 0
     finally:
         context.reset_context()
@@ -1438,18 +1450,18 @@ def test_policy_evidence_distinguishes_same_policy_and_legacy_comparison():
 
     assert diagnostic.policy_evidence(
         diagnostic_case,
-        "2.7.4",
+        "2.6.3",
     ) == {
-        "flash_attn_version": "2.7.4",
-        "split_policy_name": "fixed16",
-        "flash_attn_num_splits": 16,
-        "comparison_policy_name": "same_policy_fixed16",
+        "flash_attn_version": "2.6.3",
+        "split_policy_name": contract.HEURISTIC_POLICY_NAME,
+        "flash_attn_num_splits": None,
+        "comparison_policy_name": "same_policy_heuristic_exact_width",
     }
-    assert diagnostic.policy_evidence(legacy_case, "2.7.4") == {
-        "flash_attn_version": "2.7.4",
+    assert diagnostic.policy_evidence(legacy_case, "2.6.3") == {
+        "flash_attn_version": "2.6.3",
         "split_policy_name": "auto",
         "flash_attn_num_splits": 0,
-        "comparison_policy_name": "legacy_auto_vs_fixed16",
+        "comparison_policy_name": "legacy_auto_vs_heuristic",
     }
 
 
@@ -1516,9 +1528,9 @@ def _case_identity(case) -> tuple[int, str, int]:
 
 def _comparison_policy_name(case) -> str:
     return (
-        "same_policy_fixed16"
+        "same_policy_heuristic_exact_width"
         if hasattr(case, "mode")
-        else "legacy_auto_vs_fixed16"
+        else "legacy_auto_vs_heuristic"
     )
 
 
@@ -1528,7 +1540,7 @@ def _case_graph_size(case) -> int:
 
 def _is_reference_case(case) -> bool:
     return (
-        getattr(case, "mode", None) == "candidate_eager"
+        getattr(case, "mode", None) == "candidate_eager_heuristic"
         or getattr(case, "policy", None) == "legacy_eager_auto"
     )
 
@@ -1572,7 +1584,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         "cuda_runtime": "12.synthetic",
         "nvidia_driver": "synthetic",
         "gpu_name": "Synthetic GPU",
-        "flash_attention": "synthetic",
+        "flash_attention": "2.6.3",
         "transformers": "synthetic",
         "model_identifier": "Qwen3-0.6B-synthetic",
         "bf16_supported": True,
@@ -1604,7 +1616,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
     prompt_manifest_sha256 = contract.canonical_json_sha256(prompt_manifest)
     manifest = {
         "schema_version": 1,
-        "kind": "fixed_split_recovery",
+        "kind": "heuristic_exact_width_recovery",
         "canonical": True,
         "source_tree_sha256": source_tree_sha256,
         "environment_sha256": environment_sha256,
@@ -1631,9 +1643,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         "compatibility_process_count": 126,
         "compatibility_pair_count": 63,
         "flash_attn_version": environment["flash_attention"],
-        "fixed_split_count": (
-            contract.MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-        ),
+        "policy_name": contract.HEURISTIC_POLICY_NAME,
         "auto_split_count": contract.AUTO_FLASH_ATTN_NUM_SPLITS,
         "warmup_steps": contract.WARMUP_STEPS,
         "measured_steps": contract.MEASURED_STEPS,
@@ -1660,11 +1670,65 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         identity = _case_identity(case)
         comparison_policy_name = _comparison_policy_name(case)
         policy_evidence = {
-            "flash_attn_version": "synthetic",
+            "flash_attn_version": "2.6.3",
             "split_policy_name": case.split_policy_name,
             "flash_attn_num_splits": case.flash_attn_num_splits,
             "comparison_policy_name": comparison_policy_name,
         }
+        graph_identities = []
+        step_policy_evidence = {}
+        if case.flash_attn_num_splits is None:
+            page_table_width = (
+                1
+                if case.batch_size <= 5
+                else 2
+                if case.batch_size <= 9
+                else 3
+            )
+            split_inputs = load_split_policy().FlashAttentionSplitInputs(
+                batch_size=case.batch_size,
+                num_query_heads=16,
+                num_kv_heads=8,
+                head_dim=128,
+                page_block_size=256,
+                page_table_width=page_table_width,
+                max_seqlen_q=1,
+                multi_processor_count=108,
+            )
+            graph_identity = (
+                load_split_policy().build_flash_attn_263_graph_identity(
+                    graph_batch_size=_case_graph_size(case),
+                    inputs=split_inputs,
+                    flash_attn_version="2.6.3",
+                )
+            )
+            step_policy_evidence = {
+                "split_policy_name": contract.HEURISTIC_POLICY_NAME,
+                "flash_attn_version": "2.6.3",
+                "page_table_width": page_table_width,
+                "effective_num_splits": (
+                    graph_identity.effective_num_splits
+                ),
+                "heuristic_batch_size": case.batch_size,
+                "heuristic_num_query_heads": 16,
+                "heuristic_num_kv_heads": 8,
+                "heuristic_head_dim": 128,
+                "heuristic_page_block_size": 256,
+                "heuristic_max_seqlen_q": 1,
+                "heuristic_multi_processor_count": 108,
+                "graph_batch_size": _case_graph_size(case),
+                "graph_identity_sha256": graph_identity.sha256,
+            }
+            graph_identities = [
+                {
+                    "sha256": graph_identity.sha256,
+                    "page_table_width": page_table_width,
+                    "effective_num_splits": (
+                        graph_identity.effective_num_splits
+                    ),
+                    "graph_batch_size": _case_graph_size(case),
+                }
+            ]
         reference_key = (
             comparison_policy_name,
             identity,
@@ -1820,6 +1884,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
                 ),
                 "tinyvllm_dist_port": tiny_port,
                 "master_port": master_port,
+                "graph_identities": graph_identities,
                 "artifacts": {
                     "logits": _artifact_record(run_dir, logits_path),
                     "layers": _artifact_record(run_dir, layers_path),
@@ -1832,6 +1897,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
                 {
                     **asdict(case),
                     **policy_evidence,
+                    **step_policy_evidence,
                     "case_id": case.case_id,
                     "step_id": step_id,
                     "observed_argmax_token_ids": torch.argmax(
@@ -1846,6 +1912,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             layer_rows.append(
                 {
                     **policy_evidence,
+                    **step_policy_evidence,
                     "case_id": case.case_id,
                     "step_id": step_id,
                     "required_layer_count": 2,
@@ -1857,6 +1924,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             kv_rows.append(
                 {
                     **policy_evidence,
+                    **step_policy_evidence,
                     "case_id": case.case_id,
                     "step_id": step_id,
                     "active_write_slots": list(active_slots),
@@ -1880,6 +1948,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         "classification": "EXACT_REPLAY_CORRECT",
         "rounded_classification": "ROUNDED_REPLAY_CORRECT",
         "legacy_compatibility": "LEGACY_COMPATIBLE",
+        "policy_integrity": "POLICY_EXACT",
         "case_count": len(process_rows),
         "same_policy_case_count": 189,
         "compatibility_process_count": 126,
@@ -1919,7 +1988,7 @@ def test_verifier_reconstructs_complete_diagnostic():
         assert summary["compatibility_pair_count"] == 63
 
 
-def test_verifier_rejects_fixed_split_manifest_contract_drift():
+def test_verifier_rejects_heuristic_manifest_contract_drift():
     verifier = load_verifier()
     with tempfile.TemporaryDirectory() as temporary_directory:
         run_dir = write_complete_diagnostic_fixture(
@@ -1943,7 +2012,7 @@ def test_verifier_rejects_fixed_split_manifest_contract_drift():
             ("compatibility_process_count", 125),
             ("compatibility_pair_count", 62),
             ("flash_attn_version", "different"),
-            ("fixed_split_count", 8),
+            ("policy_name", "different_policy"),
             ("auto_split_count", 1),
         )
         for field, value in mutations:
@@ -1984,7 +2053,7 @@ def test_verifier_rejects_auto_graph_as_fixed16_evidence():
         graph = next(
             row
             for row in rows
-            if row.get("mode") == "exact_graph_fixed16"
+            if row.get("mode") == "exact_graph_heuristic"
         )
         graph["split_policy_name"] = "auto"
         graph["flash_attn_num_splits"] = 0
@@ -2002,7 +2071,7 @@ def test_verifier_rejects_step_policy_identity_drift():
         )
         raw_path = run_dir / "raw_rows.jsonl"
         rows = _read_jsonl(raw_path)
-        rows[0]["comparison_policy_name"] = "legacy_auto_vs_fixed16"
+        rows[0]["comparison_policy_name"] = "legacy_auto_vs_heuristic"
         _rewrite_jsonl(raw_path, rows)
         _refresh_sha256sums(run_dir)
         summary = verifier.verify_diagnostic(run_dir)
@@ -2020,7 +2089,7 @@ def test_verifier_reports_fixed_vs_auto_token_mismatch_as_legacy_incompatible():
         target = next(
             row
             for row in rows
-            if row.get("policy") == "candidate_eager_fixed16"
+            if row.get("policy") == "candidate_eager_heuristic"
         )
         target["observed_argmax_token_ids"][0] += 1
         _rewrite_jsonl(raw_path, rows)
@@ -2060,7 +2129,7 @@ def test_verifier_detects_rehashed_exact_logit_mutation():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+        target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0, 0] += 10.0
@@ -2180,7 +2249,7 @@ def test_verifier_detects_nonfinite_exact_logit():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+        target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0, 0] = float("nan")
@@ -2209,7 +2278,7 @@ def test_verifier_detects_exact_argmax_mismatch():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+        target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0] = torch.tensor([100.0, 0.0, 0.0])
@@ -2234,7 +2303,7 @@ def test_verifier_detects_exact_close_threshold_failure():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+        target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0] += torch.tensor([0.1, 0.1, 0.1])
@@ -2259,7 +2328,7 @@ def test_verifier_rejects_missing_layer_index():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+        target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
         artifact = run_dir / target["artifacts"]["layers"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["layer_ids"] = [0]
@@ -2286,7 +2355,7 @@ def test_verifier_detects_rehashed_layer_tensor_mutation():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+        target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
         artifact = run_dir / target["artifacts"]["layers"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0, 0, 0, 0] += 1.0
@@ -2308,7 +2377,7 @@ def _mutate_kv_evidence(run_dir: Path, mutation: str) -> str:
 
     process_path = run_dir / "process_rows.jsonl"
     rows = _read_jsonl(process_path)
-    target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
+    target = next(row for row in rows if row["mode"] == "exact_graph_heuristic")
     artifact = run_dir / target["artifacts"]["kv"]["path"]
     shard = torch.load(artifact, weights_only=False)
     if mutation == "active":
@@ -2912,13 +2981,13 @@ if __name__ == "__main__":
         test_verifier_recomputes_exact_policy_integrity,
         test_verifier_rejects_policy_integrity_mutations,
         test_diagnostic_case_parser_rejects_split_policy_drift,
-        test_execution_policy_maps_gate_cases_to_expected_split,
-        test_candidate_eager_forward_observes_fixed16_and_restores_auto,
+        test_execution_policy_rejects_case_level_heuristic_split,
+        test_candidate_eager_forward_observes_step_split_and_restores_auto,
         test_legacy_eager_forward_observes_auto,
         test_policy_evidence_distinguishes_same_policy_and_legacy_comparison,
         test_artifact_record_path_is_relative_and_resolves_after_relocation,
         test_verifier_reconstructs_complete_diagnostic,
-        test_verifier_rejects_fixed_split_manifest_contract_drift,
+        test_verifier_rejects_heuristic_manifest_contract_drift,
         test_verifier_rejects_missing_split_identity,
         test_verifier_rejects_auto_graph_as_fixed16_evidence,
         test_verifier_rejects_step_policy_identity_drift,

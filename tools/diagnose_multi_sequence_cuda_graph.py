@@ -468,9 +468,9 @@ def policy_evidence(case, flash_attn_version: str) -> dict:
         "split_policy_name": case.split_policy_name,
         "flash_attn_num_splits": case.flash_attn_num_splits,
         "comparison_policy_name": (
-            "same_policy_fixed16"
+            "same_policy_heuristic_exact_width"
             if hasattr(case, "mode")
-            else "legacy_auto_vs_fixed16"
+            else "legacy_auto_vs_heuristic"
         ),
     }
 
