@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import collections
+import copy
 import hashlib
 import importlib.util
 import json
@@ -75,7 +77,7 @@ class FakeTokenizer:
         return [ord(character) for character in text]
 
 
-def test_diagnostic_matrix_is_exact_and_unique():
+def test_same_policy_matrix_is_exact_policy_aware_and_unique():
     matrix = contract.build_diagnostic_matrix()
     assert len(matrix) == 189
     assert len({case.case_id for case in matrix}) == 189
@@ -86,18 +88,52 @@ def test_diagnostic_matrix_is_exact_and_unique():
         "duplicate-and-distinct",
     }
     assert {case.mode for case in matrix} == {
-        "eager",
-        "exact_graph",
-        "rounded_graph",
+        "candidate_eager",
+        "exact_graph_fixed16",
+        "rounded_graph_fixed16",
     }
     assert {case.repetition for case in matrix} == {0, 1, 2}
+    assert {
+        (case.split_policy_name, case.flash_attn_num_splits)
+        for case in matrix
+    } == {("fixed16", 16)}
+
+
+def test_legacy_compatibility_matrix_is_63_pairs_126_processes():
+    matrix = contract.build_legacy_compatibility_matrix()
+    assert len(matrix) == 126
+    assert len({case.case_id for case in matrix}) == 126
+    pair_counts = collections.Counter(case.pair_id for case in matrix)
+    assert len(pair_counts) == 63
+    assert set(pair_counts.values()) == {2}
+    assert {
+        (case.policy, case.split_policy_name, case.flash_attn_num_splits)
+        for case in matrix
+    } == {
+        ("legacy_eager_auto", "auto", 0),
+        ("candidate_eager_fixed16", "fixed16", 16),
+    }
+
+
+def test_case_ids_bind_split_policy_identity():
+    case = contract.build_diagnostic_matrix()[0]
+    assert "fixed16-s16" in case.case_id
+    compatibility = contract.build_legacy_compatibility_matrix()
+    assert any("auto-s0" in case.case_id for case in compatibility)
+    assert any("fixed16-s16" in case.case_id for case in compatibility)
 
 
 def test_exact_and_rounded_graph_sizes_are_frozen():
     for batch_size in (2, 3, 4, 5, 8, 9, 16):
-        assert contract.diagnostic_graph_size(batch_size, "eager") == batch_size
         assert (
-            contract.diagnostic_graph_size(batch_size, "exact_graph")
+            contract.diagnostic_graph_size(batch_size, "candidate_eager")
+            == batch_size
+        )
+        assert (
+            contract.diagnostic_graph_size(
+                batch_size,
+                "exact_graph_fixed16",
+            )
             == batch_size
         )
     assert contract.ROUNDED_GRAPH_SIZE == {
@@ -157,7 +193,7 @@ def test_tensor_metadata_hashes_contiguous_bytes_and_reports_nonfinite():
 
 def test_graph_size_contract_rejects_unknown_inputs():
     for batch_size, mode, expected_message in (
-        (1, "eager", "unsupported batch size"),
+        (1, "candidate_eager", "unsupported batch size"),
         (2, "larger_graph", "unsupported mode"),
     ):
         try:
@@ -206,7 +242,7 @@ def make_complete_diagnostic_evidence():
                 "status": "PASS",
             }
         )
-        if case.mode == "eager":
+        if case.mode == "candidate_eager":
             continue
         common = {
             "case_id": case.case_id,
@@ -259,7 +295,7 @@ def test_diagnostic_classification_separates_exact_and_rounded():
     rounded_bad = make_complete_diagnostic_evidence()
     rounded_kv = _first_result_for_mode(
         rounded_bad["kv_results"],
-        "rounded_graph",
+        "rounded_graph_fixed16",
     )
     rounded_kv["unexpected_slot_mutations"] = [0]
     result = contract.classify_diagnostic(**rounded_bad)
@@ -269,7 +305,7 @@ def test_diagnostic_classification_separates_exact_and_rounded():
     exact_bad = make_complete_diagnostic_evidence()
     exact_logits = _first_result_for_mode(
         exact_bad["logit_results"],
-        "exact_graph",
+        "exact_graph_fixed16",
     )
     exact_logits["close"] = False
     result = contract.classify_diagnostic(**exact_bad)
@@ -285,6 +321,109 @@ def test_diagnostic_classification_rejects_duplicate_evidence():
     duplicate = make_complete_diagnostic_evidence()
     duplicate["logit_results"].append(dict(duplicate["logit_results"][0]))
     result = contract.classify_diagnostic(**duplicate)
+    assert result["classification"] == "INCOMPLETE"
+
+
+def make_complete_legacy_compatibility_evidence():
+    process_rows = []
+    logit_results = []
+    kv_results = []
+    token_results = []
+    for case in contract.build_legacy_compatibility_matrix():
+        process_rows.append(
+            {
+                "case_id": case.case_id,
+                "pair_id": case.pair_id,
+                "batch_size": case.batch_size,
+                "trajectory": case.trajectory,
+                "policy": case.policy,
+                "repetition": case.repetition,
+                "split_policy_name": case.split_policy_name,
+                "flash_attn_num_splits": case.flash_attn_num_splits,
+                "comparison_policy_name": "legacy_auto_vs_fixed16",
+                "status": "PASS",
+            }
+        )
+        if case.policy != "candidate_eager_fixed16":
+            continue
+        common = {
+            "pair_id": case.pair_id,
+            "batch_size": case.batch_size,
+            "trajectory": case.trajectory,
+            "repetition": case.repetition,
+            "comparison_policy_name": "legacy_auto_vs_fixed16",
+        }
+        logit_results.append(
+            {
+                **common,
+                "finite": True,
+                "argmax_equal": True,
+                "close": True,
+            }
+        )
+        kv_results.append(
+            {
+                **common,
+                "touched_slot_sets_equal": True,
+                "unexpected_slot_mutations": [],
+            }
+        )
+        token_results.append(
+            {
+                **common,
+                "tokens_equal": True,
+            }
+        )
+    return {
+        "process_rows": process_rows,
+        "logit_results": logit_results,
+        "kv_results": kv_results,
+        "token_results": token_results,
+    }
+
+
+def test_legacy_compatibility_requires_tokens_close_logits_and_kv_ownership():
+    complete = make_complete_legacy_compatibility_evidence()
+    assert (
+        contract.classify_legacy_compatibility(**complete)["classification"]
+        == "LEGACY_COMPATIBLE"
+    )
+
+    token_bad = copy.deepcopy(complete)
+    token_bad["token_results"][0]["tokens_equal"] = False
+    assert (
+        contract.classify_legacy_compatibility(**token_bad)[
+            "classification"
+        ]
+        == "LEGACY_INCOMPATIBLE"
+    )
+
+    close_bad = copy.deepcopy(complete)
+    close_bad["logit_results"][0]["close"] = False
+    assert (
+        contract.classify_legacy_compatibility(**close_bad)[
+            "classification"
+        ]
+        == "LEGACY_INCOMPATIBLE"
+    )
+
+    kv_bad = copy.deepcopy(complete)
+    kv_bad["kv_results"][0]["touched_slot_sets_equal"] = False
+    assert (
+        contract.classify_legacy_compatibility(**kv_bad)["classification"]
+        == "LEGACY_INCOMPATIBLE"
+    )
+
+
+def test_legacy_compatibility_missing_or_mixed_policy_is_incomplete():
+    incomplete = make_complete_legacy_compatibility_evidence()
+    incomplete["process_rows"].pop()
+    result = contract.classify_legacy_compatibility(**incomplete)
+    assert result["classification"] == "INCOMPLETE"
+
+    mixed = make_complete_legacy_compatibility_evidence()
+    mixed["process_rows"][0]["flash_attn_num_splits"] = 16
+    result = contract.classify_legacy_compatibility(**mixed)
     assert result["classification"] == "INCOMPLETE"
 
 
@@ -1584,7 +1723,9 @@ def test_remote_runner_failed_case_preservation_manifest():
 
 if __name__ == "__main__":
     tests = [
-        test_diagnostic_matrix_is_exact_and_unique,
+        test_same_policy_matrix_is_exact_policy_aware_and_unique,
+        test_legacy_compatibility_matrix_is_63_pairs_126_processes,
+        test_case_ids_bind_split_policy_identity,
         test_exact_and_rounded_graph_sizes_are_frozen,
         test_canonical_json_and_file_hashes_are_stable_and_strict,
         test_tensor_metadata_hashes_contiguous_bytes_and_reports_nonfinite,
@@ -1592,6 +1733,8 @@ if __name__ == "__main__":
         test_tensor_comparison_requires_finite_close_and_equal_argmax,
         test_diagnostic_classification_separates_exact_and_rounded,
         test_diagnostic_classification_rejects_duplicate_evidence,
+        test_legacy_compatibility_requires_tokens_close_logits_and_kv_ownership,
+        test_legacy_compatibility_missing_or_mixed_policy_is_incomplete,
         test_production_gate_frozen_boundaries,
         test_production_gate_fails_closed_on_structure_and_correctness,
         test_prompt_plan_is_deterministic_and_covers_required_trajectories,

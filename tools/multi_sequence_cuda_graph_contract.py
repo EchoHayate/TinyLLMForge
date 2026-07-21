@@ -15,7 +15,47 @@ DIAGNOSTIC_TRAJECTORIES = (
     "ragged-context",
     "duplicate-and-distinct",
 )
-DIAGNOSTIC_MODES = ("eager", "exact_graph", "rounded_graph")
+AUTO_FLASH_ATTN_NUM_SPLITS = 0
+MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS = 16
+SAME_POLICY_MODES = (
+    "candidate_eager",
+    "exact_graph_fixed16",
+    "rounded_graph_fixed16",
+)
+LEGACY_COMPATIBILITY_POLICIES = (
+    "legacy_eager_auto",
+    "candidate_eager_fixed16",
+)
+SPLIT_POLICIES = {
+    "legacy_eager_auto": {
+        "split_policy_name": "auto",
+        "flash_attn_num_splits": AUTO_FLASH_ATTN_NUM_SPLITS,
+    },
+    "candidate_eager_fixed16": {
+        "split_policy_name": "fixed16",
+        "flash_attn_num_splits": (
+            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+        ),
+    },
+    "candidate_eager": {
+        "split_policy_name": "fixed16",
+        "flash_attn_num_splits": (
+            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+        ),
+    },
+    "exact_graph_fixed16": {
+        "split_policy_name": "fixed16",
+        "flash_attn_num_splits": (
+            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+        ),
+    },
+    "rounded_graph_fixed16": {
+        "split_policy_name": "fixed16",
+        "flash_attn_num_splits": (
+            MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
+        ),
+    },
+}
 ROUNDED_GRAPH_SIZE = {2: 4, 3: 4, 4: 8, 5: 8, 8: 16, 9: 16, 16: 32}
 DIAGNOSTIC_REPETITIONS = 3
 WARMUP_STEPS = 2
@@ -54,21 +94,61 @@ class DiagnosticCase:
     mode: str
     repetition: int
     graph_size: int
+    split_policy_name: str
+    flash_attn_num_splits: int
 
     @property
     def case_id(self) -> str:
         return (
             f"b{self.batch_size}__{self.trajectory}__"
-            f"{self.mode}__r{self.repetition}"
+            f"{self.mode}__{self.split_policy_name}"
+            f"-s{self.flash_attn_num_splits}__r{self.repetition}"
         )
+
+
+@dataclass(frozen=True)
+class LegacyCompatibilityCase:
+    batch_size: int
+    trajectory: str
+    policy: str
+    repetition: int
+    split_policy_name: str
+    flash_attn_num_splits: int
+
+    @property
+    def pair_id(self) -> str:
+        return (
+            f"b{self.batch_size}__{self.trajectory}"
+            f"__compat__r{self.repetition}"
+        )
+
+    @property
+    def case_id(self) -> str:
+        return (
+            f"{self.pair_id}__{self.policy}"
+            f"__{self.split_policy_name}-s{self.flash_attn_num_splits}"
+        )
+
+
+def split_policy_for(execution_name: str) -> tuple[str, int]:
+    try:
+        policy = SPLIT_POLICIES[execution_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported split execution policy: {execution_name}"
+        ) from exc
+    return (
+        str(policy["split_policy_name"]),
+        int(policy["flash_attn_num_splits"]),
+    )
 
 
 def diagnostic_graph_size(batch_size: int, mode: str) -> int:
     if batch_size not in DIAGNOSTIC_BATCH_SIZES:
         raise ValueError(f"unsupported batch size: {batch_size}")
-    if mode not in DIAGNOSTIC_MODES:
+    if mode not in SAME_POLICY_MODES:
         raise ValueError(f"unsupported mode: {mode}")
-    if mode == "rounded_graph":
+    if mode == "rounded_graph_fixed16":
         return ROUNDED_GRAPH_SIZE[batch_size]
     return batch_size
 
@@ -81,11 +161,31 @@ def build_diagnostic_matrix() -> tuple[DiagnosticCase, ...]:
             mode=mode,
             repetition=repetition,
             graph_size=diagnostic_graph_size(batch_size, mode),
+            split_policy_name=split_policy_for(mode)[0],
+            flash_attn_num_splits=split_policy_for(mode)[1],
         )
         for repetition in range(DIAGNOSTIC_REPETITIONS)
         for trajectory in DIAGNOSTIC_TRAJECTORIES
         for batch_size in DIAGNOSTIC_BATCH_SIZES
-        for mode in DIAGNOSTIC_MODES
+        for mode in SAME_POLICY_MODES
+    )
+
+
+def build_legacy_compatibility_matrix(
+) -> tuple[LegacyCompatibilityCase, ...]:
+    return tuple(
+        LegacyCompatibilityCase(
+            batch_size=batch_size,
+            trajectory=trajectory,
+            policy=policy,
+            repetition=repetition,
+            split_policy_name=split_policy_for(policy)[0],
+            flash_attn_num_splits=split_policy_for(policy)[1],
+        )
+        for repetition in range(DIAGNOSTIC_REPETITIONS)
+        for trajectory in DIAGNOSTIC_TRAJECTORIES
+        for batch_size in DIAGNOSTIC_BATCH_SIZES
+        for policy in LEGACY_COMPATIBILITY_POLICIES
     )
 
 
@@ -267,7 +367,9 @@ def classify_diagnostic(
 ) -> dict:
     matrix = build_diagnostic_matrix()
     expected_matrix_ids = {case.case_id for case in matrix}
-    candidate_cases = tuple(case for case in matrix if case.mode != "eager")
+    candidate_cases = tuple(
+        case for case in matrix if case.mode != "candidate_eager"
+    )
     expected_candidate_ids = {case.case_id for case in candidate_cases}
 
     matrix_by_id, failures = _index_unique_rows(
@@ -333,8 +435,14 @@ def classify_diagnostic(
             "failures": failures,
         }
 
-    mode_correctness = {"exact_graph": True, "rounded_graph": True}
-    corrupt_case_ids = {"exact_graph": [], "rounded_graph": []}
+    mode_correctness = {
+        "exact_graph_fixed16": True,
+        "rounded_graph_fixed16": True,
+    }
+    corrupt_case_ids = {
+        "exact_graph_fixed16": [],
+        "rounded_graph_fixed16": [],
+    }
     for case in candidate_cases:
         correct = _candidate_row_correct(
             logit_by_id[case.case_id],
@@ -348,17 +456,186 @@ def classify_diagnostic(
     return {
         "classification": (
             "EXACT_REPLAY_CORRECT"
-            if mode_correctness["exact_graph"]
+            if mode_correctness["exact_graph_fixed16"]
             else "EXACT_REPLAY_CORRUPT"
         ),
         "rounded_classification": (
             "ROUNDED_REPLAY_CORRECT"
-            if mode_correctness["rounded_graph"]
+            if mode_correctness["rounded_graph_fixed16"]
             else "ROUNDED_REPLAY_CORRUPT"
         ),
         "failures": [],
-        "corrupt_exact_case_ids": corrupt_case_ids["exact_graph"],
-        "corrupt_rounded_case_ids": corrupt_case_ids["rounded_graph"],
+        "corrupt_exact_case_ids": corrupt_case_ids["exact_graph_fixed16"],
+        "corrupt_rounded_case_ids": corrupt_case_ids[
+            "rounded_graph_fixed16"
+        ],
+    }
+
+
+def _validate_legacy_process_row(
+    row: dict,
+    case: LegacyCompatibilityCase,
+) -> list[str]:
+    expected = {
+        "case_id": case.case_id,
+        "pair_id": case.pair_id,
+        "batch_size": case.batch_size,
+        "trajectory": case.trajectory,
+        "policy": case.policy,
+        "repetition": case.repetition,
+        "split_policy_name": case.split_policy_name,
+        "flash_attn_num_splits": case.flash_attn_num_splits,
+        "comparison_policy_name": "legacy_auto_vs_fixed16",
+        "status": "PASS",
+    }
+    return [
+        (
+            f"process: {case.case_id} {field}={row.get(field)!r}, "
+            f"expected {expected_value!r}"
+        )
+        for field, expected_value in expected.items()
+        if row.get(field) != expected_value
+    ]
+
+
+def _validate_legacy_pair_row(
+    row: dict,
+    case: LegacyCompatibilityCase,
+    *,
+    evidence_name: str,
+) -> list[str]:
+    expected = {
+        "pair_id": case.pair_id,
+        "batch_size": case.batch_size,
+        "trajectory": case.trajectory,
+        "repetition": case.repetition,
+        "comparison_policy_name": "legacy_auto_vs_fixed16",
+    }
+    return [
+        (
+            f"{evidence_name}: {case.pair_id} {field}="
+            f"{row.get(field)!r}, expected {expected_value!r}"
+        )
+        for field, expected_value in expected.items()
+        if row.get(field) != expected_value
+    ]
+
+
+def _legacy_pair_correct(
+    logit_row: dict,
+    kv_row: dict,
+    token_row: dict,
+) -> bool:
+    return all(
+        (
+            logit_row.get("finite") is True,
+            logit_row.get("argmax_equal") is True,
+            logit_row.get("close") is True,
+            token_row.get("tokens_equal") is True,
+            kv_row.get("touched_slot_sets_equal") is True,
+            kv_row.get("unexpected_slot_mutations") == [],
+        )
+    )
+
+
+def classify_legacy_compatibility(
+    *,
+    process_rows: list[dict],
+    logit_results: list[dict],
+    kv_results: list[dict],
+    token_results: list[dict],
+) -> dict:
+    matrix = build_legacy_compatibility_matrix()
+    expected_process_ids = {case.case_id for case in matrix}
+    candidate_cases = tuple(
+        case
+        for case in matrix
+        if case.policy == "candidate_eager_fixed16"
+    )
+    expected_pair_ids = {case.pair_id for case in candidate_cases}
+
+    process_by_id, failures = _index_unique_rows(
+        process_rows,
+        evidence_name="process",
+    )
+
+    pair_indexes = {}
+    for evidence_name, rows in (
+        ("logits", logit_results),
+        ("kv", kv_results),
+        ("tokens", token_results),
+    ):
+        indexed = {}
+        for row in rows:
+            pair_id = row.get("pair_id")
+            if not isinstance(pair_id, str):
+                failures.append(f"{evidence_name}: missing pair_id")
+                continue
+            if pair_id in indexed:
+                failures.append(
+                    f"{evidence_name}: duplicate pair_id {pair_id}"
+                )
+                continue
+            indexed[pair_id] = row
+        pair_indexes[evidence_name] = indexed
+
+    process_ids = set(process_by_id)
+    missing_processes = sorted(expected_process_ids - process_ids)
+    unexpected_processes = sorted(process_ids - expected_process_ids)
+    if missing_processes:
+        failures.append(f"process: missing {missing_processes}")
+    if unexpected_processes:
+        failures.append(f"process: unexpected {unexpected_processes}")
+
+    for evidence_name, indexed in pair_indexes.items():
+        actual_ids = set(indexed)
+        missing = sorted(expected_pair_ids - actual_ids)
+        unexpected = sorted(actual_ids - expected_pair_ids)
+        if missing:
+            failures.append(f"{evidence_name}: missing {missing}")
+        if unexpected:
+            failures.append(f"{evidence_name}: unexpected {unexpected}")
+
+    for case in matrix:
+        row = process_by_id.get(case.case_id)
+        if row is not None:
+            failures.extend(_validate_legacy_process_row(row, case))
+    for case in candidate_cases:
+        for evidence_name, indexed in pair_indexes.items():
+            row = indexed.get(case.pair_id)
+            if row is not None:
+                failures.extend(
+                    _validate_legacy_pair_row(
+                        row,
+                        case,
+                        evidence_name=evidence_name,
+                    )
+                )
+
+    if failures:
+        return {
+            "classification": "INCOMPLETE",
+            "failures": failures,
+            "incompatible_pair_ids": [],
+        }
+
+    incompatible_pair_ids = [
+        case.pair_id
+        for case in candidate_cases
+        if not _legacy_pair_correct(
+            pair_indexes["logits"][case.pair_id],
+            pair_indexes["kv"][case.pair_id],
+            pair_indexes["tokens"][case.pair_id],
+        )
+    ]
+    return {
+        "classification": (
+            "LEGACY_COMPATIBLE"
+            if not incompatible_pair_ids
+            else "LEGACY_INCOMPATIBLE"
+        ),
+        "failures": [],
+        "incompatible_pair_ids": incompatible_pair_ids,
     }
 
 
