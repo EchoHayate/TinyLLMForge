@@ -78,14 +78,41 @@ def _case_identity(case) -> tuple[int, str, int]:
     return case.batch_size, case.trajectory, case.repetition
 
 
-def _case_from_row(row: dict):
-    return contract.DiagnosticCase(
-        batch_size=int(row["batch_size"]),
-        trajectory=str(row["trajectory"]),
-        mode=str(row["mode"]),
-        repetition=int(row["repetition"]),
-        graph_size=int(row["graph_size"]),
+def _expected_same_policy_cases():
+    return {
+        case.case_id: case for case in contract.build_diagnostic_matrix()
+    }
+
+
+def _expected_compatibility_cases():
+    return {
+        case.case_id: case
+        for case in contract.build_legacy_compatibility_matrix()
+    }
+
+
+def _all_expected_cases():
+    return {
+        **_expected_same_policy_cases(),
+        **_expected_compatibility_cases(),
+    }
+
+
+def _comparison_policy_name(case) -> str:
+    return (
+        "same_policy_fixed16"
+        if hasattr(case, "mode")
+        else "legacy_auto_vs_fixed16"
     )
+
+
+def _policy_identity(case, flash_attn_version: str) -> dict:
+    return {
+        "flash_attn_version": flash_attn_version,
+        "split_policy_name": case.split_policy_name,
+        "flash_attn_num_splits": case.flash_attn_num_splits,
+        "comparison_policy_name": _comparison_policy_name(case),
+    }
 
 
 def _index_unique(
@@ -207,9 +234,9 @@ def _validate_manifest(
     prompt_manifest: dict,
 ) -> list[str]:
     failures = []
-    expected_ids = [
-        case.case_id for case in contract.build_diagnostic_matrix()
-    ]
+    same_policy_ids = list(_expected_same_policy_cases())
+    compatibility_ids = list(_expected_compatibility_cases())
+    expected_ids = same_policy_ids + compatibility_ids
     expected_values = {
         "schema_version": 1,
         "kind": "diagnostic",
@@ -220,6 +247,8 @@ def _validate_manifest(
             prompt_manifest
         ),
         "case_ids": expected_ids,
+        "same_policy_case_ids": same_policy_ids,
+        "compatibility_case_ids": compatibility_ids,
         "warmup_steps": contract.WARMUP_STEPS,
         "measured_steps": contract.MEASURED_STEPS,
         "logit_rtol": contract.LOGIT_RTOL,
@@ -274,9 +303,7 @@ def _validate_process_rows(
         if row.get("tinyvllm_dist_port") == row.get("master_port"):
             failures.append(f"process_rows: {owner} ports are identical")
 
-    expected_cases = {
-        case.case_id: case for case in contract.build_diagnostic_matrix()
-    }
+    expected_cases = _all_expected_cases()
     actual_ids = set(indexed)
     expected_ids = set(expected_cases)
     missing = sorted(expected_ids - actual_ids)
@@ -294,6 +321,10 @@ def _validate_process_rows(
             continue
         for field, expected in {
             **asdict(case),
+            **_policy_identity(
+                case,
+                str(environment.get("flash_attention")),
+            ),
             "case_id": case.case_id,
             "status": "PASS",
             "source_tree_sha256": source_hash,
@@ -329,6 +360,7 @@ def _validate_step_evidence(
     rows: list[dict],
     *,
     evidence_name: str,
+    process_rows: dict[str, dict],
 ) -> tuple[dict[tuple[str, int], dict], list[str]]:
     indexed, failures = _index_step_rows(
         rows,
@@ -336,7 +368,7 @@ def _validate_step_evidence(
     )
     expected_keys = {
         (case.case_id, step_id)
-        for case in contract.build_diagnostic_matrix()
+        for case in _all_expected_cases().values()
         for step_id in range(contract.MEASURED_STEPS)
     }
     actual_keys = set(indexed)
@@ -346,6 +378,23 @@ def _validate_step_evidence(
         failures.append(f"{evidence_name}: missing {missing[:8]}")
     if unexpected:
         failures.append(f"{evidence_name}: unexpected {unexpected[:8]}")
+    policy_fields = (
+        "flash_attn_version",
+        "split_policy_name",
+        "flash_attn_num_splits",
+        "comparison_policy_name",
+    )
+    for (case_id, step_id), row in indexed.items():
+        process = process_rows.get(case_id)
+        if process is None:
+            continue
+        for field in policy_fields:
+            if row.get(field) != process.get(field):
+                failures.append(
+                    f"{evidence_name}: {case_id} step {step_id} "
+                    f"{field}={row.get(field)!r}, "
+                    f"expected {process.get(field)!r}"
+                )
     return indexed, failures
 
 
@@ -377,6 +426,15 @@ def _load_tensor_shard(
         failures.append(f"{label}: schema_version mismatch")
     if shard.get("case_id") != case.case_id:
         failures.append(f"{label}: case_id mismatch")
+    for field, expected in _policy_identity(
+        case,
+        str(shard.get("flash_attn_version")),
+    ).items():
+        if field == "flash_attn_version":
+            if not isinstance(shard.get(field), str) or not shard.get(field):
+                failures.append(f"{label}: {field} missing")
+        elif shard.get(field) != expected:
+            failures.append(f"{label}: {field} mismatch")
     if shard.get("step_ids") != list(range(contract.MEASURED_STEPS)):
         failures.append(f"{label}: step_ids mismatch")
     if shard.get("row_ids") != list(range(case.batch_size)):
@@ -390,8 +448,8 @@ def _validate_reference_tokens(
     sha256sums: dict[str, str],
     failures: list[str],
 ) -> None:
-    expected_by_identity = {}
-    for case in contract.build_diagnostic_matrix():
+    expected_by_comparison = {}
+    for case in _all_expected_cases().values():
         row = process_rows.get(case.case_id)
         if row is None:
             continue
@@ -434,8 +492,8 @@ def _validate_reference_tokens(
                 f"process_rows: {case.case_id} "
                 "reference_token_sha256 mismatch"
             )
-        identity = _case_identity(case)
-        previous = expected_by_identity.setdefault(identity, digest)
+        identity = (_comparison_policy_name(case), _case_identity(case))
+        previous = expected_by_comparison.setdefault(identity, digest)
         if previous != digest:
             failures.append(
                 f"process_rows: {case.case_id} reference token drift"
@@ -600,7 +658,7 @@ def _compare_logits_and_layers(
                     f"{case.case_id} layers: component_ids mismatch"
                 )
         identity = _case_identity(case)
-        if case.mode == "eager":
+        if case.mode == "candidate_eager":
             eager_shards[identity] = loaded
             continue
         eager = eager_shards.get(identity)
@@ -753,7 +811,7 @@ def _compare_kv(
                 failures.append(f"{case.case_id} kv: step metadata mismatch")
                 shard = None
         identity = _case_identity(case)
-        if case.mode == "eager":
+        if case.mode == "candidate_eager":
             eager_shards[identity] = shard
             continue
         common = {
@@ -847,12 +905,286 @@ def _compare_kv(
     return results, divergences
 
 
+def _load_compatibility_artifacts(
+    run_dir: Path,
+    process_rows: dict[str, dict],
+    sha256sums: dict[str, str],
+    failures: list[str],
+) -> dict[str, dict[str, dict | None]]:
+    loaded_by_pair = {}
+    for case in contract.build_legacy_compatibility_matrix():
+        row = process_rows.get(case.case_id)
+        if row is None:
+            continue
+        artifacts = row.get("artifacts", {})
+        loaded = {}
+        for evidence in ("logits", "kv"):
+            path = _resolve_artifact(
+                run_dir,
+                artifacts.get(evidence),
+                label=f"{case.case_id} {evidence}",
+                sha256sums=sha256sums,
+                failures=failures,
+            )
+            if path is None:
+                loaded[evidence] = None
+                continue
+            shard = _load_tensor_shard(
+                path,
+                case=case,
+                label=f"{case.case_id} {evidence}",
+                failures=failures,
+            )
+            loaded[evidence] = shard
+        logits = loaded.get("logits")
+        if logits is not None:
+            tensor = logits.get("tensor")
+            if tensor is None:
+                failures.append(f"{case.case_id} logits: tensor missing")
+                loaded["logits"] = None
+            else:
+                if logits.get("dtype") != str(tensor.dtype):
+                    failures.append(
+                        f"{case.case_id} logits: dtype metadata mismatch"
+                    )
+                if logits.get("shape") != list(tensor.shape):
+                    failures.append(
+                        f"{case.case_id} logits: shape metadata mismatch"
+                    )
+        kv = loaded.get("kv")
+        if kv is not None:
+            required = {
+                "slot_ids",
+                "plans",
+                "keys_before",
+                "values_before",
+                "keys_after",
+                "values_after",
+            }
+            missing = sorted(required - set(kv))
+            if missing:
+                failures.append(f"{case.case_id} kv: missing {missing}")
+                loaded["kv"] = None
+            elif (
+                len(kv["slot_ids"]) != contract.MEASURED_STEPS
+                or len(kv["plans"]) != contract.MEASURED_STEPS
+            ):
+                failures.append(f"{case.case_id} kv: step metadata mismatch")
+                loaded["kv"] = None
+        loaded_by_pair.setdefault(case.pair_id, {})[case.policy] = loaded
+    return loaded_by_pair
+
+
+def _protected_kv_mutations(case_id: str, shard: dict) -> list[dict]:
+    mutations = []
+    for step_id in range(contract.MEASURED_STEPS):
+        slots = shard["slot_ids"][step_id]
+        plan = shard["plans"][step_id]
+        protected = [(plan.get("slot_zero"), "slot_zero_mutation")]
+        protected.extend(
+            (slot, "inactive_slot_mutation")
+            for slot in plan.get("inactive_declared_slots", [])
+        )
+        protected.extend(
+            (slot, "sentinel_mutation")
+            for slot in plan.get("sentinel_slots", [])
+        )
+        for slot, kind in protected:
+            if slot is None or slot not in slots:
+                mutations.append(
+                    {
+                        "case_id": case_id,
+                        "kind": "protected_slot_missing",
+                        "step_id": step_id,
+                        "slot_id": slot,
+                    }
+                )
+                continue
+            slot_index = slots.index(slot)
+            mutated = any(
+                not _kv_tensor_equal(
+                    shard[after_name][step_id, :, slot_index],
+                    shard[before_name][step_id, :, slot_index],
+                )
+                for before_name, after_name in (
+                    ("keys_before", "keys_after"),
+                    ("values_before", "values_after"),
+                )
+            )
+            if mutated:
+                mutations.append(
+                    {
+                        "case_id": case_id,
+                        "kind": kind,
+                        "step_id": step_id,
+                        "slot_id": slot,
+                    }
+                )
+    return mutations
+
+
+def _compare_legacy_compatibility(
+    run_dir: Path,
+    process_rows: dict[str, dict],
+    raw_rows: dict[tuple[str, int], dict],
+    sha256sums: dict[str, str],
+    failures: list[str],
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    loaded_by_pair = _load_compatibility_artifacts(
+        run_dir,
+        process_rows,
+        sha256sums,
+        failures,
+    )
+    logit_results = []
+    token_results = []
+    kv_results = []
+    divergences = []
+    candidate_cases = (
+        case
+        for case in contract.build_legacy_compatibility_matrix()
+        if case.policy == "candidate_eager_fixed16"
+    )
+    for case in candidate_cases:
+        pair = loaded_by_pair.get(case.pair_id, {})
+        legacy = pair.get("legacy_eager_auto", {})
+        candidate = pair.get("candidate_eager_fixed16", {})
+        common = {
+            "pair_id": case.pair_id,
+            "batch_size": case.batch_size,
+            "trajectory": case.trajectory,
+            "repetition": case.repetition,
+            "comparison_policy_name": "legacy_auto_vs_fixed16",
+        }
+
+        logit_comparison = {
+            "shape_equal": False,
+            "dtype_equal": False,
+            "finite": False,
+            "argmax_equal": False,
+            "close": False,
+        }
+        legacy_logits = legacy.get("logits")
+        candidate_logits = candidate.get("logits")
+        if (
+            legacy_logits is not None
+            and candidate_logits is not None
+            and legacy_logits.get("tensor") is not None
+            and candidate_logits.get("tensor") is not None
+        ):
+            logit_comparison = contract.compare_tensor_pair(
+                legacy_logits["tensor"],
+                candidate_logits["tensor"],
+            )
+            detail = _first_tensor_divergence(
+                legacy_logits["tensor"],
+                candidate_logits["tensor"],
+                evidence="logits",
+                case_id=case.case_id,
+            )
+            if detail is not None:
+                detail["evidence"] = "legacy_compatibility_logits"
+                detail["pair_id"] = case.pair_id
+                divergences.append(detail)
+        logit_results.append({**common, **logit_comparison})
+
+        legacy_case_id = next(
+            item.case_id
+            for item in contract.build_legacy_compatibility_matrix()
+            if item.pair_id == case.pair_id
+            and item.policy == "legacy_eager_auto"
+        )
+        legacy_tokens = [
+            raw_rows.get((legacy_case_id, step_id), {}).get(
+                "observed_argmax_token_ids"
+            )
+            for step_id in range(contract.MEASURED_STEPS)
+        ]
+        candidate_tokens = [
+            raw_rows.get((case.case_id, step_id), {}).get(
+                "observed_argmax_token_ids"
+            )
+            for step_id in range(contract.MEASURED_STEPS)
+        ]
+        tokens_equal = legacy_tokens == candidate_tokens
+        token_results.append({**common, "tokens_equal": tokens_equal})
+        if not tokens_equal:
+            mismatch_step = next(
+                step_id
+                for step_id, (legacy_row, candidate_row) in enumerate(
+                    zip(legacy_tokens, candidate_tokens)
+                )
+                if legacy_row != candidate_row
+            )
+            divergences.append(
+                {
+                    "evidence": "legacy_compatibility_tokens",
+                    "case_id": case.case_id,
+                    "pair_id": case.pair_id,
+                    "kind": "token_mismatch",
+                    "step_id": mismatch_step,
+                }
+            )
+
+        legacy_kv = legacy.get("kv")
+        candidate_kv = candidate.get("kv")
+        touched_slot_sets_equal = False
+        unexpected_mutations = []
+        if legacy_kv is not None and candidate_kv is not None:
+            legacy_touched = [
+                set(plan.get("active_write_slots", []))
+                for plan in legacy_kv["plans"]
+            ]
+            candidate_touched = [
+                set(plan.get("active_write_slots", []))
+                for plan in candidate_kv["plans"]
+            ]
+            touched_slot_sets_equal = legacy_touched == candidate_touched
+            unexpected_mutations = _protected_kv_mutations(
+                legacy_case_id,
+                legacy_kv,
+            ) + _protected_kv_mutations(case.case_id, candidate_kv)
+            if not touched_slot_sets_equal:
+                mismatch_step = next(
+                    step_id
+                    for step_id, (legacy_slots, candidate_slots) in enumerate(
+                        zip(legacy_touched, candidate_touched)
+                    )
+                    if legacy_slots != candidate_slots
+                )
+                divergences.append(
+                    {
+                        "evidence": "legacy_compatibility_kv",
+                        "case_id": case.case_id,
+                        "pair_id": case.pair_id,
+                        "kind": "touched_slot_set_mismatch",
+                        "step_id": mismatch_step,
+                    }
+                )
+            divergences.extend(
+                {
+                    "evidence": "legacy_compatibility_kv",
+                    "pair_id": case.pair_id,
+                    **mutation,
+                }
+                for mutation in unexpected_mutations
+            )
+        kv_results.append(
+            {
+                **common,
+                "touched_slot_sets_equal": touched_slot_sets_equal,
+                "unexpected_slot_mutations": unexpected_mutations,
+            }
+        )
+    return logit_results, token_results, kv_results, divergences
+
+
 def _verify_layer_rows(
     layer_rows: dict[tuple[str, int], dict],
     process_rows: dict[str, dict],
 ) -> list[str]:
     failures = []
-    for case in contract.build_diagnostic_matrix():
+    for case in _all_expected_cases().values():
         process = process_rows.get(case.case_id)
         if process is None:
             continue
@@ -891,7 +1223,7 @@ def _verify_raw_rows_against_logits(
     run_dir: Path,
 ) -> list[str]:
     failures = []
-    for case in contract.build_diagnostic_matrix():
+    for case in _all_expected_cases().values():
         process = process_rows.get(case.case_id)
         if process is None:
             continue
@@ -935,7 +1267,23 @@ def _report_markdown(summary: dict) -> str:
             "- Rounded classification: "
             f"`{summary['rounded_classification']}`"
         ),
+        (
+            "- Legacy compatibility: "
+            f"`{summary['legacy_compatibility']}`"
+        ),
         f"- Case count: `{summary['case_count']}`",
+        (
+            "- Same-policy case count: "
+            f"`{summary['same_policy_case_count']}`"
+        ),
+        (
+            "- Compatibility process count: "
+            f"`{summary['compatibility_process_count']}`"
+        ),
+        (
+            "- Compatibility pair count: "
+            f"`{summary['compatibility_pair_count']}`"
+        ),
         f"- Structural failures: `{len(summary['failures'])}`",
     ]
     if summary.get("first_divergence") is not None:
@@ -968,7 +1316,7 @@ def _write_verification_outputs(run_dir: Path, summary: dict) -> None:
     )
     exitcode = 0 if (
         summary["classification"] == "EXACT_REPLAY_CORRECT"
-        and summary["rounded_classification"] == "ROUNDED_REPLAY_CORRECT"
+        and summary["legacy_compatibility"] == "LEGACY_COMPATIBLE"
     ) else 1
     _atomic_write_bytes(
         output_dir / "verify.exitcode",
@@ -1061,16 +1409,19 @@ def verify_diagnostic(run_dir: Path) -> dict:
     raw_rows, raw_failures = _validate_step_evidence(
         jsonl_rows["raw_rows.jsonl"],
         evidence_name="raw_rows",
+        process_rows=process_rows,
     )
     failures.extend(raw_failures)
     layer_rows, layer_failures = _validate_step_evidence(
         jsonl_rows["layer_observations.jsonl"],
         evidence_name="layer_rows",
+        process_rows=process_rows,
     )
     failures.extend(layer_failures)
     _, kv_row_failures = _validate_step_evidence(
         jsonl_rows["kv_observations.jsonl"],
         evidence_name="kv_rows",
+        process_rows=process_rows,
     )
     failures.extend(kv_row_failures)
     failures.extend(_verify_layer_rows(layer_rows, process_rows))
@@ -1100,7 +1451,13 @@ def verify_diagnostic(run_dir: Path) -> dict:
         failures,
     )
     divergences.extend(kv_divergences)
-    matrix_rows = list(process_rows.values())
+    same_policy_cases = _expected_same_policy_cases()
+    compatibility_cases = _expected_compatibility_cases()
+    matrix_rows = [
+        row
+        for case_id, row in process_rows.items()
+        if case_id in same_policy_cases
+    ]
     classification = contract.classify_diagnostic(
         matrix_rows=matrix_rows,
         logit_results=logit_results,
@@ -1108,13 +1465,40 @@ def verify_diagnostic(run_dir: Path) -> dict:
         kv_results=kv_results,
     )
     failures.extend(classification.get("failures", []))
+    (
+        compatibility_logit_results,
+        compatibility_token_results,
+        compatibility_kv_results,
+        compatibility_divergences,
+    ) = _compare_legacy_compatibility(
+        run_dir,
+        process_rows,
+        raw_rows,
+        sha256sums,
+        failures,
+    )
+    divergences.extend(compatibility_divergences)
+    compatibility_process_rows = [
+        row
+        for case_id, row in process_rows.items()
+        if case_id in compatibility_cases
+    ]
+    compatibility = contract.classify_legacy_compatibility(
+        process_rows=compatibility_process_rows,
+        logit_results=compatibility_logit_results,
+        kv_results=compatibility_kv_results,
+        token_results=compatibility_token_results,
+    )
+    failures.extend(compatibility.get("failures", []))
 
     if failures:
         final_classification = "INCOMPLETE"
         rounded_classification = "INCOMPLETE"
+        legacy_compatibility = "INCOMPLETE"
     else:
         final_classification = classification["classification"]
         rounded_classification = classification["rounded_classification"]
+        legacy_compatibility = compatibility["classification"]
     producer = loaded["summary.json"]
     if (
         final_classification == "EXACT_REPLAY_CORRECT"
@@ -1129,9 +1513,29 @@ def verify_diagnostic(run_dir: Path) -> dict:
         failures.append(
             "producer rounded classification does not match evidence"
         )
+    if (
+        legacy_compatibility == "LEGACY_COMPATIBLE"
+        and producer.get("legacy_compatibility") != legacy_compatibility
+    ):
+        failures.append(
+            "producer legacy compatibility does not match evidence"
+        )
+    expected_counts = {
+        "case_count": len(process_rows),
+        "same_policy_case_count": len(same_policy_cases),
+        "compatibility_process_count": len(compatibility_cases),
+        "compatibility_pair_count": len(compatibility_cases) // 2,
+    }
+    for field, expected in expected_counts.items():
+        if producer.get(field) != expected:
+            failures.append(
+                f"producer {field}={producer.get(field)!r}, "
+                f"expected {expected!r}"
+            )
     if failures:
         final_classification = "INCOMPLETE"
         rounded_classification = "INCOMPLETE"
+        legacy_compatibility = "INCOMPLETE"
 
     ordered_divergences = sorted(
         divergences,
@@ -1147,7 +1551,11 @@ def verify_diagnostic(run_dir: Path) -> dict:
         "schema_version": 1,
         "classification": final_classification,
         "rounded_classification": rounded_classification,
+        "legacy_compatibility": legacy_compatibility,
         "case_count": len(process_rows),
+        "same_policy_case_count": len(same_policy_cases),
+        "compatibility_process_count": len(compatibility_cases),
+        "compatibility_pair_count": len(compatibility_cases) // 2,
         "failures": list(dict.fromkeys(failures)),
         "corrupt_exact_case_ids": classification.get(
             "corrupt_exact_case_ids",
@@ -1155,6 +1563,10 @@ def verify_diagnostic(run_dir: Path) -> dict:
         ),
         "corrupt_rounded_case_ids": classification.get(
             "corrupt_rounded_case_ids",
+            [],
+        ),
+        "incompatible_pair_ids": compatibility.get(
+            "incompatible_pair_ids",
             [],
         ),
         "first_divergence": (
@@ -1186,7 +1598,7 @@ def main(argv=None) -> int:
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if (
         summary["classification"] == "EXACT_REPLAY_CORRECT"
-        and summary["rounded_classification"] == "ROUNDED_REPLAY_CORRECT"
+        and summary["legacy_compatibility"] == "LEGACY_COMPATIBLE"
     ) else 1
 
 

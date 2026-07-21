@@ -788,6 +788,25 @@ def _case_identity(case) -> tuple[int, str, int]:
     return case.batch_size, case.trajectory, case.repetition
 
 
+def _comparison_policy_name(case) -> str:
+    return (
+        "same_policy_fixed16"
+        if hasattr(case, "mode")
+        else "legacy_auto_vs_fixed16"
+    )
+
+
+def _case_graph_size(case) -> int:
+    return getattr(case, "graph_size", case.batch_size)
+
+
+def _is_reference_case(case) -> bool:
+    return (
+        getattr(case, "mode", None) == "candidate_eager"
+        or getattr(case, "policy", None) == "legacy_eager_auto"
+    )
+
+
 def _reference_name(case) -> str:
     return (
         f"b{case.batch_size}__{case.trajectory}__"
@@ -865,7 +884,18 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         "environment_sha256": environment_sha256,
         "prompt_manifest_sha256": prompt_manifest_sha256,
         "case_ids": [
+            case.case_id
+            for case in (
+                contract.build_diagnostic_matrix()
+                + contract.build_legacy_compatibility_matrix()
+            )
+        ],
+        "same_policy_case_ids": [
             case.case_id for case in contract.build_diagnostic_matrix()
+        ],
+        "compatibility_case_ids": [
+            case.case_id
+            for case in contract.build_legacy_compatibility_matrix()
         ],
         "warmup_steps": contract.WARMUP_STEPS,
         "measured_steps": contract.MEASURED_STEPS,
@@ -877,15 +907,30 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
     _write_json(run_dir / "prompt_manifest.json", prompt_manifest)
     _write_json(run_dir / "manifest.json", manifest)
 
-    eager_tensors = {}
-    eager_reference_hashes = {}
+    reference_tensors = {}
+    reference_hashes = {}
     process_rows = []
     raw_rows = []
     layer_rows = []
     kv_rows = []
     used_ports = set()
-    for case_index, case in enumerate(contract.build_diagnostic_matrix()):
+    all_cases = (
+        contract.build_diagnostic_matrix()
+        + contract.build_legacy_compatibility_matrix()
+    )
+    for case_index, case in enumerate(all_cases):
         identity = _case_identity(case)
+        comparison_policy_name = _comparison_policy_name(case)
+        policy_evidence = {
+            "flash_attn_version": "synthetic",
+            "split_policy_name": case.split_policy_name,
+            "flash_attn_num_splits": case.flash_attn_num_splits,
+            "comparison_policy_name": comparison_policy_name,
+        }
+        reference_key = (
+            comparison_policy_name,
+            identity,
+        )
         base = torch.arange(
             contract.MEASURED_STEPS * case.batch_size * 3,
             dtype=torch.float32,
@@ -919,13 +964,13 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         reference_path = (
             run_dir / "reference_tokens" / _reference_name(case)
         )
-        if case.mode == "eager":
+        if _is_reference_case(case):
             _write_json(reference_path, reference_tokens)
         prompt_sha256 = prompt_manifest["trajectories"][case.trajectory][
             str(case.batch_size)
         ]
-        if case.mode == "eager":
-            eager_tensors[identity] = {
+        if _is_reference_case(case):
+            reference_tensors[reference_key] = {
                 "logits": logits.clone(),
                 "layers": layers.clone(),
                 "keys_before": keys_before.clone(),
@@ -934,16 +979,17 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
                 "values_after": values_after.clone(),
                 "observed_slots": list(observed_slots),
             }
-            eager_reference_hashes[identity] = reference_sha256
+            reference_hashes[reference_key] = reference_sha256
         else:
-            logits = eager_tensors[identity]["logits"].clone()
-            layers = eager_tensors[identity]["layers"].clone()
-            keys_before = eager_tensors[identity]["keys_before"].clone()
-            keys_after = eager_tensors[identity]["keys_after"].clone()
-            values_before = eager_tensors[identity]["values_before"].clone()
-            values_after = eager_tensors[identity]["values_after"].clone()
-            observed_slots = list(eager_tensors[identity]["observed_slots"])
-            reference_sha256 = eager_reference_hashes[identity]
+            reference = reference_tensors[reference_key]
+            logits = reference["logits"].clone()
+            layers = reference["layers"].clone()
+            keys_before = reference["keys_before"].clone()
+            keys_after = reference["keys_after"].clone()
+            values_before = reference["values_before"].clone()
+            values_after = reference["values_after"].clone()
+            observed_slots = list(reference["observed_slots"])
+            reference_sha256 = reference_hashes[reference_key]
 
         logits_path = run_dir / "tensors" / "logits" / f"{case.case_id}.pt"
         layers_path = run_dir / "tensors" / "layers" / f"{case.case_id}.pt"
@@ -955,6 +1001,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             {
                 "schema_version": 1,
                 "case_id": case.case_id,
+                **policy_evidence,
                 "dtype": str(logits.dtype),
                 "shape": list(logits.shape),
                 "step_ids": list(range(contract.MEASURED_STEPS)),
@@ -967,6 +1014,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             {
                 "schema_version": 1,
                 "case_id": case.case_id,
+                **policy_evidence,
                 "dtype": str(layers.dtype),
                 "shape": list(layers.shape),
                 "step_ids": list(range(contract.MEASURED_STEPS)),
@@ -981,6 +1029,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             {
                 "schema_version": 1,
                 "case_id": case.case_id,
+                **policy_evidence,
                 "step_ids": list(range(contract.MEASURED_STEPS)),
                 "row_ids": list(range(case.batch_size)),
                 "slot_ids": [
@@ -993,7 +1042,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
                         "slot_zero": 0,
                         "inactive_declared_slots": (
                             [0]
-                            if case.graph_size > case.batch_size
+                            if _case_graph_size(case) > case.batch_size
                             else []
                         ),
                         "sentinel_slots": [1000, 2000, 3000],
@@ -1015,6 +1064,12 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         process_rows.append(
             {
                 **asdict(case),
+                **(
+                    {"pair_id": case.pair_id}
+                    if hasattr(case, "pair_id")
+                    else {}
+                ),
+                **policy_evidence,
                 "case_id": case.case_id,
                 "status": "PASS",
                 "source_tree_sha256": source_tree_sha256,
@@ -1037,6 +1092,8 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         for step_id in range(contract.MEASURED_STEPS):
             raw_rows.append(
                 {
+                    **asdict(case),
+                    **policy_evidence,
                     "case_id": case.case_id,
                     "step_id": step_id,
                     "observed_argmax_token_ids": torch.argmax(
@@ -1050,6 +1107,7 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             )
             layer_rows.append(
                 {
+                    **policy_evidence,
                     "case_id": case.case_id,
                     "step_id": step_id,
                     "required_layer_count": 2,
@@ -1060,12 +1118,15 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
             )
             kv_rows.append(
                 {
+                    **policy_evidence,
                     "case_id": case.case_id,
                     "step_id": step_id,
                     "active_write_slots": list(active_slots),
                     "slot_zero": 0,
                     "inactive_declared_slots": (
-                        [0] if case.graph_size > case.batch_size else []
+                        [0]
+                        if _case_graph_size(case) > case.batch_size
+                        else []
                     ),
                     "sentinel_slots": [1000, 2000, 3000],
                     "observed_slot_ids": list(observed_slots),
@@ -1080,7 +1141,11 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
         "schema_version": 1,
         "classification": "EXACT_REPLAY_CORRECT",
         "rounded_classification": "ROUNDED_REPLAY_CORRECT",
+        "legacy_compatibility": "LEGACY_COMPATIBLE",
         "case_count": len(process_rows),
+        "same_policy_case_count": 189,
+        "compatibility_process_count": 126,
+        "compatibility_pair_count": 63,
     }
     _write_json(run_dir / "summary.json", producer_summary)
     _refresh_sha256sums(run_dir)
@@ -1110,7 +1175,82 @@ def test_verifier_reconstructs_complete_diagnostic():
             summary["rounded_classification"]
             == "ROUNDED_REPLAY_CORRECT"
         )
-        assert summary["case_count"] == 189
+        assert summary["legacy_compatibility"] == "LEGACY_COMPATIBLE"
+        assert summary["same_policy_case_count"] == 189
+        assert summary["compatibility_process_count"] == 126
+        assert summary["compatibility_pair_count"] == 63
+
+
+def test_verifier_rejects_missing_split_identity():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        rows[0].pop("flash_attn_num_splits")
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+
+
+def test_verifier_rejects_auto_graph_as_fixed16_evidence():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        process_path = run_dir / "process_rows.jsonl"
+        rows = _read_jsonl(process_path)
+        graph = next(
+            row
+            for row in rows
+            if row.get("mode") == "exact_graph_fixed16"
+        )
+        graph["split_policy_name"] = "auto"
+        graph["flash_attn_num_splits"] = 0
+        _rewrite_jsonl(process_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+
+
+def test_verifier_rejects_step_policy_identity_drift():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        raw_path = run_dir / "raw_rows.jsonl"
+        rows = _read_jsonl(raw_path)
+        rows[0]["comparison_policy_name"] = "legacy_auto_vs_fixed16"
+        _rewrite_jsonl(raw_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "INCOMPLETE"
+
+
+def test_verifier_reports_fixed_vs_auto_token_mismatch_as_legacy_incompatible():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_complete_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        raw_path = run_dir / "raw_rows.jsonl"
+        rows = _read_jsonl(raw_path)
+        target = next(
+            row
+            for row in rows
+            if row.get("policy") == "candidate_eager_fixed16"
+        )
+        target["observed_argmax_token_ids"][0] += 1
+        _rewrite_jsonl(raw_path, rows)
+        _refresh_sha256sums(run_dir)
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRECT"
+        assert summary["legacy_compatibility"] == "LEGACY_INCOMPATIBLE"
 
 
 def test_verifier_is_independent_from_diagnostic_producer():
@@ -1143,7 +1283,7 @@ def test_verifier_detects_rehashed_exact_logit_mutation():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph")
+        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0, 0] += 10.0
@@ -1263,7 +1403,7 @@ def test_verifier_detects_nonfinite_exact_logit():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph")
+        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0, 0] = float("nan")
@@ -1292,7 +1432,7 @@ def test_verifier_detects_exact_argmax_mismatch():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph")
+        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0] = torch.tensor([100.0, 0.0, 0.0])
@@ -1317,7 +1457,7 @@ def test_verifier_detects_exact_close_threshold_failure():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph")
+        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
         artifact = run_dir / target["artifacts"]["logits"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0] += torch.tensor([0.1, 0.1, 0.1])
@@ -1342,7 +1482,7 @@ def test_verifier_rejects_missing_layer_index():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph")
+        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
         artifact = run_dir / target["artifacts"]["layers"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["layer_ids"] = [0]
@@ -1369,7 +1509,7 @@ def test_verifier_detects_rehashed_layer_tensor_mutation():
         )
         process_path = run_dir / "process_rows.jsonl"
         rows = _read_jsonl(process_path)
-        target = next(row for row in rows if row["mode"] == "exact_graph")
+        target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
         artifact = run_dir / target["artifacts"]["layers"]["path"]
         shard = torch.load(artifact, weights_only=False)
         shard["tensor"][0, 0, 0, 0, 0] += 1.0
@@ -1391,7 +1531,7 @@ def _mutate_kv_evidence(run_dir: Path, mutation: str) -> str:
 
     process_path = run_dir / "process_rows.jsonl"
     rows = _read_jsonl(process_path)
-    target = next(row for row in rows if row["mode"] == "exact_graph")
+    target = next(row for row in rows if row["mode"] == "exact_graph_fixed16")
     artifact = run_dir / target["artifacts"]["kv"]["path"]
     shard = torch.load(artifact, weights_only=False)
     if mutation == "active":
@@ -1747,7 +1887,7 @@ def test_remote_runner_orders_eager_before_matching_graph_cases():
     assert len(cases) == 18
     positions = {case.case_id: index for index, case in enumerate(cases)}
     for case in cases:
-        if case.mode == "eager":
+        if case.mode == "candidate_eager":
             continue
         eager_id = (
             f"b{case.batch_size}__{case.trajectory}__"
@@ -1761,7 +1901,7 @@ def test_remote_runner_requires_eager_reference_before_graph_case():
     case = next(
         case
         for case in contract.build_diagnostic_matrix()
-        if case.mode == "exact_graph"
+        if case.mode == "exact_graph_fixed16"
     )
     with tempfile.TemporaryDirectory() as temporary_directory:
         run_dir = Path(temporary_directory)
@@ -1876,6 +2016,10 @@ if __name__ == "__main__":
         test_policy_evidence_distinguishes_same_policy_and_legacy_comparison,
         test_artifact_record_path_is_relative_and_resolves_after_relocation,
         test_verifier_reconstructs_complete_diagnostic,
+        test_verifier_rejects_missing_split_identity,
+        test_verifier_rejects_auto_graph_as_fixed16_evidence,
+        test_verifier_rejects_step_policy_identity_drift,
+        test_verifier_reports_fixed_vs_auto_token_mismatch_as_legacy_incompatible,
         test_verifier_is_independent_from_diagnostic_producer,
         test_verifier_rejects_missing_matrix_case,
         test_verifier_detects_rehashed_exact_logit_mutation,
