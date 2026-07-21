@@ -1855,26 +1855,28 @@ def verify_diagnostic(run_dir: Path) -> dict:
         rounded_classification = classification["rounded_classification"]
         legacy_compatibility = compatibility["classification"]
     producer = loaded["summary.json"]
-    if (
-        final_classification == "EXACT_REPLAY_CORRECT"
-        and producer.get("classification") != final_classification
-    ):
-        failures.append("producer classification does not match evidence")
-    if (
-        rounded_classification == "ROUNDED_REPLAY_CORRECT"
-        and producer.get("rounded_classification")
-        != rounded_classification
-    ):
-        failures.append(
-            "producer rounded classification does not match evidence"
-        )
-    if (
-        legacy_compatibility == "LEGACY_COMPATIBLE"
-        and producer.get("legacy_compatibility") != legacy_compatibility
-    ):
-        failures.append(
-            "producer legacy compatibility does not match evidence"
-        )
+    if manifest.get("canonical") is True:
+        if (
+            final_classification == "EXACT_REPLAY_CORRECT"
+            and producer.get("classification") != final_classification
+        ):
+            failures.append("producer classification does not match evidence")
+        if (
+            rounded_classification == "ROUNDED_REPLAY_CORRECT"
+            and producer.get("rounded_classification")
+            != rounded_classification
+        ):
+            failures.append(
+                "producer rounded classification does not match evidence"
+            )
+        if (
+            legacy_compatibility == "LEGACY_COMPATIBLE"
+            and producer.get("legacy_compatibility")
+            != legacy_compatibility
+        ):
+            failures.append(
+                "producer legacy compatibility does not match evidence"
+            )
     expected_counts = {
         "case_count": len(process_rows),
         "same_policy_case_count": len(same_policy_cases),

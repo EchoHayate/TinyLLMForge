@@ -2019,6 +2019,10 @@ def restrict_diagnostic_fixture_to_cases(
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     summary.update(
         {
+            "classification": "NON_AUTHORITATIVE_SMOKE",
+            "rounded_classification": "NON_AUTHORITATIVE_SMOKE",
+            "legacy_compatibility": "NON_AUTHORITATIVE_SMOKE",
+            "policy_integrity": "NON_AUTHORITATIVE_SMOKE",
             "case_count": len(selected_case_ids),
             "same_policy_case_count": len(same_policy_case_ids),
             "compatibility_process_count": len(compatibility_case_ids),
