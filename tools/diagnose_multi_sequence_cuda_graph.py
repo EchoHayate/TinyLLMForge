@@ -88,6 +88,61 @@ class StepSplitPolicy:
         return self.identity.effective_num_splits
 
 
+def step_policy_evidence(policy: StepSplitPolicy) -> dict:
+    inputs = policy.inputs
+    identity = policy.identity
+    return {
+        "split_policy_name": contract.HEURISTIC_POLICY_NAME,
+        "flash_attn_version": identity.flash_attn_version,
+        "page_table_width": identity.page_table_width,
+        "effective_num_splits": identity.effective_num_splits,
+        "heuristic_batch_size": inputs.batch_size,
+        "heuristic_num_query_heads": inputs.num_query_heads,
+        "heuristic_num_kv_heads": inputs.num_kv_heads,
+        "heuristic_head_dim": inputs.head_dim,
+        "heuristic_page_block_size": inputs.page_block_size,
+        "heuristic_max_seqlen_q": inputs.max_seqlen_q,
+        "heuristic_multi_processor_count": (
+            inputs.multi_processor_count
+        ),
+        "graph_batch_size": identity.graph_batch_size,
+        "graph_identity_sha256": identity.sha256,
+    }
+
+
+def build_step_policy_rows(
+    policy: StepSplitPolicy,
+    *,
+    raw: dict,
+    layer: dict,
+    kv: dict,
+) -> dict[str, dict]:
+    evidence = step_policy_evidence(policy)
+    return {
+        "raw": {**raw, **evidence},
+        "layer": {**layer, **evidence},
+        "kv": {**kv, **evidence},
+    }
+
+
+def graph_identity_summary(identities) -> list[dict]:
+    ordered = []
+    seen = set()
+    for identity in identities:
+        if identity in seen:
+            continue
+        seen.add(identity)
+        ordered.append(
+            {
+                "sha256": identity.sha256,
+                "page_table_width": identity.page_table_width,
+                "effective_num_splits": identity.effective_num_splits,
+                "graph_batch_size": identity.graph_batch_size,
+            }
+        )
+    return ordered
+
+
 @dataclass
 class CapturedDecodeGraph:
     identity: split_policy.FlashAttentionGraphIdentity
@@ -1078,6 +1133,7 @@ def run_case(
         layer_steps = []
         kv_step_payloads = []
         observed_reference_tokens = []
+        used_step_identities = []
 
         for absolute_step in range(total_steps):
             if absolute_step > 0:
@@ -1124,6 +1180,7 @@ def run_case(
                     ),
                     flash_attn_version=flash_attn_version,
                 )
+                used_step_identities.append(step_policy.identity)
                 if not _is_graph_case(case):
                     logits, layers = _run_eager_step(
                         runner,
@@ -1165,40 +1222,47 @@ def run_case(
                     **asdict(case),
                     **evidence,
                 }
-                raw_rows.append(
-                    build_step_row(
-                        **case_identity,
-                        case_id=case.case_id,
-                        step_id=measured_step,
-                        absolute_step=absolute_step,
-                        execution_name=_execution_name(case),
-                        active_write_slots=active_slots,
-                        observed_argmax_token_ids=observed_tokens,
-                        reference_next_input_token_ids=reference_row,
+                raw_row = build_step_row(
+                    **case_identity,
+                    case_id=case.case_id,
+                    step_id=measured_step,
+                    absolute_step=absolute_step,
+                    execution_name=_execution_name(case),
+                    active_write_slots=active_slots,
+                    observed_argmax_token_ids=observed_tokens,
+                    reference_next_input_token_ids=reference_row,
+                )
+                layer_row = {
+                    **evidence,
+                    "case_id": case.case_id,
+                    "step_id": measured_step,
+                    "required_layer_count": (
+                        runner.config.hf_config.num_hidden_layers
+                    ),
+                    "observed_layer_count": layers.size(1),
+                    "shape": list(layers.shape),
+                    "finite": bool(torch.isfinite(layers).all().item()),
+                }
+                kv_row = {
+                    **evidence,
+                    "case_id": case.case_id,
+                    "step_id": measured_step,
+                    **observation_plan,
+                    "observed_slot_ids": observation_slots,
+                }
+                if step_policy is not None:
+                    step_rows = build_step_policy_rows(
+                        step_policy,
+                        raw=raw_row,
+                        layer=layer_row,
+                        kv=kv_row,
                     )
-                )
-                layer_rows.append(
-                    {
-                        **evidence,
-                        "case_id": case.case_id,
-                        "step_id": measured_step,
-                        "required_layer_count": (
-                            runner.config.hf_config.num_hidden_layers
-                        ),
-                        "observed_layer_count": layers.size(1),
-                        "shape": list(layers.shape),
-                        "finite": bool(torch.isfinite(layers).all().item()),
-                    }
-                )
-                kv_rows.append(
-                    {
-                        **evidence,
-                        "case_id": case.case_id,
-                        "step_id": measured_step,
-                        **observation_plan,
-                        "observed_slot_ids": observation_slots,
-                    }
-                )
+                    raw_row = step_rows["raw"]
+                    layer_row = step_rows["layer"]
+                    kv_row = step_rows["kv"]
+                raw_rows.append(raw_row)
+                layer_rows.append(layer_row)
+                kv_rows.append(kv_row)
                 logits_steps.append(logits)
                 layer_steps.append(layers)
                 kv_step_payloads.append(
@@ -1278,6 +1342,9 @@ def run_case(
             **evidence,
             "case": asdict(case),
             "case_id": case.case_id,
+            "graph_identities": graph_identity_summary(
+                used_step_identities
+            ),
             "artifacts": artifact_records,
             "measured_steps": contract.MEASURED_STEPS,
             "warmup_steps": contract.WARMUP_STEPS,

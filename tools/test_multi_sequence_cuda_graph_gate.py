@@ -1143,6 +1143,106 @@ def test_capture_operation_restores_all_active_write_slots_on_failure():
     assert restored == [(runner, [7, 11, 19], snapshot)]
 
 
+def test_step_policy_evidence_is_complete_and_stable():
+    diagnostic = load_diagnostic_module_without_gpu()
+    identity = make_graph_identity(
+        active_batch_size=8,
+        graph_batch_size=16,
+        page_table_width=3,
+        effective_num_splits=2,
+    )
+    policy = diagnostic.StepSplitPolicy(
+        inputs=load_split_policy().FlashAttentionSplitInputs(
+            batch_size=8,
+            num_query_heads=16,
+            num_kv_heads=8,
+            head_dim=128,
+            page_block_size=256,
+            page_table_width=3,
+            max_seqlen_q=1,
+            multi_processor_count=108,
+        ),
+        identity=identity,
+    )
+    expected = {
+        "split_policy_name": "fa2_263_heuristic_exact_width",
+        "flash_attn_version": "2.6.3",
+        "page_table_width": 3,
+        "effective_num_splits": 2,
+        "heuristic_batch_size": 8,
+        "heuristic_num_query_heads": 16,
+        "heuristic_num_kv_heads": 8,
+        "heuristic_head_dim": 128,
+        "heuristic_page_block_size": 256,
+        "heuristic_max_seqlen_q": 1,
+        "heuristic_multi_processor_count": 108,
+        "graph_batch_size": 16,
+        "graph_identity_sha256": identity.sha256,
+    }
+
+    assert diagnostic.step_policy_evidence(policy) == expected
+    assert diagnostic.step_policy_evidence(policy) == expected
+
+
+def test_step_policy_evidence_matches_raw_layer_and_kv_rows():
+    diagnostic = load_diagnostic_module_without_gpu()
+    identity = make_graph_identity()
+    policy = diagnostic.StepSplitPolicy(
+        inputs=load_split_policy().FlashAttentionSplitInputs(
+            batch_size=8,
+            num_query_heads=16,
+            num_kv_heads=8,
+            head_dim=128,
+            page_block_size=256,
+            page_table_width=2,
+            max_seqlen_q=1,
+            multi_processor_count=108,
+        ),
+        identity=identity,
+    )
+    rows = diagnostic.build_step_policy_rows(
+        policy,
+        raw={"kind": "raw"},
+        layer={"kind": "layer"},
+        kv={"kind": "kv"},
+    )
+    evidence = diagnostic.step_policy_evidence(policy)
+
+    assert rows["raw"] == {"kind": "raw", **evidence}
+    assert rows["layer"] == {"kind": "layer", **evidence}
+    assert rows["kv"] == {"kind": "kv", **evidence}
+
+
+def test_graph_identity_summary_is_ordered_unique_and_complete():
+    diagnostic = load_diagnostic_module_without_gpu()
+    first = make_graph_identity()
+    wider = make_graph_identity(page_table_width=3)
+    split = make_graph_identity(effective_num_splits=3)
+
+    assert diagnostic.graph_identity_summary(
+        [first, first, wider, split, wider]
+    ) == [
+        {
+            "sha256": first.sha256,
+            "page_table_width": 2,
+            "effective_num_splits": 2,
+            "graph_batch_size": 8,
+        },
+        {
+            "sha256": wider.sha256,
+            "page_table_width": 3,
+            "effective_num_splits": 2,
+            "graph_batch_size": 8,
+        },
+        {
+            "sha256": split.sha256,
+            "page_table_width": 2,
+            "effective_num_splits": 3,
+            "graph_batch_size": 8,
+        },
+    ]
+
+
 def test_diagnostic_case_parser_rejects_split_policy_drift():
     diagnostic = load_diagnostic_module_without_gpu()
     case = contract.build_diagnostic_matrix()[0]
@@ -2667,6 +2767,9 @@ if __name__ == "__main__":
         test_graph_cache_reuses_only_identical_identity,
         test_graph_cache_and_replay_reject_identity_mismatch,
         test_capture_operation_restores_all_active_write_slots_on_failure,
+        test_step_policy_evidence_is_complete_and_stable,
+        test_step_policy_evidence_matches_raw_layer_and_kv_rows,
+        test_graph_identity_summary_is_ordered_unique_and_complete,
         test_diagnostic_case_parser_rejects_split_policy_drift,
         test_execution_policy_maps_gate_cases_to_expected_split,
         test_candidate_eager_forward_observes_fixed16_and_restores_auto,
