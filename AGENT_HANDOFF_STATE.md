@@ -2,6 +2,267 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-21 Multi-sequence CUDA Graph canonical hard gate
+
+### 当前结论
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- Final source commit：`9e1610a`
+- Authoritative canonical：
+  `experiments/cuda_graph/qwen3-06b-cuda-graph-canonical-20260721-r3/`
+- Producer `summary.json` 自报：
+  `EXACT_REPLAY_CORRECT / ROUNDED_REPLAY_CORRECT`
+- **独立 verifier 才是 hard gate，最终分类为：
+  `EXACT_REPLAY_CORRUPT / ROUNDED_REPLAY_CORRUPT`**
+- Canonical 189/189 model processes 全部 producer PASS，结构失败为 0；
+  corruption 是证据重算发现的数值 correctness failure，不是进程、存储、
+  source identity 或 artifact 完整性失败
+- Stop condition 已触发：**不得实现或启用 production multi-sequence
+  exact-key CUDA Graph dispatch**
+- `tinyvllm/engine/model_runner.py` 的 production batch>1 eager guard 必须保持；
+  README 不更新，不能宣称 multi-sequence CUDA Graph 性能提升
+
+### 书面设计与实现
+
+设计与计划：
+
+```text
+docs/superpowers/specs/2026-07-21-multi-sequence-cuda-graph-correctness-and-batching-gate-design.md
+docs/superpowers/plans/2026-07-21-multi-sequence-cuda-graph-correctness-and-batching-gate.md
+```
+
+提交：
+
+```text
+8c8a75f docs: design multi-sequence cuda graph gate
+875b8d2 docs: plan multi-sequence cuda graph gate
+b8b5ddd test: freeze multi-sequence cuda graph gate
+6feaef8 feat: add isolated cuda graph diagnostic
+783c49b feat: verify cuda graph diagnostic evidence
+6a38ce7 feat: orchestrate remote cuda graph diagnostic
+a0f4131 fix: bound remote cuda graph artifacts
+9e1610a fix: retry remote diagnostic port collisions
+```
+
+核心工具：
+
+```text
+tools/multi_sequence_cuda_graph_contract.py
+tools/diagnose_multi_sequence_cuda_graph.py
+tools/verify_multi_sequence_cuda_graph_diagnostic.py
+tools/run_multi_sequence_cuda_graph_diagnostic_remote.py
+tools/test_multi_sequence_cuda_graph_gate.py
+```
+
+### Final source-bound canonical
+
+执行命令：
+
+```bash
+python3 tools/run_multi_sequence_cuda_graph_diagnostic_remote.py \
+  diagnostic-canonical \
+  --run-tag qwen3-06b-cuda-graph-canonical-20260721-r3 \
+  --verifier-python /Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python
+```
+
+环境与 source identity：
+
+```text
+host                 sitian@10.232.195.203
+remote Python        /data00/home/sitian/sitian-workspace01/tllm/env/bin/python
+model                /data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B
+GPU                  NVIDIA A100 80GB PCIe
+PyTorch              2.4.1+cu121
+CUDA runtime         12.1
+source tree SHA256   547fde844c73221c503657610e49e97c5255c2e2c986f3afc698abf99588a91f
+```
+
+冻结矩阵：
+
+```text
+batch sizes          2, 3, 4, 5, 8, 9, 16
+trajectories         uniform-short, ragged-context, duplicate-and-distinct
+modes                eager, exact_graph, rounded_graph
+repetitions          0, 1, 2
+process count        7 x 3 x 3 x 3 = 189
+warmup steps         2
+measured steps       16
+```
+
+结构审计：
+
+```text
+case directories                 189
+producer PASS case results       189
+non-zero model process exits       0
+process_rows.jsonl rows          189
+raw_rows.jsonl rows            3,024
+layer_observations rows        3,024
+kv_observations rows           3,024
+structural verifier failures       0
+remote run root after finish    CLEANED
+```
+
+Remote artifact cleanup 在运行期间始终只保留 0 或 1 个当前 case 目录；
+普通占用约 4.1 MB，大 batch 观察峰值约 177 MB，避免了旧 canonical r1
+因远端 `/tmp` 累积约 9 GB 后 `ENOSPC` 的失败。
+
+### Authoritative independent verifier result
+
+权威 artifacts：
+
+```text
+experiments/cuda_graph/qwen3-06b-cuda-graph-canonical-20260721-r3/independent-verification/summary.json
+experiments/cuda_graph/qwen3-06b-cuda-graph-canonical-20260721-r3/independent-verification/report.md
+experiments/cuda_graph/qwen3-06b-cuda-graph-canonical-20260721-r3/independent-verification/verify.exitcode
+```
+
+Fresh 手工复跑：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/verify_multi_sequence_cuda_graph_diagnostic.py \
+  --run-dir \
+  experiments/cuda_graph/qwen3-06b-cuda-graph-canonical-20260721-r3 \
+  --kind diagnostic
+```
+
+复跑 exit code 为 `1`，且稳定重现：
+
+```text
+classification             EXACT_REPLAY_CORRUPT
+rounded classification     ROUNDED_REPLAY_CORRUPT
+case count                 189
+structural failures        0
+exact corrupt cases        15
+rounded corrupt cases      63
+```
+
+Exact corruption 的模式是确定且跨 repetition 重现的：
+
+```text
+trajectory                 ragged-context only
+batch sizes                4, 5, 8, 9, 16
+repetitions                0, 1, 2
+per-batch failures         3/3 repetitions
+```
+
+Exact corrupt case ids：
+
+```text
+b4__ragged-context__exact_graph__r0
+b5__ragged-context__exact_graph__r0
+b8__ragged-context__exact_graph__r0
+b9__ragged-context__exact_graph__r0
+b16__ragged-context__exact_graph__r0
+b4__ragged-context__exact_graph__r1
+b5__ragged-context__exact_graph__r1
+b8__ragged-context__exact_graph__r1
+b9__ragged-context__exact_graph__r1
+b16__ragged-context__exact_graph__r1
+b4__ragged-context__exact_graph__r2
+b5__ragged-context__exact_graph__r2
+b8__ragged-context__exact_graph__r2
+b9__ragged-context__exact_graph__r2
+b16__ragged-context__exact_graph__r2
+```
+
+Rounded replay 63/63 cases 全部 corrupt，因此 padded/rounded replay 也不得
+进入 production。Verifier 的全局排序首个 divergence 是：
+
+```json
+{
+  "case_id": "b16__duplicate-and-distinct__rounded_graph__r0",
+  "evidence": "logits",
+  "kind": "close_failure",
+  "row_id": 0,
+  "step_id": 0
+}
+```
+
+注意：该 `first_divergence` 是所有 exact + rounded divergence 按 case id
+排序后的第一个，不代表 exact corruption 只发生在该 rounded case。Exact
+admission 应直接依据 `corrupt_exact_case_ids` 和顶层
+`EXACT_REPLAY_CORRUPT`。
+
+### Runner hardening history
+
+1. Canonical r1 在 119/189 后因远端为所有 case 保留 artifacts，最终
+   `/tmp` 满并报 `OSError: [Errno 28] No space left on device`。
+2. `a0f4131` 改为每个 case 下载并原子替换本地目录后，只删除自己唯一的
+   remote case path；fresh smoke r2 18/18 验证 bounded cleanup。
+3. Canonical r2 在 135/189 遇到 `MASTER_PORT` 的瞬态
+   `EADDRINUSE`。已有 bounded retry 只读取 `launcher_stderr.txt`，但真实
+   traceback 在 diagnostic `output/stderr.txt`，因此被误判为不可重试。
+4. `9e1610a` 通过 TDD 聚合两份 stderr，使现有 bounded retry 可识别
+   collision；本地完整 gate 与 remote immutable-source preflight PASS。
+5. 因 source hash 改变，r2 没有 resume 或混入新 source，而是 fresh 跑
+   canonical r3。
+
+### Production safety state
+
+`tinyvllm/engine/model_runner.py` 当前仍 fail closed：
+
+```python
+multi_sequence_decode = mode == "decode" and input_ids.size(0) > 1
+```
+
+该条件进入 eager path；只有 batch 1 保留 CUDA Graph replay。不要删除、
+绕过或放宽该 guard。Producer summary 的 `CORRECT` 是非权威 proxy，已经
+被独立 verifier 推翻，不能作为 production admission 依据。
+
+### Prompt-to-artifact completion audit
+
+1. **批准的 189-process canonical matrix**：
+   189 个 case directory、189 个 producer PASS、189 个 process rows；
+   7 batches × 3 trajectories × 3 modes × 3 repetitions 全覆盖。
+2. **Remote-only GPU/model execution**：
+   manifest/environment 绑定指定 `sitian` host、A100、Qwen3-0.6B 和
+   remote Python；未修改远端 checkout。
+3. **Immutable source identity**：
+   `source_evidence.json`、`source_snapshot.tar.gz`、manifest 和
+   environment 绑定同一 source tree SHA256。
+4. **Unique dynamic ports and transient collision handling**：
+   runner 全局保留已用端口，只有 `EADDRINUSE` 可 bounded retry；
+   `9e1610a` 确保 diagnostic stderr 会进入 retry classifier。
+5. **Bounded remote storage**：
+   逐 case 下载后清理唯一 remote path；canonical 完成后 remote root
+   为 `CLEANED`。
+6. **Independent verifier hard gate**：
+   artifact 已落盘，fresh 手工复跑 exit `1`，稳定返回
+   `EXACT_REPLAY_CORRUPT`；不是只依赖 runner stdout。
+7. **Exact replay admission**：
+   15 个 exact cases 在 ragged batch 4/5/8/9/16 上跨 3 repetitions
+   corrupt，因此 admission 条件不满足。
+8. **Rounded replay admission**：
+   63/63 rounded cases corrupt，不能启用 padded replay。
+9. **Production guard**：
+   `model_runner.py` batch>1 decode 仍强制 eager，未做 production
+   dispatch 变更。
+10. **Documentation/claim boundary**：
+    本 handoff 记录 authoritative NO-GO；README 保持不变，不宣称性能
+    提升。
+
+结论：本轮 correctness gate 已完成，但产品结论是 **NO-GO**。当前没有
+multi-sequence CUDA Graph 性能提升，因为该路径未获准进入 production；
+已验证的收益是避免错误优化上线，并保留 batch-1 graph fast path。
+
+### 后续方向
+
+不要直接继续 production exact-key dispatch。若未来要修复
+multi-sequence replay，必须先做新的书面 root-cause/design：
+
+1. 针对 ragged exact failures 对比 eager/exact 的 per-row logits、
+   per-layer outputs 与 active KV slot，定位首次 exact divergence，而不是
+   仅看全局 rounded `first_divergence`；
+2. 优先审计 capture/replay 的 row-specific context metadata、slot mapping、
+   cu-seqlens/sequence lengths 和 graph input zero/copy 顺序；
+3. 任何修复必须 TDD，并 fresh source-bound 跑完整 189-process canonical；
+4. 只有独立 verifier 返回 `EXACT_REPLAY_CORRECT` 才能重新讨论 exact-key
+   production dispatch；rounded replay 需要独立的
+   `ROUNDED_REPLAY_CORRECT`，不能由 exact 结果推断。
+
 ## 2026-07-20 P4 SAM backlog-adaptive mixed-prefill canonical
 
 ### 当前结论
