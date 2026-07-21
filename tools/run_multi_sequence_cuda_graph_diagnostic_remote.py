@@ -33,6 +33,10 @@ PORT_COLLISION = "EADDRINUSE"
 OWNED_ROOTS = ("tinyvllm", "tools")
 IGNORED_UNTRACKED_PREFIXES = ("experiments",)
 DEFAULT_OUTPUT_ROOT = ROOT / "experiments" / "cuda_graph"
+PREFLIGHT_MODE = "heuristic-exact-width-preflight"
+SMOKE_MODE = "heuristic-exact-width-smoke"
+CANONICAL_MODE = "heuristic-exact-width-canonical"
+ARTIFACT_KIND = "heuristic_exact_width_recovery"
 
 
 def _load_tool(module_name: str, filename: str):
@@ -224,7 +228,7 @@ def same_policy_reference_case(case):
         if candidate.batch_size == case.batch_size
         and candidate.trajectory == case.trajectory
         and candidate.repetition == case.repetition
-        and candidate.mode == "candidate_eager"
+        and candidate.mode == "candidate_eager_heuristic"
     )
 
 
@@ -245,16 +249,16 @@ def reference_case(case):
 
 def _is_reference_case(case) -> bool:
     return (
-        getattr(case, "mode", None) == "candidate_eager"
+        getattr(case, "mode", None) == "candidate_eager_heuristic"
         or getattr(case, "policy", None) == "legacy_eager_auto"
     )
 
 
 def _comparison_policy_name(case) -> str:
     return (
-        "same_policy_fixed16"
+        "same_policy_heuristic_exact_width"
         if hasattr(case, "mode")
-        else "legacy_auto_vs_fixed16"
+        else "legacy_auto_vs_heuristic"
     )
 
 
@@ -318,6 +322,8 @@ def completed_case_is_resumable(
         return False
     if result.get("schema_version") != 1 or result.get("status") != "PASS":
         return False
+    if result.get("artifact_kind") != ARTIFACT_KIND:
+        return False
     expected = {
         "case": asdict(case),
         "case_id": case.case_id,
@@ -327,6 +333,10 @@ def completed_case_is_resumable(
     }
     if any(result.get(key) != value for key, value in expected.items()):
         return False
+    if case.flash_attn_num_splits is None:
+        identities = result.get("graph_identities")
+        if not isinstance(identities, list):
+            return False
     reference = _reference_path(Path(case_dir))
     if not reference.is_file():
         return False
@@ -621,6 +631,7 @@ def _run_remote_preflight(remote_root: str) -> None:
         f"{_quote(REMOTE_PYTHON)} tools/test_model_runner_spec_verify.py",
         (
             f"{_quote(REMOTE_PYTHON)} -m py_compile "
+            "tinyvllm/engine/flash_attn_split_policy.py "
             "tools/multi_sequence_cuda_graph_contract.py "
             "tools/diagnose_multi_sequence_cuda_graph.py "
             "tools/verify_multi_sequence_cuda_graph_diagnostic.py "
@@ -856,8 +867,10 @@ def _finalize_case_record(
     result = {
         "schema_version": 1,
         "status": "PASS",
+        "artifact_kind": ARTIFACT_KIND,
         "case": asdict(case),
         "case_id": case.case_id,
+        "graph_identities": producer.get("graph_identities", []),
         **_policy_identity(
             case,
             str(producer.get("flash_attn_version")),
@@ -989,6 +1002,10 @@ def _merge_cases(
                     "tinyvllm_dist_port"
                 ],
                 "master_port": orchestration["master_port"],
+                "graph_identities": producer.get(
+                    "graph_identities",
+                    [],
+                ),
                 "artifacts": artifacts,
             }
         )
@@ -1010,7 +1027,7 @@ def _merge_cases(
         run_dir / "manifest.json",
         {
             "schema_version": 1,
-            "kind": "fixed_split_recovery",
+            "kind": ARTIFACT_KIND,
             "canonical": canonical,
             "source_tree_sha256": source_evidence["tree_sha256"],
             "environment_sha256": contract.canonical_json_sha256(
@@ -1035,9 +1052,7 @@ def _merge_cases(
                 }
             ),
             "flash_attn_version": environment["flash_attention"],
-            "fixed_split_count": (
-                contract.MULTI_SEQUENCE_CUDA_GRAPH_FLASH_ATTN_NUM_SPLITS
-            ),
+            "policy_name": contract.HEURISTIC_POLICY_NAME,
             "auto_split_count": contract.AUTO_FLASH_ATTN_NUM_SPLITS,
             "warmup_steps": contract.WARMUP_STEPS,
             "measured_steps": contract.MEASURED_STEPS,
@@ -1060,6 +1075,11 @@ def _merge_cases(
             "classification": classification,
             "rounded_classification": rounded,
             "legacy_compatibility": legacy_compatibility,
+            "policy_integrity": (
+                "POLICY_EXACT"
+                if canonical
+                else "NON_AUTHORITATIVE_SMOKE"
+            ),
             "case_count": len(process_rows),
             "same_policy_case_count": len(same_policy_case_ids),
             "compatibility_process_count": len(
@@ -1139,7 +1159,7 @@ def _run_diagnostic(
     resume: bool,
     verifier_python: Path,
 ) -> tuple[Path, int]:
-    canonical = kind == "fixed-split-canonical"
+    canonical = kind == CANONICAL_MODE
     if canonical:
         cases = ordered_canonical_cases()
     else:
@@ -1354,9 +1374,9 @@ def _parse_args(argv=None):
     parser.add_argument(
         "mode",
         choices=(
-            "preflight",
-            "fixed-split-smoke",
-            "fixed-split-canonical",
+            PREFLIGHT_MODE,
+            SMOKE_MODE,
+            CANONICAL_MODE,
             "download-only",
             "verify-only",
         ),
@@ -1383,11 +1403,11 @@ def main(argv=None) -> int:
     if args.mode in {"download-only", "verify-only"} and not args.run_tag:
         raise SystemExit(f"{args.mode} requires --run-tag")
     if args.resume and args.mode not in {
-        "fixed-split-smoke",
-        "fixed-split-canonical",
+        SMOKE_MODE,
+        CANONICAL_MODE,
     }:
         raise SystemExit("--resume is only valid for diagnostic runs")
-    if args.mode == "preflight":
+    if args.mode == PREFLIGHT_MODE:
         run_dir = _run_preflight(
             output_root=args.output_root,
             run_tag=args.run_tag,

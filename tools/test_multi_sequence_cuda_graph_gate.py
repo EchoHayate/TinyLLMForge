@@ -2414,8 +2414,11 @@ def test_remote_runner_has_frozen_transport_and_safety_contract():
         "EADDRINUSE",
         "source_audit.build_source_evidence",
         "source_audit.validate_source_snapshot",
-        "fixed-split-smoke",
-        "fixed-split-canonical",
+        "heuristic-exact-width-preflight",
+        "heuristic-exact-width-smoke",
+        "heuristic-exact-width-canonical",
+        "heuristic_exact_width_recovery",
+        "flash_attn_split_policy.py",
         "download-only",
         "verify-only",
     ):
@@ -2606,7 +2609,7 @@ def test_remote_runner_exposes_resume_and_verifier_python_options():
     runner = load_remote_runner()
     args = runner._parse_args(
         [
-            "fixed-split-canonical",
+            "heuristic-exact-width-canonical",
             "--run-tag",
             "resume-run",
             "--resume",
@@ -2658,7 +2661,7 @@ def test_remote_runner_removes_only_downloaded_remote_case():
     assert command != "rm -r -- /tmp"
 
 
-def test_remote_runner_builds_fixed_split_smoke_for_both_gates():
+def test_remote_runner_builds_heuristic_smoke_for_both_gates():
     runner = load_remote_runner()
     same_policy, compatibility = runner.build_smoke_cases()
     assert same_policy
@@ -2668,13 +2671,13 @@ def test_remote_runner_builds_fixed_split_smoke_for_both_gates():
     assert all(case.repetition == 0 for case in same_policy)
     assert all(case.repetition == 0 for case in compatibility)
     assert {case.mode for case in same_policy} == {
-        "candidate_eager",
-        "exact_graph_fixed16",
-        "rounded_graph_fixed16",
+        "candidate_eager_heuristic",
+        "exact_graph_heuristic",
+        "rounded_graph_heuristic",
     }
     assert {case.policy for case in compatibility} == {
         "legacy_eager_auto",
-        "candidate_eager_fixed16",
+        "candidate_eager_heuristic",
     }
 
 
@@ -2682,12 +2685,20 @@ def test_remote_runner_orders_each_reference_before_candidates():
     runner = load_remote_runner()
     cases = runner.ordered_canonical_cases()
     assert len(cases) == 315
+    allocated = runner.allocate_unique_port_pairs(
+        count=len(cases),
+        allocator=iter(
+            (30000 + 2 * index, 30001 + 2 * index)
+            for index in range(len(cases))
+        ).__next__,
+    )
+    assert len({port for pair in allocated for port in pair}) == 630
     positions = {case.case_id: index for index, case in enumerate(cases)}
     for case in contract.build_diagnostic_matrix():
-        if case.mode == "candidate_eager":
+        if case.mode == "candidate_eager_heuristic":
             continue
         reference = runner.same_policy_reference_case(case)
-        assert reference.mode == "candidate_eager"
+        assert reference.mode == "candidate_eager_heuristic"
         assert positions[reference.case_id] < positions[case.case_id]
     for case in contract.build_legacy_compatibility_matrix():
         if case.policy == "legacy_eager_auto":
@@ -2703,12 +2714,12 @@ def test_remote_runner_requires_paired_reference_before_candidate():
         next(
             case
             for case in contract.build_diagnostic_matrix()
-            if case.mode == "exact_graph_fixed16"
+            if case.mode == "exact_graph_heuristic"
         ),
         next(
             case
             for case in contract.build_legacy_compatibility_matrix()
-            if case.policy == "candidate_eager_fixed16"
+            if case.policy == "candidate_eager_heuristic"
         ),
     )
     with tempfile.TemporaryDirectory() as temporary_directory:
@@ -2741,11 +2752,11 @@ def test_remote_runner_resume_requires_policy_identity_and_artifact_hashes():
     case = next(
         case
         for case in contract.build_legacy_compatibility_matrix()
-        if case.policy == "candidate_eager_fixed16"
+        if case.policy == "candidate_eager_heuristic"
     )
     source_tree_sha256 = "a" * 64
     environment_sha256 = "b" * 64
-    flash_attn_version = "2.8.0"
+    flash_attn_version = "2.6.3"
     with tempfile.TemporaryDirectory() as temporary_directory:
         case_dir = Path(temporary_directory) / case.case_id
         artifact = case_dir / "output" / "artifact.bin"
@@ -2769,12 +2780,14 @@ def test_remote_runner_resume_requires_policy_identity_and_artifact_hashes():
             {
                 "schema_version": 1,
                 "status": "PASS",
+                "artifact_kind": "heuristic_exact_width_recovery",
                 "case": asdict(case),
                 "case_id": case.case_id,
                 "flash_attn_version": flash_attn_version,
                 "split_policy_name": case.split_policy_name,
                 "flash_attn_num_splits": case.flash_attn_num_splits,
-                "comparison_policy_name": "legacy_auto_vs_fixed16",
+                "comparison_policy_name": "legacy_auto_vs_heuristic",
+                "graph_identities": [],
                 "source_tree_sha256": source_tree_sha256,
                 "environment_sha256": environment_sha256,
                 "reference_token_sha256": reference_token_sha256,
@@ -2794,10 +2807,14 @@ def test_remote_runner_resume_requires_policy_identity_and_artifact_hashes():
             (case_dir / "case_result.json").read_text(encoding="utf-8")
         )
         mutations = (
-            ("flash_attn_version", "2.7.0"),
+            ("flash_attn_version", "2.6.4"),
             ("split_policy_name", "auto"),
             ("flash_attn_num_splits", 0),
-            ("comparison_policy_name", "same_policy_fixed16"),
+            (
+                "comparison_policy_name",
+                "same_policy_heuristic_exact_width",
+            ),
+            ("artifact_kind", "fixed_split_recovery"),
             ("source_tree_sha256", "c" * 64),
             ("environment_sha256", "d" * 64),
         )
@@ -2823,12 +2840,12 @@ def test_remote_runner_resume_requires_policy_identity_and_artifact_hashes():
         )
 
 
-def test_remote_runner_exposes_fixed_split_cli_modes():
+def test_remote_runner_exposes_heuristic_cli_modes():
     runner = load_remote_runner()
     for mode in (
-        "preflight",
-        "fixed-split-smoke",
-        "fixed-split-canonical",
+        "heuristic-exact-width-preflight",
+        "heuristic-exact-width-smoke",
+        "heuristic-exact-width-canonical",
         "download-only",
         "verify-only",
     ):
@@ -2937,11 +2954,11 @@ if __name__ == "__main__":
         test_remote_runner_exposes_resume_and_verifier_python_options,
         test_remote_runner_promotes_source_evidence_artifacts,
         test_remote_runner_removes_only_downloaded_remote_case,
-        test_remote_runner_builds_fixed_split_smoke_for_both_gates,
+        test_remote_runner_builds_heuristic_smoke_for_both_gates,
         test_remote_runner_orders_each_reference_before_candidates,
         test_remote_runner_requires_paired_reference_before_candidate,
         test_remote_runner_resume_requires_policy_identity_and_artifact_hashes,
-        test_remote_runner_exposes_fixed_split_cli_modes,
+        test_remote_runner_exposes_heuristic_cli_modes,
         test_remote_runner_failed_case_preservation_manifest,
     ]
     for test in tests:
