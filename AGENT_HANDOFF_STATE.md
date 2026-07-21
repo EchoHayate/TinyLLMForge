@@ -200,6 +200,65 @@ admission 应直接依据 `corrupt_exact_case_ids` 和顶层
 5. 因 source hash 改变，r2 没有 resume 或混入新 source，而是 fresh 跑
    canonical r3。
 
+### Exact replay root-cause probe
+
+Canonical NO-GO 后对 capture/replay 输入链做了只读审计，并在远端唯一
+临时 source copy 上做最小 probe；production checkout、production dispatch
+和 batch>1 eager guard 均未修改。Probe artifacts：
+
+```text
+experiments/cuda_graph/qwen3-06b-cuda-graph-root-cause-split-probe-20260721/
+```
+
+静态与动态审计没有发现 graph input metadata 漏拷贝：
+`input_ids`、`positions`、`slot_mapping`、`context_lens` 和
+`block_tables` 在 replay 前均先清零，再覆盖所有 active rows。根因证据
+指向 FlashAttention 2.6.3 decode 的 split selection：
+
+```text
+flash_attn_with_kvcache(..., num_splits=0)
+```
+
+其中 `num_splits=0` 使用自动 heuristic，CUDA Graph capture 会固化 capture
+时选择的 kernel/split 路径，而 eager 会针对当步 ragged shape/length
+重新选择。Canonical verifier 因而可能在比较两条不同 reduction 路径，
+并把数值差异分类为 replay corruption。`num_splits=1` 并不能修复 batch 4；
+`num_splits=16` 则提供了稳定的固定策略，且与已有 speculative verifier
+的固定 split 先例一致。
+
+最关键的同策略对照为：
+
+```text
+comparison      fixed-split16 CUDA Graph replay vs fixed-split16 eager
+trajectory      ragged-context
+batches         4, 5, 8, 9, 16
+repetition      0
+process exits   all 0
+result          all_equal=true
+```
+
+`graph-vs-eager-s16-comparison.json` 对每个 batch 独立确认：
+
+- logits：逐元素相等，`max_abs=0`；
+- 所有 layer hook outputs：逐元素相等，`max_abs=0`；
+- KV `keys_before`、`values_before`、`keys_after`、`values_after`：
+  全部逐元素相等，`max_abs=0`。
+
+这排除了“固定 split 下 graph replay 本身仍会破坏 ragged rows”的假设，
+并把当前最强根因定位为 auto split 在 graph capture/replay 与 eager
+动态执行之间的策略不一致。早先
+`fixed-split16-matrix-comparison.json` 在 batch 8/9/16 仍显示差异，是因为
+它把 fixed-split16 graph 与 canonical auto-split eager 比较；这证明不同
+split 算法路径可能产生显著数值差异，不是同策略 graph corruption。
+
+该 probe **不改变 canonical hard gate**，也不证明 production 修复完成：
+
+1. 只覆盖历史 exact-corrupt 的 5 个 batch、单 trajectory、单 repetition；
+2. 未证明 fixed split 对原 auto-split eager 满足 canonical tolerance；
+3. 未跑完整 189-case matrix，也未验证 rounded graph；
+4. 未测 fixed split 的吞吐、延迟或显存收益；
+5. artifacts 是 root-cause evidence，不是 production admission artifact。
+
 ### Production safety state
 
 `tinyvllm/engine/model_runner.py` 当前仍 fail closed：
@@ -262,6 +321,12 @@ multi-sequence replay，必须先做新的书面 root-cause/design：
 4. 只有独立 verifier 返回 `EXACT_REPLAY_CORRECT` 才能重新讨论 exact-key
    production dispatch；rounded replay 需要独立的
    `ROUNDED_REPLAY_CORRECT`，不能由 exact 结果推断。
+5. 若采用固定 `num_splits` 修复，fresh canonical 的 eager baseline 与
+   graph path 必须使用书面冻结且可审计的同一 split policy；不得再把
+   auto-split eager 与 fixed-split graph 混作 replay correctness 对照。
+6. 任何 source、split policy、verifier 或 matrix 变化都必须生成新的
+   source-bound artifacts，并由独立 verifier 重算；只有 full canonical
+   hard gate 通过后，production batch>1 eager guard 才有资格重新评审。
 
 ## 2026-07-20 P4 SAM backlog-adaptive mixed-prefill canonical
 
