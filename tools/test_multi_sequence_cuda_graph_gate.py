@@ -763,18 +763,22 @@ def test_prompt_plan_is_deterministic_and_covers_required_trajectories():
 
 def test_ragged_prompts_cross_page_boundaries_during_measured_decode():
     diagnostic = load_diagnostic_module_without_gpu()
-    plan = diagnostic.build_prompt_plan(FakeTokenizer(), 16)
-    lengths = [len(prompt) for prompt in plan["ragged-context"]]
     measured_start = contract.WARMUP_STEPS
     measured_end = measured_start + contract.MEASURED_STEPS
 
-    assert 253 in lengths
-    assert 510 in lengths
-    assert any(
-        (length + measured_start) // 256
-        != (length + measured_end) // 256
-        for length in lengths
-    )
+    expected_max_lengths = {5: 253, 8: 509, 16: 765}
+    expected_initial_widths = {5: 1, 8: 2, 16: 3}
+    for batch_size in (5, 8, 16):
+        plan = diagnostic.build_prompt_plan(FakeTokenizer(), batch_size)
+        lengths = [len(prompt) for prompt in plan["ragged-context"]]
+        max_length = max(lengths)
+        widths = [
+            (max_length + 1 + absolute_step + 255) // 256
+            for absolute_step in range(measured_start, measured_end)
+        ]
+        assert max_length == expected_max_lengths[batch_size]
+        assert widths[0] == expected_initial_widths[batch_size]
+        assert len(set(widths)) >= 2
 
 
 def test_kv_observation_plan_covers_active_zero_inactive_and_sentinels():
@@ -1975,6 +1979,67 @@ def write_complete_diagnostic_fixture(root: Path) -> Path:
     return run_dir
 
 
+def restrict_diagnostic_fixture_to_cases(
+    run_dir: Path,
+    *,
+    same_policy_case_ids: list[str],
+    compatibility_case_ids: list[str],
+) -> None:
+    selected_case_ids = same_policy_case_ids + compatibility_case_ids
+    selected = set(selected_case_ids)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "canonical": False,
+            "case_ids": selected_case_ids,
+            "same_policy_case_ids": same_policy_case_ids,
+            "compatibility_case_ids": compatibility_case_ids,
+            "legacy_compatibility_case_ids": compatibility_case_ids,
+            "same_policy_process_count": len(same_policy_case_ids),
+            "compatibility_process_count": len(compatibility_case_ids),
+            "compatibility_pair_count": len(compatibility_case_ids) // 2,
+        }
+    )
+    _write_json(manifest_path, manifest)
+    for name in (
+        "process_rows.jsonl",
+        "raw_rows.jsonl",
+        "layer_observations.jsonl",
+        "kv_observations.jsonl",
+    ):
+        path = run_dir / name
+        rows = [
+            row
+            for row in _read_jsonl(path)
+            if row.get("case_id") in selected
+        ]
+        _write_jsonl(path, rows)
+    summary_path = run_dir / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary.update(
+        {
+            "case_count": len(selected_case_ids),
+            "same_policy_case_count": len(same_policy_case_ids),
+            "compatibility_process_count": len(compatibility_case_ids),
+            "compatibility_pair_count": len(compatibility_case_ids) // 2,
+        }
+    )
+    _write_json(summary_path, summary)
+    _refresh_sha256sums(run_dir)
+
+
+def write_smoke_diagnostic_fixture(root: Path) -> Path:
+    run_dir = write_complete_diagnostic_fixture(root)
+    same_policy, compatibility = load_remote_runner().build_smoke_cases()
+    restrict_diagnostic_fixture_to_cases(
+        run_dir,
+        same_policy_case_ids=[case.case_id for case in same_policy],
+        compatibility_case_ids=[case.case_id for case in compatibility],
+    )
+    return run_dir
+
+
 def _rewrite_jsonl(path: Path, rows: list[dict]) -> None:
     _write_jsonl(path, rows)
 
@@ -2002,6 +2067,50 @@ def test_verifier_reconstructs_complete_diagnostic():
         assert summary["same_policy_case_count"] == 189
         assert summary["compatibility_process_count"] == 126
         assert summary["compatibility_pair_count"] == 63
+
+
+def test_verifier_reconstructs_manifest_selected_smoke_subset():
+    verifier = load_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = write_smoke_diagnostic_fixture(
+            Path(temporary_directory)
+        )
+        summary = verifier.verify_diagnostic(run_dir)
+        assert summary["classification"] == "EXACT_REPLAY_CORRECT"
+        assert summary["legacy_compatibility"] == "LEGACY_COMPATIBLE"
+        assert summary["policy_integrity"] == "POLICY_EXACT"
+        assert summary["failures"] == []
+        assert summary["case_count"] == 30
+        assert summary["same_policy_case_count"] == 18
+        assert summary["compatibility_process_count"] == 12
+        assert summary["compatibility_pair_count"] == 6
+
+
+def test_verifier_rejects_manifest_subset_missing_or_extra_case():
+    verifier = load_verifier()
+    for mutation in ("missing", "extra"):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            run_dir = write_smoke_diagnostic_fixture(
+                Path(temporary_directory)
+            )
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            if mutation == "missing":
+                removed = manifest["same_policy_case_ids"].pop()
+                manifest["case_ids"].remove(removed)
+                manifest["same_policy_process_count"] -= 1
+            else:
+                unknown = "b999__unknown__exact_graph__r0"
+                manifest["same_policy_case_ids"].append(unknown)
+                manifest["case_ids"].append(unknown)
+                manifest["same_policy_process_count"] += 1
+            _write_json(manifest_path, manifest)
+            _refresh_sha256sums(run_dir)
+            summary = verifier.verify_diagnostic(run_dir)
+            assert summary["classification"] == "INCOMPLETE"
+            assert summary["failures"]
 
 
 def test_verifier_rejects_heuristic_manifest_contract_drift():
@@ -3006,6 +3115,8 @@ if __name__ == "__main__":
         test_policy_evidence_distinguishes_same_policy_and_legacy_comparison,
         test_artifact_record_path_is_relative_and_resolves_after_relocation,
         test_verifier_reconstructs_complete_diagnostic,
+        test_verifier_reconstructs_manifest_selected_smoke_subset,
+        test_verifier_rejects_manifest_subset_missing_or_extra_case,
         test_verifier_rejects_heuristic_manifest_contract_drift,
         test_verifier_rejects_missing_split_identity,
         test_verifier_rejects_auto_graph_as_fixed16_evidence,

@@ -369,8 +369,13 @@ def classify_diagnostic(
     logit_results: list[dict],
     layer_results: list[dict],
     kv_results: list[dict],
+    expected_cases: Iterable[DiagnosticCase] | None = None,
 ) -> dict:
-    matrix = build_diagnostic_matrix()
+    matrix = tuple(
+        build_diagnostic_matrix()
+        if expected_cases is None
+        else expected_cases
+    )
     expected_matrix_ids = {case.case_id for case in matrix}
     candidate_cases = tuple(
         case
@@ -553,8 +558,13 @@ def classify_legacy_compatibility(
     logit_results: list[dict],
     kv_results: list[dict],
     token_results: list[dict],
+    expected_cases: Iterable[LegacyCompatibilityCase] | None = None,
 ) -> dict:
-    matrix = build_legacy_compatibility_matrix()
+    matrix = tuple(
+        build_legacy_compatibility_matrix()
+        if expected_cases is None
+        else expected_cases
+    )
     expected_process_ids = {case.case_id for case in matrix}
     candidate_cases = tuple(
         case

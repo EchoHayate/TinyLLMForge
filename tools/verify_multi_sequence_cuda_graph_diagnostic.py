@@ -330,6 +330,60 @@ def _all_expected_cases():
     }
 
 
+def _manifest_case_domain(
+    manifest: dict,
+) -> tuple[dict[str, object], dict[str, object], list[str]]:
+    all_same_policy = _expected_same_policy_cases()
+    all_compatibility = _expected_compatibility_cases()
+    failures = []
+
+    def select(field: str, known: dict[str, object]) -> dict[str, object]:
+        values = manifest.get(field)
+        if not isinstance(values, list) or any(
+            not isinstance(case_id, str) for case_id in values
+        ):
+            failures.append(f"manifest {field} must be a string list")
+            return {}
+        if len(values) != len(set(values)):
+            failures.append(f"manifest {field} contains duplicates")
+        unknown = [case_id for case_id in values if case_id not in known]
+        if unknown:
+            failures.append(f"manifest {field} unknown {unknown}")
+        return {
+            case_id: known[case_id]
+            for case_id in values
+            if case_id in known
+        }
+
+    same_policy = select("same_policy_case_ids", all_same_policy)
+    compatibility = select(
+        "compatibility_case_ids",
+        all_compatibility,
+    )
+    case_ids = manifest.get("case_ids")
+    expected_case_ids = list(same_policy) + list(compatibility)
+    if case_ids != expected_case_ids:
+        failures.append(
+            f"manifest case_ids={case_ids!r}, "
+            f"expected {expected_case_ids!r}"
+        )
+    if manifest.get("legacy_compatibility_case_ids") != list(compatibility):
+        failures.append(
+            "manifest legacy_compatibility_case_ids disagree with "
+            "compatibility_case_ids"
+        )
+    if manifest.get("canonical") is True:
+        if list(same_policy) != list(all_same_policy):
+            failures.append("canonical manifest same-policy matrix incomplete")
+        if list(compatibility) != list(all_compatibility):
+            failures.append(
+                "canonical manifest compatibility matrix incomplete"
+            )
+    elif manifest.get("canonical") is not False:
+        failures.append("manifest canonical must be boolean")
+    return same_policy, compatibility, failures
+
+
 def _comparison_policy_name(case) -> str:
     return (
         "same_policy_heuristic_exact_width"
@@ -464,15 +518,28 @@ def _validate_manifest(
     source_evidence: dict,
     environment: dict,
     prompt_manifest: dict,
+    *,
+    same_policy_cases: dict[str, object] | None = None,
+    compatibility_cases: dict[str, object] | None = None,
 ) -> list[str]:
     failures = []
-    same_policy_ids = list(_expected_same_policy_cases())
-    compatibility_ids = list(_expected_compatibility_cases())
+    if same_policy_cases is None or compatibility_cases is None:
+        (
+            parsed_same_policy,
+            parsed_compatibility,
+            domain_failures,
+        ) = _manifest_case_domain(manifest)
+        failures.extend(domain_failures)
+        if same_policy_cases is None:
+            same_policy_cases = parsed_same_policy
+        if compatibility_cases is None:
+            compatibility_cases = parsed_compatibility
+    same_policy_ids = list(same_policy_cases)
+    compatibility_ids = list(compatibility_cases)
     expected_ids = same_policy_ids + compatibility_ids
     expected_values = {
         "schema_version": 1,
         "kind": "heuristic_exact_width_recovery",
-        "canonical": True,
         "source_tree_sha256": source_evidence.get("tree_sha256"),
         "environment_sha256": contract.canonical_json_sha256(environment),
         "prompt_manifest_sha256": contract.canonical_json_sha256(
@@ -517,6 +584,7 @@ def _validate_process_rows(
     manifest: dict,
     environment: dict,
     prompt_manifest: dict,
+    expected_cases: dict[str, object],
 ) -> tuple[dict[str, dict], list[str]]:
     indexed, failures = _index_unique(
         rows,
@@ -542,7 +610,6 @@ def _validate_process_rows(
         if row.get("tinyvllm_dist_port") == row.get("master_port"):
             failures.append(f"process_rows: {owner} ports are identical")
 
-    expected_cases = _all_expected_cases()
     actual_ids = set(indexed)
     expected_ids = set(expected_cases)
     missing = sorted(expected_ids - actual_ids)
@@ -600,6 +667,7 @@ def _validate_step_evidence(
     *,
     evidence_name: str,
     process_rows: dict[str, dict],
+    expected_cases: dict[str, object],
 ) -> tuple[dict[tuple[str, int], dict], list[str]]:
     indexed, failures = _index_step_rows(
         rows,
@@ -607,7 +675,7 @@ def _validate_step_evidence(
     )
     expected_keys = {
         (case.case_id, step_id)
-        for case in _all_expected_cases().values()
+        for case in expected_cases.values()
         for step_id in range(contract.MEASURED_STEPS)
     }
     actual_keys = set(indexed)
@@ -686,9 +754,10 @@ def _validate_reference_tokens(
     process_rows: dict[str, dict],
     sha256sums: dict[str, str],
     failures: list[str],
+    expected_cases: dict[str, object],
 ) -> None:
     expected_by_comparison = {}
-    for case in _all_expected_cases().values():
+    for case in expected_cases.values():
         row = process_rows.get(case.case_id)
         if row is None:
             continue
@@ -830,12 +899,13 @@ def _compare_logits_and_layers(
     process_rows: dict[str, dict],
     sha256sums: dict[str, str],
     failures: list[str],
+    expected_cases: dict[str, object],
 ) -> tuple[list[dict], list[dict], list[dict]]:
     eager_shards = {}
     logit_results = []
     layer_results = []
     divergences = []
-    for case in contract.build_diagnostic_matrix():
+    for case in expected_cases.values():
         row = process_rows.get(case.case_id)
         if row is None:
             continue
@@ -1006,11 +1076,12 @@ def _compare_kv(
     process_rows: dict[str, dict],
     sha256sums: dict[str, str],
     failures: list[str],
+    expected_cases: dict[str, object],
 ) -> tuple[list[dict], list[dict]]:
     eager_shards = {}
     results = []
     divergences = []
-    for case in contract.build_diagnostic_matrix():
+    for case in expected_cases.values():
         row = process_rows.get(case.case_id)
         if row is None:
             continue
@@ -1149,9 +1220,10 @@ def _load_compatibility_artifacts(
     process_rows: dict[str, dict],
     sha256sums: dict[str, str],
     failures: list[str],
+    expected_cases: dict[str, object],
 ) -> dict[str, dict[str, dict | None]]:
     loaded_by_pair = {}
-    for case in contract.build_legacy_compatibility_matrix():
+    for case in expected_cases.values():
         row = process_rows.get(case.case_id)
         if row is None:
             continue
@@ -1268,12 +1340,14 @@ def _compare_legacy_compatibility(
     raw_rows: dict[tuple[str, int], dict],
     sha256sums: dict[str, str],
     failures: list[str],
+    expected_cases: dict[str, object],
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     loaded_by_pair = _load_compatibility_artifacts(
         run_dir,
         process_rows,
         sha256sums,
         failures,
+        expected_cases,
     )
     logit_results = []
     token_results = []
@@ -1281,7 +1355,7 @@ def _compare_legacy_compatibility(
     divergences = []
     candidate_cases = (
         case
-        for case in contract.build_legacy_compatibility_matrix()
+        for case in expected_cases.values()
         if case.policy == "candidate_eager_heuristic"
     )
     for case in candidate_cases:
@@ -1329,7 +1403,7 @@ def _compare_legacy_compatibility(
 
         legacy_case_id = next(
             item.case_id
-            for item in contract.build_legacy_compatibility_matrix()
+            for item in expected_cases.values()
             if item.pair_id == case.pair_id
             and item.policy == "legacy_eager_auto"
         )
@@ -1421,9 +1495,10 @@ def _compare_legacy_compatibility(
 def _verify_layer_rows(
     layer_rows: dict[tuple[str, int], dict],
     process_rows: dict[str, dict],
+    expected_cases: dict[str, object],
 ) -> list[str]:
     failures = []
-    for case in _all_expected_cases().values():
+    for case in expected_cases.values():
         process = process_rows.get(case.case_id)
         if process is None:
             continue
@@ -1460,9 +1535,10 @@ def _verify_raw_rows_against_logits(
     raw_rows: dict[tuple[str, int], dict],
     process_rows: dict[str, dict],
     run_dir: Path,
+    expected_cases: dict[str, object],
 ) -> list[str]:
     failures = []
-    for case in _all_expected_cases().values():
+    for case in expected_cases.values():
         process = process_rows.get(case.case_id)
         if process is None:
             continue
@@ -1593,12 +1669,24 @@ def verify_diagnostic(run_dir: Path) -> dict:
     source_evidence = loaded["source_evidence.json"]
     environment = loaded["environment.json"]
     prompt_manifest = loaded["prompt_manifest.json"]
+    (
+        same_policy_cases,
+        compatibility_cases,
+        domain_failures,
+    ) = _manifest_case_domain(manifest)
+    failures.extend(domain_failures)
+    expected_cases = {
+        **same_policy_cases,
+        **compatibility_cases,
+    }
     failures.extend(
         _validate_manifest(
             manifest,
             source_evidence,
             environment,
             prompt_manifest,
+            same_policy_cases=same_policy_cases,
+            compatibility_cases=compatibility_cases,
         )
     )
 
@@ -1646,24 +1734,28 @@ def verify_diagnostic(run_dir: Path) -> dict:
         manifest=manifest,
         environment=environment,
         prompt_manifest=prompt_manifest,
+        expected_cases=expected_cases,
     )
     failures.extend(process_failures)
     raw_rows, raw_failures = _validate_step_evidence(
         jsonl_rows["raw_rows.jsonl"],
         evidence_name="raw_rows",
         process_rows=process_rows,
+        expected_cases=expected_cases,
     )
     failures.extend(raw_failures)
     layer_rows, layer_failures = _validate_step_evidence(
         jsonl_rows["layer_observations.jsonl"],
         evidence_name="layer_rows",
         process_rows=process_rows,
+        expected_cases=expected_cases,
     )
     failures.extend(layer_failures)
     kv_rows, kv_row_failures = _validate_step_evidence(
         jsonl_rows["kv_observations.jsonl"],
         evidence_name="kv_rows",
         process_rows=process_rows,
+        expected_cases=expected_cases,
     )
     failures.extend(kv_row_failures)
     policy_integrity = verify_policy_integrity(
@@ -1672,15 +1764,27 @@ def verify_diagnostic(run_dir: Path) -> dict:
         kv_rows=list(kv_rows.values()),
         process_rows=process_rows,
     )
-    failures.extend(_verify_layer_rows(layer_rows, process_rows))
     failures.extend(
-        _verify_raw_rows_against_logits(raw_rows, process_rows, run_dir)
+        _verify_layer_rows(
+            layer_rows,
+            process_rows,
+            expected_cases,
+        )
+    )
+    failures.extend(
+        _verify_raw_rows_against_logits(
+            raw_rows,
+            process_rows,
+            run_dir,
+            expected_cases,
+        )
     )
     _validate_reference_tokens(
         run_dir,
         process_rows,
         sha256sums,
         failures,
+        expected_cases,
     )
 
     logit_results, layer_results, tensor_divergences = (
@@ -1689,6 +1793,7 @@ def verify_diagnostic(run_dir: Path) -> dict:
             process_rows,
             sha256sums,
             failures,
+            same_policy_cases,
         )
     )
     divergences.extend(tensor_divergences)
@@ -1697,10 +1802,9 @@ def verify_diagnostic(run_dir: Path) -> dict:
         process_rows,
         sha256sums,
         failures,
+        same_policy_cases,
     )
     divergences.extend(kv_divergences)
-    same_policy_cases = _expected_same_policy_cases()
-    compatibility_cases = _expected_compatibility_cases()
     matrix_rows = [
         row
         for case_id, row in process_rows.items()
@@ -1711,6 +1815,7 @@ def verify_diagnostic(run_dir: Path) -> dict:
         logit_results=logit_results,
         layer_results=layer_results,
         kv_results=kv_results,
+        expected_cases=same_policy_cases.values(),
     )
     failures.extend(classification.get("failures", []))
     (
@@ -1724,6 +1829,7 @@ def verify_diagnostic(run_dir: Path) -> dict:
         raw_rows,
         sha256sums,
         failures,
+        compatibility_cases,
     )
     divergences.extend(compatibility_divergences)
     compatibility_process_rows = [
@@ -1736,6 +1842,7 @@ def verify_diagnostic(run_dir: Path) -> dict:
         logit_results=compatibility_logit_results,
         kv_results=compatibility_kv_results,
         token_results=compatibility_token_results,
+        expected_cases=compatibility_cases.values(),
     )
     failures.extend(compatibility.get("failures", []))
 
