@@ -25,6 +25,9 @@ VERIFIER_PATH = (
 REMOTE_RUNNER_PATH = (
     ROOT / "tools" / "run_multi_sequence_cuda_graph_diagnostic_remote.py"
 )
+SPLIT_POLICY_PATH = (
+    ROOT / "tinyvllm" / "engine" / "flash_attn_split_policy.py"
+)
 
 
 def load_contract():
@@ -39,6 +42,17 @@ def load_contract():
 
 
 contract = load_contract()
+
+
+def load_split_policy():
+    spec = importlib.util.spec_from_file_location(
+        "flash_attn_split_policy",
+        SPLIT_POLICY_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_diagnostic_module_without_gpu():
@@ -112,6 +126,130 @@ def load_remote_runner():
 class FakeTokenizer:
     def encode(self, text):
         return [ord(character) for character in text]
+
+
+def test_flash_attn_263_known_qwen3_a100_vectors():
+    split_policy = load_split_policy()
+    vectors = {
+        (2, 1): 2,
+        (3, 1): 2,
+        (4, 1): 2,
+        (5, 1): 2,
+        (8, 2): 2,
+        (9, 2): 2,
+        (16, 3): 3,
+    }
+    for (batch_size, page_table_width), expected in vectors.items():
+        inputs = split_policy.FlashAttentionSplitInputs(
+            batch_size=batch_size,
+            num_query_heads=16,
+            num_kv_heads=8,
+            head_dim=128,
+            page_block_size=256,
+            page_table_width=page_table_width,
+            max_seqlen_q=1,
+            multi_processor_count=108,
+        )
+        assert (
+            split_policy.flash_attn_263_decode_num_splits(inputs)
+            == expected
+        )
+
+
+def test_flash_attn_263_early_return_and_graph_identity():
+    split_policy = load_split_policy()
+    inputs = split_policy.FlashAttentionSplitInputs(
+        batch_size=22,
+        num_query_heads=16,
+        num_kv_heads=8,
+        head_dim=128,
+        page_block_size=256,
+        page_table_width=3,
+        max_seqlen_q=1,
+        multi_processor_count=108,
+    )
+    assert split_policy.flash_attn_263_decode_num_splits(inputs) == 1
+
+    first = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=22,
+        inputs=inputs,
+        flash_attn_version="2.6.3",
+    )
+    second = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=22,
+        inputs=inputs,
+        flash_attn_version="2.6.3",
+    )
+    assert first == second
+    assert first.sha256 == second.sha256
+    assert len(first.sha256) == 64
+
+    wider = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=22,
+        inputs=split_policy.FlashAttentionSplitInputs(
+            **{
+                **asdict(inputs),
+                "page_table_width": 4,
+            }
+        ),
+        flash_attn_version="2.6.3",
+    )
+    rounded = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=32,
+        inputs=inputs,
+        flash_attn_version="2.6.3",
+    )
+    assert first.sha256 != wider.sha256
+    assert first.sha256 != rounded.sha256
+
+
+def test_flash_attn_263_rejects_unsupported_inputs():
+    split_policy = load_split_policy()
+    valid = {
+        "batch_size": 8,
+        "num_query_heads": 16,
+        "num_kv_heads": 8,
+        "head_dim": 128,
+        "page_block_size": 256,
+        "page_table_width": 2,
+        "max_seqlen_q": 1,
+        "multi_processor_count": 108,
+    }
+    invalid = (
+        ("batch_size", 0),
+        ("num_query_heads", 0),
+        ("num_kv_heads", 0),
+        ("head_dim", 0),
+        ("head_dim", 257),
+        ("page_block_size", 128),
+        ("page_table_width", 0),
+        ("max_seqlen_q", 2),
+        ("multi_processor_count", 0),
+        ("num_query_heads", 15),
+    )
+    for field, value in invalid:
+        values = dict(valid)
+        values[field] = value
+        inputs = split_policy.FlashAttentionSplitInputs(**values)
+        try:
+            split_policy.flash_attn_263_decode_num_splits(inputs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                f"unsupported split input accepted: {field}={value}"
+            )
+
+    try:
+        split_policy.build_flash_attn_263_graph_identity(
+            graph_batch_size=8,
+            inputs=split_policy.FlashAttentionSplitInputs(**valid),
+            flash_attn_version="2.6.4",
+        )
+    except ValueError as exc:
+        assert "2.6.3" in str(exc)
+    else:
+        raise AssertionError("unsupported FlashAttention version accepted")
 
 
 def test_same_policy_matrix_is_exact_policy_aware_and_unique():
@@ -2131,6 +2269,9 @@ def test_remote_runner_failed_case_preservation_manifest():
 
 if __name__ == "__main__":
     tests = [
+        test_flash_attn_263_known_qwen3_a100_vectors,
+        test_flash_attn_263_early_return_and_graph_identity,
+        test_flash_attn_263_rejects_unsupported_inputs,
         test_same_policy_matrix_is_exact_policy_aware_and_unique,
         test_legacy_compatibility_matrix_is_63_pairs_126_processes,
         test_case_ids_bind_split_policy_identity,
