@@ -105,11 +105,45 @@ def test_reset_context_returns_decode_default():
     assert context.get_context().is_prefill is False
 
 
+def test_temporary_flash_attn_split_restores_previous_context():
+    context.set_context(mode="decode", flash_attn_num_splits=0)
+    original = context.get_context()
+    with context.temporary_flash_attn_num_splits(16):
+        assert context.get_context() is not original
+        assert context.get_context().flash_attn_num_splits == 16
+    assert context.get_context() is original
+    assert context.get_context().flash_attn_num_splits == 0
+
+
+def test_temporary_flash_attn_split_restores_after_exception():
+    context.set_context(mode="decode", flash_attn_num_splits=0)
+    original = context.get_context()
+    try:
+        with context.temporary_flash_attn_num_splits(16):
+            raise RuntimeError("capture failed")
+    except RuntimeError:
+        pass
+    assert context.get_context() is original
+    assert context.get_context().flash_attn_num_splits == 0
+
+
+def test_temporary_flash_attn_split_supports_nested_scopes():
+    context.set_context(mode="decode", flash_attn_num_splits=0)
+    with context.temporary_flash_attn_num_splits(16):
+        with context.temporary_flash_attn_num_splits(1):
+            assert context.get_context().flash_attn_num_splits == 1
+        assert context.get_context().flash_attn_num_splits == 16
+    assert context.get_context().flash_attn_num_splits == 0
+
+
 def main():
     test_explicit_modes_are_preserved()
     test_legacy_boolean_callers_keep_current_behavior()
     test_conflicting_mode_and_boolean_fail()
     test_reset_context_returns_decode_default()
+    test_temporary_flash_attn_split_restores_previous_context()
+    test_temporary_flash_attn_split_restores_after_exception()
+    test_temporary_flash_attn_split_supports_nested_scopes()
     print("context mode tests passed")
 
 

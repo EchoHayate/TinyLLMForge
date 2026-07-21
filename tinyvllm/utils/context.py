@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 import torch
 
 from tinyvllm.speculative.verifier import AttentionMode
@@ -77,6 +78,23 @@ def resolve_attention_mode(
 
 def get_context():
     return _CONTEXT
+
+
+@contextmanager
+def temporary_flash_attn_num_splits(num_splits: int):
+    global _CONTEXT
+    num_splits = int(num_splits)
+    if num_splits < 0:
+        raise ValueError("flash_attn_num_splits must be non-negative")
+    previous = _CONTEXT
+    _CONTEXT = replace(
+        previous,
+        flash_attn_num_splits=num_splits,
+    )
+    try:
+        yield _CONTEXT
+    finally:
+        _CONTEXT = previous
 
 
 def am_compact_layer_enabled(context: Context, layer_idx: int, num_hidden_layers: int = 0) -> bool:
