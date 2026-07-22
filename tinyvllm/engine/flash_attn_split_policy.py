@@ -143,6 +143,7 @@ def build_flash_attn_263_graph_identity(
     graph_batch_size: int,
     inputs: FlashAttentionSplitInputs,
     flash_attn_version: str,
+    require_exact_batch: bool = False,
 ) -> FlashAttentionGraphIdentity:
     if flash_attn_version != FLASH_ATTN_VERSION:
         raise ValueError(
@@ -151,6 +152,10 @@ def build_flash_attn_263_graph_identity(
     if graph_batch_size < inputs.batch_size:
         raise ValueError(
             "graph_batch_size must be at least the active batch size"
+        )
+    if require_exact_batch and graph_batch_size != inputs.batch_size:
+        raise ValueError(
+            "production graph_batch_size must equal active batch size"
         )
     return FlashAttentionGraphIdentity(
         graph_batch_size=int(graph_batch_size),

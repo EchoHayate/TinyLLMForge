@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import shlex
 import sys
 import tempfile
@@ -28,6 +29,7 @@ REMOTE_RUNNER_PATH = (
 SPLIT_POLICY_PATH = (
     ROOT / "tinyvllm" / "engine" / "flash_attn_split_policy.py"
 )
+CONFIG_PATH = ROOT / "tinyvllm" / "config.py"
 
 
 def load_contract():
@@ -53,6 +55,43 @@ def load_split_policy():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_real_config_class():
+    module_name = "tinyvllm_cuda_graph_config_under_test"
+    fake_transformers = types.ModuleType("transformers")
+
+    class FakeAutoConfig:
+        @staticmethod
+        def from_pretrained(model):
+            del model
+            return types.SimpleNamespace(
+                max_position_embeddings=4096,
+                num_hidden_layers=4,
+            )
+
+    fake_transformers.AutoConfig = FakeAutoConfig
+    original = sys.modules.get("transformers")
+    sys.modules["transformers"] = fake_transformers
+    try:
+        module = types.ModuleType(module_name)
+        module.__file__ = os.fspath(CONFIG_PATH)
+        sys.modules[module_name] = module
+        source = CONFIG_PATH.read_text(encoding="utf-8")
+        exec(
+            compile(
+                "from __future__ import annotations\n" + source,
+                os.fspath(CONFIG_PATH),
+                "exec",
+            ),
+            module.__dict__,
+        )
+        return module.Config
+    finally:
+        if original is None:
+            sys.modules.pop("transformers", None)
+        else:
+            sys.modules["transformers"] = original
 
 
 def load_diagnostic_module_without_gpu():
@@ -239,6 +278,100 @@ def test_flash_attn_263_early_return_and_graph_identity():
     )
     assert first.sha256 != wider.sha256
     assert first.sha256 != rounded.sha256
+
+
+def test_multi_sequence_cuda_graph_config_defaults_and_allowlist():
+    Config = load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        config = Config(model=model)
+        assert config.multi_sequence_cuda_graphs is False
+        assert config.multi_sequence_cuda_graph_batch_allowlist == (2, 4, 8)
+        assert config.multi_sequence_cuda_graph_min_observations == 3
+        assert config.multi_sequence_cuda_graph_max_entries == 8
+        assert (
+            config.multi_sequence_cuda_graph_max_static_bytes
+            == 64 * 1024 * 1024
+        )
+        assert (
+            config.multi_sequence_cuda_graph_max_reserved_bytes
+            == 512 * 1024 * 1024
+        )
+        assert (
+            config.multi_sequence_cuda_graph_max_total_capture_ns
+            == 5_000_000_000
+        )
+        assert (
+            config.multi_sequence_cuda_graph_max_single_capture_ns
+            == 2_000_000_000
+        )
+
+        canonical = Config(
+            model=model,
+            multi_sequence_cuda_graph_batch_allowlist=(8, 2, 4, 4),
+        )
+        assert canonical.multi_sequence_cuda_graph_batch_allowlist == (
+            2,
+            4,
+            8,
+        )
+
+
+def test_multi_sequence_cuda_graph_config_rejects_invalid_controls():
+    Config = load_real_config_class()
+    invalid = (
+        {"multi_sequence_cuda_graph_batch_allowlist": ()},
+        {"multi_sequence_cuda_graph_batch_allowlist": (1, 2)},
+        {"multi_sequence_cuda_graph_batch_allowlist": (2, True)},
+        {"multi_sequence_cuda_graph_batch_allowlist": (2, 4.0)},
+        {"multi_sequence_cuda_graph_min_observations": 0},
+        {"multi_sequence_cuda_graph_max_entries": 0},
+        {"multi_sequence_cuda_graph_max_static_bytes": 0},
+        {"multi_sequence_cuda_graph_max_reserved_bytes": 0},
+        {"multi_sequence_cuda_graph_max_total_capture_ns": 0},
+        {"multi_sequence_cuda_graph_max_single_capture_ns": 0},
+    )
+    with tempfile.TemporaryDirectory() as model:
+        for overrides in invalid:
+            try:
+                Config(model=model, **overrides)
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError(
+                    f"invalid CUDA Graph config accepted: {overrides}"
+                )
+
+
+def test_production_identity_requires_graph_batch_equal_active_batch():
+    split_policy = load_split_policy()
+    inputs = split_policy.FlashAttentionSplitInputs(
+        batch_size=4,
+        num_query_heads=16,
+        num_kv_heads=8,
+        head_dim=128,
+        page_block_size=256,
+        page_table_width=2,
+        max_seqlen_q=1,
+        multi_processor_count=108,
+    )
+    exact = split_policy.build_flash_attn_263_graph_identity(
+        graph_batch_size=4,
+        inputs=inputs,
+        flash_attn_version="2.6.3",
+        require_exact_batch=True,
+    )
+    assert exact.graph_batch_size == exact.active_batch_size == 4
+    try:
+        split_policy.build_flash_attn_263_graph_identity(
+            graph_batch_size=8,
+            inputs=inputs,
+            flash_attn_version="2.6.3",
+            require_exact_batch=True,
+        )
+    except ValueError as exc:
+        assert "equal" in str(exc)
+    else:
+        raise AssertionError("rounded production graph identity accepted")
 
 
 def test_flash_attn_263_rejects_unsupported_inputs():
@@ -3076,6 +3209,9 @@ if __name__ == "__main__":
     tests = [
         test_flash_attn_263_known_qwen3_a100_vectors,
         test_flash_attn_263_early_return_and_graph_identity,
+        test_multi_sequence_cuda_graph_config_defaults_and_allowlist,
+        test_multi_sequence_cuda_graph_config_rejects_invalid_controls,
+        test_production_identity_requires_graph_batch_equal_active_batch,
         test_flash_attn_263_rejects_unsupported_inputs,
         test_same_policy_matrix_is_exact_policy_aware_and_unique,
         test_legacy_compatibility_matrix_is_63_pairs_126_processes,

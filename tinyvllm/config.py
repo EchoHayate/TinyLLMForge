@@ -11,6 +11,14 @@ class Config:
     gpu_memory_utilization: float = 0.9                 #gpu利用率 可以用来确定实际 kv cache大小
     tensor_parallel_size: int = 1                       #并行计算gpu的个数
     enforce_eager: bool = False                         # True表示以即时执行模式推理，用于debug   false表示启用cuda graph  cuda graph开启后减少kernal launch时间 可用于吞吐量测试
+    multi_sequence_cuda_graphs: bool = False
+    multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
+    multi_sequence_cuda_graph_min_observations: int = 3
+    multi_sequence_cuda_graph_max_entries: int = 8
+    multi_sequence_cuda_graph_max_static_bytes: int = 64 * 1024 * 1024
+    multi_sequence_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
+    multi_sequence_cuda_graph_max_total_capture_ns: int = 5_000_000_000
+    multi_sequence_cuda_graph_max_single_capture_ns: int = 2_000_000_000
     hf_config: AutoConfig | None = None                 # hugging face config, 加载模型的层数，隐藏层数，注意力头数
     eos: int  = -1                                      # end of sentence, 使用模型默认的句子结束符
     kvcache_block_size: int = 256                       
@@ -103,6 +111,28 @@ class Config:
         assert os.path.isdir(self.model)
         assert self.kvcache_block_size % 256 == 0
         assert 1 <= self.tensor_parallel_size <= 8
+        allowlist = self.multi_sequence_cuda_graph_batch_allowlist
+        assert isinstance(allowlist, (tuple, list))
+        assert allowlist
+        assert all(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 1
+            for value in allowlist
+        )
+        self.multi_sequence_cuda_graph_batch_allowlist = tuple(
+            sorted(set(allowlist))
+        )
+        for value in (
+            self.multi_sequence_cuda_graph_min_observations,
+            self.multi_sequence_cuda_graph_max_entries,
+            self.multi_sequence_cuda_graph_max_static_bytes,
+            self.multi_sequence_cuda_graph_max_reserved_bytes,
+            self.multi_sequence_cuda_graph_max_total_capture_ns,
+            self.multi_sequence_cuda_graph_max_single_capture_ns,
+        ):
+            assert isinstance(value, int) and not isinstance(value, bool)
+            assert value > 0
         assert self.quantization in (None, "int8", "int8_bnb", "int4", "int2")
         assert self.kv_quant_bits in (0, 4, 8), "kv_quant_bits 仅支持 0/4/8"
         assert self.kv_offload_gpu_blocks >= 0
