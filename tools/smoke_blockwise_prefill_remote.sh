@@ -115,6 +115,8 @@ run_preflight() {
     tools/test_chunked_prefill.py
   "${PYTHON_BIN}" tools/test_chunked_prefill.py
   "${PYTHON_BIN}" tools/test_ngram_speculative.py
+  "${PYTHON_BIN}" tools/test_blockwise_attention_planning.py
+  "${PYTHON_BIN}" tools/test_kv_offload.py
 }
 
 run_with_log() {

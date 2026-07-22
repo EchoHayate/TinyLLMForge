@@ -85,6 +85,10 @@ class FakeIndexedTensor:
         self.trace.append(("detach", None))
         return self
 
+    def float(self):
+        self.trace.append(("float", None))
+        return self
+
     def cpu(self):
         self.trace.append(("cpu", None))
         return self
@@ -340,6 +344,27 @@ def test_prepare_spec_verify_installs_reference_context():
     assert current.context_lens.values == [55]
     assert current.block_tables.values == [[0]]
     assert current.flash_attn_num_splits == 16
+
+
+def test_step_logits_recording_accessor_is_default_off_and_returns_clone():
+    runner = make_runner()
+    runner._record_step_logits = False
+    runner._last_step_logits_cpu = None
+
+    assert runner.last_step_logits() is None
+    runner.enable_step_logits_recording(True)
+    assert runner._record_step_logits is True
+    assert runner.last_step_logits() is None
+
+    stored = FakeIndexedTensor([[1.0, 2.0]])
+    runner._last_step_logits_cpu = stored
+    returned = runner.last_step_logits()
+    assert returned is not stored
+    assert returned.values == ("cloned", stored.values)
+
+    runner.enable_step_logits_recording(False)
+    assert runner._record_step_logits is False
+    assert runner.last_step_logits() is None
 
 
 def test_snapshot_kv_slots_uses_physical_block_and_offset_indices():
@@ -1205,6 +1230,77 @@ def test_run_hashes_canonical_sorted_sequence_ids_before_dispatch():
     assert observed["request_ids_hash"] == expected
 
 
+def _make_step_logits_run_runner(*, rank=0):
+    runner = make_runner()
+    runner.rank = rank
+    runner._record_step_logits = True
+    runner._last_step_logits_cpu = FakeIndexedTensor("stale")
+    runner.prepare_decode = (
+        lambda seqs: (FakeTensor([1, 2]), FakeTensor([0, 0]))
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    runner.prepare_sample = lambda seqs: FakeTensor([1.0] * len(seqs))
+    return runner
+
+
+def test_run_records_selected_rank_zero_sampling_logits_before_sampler():
+    runner = _make_step_logits_run_runner()
+    logits = FakeIndexedTensor([[1.0, 2.0], [3.0, 4.0]])
+    runner.run_model = lambda *args: logits
+    sampled = {}
+
+    class SampledTokens:
+        def tolist(self):
+            return [7, 8]
+
+    def sampler(selected_logits, temperatures):
+        sampled["logits"] = selected_logits
+        sampled["temperatures"] = temperatures
+        return SampledTokens()
+
+    runner.sampler = sampler
+    seqs = [SimpleNamespace(seq_id=1), SimpleNamespace(seq_id=2)]
+
+    assert runner.run(seqs, is_prefill=False) == [7, 8]
+    assert sampled["logits"] is logits
+    recorded = runner.last_step_logits()
+    assert recorded is not None
+    assert recorded.values == ("cloned", logits.values)
+    assert logits.trace[:3] == [
+        ("detach", None),
+        ("float", None),
+        ("cpu", None),
+    ]
+
+
+def test_run_clears_recorded_logits_when_sampling_is_disabled():
+    runner = _make_step_logits_run_runner()
+    runner.run_model = lambda *args: FakeIndexedTensor([[1.0, 2.0]])
+
+    result = runner.run(
+        [SimpleNamespace(seq_id=1)],
+        is_prefill=False,
+        do_sample=False,
+    )
+
+    assert result is None
+    assert runner.last_step_logits() is None
+
+
+def test_run_clears_recorded_logits_on_nonzero_rank():
+    runner = _make_step_logits_run_runner(rank=1)
+    runner.run_model = lambda *args: FakeIndexedTensor([[1.0, 2.0]])
+
+    result = runner.run(
+        [SimpleNamespace(seq_id=1)],
+        is_prefill=False,
+    )
+
+    assert result is None
+    assert runner.last_step_logits() is None
+
+
 def test_capture_failures_are_terminal_and_reason_specific():
     runner = _make_exact_dispatch_runner()
     identity = runner._build_multi_sequence_graph_identity(
@@ -1465,6 +1561,7 @@ def test_replay_failure_publishes_terminal_event_before_reraising():
 def main():
     tests = (
         test_prepare_spec_verify_installs_reference_context,
+        test_step_logits_recording_accessor_is_default_off_and_returns_clone,
         test_snapshot_kv_slots_uses_physical_block_and_offset_indices,
         test_snapshot_kv_slots_rejects_empty_or_quantized_requests,
         test_prepare_spec_verify_rejects_nonconsecutive_slots_before_upload,
@@ -1485,6 +1582,9 @@ def main():
         test_dispatch_event_schema_is_complete_and_ordered,
         test_every_fallback_reason_and_graph_hit_use_closed_event_schema,
         test_run_hashes_canonical_sorted_sequence_ids_before_dispatch,
+        test_run_records_selected_rank_zero_sampling_logits_before_sampler,
+        test_run_clears_recorded_logits_when_sampling_is_disabled,
+        test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,
         test_capture_restores_all_scratch_slots_and_context_in_finally,
         test_replay_resets_context_on_success_and_exception,

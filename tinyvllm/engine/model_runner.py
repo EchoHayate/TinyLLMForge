@@ -728,6 +728,8 @@ class ModelRunner:
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)
         self.sampler =  Sampler()
+        self._record_step_logits = False
+        self._last_step_logits_cpu: torch.Tensor | None = None
 
         # prepare_prefill / prepare_decode 用的 pinned host buffer 池：按 (name, dtype) 复用，
         # 容量按需向上扩；避免每步 torch.tensor(list, pin_memory=True).cuda() 触发 host alloc + pin
@@ -762,6 +764,7 @@ class ModelRunner:
                 ),
             )
         )
+
         self.last_cuda_graph_dispatch_event = None
         self._cuda_graph_step_id = 0
         self._cuda_graph_request_ids_hash = hashlib.sha256(
@@ -798,6 +801,15 @@ class ModelRunner:
                 dist.barrier()
                 self.shm = SharedMemory(name="tinyvllm")
                 self.loop()
+
+    def enable_step_logits_recording(self, enabled: bool) -> None:
+        self._record_step_logits = bool(enabled)
+        self._last_step_logits_cpu = None
+
+    def last_step_logits(self) -> torch.Tensor | None:
+        if self._last_step_logits_cpu is None:
+            return None
+        return self._last_step_logits_cpu.clone()
 
     def exit(self):
         if self.world_size > 1:
@@ -2410,13 +2422,19 @@ class ModelRunner:
         logits = self.run_model(input_ids, positions, is_prefill)
         self._kv_offload_after_forward()
         if not do_sample:
+            self._last_step_logits_cpu = None
             reset_context()
             return None
         if self.rank == 0:
             logits, sample_seqs = self._select_sample_rows(logits, seqs, batch_kind)
+            if self._record_step_logits:
+                self._last_step_logits_cpu = logits.detach().float().cpu()
+            else:
+                self._last_step_logits_cpu = None
             temperatures = self.prepare_sample(sample_seqs)    #只有主进程做采样
             token_ids = self.sampler(logits, temperatures).tolist()
         else:
+            self._last_step_logits_cpu = None
             token_ids = None
         reset_context()
         return token_ids

@@ -20,6 +20,7 @@ import sys
 import time
 from copy import copy
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from draft_model_schema import (
     DraftModelContract,
@@ -73,6 +74,16 @@ choose_speculation_route = router.choose_speculation_route
 DEFAULT_PROMPTS = [
     "Repeat the following phrase five times: alpha beta gamma alpha beta gamma.",
 ]
+
+PLANNER_COUNTER_FIELDS = (
+    "decode_plan_builds",
+    "decode_plan_cache_hits",
+    "decode_plan_identity_invalidations",
+    "decode_windows_with_spare_capacity",
+    "decode_cross_layer_hint_blocks",
+    "decode_cross_layer_hint_resident",
+    "decode_cross_layer_hint_retained",
+)
 
 
 @dataclass
@@ -247,6 +258,8 @@ def parse_args():
                    choices=["paired", "baseline-only", "candidate-only"],
                    help="paired compares baseline+candidate in one engine; baseline-only/candidate-only are for separated timing.")
     p.add_argument("--out-json", type=str, default=None)
+    p.add_argument("--record-decode-logits", action="store_true", default=False)
+    p.add_argument("--decode-logits-out", type=str, default=None)
     p.add_argument("--max-model-len", type=int, default=4096)
     p.add_argument("--enforce-eager", action="store_true", default=True)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
@@ -292,6 +305,55 @@ def cuda_sync_if_available():
             torch.cuda.synchronize()
     except Exception:
         return
+
+
+def _reset_cuda_peak_memory_stats():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        return
+
+
+def _cuda_peak_memory_bytes() -> tuple[int, int]:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return (
+                int(torch.cuda.max_memory_allocated()),
+                int(torch.cuda.max_memory_reserved()),
+            )
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _save_decode_logits_atomic(tensors, output_path: str) -> dict:
+    import torch
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial_path = Path(f"{path}.partial")
+    logits = torch.cat(
+        [tensor.detach().float().cpu() for tensor in tensors],
+        dim=0,
+    )
+    torch.save(logits, partial_path)
+    os.replace(partial_path, path)
+    return {
+        "decode_logits_path": os.fspath(path),
+        "decode_logits_sha256": _sha256_file(path),
+        "decode_logits_shape": [int(dimension) for dimension in logits.shape],
+    }
 
 
 def propose_draft(
@@ -2059,6 +2121,13 @@ def run_baseline_only_profile(args) -> dict:
 
     outputs = {}
     step_records = []
+    decode_logits = []
+    peak_resident_blocks = 0
+    final_kv_summary = llm.model_runner.kv_offload_summary()
+    llm.model_runner.enable_step_logits_recording(
+        args.record_decode_logits
+    )
+    _reset_cuda_peak_memory_stats()
     t0 = time.perf_counter()
     cuda_sync_if_available()
     step_idx = 0
@@ -2068,8 +2137,19 @@ def run_baseline_only_profile(args) -> dict:
         simulated_kv_upload_ms = 0.0
         if num_tokens < 0:
             simulated_kv_upload_ms = _simulate_kv_upload(llm, args.simulate_kv_upload_mb)
+            if args.record_decode_logits:
+                step_logits = llm.model_runner.last_step_logits()
+                if step_logits is None:
+                    raise RuntimeError("decode logits recording produced no tensor")
+                decode_logits.append(step_logits)
         cuda_sync_if_available()
         dt_ms = (time.perf_counter() - t_step) * 1000.0
+        final_kv_summary = llm.model_runner.kv_offload_summary()
+        if final_kv_summary is not None:
+            peak_resident_blocks = max(
+                peak_resident_blocks,
+                int(final_kv_summary.get("resident_blocks", 0)),
+            )
         for seq_id, token_ids in out:
             outputs[seq_id] = token_ids
         step_records.append({
@@ -2093,25 +2173,54 @@ def run_baseline_only_profile(args) -> dict:
             "text": llm.tokenizer.decode(token_ids),
         })
     output_tokens = sum(item["output_tokens"] for item in per_prompt)
+    peak_cuda_allocated_bytes, peak_cuda_reserved_bytes = (
+        _cuda_peak_memory_bytes()
+    )
     summary = _base_summary(args, prompts, elapsed_s, step_records)
     summary.update({
         "output_tokens": output_tokens,
         "output_tokens_per_s": output_tokens / elapsed_s if elapsed_s > 0 else 0.0,
+        "decode_step_ms": [
+            float(record["dt_ms"])
+            for record in step_records
+            if record["num_tokens"] < 0
+        ],
+        "peak_cuda_allocated_bytes": peak_cuda_allocated_bytes,
+        "peak_cuda_reserved_bytes": peak_cuda_reserved_bytes,
+        "peak_resident_blocks": peak_resident_blocks,
         "gate_pass": all(item["output_tokens"] == args.max_output_len for item in per_prompt),
         "gate_fail_reasons": [],
     })
     summary.update(_summarize_simulated_upload(args, step_records))
     if not summary["gate_pass"]:
         summary["gate_fail_reasons"].append("incomplete_output")
-    return {
+    planner = {
+        field: int((final_kv_summary or {}).get(field, 0))
+        for field in PLANNER_COUNTER_FIELDS
+    }
+    result = {
         "args": vars(args),
         "summary": summary,
         "per_prompt": per_prompt,
         "step_records": step_records,
         "warmup": warmup,
         "simulated_upload_warmup_ms": simulated_upload_warmup_ms,
-        "kv_offload": llm.model_runner.kv_offload_summary(),
+        "kv_offload": final_kv_summary,
+        "planner": planner,
     }
+    if args.record_decode_logits:
+        if not args.decode_logits_out:
+            raise ValueError(
+                "--decode-logits-out is required with "
+                "--record-decode-logits"
+            )
+        result.update(
+            _save_decode_logits_atomic(
+                decode_logits,
+                args.decode_logits_out,
+            )
+        )
+    return result
 
 
 def run_candidate_only_profile(args) -> dict:
