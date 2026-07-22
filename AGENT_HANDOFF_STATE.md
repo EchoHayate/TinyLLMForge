@@ -2,6 +2,175 @@
 
 > 目的：上下文中断后，新的 agent 先读这个文件，避免重新猜工作区、远程环境和当前任务状态。
 
+## 2026-07-22 Heuristic-equivalent exact-width CUDA Graph diagnostic GO
+
+### 最终结论
+
+- 工作目录：`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`
+- 分支：`feat/adaptive-ngram-speculation`
+- HEAD before this handoff update：`ca994fb`
+- Source tree SHA256：
+  `7997be699eb85046d399959b268ada0ab92cd14c06fbca1547d3833d1876db8e`
+- Authoritative canonical：
+  `experiments/cuda_graph/qwen3-06b-heuristic-exact-width-canonical-20260722-055943/`
+- Independent verifier：
+  `experiments/cuda_graph/qwen3-06b-heuristic-exact-width-canonical-20260722-055943/independent-verification/summary.json`
+- Gate A：`EXACT_REPLAY_CORRECT`
+- Gate B：`LEGACY_COMPATIBLE`
+- Policy：`POLICY_EXACT`
+- Rounded negative control：`ROUNDED_REPLAY_CORRUPT`
+- Structural failures：`0`
+
+这次 fresh source-bound canonical 已完成 diagnostic `GO`：FlashAttention
+2.6.3 等价 split heuristic 与 exact page-table-width 共同进入 graph
+identity 后，exact-width CUDA Graph replay 在完整矩阵上与 candidate eager
+一致，并且 candidate eager 与现有 legacy auto-eager 语义兼容。
+
+这仍然**不是 production 性能提升结论**。Production
+`batch > 1` eager guard 未修改，README 未更新；当前引擎线上路径仍不会使用
+该 multi-sequence graph candidate。下一步若继续，必须先做独立 production
+设计，加入 graph allowlist/budget、fallback/telemetry、初始化与显存上限，
+然后跑真实吞吐、ITL、request-rate、graph-hit 和 memory gate。
+
+### Canonical 覆盖与独立审计
+
+冻结合同：
+
+```text
+Gate A                         189 processes
+Gate B                         126 processes
+total                          315 processes
+batches                        2, 3, 4, 5, 8, 9, 16
+trajectories                   uniform-short, ragged-context,
+                               duplicate-and-distinct
+repetitions                    3
+warmup / measured steps        2 / 16
+raw rows                       5040
+layer observation rows         5040
+KV observation rows            5040
+unique dynamic ports           630
+logit tolerance                rtol=1e-3, atol=1e-2
+```
+
+Fresh independent verifier：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/run_multi_sequence_cuda_graph_diagnostic_remote.py \
+  verify-only \
+  --run-tag qwen3-06b-heuristic-exact-width-canonical-20260722-055943 \
+  --verifier-python \
+  /Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python
+```
+
+结果：
+
+```text
+verify.exitcode                0
+classification                 EXACT_REPLAY_CORRECT
+legacy_compatibility           LEGACY_COMPATIBLE
+policy_integrity               POLICY_EXACT
+rounded_classification         ROUNDED_REPLAY_CORRUPT
+corrupt exact cases            0
+corrupt rounded cases          63 / 63
+incompatible legacy pairs      0
+policy failures                0
+structural failures            0
+```
+
+额外独立审计已逐项确认：
+
+1. `315` 个 case ID 全部唯一且与 manifest/process rows 完全一致；
+2. `630` 个 `TINYVLLM_DIST_PORT` / `MASTER_PORT` 全局唯一，且每个
+   process 的两端口不同；
+3. `189 / 126 / 63` 的 Gate A、Gate B process、compatibility pair
+   计数一致；
+4. raw/layer/KV rows 均为 `5040`；
+5. `sha256sums.txt` 中 `1083` 个 artifact 全部重新计算匹配；
+6. manifest、staging source evidence、promoted source evidence 的 source
+   tree SHA256 一致；
+7. 所有 process row 均为 `PASS`；
+8. production eager guard 精确保留一处：
+   `multi_sequence_decode = mode == "decode" and input_ids.size(0) > 1`；
+9. `README.md` 无 tracked diff。
+
+本地 fresh regression：
+
+```text
+tools/test_multi_sequence_cuda_graph_gate.py   PASS
+tools/test_context_modes.py                    PASS
+tools/test_model_runner_spec_verify.py         PASS
+changed Python files py_compile                PASS
+git diff --check                               PASS
+```
+
+### 共享 GPU 容量失败的根因
+
+Canonical 初次在
+`b5__uniform-short__compat__r2__legacy_eager_auto__auto-s0` 停止，后续
+resume 又在
+`b8__uniform-short__compat__r2__candidate_eager_heuristic__fa2-263-exact-width`
+停止。两次 traceback 都只发生在 LLM 初始化：
+
+```text
+ModelRunner.allocate_kv_cache()
+assert auto_num_blocks > 0
+```
+
+Diagnostic 固定 `gpu_memory_utilization=0.55`。GPU 0 总显存
+`81920 MiB`，55% budget 为 `45056 MiB`；失败时外部共享进程已占用约
+`46800-47000 MiB`。两次都有另一个短时 int4 校验进程额外占用约
+`16 GiB`，因此模型加载前就已超过 KV budget。
+
+没有修改 production 或 diagnostic source，也没有 kill 任何共享进程。
+等待外部任务自然退出、GPU used 回落到约 `30619 MiB` 后，用相同 run tag、
+source snapshot、配置和 case 原样 `--resume`：
+
+- 原 b5 失败 case 转为 `PASS`；
+- 原 b8 失败 case 转为 `PASS`；
+- 最终 `315/315` 全部完成；
+- 没有 token、logit、layer、KV、policy、hash 或 verifier failure。
+
+因此根因已确认是共享 GPU 的瞬时容量竞争，不是 heuristic/exact-width
+candidate correctness 回归。
+
+### 书面设计、执行入口与边界
+
+设计：
+
+```text
+docs/superpowers/specs/2026-07-22-heuristic-equivalent-exact-width-cuda-graph-recovery-design.md
+```
+
+批准计划：
+
+```text
+docs/superpowers/plans/2026-07-22-heuristic-equivalent-exact-width-cuda-graph-recovery.md
+```
+
+Canonical resume 命令：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/run_multi_sequence_cuda_graph_diagnostic_remote.py \
+  heuristic-exact-width-canonical \
+  --run-tag qwen3-06b-heuristic-exact-width-canonical-20260722-055943 \
+  --resume \
+  --verifier-python \
+  /Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python
+```
+
+后续决策：
+
+1. Diagnostic candidate 已具备进入 production **设计阶段**的证据；
+2. 不得直接删除 production eager guard；
+3. rounded-width replay 已被完整负控证明 corruption，永久保持
+   diagnostic-only / production-disabled；
+4. 下一阶段必须先批准书面 production spec，再实现 bounded exact-width
+   graph cache 和 eager fallback；
+5. 只有 production source-bound 性能 gate 证明吞吐/ITL/request-rate
+   改善且初始化与显存预算通过后，才能宣称推理引擎真正变快或更省。
+
 ## 2026-07-22 Fixed-split multi-sequence CUDA Graph recovery hard checkpoint
 
 ### 最终结论
