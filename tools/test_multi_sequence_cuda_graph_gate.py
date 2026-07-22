@@ -3140,6 +3140,463 @@ def test_production_budget_fallback_artifact_merges_raw_rows_and_hashes_exactly(
         raise AssertionError("fault performance contamination accepted")
 
 
+def test_budget_fallback_fault_surface_is_harness_only():
+    prohibited = (
+        "budget_fallback_reason",
+        "fault_injection",
+        "TINYVLLM_CUDA_GRAPH_FAULT",
+        "inject_exact_cuda_graph",
+    )
+    for relative_path in (
+        "tinyvllm/config.py",
+        "tinyvllm/engine/model_runner.py",
+        "tinyvllm/engine/exact_cuda_graph_cache.py",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert not any(token in source for token in prohibited)
+
+
+def test_budget_fallback_preconditions_bind_exactly_one_reason():
+    runner = load_production_runner()
+    cache_module = load_exact_cache()
+    target = make_graph_identity(
+        active_batch_size=4,
+        graph_batch_size=4,
+        page_table_width=2,
+    )
+    seed = make_graph_identity(
+        active_batch_size=2,
+        graph_batch_size=2,
+        page_table_width=1,
+    )
+
+    for reason in (
+        "entry_limit",
+        "static_byte_budget",
+        "reserved_byte_budget",
+        "single_capture_budget",
+        "total_capture_budget",
+    ):
+        model_runner = types.SimpleNamespace()
+        metadata = runner._install_budget_fault(
+            model_runner,
+            reason,
+            target_identity=target,
+            target_estimated_static_bytes=4096,
+            seed_identity=seed,
+        )
+        cache = model_runner.exact_cuda_graph_cache
+        config = cache.config
+        assert metadata["injection_class"] == "budget_precondition"
+        assert metadata["injection_installed"] is False
+        assert metadata["injection_restored"] is False
+        assert target.sha256 != seed.sha256
+        if reason == "entry_limit":
+            assert list(cache.ready_entries) == [seed.sha256]
+            assert config.max_entries == 1
+        elif reason == "static_byte_budget":
+            assert config.max_static_bytes == 4095
+            assert cache.static_bytes == 0
+        elif reason == "reserved_byte_budget":
+            assert config.max_reserved_bytes == 1
+            assert cache.reserved_delta_bytes == 0
+        elif reason == "single_capture_budget":
+            assert config.max_single_capture_ns == 1
+            assert config.max_total_capture_ns > 1
+        elif reason == "total_capture_budget":
+            assert config.max_total_capture_ns == 1
+            assert cache.total_capture_ns == 0
+            assert config.max_single_capture_ns > 1
+        first = cache.observe_success(
+            target,
+            estimated_static_bytes=4096,
+        )
+        second = cache.observe_success(
+            target,
+            estimated_static_bytes=4096,
+        )
+        assert first.fallback_reason == "cold_identity"
+        assert second.fallback_reason == "cold_identity"
+        decision = cache.observe_success(
+            target,
+            estimated_static_bytes=4096,
+        )
+        if reason in {"entry_limit", "static_byte_budget"}:
+            assert decision.fallback_reason == reason
+            assert decision.should_capture is False
+        else:
+            assert decision.should_capture is True
+            entry = cache_module.ExactCudaGraphEntry(
+                identity=target,
+                identity_sha256=target.sha256,
+                graph=object(),
+                tensors={},
+                static_bytes=4096,
+                capture_duration_ns=100,
+                allocated_delta_bytes=0,
+                reserved_delta_bytes=1024,
+            )
+            cache.commit_capture(entry)
+            assert cache.summary()["rejected"][target.sha256] == reason
+        metadata["restore"]()
+
+
+def test_budget_fallback_runtime_faults_restore_runner_instance_methods():
+    runner = load_production_runner()
+    target = make_graph_identity(
+        active_batch_size=4,
+        graph_batch_size=4,
+        page_table_width=2,
+    )
+    drifted = make_graph_identity(
+        active_batch_size=4,
+        graph_batch_size=4,
+        page_table_width=3,
+    )
+
+    for reason in (
+        "scratch_unavailable",
+        "capture_failed",
+        "identity_drift",
+    ):
+        calls = []
+
+        def restore_kv_slots(slots, snapshot):
+            calls.append(("restore", slots, snapshot))
+
+        def capture_exact(*, identity, input_ids, positions, context):
+            calls.append(("capture", identity))
+            return object()
+
+        identities = iter((target, target, target))
+
+        def build_identity(input_ids, context):
+            del input_ids, context
+            return next(identities)
+
+        model_runner = types.SimpleNamespace(
+            restore_kv_slots=restore_kv_slots,
+            _capture_exact_multi_sequence_graph=capture_exact,
+            _build_multi_sequence_graph_identity=build_identity,
+        )
+        originals = {
+            "restore_kv_slots": model_runner.restore_kv_slots,
+            "_capture_exact_multi_sequence_graph": (
+                model_runner._capture_exact_multi_sequence_graph
+            ),
+            "_build_multi_sequence_graph_identity": (
+                model_runner._build_multi_sequence_graph_identity
+            ),
+        }
+        metadata = runner._install_budget_fault(
+            model_runner,
+            reason,
+            target_identity=target,
+            target_estimated_static_bytes=4096,
+            drift_identity=drifted,
+        )
+        assert metadata["injection_class"] == "runtime_fault"
+        assert metadata["injection_installed"] is True
+        if reason == "scratch_unavailable":
+            try:
+                snapshot = object()
+                model_runner.restore_kv_slots([1], snapshot)
+            except RuntimeError as exc:
+                assert "scratch" in str(exc)
+            else:
+                raise AssertionError("scratch fault did not fire")
+            assert calls == [("restore", [1], snapshot)]
+        elif reason == "capture_failed":
+            try:
+                model_runner._capture_exact_multi_sequence_graph(
+                    identity=target,
+                    input_ids=object(),
+                    positions=object(),
+                    context=object(),
+                )
+            except Exception as exc:
+                assert getattr(exc, "reason", None) == "capture_failed"
+            else:
+                raise AssertionError("capture fault did not fire")
+            assert metadata["capture_observation"][
+                "capture_duration_ns"
+            ] > 0
+        else:
+            assert model_runner._build_multi_sequence_graph_identity(
+                object(),
+                object(),
+            ) == target
+            assert model_runner._build_multi_sequence_graph_identity(
+                object(),
+                object(),
+            ) == drifted
+        metadata["restore"]()
+        assert metadata["injection_restored"] is True
+        for name, original in originals.items():
+            assert getattr(model_runner, name) is original
+
+
+def test_budget_fallback_fault_scope_restores_after_operation_failure():
+    runner = load_production_runner()
+    target = make_graph_identity(
+        active_batch_size=2,
+        graph_batch_size=2,
+        page_table_width=1,
+    )
+
+    def original_capture(**kwargs):
+        del kwargs
+        return types.SimpleNamespace(
+            capture_duration_ns=100,
+            static_bytes=4096,
+            reserved_delta_bytes=1024,
+        )
+
+    model_runner = types.SimpleNamespace(
+        _capture_exact_multi_sequence_graph=original_capture,
+    )
+    try:
+        runner._run_with_budget_fault(
+            model_runner,
+            "capture_failed",
+            target_identity=target,
+            target_estimated_static_bytes=4096,
+            operation=lambda metadata: (
+                (_ for _ in ()).throw(RuntimeError("comparison failed"))
+            ),
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "comparison failed"
+    else:
+        raise AssertionError("operation failure was swallowed")
+    assert (
+        model_runner._capture_exact_multi_sequence_graph
+        is original_capture
+    )
+
+
+def test_budget_fallback_worker_builds_complete_terminal_lifecycle():
+    import torch
+
+    runner = load_production_runner()
+    source_sha = "b" * 64
+    budget_rows, dispatch_rows, capture_rows = (
+        _synthetic_budget_fallback_evidence(
+            source_sha=source_sha,
+            first_port=30000,
+        )
+    )
+    for budget_row in budget_rows:
+        case_id = budget_row["case_id"]
+        reason = budget_row["reason"]
+        candidate_dispatch = [
+            row for row in dispatch_rows
+            if row["case_id"] == case_id
+        ]
+        candidate_capture = [
+            row for row in capture_rows
+            if row["case_id"] == case_id
+        ]
+
+        def phase_runner(args, *, feature_enabled):
+            del args
+            if not feature_enabled:
+                return {
+                    "output_token_ids": [41, 42],
+                    "logits": [torch.tensor([[1.0, 2.0]])],
+                    "live_kv_sha256": "6" * 64,
+                }
+            return {
+                "output_token_ids": [41, 42],
+                "logits": [torch.tensor([[1.0, 2.0]])],
+                "live_kv_sha256": "6" * 64,
+                "dispatch_rows": candidate_dispatch,
+                "capture_rows": candidate_capture,
+                "target_identity_fields": budget_row[
+                    "target_identity_fields"
+                ],
+                "target_identity_sha256": budget_row[
+                    "target_identity_sha256"
+                ],
+                "effective_cache_config": budget_row[
+                    "effective_cache_config"
+                ],
+                "pre_target_cache_summary": budget_row[
+                    "pre_target_cache_summary"
+                ],
+                "injection_class": budget_row["injection_class"],
+                "injection_installed": budget_row[
+                    "injection_installed"
+                ],
+                "injection_restored": budget_row[
+                    "injection_restored"
+                ],
+                "pid": budget_row["worker_pid"],
+            }
+
+        args = types.SimpleNamespace(
+            case_id=case_id,
+            budget_fallback_reason=reason,
+            source_sha256=source_sha,
+        )
+        original_dist_port = os.environ.get("TINYVLLM_DIST_PORT")
+        original_master_port = os.environ.get("MASTER_PORT")
+        os.environ["TINYVLLM_DIST_PORT"] = str(
+            budget_row["tinyvllm_dist_port"]
+        )
+        os.environ["MASTER_PORT"] = str(
+            budget_row["master_port"]
+        )
+        try:
+            result = runner._run_budget_fallback_worker(
+                args,
+                phase_runner=phase_runner,
+            )
+        finally:
+            if original_dist_port is None:
+                os.environ.pop("TINYVLLM_DIST_PORT", None)
+            else:
+                os.environ["TINYVLLM_DIST_PORT"] = original_dist_port
+            if original_master_port is None:
+                os.environ.pop("MASTER_PORT", None)
+            else:
+                os.environ["MASTER_PORT"] = original_master_port
+        assert result["reason"] == reason
+        assert result["observation_count"] >= 3
+        assert result["target_dispatch"] == "eager"
+        assert result["terminal_rejection_reason"] == reason
+        assert result["target_graph_replay_count"] == 0
+        assert result["post_rejection_capture_attempt_count"] == 0
+        assert result["eager_output_token_ids"] == (
+            result["candidate_output_token_ids"]
+        )
+        assert result["logits_allclose"] is True
+        assert result["eager_live_kv_sha256"] == (
+            result["candidate_live_kv_sha256"]
+        )
+        assert result["complete"] is True
+        assert result["budget_fallback_row"]["complete"] is True
+        assert result["correctness_rows"][0]["logits_close"] is True
+        config = result["budget_fallback_row"][
+            "effective_cache_config"
+        ]
+        if reason == "reserved_byte_budget":
+            assert config["target_reserved_delta_bytes"] > (
+                config["max_reserved_bytes"]
+            )
+        if reason == "single_capture_budget":
+            assert config["target_capture_duration_ns"] > (
+                config["max_single_capture_ns"]
+            )
+        if reason == "total_capture_budget":
+            assert config["target_capture_duration_ns"] > (
+                config["max_total_capture_ns"]
+            )
+
+
+def test_budget_fallback_worker_main_writes_atomic_artifacts_and_incomplete():
+    runner = load_production_runner()
+    source_sha = "b" * 64
+    budget_rows, dispatch_rows, capture_rows = (
+        _synthetic_budget_fallback_evidence(
+            source_sha=source_sha,
+            first_port=30000,
+        )
+    )
+    budget_row = budget_rows[0]
+    complete_result = {
+        "reason": budget_row["reason"],
+        "observation_count": 3,
+        "target_dispatch": "eager",
+        "terminal_rejection_reason": budget_row["reason"],
+        "target_graph_replay_count": 0,
+        "post_rejection_capture_attempt_count": 0,
+        "eager_output_token_ids": [41, 42],
+        "candidate_output_token_ids": [41, 42],
+        "logits_allclose": True,
+        "logits_max_abs_diff": 0.0,
+        "eager_live_kv_sha256": "6" * 64,
+        "candidate_live_kv_sha256": "6" * 64,
+        "complete": True,
+        "budget_fallback_row": budget_row,
+        "dispatch_rows": [
+            row for row in dispatch_rows
+            if row["case_id"] == budget_row["case_id"]
+        ],
+        "capture_rows": [
+            row for row in capture_rows
+            if row["case_id"] == budget_row["case_id"]
+        ],
+        "correctness_rows": [{
+            "row_id": f"{budget_row['case_id']}:correctness",
+            "case_id": budget_row["case_id"],
+            "source_sha256": source_sha,
+            "output_token_ids": [41, 42],
+            "reference_token_ids": [41, 42],
+            "logits_close": True,
+            "live_slot_kv_sha256": "6" * 64,
+            "reference_live_slot_kv_sha256": "6" * 64,
+        }],
+        "memory_rows": [{
+            "row_id": f"{budget_row['case_id']}:memory:0",
+            "case_id": budget_row["case_id"],
+            "source_sha256": source_sha,
+            "reserved_bytes": 1,
+        }],
+        "environment": {
+            "source_sha256": source_sha,
+            "gpu": 0,
+        },
+        "pid": budget_row["worker_pid"],
+    }
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_dir = Path(temporary_directory) / "complete"
+        args = types.SimpleNamespace(
+            output_dir=output_dir,
+            worker_kind="budget-fallback",
+            budget_fallback_reason=budget_row["reason"],
+            source_sha256=source_sha,
+            case_id=budget_row["case_id"],
+        )
+        original = runner._run_budget_fallback_worker
+        runner._run_budget_fallback_worker = (
+            lambda observed_args: complete_result
+        )
+        try:
+            assert runner._worker_main(args) == 0
+        finally:
+            runner._run_budget_fallback_worker = original
+        assert json.loads(
+            (output_dir / "budget_fallback_row.json").read_text()
+        ) == budget_row
+        assert (output_dir / "worker_result.json").is_file()
+        assert (output_dir / "dispatch_events.jsonl").is_file()
+        assert (output_dir / "capture_events.jsonl").is_file()
+        assert (output_dir / "correctness_rows.jsonl").is_file()
+        assert (output_dir / "memory_trace.jsonl").is_file()
+        assert (output_dir / "environment.json").is_file()
+        assert not list(output_dir.glob("*.partial"))
+
+        failed_dir = Path(temporary_directory) / "failed"
+        args.output_dir = failed_dir
+        runner._run_budget_fallback_worker = (
+            lambda observed_args: (
+                (_ for _ in ()).throw(RuntimeError("phase failed"))
+            )
+        )
+        try:
+            assert runner._worker_main(args) == 1
+        finally:
+            runner._run_budget_fallback_worker = original
+        incomplete = json.loads(
+            (failed_dir / "incomplete.json").read_text()
+        )
+        assert incomplete["classification"] == "INCOMPLETE"
+        assert incomplete["failure_reason"] == "worker_exception"
+        assert "phase failed" in incomplete["error"]
+        assert not (failed_dir / "worker_result.json").exists()
+
+
 def test_production_correctness_canonical_binds_315_case_diagnostic():
     runner = load_production_runner()
     diagnostic_runner = load_remote_runner()
@@ -6124,8 +6581,17 @@ if __name__ == "__main__":
         test_production_runner_snapshot_and_command_binding_are_source_exact,
         test_production_budget_fallback_worker_cli_commands_and_plan_are_isolated,
         test_production_budget_fallback_worker_results_merge_without_performance_rows,
+        test_production_budget_fallback_aggregate_is_correctness_owned_and_arrival_bound,
+        test_production_budget_fallback_artifact_merges_raw_rows_and_hashes_exactly,
+        test_budget_fallback_fault_surface_is_harness_only,
+        test_budget_fallback_preconditions_bind_exactly_one_reason,
+        test_budget_fallback_runtime_faults_restore_runner_instance_methods,
+        test_budget_fallback_fault_scope_restores_after_operation_failure,
+        test_budget_fallback_worker_builds_complete_terminal_lifecycle,
+        test_budget_fallback_worker_main_writes_atomic_artifacts_and_incomplete,
         test_production_correctness_canonical_binds_315_case_diagnostic,
         test_arrival_canonical_rejects_non_go_correctness_binding,
+        test_arrival_canonical_loads_verified_budget_fallback_binding,
         test_production_capacity_pairing_is_scheduler_visible_equal,
         test_production_correctness_and_arrival_workload_contracts,
         test_production_runner_case_plan_is_mode_exact_and_paired,

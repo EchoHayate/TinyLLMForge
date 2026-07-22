@@ -93,6 +93,10 @@ contract = _load_tool(
     "exact_cuda_production_contract",
     "multi_sequence_cuda_graph_contract.py",
 )
+exact_cache_module = _load_tool(
+    "exact_cuda_production_cache",
+    "../tinyvllm/engine/exact_cuda_graph_cache.py",
+)
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -968,6 +972,807 @@ def write_budget_fallback_artifact(
     return contract.sha256_file(path)
 
 
+def _install_budget_fault(
+    model_runner,
+    reason: str,
+    *,
+    target_identity,
+    target_estimated_static_bytes: int,
+    seed_identity=None,
+    drift_identity=None,
+    target_observation_count: int = 0,
+) -> dict:
+    ExactCudaGraphCache = exact_cache_module.ExactCudaGraphCache
+    ExactCudaGraphCacheConfig = (
+        exact_cache_module.ExactCudaGraphCacheConfig
+    )
+    ExactCudaGraphEntry = exact_cache_module.ExactCudaGraphEntry
+
+    if reason not in contract.BUDGET_FALLBACK_REASONS:
+        raise ValueError(f"unknown budget fallback reason: {reason}")
+    runtime_reasons = {
+        "scratch_unavailable",
+        "capture_failed",
+        "identity_drift",
+    }
+    config_values = {
+        "enabled": True,
+        "batch_allowlist": (
+            int(target_identity.active_batch_size),
+        ),
+        "min_observations": 3,
+        "max_entries": 16,
+        "max_static_bytes": max(
+            8192,
+            int(target_estimated_static_bytes) * 2,
+        ),
+        "max_reserved_bytes": 512 * 1024 * 1024,
+        "max_total_capture_ns": 5_000_000_000,
+        "max_single_capture_ns": 2_000_000_000,
+    }
+    if reason == "entry_limit":
+        if seed_identity is None:
+            raise ValueError("entry_limit requires a seed identity")
+        config_values["max_entries"] = 1
+    elif reason == "static_byte_budget":
+        config_values["max_static_bytes"] = max(
+            1,
+            int(target_estimated_static_bytes) - 1,
+        )
+    elif reason == "reserved_byte_budget":
+        config_values["max_reserved_bytes"] = 1
+    elif reason == "single_capture_budget":
+        config_values["max_single_capture_ns"] = 1
+    elif reason == "total_capture_budget":
+        config_values["max_total_capture_ns"] = 1
+
+    cache = ExactCudaGraphCache(
+        ExactCudaGraphCacheConfig(**config_values)
+    )
+    if reason == "entry_limit":
+        cache.ready_entries[seed_identity.sha256] = (
+            ExactCudaGraphEntry(
+                identity=seed_identity,
+                identity_sha256=seed_identity.sha256,
+                graph=object(),
+                tensors={},
+                static_bytes=0,
+                capture_duration_ns=0,
+                allocated_delta_bytes=0,
+                reserved_delta_bytes=0,
+            )
+        )
+    if target_observation_count:
+        cache.observation_counts[target_identity.sha256] = int(
+            target_observation_count
+        )
+    model_runner.exact_cuda_graph_cache = cache
+    metadata = {
+        "injection_class": (
+            "runtime_fault"
+            if reason in runtime_reasons
+            else "budget_precondition"
+        ),
+        "injection_installed": reason in runtime_reasons,
+        "injection_restored": False,
+        "capture_observation": None,
+    }
+    originals = {}
+    if reason in runtime_reasons:
+        originals["_capture_exact_multi_sequence_graph"] = (
+            model_runner._capture_exact_multi_sequence_graph
+        )
+        original_capture = originals[
+            "_capture_exact_multi_sequence_graph"
+        ]
+
+        def observe_capture(*args, **kwargs):
+            try:
+                import torch
+
+                reserved_before = int(torch.cuda.memory_reserved())
+            except Exception:
+                reserved_before = 0
+            started_ns = time.perf_counter_ns()
+            try:
+                return original_capture(*args, **kwargs)
+            finally:
+                try:
+                    import torch
+
+                    reserved_after = int(
+                        torch.cuda.memory_reserved()
+                    )
+                except Exception:
+                    reserved_after = reserved_before
+                metadata["capture_observation"] = {
+                    "capture_duration_ns": max(
+                        1,
+                        time.perf_counter_ns() - started_ns,
+                    ),
+                    "reserved_delta_bytes": max(
+                        0,
+                        reserved_after - reserved_before,
+                    ),
+                }
+
+        model_runner._capture_exact_multi_sequence_graph = (
+            observe_capture
+        )
+    if reason == "scratch_unavailable":
+        originals["restore_kv_slots"] = (
+            model_runner.restore_kv_slots
+        )
+        original_restore_kv_slots = originals["restore_kv_slots"]
+
+        def fail_restore(*args, **kwargs):
+            original_restore_kv_slots(*args, **kwargs)
+            raise RuntimeError("scratch restoration unavailable")
+
+        model_runner.restore_kv_slots = fail_restore
+    elif reason == "capture_failed":
+        def fail_capture(*args, **kwargs):
+            del args, kwargs
+            try:
+                from tinyvllm.engine.model_runner import (
+                    _ExactGraphCaptureError,
+                )
+            except ModuleNotFoundError:
+                class _ExactGraphCaptureError(RuntimeError):
+                    def __init__(
+                        self,
+                        reason,
+                        message,
+                        *,
+                        retained_reserved_bytes=0,
+                    ):
+                        super().__init__(message)
+                        self.reason = reason
+                        self.retained_reserved_bytes = (
+                            retained_reserved_bytes
+                        )
+            started_ns = time.perf_counter_ns()
+            try:
+                import torch
+
+                reserved_before = int(torch.cuda.memory_reserved())
+            except Exception:
+                reserved_before = 0
+            try:
+                raise _ExactGraphCaptureError(
+                    "capture_failed",
+                    "gate-injected exact CUDA Graph capture failure",
+                )
+            finally:
+                try:
+                    import torch
+
+                    reserved_after = int(
+                        torch.cuda.memory_reserved()
+                    )
+                except Exception:
+                    reserved_after = reserved_before
+                metadata["capture_observation"] = {
+                    "capture_duration_ns": max(
+                        1,
+                        time.perf_counter_ns() - started_ns,
+                    ),
+                    "reserved_delta_bytes": max(
+                        0,
+                        reserved_after - reserved_before,
+                    ),
+                }
+
+        model_runner._capture_exact_multi_sequence_graph = (
+            fail_capture
+        )
+    elif reason == "identity_drift":
+        if drift_identity is None:
+            raise ValueError(
+                "identity_drift requires a drift identity"
+            )
+        originals["_build_multi_sequence_graph_identity"] = (
+            model_runner._build_multi_sequence_graph_identity
+        )
+        original_build_identity = originals[
+            "_build_multi_sequence_graph_identity"
+        ]
+        rebuild_count = 0
+
+        def drift_on_rebuild(*args, **kwargs):
+            nonlocal rebuild_count
+            rebuild_count += 1
+            identity = original_build_identity(*args, **kwargs)
+            if rebuild_count >= 2:
+                return drift_identity
+            return identity
+
+        model_runner._build_multi_sequence_graph_identity = (
+            drift_on_rebuild
+        )
+
+    restored = False
+
+    def restore() -> None:
+        nonlocal restored
+        if restored:
+            return
+        for name, original in originals.items():
+            setattr(model_runner, name, original)
+        restored = True
+        metadata["injection_restored"] = bool(originals)
+
+    metadata["restore"] = restore
+    return metadata
+
+
+def _run_with_budget_fault(
+    model_runner,
+    reason: str,
+    *,
+    target_identity,
+    target_estimated_static_bytes: int,
+    operation,
+    seed_identity=None,
+    drift_identity=None,
+    target_observation_count: int = 0,
+):
+    metadata = _install_budget_fault(
+        model_runner,
+        reason,
+        target_identity=target_identity,
+        target_estimated_static_bytes=target_estimated_static_bytes,
+        seed_identity=seed_identity,
+        drift_identity=drift_identity,
+        target_observation_count=target_observation_count,
+    )
+    try:
+        return operation(metadata)
+    finally:
+        metadata["restore"]()
+
+
+def _compare_logit_steps(
+    eager_logits: list,
+    candidate_logits: list,
+) -> tuple[bool, float]:
+    import torch
+
+    if len(eager_logits) != len(candidate_logits):
+        return False, math.inf
+    maximum = 0.0
+    all_close = True
+    for eager, candidate in zip(eager_logits, candidate_logits):
+        difference = float(
+            torch.max(torch.abs(eager - candidate)).item()
+        )
+        maximum = max(maximum, difference)
+        all_close = bool(
+            all_close
+            and torch.allclose(
+                eager,
+                candidate,
+                rtol=contract.LOGIT_RTOL,
+                atol=contract.LOGIT_ATOL,
+            )
+        )
+    return all_close, maximum
+
+
+def _run_budget_fallback_worker(
+    args,
+    *,
+    phase_runner=None,
+) -> dict:
+    if phase_runner is None:
+        phase_runner = _run_budget_fallback_phase
+    eager = phase_runner(args, feature_enabled=False)
+    candidate = phase_runner(args, feature_enabled=True)
+    reason = args.budget_fallback_reason
+    target_sha256 = candidate["target_identity_sha256"]
+    target_dispatch = [
+        row for row in candidate["dispatch_rows"]
+        if row.get("graph_identity_sha256") == target_sha256
+    ]
+    observations = [
+        row for row in target_dispatch
+        if row.get("fallback_reason") == "cold_identity"
+        and row.get("cache_state") == "observing"
+    ]
+    terminals = [
+        row for row in target_dispatch
+        if row.get("fallback_reason") == reason
+        and row.get("cache_state") == "rejected"
+    ]
+    first_terminal_step = min(
+        (row["step_id"] for row in terminals),
+        default=None,
+    )
+    graph_replays = sum(
+        row.get("dispatch") == "graph"
+        for row in target_dispatch
+    )
+    capture_attempts = sum(
+        row.get("capture_attempted") is True
+        and row.get("step_id") == first_terminal_step
+        for row in target_dispatch
+    )
+    post_rejection_attempts = sum(
+        row.get("capture_attempted") is True
+        and first_terminal_step is not None
+        and row.get("step_id", -1) > first_terminal_step
+        for row in target_dispatch
+    )
+    logits_allclose, logits_max_abs_diff = _compare_logit_steps(
+        eager["logits"],
+        candidate["logits"],
+    )
+    complete = bool(
+        len(observations) == 2
+        and len(terminals) >= 3
+        and first_terminal_step is not None
+        and bool(eager["logits"])
+        and len(eager["logits"]) == len(candidate["logits"])
+        and all(row.get("dispatch") == "eager" for row in terminals)
+        and graph_replays == 0
+        and post_rejection_attempts == 0
+        and eager["output_token_ids"]
+        == candidate["output_token_ids"]
+        and logits_allclose
+        and eager["live_kv_sha256"]
+        == candidate["live_kv_sha256"]
+    )
+    observation_ids = [row["row_id"] for row in observations]
+    terminal_ids = [row["row_id"] for row in terminals]
+    capture_ids = [
+        row["row_id"] for row in candidate["capture_rows"]
+        if row.get("graph_identity_sha256") == target_sha256
+    ]
+    effective_cache_config = candidate[
+        "effective_cache_config"
+    ]
+    budget_row = {
+        "row_id": f"{args.case_id}:result",
+        "case_id": args.case_id,
+        "reason": reason,
+        "source_sha256": args.source_sha256,
+        "worker_pid": candidate["pid"],
+        "tinyvllm_dist_port": int(os.environ[DIST_PORT_ENV]),
+        "master_port": int(os.environ[MASTER_PORT_ENV]),
+        "gpu": int(CUDA_VISIBLE_DEVICES),
+        "injection_class": candidate["injection_class"],
+        "injection_installed": candidate[
+            "injection_installed"
+        ],
+        "injection_restored": candidate["injection_restored"],
+        "effective_cache_config": effective_cache_config,
+        "pre_target_cache_summary": candidate[
+            "pre_target_cache_summary"
+        ],
+        "target_identity_fields": candidate[
+            "target_identity_fields"
+        ],
+        "target_identity_sha256": target_sha256,
+        "observation_dispatch_row_ids": observation_ids,
+        "terminal_dispatch_row_ids": terminal_ids,
+        "capture_row_ids": capture_ids,
+        "eager_output_token_ids": eager["output_token_ids"],
+        "candidate_output_token_ids": candidate[
+            "output_token_ids"
+        ],
+        "logits_allclose": logits_allclose,
+        "logits_max_abs_diff": logits_max_abs_diff,
+        "eager_live_kv_sha256": eager["live_kv_sha256"],
+        "candidate_live_kv_sha256": candidate[
+            "live_kv_sha256"
+        ],
+        "terminal_rejection_reason": (
+            None if not terminals else terminals[0]["fallback_reason"]
+        ),
+        "target_graph_replay_count": graph_replays,
+        "target_capture_attempt_count": capture_attempts,
+        "post_rejection_capture_attempt_count": (
+            post_rejection_attempts
+        ),
+        "complete": complete,
+    }
+    budget_row = {
+        field: budget_row[field]
+        for field in contract.BUDGET_FALLBACK_ROW_FIELDS
+    }
+    correctness_row = {
+        "row_id": f"{args.case_id}:correctness",
+        "case_id": args.case_id,
+        "source_sha256": args.source_sha256,
+        "output_token_ids": candidate["output_token_ids"],
+        "reference_token_ids": eager["output_token_ids"],
+        "logits_close": logits_allclose,
+        "live_slot_kv_sha256": candidate["live_kv_sha256"],
+        "reference_live_slot_kv_sha256": eager[
+            "live_kv_sha256"
+        ],
+    }
+    return {
+        "reason": reason,
+        "observation_count": max(
+            (
+                int(row.get("observation_count", 0))
+                for row in target_dispatch
+            ),
+            default=0,
+        ),
+        "target_dispatch": (
+            None if not terminals else terminals[0]["dispatch"]
+        ),
+        "terminal_rejection_reason": budget_row[
+            "terminal_rejection_reason"
+        ],
+        "target_graph_replay_count": graph_replays,
+        "post_rejection_capture_attempt_count": (
+            post_rejection_attempts
+        ),
+        "eager_output_token_ids": eager["output_token_ids"],
+        "candidate_output_token_ids": candidate[
+            "output_token_ids"
+        ],
+        "logits_allclose": logits_allclose,
+        "logits_max_abs_diff": logits_max_abs_diff,
+        "eager_live_kv_sha256": eager["live_kv_sha256"],
+        "candidate_live_kv_sha256": candidate[
+            "live_kv_sha256"
+        ],
+        "complete": complete,
+        "budget_fallback_row": budget_row,
+        "dispatch_rows": candidate["dispatch_rows"],
+        "capture_rows": candidate["capture_rows"],
+        "correctness_rows": [correctness_row],
+        "memory_rows": candidate.get("memory_rows", []),
+        "environment": candidate.get("environment", {}),
+        "pid": candidate["pid"],
+    }
+
+
+def _identity_from_fields(fields: dict):
+    from tinyvllm.engine.flash_attn_split_policy import (
+        FlashAttentionGraphIdentity,
+    )
+
+    return FlashAttentionGraphIdentity(**fields)
+
+
+def _distinct_identity(identity):
+    fields = asdict(identity)
+    fields["page_table_width"] = (
+        int(fields["page_table_width"]) + 1
+    )
+    return type(identity)(**fields)
+
+
+def _budget_phase_workload() -> dict:
+    return build_correctness_workload(
+        workload="stable_exact_reuse",
+        repetition=0,
+        warmup=False,
+    )
+
+
+def _run_budget_fallback_phase(
+    args,
+    *,
+    feature_enabled: bool,
+) -> dict:
+    from tinyvllm.engine.llm_engine import LLMEngine
+    from tinyvllm.sampling_params import SamplingParams
+    import torch
+
+    engine = LLMEngine(
+        REMOTE_MODEL,
+        **_base_engine_config(
+            feature_enabled=feature_enabled,
+            num_kvcache_blocks=args.num_kvcache_blocks,
+        ),
+    )
+    workload = _budget_phase_workload()
+    output_token_ids = {}
+    logits = []
+    live_kv_steps = []
+    dispatch_rows = []
+    capture_rows = []
+    memory_rows = []
+    original_run_model = engine.model_runner.run_model
+    injection = None
+    target_identity = None
+    target_identity_fields = None
+    target_estimated_static_bytes = None
+    pre_target_cache_summary = None
+    effective_cache_config = None
+    last_dispatch_step_id = None
+    target_event_count = 0
+    phase_result = None
+
+    def observed_run_model(*run_args, **run_kwargs):
+        result = original_run_model(*run_args, **run_kwargs)
+        observed_logits = (
+            result[0] if isinstance(result, tuple) else result
+        )
+        logits.append(
+            observed_logits.detach().cpu().contiguous()
+        )
+        return result
+
+    engine.model_runner.run_model = observed_run_model
+    try:
+        for request in workload["requests"]:
+            engine.add_request(
+                request["prompt_token_ids"],
+                SamplingParams(
+                    temperature=0.0,
+                    max_tokens=max(
+                        8,
+                        request["requested_output_tokens"],
+                    ),
+                    ignore_eos=True,
+                ),
+            )
+        step_index = 0
+        while not engine.is_finished():
+            outputs, _num_tokens = engine.step()
+            for seq_id, tokens in outputs:
+                output_token_ids[int(seq_id)] = list(tokens)
+            live_kv_steps.append(_live_kv_sha256(engine))
+            observation = engine.last_step_observation or {}
+            memory_rows.append({
+                "row_id": f"{args.case_id}:memory:{step_index}",
+                "case_id": args.case_id,
+                "source_sha256": args.source_sha256,
+                "reserved_bytes": int(
+                    observation.get("memory", {}).get(
+                        "cuda_reserved_bytes",
+                        torch.cuda.memory_reserved(),
+                    )
+                ),
+            })
+            if feature_enabled:
+                event = (
+                    engine.model_runner.cuda_graph_dispatch_observation()
+                )
+                if (
+                    event is not None
+                    and event["step_id"] != last_dispatch_step_id
+                ):
+                    last_dispatch_step_id = event["step_id"]
+                    identity_fields = _identity_fields_for_event(
+                        engine,
+                        event,
+                    )
+                    if identity_fields is not None:
+                        dispatch_row = {
+                            "row_id": (
+                                f"{args.case_id}:dispatch:{step_index}"
+                            ),
+                            "case_id": args.case_id,
+                            "source_sha256": args.source_sha256,
+                            **event,
+                            "identity_fields": identity_fields,
+                        }
+                        dispatch_rows.append(dispatch_row)
+                        if target_identity is None:
+                            target_identity = _identity_from_fields(
+                                identity_fields
+                            )
+                            target_identity_fields = identity_fields
+                            target_estimated_static_bytes = (
+                                engine.model_runner
+                                ._estimate_exact_graph_static_bytes(
+                                    batch_size=(
+                                        target_identity
+                                        .active_batch_size
+                                    ),
+                                    page_table_width=(
+                                        target_identity
+                                        .page_table_width
+                                    ),
+                                )
+                            )
+                        if (
+                            event["graph_identity_sha256"]
+                            == target_identity.sha256
+                        ):
+                            target_event_count += 1
+                            if (
+                                event["capture_attempted"]
+                                and event["fallback_reason"]
+                                == args.budget_fallback_reason
+                            ):
+                                runtime_capture = (
+                                    injection["capture_observation"]
+                                    if injection is not None
+                                    else None
+                                )
+                                capture_duration_ns = int(
+                                    event["capture_duration_ns"]
+                                )
+                                reserved_delta_bytes = int(
+                                    event[
+                                        "capture_reserved_delta_bytes"
+                                    ]
+                                )
+                                if runtime_capture is not None:
+                                    capture_duration_ns = int(
+                                        runtime_capture[
+                                            "capture_duration_ns"
+                                        ]
+                                    )
+                                    reserved_delta_bytes = int(
+                                        runtime_capture[
+                                            "reserved_delta_bytes"
+                                        ]
+                                    )
+                                capture_rows.append({
+                                    "row_id": (
+                                        f"{args.case_id}:capture:"
+                                        f"{step_index}"
+                                    ),
+                                    "case_id": args.case_id,
+                                    "step_id": event["step_id"],
+                                    "source_sha256": (
+                                        args.source_sha256
+                                    ),
+                                    "graph_identity_sha256": (
+                                        target_identity.sha256
+                                    ),
+                                    "identity_fields": (
+                                        target_identity_fields
+                                    ),
+                                    "observation_count": event[
+                                        "observation_count"
+                                    ],
+                                    "status": "rejected",
+                                    "fallback_reason": event[
+                                        "fallback_reason"
+                                    ],
+                                    "capture_duration_ns": max(
+                                        1,
+                                        capture_duration_ns,
+                                    ),
+                                    "static_bytes": max(
+                                        1,
+                                        int(event[
+                                            "capture_static_bytes"
+                                        ])
+                                        or int(
+                                            target_estimated_static_bytes
+                                        ),
+                                    ),
+                                    "reserved_delta_bytes": max(
+                                        1,
+                                        reserved_delta_bytes,
+                                    ),
+                                    "budget_overshoot": (
+                                        args.budget_fallback_reason
+                                        in {
+                                            "reserved_byte_budget",
+                                            "single_capture_budget",
+                                            "total_capture_budget",
+                                        }
+                                    ),
+                                })
+                    if (
+                        target_event_count == 2
+                        and injection is None
+                    ):
+                        seed_identity = _distinct_identity(
+                            target_identity
+                        )
+                        drift_identity = _distinct_identity(
+                            target_identity
+                        )
+                        injection = _install_budget_fault(
+                            engine.model_runner,
+                            args.budget_fallback_reason,
+                            target_identity=target_identity,
+                            target_estimated_static_bytes=(
+                                target_estimated_static_bytes
+                            ),
+                            seed_identity=seed_identity,
+                            drift_identity=drift_identity,
+                            target_observation_count=2,
+                        )
+                        pre_target_cache_summary = (
+                            engine.model_runner
+                            .exact_cuda_graph_cache.summary()
+                        )
+                        effective_cache_config = asdict(
+                            engine.model_runner
+                            .exact_cuda_graph_cache.config
+                        )
+                        effective_cache_config.update({
+                            "target_estimated_static_bytes": int(
+                                target_estimated_static_bytes
+                            ),
+                            "target_capture_duration_ns": 1,
+                            "target_reserved_delta_bytes": 2,
+                        })
+            step_index += 1
+        ordered_outputs = [
+            output_token_ids[seq_id]
+            for seq_id in sorted(output_token_ids)
+        ]
+        phase_result = {
+            "output_token_ids": ordered_outputs,
+            "logits": logits,
+            "live_kv_sha256": (
+                contract.canonical_json_sha256(live_kv_steps)
+            ),
+            "dispatch_rows": dispatch_rows,
+            "capture_rows": capture_rows,
+            "memory_rows": memory_rows,
+            "pid": os.getpid(),
+            "environment": {
+                "source_sha256": args.source_sha256,
+                "gpu": int(CUDA_VISIBLE_DEVICES),
+                "model": REMOTE_MODEL,
+            },
+        }
+        if feature_enabled:
+            if injection is None or target_identity is None:
+                raise RuntimeError(
+                    "budget fallback target was not observed twice"
+                )
+            terminal = next(
+                (
+                    row for row in dispatch_rows
+                    if row.get("graph_identity_sha256")
+                    == target_identity.sha256
+                    and row.get("fallback_reason")
+                    == args.budget_fallback_reason
+                ),
+                None,
+            )
+            target_capture = next(
+                (
+                    row for row in capture_rows
+                    if row.get("graph_identity_sha256")
+                    == target_identity.sha256
+                ),
+                None,
+            )
+            if target_capture is not None:
+                effective_cache_config[
+                    "target_capture_duration_ns"
+                ] = int(target_capture["capture_duration_ns"])
+                effective_cache_config[
+                    "target_reserved_delta_bytes"
+                ] = int(target_capture["reserved_delta_bytes"])
+            phase_result.update({
+                "target_identity_fields": target_identity_fields,
+                "target_identity_sha256": target_identity.sha256,
+                "effective_cache_config": effective_cache_config,
+                "pre_target_cache_summary": (
+                    pre_target_cache_summary
+                ),
+                "injection_class": injection[
+                    "injection_class"
+                ],
+                "injection_installed": injection[
+                    "injection_installed"
+                ],
+            })
+        return phase_result
+    finally:
+        if injection is not None:
+            injection["restore"]()
+        engine.exit()
+        if (
+            feature_enabled
+            and injection is not None
+            and phase_result is not None
+        ):
+            phase_result["injection_restored"] = injection[
+                "injection_restored"
+            ]
+
+
 def _engine_capacity(engine) -> dict:
     runner = engine.model_runner
     visible = int(runner.config.num_kvcache_blocks)
@@ -1374,6 +2179,50 @@ def _worker_main(args) -> int:
         _write_jsonl(
             output_dir / "memory_trace.jsonl",
             result["memory_rows"],
+        )
+    elif args.worker_kind == "budget-fallback":
+        try:
+            result = _run_budget_fallback_worker(args)
+        except Exception as exc:
+            _write_json(
+                output_dir / "incomplete.json",
+                {
+                    "classification": "INCOMPLETE",
+                    "failure_reason": "worker_exception",
+                    "case_id": args.case_id,
+                    "reason": args.budget_fallback_reason,
+                    "source_sha256": args.source_sha256,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            return 1
+        _write_json(
+            output_dir / "budget_fallback_row.json",
+            result["budget_fallback_row"],
+        )
+        _write_json(
+            output_dir / "worker_result.json",
+            result,
+        )
+        _write_jsonl(
+            output_dir / "dispatch_events.jsonl",
+            result["dispatch_rows"],
+        )
+        _write_jsonl(
+            output_dir / "capture_events.jsonl",
+            result["capture_rows"],
+        )
+        _write_jsonl(
+            output_dir / "correctness_rows.jsonl",
+            result["correctness_rows"],
+        )
+        _write_jsonl(
+            output_dir / "memory_trace.jsonl",
+            result["memory_rows"],
+        )
+        _write_json(
+            output_dir / "environment.json",
+            result["environment"],
         )
     else:
         raise ValueError(f"unknown worker kind: {args.worker_kind}")
