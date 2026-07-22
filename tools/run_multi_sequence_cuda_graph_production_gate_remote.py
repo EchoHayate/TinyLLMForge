@@ -1214,6 +1214,15 @@ def _gpu_occupancy() -> list[dict]:
     return rows
 
 
+class GpuOccupancyError(RuntimeError):
+    def __init__(self, *, stage: str, occupancy: list[dict]):
+        self.stage = stage
+        self.occupancy = occupancy
+        super().__init__(
+            f"GPU 0 is occupied {stage}: {occupancy}"
+        )
+
+
 def _run_preflight(remote_dir: str) -> None:
     source = f"{remote_dir}/source"
     commands = (
@@ -1400,8 +1409,9 @@ def _run_remote_worker(
 ) -> subprocess.CompletedProcess:
     occupancy_before = _gpu_occupancy()
     if occupancy_before:
-        raise RuntimeError(
-            f"GPU 0 is occupied before worker: {occupancy_before}"
+        raise GpuOccupancyError(
+            stage="before_worker",
+            occupancy=occupancy_before,
         )
     env_args = [
         f"{name}={value}"
@@ -1421,8 +1431,9 @@ def _run_remote_worker(
     ], check=False)
     occupancy_after = _gpu_occupancy()
     if occupancy_after:
-        raise RuntimeError(
-            f"GPU 0 remains occupied after worker: {occupancy_after}"
+        raise GpuOccupancyError(
+            stage="after_worker",
+            occupancy=occupancy_after,
         )
     return result
 
@@ -1889,11 +1900,27 @@ def main(argv: list[str] | None = None) -> int:
             OUTPUT_ROOT / run_tag,
         )
         return 0
-    run_dir = _orchestrate(
-        args.mode,
-        run_tag,
-        diagnostic_run_tag=args.diagnostic_run_tag,
-    )
+    try:
+        run_dir = _orchestrate(
+            args.mode,
+            run_tag,
+            diagnostic_run_tag=args.diagnostic_run_tag,
+        )
+    except GpuOccupancyError as exc:
+        run_dir = OUTPUT_ROOT / run_tag
+        run_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(
+            run_dir / "incomplete.json",
+            {
+                "classification": "INCOMPLETE",
+                "failure_reason": "unrelated_gpu_occupancy",
+                "gpu": int(CUDA_VISIBLE_DEVICES),
+                "occupancy": exc.occupancy,
+                "stage": exc.stage,
+            },
+        )
+        print(run_dir)
+        return 1
     print(run_dir)
     return 0
 

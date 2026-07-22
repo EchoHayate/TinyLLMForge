@@ -4455,6 +4455,57 @@ def test_remote_runner_reads_diagnostic_stderr_for_port_collision():
         )
 
 
+def test_production_runner_records_gpu_occupancy_as_incomplete():
+    runner = load_production_runner()
+    occupancy = [
+        {
+            "pid": 123,
+            "process_name": "unrelated-python",
+            "used_memory_mib": 4096,
+        }
+    ]
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        original_output_root = runner.OUTPUT_ROOT
+        original_orchestrate = runner._orchestrate
+        runner.OUTPUT_ROOT = Path(temporary_directory)
+
+        def fail_with_occupancy(*args, **kwargs):
+            del args, kwargs
+            raise runner.GpuOccupancyError(
+                stage="before_worker",
+                occupancy=occupancy,
+            )
+
+        runner._orchestrate = fail_with_occupancy
+        try:
+            returncode = runner.main(
+                [
+                    "correctness-smoke",
+                    "--run-tag",
+                    "occupied-smoke",
+                ]
+            )
+        finally:
+            runner._orchestrate = original_orchestrate
+            runner.OUTPUT_ROOT = original_output_root
+
+        assert returncode == 1
+        evidence = json.loads(
+            (
+                Path(temporary_directory)
+                / "occupied-smoke"
+                / "incomplete.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert evidence == {
+            "classification": "INCOMPLETE",
+            "failure_reason": "unrelated_gpu_occupancy",
+            "gpu": 0,
+            "occupancy": occupancy,
+            "stage": "before_worker",
+        }
+
+
 def test_remote_runner_preserves_remote_shell_command_as_one_argument():
     runner = load_remote_runner()
     remote_command = "cd /tmp/example && printf 'OK\\n'"
@@ -4904,6 +4955,7 @@ if __name__ == "__main__":
         test_remote_runner_rejects_duplicate_or_equal_ports,
         test_remote_runner_retries_only_eaddrinuse,
         test_remote_runner_reads_diagnostic_stderr_for_port_collision,
+        test_production_runner_records_gpu_occupancy_as_incomplete,
         test_remote_runner_preserves_remote_shell_command_as_one_argument,
         test_remote_runner_disables_bytecode_during_source_validation,
         test_remote_runner_requires_explicit_resume_for_existing_run,
