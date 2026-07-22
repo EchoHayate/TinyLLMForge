@@ -62,6 +62,34 @@ PRODUCTION_THRESHOLDS = {
     "initialization_ratio": 1.05,
     "stable_graph_hit_rate": 0.60,
 }
+FALLBACK_REASONS = (
+    "feature_disabled",
+    "enforce_eager",
+    "unsupported_mode",
+    "incompatible_feature",
+    "batch_not_allowlisted",
+    "identity_invalid",
+    "cold_identity",
+    "entry_limit",
+    "static_byte_budget",
+    "reserved_byte_budget",
+    "single_capture_budget",
+    "total_capture_budget",
+    "scratch_unavailable",
+    "capture_failed",
+    "identity_drift",
+    "replay_disabled",
+)
+PRODUCTION_CACHE_DEFAULTS = {
+    "enabled": False,
+    "batch_allowlist": (2, 4, 8),
+    "min_observations": 3,
+    "max_entries": 8,
+    "max_static_bytes": 64 * 1024 * 1024,
+    "max_reserved_bytes": 512 * 1024 * 1024,
+    "max_total_capture_ns": 5_000_000_000,
+    "max_single_capture_ns": 2_000_000_000,
+}
 
 _LOWER_BOUND_THRESHOLDS = frozenset(
     {

@@ -30,6 +30,9 @@ SPLIT_POLICY_PATH = (
     ROOT / "tinyvllm" / "engine" / "flash_attn_split_policy.py"
 )
 CONFIG_PATH = ROOT / "tinyvllm" / "config.py"
+EXACT_CACHE_PATH = (
+    ROOT / "tinyvllm" / "engine" / "exact_cuda_graph_cache.py"
+)
 
 
 def load_contract():
@@ -92,6 +95,76 @@ def load_real_config_class():
             sys.modules.pop("transformers", None)
         else:
             sys.modules["transformers"] = original
+
+
+def load_exact_cache():
+    spec = importlib.util.spec_from_file_location(
+        "exact_cuda_graph_cache_under_test",
+        EXACT_CACHE_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def make_identity(*, batch=4, width=2, splits=2):
+    split_policy = load_split_policy()
+    return split_policy.FlashAttentionGraphIdentity(
+        graph_batch_size=batch,
+        active_batch_size=batch,
+        page_table_width=width,
+        effective_num_splits=splits,
+        flash_attn_version="2.6.3",
+        multi_processor_count=108,
+        num_query_heads=16,
+        num_kv_heads=8,
+        head_dim=128,
+        page_block_size=256,
+        max_seqlen_q=1,
+    )
+
+
+def make_cache_config(**overrides):
+    cache_module = load_exact_cache()
+    values = {
+        "enabled": True,
+        "batch_allowlist": (2, 4, 8),
+        "min_observations": 3,
+        "max_entries": 8,
+        "max_static_bytes": 64 * 1024 * 1024,
+        "max_reserved_bytes": 512 * 1024 * 1024,
+        "max_total_capture_ns": 5_000_000_000,
+        "max_single_capture_ns": 2_000_000_000,
+    }
+    values.update(overrides)
+    return cache_module.ExactCudaGraphCacheConfig(**values)
+
+
+def make_entry(
+    identity,
+    *,
+    static_bytes=4096,
+    capture_duration_ns=100,
+    allocated_delta_bytes=512,
+    reserved_delta_bytes=1024,
+):
+    cache_module = load_exact_cache()
+    return cache_module.ExactCudaGraphEntry(
+        identity=identity,
+        identity_sha256=identity.sha256,
+        graph=object(),
+        tensors={
+            "input_ids": object(),
+            "positions": object(),
+            "block_tables": object(),
+            "output": object(),
+        },
+        static_bytes=static_bytes,
+        capture_duration_ns=capture_duration_ns,
+        allocated_delta_bytes=allocated_delta_bytes,
+        reserved_delta_bytes=reserved_delta_bytes,
+    )
 
 
 def load_diagnostic_module_without_gpu():
@@ -372,6 +445,173 @@ def test_production_identity_requires_graph_batch_equal_active_batch():
         assert "equal" in str(exc)
     else:
         raise AssertionError("rounded production graph identity accepted")
+
+
+def test_exact_cache_observes_three_eager_steps_before_capture():
+    cache_module = load_exact_cache()
+    identity = make_identity(batch=4, width=2, splits=2)
+    cache = cache_module.ExactCudaGraphCache(make_cache_config())
+
+    first = cache.observe_success(identity, estimated_static_bytes=4096)
+    second = cache.observe_success(identity, estimated_static_bytes=4096)
+    third = cache.observe_success(identity, estimated_static_bytes=4096)
+    assert [
+        first.should_capture,
+        second.should_capture,
+        third.should_capture,
+    ] == [False, False, True]
+    assert [
+        first.observation_count,
+        second.observation_count,
+        third.observation_count,
+    ] == [1, 2, 3]
+
+    entry = make_entry(identity, static_bytes=4096)
+    cache.commit_capture(entry)
+    assert cache.ready_entry(identity) is entry
+
+
+def test_every_exact_cache_budget_blocks_admission_independently():
+    cache_module = load_exact_cache()
+
+    entry_limited = cache_module.ExactCudaGraphCache(
+        make_cache_config(max_entries=1)
+    )
+    first = make_identity(batch=2, width=1, splits=2)
+    second = make_identity(batch=4, width=1, splits=2)
+    for _ in range(3):
+        entry_limited.observe_success(first, estimated_static_bytes=4096)
+    entry_limited.commit_capture(make_entry(first))
+    decisions = [
+        entry_limited.observe_success(
+            second,
+            estimated_static_bytes=4096,
+        )
+        for _ in range(3)
+    ]
+    assert decisions[-1].fallback_reason == "entry_limit"
+
+    static_limited = cache_module.ExactCudaGraphCache(
+        make_cache_config(max_static_bytes=4095)
+    )
+    decisions = [
+        static_limited.observe_success(
+            first,
+            estimated_static_bytes=4096,
+        )
+        for _ in range(3)
+    ]
+    assert decisions[-1].fallback_reason == "static_byte_budget"
+
+    reserved_limited = cache_module.ExactCudaGraphCache(
+        make_cache_config(max_reserved_bytes=1023)
+    )
+    reserved_limited.reject(
+        second,
+        "capture_failed",
+        retained_reserved_bytes=1024,
+    )
+    decisions = [
+        reserved_limited.observe_success(
+            first,
+            estimated_static_bytes=4096,
+        )
+        for _ in range(3)
+    ]
+    assert decisions[-1].fallback_reason == "reserved_byte_budget"
+
+    single_limited = cache_module.ExactCudaGraphCache(
+        make_cache_config(max_single_capture_ns=99)
+    )
+    for _ in range(3):
+        single_limited.observe_success(
+            first,
+            estimated_static_bytes=4096,
+        )
+    single_limited.commit_capture(
+        make_entry(first, capture_duration_ns=100)
+    )
+    assert single_limited.summary()["rejected"][first.sha256] == (
+        "single_capture_budget"
+    )
+
+    total_limited = cache_module.ExactCudaGraphCache(
+        make_cache_config(
+            max_single_capture_ns=1_000,
+            max_total_capture_ns=199,
+        )
+    )
+    for _ in range(3):
+        total_limited.observe_success(
+            first,
+            estimated_static_bytes=4096,
+        )
+    total_limited.commit_capture(
+        make_entry(first, capture_duration_ns=150)
+    )
+    for _ in range(3):
+        total_limited.observe_success(
+            second,
+            estimated_static_bytes=4096,
+        )
+    total_limited.commit_capture(
+        make_entry(second, capture_duration_ns=50)
+    )
+    assert total_limited.summary()["rejected"][second.sha256] == (
+        "total_capture_budget"
+    )
+
+
+def test_rejected_identity_is_terminal_and_exact_lookup_only():
+    cache_module = load_exact_cache()
+    cache = cache_module.ExactCudaGraphCache(make_cache_config())
+    identity = make_identity(batch=4, width=2, splits=2)
+    wider = make_identity(batch=4, width=3, splits=3)
+    cache.reject(
+        identity,
+        "capture_failed",
+        retained_reserved_bytes=8192,
+    )
+    assert cache.ready_entry(identity) is None
+    assert cache.ready_entry(wider) is None
+    for _ in range(10):
+        decision = cache.observe_success(
+            identity,
+            estimated_static_bytes=4096,
+        )
+        assert decision.should_capture is False
+        assert decision.cache_state == "rejected"
+        assert decision.fallback_reason == "capture_failed"
+    assert cache.summary()["capture_attempts"] == 0
+    assert cache.summary()["reserved_delta_bytes"] == 8192
+
+
+def test_entries_do_not_share_static_tensor_objects():
+    first = make_entry(make_identity(batch=2, width=1, splits=2))
+    second = make_entry(make_identity(batch=4, width=1, splits=2))
+    assert set(first.tensors) == set(second.tensors)
+    assert all(
+        first.tensors[name] is not second.tensors[name]
+        for name in first.tensors
+    )
+
+
+def test_fallback_reason_contract_is_closed_and_complete():
+    cache_module = load_exact_cache()
+    assert cache_module.FALLBACK_REASONS == contract.FALLBACK_REASONS
+    assert len(set(cache_module.FALLBACK_REASONS)) == len(
+        cache_module.FALLBACK_REASONS
+    )
+    assert contract.PRODUCTION_CACHE_DEFAULTS == {
+        "enabled": False,
+        "batch_allowlist": (2, 4, 8),
+        "min_observations": 3,
+        "max_entries": 8,
+        "max_static_bytes": 64 * 1024 * 1024,
+        "max_reserved_bytes": 512 * 1024 * 1024,
+        "max_total_capture_ns": 5_000_000_000,
+        "max_single_capture_ns": 2_000_000_000,
+    }
 
 
 def test_flash_attn_263_rejects_unsupported_inputs():
@@ -3212,6 +3452,11 @@ if __name__ == "__main__":
         test_multi_sequence_cuda_graph_config_defaults_and_allowlist,
         test_multi_sequence_cuda_graph_config_rejects_invalid_controls,
         test_production_identity_requires_graph_batch_equal_active_batch,
+        test_exact_cache_observes_three_eager_steps_before_capture,
+        test_every_exact_cache_budget_blocks_admission_independently,
+        test_rejected_identity_is_terminal_and_exact_lookup_only,
+        test_entries_do_not_share_static_tensor_objects,
+        test_fallback_reason_contract_is_closed_and_complete,
         test_flash_attn_263_rejects_unsupported_inputs,
         test_same_policy_matrix_is_exact_policy_aware_and_unique,
         test_legacy_compatibility_matrix_is_63_pairs_126_processes,
