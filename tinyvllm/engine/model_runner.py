@@ -737,9 +737,6 @@ class ModelRunner:
         self.kv_offload: KVOffloadMVP0 | None = None
         self._kv_offload_pending_dirty_blocks: list[int] = []
 
-        self.warmup_model()                             #暂时跳过
-
-        self.allocate_kv_cache()                        #预分配空间（没有具体值）
         self.exact_cuda_graph_cache = ExactCudaGraphCache(
             ExactCudaGraphCacheConfig(
                 enabled=config.multi_sequence_cuda_graphs,
@@ -770,6 +767,10 @@ class ModelRunner:
         self._cuda_graph_request_ids_hash = hashlib.sha256(
             b"[]"
         ).hexdigest()
+
+        self.warmup_model()                             #暂时跳过
+
+        self.allocate_kv_cache()                        #预分配空间（没有具体值）
         # cuda graph 跳过条件：
         #   1) enforce_eager：用户显式关
         #   2) kv_quant_bits == 4 (C4)：decode 反量化路径里有动态 alloc，无法 capture

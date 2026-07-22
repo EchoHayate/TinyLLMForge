@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import __future__
+import ast
 import copy
 import hashlib
 import importlib.util
@@ -272,6 +273,52 @@ def _load_model_runner_module():
 
 model_runner, context = _load_model_runner_module()
 ModelRunner = model_runner.ModelRunner
+
+
+def test_init_prepares_cuda_graph_dispatch_state_before_warmup():
+    tree = ast.parse(open(_MODEL_RUNNER_PATH).read())
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ModelRunner"
+    )
+    init_function = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+
+    statement_index_by_attribute = {}
+    warmup_index = None
+    for statement_index, statement in enumerate(init_function.body):
+        for node in ast.walk(statement):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and isinstance(node.ctx, ast.Store)
+            ):
+                statement_index_by_attribute.setdefault(
+                    node.attr,
+                    statement_index,
+                )
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+                and node.func.attr == "warmup_model"
+            ):
+                warmup_index = statement_index
+
+    assert warmup_index is not None
+    for attribute in (
+        "exact_cuda_graph_cache",
+        "last_cuda_graph_dispatch_event",
+        "_cuda_graph_step_id",
+        "_cuda_graph_request_ids_hash",
+    ):
+        assert statement_index_by_attribute[attribute] < warmup_index
 
 
 def make_runner(**overrides):
@@ -1560,6 +1607,7 @@ def test_replay_failure_publishes_terminal_event_before_reraising():
 
 def main():
     tests = (
+        test_init_prepares_cuda_graph_dispatch_state_before_warmup,
         test_prepare_spec_verify_installs_reference_context,
         test_step_logits_recording_accessor_is_default_off_and_returns_clone,
         test_snapshot_kv_slots_uses_physical_block_and_offset_indices,
