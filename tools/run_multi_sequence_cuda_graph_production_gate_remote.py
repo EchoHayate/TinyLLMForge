@@ -255,6 +255,51 @@ def build_worker_command(
     }
 
 
+def build_budget_fallback_worker_command(
+    *,
+    remote_source: str,
+    output_dir: str,
+    source_sha256: str,
+    dist_port: int,
+    master_port: int,
+    reason: str,
+    visible_blocks: int,
+) -> dict:
+    if reason not in contract.BUDGET_FALLBACK_REASONS:
+        raise ValueError(f"unknown budget fallback reason: {reason}")
+    if dist_port == master_port:
+        raise ValueError("worker ports must be distinct")
+    argv = [
+        REMOTE_PYTHON,
+        "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
+        "local-contracts",
+        "--worker-kind",
+        "budget-fallback",
+        "--budget-fallback-reason",
+        reason,
+        "--output-dir",
+        output_dir,
+        "--source-sha256",
+        source_sha256,
+        "--case-id",
+        f"budget-fallback:{reason}",
+        "--num-kvcache-blocks",
+        str(visible_blocks),
+    ]
+    return {
+        "cwd": remote_source,
+        "env": {
+            "CUDA_VISIBLE_DEVICES": CUDA_VISIBLE_DEVICES,
+            DIST_PORT_ENV: str(dist_port),
+            MASTER_PORT_ENV: str(master_port),
+            "PYTHONPATH": remote_source,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "TINYVLLM_SOURCE_SHA256": source_sha256,
+        },
+        "argv": argv,
+    }
+
+
 def build_paired_capacity_contract(candidate_capacity: dict) -> dict:
     required = (
         "physical_blocks",
@@ -487,6 +532,21 @@ def build_case_plan(mode: str) -> list[dict]:
             "worker_kind": worker_kind,
         }
         for case in matrix
+    ]
+
+
+def build_budget_fallback_plan(mode: str) -> list[dict]:
+    if mode in {"arrival-smoke", "arrival-canonical"}:
+        return []
+    if mode not in {"correctness-smoke", "correctness-canonical"}:
+        raise ValueError(f"mode does not execute budget fallbacks: {mode}")
+    return [
+        {
+            "case_id": f"budget-fallback:{reason}",
+            "reason": reason,
+            "worker_kind": "budget-fallback",
+        }
+        for reason in contract.BUDGET_FALLBACK_REASONS
     ]
 
 
@@ -787,6 +847,125 @@ def classify_production_run(
         producer_summary={"classification": "GO"},
         independent_summary={"classification": "GO"},
     )
+
+
+def merge_budget_fallback_worker_results(
+    plan: list[dict],
+    worker_results: dict[str, dict],
+) -> dict:
+    aggregate = {
+        "budget_fallback_rows": [],
+        "dispatch_rows": [],
+        "capture_rows": [],
+        "correctness_rows": [],
+        "case_summaries": [],
+    }
+    seen_row_ids = set()
+    for case in plan:
+        case_id = case["case_id"]
+        result = worker_results.get(case_id)
+        if result is None:
+            raise ValueError(
+                f"missing budget fallback worker: {case_id}"
+            )
+        budget_row = result.get("budget_fallback_row")
+        if (
+            not isinstance(budget_row, dict)
+            or budget_row.get("case_id") != case_id
+            or budget_row.get("reason") != case["reason"]
+        ):
+            raise ValueError(
+                f"invalid budget fallback worker result: {case_id}"
+            )
+        row_groups = {
+            "budget_fallback_rows": [budget_row],
+            "dispatch_rows": result.get("dispatch_rows"),
+            "capture_rows": result.get("capture_rows"),
+            "correctness_rows": result.get("correctness_rows"),
+        }
+        for name, rows in row_groups.items():
+            if not isinstance(rows, list):
+                raise ValueError(
+                    f"{case_id}: missing {name} evidence"
+                )
+            for row in rows:
+                if (
+                    not isinstance(row, dict)
+                    or row.get("case_id") != case_id
+                    or not isinstance(row.get("row_id"), str)
+                    or not row["row_id"]
+                ):
+                    raise ValueError(
+                        f"{case_id}: invalid {name} row"
+                    )
+                if row["row_id"] in seen_row_ids:
+                    raise ValueError(
+                        f"duplicate budget fallback row_id: "
+                        f"{row['row_id']}"
+                    )
+                seen_row_ids.add(row["row_id"])
+                aggregate[name].append(row)
+    return aggregate
+
+
+def resolve_budget_fallback_aggregate(
+    *,
+    mode: str,
+    worker_results: dict[str, dict],
+    correctness_binding: dict | None,
+) -> dict:
+    plan = build_budget_fallback_plan(mode)
+    if plan:
+        return merge_budget_fallback_worker_results(
+            plan,
+            worker_results,
+        )
+    if correctness_binding is None:
+        raise ValueError(
+            "arrival mode requires a correctness binding"
+        )
+    aggregate = correctness_binding.get("budget_fallback")
+    if not isinstance(aggregate, dict):
+        raise ValueError(
+            "correctness binding lacks budget fallback evidence"
+        )
+    return aggregate
+
+
+def merge_budget_fallback_evidence(
+    aggregate: dict,
+    budget_fallback: dict,
+) -> list[dict]:
+    if budget_fallback.get("case_summaries") != []:
+        raise ValueError(
+            "budget fallback workers cannot contribute performance rows"
+        )
+    for target_name, source_name in (
+        ("dispatch_rows", "dispatch_rows"),
+        ("capture_rows", "capture_rows"),
+        ("correctness_rows", "correctness_rows"),
+    ):
+        rows = budget_fallback.get(source_name)
+        if not isinstance(rows, list):
+            raise ValueError(
+                f"budget fallback evidence lacks {source_name}"
+            )
+        aggregate[target_name].extend(rows)
+    budget_rows = budget_fallback.get("budget_fallback_rows")
+    if not isinstance(budget_rows, list):
+        raise ValueError(
+            "budget fallback evidence lacks budget_fallback_rows"
+        )
+    return budget_rows
+
+
+def write_budget_fallback_artifact(
+    run_dir: Path,
+    rows: list[dict],
+) -> str:
+    path = run_dir / "budget_fallback_rows.jsonl"
+    _write_jsonl(path, rows)
+    return contract.sha256_file(path)
 
 
 def _engine_capacity(engine) -> dict:
@@ -1446,10 +1625,6 @@ def _load_correctness_binding(
     verification = _read_json(
         run_dir / "independent_verification.json"
     )
-    rows = _read_jsonl(run_dir / "correctness_rows.jsonl")
-    diagnostic_binding = _read_json(
-        run_dir / "diagnostic_binding.json"
-    )
     if (
         verification.get("classification") != "GO"
         or verification.get("failures") not in (None, [])
@@ -1457,16 +1632,48 @@ def _load_correctness_binding(
         raise ValueError(
             "correctness independent verification is not GO"
         )
+    rows = _read_jsonl(run_dir / "correctness_rows.jsonl")
+    budget_fallback_rows = _read_jsonl(
+        run_dir / "budget_fallback_rows.jsonl"
+    )
+    dispatch_rows = _read_jsonl(run_dir / "dispatch_events.jsonl")
+    capture_rows = _read_jsonl(run_dir / "capture_events.jsonl")
+    diagnostic_binding = _read_json(
+        run_dir / "diagnostic_binding.json"
+    )
+    required_budget_fallbacks = len(
+        contract.BUDGET_FALLBACK_REASONS
+    )
+    if (
+        verification.get("budget_fallback_required")
+        != required_budget_fallbacks
+        or verification.get("budget_fallback_verified")
+        != required_budget_fallbacks
+        or verification.get("budget_fallback_reasons")
+        != list(contract.BUDGET_FALLBACK_REASONS)
+    ):
+        raise ValueError(
+            "correctness binding lacks verified budget fallback evidence"
+        )
     if manifest["source_tree_sha256"] != source_sha256:
         raise ValueError("correctness binding source mismatch")
-    if len(rows) != len(contract.build_production_matrix()):
+    budget_case_ids = {
+        row["case_id"] for row in budget_fallback_rows
+    }
+    production_rows = [
+        row for row in rows
+        if row.get("case_id") not in budget_case_ids
+    ]
+    if len(production_rows) != len(
+        contract.build_production_matrix()
+    ):
         raise ValueError("correctness binding is not canonical-complete")
     if any(
         row["output_token_ids"] != row["reference_token_ids"]
         or row["logits_close"] is not True
         or row["live_slot_kv_sha256"]
         != row["reference_live_slot_kv_sha256"]
-        for row in rows
+        for row in production_rows
     ):
         raise ValueError("correctness binding contains a mismatch")
     if (
@@ -1480,7 +1687,25 @@ def _load_correctness_binding(
     return {
         "run_tag": run_tag,
         "verification": verification,
-        "rows": {row["case_id"]: row for row in rows},
+        "rows": {
+            row["case_id"]: row for row in production_rows
+        },
+        "budget_fallback": {
+            "budget_fallback_rows": budget_fallback_rows,
+            "dispatch_rows": [
+                row for row in dispatch_rows
+                if row.get("case_id") in budget_case_ids
+            ],
+            "capture_rows": [
+                row for row in capture_rows
+                if row.get("case_id") in budget_case_ids
+            ],
+            "correctness_rows": [
+                row for row in rows
+                if row.get("case_id") in budget_case_ids
+            ],
+            "case_summaries": [],
+        },
         "diagnostic_binding": diagnostic_binding,
     }
 
@@ -1602,20 +1827,31 @@ def _run_worker_with_retry(
             or master_port in used_ports
         ):
             continue
-        command = build_worker_command(
-            remote_source=remote_source,
-            output_dir=remote_output,
-            worker_kind=case["worker_kind"],
-            source_sha256=source_sha256,
-            dist_port=dist_port,
-            master_port=master_port,
-            case_id=case["case_id"],
-            policy=case["policy"],
-            workload=case["workload"],
-            repetition=case["repetition"],
-            warmup=case["warmup"],
-            visible_blocks=visible_blocks,
-        )
+        if case["worker_kind"] == "budget-fallback":
+            command = build_budget_fallback_worker_command(
+                remote_source=remote_source,
+                output_dir=remote_output,
+                source_sha256=source_sha256,
+                dist_port=dist_port,
+                master_port=master_port,
+                reason=case["reason"],
+                visible_blocks=visible_blocks,
+            )
+        else:
+            command = build_worker_command(
+                remote_source=remote_source,
+                output_dir=remote_output,
+                worker_kind=case["worker_kind"],
+                source_sha256=source_sha256,
+                dist_port=dist_port,
+                master_port=master_port,
+                case_id=case["case_id"],
+                policy=case["policy"],
+                workload=case["workload"],
+                repetition=case["repetition"],
+                warmup=case["warmup"],
+                visible_blocks=visible_blocks,
+            )
         result = _run_remote_worker(
             str(Path(remote_output).parent),
             command=command,
@@ -1649,6 +1885,7 @@ def _write_production_artifacts(
     paired_capacity: dict,
     case_plan: list[dict],
     worker_results: dict[str, dict],
+    budget_fallback: dict,
     process_rows: list[dict],
     ports: dict,
     correctness_binding: dict | None,
@@ -1718,6 +1955,10 @@ def _write_production_artifacts(
     aggregate["correctness_rows"].sort(
         key=lambda row: matrix_order[row["case_id"]]
     )
+    budget_fallback_rows = merge_budget_fallback_evidence(
+        aggregate,
+        budget_fallback,
+    )
 
     for filename, rows in (
         ("dispatch_events.jsonl", aggregate["dispatch_rows"]),
@@ -1728,6 +1969,10 @@ def _write_production_artifacts(
         ("correctness_rows.jsonl", aggregate["correctness_rows"]),
     ):
         _write_jsonl(run_dir / filename, rows)
+    budget_fallback_sha256 = write_budget_fallback_artifact(
+        run_dir,
+        budget_fallback_rows,
+    )
     _write_json(
         run_dir / "case_summaries.json",
         aggregate["case_summaries"],
@@ -1803,6 +2048,7 @@ def _write_production_artifacts(
         "diagnostic_binding_sha256": (
             contract.sha256_file(run_dir / "diagnostic_binding.json")
         ),
+        "budget_fallback_sha256": budget_fallback_sha256,
     }
     _write_json(run_dir / "manifest.json", manifest)
     hashed_names = (
@@ -1814,6 +2060,7 @@ def _write_production_artifacts(
         "model_step_metrics.jsonl",
         "memory_trace.jsonl",
         "correctness_rows.jsonl",
+        "budget_fallback_rows.jsonl",
         "case_summaries.json",
         "summary.json",
     )
@@ -1915,7 +2162,7 @@ def _orchestrate(
             diagnostic_run_tag,
             source_evidence["tree_sha256"],
         )
-        if mode == "arrival-canonical"
+        if mode.startswith("arrival-")
         else None
     )
     if correctness_binding is not None:
@@ -1978,6 +2225,45 @@ def _orchestrate(
                 **execution,
             },
         )
+    budget_fallback_plan = build_budget_fallback_plan(mode)
+    budget_fallback_worker_results = {}
+    for case in budget_fallback_plan:
+        remote_output = (
+            f"{remote_dir}/budget-fallback/{case['reason']}/output"
+        )
+        _run_remote(["mkdir", "-p", remote_output])
+        worker_command, execution = _run_worker_with_retry(
+            remote_source=remote_source,
+            remote_output=remote_output,
+            case=case,
+            source_sha256=source_evidence["tree_sha256"],
+            visible_blocks=paired["candidate_config"][
+                "num_kvcache_blocks"
+            ],
+            used_ports=used_ports,
+        )
+        local_case_dir = (
+            run_dir / "budget-fallback" / case["reason"]
+        )
+        _download_remote_tree(remote_output, local_case_dir)
+        worker_result = _read_json(
+            local_case_dir / "worker_result.json"
+        )
+        budget_fallback_worker_results[case["case_id"]] = (
+            worker_result
+        )
+        _write_json(
+            local_case_dir / "execution.json",
+            {
+                "command": worker_command,
+                **execution,
+            },
+        )
+    budget_fallback = resolve_budget_fallback_aggregate(
+        mode=mode,
+        worker_results=budget_fallback_worker_results,
+        correctness_binding=correctness_binding,
+    )
     environment = _production_environment(
         source_evidence["tree_sha256"]
     )
@@ -1990,6 +2276,7 @@ def _orchestrate(
         paired_capacity=paired,
         case_plan=case_plan,
         worker_results=worker_results,
+        budget_fallback=budget_fallback,
         process_rows=process_rows,
         ports=ports,
         correctness_binding=correctness_binding,
@@ -2008,7 +2295,16 @@ def _parse_args(argv: list[str] | None = None):
     parser.add_argument("--diagnostic-run-tag")
     parser.add_argument(
         "--worker-kind",
-        choices=("capacity", "correctness", "arrival"),
+        choices=(
+            "capacity",
+            "correctness",
+            "arrival",
+            "budget-fallback",
+        ),
+    )
+    parser.add_argument(
+        "--budget-fallback-reason",
+        choices=contract.BUDGET_FALLBACK_REASONS,
     )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--source-sha256")
@@ -2029,9 +2325,9 @@ def _parse_args(argv: list[str] | None = None):
     args = parser.parse_args(argv)
     if args.mode in {"download-only", "verify-only"} and not args.run_tag:
         parser.error(f"{args.mode} requires --run-tag")
-    if args.mode == "arrival-canonical" and not args.diagnostic_run_tag:
+    if args.mode.startswith("arrival-") and not args.diagnostic_run_tag:
         parser.error(
-            "arrival-canonical requires --diagnostic-run-tag"
+            f"{args.mode} requires --diagnostic-run-tag"
         )
     if args.mode == "local-contracts" and args.worker_kind is not None:
         missing = [
@@ -2046,6 +2342,22 @@ def _parse_args(argv: list[str] | None = None):
         if missing:
             parser.error(
                 "local-contracts worker requires " + ", ".join(missing)
+            )
+        if (
+            args.worker_kind == "budget-fallback"
+            and args.budget_fallback_reason is None
+        ):
+            parser.error(
+                "budget-fallback worker requires "
+                "--budget-fallback-reason"
+            )
+        if (
+            args.worker_kind != "budget-fallback"
+            and args.budget_fallback_reason is not None
+        ):
+            parser.error(
+                "--budget-fallback-reason requires "
+                "--worker-kind budget-fallback"
             )
     return args
 

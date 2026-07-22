@@ -2008,6 +2008,23 @@ def write_complete_production_artifact(
     )
     dispatch_rows.extend(budget_dispatch_rows)
     capture_rows.extend(budget_capture_rows)
+    correctness_rows.extend([
+        {
+            "row_id": f"{row['case_id']}:correctness",
+            "case_id": row["case_id"],
+            "source_sha256": source_sha,
+            "output_token_ids": row["candidate_output_token_ids"],
+            "reference_token_ids": row["eager_output_token_ids"],
+            "logits_close": row["logits_allclose"],
+            "live_slot_kv_sha256": (
+                row["candidate_live_kv_sha256"]
+            ),
+            "reference_live_slot_kv_sha256": (
+                row["eager_live_kv_sha256"]
+            ),
+        }
+        for row in budget_rows
+    ])
     _write_production_jsonl(
         run_dir / "dispatch_events.jsonl",
         dispatch_rows,
@@ -2726,7 +2743,7 @@ def test_production_runner_cli_and_remote_contract_are_closed():
         args = [mode]
         if mode in {"download-only", "verify-only"}:
             args.extend(["--run-tag", "existing"])
-        if mode == "arrival-canonical":
+        if mode in {"arrival-smoke", "arrival-canonical"}:
             args.extend([
                 "--diagnostic-run-tag",
                 "correctness",
@@ -2751,18 +2768,19 @@ def test_production_runner_cli_and_remote_contract_are_closed():
         "correctness",
     ])
     assert parsed.diagnostic_run_tag == "correctness"
-    try:
-        runner._parse_args([
-            "arrival-canonical",
-            "--run-tag",
-            "arrival",
-        ])
-    except SystemExit:
-        pass
-    else:
-        raise AssertionError(
-            "arrival-canonical must bind a correctness run tag"
-        )
+    for mode in ("arrival-smoke", "arrival-canonical"):
+        try:
+            runner._parse_args([
+                mode,
+                "--run-tag",
+                "arrival",
+            ])
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(
+                f"{mode} must bind a correctness run tag"
+            )
     for mode in ("download-only", "verify-only"):
         try:
             runner._parse_args([mode])
@@ -2830,6 +2848,296 @@ def test_production_runner_snapshot_and_command_binding_are_source_exact():
         "--worker-kind",
     ]
     assert "--num-kvcache-blocks" in command["argv"]
+
+
+def test_production_budget_fallback_worker_cli_commands_and_plan_are_isolated():
+    runner = load_production_runner()
+    parsed = runner._parse_args([
+        "local-contracts",
+        "--worker-kind",
+        "budget-fallback",
+        "--budget-fallback-reason",
+        "entry_limit",
+        "--output-dir",
+        "/tmp/output",
+        "--source-sha256",
+        "a" * 64,
+    ])
+    assert parsed.worker_kind == "budget-fallback"
+    assert parsed.budget_fallback_reason == "entry_limit"
+    for argv in (
+        [
+            "local-contracts",
+            "--worker-kind",
+            "budget-fallback",
+            "--output-dir",
+            "/tmp/output",
+            "--source-sha256",
+            "a" * 64,
+        ],
+        [
+            "local-contracts",
+            "--worker-kind",
+            "arrival",
+            "--budget-fallback-reason",
+            "entry_limit",
+            "--output-dir",
+            "/tmp/output",
+            "--source-sha256",
+            "a" * 64,
+        ],
+    ):
+        try:
+            runner._parse_args(argv)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("invalid budget fallback CLI accepted")
+
+    used_ports = set()
+    commands = []
+    for index, reason in enumerate(contract.BUDGET_FALLBACK_REASONS):
+        command = runner.build_budget_fallback_worker_command(
+            remote_source="/remote/source",
+            output_dir=f"/remote/output/{reason}",
+            source_sha256="b" * 64,
+            dist_port=30000 + index * 2,
+            master_port=30001 + index * 2,
+            reason=reason,
+            visible_blocks=100,
+        )
+        commands.append(command)
+        assert command["cwd"] == "/remote/source"
+        assert command["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+        assert command["env"]["TINYVLLM_SOURCE_SHA256"] == "b" * 64
+        assert command["env"]["TINYVLLM_DIST_PORT"] != (
+            command["env"]["MASTER_PORT"]
+        )
+        assert command["argv"][0] == runner.REMOTE_PYTHON
+        assert command["argv"][
+            command["argv"].index("--worker-kind") + 1
+        ] == "budget-fallback"
+        assert command["argv"][
+            command["argv"].index("--budget-fallback-reason") + 1
+        ] == reason
+        for field in ("TINYVLLM_DIST_PORT", "MASTER_PORT"):
+            port = int(command["env"][field])
+            assert port not in used_ports
+            used_ports.add(port)
+    assert len(commands) == 8
+    assert len(used_ports) == 16
+
+    for mode in ("correctness-smoke", "correctness-canonical"):
+        plan = runner.build_budget_fallback_plan(mode)
+        assert [row["reason"] for row in plan] == list(
+            contract.BUDGET_FALLBACK_REASONS
+        )
+        assert all(row["worker_kind"] == "budget-fallback" for row in plan)
+    for mode in ("arrival-smoke", "arrival-canonical"):
+        assert runner.build_budget_fallback_plan(mode) == []
+
+
+def test_production_budget_fallback_worker_results_merge_without_performance_rows():
+    runner = load_production_runner()
+    budget_rows, dispatch_rows, capture_rows = (
+        _synthetic_budget_fallback_evidence(
+            source_sha="b" * 64,
+            first_port=30000,
+        )
+    )
+    worker_results = {}
+    for row in budget_rows:
+        case_id = row["case_id"]
+        worker_results[case_id] = {
+            "budget_fallback_row": row,
+            "dispatch_rows": [
+                event for event in dispatch_rows
+                if event["case_id"] == case_id
+            ],
+            "capture_rows": [
+                event for event in capture_rows
+                if event["case_id"] == case_id
+            ],
+            "correctness_rows": [{
+                "row_id": f"{case_id}:correctness",
+                "case_id": case_id,
+                "source_sha256": "b" * 64,
+                "output_token_ids": [41, 42],
+                "reference_token_ids": [41, 42],
+                "logits_close": True,
+                "live_slot_kv_sha256": "6" * 64,
+                "reference_live_slot_kv_sha256": "6" * 64,
+            }],
+        }
+    merged = runner.merge_budget_fallback_worker_results(
+        runner.build_budget_fallback_plan("correctness-canonical"),
+        worker_results,
+    )
+    assert [row["reason"] for row in merged["budget_fallback_rows"]] == (
+        list(contract.BUDGET_FALLBACK_REASONS)
+    )
+    assert len(merged["dispatch_rows"]) == 40
+    assert len(merged["capture_rows"]) == 6
+    assert len(merged["correctness_rows"]) == 8
+    assert merged["case_summaries"] == []
+    assert len({
+        row["row_id"]
+        for name in (
+            "dispatch_rows",
+            "capture_rows",
+            "correctness_rows",
+            "budget_fallback_rows",
+        )
+        for row in merged[name]
+    }) == 62
+
+    incomplete = copy.deepcopy(worker_results)
+    incomplete.pop("budget-fallback:identity_drift")
+    try:
+        runner.merge_budget_fallback_worker_results(
+            runner.build_budget_fallback_plan("correctness-canonical"),
+            incomplete,
+        )
+    except ValueError as exc:
+        assert "missing budget fallback worker" in str(exc)
+    else:
+        raise AssertionError("missing budget fallback worker was accepted")
+
+
+def test_production_budget_fallback_aggregate_is_correctness_owned_and_arrival_bound():
+    runner = load_production_runner()
+    budget_rows, dispatch_rows, capture_rows = (
+        _synthetic_budget_fallback_evidence(
+            source_sha="b" * 64,
+            first_port=30000,
+        )
+    )
+    worker_results = {}
+    for row in budget_rows:
+        case_id = row["case_id"]
+        worker_results[case_id] = {
+            "budget_fallback_row": row,
+            "dispatch_rows": [
+                event for event in dispatch_rows
+                if event["case_id"] == case_id
+            ],
+            "capture_rows": [
+                event for event in capture_rows
+                if event["case_id"] == case_id
+            ],
+            "correctness_rows": [{
+                "row_id": f"{case_id}:correctness",
+                "case_id": case_id,
+                "source_sha256": "b" * 64,
+                "output_token_ids": [41, 42],
+                "reference_token_ids": [41, 42],
+                "logits_close": True,
+                "live_slot_kv_sha256": "6" * 64,
+                "reference_live_slot_kv_sha256": "6" * 64,
+            }],
+        }
+    expected = runner.merge_budget_fallback_worker_results(
+        runner.build_budget_fallback_plan("correctness-canonical"),
+        worker_results,
+    )
+    assert runner.resolve_budget_fallback_aggregate(
+        mode="correctness-canonical",
+        worker_results=worker_results,
+        correctness_binding=None,
+    ) == expected
+    binding = {"budget_fallback": copy.deepcopy(expected)}
+    assert runner.resolve_budget_fallback_aggregate(
+        mode="arrival-canonical",
+        worker_results={},
+        correctness_binding=binding,
+    ) == expected
+    try:
+        runner.resolve_budget_fallback_aggregate(
+            mode="arrival-canonical",
+            worker_results={},
+            correctness_binding=None,
+        )
+    except ValueError as exc:
+        assert "correctness binding" in str(exc)
+    else:
+        raise AssertionError("arrival accepted missing fault binding")
+
+
+def test_production_budget_fallback_artifact_merges_raw_rows_and_hashes_exactly():
+    runner = load_production_runner()
+    budget_rows, dispatch_rows, capture_rows = (
+        _synthetic_budget_fallback_evidence(
+            source_sha="b" * 64,
+            first_port=30000,
+        )
+    )
+    budget_aggregate = {
+        "budget_fallback_rows": budget_rows,
+        "dispatch_rows": dispatch_rows,
+        "capture_rows": capture_rows,
+        "correctness_rows": [
+            {
+                "row_id": f"{row['case_id']}:correctness",
+                "case_id": row["case_id"],
+                "source_sha256": "b" * 64,
+                "output_token_ids": [41, 42],
+                "reference_token_ids": [41, 42],
+                "logits_close": True,
+                "live_slot_kv_sha256": "6" * 64,
+                "reference_live_slot_kv_sha256": "6" * 64,
+            }
+            for row in budget_rows
+        ],
+        "case_summaries": [],
+    }
+    aggregate = {
+        "dispatch_rows": [{"row_id": "production:dispatch"}],
+        "capture_rows": [],
+        "request_rows": [],
+        "model_step_rows": [],
+        "memory_rows": [],
+        "correctness_rows": [{"row_id": "production:correctness"}],
+        "case_summaries": [{"case_id": "production"}],
+    }
+    merged_rows = runner.merge_budget_fallback_evidence(
+        aggregate,
+        budget_aggregate,
+    )
+    assert merged_rows == budget_rows
+    assert len(aggregate["dispatch_rows"]) == 41
+    assert len(aggregate["capture_rows"]) == 6
+    assert len(aggregate["correctness_rows"]) == 9
+    assert aggregate["case_summaries"] == [{"case_id": "production"}]
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = Path(temporary_directory)
+        sha256 = runner.write_budget_fallback_artifact(
+            run_dir,
+            merged_rows,
+        )
+        assert sha256 == contract.sha256_file(
+            run_dir / "budget_fallback_rows.jsonl"
+        )
+        assert [
+            json.loads(line)
+            for line in (
+                run_dir / "budget_fallback_rows.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ] == budget_rows
+
+    contaminated = copy.deepcopy(budget_aggregate)
+    contaminated["case_summaries"] = [{
+        "case_id": "budget-fallback:entry_limit",
+    }]
+    try:
+        runner.merge_budget_fallback_evidence(
+            aggregate,
+            contaminated,
+        )
+    except ValueError as exc:
+        assert "performance" in str(exc)
+    else:
+        raise AssertionError("fault performance contamination accepted")
 
 
 def test_production_correctness_canonical_binds_315_case_diagnostic():
@@ -2967,6 +3275,55 @@ def test_arrival_canonical_rejects_non_go_correctness_binding():
             raise AssertionError("NO_GO correctness binding accepted")
         finally:
             runner.OUTPUT_ROOT = original_output_root
+
+
+def test_arrival_canonical_loads_verified_budget_fallback_binding():
+    runner = load_production_runner()
+    verifier = load_production_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        original_output_root = runner.OUTPUT_ROOT
+        runner.OUTPUT_ROOT = Path(temporary_directory)
+        run_dir = runner.OUTPUT_ROOT / "correctness"
+        write_complete_production_artifact(
+            run_dir,
+            mode="correctness-canonical",
+        )
+        verification = verifier.verify_run(run_dir, write_report=True)
+        assert verification["classification"] == "GO"
+        binding = runner._load_correctness_binding(
+            "correctness",
+            "1" * 64,
+        )
+        assert binding["verification"][
+            "budget_fallback_required"
+        ] == 8
+        assert binding["verification"][
+            "budget_fallback_verified"
+        ] == 8
+        assert [row["reason"] for row in binding[
+            "budget_fallback"
+        ]["budget_fallback_rows"]] == list(
+            contract.BUDGET_FALLBACK_REASONS
+        )
+        assert len(binding["budget_fallback"]["dispatch_rows"]) == 40
+        assert len(binding["budget_fallback"]["capture_rows"]) == 6
+        assert len(binding["budget_fallback"]["correctness_rows"]) == 8
+
+        verification["budget_fallback_verified"] = 7
+        _write_json(
+            run_dir / "independent_verification.json",
+            verification,
+        )
+        try:
+            runner._load_correctness_binding(
+                "correctness",
+                "1" * 64,
+            )
+        except ValueError as exc:
+            assert "budget fallback" in str(exc)
+        else:
+            raise AssertionError("incomplete fault binding accepted")
+        runner.OUTPUT_ROOT = original_output_root
 
 
 def test_production_capacity_pairing_is_scheduler_visible_equal():
@@ -5765,6 +6122,8 @@ if __name__ == "__main__":
         test_production_verifier_recomputes_correctness_capacity_and_metrics,
         test_production_runner_cli_and_remote_contract_are_closed,
         test_production_runner_snapshot_and_command_binding_are_source_exact,
+        test_production_budget_fallback_worker_cli_commands_and_plan_are_isolated,
+        test_production_budget_fallback_worker_results_merge_without_performance_rows,
         test_production_correctness_canonical_binds_315_case_diagnostic,
         test_arrival_canonical_rejects_non_go_correctness_binding,
         test_production_capacity_pairing_is_scheduler_visible_equal,
