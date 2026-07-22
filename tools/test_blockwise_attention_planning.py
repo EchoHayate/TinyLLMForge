@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -35,6 +36,7 @@ from tinyvllm.layers.attention import (
     _merge_attention_window,
     _normalize_logical_block_rows,
     _stage_blockwise_read_window,
+    _unique_blocks_in_order,
 )
 
 
@@ -103,6 +105,90 @@ class _ResidentPlanOnlyManager(_PlanOnlyManager):
         self.pending_wait_blocks = set()
 
 
+class _SimulatedResidencyManager:
+    def __init__(self, gpu_blocks):
+        self.gpu_blocks = int(gpu_blocks)
+        self.logical_to_slot = {}
+        self.slot_to_logical = [None] * self.gpu_blocks
+        self.slot_last_used = [0] * self.gpu_blocks
+        self.pending_wait_blocks = set()
+        self.clock = 0
+        self.required_trace = []
+        self.stats = {
+            "h2d_copies": 0,
+            "evictions": 0,
+            "prefetch_plans": 0,
+            "prefetch_read_blocks": 0,
+            "prefetch_write_blocks": 0,
+            "decode_plan_builds": 0,
+            "decode_plan_cache_hits": 0,
+            "decode_plan_identity_invalidations": 0,
+            "decode_windows_with_spare_capacity": 0,
+            "decode_cross_layer_hint_blocks": 0,
+            "decode_cross_layer_hint_resident": 0,
+            "decode_cross_layer_hint_retained": 0,
+        }
+
+    def mark_dirty(self, blocks):
+        return None
+
+    def _touch(self, slot):
+        self.clock += 1
+        self.slot_last_used[int(slot)] = self.clock
+
+    def ensure_resident(
+        self,
+        logical_blocks,
+        require_valid,
+        future_logical_blocks=None,
+        protected_logical_blocks=None,
+    ):
+        required = _unique_blocks_in_order(logical_blocks)
+        self.required_trace.append(tuple(required))
+        protected = set(required) | set(protected_logical_blocks or ())
+        future = set(future_logical_blocks or ())
+        for logical in required:
+            if logical in self.logical_to_slot:
+                self._touch(self.logical_to_slot[logical])
+                continue
+            candidates = [
+                slot
+                for slot, resident in enumerate(self.slot_to_logical)
+                if resident not in protected
+            ]
+            free = next(
+                (
+                    slot
+                    for slot, resident in enumerate(self.slot_to_logical)
+                    if resident is None
+                ),
+                None,
+            )
+            slot = free
+            if slot is None:
+                slot = min(
+                    candidates,
+                    key=lambda item: (
+                        self.slot_to_logical[item] in future,
+                        self.slot_last_used[item],
+                    ),
+                )
+                old = self.slot_to_logical[slot]
+                del self.logical_to_slot[old]
+                self.stats["evictions"] += 1
+            self.logical_to_slot[logical] = slot
+            self.slot_to_logical[slot] = logical
+            self.stats["h2d_copies"] += 1
+            self._touch(slot)
+        return {
+            logical: self.logical_to_slot[logical]
+            for logical in required
+        }
+
+    def wait_for_blocks(self, logical_blocks, clear_pending=False):
+        return None
+
+
 def _decode_fixture(
     *,
     block_rows,
@@ -137,6 +223,50 @@ def _decode_fixture(
     )
     v_cache = torch.zeros_like(k_cache)
     return manager, context, q, k_cache, v_cache
+
+
+def _plan_without_cross_layer_hints(plan):
+    return BlockwiseDecodePlan(
+        identity=plan.identity,
+        forward_windows=tuple(
+            replace(window, cross_layer_reuse_blocks=())
+            for window in plan.forward_windows
+        ),
+        reverse_windows=tuple(
+            replace(window, cross_layer_reuse_blocks=())
+            for window in plan.reverse_windows
+        ),
+    )
+
+
+def _run_simulated_decode_layers(plan):
+    manager = _SimulatedResidencyManager(gpu_blocks=2)
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=[[0, 1, 2, 3, 4, 5]],
+        kv_offload_context_lens=[6],
+        kv_offload_blockwise_blocks=1,
+        kv_offload_write_blocks=[],
+        kv_offload_decode_window_plan_cache=plan,
+    )
+    q = torch.ones(1, 1, 1, dtype=torch.float32)
+    k_cache = torch.arange(
+        2,
+        dtype=torch.float32,
+    ).view(2, 1, 1, 1)
+    v_cache = k_cache.clone()
+    for layer_idx in range(4):
+        _blockwise_online_decode_attention(
+            q,
+            k_cache,
+            v_cache,
+            context,
+            num_heads=1,
+            head_dim=1,
+            scale=1.0,
+            layer_idx=layer_idx,
+        )
+    return manager
 
 
 def test_decode_plan_builds_forward_and_reverse_cross_layer_frontiers():
@@ -296,6 +426,26 @@ def test_resident_fast_path_touches_only_required_blocks():
     assert manager.ensure_calls == []
     assert manager.wait_calls == []
     assert manager.touch_calls == [0]
+
+
+def test_cross_layer_hints_preserve_required_trace_and_do_not_worsen_movement():
+    candidate_plan = _build_blockwise_decode_window_plan(
+        block_rows=[[0, 1, 2, 3, 4, 5]],
+        context_lens=[6],
+        max_blocks=6,
+        block_size=1,
+        window_blocks=1,
+        write_blocks=set(),
+        gpu_blocks=2,
+    )
+    baseline_plan = _plan_without_cross_layer_hints(candidate_plan)
+
+    baseline = _run_simulated_decode_layers(baseline_plan)
+    candidate = _run_simulated_decode_layers(candidate_plan)
+
+    assert candidate.required_trace == baseline.required_trace
+    assert candidate.stats["h2d_copies"] <= baseline.stats["h2d_copies"]
+    assert candidate.stats["evictions"] <= baseline.stats["evictions"]
 
 
 def test_blockwise_decode_stages_read_window_in_first_seen_order():
@@ -1122,6 +1272,7 @@ def main():
     test_cross_layer_hints_are_future_only()
     test_zero_spare_capacity_matches_existing_alternating_future_sets()
     test_resident_fast_path_touches_only_required_blocks()
+    test_cross_layer_hints_preserve_required_trace_and_do_not_worsen_movement()
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks()
     test_blockwise_decode_odd_layers_stage_read_windows_from_tail()

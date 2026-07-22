@@ -242,6 +242,50 @@ def test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_f
     assert manager._coalesce_copy_pairs(manager.h2d_pairs[0]) == [(4, 0, 4)]
 
 
+def test_future_only_block_biases_victim_score_without_becoming_protected():
+    manager = _RecordingKVOffload()
+    manager.evict_policy = "lru_cost"
+    manager.slot_last_used = [0, 1, 2, 3]
+    manager.cpu_valid[4] = True
+
+    mapping = manager.ensure_resident(
+        [4],
+        require_valid=True,
+        future_logical_blocks={0},
+        protected_logical_blocks=set(),
+        wait=False,
+    )
+
+    assert mapping == {4: 1}
+    assert 0 in manager.logical_to_slot
+    assert 4 in manager.logical_to_slot
+    assert manager.h2d_pairs == [[(4, 1)]]
+    assert manager.pending_wait_blocks == set()
+
+
+def test_future_only_missing_blocks_are_not_loaded_pending_or_waited():
+    manager = _RecordingKVOffload()
+    manager.cpu_valid[4] = True
+    manager.cpu_valid[5] = True
+
+    mapping = manager.ensure_resident(
+        [4],
+        require_valid=True,
+        future_logical_blocks={5},
+        protected_logical_blocks=set(),
+        wait=False,
+    )
+
+    assert mapping == {4: manager.logical_to_slot[4]}
+    assert 5 not in manager.logical_to_slot
+    assert all(
+        logical != 5
+        for batch in manager.h2d_pairs
+        for logical, _ in batch
+    )
+    assert 5 not in manager.pending_wait_blocks
+
+
 def test_map_block_rows_uses_existing_resident_slots_without_staging():
     manager = _NoopKVOffload()
     manager.block_size = 8
@@ -441,6 +485,8 @@ def main():
     test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
     test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()
     test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_for_coalesced_h2d()
+    test_future_only_block_biases_victim_score_without_becoming_protected()
+    test_future_only_missing_blocks_are_not_loaded_pending_or_waited()
     test_map_block_rows_uses_existing_resident_slots_without_staging()
     test_map_slots_for_positions_uses_existing_resident_slots_without_staging()
     test_dirty_evictions_are_batched_when_loading_multiple_blocks()
