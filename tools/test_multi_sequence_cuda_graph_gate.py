@@ -2205,6 +2205,7 @@ def test_production_runner_snapshot_and_command_binding_are_source_exact():
     required = {
         "tinyvllm",
         "tools/source_audit.py",
+        "tools/arrival_load_gate.py",
         "tools/multi_sequence_cuda_graph_contract.py",
         "tools/verify_multi_sequence_cuda_graph_production.py",
         "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
