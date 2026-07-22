@@ -30,7 +30,19 @@ REMOTE_MODEL = "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___
 DIST_PORT_ENV = "TINYVLLM_DIST_PORT"
 MASTER_PORT_ENV = "MASTER_PORT"
 PORT_COLLISION = "EADDRINUSE"
-OWNED_ROOTS = ("tinyvllm", "tools")
+OWNED_ROOTS = (
+    "tinyvllm",
+    "tools/source_audit.py",
+    "tools/arrival_load_gate.py",
+    "tools/multi_sequence_cuda_graph_contract.py",
+    "tools/verify_multi_sequence_cuda_graph_production.py",
+    "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
+    "tools/run_multi_sequence_cuda_graph_diagnostic_remote.py",
+    "tools/diagnose_multi_sequence_cuda_graph.py",
+    "tools/verify_multi_sequence_cuda_graph_diagnostic.py",
+    "tools/test_multi_sequence_cuda_graph_gate.py",
+    "tools/test_model_runner_spec_verify.py",
+)
 IGNORED_UNTRACKED_PREFIXES = ("experiments",)
 DEFAULT_OUTPUT_ROOT = ROOT / "experiments" / "cuda_graph"
 PREFLIGHT_MODE = "heuristic-exact-width-preflight"
@@ -420,6 +432,41 @@ def _run_remote(
     return result
 
 
+class GpuOccupancyError(RuntimeError):
+    def __init__(self, *, stage: str, occupancy: list[dict]):
+        self.stage = stage
+        self.occupancy = occupancy
+        super().__init__(f"GPU 0 is occupied {stage}: {occupancy}")
+
+
+def _gpu_occupancy() -> list[dict]:
+    result = _run_remote(
+        "nvidia-smi -i 0 "
+        "--query-compute-apps=pid,process_name,used_memory "
+        "--format=csv,noheader,nounits",
+        check=False,
+    )
+    rows = []
+    for line in result.stdout.decode().splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) == 3 and parts[0].isdigit():
+            rows.append({
+                "pid": int(parts[0]),
+                "process_name": parts[1],
+                "used_memory_mib": int(parts[2]),
+            })
+    return rows
+
+
+def _require_idle_gpu(*, stage: str) -> None:
+    occupancy = _gpu_occupancy()
+    if occupancy:
+        raise GpuOccupancyError(
+            stage=stage,
+            occupancy=occupancy,
+        )
+
+
 def _quote(path: str | Path) -> str:
     return shlex.quote(str(path))
 
@@ -782,6 +829,7 @@ def _run_remote_case(
     case,
     ports: tuple[int, int],
 ) -> tuple[int, str]:
+    _require_idle_gpu(stage="before_case")
     local_case = _prepare_case_input(run_dir, case)
     remote_case = f"{remote_root}/cases/{case.case_id}"
     _run_remote(f"mkdir -p {_quote(remote_case + '/input')}")
@@ -814,6 +862,7 @@ def _run_remote_case(
         f"2> {_quote(output_dir + '/launcher_stderr.txt')}"
     )
     result = _run_remote(command, check=False)
+    _require_idle_gpu(stage="after_case")
     _download_tree(remote_case, local_case.with_name(local_case.name + ".new"))
     shutil.rmtree(local_case)
     local_case.with_name(local_case.name + ".new").replace(local_case)
@@ -1430,14 +1479,32 @@ def main(argv=None) -> int:
         )
         print(run_dir)
         return returncode
-    run_dir, returncode = _run_diagnostic(
-        kind=args.mode,
-        output_root=args.output_root,
-        run_tag=args.run_tag,
-        keep_remote=args.keep_remote,
-        resume=args.resume,
-        verifier_python=args.verifier_python,
-    )
+    try:
+        run_dir, returncode = _run_diagnostic(
+            kind=args.mode,
+            output_root=args.output_root,
+            run_tag=args.run_tag,
+            keep_remote=args.keep_remote,
+            resume=args.resume,
+            verifier_python=args.verifier_python,
+        )
+    except GpuOccupancyError as exc:
+        run_dir = args.output_root / (
+            args.run_tag or _make_run_tag(args.mode)
+        )
+        run_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(
+            run_dir / "incomplete.json",
+            {
+                "classification": "INCOMPLETE",
+                "failure_reason": "unrelated_gpu_occupancy",
+                "gpu": 0,
+                "occupancy": exc.occupancy,
+                "stage": exc.stage,
+            },
+        )
+        print(run_dir)
+        return 1
     print(run_dir)
     return returncode
 

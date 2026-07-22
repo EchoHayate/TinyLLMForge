@@ -33,6 +33,9 @@ REMOTE_MODEL = (
     "/data00/home/sitian/sitian-workspace01/.ms_cache/"
     "Qwen/Qwen3-0___6B"
 )
+DIAGNOSTIC_VERIFIER_PYTHON = Path(
+    "/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python"
+)
 REMOTE_RUN_ROOT = (
     "/data00/home/sitian/sitian-workspace01/tllm/"
     "exact-cuda-production-runs"
@@ -490,6 +493,67 @@ def build_case_plan(mode: str) -> list[dict]:
         }
         for case in matrix
     ]
+
+
+def build_canonical_diagnostic_command(*, run_tag: str) -> list[str]:
+    return [
+        sys.executable,
+        "tools/run_multi_sequence_cuda_graph_diagnostic_remote.py",
+        "heuristic-exact-width-canonical",
+        "--run-tag",
+        f"{run_tag}-diagnostic",
+        "--output-root",
+        str(OUTPUT_ROOT),
+        "--verifier-python",
+        str(DIAGNOSTIC_VERIFIER_PYTHON),
+    ]
+
+
+def load_canonical_diagnostic_binding(
+    diagnostic_dir: Path,
+    *,
+    expected_source_sha256: str,
+) -> dict:
+    diagnostic_dir = Path(diagnostic_dir)
+    source = _read_json(diagnostic_dir / "source_evidence.json")
+    manifest = _read_json(diagnostic_dir / "manifest.json")
+    verification = _read_json(
+        diagnostic_dir / "independent-verification" / "summary.json"
+    )
+    source_sha256 = source.get("tree_sha256")
+    if (
+        source_sha256 != expected_source_sha256
+        or manifest.get("source_tree_sha256") != expected_source_sha256
+    ):
+        raise ValueError("canonical diagnostic source mismatch")
+    case_ids = manifest.get("case_ids")
+    if manifest.get("canonical") is not True or not isinstance(
+        case_ids,
+        list,
+    ) or len(case_ids) != 315:
+        raise ValueError("canonical diagnostic is not 315-case complete")
+    expected = {
+        "classification": "EXACT_REPLAY_CORRECT",
+        "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
+        "legacy_compatibility": "LEGACY_COMPATIBLE",
+        "policy_integrity": "POLICY_EXACT",
+    }
+    for field, value in expected.items():
+        if verification.get(field) != value:
+            raise ValueError(
+                f"canonical diagnostic {field} mismatch"
+            )
+    if verification.get("case_count") != 315:
+        raise ValueError("canonical diagnostic case_count mismatch")
+    if verification.get("failures") != []:
+        raise ValueError("canonical diagnostic contains failures")
+    return {
+        "required": True,
+        "run_tag": diagnostic_dir.name,
+        "source_tree_sha256": source_sha256,
+        "case_count": 315,
+        "classifications": expected,
+    }
 
 
 def _nearest_rank(values: list[float], percentile: float) -> float:
@@ -1370,6 +1434,16 @@ def _load_correctness_binding(
         run_dir / "independent_verification.json"
     )
     rows = _read_jsonl(run_dir / "correctness_rows.jsonl")
+    diagnostic_binding = _read_json(
+        run_dir / "diagnostic_binding.json"
+    )
+    if (
+        verification.get("classification") != "GO"
+        or verification.get("failures") not in (None, [])
+    ):
+        raise ValueError(
+            "correctness independent verification is not GO"
+        )
     if manifest["source_tree_sha256"] != source_sha256:
         raise ValueError("correctness binding source mismatch")
     if len(rows) != len(contract.build_production_matrix()):
@@ -1382,11 +1456,71 @@ def _load_correctness_binding(
         for row in rows
     ):
         raise ValueError("correctness binding contains a mismatch")
+    if (
+        diagnostic_binding.get("required") is not True
+        or diagnostic_binding.get("source_tree_sha256")
+        != source_sha256
+    ):
+        raise ValueError(
+            "correctness binding lacks canonical diagnostic evidence"
+        )
     return {
         "run_tag": run_tag,
         "verification": verification,
         "rows": {row["case_id"]: row for row in rows},
+        "diagnostic_binding": diagnostic_binding,
     }
+
+
+def _run_canonical_diagnostic(
+    *,
+    run_tag: str,
+    source_sha256: str,
+) -> dict:
+    occupancy = _gpu_occupancy()
+    if occupancy:
+        raise GpuOccupancyError(
+            stage="before_canonical_diagnostic",
+            occupancy=occupancy,
+        )
+    command = build_canonical_diagnostic_command(run_tag=run_tag)
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        incomplete_path = (
+            OUTPUT_ROOT
+            / f"{run_tag}-diagnostic"
+            / "incomplete.json"
+        )
+        if incomplete_path.is_file():
+            incomplete = _read_json(incomplete_path)
+            if (
+                incomplete.get("failure_reason")
+                == "unrelated_gpu_occupancy"
+            ):
+                raise GpuOccupancyError(
+                    stage=str(incomplete.get("stage")),
+                    occupancy=list(incomplete.get("occupancy", [])),
+                )
+        raise RuntimeError(
+            result.stderr.decode("utf-8", errors="replace")
+            or result.stdout.decode("utf-8", errors="replace")
+            or "canonical diagnostic failed"
+        )
+    occupancy = _gpu_occupancy()
+    if occupancy:
+        raise GpuOccupancyError(
+            stage="after_canonical_diagnostic",
+            occupancy=occupancy,
+        )
+    return load_canonical_diagnostic_binding(
+        OUTPUT_ROOT / f"{run_tag}-diagnostic",
+        expected_source_sha256=source_sha256,
+    )
 
 
 def _write_artifact_hashes_after_go(run_dir: Path) -> None:
@@ -1494,6 +1628,7 @@ def _run_worker_with_retry(
 
 def _write_production_artifacts(
     *,
+    mode: str,
     run_dir: Path,
     run_tag: str,
     source_evidence: dict,
@@ -1504,6 +1639,7 @@ def _write_production_artifacts(
     process_rows: list[dict],
     ports: dict,
     correctness_binding: dict | None,
+    diagnostic_binding: dict,
 ) -> dict:
     matrix = contract.build_production_matrix()
     matrix_by_id = {case.case_id: case for case in matrix}
@@ -1590,6 +1726,10 @@ def _write_production_artifacts(
     )
     _write_json(run_dir / "summary.json", producer_summary)
     _write_json(run_dir / "environment.json", environment)
+    _write_json(
+        run_dir / "diagnostic_binding.json",
+        diagnostic_binding,
+    )
 
     policy_configs = {
         "baseline": paired_capacity["baseline_config"],
@@ -1597,6 +1737,7 @@ def _write_production_artifacts(
     }
     manifest = {
         "schema_version": 1,
+        "mode": mode,
         "run_tag": run_tag,
         "source_tree_sha256": source_evidence["tree_sha256"],
         "copied_file_sha256": _source_file_hashes(source_evidence),
@@ -1647,10 +1788,14 @@ def _write_production_artifacts(
         "capacity": paired_capacity["capacity"],
         "thresholds": dict(contract.PRODUCTION_THRESHOLDS),
         "case_ids": [case["case_id"] for case in case_plan],
+        "diagnostic_binding_sha256": (
+            contract.sha256_file(run_dir / "diagnostic_binding.json")
+        ),
     }
     _write_json(run_dir / "manifest.json", manifest)
     hashed_names = (
         "environment.json",
+        "diagnostic_binding.json",
         "dispatch_events.jsonl",
         "capture_events.jsonl",
         "request_metrics.jsonl",
@@ -1685,6 +1830,9 @@ def _write_production_artifacts(
             {
                 "run_tag": correctness_binding["run_tag"],
                 "verification": correctness_binding["verification"],
+                "diagnostic_binding": correctness_binding[
+                    "diagnostic_binding"
+                ],
             },
         )
     return producer_summary
@@ -1709,6 +1857,19 @@ def _orchestrate(
     if mode == "preflight":
         _write_json(run_dir / "source_manifest.json", source_evidence)
         return run_dir
+
+    diagnostic_binding = {
+        "required": False,
+        "run_tag": None,
+        "source_tree_sha256": source_evidence["tree_sha256"],
+        "case_count": 0,
+        "classifications": None,
+    }
+    if mode == "correctness-canonical":
+        diagnostic_binding = _run_canonical_diagnostic(
+            run_tag=run_tag,
+            source_sha256=source_evidence["tree_sha256"],
+        )
 
     capacity_output = f"{remote_dir}/capacity"
     capacity_dist_port, capacity_master_port = (
@@ -1745,6 +1906,10 @@ def _orchestrate(
         if mode == "arrival-canonical"
         else None
     )
+    if correctness_binding is not None:
+        diagnostic_binding = correctness_binding[
+            "diagnostic_binding"
+        ]
     case_plan = build_case_plan(mode)
     worker_results = {}
     process_rows = []
@@ -1805,6 +1970,7 @@ def _orchestrate(
         source_evidence["tree_sha256"]
     )
     _write_production_artifacts(
+        mode=mode,
         run_dir=run_dir,
         run_tag=run_tag,
         source_evidence=source_evidence,
@@ -1815,6 +1981,7 @@ def _orchestrate(
         process_rows=process_rows,
         ports=ports,
         correctness_binding=correctness_binding,
+        diagnostic_binding=diagnostic_binding,
     )
     verification = _verify_local(run_dir)
     if verification["classification"] == "GO":

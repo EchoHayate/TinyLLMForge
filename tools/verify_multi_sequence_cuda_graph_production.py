@@ -22,6 +22,7 @@ SPLIT_POLICY_PATH = (
 
 HASHED_PRODUCTION_FILES = (
     "environment.json",
+    "diagnostic_binding.json",
     "dispatch_events.jsonl",
     "capture_events.jsonl",
     "request_metrics.jsonl",
@@ -226,10 +227,12 @@ def _validate_required_files(run_dir: Path) -> list[str]:
 
 
 def _validate_manifest(
+    run_dir: Path,
     manifest: dict,
     environment: dict,
     source_manifest: dict,
     request_rows: list[dict],
+    diagnostic_binding: dict,
 ) -> list[str]:
     failures = []
     if set(manifest) != set(contract.PRODUCTION_MANIFEST_FIELDS):
@@ -240,6 +243,12 @@ def _validate_manifest(
         failures.append("manifest case_ids order or domain mismatch")
     if manifest.get("schema_version") != 1:
         failures.append("manifest schema_version mismatch")
+    mode = manifest.get("mode")
+    if mode not in {
+        "correctness-canonical",
+        "arrival-canonical",
+    }:
+        failures.append("manifest mode is not canonical")
     if manifest.get("thresholds") != contract.PRODUCTION_THRESHOLDS:
         failures.append("manifest thresholds mismatch")
     if manifest.get("commands") != list(EXPECTED_COMMAND):
@@ -253,6 +262,26 @@ def _validate_manifest(
         failures.append("source tree identity mismatch")
     if manifest.get("copied_file_sha256") != source_manifest.get("files"):
         failures.append("copied file hashes disagree")
+    if manifest.get("diagnostic_binding_sha256") != contract.sha256_file(
+        run_dir / "diagnostic_binding.json"
+    ):
+        failures.append("diagnostic binding hash mismatch")
+    expected_diagnostic = {
+        "classification": "EXACT_REPLAY_CORRECT",
+        "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
+        "legacy_compatibility": "LEGACY_COMPATIBLE",
+        "policy_integrity": "POLICY_EXACT",
+    }
+    if diagnostic_binding.get("required") is not True:
+        failures.append("canonical diagnostic binding is not required")
+    if diagnostic_binding.get("case_count") != 315:
+        failures.append("canonical diagnostic case count mismatch")
+    if diagnostic_binding.get("classifications") != expected_diagnostic:
+        failures.append("canonical diagnostic classifications mismatch")
+    if diagnostic_binding.get("source_tree_sha256") != manifest.get(
+        "source_tree_sha256"
+    ):
+        failures.append("canonical diagnostic source mismatch")
     if manifest.get("model_sha256") != contract.canonical_json_sha256(
         environment.get("model")
     ):
@@ -727,6 +756,9 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
             source_manifest = _read_json(
                 run_dir / "source_manifest.json"
             )
+            diagnostic_binding = _read_json(
+                run_dir / "diagnostic_binding.json"
+            )
             producer_summary = _read_json(run_dir / "summary.json")
             producer_case_rows = _read_json(
                 run_dir / "case_summaries.json"
@@ -762,10 +794,12 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
             )
             failures.extend(
                 _validate_manifest(
+                    run_dir,
                     manifest,
                     environment,
                     source_manifest,
                     request_rows,
+                    diagnostic_binding,
                 )
             )
             row_sets = (

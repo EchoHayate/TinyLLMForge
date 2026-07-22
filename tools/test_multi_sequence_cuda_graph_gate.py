@@ -1196,6 +1196,7 @@ def test_production_artifact_and_manifest_contract_is_closed():
         "manifest.json",
         "environment.json",
         "source_manifest.json",
+        "diagnostic_binding.json",
         "dispatch_events.jsonl",
         "capture_events.jsonl",
         "request_metrics.jsonl",
@@ -1213,6 +1214,7 @@ def test_production_artifact_and_manifest_contract_is_closed():
     required = set(contract.PRODUCTION_MANIFEST_FIELDS)
     assert required == {
         "schema_version",
+        "mode",
         "run_tag",
         "source_tree_sha256",
         "copied_file_sha256",
@@ -1228,6 +1230,7 @@ def test_production_artifact_and_manifest_contract_is_closed():
         "capacity",
         "thresholds",
         "case_ids",
+        "diagnostic_binding_sha256",
     }
 
 
@@ -1588,6 +1591,22 @@ def write_complete_production_artifact(run_dir: Path) -> None:
         "gpu": "A100-SXM4-80GB",
     }
     _write_json(run_dir / "environment.json", environment)
+    diagnostic_binding = {
+        "required": True,
+        "run_tag": "synthetic-production-go-diagnostic",
+        "source_tree_sha256": source_sha,
+        "case_count": 315,
+        "classifications": {
+            "classification": "EXACT_REPLAY_CORRECT",
+            "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
+            "legacy_compatibility": "LEGACY_COMPATIBLE",
+            "policy_integrity": "POLICY_EXACT",
+        },
+    }
+    _write_json(
+        run_dir / "diagnostic_binding.json",
+        diagnostic_binding,
+    )
 
     case_summaries = make_complete_production_rows()
     summary_by_id = {
@@ -1770,6 +1789,7 @@ def write_complete_production_artifact(run_dir: Path) -> None:
 
     manifest = {
         "schema_version": 1,
+        "mode": "arrival-canonical",
         "run_tag": "synthetic-production-go",
         "source_tree_sha256": source_sha,
         "copied_file_sha256": source_files,
@@ -1801,10 +1821,14 @@ def write_complete_production_artifact(run_dir: Path) -> None:
         "capacity": capacity,
         "thresholds": dict(contract.PRODUCTION_THRESHOLDS),
         "case_ids": [case.case_id for case in matrix],
+        "diagnostic_binding_sha256": (
+            contract.sha256_file(run_dir / "diagnostic_binding.json")
+        ),
     }
     _write_json(run_dir / "manifest.json", manifest)
     hashed_names = (
         "environment.json",
+        "diagnostic_binding.json",
         "dispatch_events.jsonl",
         "capture_events.jsonl",
         "request_metrics.jsonl",
@@ -2243,6 +2267,143 @@ def test_production_runner_snapshot_and_command_binding_are_source_exact():
         "--worker-kind",
     ]
     assert "--num-kvcache-blocks" in command["argv"]
+
+
+def test_production_correctness_canonical_binds_315_case_diagnostic():
+    runner = load_production_runner()
+    diagnostic_runner = load_remote_runner()
+    assert tuple(runner.OWNED_SOURCE_ROOTS) == tuple(
+        diagnostic_runner.OWNED_ROOTS
+    )
+    command = runner.build_canonical_diagnostic_command(
+        run_tag="production-correctness",
+    )
+    assert command == [
+        sys.executable,
+        "tools/run_multi_sequence_cuda_graph_diagnostic_remote.py",
+        "heuristic-exact-width-canonical",
+        "--run-tag",
+        "production-correctness-diagnostic",
+        "--output-root",
+        str(runner.OUTPUT_ROOT),
+        "--verifier-python",
+        str(runner.DIAGNOSTIC_VERIFIER_PYTHON),
+    ]
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        diagnostic_dir = Path(temporary_directory)
+        source_sha256 = "a" * 64
+        _write_json(
+            diagnostic_dir / "source_evidence.json",
+            {"tree_sha256": source_sha256},
+        )
+        _write_json(
+            diagnostic_dir / "manifest.json",
+            {
+                "canonical": True,
+                "case_ids": [f"case-{index}" for index in range(315)],
+                "source_tree_sha256": source_sha256,
+            },
+        )
+        summary = {
+            "classification": "EXACT_REPLAY_CORRECT",
+            "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
+            "legacy_compatibility": "LEGACY_COMPATIBLE",
+            "policy_integrity": "POLICY_EXACT",
+            "case_count": 315,
+            "failures": [],
+        }
+        verification_dir = diagnostic_dir / "independent-verification"
+        verification_dir.mkdir()
+        _write_json(verification_dir / "summary.json", summary)
+
+        binding = runner.load_canonical_diagnostic_binding(
+            diagnostic_dir,
+            expected_source_sha256=source_sha256,
+        )
+        assert binding["run_tag"] == diagnostic_dir.name
+        assert binding["case_count"] == 315
+        assert binding["classifications"] == {
+            "classification": "EXACT_REPLAY_CORRECT",
+            "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
+            "legacy_compatibility": "LEGACY_COMPATIBLE",
+            "policy_integrity": "POLICY_EXACT",
+        }
+        assert binding["source_tree_sha256"] == source_sha256
+
+        summary["rounded_classification"] = "ROUNDED_REPLAY_CORRECT"
+        _write_json(verification_dir / "summary.json", summary)
+        try:
+            runner.load_canonical_diagnostic_binding(
+                diagnostic_dir,
+                expected_source_sha256=source_sha256,
+            )
+        except ValueError as exc:
+            assert "rounded_classification" in str(exc)
+        else:
+            raise AssertionError("incorrect diagnostic classification accepted")
+
+        summary["rounded_classification"] = "ROUNDED_REPLAY_CORRUPT"
+        _write_json(verification_dir / "summary.json", summary)
+        try:
+            runner.load_canonical_diagnostic_binding(
+                diagnostic_dir,
+                expected_source_sha256="b" * 64,
+            )
+        except ValueError as exc:
+            assert "source" in str(exc)
+        else:
+            raise AssertionError("diagnostic source drift accepted")
+
+
+def test_arrival_canonical_rejects_non_go_correctness_binding():
+    runner = load_production_runner()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        original_output_root = runner.OUTPUT_ROOT
+        runner.OUTPUT_ROOT = Path(temporary_directory)
+        source_sha256 = "a" * 64
+        run_dir = runner.OUTPUT_ROOT / "correctness"
+        run_dir.mkdir()
+        _write_json(
+            run_dir / "manifest.json",
+            {"source_tree_sha256": source_sha256},
+        )
+        _write_json(
+            run_dir / "independent_verification.json",
+            {"classification": "NO_GO"},
+        )
+        _write_production_jsonl(
+            run_dir / "correctness_rows.jsonl",
+            [
+                {
+                    "case_id": case.case_id,
+                    "output_token_ids": [1],
+                    "reference_token_ids": [1],
+                    "logits_close": True,
+                    "live_slot_kv_sha256": "b" * 64,
+                    "reference_live_slot_kv_sha256": "b" * 64,
+                }
+                for case in contract.build_production_matrix()
+            ],
+        )
+        _write_json(
+            run_dir / "diagnostic_binding.json",
+            {
+                "required": True,
+                "source_tree_sha256": source_sha256,
+            },
+        )
+        try:
+            runner._load_correctness_binding(
+                "correctness",
+                source_sha256,
+            )
+        except ValueError as exc:
+            assert "independent verification" in str(exc)
+        else:
+            raise AssertionError("NO_GO correctness binding accepted")
+        finally:
+            runner.OUTPUT_ROOT = original_output_root
 
 
 def test_production_capacity_pairing_is_scheduler_visible_equal():
@@ -4455,6 +4616,134 @@ def test_remote_runner_reads_diagnostic_stderr_for_port_collision():
         )
 
 
+def test_diagnostic_runner_fails_closed_on_gpu_occupancy():
+    runner = load_remote_runner()
+    occupancy = [
+        {
+            "pid": 321,
+            "process_name": "unrelated-python",
+            "used_memory_mib": 2048,
+        }
+    ]
+    original = runner._gpu_occupancy
+    runner._gpu_occupancy = lambda: occupancy
+    try:
+        try:
+            runner._require_idle_gpu(stage="before_case")
+        except runner.GpuOccupancyError as exc:
+            assert exc.stage == "before_case"
+            assert exc.occupancy == occupancy
+        else:
+            raise AssertionError("occupied diagnostic GPU accepted")
+    finally:
+        runner._gpu_occupancy = original
+
+    source = REMOTE_RUNNER_PATH.read_text(encoding="utf-8")
+    function = source[
+        source.index("def _run_remote_case("):
+        source.index("\ndef _case_artifact_records(", source.index(
+            "def _run_remote_case("
+        ))
+    ]
+    assert '_require_idle_gpu(stage="before_case")' in function
+    assert '_require_idle_gpu(stage="after_case")' in function
+
+
+def test_diagnostic_runner_records_and_propagates_gpu_occupancy():
+    diagnostic_runner = load_remote_runner()
+    occupancy = [
+        {
+            "pid": 654,
+            "process_name": "unrelated-python",
+            "used_memory_mib": 1024,
+        }
+    ]
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_root = Path(temporary_directory)
+        original_run_diagnostic = diagnostic_runner._run_diagnostic
+
+        def fail_with_occupancy(**kwargs):
+            del kwargs
+            raise diagnostic_runner.GpuOccupancyError(
+                stage="before_case",
+                occupancy=occupancy,
+            )
+
+        diagnostic_runner._run_diagnostic = fail_with_occupancy
+        try:
+            returncode = diagnostic_runner.main([
+                "heuristic-exact-width-canonical",
+                "--run-tag",
+                "occupied-diagnostic",
+                "--output-root",
+                str(output_root),
+            ])
+        finally:
+            diagnostic_runner._run_diagnostic = original_run_diagnostic
+        assert returncode == 1
+        evidence = json.loads(
+            (
+                output_root
+                / "occupied-diagnostic"
+                / "incomplete.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert evidence == {
+            "classification": "INCOMPLETE",
+            "failure_reason": "unrelated_gpu_occupancy",
+            "gpu": 0,
+            "occupancy": occupancy,
+            "stage": "before_case",
+        }
+
+    production_runner = load_production_runner()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        original_output_root = production_runner.OUTPUT_ROOT
+        original_subprocess_run = production_runner.subprocess.run
+        original_gpu_occupancy = production_runner._gpu_occupancy
+        production_runner.OUTPUT_ROOT = Path(temporary_directory)
+        diagnostic_dir = (
+            production_runner.OUTPUT_ROOT
+            / "production-correctness-diagnostic"
+        )
+        diagnostic_dir.mkdir()
+        _write_json(
+            diagnostic_dir / "incomplete.json",
+            {
+                "classification": "INCOMPLETE",
+                "failure_reason": "unrelated_gpu_occupancy",
+                "gpu": 0,
+                "occupancy": occupancy,
+                "stage": "after_case",
+            },
+        )
+        production_runner._gpu_occupancy = lambda: []
+        production_runner.subprocess.run = lambda *args, **kwargs: (
+            types.SimpleNamespace(
+                returncode=1,
+                stdout=b"",
+                stderr=b"diagnostic failed",
+            )
+        )
+        try:
+            try:
+                production_runner._run_canonical_diagnostic(
+                    run_tag="production-correctness",
+                    source_sha256="a" * 64,
+                )
+            except production_runner.GpuOccupancyError as exc:
+                assert exc.stage == "after_case"
+                assert exc.occupancy == occupancy
+            else:
+                raise AssertionError(
+                    "diagnostic occupancy was not propagated"
+                )
+        finally:
+            production_runner.subprocess.run = original_subprocess_run
+            production_runner._gpu_occupancy = original_gpu_occupancy
+            production_runner.OUTPUT_ROOT = original_output_root
+
+
 def test_production_runner_records_gpu_occupancy_as_incomplete():
     runner = load_production_runner()
     occupancy = [
@@ -4894,6 +5183,8 @@ if __name__ == "__main__":
         test_production_verifier_recomputes_correctness_capacity_and_metrics,
         test_production_runner_cli_and_remote_contract_are_closed,
         test_production_runner_snapshot_and_command_binding_are_source_exact,
+        test_production_correctness_canonical_binds_315_case_diagnostic,
+        test_arrival_canonical_rejects_non_go_correctness_binding,
         test_production_capacity_pairing_is_scheduler_visible_equal,
         test_production_correctness_and_arrival_workload_contracts,
         test_production_runner_case_plan_is_mode_exact_and_paired,
@@ -4955,6 +5246,8 @@ if __name__ == "__main__":
         test_remote_runner_rejects_duplicate_or_equal_ports,
         test_remote_runner_retries_only_eaddrinuse,
         test_remote_runner_reads_diagnostic_stderr_for_port_collision,
+        test_diagnostic_runner_fails_closed_on_gpu_occupancy,
+        test_diagnostic_runner_records_and_propagates_gpu_occupancy,
         test_production_runner_records_gpu_occupancy_as_incomplete,
         test_remote_runner_preserves_remote_shell_command_as_one_argument,
         test_remote_runner_disables_bytecode_during_source_validation,

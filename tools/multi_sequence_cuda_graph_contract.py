@@ -110,6 +110,7 @@ PRODUCTION_ARTIFACT_FILES = (
     "manifest.json",
     "environment.json",
     "source_manifest.json",
+    "diagnostic_binding.json",
     "dispatch_events.jsonl",
     "capture_events.jsonl",
     "request_metrics.jsonl",
@@ -123,6 +124,7 @@ PRODUCTION_ARTIFACT_FILES = (
 )
 PRODUCTION_MANIFEST_FIELDS = (
     "schema_version",
+    "mode",
     "run_tag",
     "source_tree_sha256",
     "copied_file_sha256",
@@ -138,6 +140,7 @@ PRODUCTION_MANIFEST_FIELDS = (
     "capacity",
     "thresholds",
     "case_ids",
+    "diagnostic_binding_sha256",
 )
 
 _LOWER_BOUND_THRESHOLDS = frozenset(
