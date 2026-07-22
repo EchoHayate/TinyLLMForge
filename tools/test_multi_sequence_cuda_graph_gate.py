@@ -24,6 +24,11 @@ DIAGNOSTIC_PATH = ROOT / "tools" / "diagnose_multi_sequence_cuda_graph.py"
 VERIFIER_PATH = (
     ROOT / "tools" / "verify_multi_sequence_cuda_graph_diagnostic.py"
 )
+PRODUCTION_VERIFIER_PATH = (
+    ROOT
+    / "tools"
+    / "verify_multi_sequence_cuda_graph_production.py"
+)
 REMOTE_RUNNER_PATH = (
     ROOT / "tools" / "run_multi_sequence_cuda_graph_diagnostic_remote.py"
 )
@@ -244,6 +249,17 @@ def load_verifier():
     spec = importlib.util.spec_from_file_location(
         "cuda_graph_independent_verifier",
         VERIFIER_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_production_verifier():
+    spec = importlib.util.spec_from_file_location(
+        "cuda_graph_production_independent_verifier",
+        PRODUCTION_VERIFIER_PATH,
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -1458,6 +1474,628 @@ def test_production_gate_fails_closed_on_lifecycle_and_evidence():
         independent_summary={"classification": "NO_GO"},
     )
     assert mismatch["classification"] == "NO_GO"
+
+
+def _write_production_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text(
+        "".join(
+            json.dumps(
+                row,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=True,
+            )
+            + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+
+
+def _production_workload_identity(matrix) -> list[dict]:
+    return [
+        {
+            "case_id": case.case_id,
+            "workload": case.workload,
+            "policy": case.policy,
+            "repetition": case.repetition,
+            "warmup": case.warmup,
+            "policy_order": case.policy_order,
+            "paired_order": list(case.paired_order),
+        }
+        for case in matrix
+    ]
+
+
+def _production_arrival_identity(request_rows: list[dict]) -> list[dict]:
+    return [
+        {
+            "row_id": row["row_id"],
+            "case_id": row["case_id"],
+            "request_id": row["request_id"],
+            "scheduled_arrival_ns": row["scheduled_arrival_ns"],
+        }
+        for row in request_rows
+    ]
+
+
+def _rehash_production_artifact(run_dir: Path, name: str) -> None:
+    source_manifest_path = run_dir / "source_manifest.json"
+    source_manifest = json.loads(
+        source_manifest_path.read_text(encoding="utf-8")
+    )
+    source_manifest["artifact_sha256"][name] = contract.sha256_file(
+        run_dir / name
+    )
+    _write_json(source_manifest_path, source_manifest)
+
+
+def write_complete_production_artifact(run_dir: Path) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    matrix = contract.build_production_matrix()
+    source_sha = "1" * 64
+    source_files = {
+        "tinyvllm/engine/model_runner.py": "2" * 64,
+        "tinyvllm/engine/exact_cuda_graph_cache.py": "3" * 64,
+        "tools/multi_sequence_cuda_graph_contract.py": "4" * 64,
+    }
+    policy_configs = {
+        "baseline": {
+            "multi_sequence_cuda_graphs": False,
+            "num_kvcache_blocks": 100,
+        },
+        "candidate": {
+            "multi_sequence_cuda_graphs": True,
+            "num_kvcache_blocks": 100,
+        },
+    }
+    capacity = {
+        "baseline": {
+            "physical_blocks": 100,
+            "scratch_blocks": 0,
+            "scheduler_visible_blocks": 100,
+        },
+        "candidate": {
+            "physical_blocks": 108,
+            "scratch_blocks": 8,
+            "scheduler_visible_blocks": 100,
+        },
+    }
+    environment = {
+        "source_tree_sha256": source_sha,
+        "model": {
+            "path": "/models/Qwen3-0.6B",
+            "config": {"hidden_size": 1024},
+        },
+        "cuda": "12.1",
+        "torch": "2.4.1+cu121",
+        "gpu": "A100-SXM4-80GB",
+    }
+    _write_json(run_dir / "environment.json", environment)
+
+    case_summaries = make_complete_production_rows()
+    summary_by_id = {
+        row["case_id"]: row for row in case_summaries
+    }
+    dispatch_rows = []
+    capture_rows = []
+    request_rows = []
+    model_step_rows = []
+    memory_rows = []
+    correctness_rows = []
+    processes = []
+    ports = {}
+    commands = [
+        "python",
+        "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
+        "local-worker",
+    ]
+    split_policy = load_split_policy()
+    for case_index, case in enumerate(matrix):
+        case_id = case.case_id
+        summary = summary_by_id[case_id]
+        tinyvllm_port = 20000 + case_index * 2
+        master_port = tinyvllm_port + 1
+        ports[case_id] = {
+            "tinyvllm_dist_port": tinyvllm_port,
+            "master_port": master_port,
+        }
+        processes.append({
+            "case_id": case_id,
+            "pid": 1000 + case_index,
+            "command": commands + ["--case-id", case_id],
+            "tinyvllm_dist_port": tinyvllm_port,
+            "master_port": master_port,
+            "source_sha256": source_sha,
+        })
+        measurement_duration_ns = (
+            16_666_667
+            if case.policy == "candidate"
+            else 20_000_000
+        )
+        for request_index in range(2):
+            request_rows.append({
+                "row_id": f"{case_id}:request:{request_index}",
+                "case_id": case_id,
+                "request_id": f"{case_id}:q{request_index}",
+                "source_sha256": source_sha,
+                "scheduled_arrival_ns": request_index * 100,
+                "output_token_ids": [11, 12],
+                "itl_ns": [100.0, 100.0],
+            })
+        model_step_rows.append({
+            "row_id": f"{case_id}:model-step",
+            "case_id": case_id,
+            "source_sha256": source_sha,
+            "measurement_duration_ns": measurement_duration_ns,
+            "decode_duration_ns": 1_000_000_000,
+            "decoded_tokens": (
+                130.0
+                if case.policy == "candidate"
+                and case.workload == "stable_exact_reuse"
+                else 116.0
+                if case.policy == "candidate"
+                else 100.0
+            ),
+            "initialization_duration_ns": 1000,
+            "graph_eligible_steps": (
+                1
+                if case.policy == "candidate"
+                and case.workload == "stable_exact_reuse"
+                and not case.warmup
+                else 0
+            ),
+        })
+        memory_rows.append({
+            "row_id": f"{case_id}:memory",
+            "case_id": case_id,
+            "source_sha256": source_sha,
+            "reserved_bytes": 1000,
+        })
+        correctness_rows.append({
+            "row_id": f"{case_id}:correctness",
+            "case_id": case_id,
+            "source_sha256": source_sha,
+            "output_token_ids": [11, 12],
+            "reference_token_ids": [11, 12],
+            "logits_close": True,
+            "live_slot_kv_sha256": "5" * 64,
+            "reference_live_slot_kv_sha256": "5" * 64,
+        })
+        for event_index, event in enumerate(
+            summary["dispatch_events"]
+        ):
+            width = int(event["page_table_width"])
+            batch_size = (
+                4
+                if event["dispatch"] == "graph"
+                else int(event["active_batch_size"])
+            )
+            identity = split_policy.build_flash_attn_263_graph_identity(
+                graph_batch_size=batch_size,
+                inputs=split_policy.FlashAttentionSplitInputs(
+                    batch_size=batch_size,
+                    num_query_heads=16,
+                    num_kv_heads=8,
+                    head_dim=128,
+                    page_block_size=256,
+                    page_table_width=width,
+                    max_seqlen_q=1,
+                    multi_processor_count=108,
+                ),
+                flash_attn_version="2.6.3",
+                require_exact_batch=True,
+            )
+            identity_fields = asdict(identity)
+            if event["dispatch"] == "graph":
+                capture_rows.append({
+                    "row_id": f"{case_id}:capture:{event_index}",
+                    "case_id": case_id,
+                    "step_id": 3,
+                    "source_sha256": source_sha,
+                    "graph_identity_sha256": identity.sha256,
+                    "identity_fields": identity_fields,
+                    "observation_count": 3,
+                    "status": "ready",
+                    "fallback_reason": None,
+                    "capture_duration_ns": 100,
+                    "static_bytes": 4096,
+                    "reserved_delta_bytes": 1024,
+                    "budget_overshoot": False,
+                })
+            dispatch_rows.append({
+                "row_id": f"{case_id}:dispatch:{event_index}",
+                "case_id": case_id,
+                "step_id": 4 + event_index,
+                "source_sha256": source_sha,
+                "dispatch": event["dispatch"],
+                "cache_state": event["cache_state"],
+                "fallback_reason": event["fallback_reason"],
+                "graph_identity_sha256": identity.sha256,
+                "identity_fields": identity_fields,
+                "observation_count": 3,
+                "page_table_width": width,
+                "active_batch_size": int(
+                    event["active_batch_size"]
+                ),
+            })
+
+    _write_production_jsonl(
+        run_dir / "dispatch_events.jsonl",
+        dispatch_rows,
+    )
+    _write_production_jsonl(
+        run_dir / "capture_events.jsonl",
+        capture_rows,
+    )
+    _write_production_jsonl(
+        run_dir / "request_metrics.jsonl",
+        request_rows,
+    )
+    _write_production_jsonl(
+        run_dir / "model_step_metrics.jsonl",
+        model_step_rows,
+    )
+    _write_production_jsonl(
+        run_dir / "memory_trace.jsonl",
+        memory_rows,
+    )
+    _write_production_jsonl(
+        run_dir / "correctness_rows.jsonl",
+        correctness_rows,
+    )
+    _write_json(run_dir / "case_summaries.json", case_summaries)
+    producer_summary = contract.classify_production_gate(
+        case_summaries,
+        producer_summary={"classification": "GO"},
+        independent_summary={"classification": "GO"},
+    )
+    _write_json(run_dir / "summary.json", producer_summary)
+
+    manifest = {
+        "schema_version": 1,
+        "run_tag": "synthetic-production-go",
+        "source_tree_sha256": source_sha,
+        "copied_file_sha256": source_files,
+        "model_sha256": contract.canonical_json_sha256(
+            environment["model"]
+        ),
+        "config_sha256": contract.canonical_json_sha256(
+            policy_configs
+        ),
+        "commands": commands,
+        "workload_sha256": contract.canonical_json_sha256(
+            _production_workload_identity(matrix)
+        ),
+        "arrival_sha256": contract.canonical_json_sha256(
+            _production_arrival_identity(request_rows)
+        ),
+        "paired_policy_order": [
+            {
+                "workload": case.workload,
+                "repetition": case.repetition,
+                "paired_order": list(case.paired_order),
+            }
+            for case in matrix
+            if case.policy_order == 0
+        ],
+        "processes": processes,
+        "ports": ports,
+        "policy_configs": policy_configs,
+        "capacity": capacity,
+        "thresholds": dict(contract.PRODUCTION_THRESHOLDS),
+        "case_ids": [case.case_id for case in matrix],
+    }
+    _write_json(run_dir / "manifest.json", manifest)
+    hashed_names = (
+        "environment.json",
+        "dispatch_events.jsonl",
+        "capture_events.jsonl",
+        "request_metrics.jsonl",
+        "model_step_metrics.jsonl",
+        "memory_trace.jsonl",
+        "correctness_rows.jsonl",
+        "case_summaries.json",
+        "summary.json",
+    )
+    source_manifest = {
+        "source_tree_sha256": source_sha,
+        "files": source_files,
+        "artifact_sha256": {
+            name: contract.sha256_file(run_dir / name)
+            for name in hashed_names
+        },
+    }
+    _write_json(run_dir / "source_manifest.json", source_manifest)
+    _write_json(
+        run_dir / "independent_verification.json",
+        {"classification": "PENDING"},
+    )
+    (run_dir / "report.md").write_text(
+        "# Pending independent verification\n",
+        encoding="utf-8",
+    )
+
+
+def test_production_verifier_accepts_complete_synthetic_artifact():
+    verifier = load_production_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = Path(temporary_directory)
+        write_complete_production_artifact(run_dir)
+        result = verifier.verify_run(run_dir)
+        assert result["classification"] == "GO"
+        assert result["failures"] == []
+        written = json.loads(
+            (run_dir / "independent_verification.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert written == result
+        assert "# Exact CUDA Graph Production Verification" in (
+            run_dir / "report.md"
+        ).read_text(encoding="utf-8")
+
+
+def test_production_verifier_rejects_provenance_and_hash_tampering():
+    verifier = load_production_verifier()
+
+    def run_tamper(tamper):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            run_dir = Path(temporary_directory)
+            write_complete_production_artifact(run_dir)
+            tamper(run_dir)
+            result = verifier.verify_run(run_dir)
+            assert result["classification"] != "GO"
+
+    run_tamper(lambda root: (root / "memory_trace.jsonl").unlink())
+
+    def duplicate_row(root):
+        path = root / "request_metrics.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows.append(copy.deepcopy(rows[0]))
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(duplicate_row)
+
+    def reorder_manifest(root):
+        manifest = json.loads((root / "manifest.json").read_text())
+        manifest["case_ids"][0], manifest["case_ids"][1] = (
+            manifest["case_ids"][1],
+            manifest["case_ids"][0],
+        )
+        _write_json(root / "manifest.json", manifest)
+
+    run_tamper(reorder_manifest)
+
+    def mixed_source(root):
+        path = root / "dispatch_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[0]["source_sha256"] = "9" * 64
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(mixed_source)
+    run_tamper(
+        lambda root: (root / "request_metrics.jsonl").write_text(
+            (root / "request_metrics.jsonl").read_text() + "\n"
+        )
+    )
+
+    for field in ("workload_sha256", "model_sha256"):
+        def tamper_manifest(root, field=field):
+            manifest = json.loads((root / "manifest.json").read_text())
+            manifest[field] = "0" * 64
+            _write_json(root / "manifest.json", manifest)
+
+        run_tamper(tamper_manifest)
+
+    def wrong_command(root):
+        manifest = json.loads((root / "manifest.json").read_text())
+        manifest["commands"][-1] = "wrong-worker"
+        _write_json(root / "manifest.json", manifest)
+
+    run_tamper(wrong_command)
+
+    def duplicate_port(root):
+        manifest = json.loads((root / "manifest.json").read_text())
+        manifest["processes"][1]["tinyvllm_dist_port"] = (
+            manifest["processes"][0]["tinyvllm_dist_port"]
+        )
+        _write_json(root / "manifest.json", manifest)
+
+    run_tamper(duplicate_port)
+
+    def nonfinite_metric(root):
+        path = root / "model_step_metrics.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[0]["decoded_tokens"] = float("nan")
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(nonfinite_metric)
+
+
+def test_production_verifier_rejects_identity_and_lifecycle_tampering():
+    verifier = load_production_verifier()
+
+    def run_tamper(tamper):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            run_dir = Path(temporary_directory)
+            write_complete_production_artifact(run_dir)
+            tamper(run_dir)
+            result = verifier.verify_run(run_dir)
+            assert result["classification"] != "GO"
+
+    def mutate_dispatch(root, mutate):
+        path = root / "dispatch_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(row for row in rows if row["dispatch"] == "graph")
+        mutate(target)
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        lambda root: mutate_dispatch(
+            root,
+            lambda row: row["identity_fields"].update(
+                {"head_dim": 64}
+            ),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_dispatch(
+            root,
+            lambda row: row.update(
+                {"graph_identity_sha256": None}
+            ),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_dispatch(
+            root,
+            lambda row: row["identity_fields"].update(
+                {"graph_batch_size": 8}
+            ),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_dispatch(
+            root,
+            lambda row: row.update({"cache_state": "rejected"}),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_dispatch(
+            root,
+            lambda row: row.update({"observation_count": 2}),
+        )
+    )
+
+    def omit_capture(root):
+        path = root / "capture_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows.pop(0)
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(omit_capture)
+
+    def overshoot_capture(root):
+        path = root / "capture_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[0]["budget_overshoot"] = True
+        rows[0]["status"] = "ready"
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(overshoot_capture)
+
+
+def test_production_verifier_recomputes_correctness_capacity_and_metrics():
+    verifier = load_production_verifier()
+
+    def run_tamper(tamper):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            run_dir = Path(temporary_directory)
+            write_complete_production_artifact(run_dir)
+            tamper(run_dir)
+            result = verifier.verify_run(run_dir)
+            assert result["classification"] != "GO"
+
+    def mutate_jsonl(root, name, mutate):
+        path = root / name
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        mutate(rows[0])
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, name)
+
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "correctness_rows.jsonl",
+            lambda row: row.update({"output_token_ids": [99]}),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "correctness_rows.jsonl",
+            lambda row: row.update({"logits_close": False}),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "correctness_rows.jsonl",
+            lambda row: row.update(
+                {"live_slot_kv_sha256": "8" * 64}
+            ),
+        )
+    )
+
+    def capacity_mismatch(root):
+        manifest = json.loads((root / "manifest.json").read_text())
+        manifest["capacity"]["candidate"][
+            "scheduler_visible_blocks"
+        ] = 99
+        _write_json(root / "manifest.json", manifest)
+
+    run_tamper(capacity_mismatch)
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "model_step_metrics.jsonl",
+            lambda row: row.update(
+                {"measurement_duration_ns": 1_000_000_000}
+            ),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "request_metrics.jsonl",
+            lambda row: row.update({"itl_ns": [999.0]}),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "memory_trace.jsonl",
+            lambda row: row.update({"reserved_bytes": 999999}),
+        )
+    )
+    run_tamper(
+        lambda root: mutate_jsonl(
+            root,
+            "model_step_metrics.jsonl",
+            lambda row: row.update(
+                {"initialization_duration_ns": 999999}
+            ),
+        )
+    )
+
+    def low_hit_rate(root):
+        path = root / "model_step_metrics.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row for row in rows
+            if "stable_exact_reuse__measured" in row["case_id"]
+            and row["case_id"].endswith("__candidate")
+        )
+        target["graph_eligible_steps"] = 10
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(low_hit_rate)
+
+    def producer_mismatch(root):
+        summary = json.loads((root / "summary.json").read_text())
+        summary["classification"] = "NO_GO"
+        _write_json(root / "summary.json", summary)
+        _rehash_production_artifact(root, "summary.json")
+
+    run_tamper(producer_mismatch)
 
 
 def test_prompt_plan_is_deterministic_and_covers_required_trajectories():
@@ -3822,6 +4460,10 @@ if __name__ == "__main__":
         test_production_artifact_and_manifest_contract_is_closed,
         test_production_gate_recomputes_all_frozen_boundaries,
         test_production_gate_fails_closed_on_lifecycle_and_evidence,
+        test_production_verifier_accepts_complete_synthetic_artifact,
+        test_production_verifier_rejects_provenance_and_hash_tampering,
+        test_production_verifier_rejects_identity_and_lifecycle_tampering,
+        test_production_verifier_recomputes_correctness_capacity_and_metrics,
         test_prompt_plan_is_deterministic_and_covers_required_trajectories,
         test_ragged_prompts_cross_page_boundaries_during_measured_decode,
         test_kv_observation_plan_covers_active_zero_inactive_and_sentinels,
