@@ -3825,3 +3825,65 @@ qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-184045/
 约占 13.3 GiB。没有启动 correctness smoke。恢复时以 tree SHA
 `6dece69d...117b3` 为当前来源基线；只有 GPU 0 compute process 列表为空
 才启动新 smoke。
+
+### Exact CUDA Graph Prompt-to-Artifact Completion Checklist
+
+目标不是“代码和单测存在”，而是 source-bound Qwen3-0.6B remote
+correctness 与 arrival-load 都给出独立可复核证据。当前逐项状态：
+
+| # | Completion criterion | Concrete evidence | Status |
+|---|---|---|---|
+| 1 | default-off exact cache | `tinyvllm/config.py`: `multi_sequence_cuda_graphs=False`; `test_multi_sequence_cuda_graph_config_defaults_and_allowlist` | **PROVED locally** |
+| 2 | exact identity, no batch/width rounding | `model_runner.py` 和 verifier 均要求 `graph_batch_size == active_batch_size`; split policy 使用 `require_exact_batch=True`; rounded replay diagnostic contract 已冻结 | **PROVED locally; canonical remote diagnostic pending** |
+| 3 | three observations before capture | config/cache `min_observations=3`; cache admission test和 lifecycle verifier | **PROVED locally; remote event rows pending** |
+| 4 | scratch/capacity isolation | candidate physical blocks = scheduler-visible + scratch；baseline/candidate scheduler-visible blocks 必须相同；capacity pairing tests | **PROVED locally; remote capacity artifact pending** |
+| 5 | eight terminal fallback reasons | frozen reason/schema contract、8 isolated workers、tamper tests、independent reconstruction | **IMPLEMENTED and locally proved; remote 8/8 rows pending** |
+| 6 | no production injection surface | harness-only source scan covers `config.py`、`model_runner.py`、`exact_cuda_graph_cache.py`; production files have no fault switch | **PROVED locally** |
+| 7 | 315-case diagnostic correctness | canonical diagnostic command/binding requires exact 315 cases and four classifications | **CONTRACT proved; fresh remote canonical run missing** |
+| 8 | actual remote `ModelRunner` correctness | required fault and production rows bind tokens, logits and live-KV; source/case domains closed | **NOT ACHIEVED: no current-tree smoke/canonical model run** |
+| 9 | canonical arrival thresholds | verifier recomputes throughput, request throughput, p95/p99 ITL, reserved memory, initialization and graph-hit thresholds | **NOT ACHIEVED: arrival canonical not run** |
+| 10 | fault-worker performance exclusion | fault workers absent from `manifest.processes`, `manifest.ports`, `case_summaries` and aggregate memory/performance rows; contamination tests reject additions | **PROVED locally** |
+| 11 | source/provenance binding | current preflight run `...-20260722-184045`, base `e22bd51`, `dirty=false`, tree SHA `6dece69d...117b3`; artifact hashes and raw case domains independently checked | **PROVED through preflight only** |
+| 12 | README unchanged unless both canonical gates GO | `git diff -- README.md` empty | **PROVED** |
+
+Test-suite coverage audit：
+
+```text
+test_* definitions: 130
+manual registry entries: 130
+missing: 0
+unknown: 0
+duplicates: 0
+```
+
+Fresh local commands last passed：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/test_multi_sequence_cuda_graph_gate.py
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/test_model_runner_spec_verify.py
+git diff --check
+```
+
+Current remote blocker：
+
+```text
+GPU 0 compute processes: 8 unrelated long-running services
+GPU memory used: approximately 13.3 GiB
+current-tree correctness smoke: not started
+current-tree budget_fallback_verified: no remote value
+canonical correctness: not started
+canonical arrival: not started
+```
+
+Completion audit conclusion：
+
+```text
+objective status: NOT ACHIEVED
+reason:
+actual remote ModelRunner correctness, 8/8 fault evidence, canonical
+diagnostic correctness, and canonical arrival performance evidence are missing
+performance improvement proven: NO
+README publication allowed: NO
+```
