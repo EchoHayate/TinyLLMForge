@@ -661,6 +661,19 @@ def test_fallback_reason_contract_is_closed_and_complete():
     assert len(set(cache_module.FALLBACK_REASONS)) == len(
         cache_module.FALLBACK_REASONS
     )
+    assert contract.BUDGET_FALLBACK_REASONS == (
+        "entry_limit",
+        "static_byte_budget",
+        "reserved_byte_budget",
+        "single_capture_budget",
+        "total_capture_budget",
+        "scratch_unavailable",
+        "capture_failed",
+        "identity_drift",
+    )
+    assert set(contract.BUDGET_FALLBACK_REASONS) <= set(
+        contract.FALLBACK_REASONS
+    )
     assert contract.PRODUCTION_CACHE_DEFAULTS == {
         "enabled": False,
         "batch_allowlist": (2, 4, 8),
@@ -1203,6 +1216,7 @@ def test_production_artifact_and_manifest_contract_is_closed():
         "model_step_metrics.jsonl",
         "memory_trace.jsonl",
         "correctness_rows.jsonl",
+        "budget_fallback_rows.jsonl",
         "case_summaries.json",
         "summary.json",
         "report.md",
@@ -1231,7 +1245,39 @@ def test_production_artifact_and_manifest_contract_is_closed():
         "thresholds",
         "case_ids",
         "diagnostic_binding_sha256",
+        "budget_fallback_sha256",
     }
+    assert contract.BUDGET_FALLBACK_ROW_FIELDS == (
+        "row_id",
+        "case_id",
+        "reason",
+        "source_sha256",
+        "worker_pid",
+        "tinyvllm_dist_port",
+        "master_port",
+        "gpu",
+        "injection_class",
+        "injection_installed",
+        "injection_restored",
+        "effective_cache_config",
+        "pre_target_cache_summary",
+        "target_identity_fields",
+        "target_identity_sha256",
+        "observation_dispatch_row_ids",
+        "terminal_dispatch_row_ids",
+        "capture_row_ids",
+        "eager_output_token_ids",
+        "candidate_output_token_ids",
+        "logits_allclose",
+        "logits_max_abs_diff",
+        "eager_live_kv_sha256",
+        "candidate_live_kv_sha256",
+        "terminal_rejection_reason",
+        "target_graph_replay_count",
+        "target_capture_attempt_count",
+        "post_rejection_capture_attempt_count",
+        "complete",
+    )
 
 
 def make_complete_production_rows():
