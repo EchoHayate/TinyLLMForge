@@ -4,9 +4,18 @@ import torch
 import pickle
 import os
 import time
+import flash_attn
 
 import torch.distributed as dist
 from tinyvllm.config import Config
+from tinyvllm.engine.exact_cuda_graph_cache import (
+    ExactCudaGraphCache,
+    ExactCudaGraphCacheConfig,
+)
+from tinyvllm.engine.flash_attn_split_policy import (
+    FlashAttentionSplitInputs,
+    build_flash_attn_263_graph_identity,
+)
 from tinyvllm.engine.sequence import Sequence
 from tinyvllm.models.qwen3 import Qwen3ForCausalLM
 from tinyvllm.utils.loader import load_model
@@ -40,6 +49,41 @@ def _resolve_kv_cache_blocks(
             f"available={auto_blocks}"
         )
     return requested_blocks
+
+
+def resolve_exact_graph_kv_capacity(
+    *,
+    auto_blocks: int,
+    requested_visible_blocks: int,
+    feature_enabled: bool,
+    scratch_blocks: int,
+) -> tuple[int, int]:
+    if auto_blocks <= 0:
+        raise ValueError("auto_blocks must be positive")
+    if not feature_enabled:
+        visible_blocks = _resolve_kv_cache_blocks(
+            requested_visible_blocks,
+            auto_blocks,
+        )
+        return visible_blocks, visible_blocks
+    if scratch_blocks <= 0:
+        raise ValueError("scratch_blocks must be positive")
+    if requested_visible_blocks == -1:
+        visible_blocks = auto_blocks - scratch_blocks
+        if visible_blocks <= 0:
+            raise ValueError(
+                "exact graph scratch blocks exhaust KV cache capacity"
+            )
+        return visible_blocks, auto_blocks
+    physical_blocks = requested_visible_blocks + scratch_blocks
+    if physical_blocks > auto_blocks:
+        raise ValueError(
+            "explicit scheduler-visible KV cache plus exact graph scratch "
+            "exceeds available capacity: "
+            f"visible={requested_visible_blocks}, "
+            f"scratch={scratch_blocks}, available={auto_blocks}"
+        )
+    return requested_visible_blocks, physical_blocks
 
 
 class KVOffloadMVP0:
@@ -644,6 +688,30 @@ class ModelRunner:
         self.warmup_model()                             #暂时跳过
 
         self.allocate_kv_cache()                        #预分配空间（没有具体值）
+        self.exact_cuda_graph_cache = ExactCudaGraphCache(
+            ExactCudaGraphCacheConfig(
+                enabled=config.multi_sequence_cuda_graphs,
+                batch_allowlist=(
+                    config.multi_sequence_cuda_graph_batch_allowlist
+                ),
+                min_observations=(
+                    config.multi_sequence_cuda_graph_min_observations
+                ),
+                max_entries=config.multi_sequence_cuda_graph_max_entries,
+                max_static_bytes=(
+                    config.multi_sequence_cuda_graph_max_static_bytes
+                ),
+                max_reserved_bytes=(
+                    config.multi_sequence_cuda_graph_max_reserved_bytes
+                ),
+                max_total_capture_ns=(
+                    config.multi_sequence_cuda_graph_max_total_capture_ns
+                ),
+                max_single_capture_ns=(
+                    config.multi_sequence_cuda_graph_max_single_capture_ns
+                ),
+            )
+        )
         # cuda graph 跳过条件：
         #   1) enforce_eager：用户显式关
         #   2) kv_quant_bits == 4 (C4)：decode 反量化路径里有动态 alloc，无法 capture
@@ -814,12 +882,28 @@ class ModelRunner:
             assert logical_nb >= gpu_nb, "kv_offload_logical_blocks 必须 >= kv_offload_gpu_blocks"
             config.num_kvcache_blocks = logical_nb
             nb = gpu_nb
+            self._physical_num_kvcache_blocks = gpu_nb
+            self._exact_graph_scratch_block_ids = ()
         else:
-            config.num_kvcache_blocks = _resolve_kv_cache_blocks(
-                config.num_kvcache_blocks,
-                auto_num_blocks,
+            scratch_blocks = (
+                max(config.multi_sequence_cuda_graph_batch_allowlist)
+                if config.multi_sequence_cuda_graphs
+                else 0
             )
-            nb = config.num_kvcache_blocks
+            visible_blocks, physical_blocks = (
+                resolve_exact_graph_kv_capacity(
+                    auto_blocks=auto_num_blocks,
+                    requested_visible_blocks=config.num_kvcache_blocks,
+                    feature_enabled=config.multi_sequence_cuda_graphs,
+                    scratch_blocks=scratch_blocks,
+                )
+            )
+            config.num_kvcache_blocks = visible_blocks
+            self._physical_num_kvcache_blocks = physical_blocks
+            self._exact_graph_scratch_block_ids = tuple(
+                range(visible_blocks, physical_blocks)
+            )
+            nb = physical_blocks
         L = hf_config.num_hidden_layers
         if kvq_bits == 0:
             self.kv_cache = torch.zeros(2, L, nb, self.block_size, num_kv_heads, head_dim, dtype=dtype)
@@ -884,6 +968,87 @@ class ModelRunner:
                     module.k_min = self.kv_summary[0, layer_id]
                     module.k_max = self.kv_summary[1, layer_id]
                 layer_id += 1
+
+    def _exact_graph_scratch_slots(
+        self,
+        *,
+        batch_size: int,
+    ) -> tuple[int, ...]:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if batch_size > len(self._exact_graph_scratch_block_ids):
+            raise ValueError(
+                "exact graph scratch capacity is smaller than batch size"
+            )
+        return tuple(
+            block_id * self.block_size
+            for block_id in self._exact_graph_scratch_block_ids[:batch_size]
+        )
+
+    def _build_multi_sequence_graph_identity(
+        self,
+        input_ids,
+        context,
+    ):
+        active_batch_size = int(input_ids.size(0))
+        if active_batch_size <= 1:
+            raise ValueError(
+                "multi-sequence graph identity requires batch above one"
+            )
+        try:
+            page_table_width = int(context.block_tables.size(1))
+        except (AttributeError, IndexError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid exact graph block-table width"
+            ) from exc
+        hf_config = self.config.hf_config
+        properties = torch.cuda.get_device_properties(
+            self.kv_cache.device
+        )
+        inputs = FlashAttentionSplitInputs(
+            batch_size=active_batch_size,
+            num_query_heads=int(
+                hf_config.num_attention_heads // self.world_size
+            ),
+            num_kv_heads=int(
+                hf_config.num_key_value_heads // self.world_size
+            ),
+            head_dim=int(hf_config.head_dim),
+            page_block_size=int(self.block_size),
+            page_table_width=page_table_width,
+            max_seqlen_q=1,
+            multi_processor_count=int(
+                properties.multi_processor_count
+            ),
+        )
+        return build_flash_attn_263_graph_identity(
+            graph_batch_size=active_batch_size,
+            inputs=inputs,
+            flash_attn_version=str(
+                getattr(flash_attn, "__version__", "unknown")
+            ),
+            require_exact_batch=True,
+        )
+
+    def _estimate_exact_graph_static_bytes(
+        self,
+        *,
+        batch_size: int,
+        page_table_width: int,
+    ) -> int:
+        if batch_size <= 0 or page_table_width <= 0:
+            raise ValueError(
+                "batch size and page-table width must be positive"
+            )
+        hf_config = self.config.hf_config
+        scalar_bytes = batch_size * (8 + 8 + 4 + 4)
+        block_table_bytes = batch_size * page_table_width * 4
+        output_bytes = (
+            batch_size
+            * int(hf_config.hidden_size)
+            * int(hf_config.torch_dtype.itemsize)
+        )
+        return scalar_bytes + block_table_bytes + output_bytes
         # 假设 block_size=256（每个块存 256 个 token），其他参数不变：
 
         # 32 层（num_hidden_layers=32）；
@@ -1620,7 +1785,10 @@ class ModelRunner:
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
-        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))      # 捕捉各种batch_size的cuda graph
+        if config.multi_sequence_cuda_graphs:
+            self.graph_bs = [1]
+        else:
+            self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))      # 捕捉各种batch_size的cuda graph
         self.graphs = {}
         self.graph_pool = None
 

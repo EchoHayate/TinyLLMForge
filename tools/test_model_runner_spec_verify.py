@@ -29,11 +29,25 @@ _MODEL_RUNNER_PATH = os.path.join(
     "engine",
     "model_runner.py",
 )
+_SPLIT_POLICY_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "flash_attn_split_policy.py",
+)
+_EXACT_CACHE_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "exact_cuda_graph_cache.py",
+)
 
 
 class FakeTensor:
-    def __init__(self, values):
+    def __init__(self, values, *, device="cuda:0", element_size=2):
         self.values = values
+        self.device = device
+        self._element_size = element_size
 
     def size(self, dim=None):
         if dim is None:
@@ -50,6 +64,9 @@ class FakeTensor:
         ):
             return len(self.values[0])
         raise IndexError(dim)
+
+    def element_size(self):
+        return self._element_size
 
 
 class FakeIndexedTensor:
@@ -87,7 +104,27 @@ class FakeGraphBuffer:
         return FakeTensor(self.values[index])
 
     def __setitem__(self, index, value):
-        self.assignments.append((index, value.values))
+        self.assignments.append(
+            (index, getattr(value, "values", value))
+        )
+
+
+class FakeCaptureTensor(FakeGraphBuffer):
+    def __init__(self, shape):
+        super().__init__(None)
+        self.shape = (
+            (shape,)
+            if isinstance(shape, int)
+            else tuple(shape)
+        )
+
+    def __getitem__(self, index):
+        return self
+
+    def size(self, dim=None):
+        if dim is None:
+            return self.shape
+        return self.shape[dim]
 
 
 def _install_module(name: str, **attributes):
@@ -132,6 +169,11 @@ def _load_model_runner_module():
         )
     )
     torch_module.inference_mode = lambda: (lambda function: function)
+    torch_module.cuda = SimpleNamespace(
+        get_device_properties=lambda device: SimpleNamespace(
+            multi_processor_count=108,
+        ),
+    )
     distributed_module = _install_module("torch.distributed")
     torch_module.distributed = distributed_module
 
@@ -159,6 +201,15 @@ def _load_model_runner_module():
         "tinyvllm.utils.context",
         _CONTEXT_PATH,
     )
+    _load_source_module(
+        "tinyvllm.engine.flash_attn_split_policy",
+        _SPLIT_POLICY_PATH,
+    )
+    _load_source_module(
+        "tinyvllm.engine.exact_cuda_graph_cache",
+        _EXACT_CACHE_PATH,
+    )
+    _install_module("flash_attn", __version__="2.6.3")
 
     _install_module("tinyvllm.config", Config=type("Config", (), {}))
     _install_module(
@@ -205,6 +256,7 @@ ModelRunner = model_runner.ModelRunner
 def make_runner(**overrides):
     runner = object.__new__(ModelRunner)
     runner.block_size = 256
+    runner.world_size = 1
     runner.kv_offload = None
     runner.enforce_eager = False
     config = {
@@ -494,6 +546,181 @@ def test_single_sequence_decode_still_replays_cuda_graph():
     ]
 
 
+def test_exact_graph_capacity_reserves_scheduler_invisible_scratch():
+    assert model_runner.resolve_exact_graph_kv_capacity(
+        auto_blocks=100,
+        requested_visible_blocks=-1,
+        feature_enabled=True,
+        scratch_blocks=8,
+    ) == (92, 100)
+    assert model_runner.resolve_exact_graph_kv_capacity(
+        auto_blocks=100,
+        requested_visible_blocks=80,
+        feature_enabled=True,
+        scratch_blocks=8,
+    ) == (80, 88)
+    assert model_runner.resolve_exact_graph_kv_capacity(
+        auto_blocks=100,
+        requested_visible_blocks=-1,
+        feature_enabled=False,
+        scratch_blocks=8,
+    ) == (100, 100)
+    try:
+        model_runner.resolve_exact_graph_kv_capacity(
+            auto_blocks=100,
+            requested_visible_blocks=96,
+            feature_enabled=True,
+            scratch_blocks=8,
+        )
+    except ValueError as exc:
+        assert "scratch" in str(exc)
+    else:
+        raise AssertionError("oversized visible plus scratch capacity accepted")
+
+
+def test_scratch_blocks_are_above_scheduler_visible_range():
+    runner = make_runner()
+    runner.config.num_kvcache_blocks = 92
+    runner._physical_num_kvcache_blocks = 100
+    runner._exact_graph_scratch_block_ids = tuple(range(92, 100))
+    assert runner._exact_graph_scratch_block_ids == tuple(range(92, 100))
+    assert max(range(runner.config.num_kvcache_blocks)) < min(
+        runner._exact_graph_scratch_block_ids
+    )
+    assert runner._exact_graph_scratch_slots(batch_size=8) == tuple(
+        block * runner.block_size for block in range(92, 100)
+    )
+
+
+def _make_capture_runner(*, feature_enabled):
+    runner = make_runner(
+        multi_sequence_cuda_graphs=feature_enabled,
+    )
+    runner.config.hf_config = SimpleNamespace(hidden_size=16)
+    runner.config.max_num_seqs = 8
+    runner.config.max_model_len = 512
+
+    class FakeModel:
+        def __call__(self, input_ids, positions):
+            del input_ids, positions
+            return FakeCaptureTensor((8, 16))
+
+    class FakeGraph:
+        def replay(self):
+            pass
+
+        def pool(self):
+            return "pool"
+
+    class FakeGraphContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    runner.model = FakeModel()
+    model_runner.torch.zeros = (
+        lambda *shape, **kwargs: FakeCaptureTensor(
+            shape[0] if len(shape) > 1 else shape[0]
+        )
+    )
+    model_runner.torch.cuda.CUDAGraph = FakeGraph
+    model_runner.torch.cuda.graph = (
+        lambda graph, pool=None: FakeGraphContext()
+    )
+    model_runner.torch.cuda.synchronize = lambda: None
+    return runner
+
+
+def test_feature_enabled_startup_captures_only_batch_one():
+    runner = _make_capture_runner(feature_enabled=True)
+    runner.capture_cudagraph()
+    assert tuple(runner.graph_bs) == (1,)
+    assert set(runner.graphs) == {1}
+
+
+def test_feature_disabled_startup_inventory_is_unchanged():
+    runner = _make_capture_runner(feature_enabled=False)
+    runner.capture_cudagraph()
+    assert runner.graph_bs[:4] == [1, 2, 4, 8]
+
+
+def test_exact_graph_identity_and_static_byte_estimate_are_exact():
+    runner = make_runner()
+    runner.config.hf_config = SimpleNamespace(
+        num_attention_heads=16,
+        num_key_value_heads=8,
+        head_dim=128,
+        hidden_size=1024,
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    runner.kv_cache = FakeTensor([], device="cuda:0")
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([0, 256, 512, 768]),
+        context_lens=FakeTensor([1, 1, 1, 1]),
+        block_tables=FakeTensor([[0, 1]] * 4),
+    )
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        context.get_context(),
+    )
+    assert identity.graph_batch_size == identity.active_batch_size == 4
+    assert identity.page_table_width == 2
+    assert identity.flash_attn_version == "2.6.3"
+    assert identity.multi_processor_count == 108
+    assert runner._estimate_exact_graph_static_bytes(
+        batch_size=4,
+        page_table_width=2,
+    ) > 0
+    wider_context = SimpleNamespace(
+        block_tables=FakeTensor([[0, 1, 2]] * 4),
+    )
+    wider = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        wider_context,
+    )
+    assert wider.sha256 != identity.sha256
+
+    original_properties = (
+        model_runner.torch.cuda.get_device_properties
+    )
+    model_runner.torch.cuda.get_device_properties = (
+        lambda device: SimpleNamespace(multi_processor_count=120)
+    )
+    try:
+        different_sm = runner._build_multi_sequence_graph_identity(
+            FakeTensor([10, 20, 30, 40]),
+            context.get_context(),
+        )
+    finally:
+        model_runner.torch.cuda.get_device_properties = (
+            original_properties
+        )
+    assert different_sm.sha256 != identity.sha256
+
+    runner.config.hf_config.num_attention_heads = 32
+    different_heads = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        context.get_context(),
+    )
+    assert different_heads.sha256 != identity.sha256
+
+    model_runner.flash_attn.__version__ = "2.6.2"
+    try:
+        runner._build_multi_sequence_graph_identity(
+            FakeTensor([10, 20, 30, 40]),
+            context.get_context(),
+        )
+    except ValueError as exc:
+        assert "2.6.3" in str(exc)
+    else:
+        raise AssertionError("unsupported FlashAttention version accepted")
+    finally:
+        model_runner.flash_attn.__version__ = "2.6.3"
+
+
 def main():
     tests = (
         test_prepare_spec_verify_installs_reference_context,
@@ -505,6 +732,11 @@ def main():
         test_spec_verify_run_model_uses_eager_and_keeps_all_rows,
         test_multi_sequence_decode_uses_eager_instead_of_cuda_graph,
         test_single_sequence_decode_still_replays_cuda_graph,
+        test_exact_graph_capacity_reserves_scheduler_invisible_scratch,
+        test_scratch_blocks_are_above_scheduler_visible_range,
+        test_feature_enabled_startup_captures_only_batch_one,
+        test_feature_disabled_startup_inventory_is_unchanged,
+        test_exact_graph_identity_and_static_byte_estimate_are_exact,
     )
     for test in tests:
         context.reset_context()
