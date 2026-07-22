@@ -2312,6 +2312,73 @@ def test_production_verifier_rejects_budget_fallback_tampering():
         ),
         "live KV mismatch",
     )
+
+    def mismatch_fault_correctness_row(root):
+        path = root / "correctness_rows.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row
+            for row in rows
+            if row["case_id"] == "budget-fallback:entry_limit"
+        )
+        target["output_token_ids"] = [99]
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        mismatch_fault_correctness_row,
+        "fault correctness output binding mismatch",
+    )
+
+    def remove_fault_correctness_row(root):
+        path = root / "correctness_rows.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows = [
+            row
+            for row in rows
+            if row["case_id"] != "budget-fallback:entry_limit"
+        ]
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        remove_fault_correctness_row,
+        "fault correctness row count mismatch",
+    )
+
+    def mismatch_fault_correctness_logits(root):
+        path = root / "correctness_rows.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row
+            for row in rows
+            if row["case_id"] == "budget-fallback:entry_limit"
+        )
+        target["logits_close"] = False
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        mismatch_fault_correctness_logits,
+        "fault correctness logits binding mismatch",
+    )
+
+    def mismatch_fault_correctness_kv(root):
+        path = root / "correctness_rows.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row
+            for row in rows
+            if row["case_id"] == "budget-fallback:entry_limit"
+        )
+        target["live_slot_kv_sha256"] = "7" * 64
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        mismatch_fault_correctness_kv,
+        "fault correctness KV binding mismatch",
+    )
     run_tamper(
         lambda root: mutate_budget_rows(
             root,

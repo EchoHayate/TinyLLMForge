@@ -570,7 +570,7 @@ def _validate_budget_fallback_rows(
     capture_rows: list[dict],
     correctness_rows: list[dict],
 ) -> tuple[list[str], dict]:
-    del mode, correctness_rows
+    del mode
     failures = []
     required_reasons = list(contract.BUDGET_FALLBACK_REASONS)
     observed_reasons = [
@@ -808,6 +808,44 @@ def _validate_budget_fallback_rows(
             != row.get("candidate_live_kv_sha256")
         ):
             failures.append(f"{row_id}: live KV mismatch")
+        fault_correctness_rows = [
+            item
+            for item in correctness_rows
+            if item.get("case_id") == case_id
+        ]
+        if len(fault_correctness_rows) != 1:
+            failures.append(
+                f"{row_id}: fault correctness row count mismatch"
+            )
+        else:
+            fault_correctness = fault_correctness_rows[0]
+            if (
+                fault_correctness.get("output_token_ids")
+                != row.get("candidate_output_token_ids")
+                or fault_correctness.get("reference_token_ids")
+                != row.get("eager_output_token_ids")
+            ):
+                failures.append(
+                    f"{row_id}: fault correctness output binding mismatch"
+                )
+            if (
+                fault_correctness.get("logits_close")
+                is not row.get("logits_allclose")
+            ):
+                failures.append(
+                    f"{row_id}: fault correctness logits binding mismatch"
+                )
+            if (
+                fault_correctness.get("live_slot_kv_sha256")
+                != row.get("candidate_live_kv_sha256")
+                or fault_correctness.get(
+                    "reference_live_slot_kv_sha256"
+                )
+                != row.get("eager_live_kv_sha256")
+            ):
+                failures.append(
+                    f"{row_id}: fault correctness KV binding mismatch"
+                )
         if row.get("complete") is not True:
             failures.append(f"{row_id}: budget fallback incomplete")
 

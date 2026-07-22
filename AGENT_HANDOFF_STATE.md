@@ -3662,3 +3662,63 @@ budget_fallback_verified = 8
 才能进入 canonical correctness；canonical correctness 独立 `GO` 后
 才能进入 arrival canonical。当前仍不能宣称吞吐、延迟或显存性能提升，
 也不能更新 README。
+
+### 2026-07-22 Fault Evidence Completion Audit
+
+在远端 GPU 0 持续被无关服务占用期间，完成了不依赖 GPU 的定向
+completion audit。审计范围为 `7db219a..HEAD`，覆盖：
+
+- `tools/multi_sequence_cuda_graph_contract.py`
+- `tools/run_multi_sequence_cuda_graph_production_gate_remote.py`
+- `tools/verify_multi_sequence_cuda_graph_production.py`
+- `tools/test_multi_sequence_cuda_graph_gate.py`
+
+确认：
+
+1. fault injection 只存在于 gate harness，production config、cache 和
+   `ModelRunner` 没有 fault switch；
+2. 八个 fault worker 使用隔离进程和独立动态端口；
+3. fault worker 的 `case_summaries` 必须为空，不能进入 throughput、
+   latency、memory、initialization 或 graph-hit performance matrix；
+4. runtime method mutation 在 `_run_budget_fallback_phase()` 的
+   `finally` 中恢复，恢复状态在 worker artifact 构造前写回；
+5. arrival modes 不重跑 fault worker，只能绑定 source-matched、
+   independently verified canonical correctness evidence。
+
+审计发现并修复了一个 verifier 证据绑定缺口：此前
+`_validate_budget_fallback_rows()` 没有使用 `correctness_rows.jsonl`，
+因此只验证 `budget_fallback_rows.jsonl` 内部自洽。现在每个 fault
+case 必须恰好存在一条同 `case_id` 的 correctness row，并交叉绑定：
+
+- candidate/reference output token IDs；
+- `logits_close` / `logits_allclose`；
+- candidate/reference live-KV SHA。
+
+TDD RED 证据：
+
+```text
+test_production_verifier_rejects_budget_fallback_tampering
+AssertionError:
+result["classification"] was not NO_GO
+```
+
+修复后 fresh GREEN：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/test_multi_sequence_cuda_graph_gate.py
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/test_model_runner_spec_verify.py
+```
+
+结果：
+
+```text
+multi-sequence cuda graph gate tests passed
+model runner spec_verify tests passed
+```
+
+2026-07-22 18:17–18:22 CST 连续十次只读轮询 GPU 0，每 30 秒一次，
+始终为相同八个 unrelated compute processes，约占 13.3 GiB。未启动
+新 model worker。Task 6 仍是环境阻塞的 `INCOMPLETE`，本次 verifier
+加固尚未取得新的 remote source-bound preflight/smoke artifact。
