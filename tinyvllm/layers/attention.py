@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import torch
 from torch import nn
 import triton
@@ -124,6 +126,87 @@ def _normalize_logical_block_rows(logical_rows) -> tuple[list[list[int]], int]:
     ]
     max_blocks = max((len(row) for row in block_rows), default=0)
     return block_rows, max_blocks
+
+
+@dataclass(frozen=True)
+class BlockwiseDecodePlanIdentity:
+    block_rows: tuple[tuple[int, ...], ...]
+    context_lens: tuple[int, ...]
+    max_blocks: int
+    block_size: int
+    window_blocks: int
+    write_blocks: tuple[int, ...]
+    gpu_blocks: int
+
+
+@dataclass(frozen=True)
+class BlockwiseDecodeWindow:
+    window_rows: tuple[tuple[int, ...], ...]
+    window_lens: tuple[int, ...]
+    required_blocks: tuple[int, ...]
+    intra_layer_future_blocks: tuple[int, ...]
+    cross_layer_reuse_blocks: tuple[int, ...]
+    max_window_tokens: int
+
+
+@dataclass(frozen=True)
+class BlockwiseDecodePlan:
+    identity: BlockwiseDecodePlanIdentity
+    forward_windows: tuple[BlockwiseDecodeWindow, ...]
+    reverse_windows: tuple[BlockwiseDecodeWindow, ...]
+
+
+def _build_blockwise_decode_plan_identity(
+    block_rows: list[list[int]],
+    context_lens: list[int],
+    max_blocks: int,
+    block_size: int,
+    window_blocks: int,
+    write_blocks: set[int],
+    gpu_blocks: int,
+) -> BlockwiseDecodePlanIdentity:
+    return BlockwiseDecodePlanIdentity(
+        block_rows=tuple(tuple(int(block) for block in row) for row in block_rows),
+        context_lens=tuple(int(length) for length in context_lens),
+        max_blocks=int(max_blocks),
+        block_size=int(block_size),
+        window_blocks=int(window_blocks),
+        write_blocks=tuple(sorted(int(block) for block in write_blocks)),
+        gpu_blocks=int(gpu_blocks),
+    )
+
+
+def _ordered_unique_excluding(
+    blocks,
+    excluded: set[int],
+) -> tuple[int, ...]:
+    ordered = []
+    seen = set(int(block) for block in excluded)
+    for block in blocks:
+        block = int(block)
+        if block < 0 or block in seen:
+            continue
+        ordered.append(block)
+        seen.add(block)
+    return tuple(ordered)
+
+
+def _bounded_cross_layer_reuse_blocks(
+    *,
+    candidate_blocks,
+    required_blocks: tuple[int, ...],
+    write_blocks: set[int],
+    gpu_blocks: int,
+) -> tuple[int, ...]:
+    hard_blocks = set(int(block) for block in required_blocks)
+    hard_blocks.update(int(block) for block in write_blocks)
+    spare_capacity = max(0, int(gpu_blocks) - len(hard_blocks))
+    if spare_capacity == 0:
+        return ()
+    return _ordered_unique_excluding(
+        candidate_blocks,
+        hard_blocks,
+    )[:spare_capacity]
 
 
 def _stage_blockwise_read_window(
@@ -268,6 +351,141 @@ def _build_blockwise_decode_window_plan(
             "max_window_tokens": max(window_lens),
         })
     return plans
+
+
+def _flatten_required_blocks(windows) -> list[int]:
+    return [
+        block
+        for window in windows
+        for block in window["required_blocks"]
+    ]
+
+
+def _materialize_decode_direction(
+    raw_windows,
+    *,
+    opposite_raw_windows,
+    future_key,
+    write_blocks,
+    gpu_blocks,
+) -> tuple[BlockwiseDecodeWindow, ...]:
+    records = []
+    for raw_window in raw_windows:
+        required_blocks = raw_window["required_blocks"]
+        hard_blocks = set(required_blocks) | set(write_blocks)
+        opposite_index = next(
+            candidate_index
+            for candidate_index, candidate in enumerate(opposite_raw_windows)
+            if candidate["start_block"] == raw_window["start_block"]
+        )
+        cross_candidates = _flatten_required_blocks(
+            opposite_raw_windows[opposite_index + 1:]
+        )
+        intra_layer_future_blocks = tuple(sorted(
+            set(raw_window[future_key]) - hard_blocks
+        ))
+        cross_layer_reuse_blocks = _bounded_cross_layer_reuse_blocks(
+            candidate_blocks=cross_candidates,
+            required_blocks=required_blocks,
+            write_blocks=write_blocks,
+            gpu_blocks=gpu_blocks,
+        )
+        records.append(BlockwiseDecodeWindow(
+            window_rows=raw_window["window_rows"],
+            window_lens=raw_window["window_lens"],
+            required_blocks=required_blocks,
+            intra_layer_future_blocks=intra_layer_future_blocks,
+            cross_layer_reuse_blocks=cross_layer_reuse_blocks,
+            max_window_tokens=raw_window["max_window_tokens"],
+        ))
+    return tuple(records)
+
+
+def _build_residency_aware_blockwise_decode_window_plan(
+    block_rows: list[list[int]],
+    context_lens: list[int],
+    max_blocks: int,
+    block_size: int,
+    window_blocks: int,
+    write_blocks: set[int],
+    gpu_blocks: int,
+) -> BlockwiseDecodePlan:
+    raw_windows = []
+    for start_block in range(0, max_blocks, window_blocks):
+        window_rows = []
+        window_lens = []
+        needed_blocks = []
+        for row_idx, row_blocks in enumerate(block_rows):
+            window = row_blocks[start_block:start_block + window_blocks]
+            window_rows.append(window)
+            start_token = start_block * block_size
+            remaining = max(0, int(context_lens[row_idx]) - start_token)
+            window_lens.append(min(remaining, len(window) * block_size))
+            needed_blocks.extend(window)
+        if not needed_blocks or max(window_lens, default=0) <= 0:
+            continue
+        future_hint_blocks = set(write_blocks)
+        reverse_future_hint_blocks = set(write_blocks)
+        for row_blocks in block_rows:
+            future_hint_blocks.update(
+                _blockwise_read_window_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    max_blocks,
+                    window_blocks,
+                    write_blocks,
+                    gpu_blocks,
+                )
+            )
+            reverse_future_hint_blocks.update(
+                _blockwise_read_window_reverse_future_hint_blocks(
+                    row_blocks,
+                    start_block,
+                    window_blocks,
+                    write_blocks,
+                    gpu_blocks,
+                )
+            )
+        raw_windows.append({
+            "start_block": int(start_block),
+            "window_rows": tuple(tuple(row) for row in window_rows),
+            "window_lens": tuple(int(length) for length in window_lens),
+            "required_blocks": tuple(_unique_blocks_in_order(needed_blocks)),
+            "future_hint_blocks": frozenset(future_hint_blocks),
+            "reverse_future_hint_blocks": frozenset(
+                reverse_future_hint_blocks
+            ),
+            "max_window_tokens": int(max(window_lens)),
+        })
+
+    identity = _build_blockwise_decode_plan_identity(
+        block_rows,
+        context_lens,
+        max_blocks,
+        block_size,
+        window_blocks,
+        write_blocks,
+        gpu_blocks,
+    )
+    forward_raw = tuple(raw_windows)
+    reverse_raw = tuple(reversed(raw_windows))
+    return BlockwiseDecodePlan(
+        identity=identity,
+        forward_windows=_materialize_decode_direction(
+            forward_raw,
+            opposite_raw_windows=reverse_raw,
+            future_key="future_hint_blocks",
+            write_blocks=write_blocks,
+            gpu_blocks=gpu_blocks,
+        ),
+        reverse_windows=_materialize_decode_direction(
+            reverse_raw,
+            opposite_raw_windows=forward_raw,
+            future_key="reverse_future_hint_blocks",
+            write_blocks=write_blocks,
+            gpu_blocks=gpu_blocks,
+        ),
+    )
 
 
 def _build_blockwise_prefill_window_plan(

@@ -20,9 +20,12 @@ import torch
 import tinyvllm.layers.attention as attention_mod
 
 from tinyvllm.layers.attention import (
+    BlockwiseDecodePlan,
     _blockwise_online_decode_attention,
     _blockwise_prefill_future_hint_blocks,
     _blockwise_read_window_future_hint_blocks,
+    _bounded_cross_layer_reuse_blocks,
+    _build_residency_aware_blockwise_decode_window_plan,
     _decode_window_mask,
     _gqa_scores_decode,
     _gqa_scores_prefill,
@@ -89,6 +92,54 @@ class _ResidentPlanOnlyManager(_PlanOnlyManager):
         super().__init__()
         self.logical_to_slot = {0: 0, 1: 1, 2: 2}
         self.pending_wait_blocks = set()
+
+
+def test_decode_plan_builds_forward_and_reverse_cross_layer_frontiers():
+    plan = _build_residency_aware_blockwise_decode_window_plan(
+        block_rows=[[0, 1, 2, 3, 4]],
+        context_lens=[5],
+        max_blocks=5,
+        block_size=1,
+        window_blocks=1,
+        write_blocks=set(),
+        gpu_blocks=3,
+    )
+
+    assert isinstance(plan, BlockwiseDecodePlan)
+    assert [window.required_blocks for window in plan.forward_windows] == [
+        (0,),
+        (1,),
+        (2,),
+        (3,),
+        (4,),
+    ]
+    assert [window.required_blocks for window in plan.reverse_windows] == [
+        (4,),
+        (3,),
+        (2,),
+        (1,),
+        (0,),
+    ]
+    assert plan.forward_windows[-1].cross_layer_reuse_blocks == (3, 2)
+    assert plan.reverse_windows[-1].cross_layer_reuse_blocks == (1, 2)
+
+
+def test_cross_layer_reuse_is_stable_deduplicated_and_spare_bounded():
+    assert _bounded_cross_layer_reuse_blocks(
+        candidate_blocks=[3, 3, 2, 1, 0],
+        required_blocks=(4,),
+        write_blocks={0},
+        gpu_blocks=4,
+    ) == (3, 2)
+
+
+def test_cross_layer_reuse_is_empty_without_spare_capacity():
+    assert _bounded_cross_layer_reuse_blocks(
+        candidate_blocks=[1, 2, 3],
+        required_blocks=(0, 4),
+        write_blocks={5},
+        gpu_blocks=3,
+    ) == ()
 
 
 def test_blockwise_decode_stages_read_window_in_first_seen_order():
