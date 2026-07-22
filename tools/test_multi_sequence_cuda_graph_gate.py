@@ -29,6 +29,11 @@ PRODUCTION_VERIFIER_PATH = (
     / "tools"
     / "verify_multi_sequence_cuda_graph_production.py"
 )
+PRODUCTION_RUNNER_PATH = (
+    ROOT
+    / "tools"
+    / "run_multi_sequence_cuda_graph_production_gate_remote.py"
+)
 REMOTE_RUNNER_PATH = (
     ROOT / "tools" / "run_multi_sequence_cuda_graph_diagnostic_remote.py"
 )
@@ -260,6 +265,17 @@ def load_production_verifier():
     spec = importlib.util.spec_from_file_location(
         "cuda_graph_production_independent_verifier",
         PRODUCTION_VERIFIER_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_production_runner():
+    spec = importlib.util.spec_from_file_location(
+        "cuda_graph_production_remote_runner",
+        PRODUCTION_RUNNER_PATH,
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -1588,7 +1604,7 @@ def write_complete_production_artifact(run_dir: Path) -> None:
     commands = [
         "python",
         "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
-        "local-worker",
+        "local-contracts",
     ]
     split_policy = load_split_policy()
     for case_index, case in enumerate(matrix):
@@ -2096,6 +2112,366 @@ def test_production_verifier_recomputes_correctness_capacity_and_metrics():
         _rehash_production_artifact(root, "summary.json")
 
     run_tamper(producer_mismatch)
+
+
+def test_production_runner_cli_and_remote_contract_are_closed():
+    runner = load_production_runner()
+    assert runner.MODES == (
+        "preflight",
+        "local-contracts",
+        "correctness-smoke",
+        "correctness-canonical",
+        "arrival-smoke",
+        "arrival-canonical",
+        "download-only",
+        "verify-only",
+    )
+    assert runner.SSH_TARGET == "sitian@10.232.195.203"
+    assert runner.SSH_CONTROL_PATH == (
+        "/tmp/ssh-sitian-10.232.195.203"
+    )
+    assert runner.REMOTE_PYTHON == (
+        "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python"
+    )
+    assert runner.REMOTE_MODEL.endswith("Qwen/Qwen3-0___6B")
+    assert runner.CUDA_VISIBLE_DEVICES == "0"
+    for mode in runner.MODES:
+        args = [mode]
+        if mode in {"download-only", "verify-only"}:
+            args.extend(["--run-tag", "existing"])
+        if mode == "arrival-canonical":
+            args.extend([
+                "--diagnostic-run-tag",
+                "correctness",
+            ])
+        parsed = runner._parse_args(args)
+        assert parsed.mode == mode
+    parsed = runner._parse_args([
+        "local-contracts",
+        "--worker-kind",
+        "capacity",
+        "--output-dir",
+        "/tmp/output",
+        "--source-sha256",
+        "a" * 64,
+    ])
+    assert parsed.worker_kind == "capacity"
+    parsed = runner._parse_args([
+        "arrival-canonical",
+        "--run-tag",
+        "arrival",
+        "--diagnostic-run-tag",
+        "correctness",
+    ])
+    assert parsed.diagnostic_run_tag == "correctness"
+    try:
+        runner._parse_args([
+            "arrival-canonical",
+            "--run-tag",
+            "arrival",
+        ])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError(
+            "arrival-canonical must bind a correctness run tag"
+        )
+    for mode in ("download-only", "verify-only"):
+        try:
+            runner._parse_args([mode])
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"{mode} must require --run-tag")
+
+    source = PRODUCTION_RUNNER_PATH.read_text(encoding="utf-8")
+    prohibited = (
+        "rsync",
+        "pkill",
+        "killall",
+        "rm -rf /tmp",
+        "git checkout",
+        "git reset",
+        "CUDA_VISIBLE_DEVICES=1",
+    )
+    assert all(value not in source for value in prohibited)
+    assert "TINYVLLM_DIST_PORT" in source
+    assert "MASTER_PORT" in source
+    assert "socket.bind" in source
+
+
+def test_production_runner_snapshot_and_command_binding_are_source_exact():
+    runner = load_production_runner()
+    required = {
+        "tinyvllm",
+        "tools/source_audit.py",
+        "tools/multi_sequence_cuda_graph_contract.py",
+        "tools/verify_multi_sequence_cuda_graph_production.py",
+        "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
+        "tools/run_multi_sequence_cuda_graph_diagnostic_remote.py",
+        "tools/diagnose_multi_sequence_cuda_graph.py",
+        "tools/verify_multi_sequence_cuda_graph_diagnostic.py",
+    }
+    assert required.issubset(set(runner.OWNED_SOURCE_ROOTS))
+    command = runner.build_worker_command(
+        remote_source="/tmp/source",
+        output_dir="/tmp/output",
+        worker_kind="arrival",
+        source_sha256="b" * 64,
+        dist_port=23001,
+        master_port=23002,
+        case_id="case",
+        policy="candidate",
+        workload="stable_exact_reuse",
+        repetition=1,
+        warmup=False,
+        visible_blocks=100,
+    )
+    assert command["env"] == {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "TINYVLLM_DIST_PORT": "23001",
+        "MASTER_PORT": "23002",
+        "PYTHONPATH": "/tmp/source",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "TINYVLLM_SOURCE_SHA256": "b" * 64,
+    }
+    assert command["argv"][0] == runner.REMOTE_PYTHON
+    assert command["argv"][1:4] == [
+        "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
+        "local-contracts",
+        "--worker-kind",
+    ]
+    assert "--num-kvcache-blocks" in command["argv"]
+
+
+def test_production_capacity_pairing_is_scheduler_visible_equal():
+    runner = load_production_runner()
+    evidence = runner.build_paired_capacity_contract({
+        "physical_blocks": 108,
+        "scratch_blocks": 8,
+        "scheduler_visible_blocks": 100,
+        "block_size": 256,
+    })
+    assert evidence["baseline_config"] == {
+        "multi_sequence_cuda_graphs": False,
+        "num_kvcache_blocks": 100,
+    }
+    assert evidence["candidate_config"] == {
+        "multi_sequence_cuda_graphs": True,
+        "num_kvcache_blocks": 100,
+    }
+    assert evidence["capacity"]["baseline"][
+        "scheduler_visible_blocks"
+    ] == 100
+    assert evidence["capacity"]["candidate"][
+        "scheduler_visible_blocks"
+    ] == 100
+    assert evidence["capacity"]["candidate"]["physical_blocks"] == 108
+    assert evidence["capacity"]["candidate"]["scratch_blocks"] == 8
+
+
+def test_production_correctness_and_arrival_workload_contracts():
+    runner = load_production_runner()
+    correctness = runner.build_correctness_plan(canonical=True)
+    assert set(correctness["allowlisted_batches"]) == {2, 4, 8}
+    assert set(correctness["fallback_batches"]) == {3, 5, 7, 9}
+    assert correctness["page_transition_tokens"] == [255, 256, 257]
+    assert correctness["minimum_observations"] == 3
+    assert correctness["requires_post_capture_replay"] is True
+    assert set(correctness["required_budget_fallbacks"]) == {
+        "entry_limit",
+        "static_byte_budget",
+        "reserved_byte_budget",
+        "single_capture_budget",
+        "total_capture_budget",
+        "scratch_unavailable",
+        "capture_failed",
+        "identity_drift",
+    }
+
+    workload = runner.build_arrival_workload(
+        workload="burst_arrivals",
+        repetition=2,
+        warmup=False,
+    )
+    assert workload["workload"] == "burst_arrivals"
+    assert workload["repetition"] == 2
+    assert workload["warmup"] is False
+    assert workload["requests"]
+    assert all(
+        row["arrival_offset_ns"] >= 0
+        and row["requested_output_tokens"] > 0
+        for row in workload["requests"]
+    )
+    assert workload == runner.build_arrival_workload(
+        workload="burst_arrivals",
+        repetition=2,
+        warmup=False,
+    )
+
+
+def test_production_runner_case_plan_is_mode_exact_and_paired():
+    runner = load_production_runner()
+    canonical = runner.build_case_plan("arrival-canonical")
+    assert [case["case_id"] for case in canonical] == [
+        case.case_id for case in contract.build_production_matrix()
+    ]
+    assert len(canonical) == 96
+    assert all(case["worker_kind"] == "arrival" for case in canonical)
+
+    correctness = runner.build_case_plan("correctness-canonical")
+    assert len(correctness) == 96
+    assert all(
+        case["worker_kind"] == "correctness"
+        for case in correctness
+    )
+
+    smoke = runner.build_case_plan("arrival-smoke")
+    assert {
+        (case["workload"], case["policy"])
+        for case in smoke
+    } == {
+        ("stable_exact_reuse", "baseline"),
+        ("stable_exact_reuse", "candidate"),
+        ("mixed_allowlist_and_fallback", "baseline"),
+        ("mixed_allowlist_and_fallback", "candidate"),
+        ("page_width_transition", "baseline"),
+        ("page_width_transition", "candidate"),
+    }
+    assert all(case["warmup"] is False for case in smoke)
+
+
+def test_production_runner_pairs_raw_worker_evidence_without_placeholders():
+    runner = load_production_runner()
+    case = next(
+        case
+        for case in contract.build_production_matrix()
+        if case.workload == "stable_exact_reuse"
+        and not case.warmup
+        and case.repetition == 1
+        and case.policy == "baseline"
+    )
+    candidate_case = next(
+        value
+        for value in contract.build_production_matrix()
+        if value.workload == case.workload
+        and value.repetition == case.repetition
+        and value.warmup == case.warmup
+        and value.policy == "candidate"
+    )
+
+    def worker_result(production_case, *, decode_ns, graph):
+        case_id = production_case.case_id
+        dispatch_rows = []
+        capture_rows = []
+        if graph:
+            dispatch_rows = [{
+                "row_id": f"{case_id}:dispatch:4",
+                "case_id": case_id,
+                "step_id": 4,
+                "source_sha256": "a" * 64,
+                "dispatch": "graph",
+                "cache_state": "ready",
+                "fallback_reason": None,
+                "graph_identity_sha256": "b" * 64,
+                "identity_fields": {"graph_batch_size": 4},
+                "page_table_width": 2,
+                "active_batch_size": 4,
+            }]
+            capture_rows = [{
+                "row_id": f"{case_id}:capture:3",
+                "case_id": case_id,
+                "step_id": 3,
+                "source_sha256": "a" * 64,
+            }]
+        return {
+            "case_id": case_id,
+            "policy": production_case.policy,
+            "workload": production_case.workload,
+            "repetition": production_case.repetition,
+            "warmup": production_case.warmup,
+            "capacity": {
+                "scheduler_visible_blocks": 100,
+            },
+            "request_rows": [{
+                "row_id": f"{case_id}:request:0",
+                "case_id": case_id,
+                "request_id": "q0",
+                "source_sha256": "a" * 64,
+                "scheduled_arrival_ns": 0,
+                "output_token_ids": [11, 12],
+                "itl_ns": [100, 110],
+            }],
+            "dispatch_rows": dispatch_rows,
+            "capture_rows": capture_rows,
+            "model_step_rows": [{
+                "row_id": f"{case_id}:model-step",
+                "case_id": case_id,
+                "source_sha256": "a" * 64,
+                "measurement_duration_ns": 1_000_000_000,
+                "decode_duration_ns": decode_ns,
+                "decoded_tokens": 100,
+                "initialization_duration_ns": 1000,
+                "graph_eligible_steps": 1 if graph else 0,
+            }],
+            "memory_rows": [{
+                "row_id": f"{case_id}:memory:0",
+                "case_id": case_id,
+                "source_sha256": "a" * 64,
+                "reserved_bytes": 1000,
+            }],
+            "output_token_ids": [[11, 12]],
+            "logit_step_sha256": ["c" * 64],
+            "live_slot_kv_step_sha256": ["d" * 64],
+        }
+
+    baseline = worker_result(case, decode_ns=1_000_000_000, graph=False)
+    candidate = worker_result(
+        candidate_case,
+        decode_ns=800_000_000,
+        graph=True,
+    )
+    paired = runner.pair_worker_results(
+        baseline,
+        candidate,
+        matrix_by_id={
+            case.case_id: case,
+            candidate_case.case_id: candidate_case,
+        },
+    )
+    assert paired["correctness_rows"] == [
+        {
+            "row_id": f"{case.case_id}:correctness",
+            "case_id": case.case_id,
+            "source_sha256": "a" * 64,
+            "output_token_ids": [[11, 12]],
+            "reference_token_ids": [[11, 12]],
+            "logits_close": True,
+            "live_slot_kv_sha256": "d" * 64,
+            "reference_live_slot_kv_sha256": "d" * 64,
+        },
+        {
+            "row_id": f"{candidate_case.case_id}:correctness",
+            "case_id": candidate_case.case_id,
+            "source_sha256": "a" * 64,
+            "output_token_ids": [[11, 12]],
+            "reference_token_ids": [[11, 12]],
+            "logits_close": True,
+            "live_slot_kv_sha256": "d" * 64,
+            "reference_live_slot_kv_sha256": "d" * 64,
+        },
+    ]
+    summaries = {
+        row["case_id"]: row for row in paired["case_summaries"]
+    }
+    assert summaries[case.case_id]["decode_throughput_tps"] == 100.0
+    assert (
+        summaries[candidate_case.case_id]["decode_throughput_tps"]
+        == 125.0
+    )
+    assert summaries[candidate_case.case_id]["graph_hits"] == 1
+    assert paired["dispatch_rows"] == candidate["dispatch_rows"]
+    assert paired["capture_rows"] == candidate["capture_rows"]
 
 
 def test_prompt_plan_is_deterministic_and_covers_required_trajectories():
@@ -4464,6 +4840,12 @@ if __name__ == "__main__":
         test_production_verifier_rejects_provenance_and_hash_tampering,
         test_production_verifier_rejects_identity_and_lifecycle_tampering,
         test_production_verifier_recomputes_correctness_capacity_and_metrics,
+        test_production_runner_cli_and_remote_contract_are_closed,
+        test_production_runner_snapshot_and_command_binding_are_source_exact,
+        test_production_capacity_pairing_is_scheduler_visible_equal,
+        test_production_correctness_and_arrival_workload_contracts,
+        test_production_runner_case_plan_is_mode_exact_and_paired,
+        test_production_runner_pairs_raw_worker_evidence_without_placeholders,
         test_prompt_plan_is_deterministic_and_covers_required_trajectories,
         test_ragged_prompts_cross_page_boundaries_during_measured_decode,
         test_kv_observation_plan_covers_active_zero_inactive_and_sentinels,

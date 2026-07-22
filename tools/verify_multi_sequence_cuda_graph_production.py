@@ -34,7 +34,7 @@ HASHED_PRODUCTION_FILES = (
 EXPECTED_COMMAND = (
     "python",
     "tools/run_multi_sequence_cuda_graph_production_gate_remote.py",
-    "local-worker",
+    "local-contracts",
 )
 
 
