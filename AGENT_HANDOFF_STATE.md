@@ -3551,3 +3551,114 @@ Fresh provisional envelope：
 任一 source 或固定合同变更后，都必须重新 fresh preflight → smoke；
 只有 independent verifier 给出 `SMOKE_ONLY` 才能进入后续 authoritative
 cost/workload/canonical 链。
+
+## 2026-07-22 Exact CUDA Graph 8-Case Fallback Gate
+
+已完成并提交 production exact-width multi-sequence CUDA Graph 的八类
+terminal budget/fault fallback evidence 链：
+
+- `6125a13`：批准设计；
+- `1244058`：批准 implementation plan；
+- `0afea3a`：冻结 `budget_fallback_rows.jsonl` 合同；
+- `41966ba`：独立 verifier 重建 8/8 raw evidence；
+- `e86ae1e`：八个隔离 worker 的命令、编排、聚合与 arrival binding；
+- `3faa761`：harness-only fault precondition/runtime wrapper、真实 worker、
+  atomic artifacts 与 structured incomplete。
+
+生产源码没有 fault switch。以下字符串在
+`tinyvllm/config.py`、`tinyvllm/engine/model_runner.py`、
+`tinyvllm/engine/exact_cuda_graph_cache.py` 中均无匹配：
+
+```text
+budget_fallback_reason
+fault_injection
+TINYVLLM_CUDA_GRAPH_FAULT
+inject_exact_cuda_graph
+```
+
+本地 fresh 验证：
+
+```bash
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/test_multi_sequence_cuda_graph_gate.py
+/Users/bytedance/Desktop/RL_local_mirror/.venv/bin/python \
+  tools/test_model_runner_spec_verify.py
+```
+
+结果：
+
+```text
+multi-sequence cuda graph gate tests passed
+model runner spec_verify tests passed
+```
+
+Source-bound remote preflight：
+
+```text
+run tag:
+qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-180854
+base commit:
+3faa761aaa2501603cd0bec4533bfbb3044dae61
+dirty:
+false
+tree SHA:
+b66074f3dd178894cb3b999513105af36b345b2dc771be641671283abeb643bf
+classification:
+preflight exit 0
+```
+
+Artifact：
+
+```text
+experiments/cuda_graph/
+qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-180854/
+```
+
+Correctness/fault smoke 已实际调用 gate，但在任何 model worker 启动前被
+GPU isolation gate 阻塞：
+
+```text
+run tag:
+qwen3-06b-exact-cuda-graph-fallback-correctness-smoke-20260722-181215
+classification:
+INCOMPLETE
+failure_reason:
+unrelated_gpu_occupancy
+stage:
+before_worker
+```
+
+Artifact：
+
+```text
+experiments/cuda_graph/
+qwen3-06b-exact-cuda-graph-fallback-correctness-smoke-20260722-181215/
+incomplete.json
+```
+
+GPU 0 当时有八个 unrelated 长期服务进程：
+
+```text
+330288   root      /opt/tiger/qwen3vl-encoder/main_model.py
+1302034  root      /opt/tiger/manhattan_runtime/logs/manhattan_worker.py
+1302036  root      /opt/tiger/manhattan_runtime/logs/manhattan_worker.py
+2811316  sunchao+  search.bert_qrec.0709 main_model.py
+2812359  sunchao+  search.bert_qrec.0709 main_model.py
+3472365  sunchao+  search.bert_qrec.0709 main_model.py
+3473815  sunchao+  search.bert_qrec.0709 main_model.py
+4039206  wangmin+  search.bert_qrec.7.16 main_model.py
+```
+
+没有 kill、没有切 GPU、没有修改远端 checkout。下一步只能在 GPU 0
+无 unrelated occupancy 时，使用新 run tag 重跑
+`correctness-smoke`。只有 independent verifier 得到：
+
+```text
+classification = NON_AUTHORITATIVE_SMOKE
+budget_fallback_required = 8
+budget_fallback_verified = 8
+```
+
+才能进入 canonical correctness；canonical correctness 独立 `GO` 后
+才能进入 arrival canonical。当前仍不能宣称吞吐、延迟或显存性能提升，
+也不能更新 README。
