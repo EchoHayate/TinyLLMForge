@@ -455,7 +455,9 @@ def build_correctness_workload(
     }
 
 
-def build_case_plan(mode: str) -> list[dict]:
+def production_matrix_for_mode(
+    mode: str,
+) -> tuple[contract.ProductionCase, ...]:
     if mode not in {
         "correctness-smoke",
         "correctness-canonical",
@@ -463,23 +465,16 @@ def build_case_plan(mode: str) -> list[dict]:
         "arrival-canonical",
     }:
         raise ValueError(f"mode does not execute cases: {mode}")
+    if mode.endswith("-smoke"):
+        return contract.build_production_smoke_matrix()
+    return contract.build_production_matrix()
+
+
+def build_case_plan(mode: str) -> list[dict]:
     worker_kind = (
         "correctness" if mode.startswith("correctness-") else "arrival"
     )
-    matrix = contract.build_production_matrix()
-    if mode.endswith("-smoke"):
-        smoke_workloads = {
-            "stable_exact_reuse",
-            "mixed_allowlist_and_fallback",
-            "page_width_transition",
-        }
-        matrix = tuple(
-            case
-            for case in matrix
-            if case.workload in smoke_workloads
-            and not case.warmup
-            and case.repetition == 1
-        )
+    matrix = production_matrix_for_mode(mode)
     return [
         {
             "case_id": case.case_id,
@@ -774,6 +769,24 @@ def pair_worker_results(
             for row in result["memory_rows"]
         ],
     }
+
+
+def classify_production_run(
+    mode: str,
+    case_summaries: list[dict],
+) -> dict:
+    if mode in {"correctness-smoke", "arrival-smoke"}:
+        return {
+            "classification": "NON_AUTHORITATIVE_SMOKE",
+            "failures": [],
+            "metrics": {},
+            "thresholds": dict(contract.PRODUCTION_THRESHOLDS),
+        }
+    return contract.classify_production_gate(
+        case_summaries,
+        producer_summary={"classification": "GO"},
+        independent_summary={"classification": "GO"},
+    )
 
 
 def _engine_capacity(engine) -> dict:
@@ -1641,7 +1654,7 @@ def _write_production_artifacts(
     correctness_binding: dict | None,
     diagnostic_binding: dict,
 ) -> dict:
-    matrix = contract.build_production_matrix()
+    matrix = production_matrix_for_mode(mode)
     matrix_by_id = {case.case_id: case for case in matrix}
     aggregate = {
         "dispatch_rows": [],
@@ -1719,10 +1732,9 @@ def _write_production_artifacts(
         run_dir / "case_summaries.json",
         aggregate["case_summaries"],
     )
-    producer_summary = contract.classify_production_gate(
+    producer_summary = classify_production_run(
+        mode,
         aggregate["case_summaries"],
-        producer_summary={"classification": "GO"},
-        independent_summary={"classification": "GO"},
     )
     _write_json(run_dir / "summary.json", producer_summary)
     _write_json(run_dir / "environment.json", environment)
@@ -2060,7 +2072,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "verify-only":
         result = _verify_local(OUTPUT_ROOT / run_tag)
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 0 if result["classification"] == "GO" else 1
+        return (
+            0
+            if result["classification"]
+            in {"GO", "NON_AUTHORITATIVE_SMOKE"}
+            else 1
+        )
     if args.mode == "download-only":
         _download_remote_tree(
             _remote_run_dir(run_tag),

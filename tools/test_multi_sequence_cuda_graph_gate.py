@@ -1549,9 +1549,15 @@ def _rehash_production_artifact(run_dir: Path, name: str) -> None:
     _write_json(source_manifest_path, source_manifest)
 
 
-def write_complete_production_artifact(run_dir: Path) -> None:
+def write_complete_production_artifact(
+    run_dir: Path,
+    *,
+    mode: str = "arrival-canonical",
+) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     matrix = contract.build_production_matrix()
+    if mode.endswith("-smoke"):
+        matrix = contract.build_production_smoke_matrix()
     source_sha = "1" * 64
     source_files = {
         "tinyvllm/engine/model_runner.py": "2" * 64,
@@ -1591,24 +1597,38 @@ def write_complete_production_artifact(run_dir: Path) -> None:
         "gpu": "A100-SXM4-80GB",
     }
     _write_json(run_dir / "environment.json", environment)
+    diagnostic_required = mode.endswith("-canonical")
     diagnostic_binding = {
-        "required": True,
-        "run_tag": "synthetic-production-go-diagnostic",
+        "required": diagnostic_required,
+        "run_tag": (
+            "synthetic-production-go-diagnostic"
+            if diagnostic_required
+            else None
+        ),
         "source_tree_sha256": source_sha,
-        "case_count": 315,
-        "classifications": {
-            "classification": "EXACT_REPLAY_CORRECT",
-            "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
-            "legacy_compatibility": "LEGACY_COMPATIBLE",
-            "policy_integrity": "POLICY_EXACT",
-        },
+        "case_count": 315 if diagnostic_required else 0,
+        "classifications": (
+            {
+                "classification": "EXACT_REPLAY_CORRECT",
+                "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
+                "legacy_compatibility": "LEGACY_COMPATIBLE",
+                "policy_integrity": "POLICY_EXACT",
+            }
+            if diagnostic_required
+            else None
+        ),
     }
     _write_json(
         run_dir / "diagnostic_binding.json",
         diagnostic_binding,
     )
 
-    case_summaries = make_complete_production_rows()
+    selected_ids = {case.case_id for case in matrix}
+    case_summaries = [
+        row
+        for row in make_complete_production_rows()
+        if row["case_id"] in selected_ids
+    ]
     summary_by_id = {
         row["case_id"]: row for row in case_summaries
     }
@@ -1780,16 +1800,20 @@ def write_complete_production_artifact(run_dir: Path) -> None:
         correctness_rows,
     )
     _write_json(run_dir / "case_summaries.json", case_summaries)
-    producer_summary = contract.classify_production_gate(
-        case_summaries,
-        producer_summary={"classification": "GO"},
-        independent_summary={"classification": "GO"},
+    producer_summary = (
+        {"classification": "NON_AUTHORITATIVE_SMOKE"}
+        if mode.endswith("-smoke")
+        else contract.classify_production_gate(
+            case_summaries,
+            producer_summary={"classification": "GO"},
+            independent_summary={"classification": "GO"},
+        )
     )
     _write_json(run_dir / "summary.json", producer_summary)
 
     manifest = {
         "schema_version": 1,
-        "mode": "arrival-canonical",
+        "mode": mode,
         "run_tag": "synthetic-production-go",
         "source_tree_sha256": source_sha,
         "copied_file_sha256": source_files,
@@ -1874,6 +1898,89 @@ def test_production_verifier_accepts_complete_synthetic_artifact():
         assert "# Exact CUDA Graph Production Verification" in (
             run_dir / "report.md"
         ).read_text(encoding="utf-8")
+
+
+def test_production_verifier_accepts_non_authoritative_smoke():
+    verifier = load_production_verifier()
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = Path(temporary_directory)
+        write_complete_production_artifact(
+            run_dir,
+            mode="arrival-smoke",
+        )
+        result = verifier.verify_run(run_dir)
+        assert result["classification"] == "NON_AUTHORITATIVE_SMOKE"
+        assert result["failures"] == []
+        assert result["metrics"] == {}
+
+
+def test_production_runner_smoke_summary_and_verify_exit_are_non_authoritative():
+    runner = load_production_runner()
+    summary = runner.classify_production_run(
+        "arrival-smoke",
+        [],
+    )
+    assert summary == {
+        "classification": "NON_AUTHORITATIVE_SMOKE",
+        "failures": [],
+        "metrics": {},
+        "thresholds": dict(contract.PRODUCTION_THRESHOLDS),
+    }
+    original_verify_local = runner._verify_local
+    runner._verify_local = lambda run_dir: {
+        "classification": "NON_AUTHORITATIVE_SMOKE",
+    }
+    try:
+        assert runner.main([
+            "verify-only",
+            "--run-tag",
+            "synthetic-smoke",
+        ]) == 0
+    finally:
+        runner._verify_local = original_verify_local
+
+
+def test_production_verifier_requires_smoke_hit_fallback_and_correctness():
+    verifier = load_production_verifier()
+    smoke_ids = {
+        case.case_id
+        for case in contract.build_production_smoke_matrix()
+    }
+    rows = [
+        row
+        for row in make_complete_production_rows()
+        if row["case_id"] in smoke_ids
+    ]
+    assert verifier._validate_smoke_requirements(rows) == []
+
+    no_hit = copy.deepcopy(rows)
+    for row in no_hit:
+        row["graph_hits"] = 0
+        for event in row["dispatch_events"]:
+            if event["dispatch"] == "graph":
+                event["dispatch"] = "eager"
+                event["fallback_reason"] = "cache_not_ready"
+    assert "missing exact graph hit" in verifier._validate_smoke_requirements(
+        no_hit
+    )
+
+    no_fallback = copy.deepcopy(rows)
+    for row in no_fallback:
+        row["dispatch_events"] = [
+            event
+            for event in row["dispatch_events"]
+            if event.get("fallback_reason") != "batch_not_allowlisted"
+        ]
+    assert (
+        "missing non-allowlisted eager fallback"
+        in verifier._validate_smoke_requirements(no_fallback)
+    )
+
+    incorrect = copy.deepcopy(rows)
+    incorrect[0]["output_match"] = False
+    assert "smoke correctness mismatch" in (
+        verifier._validate_smoke_requirements(incorrect)
+    )
 
 
 def test_production_verifier_rejects_provenance_and_hash_tampering():
@@ -2474,6 +2581,21 @@ def test_production_correctness_and_arrival_workload_contracts():
 
 def test_production_runner_case_plan_is_mode_exact_and_paired():
     runner = load_production_runner()
+    assert [
+        case.case_id
+        for case in runner.production_matrix_for_mode("arrival-smoke")
+    ] == [
+        case.case_id
+        for case in contract.build_production_smoke_matrix()
+    ]
+    assert [
+        case.case_id
+        for case in runner.production_matrix_for_mode(
+            "correctness-canonical"
+        )
+    ] == [
+        case.case_id for case in contract.build_production_matrix()
+    ]
     canonical = runner.build_case_plan("arrival-canonical")
     assert [case["case_id"] for case in canonical] == [
         case.case_id for case in contract.build_production_matrix()
@@ -5178,6 +5300,9 @@ if __name__ == "__main__":
         test_production_gate_recomputes_all_frozen_boundaries,
         test_production_gate_fails_closed_on_lifecycle_and_evidence,
         test_production_verifier_accepts_complete_synthetic_artifact,
+        test_production_verifier_accepts_non_authoritative_smoke,
+        test_production_runner_smoke_summary_and_verify_exit_are_non_authoritative,
+        test_production_verifier_requires_smoke_hit_fallback_and_correctness,
         test_production_verifier_rejects_provenance_and_hash_tampering,
         test_production_verifier_rejects_identity_and_lifecycle_tampering,
         test_production_verifier_recomputes_correctness_capacity_and_metrics,

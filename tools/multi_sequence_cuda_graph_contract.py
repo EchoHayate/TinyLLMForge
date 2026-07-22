@@ -255,6 +255,21 @@ def build_production_matrix(
     return tuple(matrix)
 
 
+def build_production_smoke_matrix() -> tuple[ProductionCase, ...]:
+    smoke_workloads = {
+        "stable_exact_reuse",
+        "mixed_allowlist_and_fallback",
+        "page_width_transition",
+    }
+    return tuple(
+        case
+        for case in build_production_matrix()
+        if case.workload in smoke_workloads
+        and not case.warmup
+        and case.repetition == 1
+    )
+
+
 def _case_id_policy_name(split_policy_name: str) -> str:
     if split_policy_name == HEURISTIC_POLICY_NAME:
         return HEURISTIC_POLICY_CASE_ID

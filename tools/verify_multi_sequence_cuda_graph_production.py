@@ -237,18 +237,23 @@ def _validate_manifest(
     failures = []
     if set(manifest) != set(contract.PRODUCTION_MANIFEST_FIELDS):
         failures.append("manifest fields disagree with frozen contract")
-    matrix = contract.build_production_matrix()
+    mode = manifest.get("mode")
+    if mode in {"correctness-smoke", "arrival-smoke"}:
+        matrix = contract.build_production_smoke_matrix()
+    else:
+        matrix = contract.build_production_matrix()
     expected_case_ids = [case.case_id for case in matrix]
     if manifest.get("case_ids") != expected_case_ids:
         failures.append("manifest case_ids order or domain mismatch")
     if manifest.get("schema_version") != 1:
         failures.append("manifest schema_version mismatch")
-    mode = manifest.get("mode")
     if mode not in {
+        "correctness-smoke",
+        "arrival-smoke",
         "correctness-canonical",
         "arrival-canonical",
     }:
-        failures.append("manifest mode is not canonical")
+        failures.append("manifest mode is unsupported")
     if manifest.get("thresholds") != contract.PRODUCTION_THRESHOLDS:
         failures.append("manifest thresholds mismatch")
     if manifest.get("commands") != list(EXPECTED_COMMAND):
@@ -272,12 +277,23 @@ def _validate_manifest(
         "legacy_compatibility": "LEGACY_COMPATIBLE",
         "policy_integrity": "POLICY_EXACT",
     }
-    if diagnostic_binding.get("required") is not True:
-        failures.append("canonical diagnostic binding is not required")
-    if diagnostic_binding.get("case_count") != 315:
+    canonical = mode in {
+        "correctness-canonical",
+        "arrival-canonical",
+    }
+    if diagnostic_binding.get("required") is not canonical:
+        failures.append("diagnostic binding requirement mismatch")
+    if canonical and diagnostic_binding.get("case_count") != 315:
         failures.append("canonical diagnostic case count mismatch")
-    if diagnostic_binding.get("classifications") != expected_diagnostic:
+    if canonical and diagnostic_binding.get(
+        "classifications"
+    ) != expected_diagnostic:
         failures.append("canonical diagnostic classifications mismatch")
+    if not canonical and (
+        diagnostic_binding.get("case_count") != 0
+        or diagnostic_binding.get("classifications") is not None
+    ):
+        failures.append("smoke diagnostic binding must be empty")
     if diagnostic_binding.get("source_tree_sha256") != manifest.get(
         "source_tree_sha256"
     ):
@@ -719,6 +735,29 @@ def _reconstruct_case_rows(
     return reconstructed, failures
 
 
+def _validate_smoke_requirements(
+    case_summaries: list[dict],
+) -> list[str]:
+    failures = []
+    if any(row.get("output_match") is not True for row in case_summaries):
+        failures.append("smoke correctness mismatch")
+    if not any(
+        int(row.get("graph_hits", 0)) > 0
+        for row in case_summaries
+        if row.get("policy") == "candidate"
+    ):
+        failures.append("missing exact graph hit")
+    if not any(
+        event.get("dispatch") == "eager"
+        and event.get("fallback_reason") == "batch_not_allowlisted"
+        for row in case_summaries
+        if row.get("policy") == "candidate"
+        for event in row.get("dispatch_events", [])
+    ):
+        failures.append("missing non-allowlisted eager fallback")
+    return failures
+
+
 def _render_report(result: dict) -> str:
     lines = [
         "# Exact CUDA Graph Production Verification",
@@ -828,9 +867,15 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                     capture_rows,
                 )
             )
+            mode = manifest.get("mode")
+            matrix = (
+                contract.build_production_smoke_matrix()
+                if mode in {"correctness-smoke", "arrival-smoke"}
+                else contract.build_production_matrix()
+            )
             reconstructed, reconstruction_failures = (
                 _reconstruct_case_rows(
-                    contract.build_production_matrix(),
+                    matrix,
                     manifest,
                     dispatch_rows,
                     request_rows,
@@ -841,10 +886,23 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                 )
             )
             failures.extend(reconstruction_failures)
+            if mode in {"correctness-smoke", "arrival-smoke"}:
+                failures.extend(
+                    _validate_smoke_requirements(reconstructed)
+                )
             if failures:
                 result = {
                     "classification": "NO_GO",
                     "failures": failures,
+                    "metrics": {},
+                    "thresholds": dict(
+                        contract.PRODUCTION_THRESHOLDS
+                    ),
+                }
+            elif mode in {"correctness-smoke", "arrival-smoke"}:
+                result = {
+                    "classification": "NON_AUTHORITATIVE_SMOKE",
+                    "failures": [],
                     "metrics": {},
                     "thresholds": dict(
                         contract.PRODUCTION_THRESHOLDS
