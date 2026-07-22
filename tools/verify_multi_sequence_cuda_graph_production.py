@@ -29,6 +29,7 @@ HASHED_PRODUCTION_FILES = (
     "model_step_metrics.jsonl",
     "memory_trace.jsonl",
     "correctness_rows.jsonl",
+    "budget_fallback_rows.jsonl",
     "case_summaries.json",
     "summary.json",
 )
@@ -271,6 +272,10 @@ def _validate_manifest(
         run_dir / "diagnostic_binding.json"
     ):
         failures.append("diagnostic binding hash mismatch")
+    if manifest.get("budget_fallback_sha256") != contract.sha256_file(
+        run_dir / "budget_fallback_rows.jsonl"
+    ):
+        failures.append("budget fallback hash mismatch")
     expected_diagnostic = {
         "classification": "EXACT_REPLAY_CORRECT",
         "rounded_classification": "ROUNDED_REPLAY_CORRUPT",
@@ -460,18 +465,31 @@ def _validate_identity_lifecycle(
         )
         if existing != canonical_fields:
             failures.append("identity SHA shared by incompatible tensors")
-        key = (row.get("case_id"), identity_sha)
-        if key in captures_by_case_sha:
-            failures.append(f"duplicate capture lifecycle {key}")
-        captures_by_case_sha[key] = row
         if row.get("observation_count") != 3:
             failures.append(f"{row.get('row_id')}: capture count mismatch")
-        if row.get("budget_overshoot") is not False:
-            failures.append(
-                f"{row.get('row_id')}: capture succeeded after overshoot"
-            )
-        if row.get("status") != "ready":
-            failures.append(f"{row.get('row_id')}: capture not ready")
+        status = row.get("status")
+        if status == "ready":
+            key = (row.get("case_id"), identity_sha)
+            if key in captures_by_case_sha:
+                failures.append(f"duplicate capture lifecycle {key}")
+            captures_by_case_sha[key] = row
+            if row.get("budget_overshoot") is not False:
+                failures.append(
+                    f"{row.get('row_id')}: capture succeeded after overshoot"
+                )
+            if row.get("fallback_reason") is not None:
+                failures.append(
+                    f"{row.get('row_id')}: ready capture has fallback"
+                )
+        elif status == "rejected":
+            if row.get("fallback_reason") not in (
+                contract.BUDGET_FALLBACK_REASONS
+            ):
+                failures.append(
+                    f"{row.get('row_id')}: rejected capture reason invalid"
+                )
+        else:
+            failures.append(f"{row.get('row_id')}: capture status invalid")
         for field in (
             "capture_duration_ns",
             "static_bytes",
@@ -541,6 +559,339 @@ def _validate_identity_lifecycle(
                     f"{row.get('row_id')}: rounded replay"
                 )
     return failures
+
+
+def _validate_budget_fallback_rows(
+    *,
+    mode: str,
+    manifest: dict,
+    rows: list[dict],
+    dispatch_rows: list[dict],
+    capture_rows: list[dict],
+    correctness_rows: list[dict],
+) -> tuple[list[str], dict]:
+    del mode, correctness_rows
+    failures = []
+    required_reasons = list(contract.BUDGET_FALLBACK_REASONS)
+    observed_reasons = [
+        row.get("reason") for row in rows
+        if isinstance(row, dict)
+    ]
+    if observed_reasons != required_reasons:
+        failures.append("budget fallback reason domain mismatch")
+
+    dispatch_by_id, dispatch_index_failures = _index_unique(
+        dispatch_rows,
+        evidence_name="dispatch_events",
+    )
+    capture_by_id, capture_index_failures = _index_unique(
+        capture_rows,
+        evidence_name="capture_events",
+    )
+    failures.extend(dispatch_index_failures)
+    failures.extend(capture_index_failures)
+    manifest_source = manifest.get("source_tree_sha256")
+    used_ports = set()
+    for process in manifest.get("processes", []):
+        if not isinstance(process, dict):
+            continue
+        for field in ("tinyvllm_dist_port", "master_port"):
+            value = process.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                used_ports.add(value)
+
+    verified_reasons = []
+    runtime_reasons = {
+        "scratch_unavailable",
+        "capture_failed",
+        "identity_drift",
+    }
+    capture_stage_reasons = {
+        "reserved_byte_budget",
+        "single_capture_budget",
+        "total_capture_budget",
+        *runtime_reasons,
+    }
+    for row_index, row in enumerate(rows):
+        row_id = row.get("row_id") if isinstance(row, dict) else None
+        row_id = row_id or f"budget-fallback-row-{row_index}"
+        row_failures_before = len(failures)
+        if not isinstance(row, dict):
+            failures.append(f"{row_id}: budget fallback row invalid")
+            continue
+        if set(row) != set(contract.BUDGET_FALLBACK_ROW_FIELDS):
+            failures.append(f"{row_id}: budget fallback fields mismatch")
+        reason = row.get("reason")
+        expected_case_id = f"budget-fallback:{reason}"
+        if row.get("case_id") != expected_case_id:
+            failures.append(f"{row_id}: budget fallback case mismatch")
+        if row.get("source_sha256") != manifest_source:
+            failures.append("budget_fallback_rows: mixed source SHA")
+        if row.get("gpu") != 0:
+            failures.append(f"{row_id}: budget fallback GPU mismatch")
+        for port_field in ("tinyvllm_dist_port", "master_port"):
+            port = row.get(port_field)
+            if (
+                isinstance(port, bool)
+                or not isinstance(port, int)
+                or port <= 0
+            ):
+                failures.append(f"{row_id}: invalid worker port")
+            elif port in used_ports:
+                failures.append(f"{row_id}: reused worker port")
+            else:
+                used_ports.add(port)
+        if row.get("tinyvllm_dist_port") == row.get("master_port"):
+            failures.append(f"{row_id}: identical worker ports")
+
+        try:
+            identity = _identity_from_fields(
+                row.get("target_identity_fields")
+            )
+        except (TypeError, ValueError) as exc:
+            failures.append(f"{row_id}: invalid target identity: {exc}")
+            identity = None
+        if (
+            identity is not None
+            and row.get("target_identity_sha256") != identity.sha256
+        ):
+            failures.append(f"{row_id}: target identity SHA mismatch")
+        identity_sha = row.get("target_identity_sha256")
+        case_id = row.get("case_id")
+
+        def referenced_rows(field, index, evidence_name):
+            row_ids = row.get(field)
+            if not isinstance(row_ids, list):
+                failures.append(f"{row_id}: {field} is not a list")
+                return []
+            referenced = []
+            for referenced_id in row_ids:
+                target = index.get(referenced_id)
+                if target is None:
+                    failures.append(
+                        f"{row_id}: missing referenced {evidence_name} row"
+                    )
+                    continue
+                if (
+                    target.get("case_id") != case_id
+                    or target.get("source_sha256") != manifest_source
+                    or target.get("graph_identity_sha256") != identity_sha
+                ):
+                    failures.append(
+                        f"{row_id}: referenced {evidence_name} row mismatch"
+                    )
+                referenced.append(target)
+            return referenced
+
+        observations = referenced_rows(
+            "observation_dispatch_row_ids",
+            dispatch_by_id,
+            "dispatch",
+        )
+        terminals = referenced_rows(
+            "terminal_dispatch_row_ids",
+            dispatch_by_id,
+            "dispatch",
+        )
+        captures = referenced_rows(
+            "capture_row_ids",
+            capture_by_id,
+            "capture",
+        )
+        if len(observations) != 2:
+            failures.append(f"{row_id}: cold observation count mismatch")
+        observation_steps = []
+        for observation in observations:
+            observation_steps.append(observation.get("step_id"))
+            if (
+                observation.get("dispatch") != "eager"
+                or observation.get("cache_state") != "observing"
+                or observation.get("fallback_reason") != "cold_identity"
+            ):
+                failures.append(
+                    f"{row_id}: cold observation lifecycle mismatch"
+                )
+        if len(terminals) < 3:
+            failures.append(f"{row_id}: terminal evidence count mismatch")
+        terminal_steps = []
+        for terminal in terminals:
+            terminal_steps.append(terminal.get("step_id"))
+            if terminal.get("dispatch") == "graph":
+                failures.append(f"{row_id}: graph replay after rejection")
+            if terminal.get("fallback_reason") != reason:
+                failures.append(
+                    f"{row_id}: terminal dispatch reason mismatch"
+                )
+            if terminal.get("cache_state") != "rejected":
+                failures.append(f"{row_id}: terminal cache state mismatch")
+        if (
+            observation_steps
+            and terminal_steps
+            and max(observation_steps) >= min(terminal_steps)
+        ):
+            failures.append(f"{row_id}: terminal ordering mismatch")
+
+        first_terminal_step = (
+            min(terminal_steps)
+            if terminal_steps
+            and all(isinstance(value, int) for value in terminal_steps)
+            else None
+        )
+        case_target_dispatch = [
+            item for item in dispatch_rows
+            if item.get("case_id") == case_id
+            and item.get("graph_identity_sha256") == identity_sha
+        ]
+        if any(
+            item.get("dispatch") == "graph"
+            and (
+                first_terminal_step is None
+                or item.get("step_id", -1) >= first_terminal_step
+            )
+            for item in case_target_dispatch
+        ):
+            failures.append(f"{row_id}: graph replay after rejection")
+        if any(
+            item.get("capture_attempted") is True
+            and first_terminal_step is not None
+            and item.get("step_id", -1) > first_terminal_step
+            for item in case_target_dispatch
+        ):
+            failures.append(f"{row_id}: capture after rejection")
+
+        target_capture_attempts = sum(
+            item.get("capture_attempted") is True
+            and item.get("step_id") == first_terminal_step
+            for item in case_target_dispatch
+        )
+        post_rejection_attempts = sum(
+            item.get("capture_attempted") is True
+            and first_terminal_step is not None
+            and item.get("step_id", -1) > first_terminal_step
+            for item in case_target_dispatch
+        )
+        graph_replays = sum(
+            item.get("dispatch") == "graph"
+            for item in case_target_dispatch
+        )
+        if row.get("target_capture_attempt_count") != target_capture_attempts:
+            failures.append(f"{row_id}: target capture count mismatch")
+        if (
+            row.get("post_rejection_capture_attempt_count")
+            != post_rejection_attempts
+        ):
+            failures.append(
+                f"{row_id}: post-rejection capture count mismatch"
+            )
+        if row.get("target_graph_replay_count") != graph_replays:
+            failures.append(f"{row_id}: target graph replay count mismatch")
+        if row.get("terminal_rejection_reason") != reason:
+            failures.append(f"{row_id}: terminal rejection reason mismatch")
+        if (
+            row.get("eager_output_token_ids")
+            != row.get("candidate_output_token_ids")
+        ):
+            failures.append(f"{row_id}: output token mismatch")
+        if row.get("logits_allclose") is not True:
+            failures.append(f"{row_id}: logits mismatch")
+        logits_max_abs_diff = row.get("logits_max_abs_diff")
+        if (
+            isinstance(logits_max_abs_diff, bool)
+            or not isinstance(logits_max_abs_diff, (int, float))
+            or not math.isfinite(float(logits_max_abs_diff))
+            or float(logits_max_abs_diff) < 0.0
+            or float(logits_max_abs_diff) > contract.LOGIT_ATOL
+        ):
+            failures.append(f"{row_id}: logits maximum difference invalid")
+        if (
+            row.get("eager_live_kv_sha256")
+            != row.get("candidate_live_kv_sha256")
+        ):
+            failures.append(f"{row_id}: live KV mismatch")
+        if row.get("complete") is not True:
+            failures.append(f"{row_id}: budget fallback incomplete")
+
+        runtime_fault = reason in runtime_reasons
+        expected_injection_class = (
+            "runtime_fault" if runtime_fault else "budget_precondition"
+        )
+        if row.get("injection_class") != expected_injection_class:
+            failures.append(f"{row_id}: injection class mismatch")
+        if runtime_fault and (
+            row.get("injection_installed") is not True
+            or row.get("injection_restored") is not True
+        ):
+            failures.append(f"{row_id}: runtime injection not restored")
+        if not runtime_fault and (
+            row.get("injection_installed") is not False
+            or row.get("injection_restored") is not False
+        ):
+            failures.append(f"{row_id}: unexpected runtime injection")
+
+        config = row.get("effective_cache_config")
+        summary = row.get("pre_target_cache_summary")
+        if not isinstance(config, dict) or not isinstance(summary, dict):
+            failures.append(f"{row_id}: budget precondition missing")
+            config = {}
+            summary = {}
+        try:
+            if reason == "entry_limit" and not (
+                len(summary.get("ready_entries", []))
+                >= int(config["max_entries"])
+            ):
+                failures.append(f"{row_id}: entry limit is not binding")
+            elif reason == "static_byte_budget" and not (
+                int(summary["static_bytes"])
+                + int(config["target_estimated_static_bytes"])
+                > int(config["max_static_bytes"])
+            ):
+                failures.append(
+                    f"{row_id}: static byte budget is not binding"
+                )
+            elif reason == "reserved_byte_budget" and not (
+                int(summary["reserved_delta_bytes"])
+                + int(config["target_reserved_delta_bytes"])
+                > int(config["max_reserved_bytes"])
+            ):
+                failures.append(
+                    f"{row_id}: reserved byte budget is not binding"
+                )
+            elif reason == "single_capture_budget" and not (
+                int(config["target_capture_duration_ns"])
+                > int(config["max_single_capture_ns"])
+            ):
+                failures.append(
+                    f"{row_id}: single capture budget is not binding"
+                )
+            elif reason == "total_capture_budget" and not (
+                int(summary["total_capture_ns"])
+                + int(config["target_capture_duration_ns"])
+                > int(config["max_total_capture_ns"])
+            ):
+                failures.append(
+                    f"{row_id}: total capture budget is not binding"
+                )
+        except (KeyError, TypeError, ValueError):
+            failures.append(f"{row_id}: budget precondition invalid")
+
+        expected_capture_count = 1 if reason in capture_stage_reasons else 0
+        if len(captures) != expected_capture_count:
+            failures.append(f"{row_id}: capture evidence count mismatch")
+        for capture in captures:
+            if (
+                capture.get("status") != "rejected"
+                or capture.get("fallback_reason") != reason
+                or capture.get("step_id") != first_terminal_step
+            ):
+                failures.append(f"{row_id}: rejected capture mismatch")
+        if len(failures) == row_failures_before:
+            verified_reasons.append(reason)
+
+    return failures, {
+        "budget_fallback_required": len(required_reasons),
+        "budget_fallback_verified": len(verified_reasons),
+        "budget_fallback_reasons": verified_reasons,
+    }
 
 
 def _reconstruct_case_rows(
@@ -820,6 +1171,9 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
             correctness_rows = _read_jsonl(
                 run_dir / "correctness_rows.jsonl"
             )
+            budget_fallback_rows = _read_jsonl(
+                run_dir / "budget_fallback_rows.jsonl"
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             result = {
                 "classification": "INCOMPLETE",
@@ -848,6 +1202,7 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                 ("model_step_metrics", model_step_rows),
                 ("memory_trace", memory_rows),
                 ("correctness_rows", correctness_rows),
+                ("budget_fallback_rows", budget_fallback_rows),
             )
             for evidence_name, rows in row_sets:
                 _, row_failures = _index_unique(
@@ -868,6 +1223,17 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                 )
             )
             mode = manifest.get("mode")
+            budget_failures, budget_summary = (
+                _validate_budget_fallback_rows(
+                    mode=mode,
+                    manifest=manifest,
+                    rows=budget_fallback_rows,
+                    dispatch_rows=dispatch_rows,
+                    capture_rows=capture_rows,
+                    correctness_rows=correctness_rows,
+                )
+            )
+            failures.extend(budget_failures)
             matrix = (
                 contract.build_production_smoke_matrix()
                 if mode in {"correctness-smoke", "arrival-smoke"}
@@ -898,6 +1264,7 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                     "thresholds": dict(
                         contract.PRODUCTION_THRESHOLDS
                     ),
+                    **budget_summary,
                 }
             elif mode in {"correctness-smoke", "arrival-smoke"}:
                 result = {
@@ -907,6 +1274,7 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                     "thresholds": dict(
                         contract.PRODUCTION_THRESHOLDS
                     ),
+                    **budget_summary,
                 }
             else:
                 independent = contract.classify_production_gate(
@@ -919,6 +1287,7 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                     "failures": independent["failures"],
                     "metrics": independent["metrics"],
                     "thresholds": independent["thresholds"],
+                    **budget_summary,
                 }
 
     if write_report:

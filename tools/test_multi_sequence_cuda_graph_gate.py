@@ -1595,6 +1595,185 @@ def _rehash_production_artifact(run_dir: Path, name: str) -> None:
     _write_json(source_manifest_path, source_manifest)
 
 
+def _rehash_budget_fallback_artifact(run_dir: Path) -> None:
+    name = "budget_fallback_rows.jsonl"
+    _rehash_production_artifact(run_dir, name)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["budget_fallback_sha256"] = contract.sha256_file(
+        run_dir / name
+    )
+    _write_json(manifest_path, manifest)
+
+
+def _synthetic_budget_fallback_evidence(
+    *,
+    source_sha: str,
+    first_port: int,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    split_policy = load_split_policy()
+    budget_rows = []
+    dispatch_rows = []
+    capture_rows = []
+    runtime_reasons = {
+        "scratch_unavailable",
+        "capture_failed",
+        "identity_drift",
+    }
+    capture_attempt_reasons = {
+        "reserved_byte_budget",
+        "single_capture_budget",
+        "total_capture_budget",
+        *runtime_reasons,
+    }
+    for reason_index, reason in enumerate(
+        contract.BUDGET_FALLBACK_REASONS
+    ):
+        case_id = f"budget-fallback:{reason}"
+        identity = split_policy.build_flash_attn_263_graph_identity(
+            graph_batch_size=2,
+            inputs=split_policy.FlashAttentionSplitInputs(
+                batch_size=2,
+                num_query_heads=16,
+                num_kv_heads=8,
+                head_dim=128,
+                page_block_size=256,
+                page_table_width=reason_index + 1,
+                max_seqlen_q=1,
+                multi_processor_count=108,
+            ),
+            flash_attn_version="2.6.3",
+            require_exact_batch=True,
+        )
+        identity_fields = asdict(identity)
+        observation_row_ids = []
+        terminal_row_ids = []
+        for step_id in range(1, 6):
+            cold = step_id < 3
+            row_id = f"{case_id}:dispatch:{step_id}"
+            if cold:
+                observation_row_ids.append(row_id)
+            else:
+                terminal_row_ids.append(row_id)
+            dispatch_rows.append({
+                "row_id": row_id,
+                "case_id": case_id,
+                "step_id": step_id,
+                "source_sha256": source_sha,
+                "dispatch": "eager",
+                "cache_state": "observing" if cold else "rejected",
+                "fallback_reason": "cold_identity" if cold else reason,
+                "graph_identity_sha256": identity.sha256,
+                "identity_fields": identity_fields,
+                "observation_count": min(step_id, 3),
+                "page_table_width": reason_index + 1,
+                "active_batch_size": 2,
+                "capture_attempted": (
+                    step_id == 3
+                    and reason in capture_attempt_reasons
+                ),
+            })
+        max_entries = 1 if reason == "entry_limit" else 8
+        max_static_bytes = (
+            1024 if reason == "static_byte_budget" else 64 * 1024 * 1024
+        )
+        max_reserved_bytes = (
+            1 if reason == "reserved_byte_budget" else 512 * 1024 * 1024
+        )
+        max_single_capture_ns = (
+            1 if reason == "single_capture_budget" else 2_000_000_000
+        )
+        max_total_capture_ns = (
+            1 if reason == "total_capture_budget" else 5_000_000_000
+        )
+        effective_cache_config = {
+            "max_entries": max_entries,
+            "max_static_bytes": max_static_bytes,
+            "max_reserved_bytes": max_reserved_bytes,
+            "max_single_capture_ns": max_single_capture_ns,
+            "max_total_capture_ns": max_total_capture_ns,
+            "target_estimated_static_bytes": 4096,
+            "target_capture_duration_ns": 100,
+            "target_reserved_delta_bytes": 1024,
+        }
+        pre_target_cache_summary = {
+            "ready_entries": (
+                ["seed-entry"] if reason == "entry_limit" else []
+            ),
+            "rejected": {},
+            "capturing": [],
+            "observation_counts": {identity.sha256: 2},
+            "static_bytes": 0,
+            "reserved_delta_bytes": 0,
+            "total_capture_ns": 0,
+        }
+        runtime_fault = reason in runtime_reasons
+        capture_attempt_count = (
+            1 if reason in capture_attempt_reasons else 0
+        )
+        capture_row_ids = []
+        if capture_attempt_count:
+            capture_row_id = f"{case_id}:capture:3"
+            capture_row_ids.append(capture_row_id)
+            capture_rows.append({
+                "row_id": capture_row_id,
+                "case_id": case_id,
+                "step_id": 3,
+                "source_sha256": source_sha,
+                "graph_identity_sha256": identity.sha256,
+                "identity_fields": identity_fields,
+                "observation_count": 3,
+                "status": "rejected",
+                "fallback_reason": reason,
+                "capture_duration_ns": 100,
+                "static_bytes": 4096,
+                "reserved_delta_bytes": 1024,
+                "budget_overshoot": reason in {
+                    "reserved_byte_budget",
+                    "single_capture_budget",
+                    "total_capture_budget",
+                },
+            })
+        budget_row = {
+            "row_id": f"{case_id}:result",
+            "case_id": case_id,
+            "reason": reason,
+            "source_sha256": source_sha,
+            "worker_pid": 9000 + reason_index,
+            "tinyvllm_dist_port": first_port + reason_index * 2,
+            "master_port": first_port + reason_index * 2 + 1,
+            "gpu": 0,
+            "injection_class": (
+                "runtime_fault" if runtime_fault else "budget_precondition"
+            ),
+            "injection_installed": runtime_fault,
+            "injection_restored": runtime_fault,
+            "effective_cache_config": effective_cache_config,
+            "pre_target_cache_summary": pre_target_cache_summary,
+            "target_identity_fields": identity_fields,
+            "target_identity_sha256": identity.sha256,
+            "observation_dispatch_row_ids": observation_row_ids,
+            "terminal_dispatch_row_ids": terminal_row_ids,
+            "capture_row_ids": capture_row_ids,
+            "eager_output_token_ids": [41, 42],
+            "candidate_output_token_ids": [41, 42],
+            "logits_allclose": True,
+            "logits_max_abs_diff": 0.0,
+            "eager_live_kv_sha256": "6" * 64,
+            "candidate_live_kv_sha256": "6" * 64,
+            "terminal_rejection_reason": reason,
+            "target_graph_replay_count": 0,
+            "target_capture_attempt_count": capture_attempt_count,
+            "post_rejection_capture_attempt_count": 0,
+            "complete": True,
+        }
+        budget_rows.append({
+            field: budget_row[field]
+            for field in contract.BUDGET_FALLBACK_ROW_FIELDS
+        })
+    return budget_rows, dispatch_rows, capture_rows
+
+
 def write_complete_production_artifact(
     run_dir: Path,
     *,
@@ -1821,6 +2000,14 @@ def write_complete_production_artifact(
                 ),
             })
 
+    budget_rows, budget_dispatch_rows, budget_capture_rows = (
+        _synthetic_budget_fallback_evidence(
+            source_sha=source_sha,
+            first_port=40000,
+        )
+    )
+    dispatch_rows.extend(budget_dispatch_rows)
+    capture_rows.extend(budget_capture_rows)
     _write_production_jsonl(
         run_dir / "dispatch_events.jsonl",
         dispatch_rows,
@@ -1844,6 +2031,10 @@ def write_complete_production_artifact(
     _write_production_jsonl(
         run_dir / "correctness_rows.jsonl",
         correctness_rows,
+    )
+    _write_production_jsonl(
+        run_dir / "budget_fallback_rows.jsonl",
+        budget_rows,
     )
     _write_json(run_dir / "case_summaries.json", case_summaries)
     producer_summary = (
@@ -1894,6 +2085,9 @@ def write_complete_production_artifact(
         "diagnostic_binding_sha256": (
             contract.sha256_file(run_dir / "diagnostic_binding.json")
         ),
+        "budget_fallback_sha256": contract.sha256_file(
+            run_dir / "budget_fallback_rows.jsonl"
+        ),
     }
     _write_json(run_dir / "manifest.json", manifest)
     hashed_names = (
@@ -1905,6 +2099,7 @@ def write_complete_production_artifact(
         "model_step_metrics.jsonl",
         "memory_trace.jsonl",
         "correctness_rows.jsonl",
+        "budget_fallback_rows.jsonl",
         "case_summaries.json",
         "summary.json",
     )
@@ -1935,6 +2130,11 @@ def test_production_verifier_accepts_complete_synthetic_artifact():
         result = verifier.verify_run(run_dir)
         assert result["classification"] == "GO"
         assert result["failures"] == []
+        assert result["budget_fallback_required"] == 8
+        assert result["budget_fallback_verified"] == 8
+        assert result["budget_fallback_reasons"] == list(
+            contract.BUDGET_FALLBACK_REASONS
+        )
         written = json.loads(
             (run_dir / "independent_verification.json").read_text(
                 encoding="utf-8"
@@ -1958,6 +2158,216 @@ def test_production_verifier_accepts_non_authoritative_smoke():
         assert result["classification"] == "NON_AUTHORITATIVE_SMOKE"
         assert result["failures"] == []
         assert result["metrics"] == {}
+        assert result["budget_fallback_required"] == 8
+        assert result["budget_fallback_verified"] == 8
+
+
+def test_production_verifier_rejects_budget_fallback_tampering():
+    verifier = load_production_verifier()
+
+    def run_tamper(tamper, expected_failure):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            run_dir = Path(temporary_directory)
+            write_complete_production_artifact(
+                run_dir,
+                mode="correctness-canonical",
+            )
+            tamper(run_dir)
+            result = verifier.verify_run(run_dir, write_report=False)
+            assert result["classification"] == "NO_GO"
+            assert any(
+                expected_failure in failure
+                for failure in result["failures"]
+            ), result
+
+    def mutate_budget_rows(root, mutate):
+        path = root / "budget_fallback_rows.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        mutate(rows)
+        _write_production_jsonl(path, rows)
+        _rehash_budget_fallback_artifact(root)
+
+    run_tamper(
+        lambda root: mutate_budget_rows(root, lambda rows: rows.pop()),
+        "budget fallback reason domain mismatch",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows.append(copy.deepcopy(rows[-1])),
+        ),
+        "budget fallback reason domain mismatch",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0].update({"reason": "unknown"}),
+        ),
+        "budget fallback reason domain mismatch",
+    )
+
+    def mismatch_raw_reason(root):
+        path = root / "dispatch_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row
+            for row in rows
+            if row["case_id"] == "budget-fallback:entry_limit"
+            and row["step_id"] == 3
+        )
+        target["fallback_reason"] = "capture_failed"
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(mismatch_raw_reason, "terminal dispatch reason mismatch")
+
+    def remove_cold_observation(root):
+        path = root / "dispatch_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows = [
+            row for row in rows
+            if row["row_id"] != (
+                "budget-fallback:entry_limit:dispatch:1"
+            )
+        ]
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(remove_cold_observation, "missing referenced dispatch row")
+
+    def replay_after_rejection(root):
+        path = root / "dispatch_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row
+            for row in rows
+            if row["row_id"] == (
+                "budget-fallback:entry_limit:dispatch:5"
+            )
+        )
+        target.update({
+            "dispatch": "graph",
+            "cache_state": "ready",
+            "fallback_reason": None,
+        })
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(replay_after_rejection, "graph replay after rejection")
+
+    def recapture_after_rejection(root):
+        path = root / "dispatch_events.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        target = next(
+            row
+            for row in rows
+            if row["row_id"] == (
+                "budget-fallback:capture_failed:dispatch:5"
+            )
+        )
+        target["capture_attempted"] = True
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(recapture_after_rejection, "capture after rejection")
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0].update({
+                "candidate_output_token_ids": [99],
+            }),
+        ),
+        "output token mismatch",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0].update({"logits_allclose": False}),
+        ),
+        "logits mismatch",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0].update({
+                "candidate_live_kv_sha256": "7" * 64,
+            }),
+        ),
+        "live KV mismatch",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0].update({
+                "source_sha256": "9" * 64,
+            }),
+        ),
+        "mixed source SHA",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0]["target_identity_fields"].update({
+                "head_dim": 64,
+            }),
+        ),
+        "invalid target identity",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[0].update({
+                "master_port": rows[0]["tinyvllm_dist_port"],
+            }),
+        ),
+        "identical worker ports",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: rows[1].update({
+                "tinyvllm_dist_port": rows[0]["tinyvllm_dist_port"],
+            }),
+        ),
+        "reused worker port",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: next(
+                row for row in rows
+                if row["reason"] == "capture_failed"
+            ).update({"injection_restored": False}),
+        ),
+        "runtime injection not restored",
+    )
+    run_tamper(
+        lambda root: mutate_budget_rows(
+            root,
+            lambda rows: next(
+                row for row in rows
+                if row["reason"] == "static_byte_budget"
+            )["effective_cache_config"].update({
+                "max_static_bytes": 8192,
+            }),
+        ),
+        "static byte budget is not binding",
+    )
+
+    def add_fault_performance_case(root):
+        path = root / "case_summaries.json"
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        rows.append({
+            "case_id": "budget-fallback:entry_limit",
+            "worker_kind": "budget-fallback",
+        })
+        _write_json(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        add_fault_performance_case,
+        "case_summaries order or domain mismatch",
+    )
 
 
 def test_production_runner_smoke_summary_and_verify_exit_are_non_authoritative():
@@ -5347,6 +5757,7 @@ if __name__ == "__main__":
         test_production_gate_fails_closed_on_lifecycle_and_evidence,
         test_production_verifier_accepts_complete_synthetic_artifact,
         test_production_verifier_accepts_non_authoritative_smoke,
+        test_production_verifier_rejects_budget_fallback_tampering,
         test_production_runner_smoke_summary_and_verify_exit_are_non_authoritative,
         test_production_verifier_requires_smoke_hit_fallback_and_correctness,
         test_production_verifier_rejects_provenance_and_hash_tampering,
