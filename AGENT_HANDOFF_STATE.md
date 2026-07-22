@@ -3721,4 +3721,35 @@ model runner spec_verify tests passed
 2026-07-22 18:17–18:22 CST 连续十次只读轮询 GPU 0，每 30 秒一次，
 始终为相同八个 unrelated compute processes，约占 13.3 GiB。未启动
 新 model worker。Task 6 仍是环境阻塞的 `INCOMPLETE`，本次 verifier
-加固尚未取得新的 remote source-bound preflight/smoke artifact。
+加固提交为：
+
+```text
+a435cab fix: bind cuda graph fallback correctness evidence
+```
+
+该提交已取得新的 source-bound remote preflight：
+
+```text
+run tag:
+qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-183320
+base commit:
+a435cab743f206e77bdebe82b5a4397ab6dc8c0e
+dirty:
+false
+tree SHA:
+fa9261f811d274f71a798675dbbf3c3aab352e62af07fd038aef1995348a299d
+classification:
+preflight exit 0
+```
+
+Artifact：
+
+```text
+experiments/cuda_graph/
+qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-183320/
+```
+
+2026-07-22 18:35 CST 再次只读检查 GPU 0，仍为相同八个 unrelated
+compute processes、约 13.3 GiB，因此没有创建新的 correctness smoke
+run。恢复时必须先检查 GPU 0；只有 compute process 列表为空，才能基于
+tree SHA `fa9261f8...a299d` 使用新 run tag 启动 smoke。
