@@ -436,6 +436,48 @@ def _validate_source_rows(
     return failures
 
 
+def _validate_case_domains(
+    *,
+    matrix,
+    dispatch_rows: list[dict],
+    capture_rows: list[dict],
+    request_rows: list[dict],
+    model_step_rows: list[dict],
+    memory_rows: list[dict],
+    correctness_rows: list[dict],
+) -> list[str]:
+    failures = []
+    production_case_ids = {case.case_id for case in matrix}
+    fault_case_ids = {
+        f"budget-fallback:{reason}"
+        for reason in contract.BUDGET_FALLBACK_REASONS
+    }
+    domains = (
+        (
+            "dispatch_events",
+            dispatch_rows,
+            production_case_ids | fault_case_ids,
+        ),
+        (
+            "capture_events",
+            capture_rows,
+            production_case_ids | fault_case_ids,
+        ),
+        ("request_metrics", request_rows, production_case_ids),
+        ("model_step_metrics", model_step_rows, production_case_ids),
+        ("memory_trace", memory_rows, production_case_ids),
+        (
+            "correctness_rows",
+            correctness_rows,
+            production_case_ids | fault_case_ids,
+        ),
+    )
+    for evidence_name, rows, allowed_case_ids in domains:
+        if any(row.get("case_id") not in allowed_case_ids for row in rows):
+            failures.append(f"{evidence_name} case domain mismatch")
+    return failures
+
+
 def _validate_identity_lifecycle(
     dispatch_rows: list[dict],
     capture_rows: list[dict],
@@ -1261,6 +1303,22 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                 )
             )
             mode = manifest.get("mode")
+            matrix = (
+                contract.build_production_smoke_matrix()
+                if mode in {"correctness-smoke", "arrival-smoke"}
+                else contract.build_production_matrix()
+            )
+            failures.extend(
+                _validate_case_domains(
+                    matrix=matrix,
+                    dispatch_rows=dispatch_rows,
+                    capture_rows=capture_rows,
+                    request_rows=request_rows,
+                    model_step_rows=model_step_rows,
+                    memory_rows=memory_rows,
+                    correctness_rows=correctness_rows,
+                )
+            )
             budget_failures, budget_summary = (
                 _validate_budget_fallback_rows(
                     mode=mode,
@@ -1272,11 +1330,6 @@ def verify_run(run_dir: Path, *, write_report: bool = True) -> dict:
                 )
             )
             failures.extend(budget_failures)
-            matrix = (
-                contract.build_production_smoke_matrix()
-                if mode in {"correctness-smoke", "arrival-smoke"}
-                else contract.build_production_matrix()
-            )
             reconstructed, reconstruction_failures = (
                 _reconstruct_case_rows(
                     matrix,

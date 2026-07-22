@@ -3753,3 +3753,48 @@ qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-183320/
 compute processes、约 13.3 GiB，因此没有创建新的 correctness smoke
 run。恢复时必须先检查 GPU 0；只有 compute process 列表为空，才能基于
 tree SHA `fa9261f8...a299d` 使用新 run tag 启动 smoke。
+
+### 2026-07-22 Raw Evidence Case-Domain Hardening
+
+后续 completion audit 又发现一个 provenance 闭域缺口：verifier 会按固定
+production matrix 重建指标，但此前没有拒绝 raw artifacts 中额外的未知
+`case_id`。额外行不会直接改变当前指标，却可能掩盖采集污染，且不满足
+source-bound evidence 的 closed-domain 要求。
+
+新增统一 `_validate_case_domains()`：
+
+- `request_metrics.jsonl`、`model_step_metrics.jsonl`、
+  `memory_trace.jsonl` 只允许 production matrix case IDs；
+- `dispatch_events.jsonl`、`capture_events.jsonl`、
+  `correctness_rows.jsonl` 只允许 production matrix case IDs 加八个
+  `budget-fallback:<reason>` case IDs；
+- 任意未知 case 都使 independent verifier 返回 `NO_GO`。
+
+TDD RED：
+
+```text
+add unknown-case row to correctness_rows.jsonl
+verifier incorrectly did not return NO_GO
+```
+
+GREEN：
+
+```text
+multi-sequence cuda graph gate tests passed
+model runner spec_verify tests passed
+```
+
+手工 test registry 也已用 AST 独立审计：
+
+```text
+defined=130
+registered=130
+missing=[]
+unknown=[]
+duplicates=[]
+```
+
+因此当前 dependency-light suite 不存在已定义但未运行的 `test_*`。
+本次 source-owned verifier 变化后，上一条 tree SHA
+`fa9261f8...a299d` 的 preflight 仅对应旧 verifier；提交后必须重新运行
+source-bound remote preflight，再以新的 tree SHA 启动 smoke。

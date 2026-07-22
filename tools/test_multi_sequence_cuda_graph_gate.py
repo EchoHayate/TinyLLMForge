@@ -2379,6 +2379,23 @@ def test_production_verifier_rejects_budget_fallback_tampering():
         mismatch_fault_correctness_kv,
         "fault correctness KV binding mismatch",
     )
+
+    def add_unknown_correctness_case(root):
+        path = root / "correctness_rows.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        extra = copy.deepcopy(rows[0])
+        extra.update({
+            "row_id": "unknown-case:correctness",
+            "case_id": "unknown-case",
+        })
+        rows.append(extra)
+        _write_production_jsonl(path, rows)
+        _rehash_production_artifact(root, path.name)
+
+    run_tamper(
+        add_unknown_correctness_case,
+        "correctness_rows case domain mismatch",
+    )
     run_tamper(
         lambda root: mutate_budget_rows(
             root,
