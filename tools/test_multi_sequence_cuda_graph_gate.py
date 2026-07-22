@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import ast
 import shlex
 import sys
 import tempfile
@@ -32,6 +33,32 @@ SPLIT_POLICY_PATH = (
 CONFIG_PATH = ROOT / "tinyvllm" / "config.py"
 EXACT_CACHE_PATH = (
     ROOT / "tinyvllm" / "engine" / "exact_cuda_graph_cache.py"
+)
+MODEL_RUNNER_PATH = ROOT / "tinyvllm" / "engine" / "model_runner.py"
+
+EXPECTED_DISPATCH_EVENT_FIELDS = (
+    "step_id",
+    "request_ids_hash",
+    "mode",
+    "active_batch_size",
+    "page_table_width",
+    "effective_num_splits",
+    "graph_identity_sha256",
+    "feature_enabled",
+    "dispatch",
+    "cache_state",
+    "observation_count",
+    "fallback_reason",
+    "capture_attempted",
+    "capture_duration_ns",
+    "capture_static_bytes",
+    "capture_allocated_delta_bytes",
+    "capture_reserved_delta_bytes",
+    "cache_ready_entries",
+    "cache_static_bytes",
+    "cache_reserved_delta_bytes",
+    "cache_total_capture_ns",
+    "source_sha256",
 )
 
 
@@ -612,6 +639,38 @@ def test_fallback_reason_contract_is_closed_and_complete():
         "max_total_capture_ns": 5_000_000_000,
         "max_single_capture_ns": 2_000_000_000,
     }
+
+
+def test_model_runner_dispatch_schema_and_replay_failure_are_fail_closed():
+    source = MODEL_RUNNER_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=os.fspath(MODEL_RUNNER_PATH))
+    dispatch_fields = None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(
+            isinstance(target, ast.Name)
+            and target.id == "DISPATCH_EVENT_FIELDS"
+            for target in node.targets
+        ):
+            dispatch_fields = ast.literal_eval(node.value)
+            break
+    assert dispatch_fields == EXPECTED_DISPATCH_EVENT_FIELDS
+    assert "except Exception:" in source
+    assert 'fallback_reason="replay_disabled"' in source
+    assert 'dispatch="graph"' in source
+    assert 'cache_state="rejected"' in source
+    assert "raise\n" in source
+    assert "next (x for x in self.graph_bs if x >= bs)" in source
+    exact_branch = source.split(
+        "if input_ids.size(0) > 1:",
+        maxsplit=1,
+    )[1].split(
+        "if (is_prefill or spec_verify_active",
+        maxsplit=1,
+    )[0]
+    assert "self.graph_bs" not in exact_branch
+    assert "[:bs]" not in exact_branch
 
 
 def test_flash_attn_263_rejects_unsupported_inputs():
@@ -3457,6 +3516,7 @@ if __name__ == "__main__":
         test_rejected_identity_is_terminal_and_exact_lookup_only,
         test_entries_do_not_share_static_tensor_objects,
         test_fallback_reason_contract_is_closed_and_complete,
+        test_model_runner_dispatch_schema_and_replay_failure_are_fail_closed,
         test_flash_attn_263_rejects_unsupported_inputs,
         test_same_policy_matrix_is_exact_policy_aware_and_unique,
         test_legacy_compatibility_matrix_is_63_pairs_126_processes,

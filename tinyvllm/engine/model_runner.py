@@ -5,12 +5,16 @@ import pickle
 import os
 import time
 import flash_attn
+import hashlib
+import json
+from types import SimpleNamespace
 
 import torch.distributed as dist
 from tinyvllm.config import Config
 from tinyvllm.engine.exact_cuda_graph_cache import (
     ExactCudaGraphCache,
     ExactCudaGraphCacheConfig,
+    ExactCudaGraphEntry,
 )
 from tinyvllm.engine.flash_attn_split_policy import (
     FlashAttentionSplitInputs,
@@ -34,6 +38,45 @@ from tinyvllm.speculative.verifier import (
 
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
+
+
+DISPATCH_EVENT_FIELDS = (
+    "step_id",
+    "request_ids_hash",
+    "mode",
+    "active_batch_size",
+    "page_table_width",
+    "effective_num_splits",
+    "graph_identity_sha256",
+    "feature_enabled",
+    "dispatch",
+    "cache_state",
+    "observation_count",
+    "fallback_reason",
+    "capture_attempted",
+    "capture_duration_ns",
+    "capture_static_bytes",
+    "capture_allocated_delta_bytes",
+    "capture_reserved_delta_bytes",
+    "cache_ready_entries",
+    "cache_static_bytes",
+    "cache_reserved_delta_bytes",
+    "cache_total_capture_ns",
+    "source_sha256",
+)
+
+
+class _ExactGraphCaptureError(RuntimeError):
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        *,
+        retained_reserved_bytes: int = 0,
+    ):
+        super().__init__(message)
+        self.reason = reason
+        self.retained_reserved_bytes = retained_reserved_bytes
 
 
 def _resolve_kv_cache_blocks(
@@ -712,6 +755,11 @@ class ModelRunner:
                 ),
             )
         )
+        self.last_cuda_graph_dispatch_event = None
+        self._cuda_graph_step_id = 0
+        self._cuda_graph_request_ids_hash = hashlib.sha256(
+            b"[]"
+        ).hexdigest()
         # cuda graph 跳过条件：
         #   1) enforce_eager：用户显式关
         #   2) kv_quant_bits == 4 (C4)：decode 反量化路径里有动态 alloc，无法 capture
@@ -1049,6 +1097,229 @@ class ModelRunner:
             * int(hf_config.torch_dtype.itemsize)
         )
         return scalar_bytes + block_table_bytes + output_bytes
+
+    def _multi_sequence_graph_incompatible_reason(
+        self,
+        *,
+        mode: str,
+        is_prefill: bool,
+        input_embeds,
+        return_hidden: bool,
+    ) -> str | None:
+        if not getattr(
+            self.config,
+            "multi_sequence_cuda_graphs",
+            False,
+        ):
+            return "feature_disabled"
+        if self.enforce_eager:
+            return "enforce_eager"
+        if is_prefill or mode != "decode":
+            return "unsupported_mode"
+        context = get_context()
+        if (
+            context.quest_top_k_blocks > 0
+            or context.am_compact_blocks > 0
+            or self.config.kv_quant_bits == 4
+            or self.config.cpu_offload
+            or self.config.kv_offload_mvp0
+            or input_embeds is not None
+            or return_hidden
+        ):
+            return "incompatible_feature"
+        return None
+
+    def _run_eager_logits(
+        self,
+        *,
+        input_ids,
+        positions,
+        input_embeds=None,
+        return_hidden: bool = False,
+    ):
+        hidden_states = self.model(
+            input_ids,
+            positions,
+            input_embeds=input_embeds,
+        )
+        logits = self.model.compute_logits(hidden_states)
+        if return_hidden:
+            return logits, hidden_states
+        return logits
+
+    def _publish_cuda_graph_dispatch_event(
+        self,
+        *,
+        mode: str,
+        active_batch_size: int,
+        page_table_width: int | None,
+        effective_num_splits: int | None,
+        graph_identity_sha256: str | None,
+        dispatch: str,
+        cache_state: str,
+        observation_count: int,
+        fallback_reason: str | None,
+        capture_attempted: bool,
+        capture_entry=None,
+    ) -> None:
+        self._cuda_graph_step_id = (
+            getattr(self, "_cuda_graph_step_id", 0) + 1
+        )
+        summary = self.exact_cuda_graph_cache.summary()
+        event = {
+            "step_id": self._cuda_graph_step_id,
+            "request_ids_hash": getattr(
+                self,
+                "_cuda_graph_request_ids_hash",
+                hashlib.sha256(b"[]").hexdigest(),
+            ),
+            "mode": mode,
+            "active_batch_size": active_batch_size,
+            "page_table_width": page_table_width,
+            "effective_num_splits": effective_num_splits,
+            "graph_identity_sha256": graph_identity_sha256,
+            "feature_enabled": bool(
+                getattr(
+                    self.config,
+                    "multi_sequence_cuda_graphs",
+                    False,
+                )
+            ),
+            "dispatch": dispatch,
+            "cache_state": cache_state,
+            "observation_count": observation_count,
+            "fallback_reason": fallback_reason,
+            "capture_attempted": capture_attempted,
+            "capture_duration_ns": (
+                0
+                if capture_entry is None
+                else int(capture_entry.capture_duration_ns)
+            ),
+            "capture_static_bytes": (
+                0
+                if capture_entry is None
+                else int(capture_entry.static_bytes)
+            ),
+            "capture_allocated_delta_bytes": (
+                0
+                if capture_entry is None
+                else int(capture_entry.allocated_delta_bytes)
+            ),
+            "capture_reserved_delta_bytes": (
+                0
+                if capture_entry is None
+                else int(capture_entry.reserved_delta_bytes)
+            ),
+            "cache_ready_entries": len(summary["ready_entries"]),
+            "cache_static_bytes": summary["static_bytes"],
+            "cache_reserved_delta_bytes": summary[
+                "reserved_delta_bytes"
+            ],
+            "cache_total_capture_ns": summary["total_capture_ns"],
+            "source_sha256": os.environ.get(
+                "TINYVLLM_SOURCE_SHA256",
+                "",
+            ),
+        }
+        if tuple(event) != DISPATCH_EVENT_FIELDS:
+            raise RuntimeError("CUDA Graph dispatch event schema drift")
+        self.last_cuda_graph_dispatch_event = event
+
+    def cuda_graph_dispatch_observation(self) -> dict | None:
+        event = getattr(
+            self,
+            "last_cuda_graph_dispatch_event",
+            None,
+        )
+        return None if event is None else dict(event)
+
+    def _attempt_post_step_capture(
+        self,
+        *,
+        identity,
+        input_ids,
+        positions,
+        context,
+    ):
+        try:
+            entry = self._capture_exact_multi_sequence_graph(
+                identity=identity,
+                input_ids=input_ids,
+                positions=positions,
+                context=context,
+            )
+        except _ExactGraphCaptureError as exc:
+            self.exact_cuda_graph_cache.reject(
+                identity,
+                exc.reason,
+                retained_reserved_bytes=(
+                    exc.retained_reserved_bytes
+                ),
+            )
+            return None
+        except Exception:
+            self.exact_cuda_graph_cache.reject(
+                identity,
+                "capture_failed",
+            )
+            return None
+        self.exact_cuda_graph_cache.commit_capture(entry)
+        return entry
+
+    def _replay_exact_multi_sequence_graph(
+        self,
+        entry,
+        *,
+        input_ids,
+        positions,
+        context,
+    ):
+        identity = self._build_multi_sequence_graph_identity(
+            input_ids,
+            context,
+        )
+        if (
+            entry.identity != identity
+            or entry.identity_sha256 != identity.sha256
+        ):
+            self.exact_cuda_graph_cache.disable_entry(
+                entry.identity_sha256,
+                "identity_drift",
+            )
+            raise RuntimeError("exact CUDA Graph identity drift")
+        tensors = entry.tensors
+        try:
+            tensors["input_ids"].copy_(input_ids)
+            tensors["positions"].copy_(positions)
+            tensors["slot_mapping"].copy_(context.slot_mapping)
+            tensors["context_lens"].copy_(context.context_lens)
+            tensors["block_tables"].copy_(context.block_tables)
+            set_context(
+                False,
+                slot_mapping=tensors["slot_mapping"],
+                context_lens=tensors["context_lens"],
+                block_tables=tensors["block_tables"],
+                flash_attn_num_splits=(
+                    identity.effective_num_splits
+                ),
+            )
+            entry.graph.replay()
+            logits = self.model.compute_logits(tensors["outputs"])
+        except Exception:
+            self.exact_cuda_graph_cache.disable_entry(
+                entry.identity_sha256,
+                "replay_disabled",
+            )
+            raise
+        finally:
+            reset_context()
+        entry.replay_count += 1
+        entry.last_replay_step = getattr(
+            self,
+            "_cuda_graph_step_id",
+            0,
+        ) + 1
+        return logits
         # 假设 block_size=256（每个块存 256 个 token），其他参数不变：
 
         # 32 层（num_hidden_layers=32）；
@@ -1093,6 +1364,192 @@ class ModelRunner:
             .clone()
         )
         return {"keys": keys, "values": values}
+
+    def restore_kv_slots(
+        self,
+        physical_slots: list[int],
+        snapshot: dict[str, torch.Tensor],
+    ) -> None:
+        if not physical_slots:
+            raise ValueError("KV restore requires at least one physical slot")
+        block_ids = torch.tensor(
+            [slot // self.block_size for slot in physical_slots],
+            device=self.kv_cache.device,
+            dtype=torch.long,
+        )
+        offsets = torch.tensor(
+            [slot % self.block_size for slot in physical_slots],
+            device=self.kv_cache.device,
+            dtype=torch.long,
+        )
+        self.kv_cache[0, :, block_ids, offsets].copy_(
+            snapshot["keys"].to(self.kv_cache.device)
+        )
+        self.kv_cache[1, :, block_ids, offsets].copy_(
+            snapshot["values"].to(self.kv_cache.device)
+        )
+        torch.cuda.synchronize()
+
+    def _capture_exact_multi_sequence_graph(
+        self,
+        *,
+        identity,
+        input_ids,
+        positions,
+        context,
+    ) -> ExactCudaGraphEntry:
+        if identity.graph_batch_size != identity.active_batch_size:
+            raise ValueError("exact capture cannot use rounded batch size")
+        batch_size = identity.active_batch_size
+        if int(input_ids.size(0)) != batch_size:
+            raise ValueError("capture input batch does not match identity")
+        if int(context.block_tables.size(1)) != identity.page_table_width:
+            raise ValueError(
+                "capture page-table width does not match identity"
+            )
+        device = self.kv_cache.device
+        hf_config = self.config.hf_config
+        tensors = {
+            "input_ids": torch.zeros(
+                batch_size,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "positions": torch.zeros(
+                batch_size,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "slot_mapping": torch.zeros(
+                batch_size,
+                dtype=torch.int32,
+                device=device,
+            ),
+            "context_lens": torch.zeros(
+                batch_size,
+                dtype=torch.int32,
+                device=device,
+            ),
+            "block_tables": torch.zeros(
+                batch_size,
+                identity.page_table_width,
+                dtype=torch.int32,
+                device=device,
+            ),
+            "outputs": torch.zeros(
+                batch_size,
+                hf_config.hidden_size,
+                dtype=hf_config.torch_dtype,
+                device=device,
+            ),
+        }
+        tensors["input_ids"].copy_(input_ids)
+        tensors["positions"].copy_(positions)
+        tensors["context_lens"].copy_(context.context_lens)
+        tensors["block_tables"].copy_(context.block_tables)
+        scratch_slots = list(
+            self._exact_graph_scratch_slots(batch_size=batch_size)
+        )
+        tensors["slot_mapping"].copy_(
+            torch.tensor(
+                scratch_slots,
+                dtype=torch.int32,
+                device=device,
+            )
+        )
+        snapshot = self.snapshot_kv_slots(scratch_slots)
+        graph = torch.cuda.CUDAGraph()
+        static_bytes = sum(
+            int(tensor.numel() * tensor.element_size())
+            for tensor in tensors.values()
+        )
+        allocated_before = int(torch.cuda.memory_allocated())
+        reserved_before = int(torch.cuda.memory_reserved())
+        capture_started_ns = time.perf_counter_ns()
+        restore_error = None
+        capture_error = None
+        try:
+            set_context(
+                False,
+                slot_mapping=tensors["slot_mapping"],
+                context_lens=tensors["context_lens"],
+                block_tables=tensors["block_tables"],
+                flash_attn_num_splits=identity.effective_num_splits,
+            )
+            tensors["outputs"].copy_(
+                self.model(
+                    tensors["input_ids"],
+                    tensors["positions"],
+                )
+            )
+            torch.cuda.synchronize()
+            with torch.cuda.graph(graph, self.graph_pool):
+                tensors["outputs"].copy_(
+                    self.model(
+                        tensors["input_ids"],
+                        tensors["positions"],
+                    )
+                )
+            torch.cuda.synchronize()
+        except Exception as exc:
+            capture_error = exc
+        finally:
+            reset_context()
+            try:
+                self.restore_kv_slots(scratch_slots, snapshot)
+            except Exception as exc:
+                restore_error = exc
+        capture_duration_ns = (
+            time.perf_counter_ns() - capture_started_ns
+        )
+        allocated_after = int(torch.cuda.memory_allocated())
+        reserved_after = int(torch.cuda.memory_reserved())
+        retained_reserved_bytes = max(
+            0,
+            reserved_after - reserved_before,
+        )
+        if restore_error is not None:
+            raise _ExactGraphCaptureError(
+                "scratch_unavailable",
+                "exact CUDA Graph scratch restore failed",
+                retained_reserved_bytes=retained_reserved_bytes,
+            ) from restore_error
+        if capture_error is not None:
+            raise _ExactGraphCaptureError(
+                "capture_failed",
+                "exact CUDA Graph capture failed",
+                retained_reserved_bytes=retained_reserved_bytes,
+            ) from capture_error
+        rebuilt = self._build_multi_sequence_graph_identity(
+            tensors["input_ids"],
+            SimpleNamespace(
+                block_tables=tensors["block_tables"],
+            ),
+        )
+        if rebuilt != identity or rebuilt.sha256 != identity.sha256:
+            raise _ExactGraphCaptureError(
+                "identity_drift",
+                "exact CUDA Graph identity drift",
+                retained_reserved_bytes=retained_reserved_bytes,
+            )
+        if self.graph_pool is None:
+            self.graph_pool = graph.pool()
+        return ExactCudaGraphEntry(
+            identity=identity,
+            identity_sha256=identity.sha256,
+            graph=graph,
+            tensors=tensors,
+            static_bytes=static_bytes,
+            capture_duration_ns=capture_duration_ns,
+            allocated_delta_bytes=max(
+                0,
+                allocated_after - allocated_before,
+            ),
+            reserved_delta_bytes=max(
+                0,
+                retained_reserved_bytes,
+            ),
+        )
 
     
     # 每个序列（seq）的block_table是一个列表，记录该序列在 KV Cache 中使用的块编号。
@@ -1727,14 +2184,191 @@ class ModelRunner:
         # first one, so keep the batch-1 graph fast path and fail closed to
         # eager execution for larger decode batches.
         multi_sequence_decode = mode == "decode" and input_ids.size(0) > 1
+        if input_ids.size(0) > 1:
+            context = get_context()
+            reason = self._multi_sequence_graph_incompatible_reason(
+                mode=mode,
+                is_prefill=is_prefill,
+                input_embeds=input_embeds,
+                return_hidden=return_hidden,
+            )
+            if reason is not None:
+                logits = self._run_eager_logits(
+                    input_ids=input_ids,
+                    positions=positions,
+                    input_embeds=input_embeds,
+                    return_hidden=return_hidden,
+                )
+                page_table_width = (
+                    None
+                    if context.block_tables is None
+                    else int(context.block_tables.size(1))
+                )
+                self._publish_cuda_graph_dispatch_event(
+                    mode=mode,
+                    active_batch_size=int(input_ids.size(0)),
+                    page_table_width=page_table_width,
+                    effective_num_splits=None,
+                    graph_identity_sha256=None,
+                    dispatch="eager",
+                    cache_state="absent",
+                    observation_count=0,
+                    fallback_reason=reason,
+                    capture_attempted=False,
+                )
+                return logits
+            try:
+                identity = self._build_multi_sequence_graph_identity(
+                    input_ids,
+                    context,
+                )
+            except (ValueError, RuntimeError):
+                logits = self._run_eager_logits(
+                    input_ids=input_ids,
+                    positions=positions,
+                    input_embeds=input_embeds,
+                    return_hidden=return_hidden,
+                )
+                self._publish_cuda_graph_dispatch_event(
+                    mode=mode,
+                    active_batch_size=int(input_ids.size(0)),
+                    page_table_width=None,
+                    effective_num_splits=None,
+                    graph_identity_sha256=None,
+                    dispatch="eager",
+                    cache_state="absent",
+                    observation_count=0,
+                    fallback_reason="identity_invalid",
+                    capture_attempted=False,
+                )
+                return logits
+            if (
+                identity.active_batch_size
+                not in self.config.multi_sequence_cuda_graph_batch_allowlist
+            ):
+                logits = self._run_eager_logits(
+                    input_ids=input_ids,
+                    positions=positions,
+                    input_embeds=input_embeds,
+                    return_hidden=return_hidden,
+                )
+                self._publish_cuda_graph_dispatch_event(
+                    mode=mode,
+                    active_batch_size=identity.active_batch_size,
+                    page_table_width=identity.page_table_width,
+                    effective_num_splits=(
+                        identity.effective_num_splits
+                    ),
+                    graph_identity_sha256=identity.sha256,
+                    dispatch="eager",
+                    cache_state="absent",
+                    observation_count=0,
+                    fallback_reason="batch_not_allowlisted",
+                    capture_attempted=False,
+                )
+                return logits
+            entry = self.exact_cuda_graph_cache.ready_entry(identity)
+            if entry is not None:
+                observation_count = (
+                    self.exact_cuda_graph_cache.observation_counts.get(
+                        identity.sha256,
+                        0,
+                    )
+                )
+                try:
+                    logits = self._replay_exact_multi_sequence_graph(
+                        entry,
+                        input_ids=input_ids,
+                        positions=positions,
+                        context=context,
+                    )
+                except Exception:
+                    self._publish_cuda_graph_dispatch_event(
+                        mode=mode,
+                        active_batch_size=identity.active_batch_size,
+                        page_table_width=identity.page_table_width,
+                        effective_num_splits=(
+                            identity.effective_num_splits
+                        ),
+                        graph_identity_sha256=identity.sha256,
+                        dispatch="graph",
+                        cache_state="rejected",
+                        observation_count=observation_count,
+                        fallback_reason="replay_disabled",
+                        capture_attempted=False,
+                    )
+                    raise
+                self._publish_cuda_graph_dispatch_event(
+                    mode=mode,
+                    active_batch_size=identity.active_batch_size,
+                    page_table_width=identity.page_table_width,
+                    effective_num_splits=(
+                        identity.effective_num_splits
+                    ),
+                    graph_identity_sha256=identity.sha256,
+                    dispatch="graph",
+                    cache_state="ready",
+                    observation_count=observation_count,
+                    fallback_reason=None,
+                    capture_attempted=False,
+                )
+                return logits
+            logits = self._run_eager_logits(
+                input_ids=input_ids,
+                positions=positions,
+                input_embeds=input_embeds,
+                return_hidden=return_hidden,
+            )
+            decision = self.exact_cuda_graph_cache.observe_success(
+                identity,
+                estimated_static_bytes=(
+                    self._estimate_exact_graph_static_bytes(
+                        batch_size=identity.active_batch_size,
+                        page_table_width=identity.page_table_width,
+                    )
+                ),
+            )
+            capture_entry = None
+            if decision.should_capture:
+                capture_entry = self._attempt_post_step_capture(
+                    identity=identity,
+                    input_ids=input_ids,
+                    positions=positions,
+                    context=context,
+                )
+            summary = self.exact_cuda_graph_cache.summary()
+            fallback_reason = summary["rejected"].get(
+                identity.sha256,
+                decision.fallback_reason,
+            )
+            cache_state = (
+                "rejected"
+                if identity.sha256 in summary["rejected"]
+                else decision.cache_state
+            )
+            self._publish_cuda_graph_dispatch_event(
+                mode=mode,
+                active_batch_size=identity.active_batch_size,
+                page_table_width=identity.page_table_width,
+                effective_num_splits=identity.effective_num_splits,
+                graph_identity_sha256=identity.sha256,
+                dispatch="eager",
+                cache_state=cache_state,
+                observation_count=decision.observation_count,
+                fallback_reason=fallback_reason,
+                capture_attempted=decision.should_capture,
+                capture_entry=capture_entry,
+            )
+            return logits
         if (is_prefill or spec_verify_active or self.enforce_eager or multi_sequence_decode
                 or quest_active or am_active or c4_active or offload_active or kv_offload_active
                 or input_embeds is not None or return_hidden):     #动态执行 eager mode
-            hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
-            logits = self.model.compute_logits(hidden_states)
-            if return_hidden:
-                return logits, hidden_states
-            return logits
+            return self._run_eager_logits(
+                input_ids=input_ids,
+                positions=positions,
+                input_embeds=input_embeds,
+                return_hidden=return_hidden,
+            )
         else:           #静态执行  graph replay
             bs = input_ids.size(0)
             context = get_context()
@@ -1754,6 +2388,13 @@ class ModelRunner:
 
     def run(self, seqs:list[Sequence], is_prefill: bool, do_sample: bool = True,
             batch_kind: str | None = None) -> list[int] | None:
+        request_ids = sorted(int(seq.seq_id) for seq in seqs)
+        self._cuda_graph_request_ids_hash = hashlib.sha256(
+            json.dumps(
+                request_ids,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         if batch_kind == "mixed":
             input_ids, positions = self.prepare_mixed(seqs)
         else:
