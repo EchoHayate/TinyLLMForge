@@ -305,110 +305,6 @@ def _build_blockwise_decode_window_plan(
     window_blocks: int,
     write_blocks: set[int],
     gpu_blocks: int,
-):
-    plans = []
-    for start_block in range(0, max_blocks, window_blocks):
-        window_rows = []
-        window_lens = []
-        needed_blocks = []
-        for row_idx, row_blocks in enumerate(block_rows):
-            window = row_blocks[start_block:start_block + window_blocks]
-            window_rows.append(window)
-            start_token = start_block * block_size
-            remaining = max(0, int(context_lens[row_idx]) - start_token)
-            window_lens.append(min(remaining, len(window) * block_size))
-            needed_blocks.extend(window)
-        if not needed_blocks or max(window_lens, default=0) <= 0:
-            continue
-        future_hint_blocks = set(write_blocks)
-        reverse_future_hint_blocks = set(write_blocks)
-        for row_blocks in block_rows:
-            future_hint_blocks.update(
-                _blockwise_read_window_future_hint_blocks(
-                    row_blocks,
-                    start_block,
-                    max_blocks,
-                    window_blocks,
-                    write_blocks,
-                    gpu_blocks,
-                )
-            )
-            reverse_future_hint_blocks.update(
-                _blockwise_read_window_reverse_future_hint_blocks(
-                    row_blocks,
-                    start_block,
-                    window_blocks,
-                    write_blocks,
-                    gpu_blocks,
-                )
-            )
-        plans.append({
-            "window_rows": window_rows,
-            "window_lens": window_lens,
-            "needed_blocks": needed_blocks,
-            "future_hint_blocks": future_hint_blocks,
-            "reverse_future_hint_blocks": reverse_future_hint_blocks,
-            "max_window_tokens": max(window_lens),
-        })
-    return plans
-
-
-def _flatten_required_blocks(windows) -> list[int]:
-    return [
-        block
-        for window in windows
-        for block in window["required_blocks"]
-    ]
-
-
-def _materialize_decode_direction(
-    raw_windows,
-    *,
-    opposite_raw_windows,
-    future_key,
-    write_blocks,
-    gpu_blocks,
-) -> tuple[BlockwiseDecodeWindow, ...]:
-    records = []
-    for raw_window in raw_windows:
-        required_blocks = raw_window["required_blocks"]
-        hard_blocks = set(required_blocks) | set(write_blocks)
-        opposite_index = next(
-            candidate_index
-            for candidate_index, candidate in enumerate(opposite_raw_windows)
-            if candidate["start_block"] == raw_window["start_block"]
-        )
-        cross_candidates = _flatten_required_blocks(
-            opposite_raw_windows[opposite_index + 1:]
-        )
-        intra_layer_future_blocks = tuple(sorted(
-            set(raw_window[future_key]) - hard_blocks
-        ))
-        cross_layer_reuse_blocks = _bounded_cross_layer_reuse_blocks(
-            candidate_blocks=cross_candidates,
-            required_blocks=required_blocks,
-            write_blocks=write_blocks,
-            gpu_blocks=gpu_blocks,
-        )
-        records.append(BlockwiseDecodeWindow(
-            window_rows=raw_window["window_rows"],
-            window_lens=raw_window["window_lens"],
-            required_blocks=required_blocks,
-            intra_layer_future_blocks=intra_layer_future_blocks,
-            cross_layer_reuse_blocks=cross_layer_reuse_blocks,
-            max_window_tokens=raw_window["max_window_tokens"],
-        ))
-    return tuple(records)
-
-
-def _build_residency_aware_blockwise_decode_window_plan(
-    block_rows: list[list[int]],
-    context_lens: list[int],
-    max_blocks: int,
-    block_size: int,
-    window_blocks: int,
-    write_blocks: set[int],
-    gpu_blocks: int,
 ) -> BlockwiseDecodePlan:
     raw_windows = []
     for start_block in range(0, max_blocks, window_blocks):
@@ -486,6 +382,54 @@ def _build_residency_aware_blockwise_decode_window_plan(
             gpu_blocks=gpu_blocks,
         ),
     )
+
+
+def _flatten_required_blocks(windows) -> list[int]:
+    return [
+        block
+        for window in windows
+        for block in window["required_blocks"]
+    ]
+
+
+def _materialize_decode_direction(
+    raw_windows,
+    *,
+    opposite_raw_windows,
+    future_key,
+    write_blocks,
+    gpu_blocks,
+) -> tuple[BlockwiseDecodeWindow, ...]:
+    records = []
+    for raw_window in raw_windows:
+        required_blocks = raw_window["required_blocks"]
+        hard_blocks = set(required_blocks) | set(write_blocks)
+        opposite_index = next(
+            candidate_index
+            for candidate_index, candidate in enumerate(opposite_raw_windows)
+            if candidate["start_block"] == raw_window["start_block"]
+        )
+        cross_candidates = _flatten_required_blocks(
+            opposite_raw_windows[opposite_index + 1:]
+        )
+        intra_layer_future_blocks = tuple(sorted(
+            set(raw_window[future_key]) - hard_blocks
+        ))
+        cross_layer_reuse_blocks = _bounded_cross_layer_reuse_blocks(
+            candidate_blocks=cross_candidates,
+            required_blocks=required_blocks,
+            write_blocks=write_blocks,
+            gpu_blocks=gpu_blocks,
+        )
+        records.append(BlockwiseDecodeWindow(
+            window_rows=raw_window["window_rows"],
+            window_lens=raw_window["window_lens"],
+            required_blocks=required_blocks,
+            intra_layer_future_blocks=intra_layer_future_blocks,
+            cross_layer_reuse_blocks=cross_layer_reuse_blocks,
+            max_window_tokens=raw_window["max_window_tokens"],
+        ))
+    return tuple(records)
 
 
 def _build_blockwise_prefill_window_plan(
@@ -654,8 +598,23 @@ def _blockwise_online_decode_attention(
         context.kv_offload_decode_position_template_cache = position_template_cache
     position_template = position_template_cache[2]
 
-    plan_cache = getattr(context, "kv_offload_decode_window_plan_cache", None)
-    if plan_cache is None:
+    plan_identity = _build_blockwise_decode_plan_identity(
+        block_rows,
+        context_lens,
+        max_blocks,
+        block_size,
+        window_blocks,
+        write_blocks,
+        manager.gpu_blocks,
+    )
+    plan_cache = getattr(
+        context,
+        "kv_offload_decode_window_plan_cache",
+        None,
+    )
+    if plan_cache is None or plan_cache.identity != plan_identity:
+        if plan_cache is not None:
+            manager.stats["decode_plan_identity_invalidations"] += 1
         plan_cache = _build_blockwise_decode_window_plan(
             block_rows,
             context_lens,
@@ -666,27 +625,48 @@ def _blockwise_online_decode_attention(
             manager.gpu_blocks,
         )
         context.kv_offload_decode_window_plan_cache = plan_cache
+        manager.stats["decode_plan_builds"] += 1
+    else:
+        manager.stats["decode_plan_cache_hits"] += 1
 
     reverse_windows = int(layer_idx) >= 0 and int(layer_idx) % 2 == 1
-    window_plans = reversed(plan_cache) if reverse_windows else plan_cache
+    window_plans = (
+        plan_cache.reverse_windows
+        if reverse_windows
+        else plan_cache.forward_windows
+    )
     for window_plan in window_plans:
-        window_rows = window_plan["window_rows"]
-        window_lens = window_plan["window_lens"]
-        needed_blocks = window_plan["needed_blocks"]
+        window_rows = window_plan.window_rows
+        window_lens = window_plan.window_lens
+        required_blocks = window_plan.required_blocks
+        future_hint_blocks = set(window_plan.intra_layer_future_blocks)
+        future_hint_blocks.update(window_plan.cross_layer_reuse_blocks)
+        future_hint_blocks.update(write_blocks)
+        resident_before = set(manager.logical_to_slot)
+        retained_candidates = (
+            set(window_plan.cross_layer_reuse_blocks) & resident_before
+        )
+        if window_plan.cross_layer_reuse_blocks:
+            manager.stats["decode_windows_with_spare_capacity"] += 1
+            manager.stats["decode_cross_layer_hint_blocks"] += len(
+                window_plan.cross_layer_reuse_blocks
+            )
+            manager.stats["decode_cross_layer_hint_resident"] += len(
+                retained_candidates
+            )
         _stage_blockwise_read_window(
             manager,
-            needed_blocks,
-            future_extra_blocks=(
-                window_plan["reverse_future_hint_blocks"]
-                if reverse_windows
-                else window_plan["future_hint_blocks"]
-            ),
+            required_blocks,
+            future_extra_blocks=future_hint_blocks,
             protected_extra_blocks=write_blocks,
-            capacity_extra_blocks=set(),
-            capacity_error_prefix="blockwise decode window has more unique logical blocks than GPU staging slots",
+            capacity_extra_blocks=write_blocks,
+            capacity_error_prefix="blockwise decode staging capacity exceeded",
+        )
+        manager.stats["decode_cross_layer_hint_retained"] += len(
+            retained_candidates & set(manager.logical_to_slot)
         )
 
-        max_window_tokens = window_plan["max_window_tokens"]
+        max_window_tokens = window_plan.max_window_tokens
         dense_shape = (batch, max_window_tokens, k_cache.shape[2], head_dim)
         full_window = all(int(window_len) == max_window_tokens for window_len in window_lens)
         if full_window:

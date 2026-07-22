@@ -25,7 +25,7 @@ from tinyvllm.layers.attention import (
     _blockwise_prefill_future_hint_blocks,
     _blockwise_read_window_future_hint_blocks,
     _bounded_cross_layer_reuse_blocks,
-    _build_residency_aware_blockwise_decode_window_plan,
+    _build_blockwise_decode_window_plan,
     _decode_window_mask,
     _gqa_scores_decode,
     _gqa_scores_prefill,
@@ -46,11 +46,19 @@ class _PlanOnlyManager:
             "prefetch_plans": 0,
             "prefetch_read_blocks": 0,
             "prefetch_write_blocks": 0,
+            "decode_plan_builds": 0,
+            "decode_plan_cache_hits": 0,
+            "decode_plan_identity_invalidations": 0,
+            "decode_windows_with_spare_capacity": 0,
+            "decode_cross_layer_hint_blocks": 0,
+            "decode_cross_layer_hint_resident": 0,
+            "decode_cross_layer_hint_retained": 0,
         }
         self.ensure_calls = []
         self.future_calls = []
         self.protected_calls = []
         self.wait_calls = []
+        self.touch_calls = []
         self.pending_wait_blocks = set(range(128))
         self.clock = 0
         self.slot_last_used = [0] * 128
@@ -81,6 +89,7 @@ class _PlanOnlyManager:
             self.pending_wait_blocks.difference_update(int(block) for block in logical_blocks)
 
     def _touch(self, slot: int):
+        self.touch_calls.append(int(slot))
         self.clock += 1
         if int(slot) >= len(self.slot_last_used):
             self.slot_last_used.extend([0] * (int(slot) + 1 - len(self.slot_last_used)))
@@ -94,8 +103,44 @@ class _ResidentPlanOnlyManager(_PlanOnlyManager):
         self.pending_wait_blocks = set()
 
 
+def _decode_fixture(
+    *,
+    block_rows,
+    context_lens,
+    gpu_blocks,
+    window_blocks,
+    write_blocks=None,
+):
+    manager = _PlanOnlyManager()
+    manager.gpu_blocks = int(gpu_blocks)
+    manager.pending_wait_blocks = set()
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=block_rows,
+        kv_offload_context_lens=context_lens,
+        kv_offload_blockwise_blocks=window_blocks,
+        kv_offload_write_blocks=list(write_blocks or []),
+        kv_offload_decode_window_plan_cache=None,
+    )
+    batch = len(block_rows)
+    logical_blocks = max(
+        (int(block) for row in block_rows for block in row),
+        default=-1,
+    ) + 1
+    q = torch.ones(batch, 1, 1, dtype=torch.float32)
+    k_cache = torch.zeros(
+        max(logical_blocks, gpu_blocks),
+        1,
+        1,
+        1,
+        dtype=torch.float32,
+    )
+    v_cache = torch.zeros_like(k_cache)
+    return manager, context, q, k_cache, v_cache
+
+
 def test_decode_plan_builds_forward_and_reverse_cross_layer_frontiers():
-    plan = _build_residency_aware_blockwise_decode_window_plan(
+    plan = _build_blockwise_decode_window_plan(
         block_rows=[[0, 1, 2, 3, 4]],
         context_lens=[5],
         max_blocks=5,
@@ -140,6 +185,117 @@ def test_cross_layer_reuse_is_empty_without_spare_capacity():
         write_blocks={5},
         gpu_blocks=3,
     ) == ()
+
+
+def test_decode_plan_exact_identity_reuses_cache():
+    manager, context, q, k_cache, v_cache = _decode_fixture(
+        block_rows=[[0, 1, 2]],
+        context_lens=[3],
+        gpu_blocks=3,
+        window_blocks=1,
+    )
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=0,
+    )
+    cached_plan = context.kv_offload_decode_window_plan_cache
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=1,
+    )
+
+    assert context.kv_offload_decode_window_plan_cache is cached_plan
+    assert manager.stats["decode_plan_builds"] == 1
+    assert manager.stats["decode_plan_cache_hits"] == 1
+
+
+def test_decode_plan_identity_change_rebuilds_cache():
+    manager, context, q, k_cache, v_cache = _decode_fixture(
+        block_rows=[[0, 1, 2]],
+        context_lens=[3],
+        gpu_blocks=3,
+        window_blocks=1,
+    )
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=0,
+    )
+    first_plan = context.kv_offload_decode_window_plan_cache
+    context.kv_offload_context_lens = [2]
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=1,
+    )
+
+    assert context.kv_offload_decode_window_plan_cache is not first_plan
+    assert manager.stats["decode_plan_builds"] == 2
+    assert manager.stats["decode_plan_identity_invalidations"] == 1
+
+
+def test_cross_layer_hints_are_future_only():
+    manager, context, q, k_cache, v_cache = _decode_fixture(
+        block_rows=[[0, 1, 2, 3]],
+        context_lens=[4],
+        gpu_blocks=3,
+        window_blocks=1,
+        write_blocks=[7],
+    )
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=0,
+    )
+
+    assert manager.ensure_calls[-1] == [3]
+    assert 2 in manager.future_calls[-1]
+    assert 2 not in manager.protected_calls[-1]
+    assert manager.wait_calls[-1] == ([3], True)
+    assert 2 not in manager.pending_wait_blocks
+
+
+def test_zero_spare_capacity_matches_existing_alternating_future_sets():
+    manager, context, q, k_cache, v_cache = _decode_fixture(
+        block_rows=[[0, 1, 2]],
+        context_lens=[3],
+        gpu_blocks=1,
+        window_blocks=1,
+    )
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=1,
+    )
+
+    assert manager.ensure_calls == [[2], [1], [0]]
+    assert manager.future_calls == [{2}, {1}, {0}]
+    assert manager.stats["decode_cross_layer_hint_blocks"] == 0
+
+
+def test_resident_fast_path_touches_only_required_blocks():
+    manager, context, q, k_cache, v_cache = _decode_fixture(
+        block_rows=[[0, 1, 2]],
+        context_lens=[3],
+        gpu_blocks=3,
+        window_blocks=1,
+    )
+    manager.logical_to_slot = {0: 0, 2: 2}
+    plan = _build_blockwise_decode_window_plan(
+        block_rows=[[0, 1, 2]],
+        context_lens=[3],
+        max_blocks=3,
+        block_size=1,
+        window_blocks=1,
+        write_blocks=set(),
+        gpu_blocks=3,
+    )
+    context.kv_offload_decode_window_plan_cache = BlockwiseDecodePlan(
+        identity=plan.identity,
+        forward_windows=(plan.forward_windows[0],),
+        reverse_windows=(plan.reverse_windows[-1],),
+    )
+    assert 2 in context.kv_offload_decode_window_plan_cache.reverse_windows[
+        0
+    ].cross_layer_reuse_blocks
+
+    _blockwise_online_decode_attention(
+        q, k_cache, v_cache, context, 1, 1, 1.0, layer_idx=1,
+    )
+
+    assert manager.ensure_calls == []
+    assert manager.wait_calls == []
+    assert manager.touch_calls == [0]
 
 
 def test_blockwise_decode_stages_read_window_in_first_seen_order():
@@ -201,10 +357,10 @@ def test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks():
     assert manager.ensure_calls == [[0], [1], [2], [3], [4]]
     assert manager.future_calls == [
         {0, 1, 2, 3},
+        {0, 1, 2, 3, 4},
+        {0, 1, 2, 3, 4},
+        {0, 1, 2, 3, 4},
         {1, 2, 3, 4},
-        {2, 3, 4},
-        {3, 4},
-        {4},
     ]
     assert manager.protected_calls == [set(), set(), set(), set(), set()]
     assert manager.wait_calls == [
@@ -285,10 +441,10 @@ def test_blockwise_decode_odd_layers_hint_reverse_future_blocks():
 
     assert manager.future_calls == [
         {1, 2, 3, 4},
+        {0, 1, 2, 3, 4},
+        {0, 1, 2, 3, 4},
+        {0, 1, 2, 3, 4},
         {0, 1, 2, 3},
-        {0, 1, 2},
-        {0, 1},
-        {0},
     ]
 
 
@@ -958,6 +1114,14 @@ def test_merge_attention_window_none_mask_does_not_allocate_valid_mask():
 
 
 def main():
+    test_decode_plan_builds_forward_and_reverse_cross_layer_frontiers()
+    test_cross_layer_reuse_is_stable_deduplicated_and_spare_bounded()
+    test_cross_layer_reuse_is_empty_without_spare_capacity()
+    test_decode_plan_exact_identity_reuses_cache()
+    test_decode_plan_identity_change_rebuilds_cache()
+    test_cross_layer_hints_are_future_only()
+    test_zero_spare_capacity_matches_existing_alternating_future_sets()
+    test_resident_fast_path_touches_only_required_blocks()
     test_blockwise_decode_stages_read_window_in_first_seen_order()
     test_blockwise_decode_read_windows_hint_capacity_bounded_future_blocks()
     test_blockwise_decode_odd_layers_stage_read_windows_from_tail()

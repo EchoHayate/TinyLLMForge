@@ -189,6 +189,13 @@ class KVOffloadMVP0:
             "prefetch_plans": 0,
             "prefetch_read_blocks": 0,
             "prefetch_write_blocks": 0,
+            "decode_plan_builds": 0,
+            "decode_plan_cache_hits": 0,
+            "decode_plan_identity_invalidations": 0,
+            "decode_windows_with_spare_capacity": 0,
+            "decode_cross_layer_hint_blocks": 0,
+            "decode_cross_layer_hint_resident": 0,
+            "decode_cross_layer_hint_retained": 0,
         }
         self.block_nbytes = self.kv_cache[:, :, 0].numel() * self.kv_cache.element_size()
 
