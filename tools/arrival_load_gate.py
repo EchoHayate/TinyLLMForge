@@ -2218,16 +2218,31 @@ def aggregate_case_repetitions(rows: list[dict]) -> dict:
 
 
 def _ratio(candidate: dict, baseline: dict, metric: str) -> float:
-    candidate_value = _finite_number(
+    return finite_ratio(
         candidate["metrics"].get(metric),
-        f"candidate {metric}",
+        baseline["metrics"].get(metric),
+        metric_name=metric,
+    )
+
+
+def finite_ratio(
+    candidate_value: object,
+    baseline_value: object,
+    *,
+    metric_name: str = "metric",
+) -> float:
+    candidate_value = _finite_number(
+        candidate_value,
+        f"candidate {metric_name}",
     )
     baseline_value = _finite_number(
-        baseline["metrics"].get(metric),
-        f"baseline {metric}",
+        baseline_value,
+        f"baseline {metric_name}",
     )
     if baseline_value <= 0.0:
-        raise ValueError(f"baseline {metric} must be positive")
+        raise ValueError(
+            f"baseline {metric_name} must be positive"
+        )
     return candidate_value / baseline_value
 
 

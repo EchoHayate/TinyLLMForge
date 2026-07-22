@@ -1117,60 +1117,347 @@ def test_legacy_compatibility_missing_or_mixed_policy_is_incomplete():
     assert result["classification"] == "INCOMPLETE"
 
 
-def make_complete_production_rows(**overrides):
-    values = {
-        "aggregate_decode_ratio": 1.15,
-        "stable_decode_ratio": 1.25,
-        "minimum_request_ratio": 0.95,
-        "maximum_p95_itl_ratio": 1.05,
-        "maximum_p99_itl_ratio": 1.10,
-        "peak_reserved_ratio": 1.02,
-        "initialization_ratio": 1.05,
-        "stable_graph_hit_rate": 0.60,
+def test_production_matrix_is_frozen_paired_and_complete():
+    assert contract.PRODUCTION_WORKLOADS == (
+        "stable_exact_reuse",
+        "mixed_allowlist_and_fallback",
+        "page_width_transition",
+        "short_capture_cold_cost",
+        "long_decode",
+        "burst_arrivals",
+        "near_stable_service_rate",
+        "long_prompt_pressure",
+    )
+    assert contract.PRODUCTION_POLICIES == ("baseline", "candidate")
+    assert contract.PRODUCTION_MEASURED_REPETITIONS == 5
+    assert contract.PRODUCTION_WARMUP_REPETITIONS == 1
+    matrix = contract.build_production_matrix()
+    assert len(matrix) == 96
+    assert len({case.case_id for case in matrix}) == 96
+    for workload in contract.PRODUCTION_WORKLOADS:
+        for repetition in range(6):
+            pair = [
+                case
+                for case in matrix
+                if case.workload == workload
+                and case.repetition == repetition
+            ]
+            assert len(pair) == 2
+            assert {case.policy for case in pair} == {
+                "baseline",
+                "candidate",
+            }
+            assert {case.policy_order for case in pair} == {0, 1}
+            assert len({case.paired_order for case in pair}) == 1
+            assert tuple(pair[0].paired_order) in {
+                ("baseline", "candidate"),
+                ("candidate", "baseline"),
+            }
+            assert all(
+                case.warmup == (repetition == 0)
+                for case in pair
+            )
+
+
+def test_production_artifact_and_manifest_contract_is_closed():
+    assert contract.PRODUCTION_ARTIFACT_FILES == (
+        "manifest.json",
+        "environment.json",
+        "source_manifest.json",
+        "dispatch_events.jsonl",
+        "capture_events.jsonl",
+        "request_metrics.jsonl",
+        "model_step_metrics.jsonl",
+        "memory_trace.jsonl",
+        "correctness_rows.jsonl",
+        "case_summaries.json",
+        "summary.json",
+        "report.md",
+        "independent_verification.json",
+    )
+    assert len(set(contract.PRODUCTION_ARTIFACT_FILES)) == len(
+        contract.PRODUCTION_ARTIFACT_FILES
+    )
+    required = set(contract.PRODUCTION_MANIFEST_FIELDS)
+    assert required == {
+        "schema_version",
+        "run_tag",
+        "source_tree_sha256",
+        "copied_file_sha256",
+        "model_sha256",
+        "config_sha256",
+        "commands",
+        "workload_sha256",
+        "arrival_sha256",
+        "paired_policy_order",
+        "processes",
+        "ports",
+        "policy_configs",
+        "capacity",
+        "thresholds",
+        "case_ids",
     }
-    values.update(overrides)
-    return [
-        {
-            **values,
-            "structural_failures": [],
-            "correctness_failures": [],
-            "measured_repetitions_complete": True,
-        }
-    ]
 
 
-def test_production_gate_frozen_boundaries():
+def make_complete_production_rows():
+    rows = []
+    for case in contract.build_production_matrix():
+        candidate = case.policy == "candidate"
+        measured = not case.warmup
+        stable = case.workload == "stable_exact_reuse"
+        dispatch_events = []
+        if candidate and measured:
+            dispatch_events.append({
+                "dispatch": "graph",
+                "graph_identity_sha256": "a" * 64,
+                "rebuilt_identity_sha256": "a" * 64,
+                "page_table_width": (
+                    2 if case.repetition % 2 else 1
+                ),
+                "active_batch_size": 4,
+                "fallback_reason": None,
+                "cache_state": "ready",
+            })
+            if case.workload == "mixed_allowlist_and_fallback":
+                dispatch_events.append({
+                    "dispatch": "eager",
+                    "graph_identity_sha256": "b" * 64,
+                    "rebuilt_identity_sha256": "b" * 64,
+                    "page_table_width": 2,
+                    "active_batch_size": 3,
+                    "fallback_reason": "batch_not_allowlisted",
+                    "cache_state": "absent",
+                })
+        rows.append({
+            "case_id": case.case_id,
+            "workload": case.workload,
+            "policy": case.policy,
+            "repetition": case.repetition,
+            "warmup": case.warmup,
+            "policy_order": case.policy_order,
+            "paired_order": list(case.paired_order),
+            "status": "PASS",
+            "output_match": True,
+            "capacity_snapshot": {
+                "scheduler_visible_blocks": 100,
+            },
+            "request_throughput_rps": (
+                120.0 if candidate else 100.0
+            ),
+            "decode_throughput_tps": (
+                130.0
+                if candidate and stable
+                else 116.0 if candidate else 100.0
+            ),
+            "p95_itl_ns": 100.0,
+            "p99_itl_ns": 100.0,
+            "peak_reserved_bytes": 1000,
+            "initialization_duration_ns": 1000,
+            "dispatch_events": dispatch_events,
+            "capture_events": [],
+            "replay_after_rejection": False,
+            "graph_hits": 8 if candidate and stable and measured else 0,
+            "graph_eligible_steps": (
+                10 if candidate and stable and measured else 0
+            ),
+        })
+    return rows
+
+
+def classify_complete_production_rows(rows):
+    return contract.classify_production_gate(
+        rows,
+        producer_summary={"classification": "GO"},
+        independent_summary={"classification": "GO"},
+    )
+
+
+def test_production_gate_recomputes_all_frozen_boundaries():
     rows = make_complete_production_rows()
-    assert contract.classify_production_gate(rows)["classification"] == "GO"
+    result = classify_complete_production_rows(rows)
+    assert result["classification"] == "GO"
+    assert result["metrics"]["aggregate_decode_ratio"] >= 1.15
+    assert result["metrics"]["stable_decode_ratio"] >= 1.25
+    assert result["metrics"]["stable_graph_hit_rate"] >= 0.60
 
-    failing_values = {
-        "aggregate_decode_ratio": 1.15 - 1e-6,
-        "stable_decode_ratio": 1.25 - 1e-6,
-        "minimum_request_ratio": 0.95 - 1e-6,
-        "maximum_p95_itl_ratio": 1.05 + 1e-6,
-        "maximum_p99_itl_ratio": 1.10 + 1e-6,
-        "peak_reserved_ratio": 1.02 + 1e-6,
-        "initialization_ratio": 1.05 + 1e-6,
-        "stable_graph_hit_rate": 0.60 - 1e-6,
-    }
-    for field, failing_value in failing_values.items():
-        rows = make_complete_production_rows(**{field: failing_value})
-        result = contract.classify_production_gate(rows)
-        assert result["classification"] == "NO_GO", field
+    mutations = (
+        (
+            "aggregate decode",
+            lambda rows: [
+                row.update({"decode_throughput_tps": 114.0})
+                for row in rows
+                if row["policy"] == "candidate"
+                and row["workload"] != "stable_exact_reuse"
+            ],
+        ),
+        (
+            "stable decode",
+            lambda rows: [
+                row.update({"decode_throughput_tps": 124.0})
+                for row in rows
+                if row["policy"] == "candidate"
+                and row["workload"] == "stable_exact_reuse"
+            ],
+        ),
+        (
+            "request throughput",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            ).update({"request_throughput_rps": 94.0}),
+        ),
+        (
+            "p95 itl",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            ).update({"p95_itl_ns": 106.0}),
+        ),
+        (
+            "p99 itl",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            ).update({"p99_itl_ns": 111.0}),
+        ),
+        (
+            "reserved memory",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            ).update({"peak_reserved_bytes": 1021}),
+        ),
+        (
+            "initialization",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            ).update({"initialization_duration_ns": 1051}),
+        ),
+        (
+            "hit rate",
+            lambda rows: [
+                row.update({"graph_hits": 5})
+                for row in rows
+                if row["policy"] == "candidate"
+                and row["workload"] == "stable_exact_reuse"
+                and not row["warmup"]
+            ],
+        ),
+    )
+    for label, mutate in mutations:
+        changed = copy.deepcopy(rows)
+        mutate(changed)
+        assert (
+            classify_complete_production_rows(changed)["classification"]
+            == "NO_GO"
+        ), label
 
 
-def test_production_gate_fails_closed_on_structure_and_correctness():
-    rows = make_complete_production_rows()
-    rows[0]["structural_failures"] = ["missing graph evidence"]
-    assert contract.classify_production_gate(rows)["classification"] == "NO_GO"
+def test_production_gate_fails_closed_on_lifecycle_and_evidence():
+    base = make_complete_production_rows()
+    mutations = (
+        (
+            "missing allowlisted replay",
+            lambda rows: [
+                row.update({"dispatch_events": []})
+                for row in rows
+                if row["policy"] == "candidate"
+            ],
+        ),
+        (
+            "fewer than two widths",
+            lambda rows: [
+                event.update({"page_table_width": 1})
+                for row in rows
+                for event in row["dispatch_events"]
+                if event["dispatch"] == "graph"
+            ],
+        ),
+        (
+            "missing fallback",
+            lambda rows: [
+                row.update({
+                    "dispatch_events": [
+                        event for event in row["dispatch_events"]
+                        if event.get("fallback_reason")
+                        != "batch_not_allowlisted"
+                    ]
+                })
+                for row in rows
+            ],
+        ),
+        (
+            "unknown fallback",
+            lambda rows: next(
+                event
+                for row in rows
+                for event in row["dispatch_events"]
+                if event.get("fallback_reason")
+                == "batch_not_allowlisted"
+            ).update({"fallback_reason": "unknown"}),
+        ),
+        (
+            "replay after rejection",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            ).update({"replay_after_rejection": True}),
+        ),
+        (
+            "output mismatch",
+            lambda rows: next(
+                row for row in rows
+                if not row["warmup"]
+            ).update({"output_match": False}),
+        ),
+        (
+            "capacity mismatch",
+            lambda rows: next(
+                row for row in rows
+                if row["policy"] == "candidate"
+                and not row["warmup"]
+            )["capacity_snapshot"].update({
+                "scheduler_visible_blocks": 99,
+            }),
+        ),
+        (
+            "forged graph hit",
+            lambda rows: next(
+                event
+                for row in rows
+                for event in row["dispatch_events"]
+                if event["dispatch"] == "graph"
+            ).update({"rebuilt_identity_sha256": "c" * 64}),
+        ),
+    )
+    for label, mutate in mutations:
+        changed = copy.deepcopy(base)
+        mutate(changed)
+        assert (
+            classify_complete_production_rows(changed)["classification"]
+            == "NO_GO"
+        ), label
 
-    rows = make_complete_production_rows()
-    rows[0]["correctness_failures"] = ["token mismatch"]
-    assert contract.classify_production_gate(rows)["classification"] == "NO_GO"
+    missing = copy.deepcopy(base)
+    missing.pop()
+    assert (
+        classify_complete_production_rows(missing)["classification"]
+        == "INCOMPLETE"
+    )
 
-    rows = make_complete_production_rows()
-    rows[0]["measured_repetitions_complete"] = False
-    assert contract.classify_production_gate(rows)["classification"] == "NO_GO"
+    mismatch = contract.classify_production_gate(
+        base,
+        producer_summary={"classification": "GO"},
+        independent_summary={"classification": "NO_GO"},
+    )
+    assert mismatch["classification"] == "NO_GO"
 
 
 def test_prompt_plan_is_deterministic_and_covers_required_trajectories():
@@ -3531,8 +3818,10 @@ if __name__ == "__main__":
         test_diagnostic_classification_rejects_duplicate_evidence,
         test_legacy_compatibility_requires_tokens_close_logits_and_kv_ownership,
         test_legacy_compatibility_missing_or_mixed_policy_is_incomplete,
-        test_production_gate_frozen_boundaries,
-        test_production_gate_fails_closed_on_structure_and_correctness,
+        test_production_matrix_is_frozen_paired_and_complete,
+        test_production_artifact_and_manifest_contract_is_closed,
+        test_production_gate_recomputes_all_frozen_boundaries,
+        test_production_gate_fails_closed_on_lifecycle_and_evidence,
         test_prompt_plan_is_deterministic_and_covers_required_trajectories,
         test_ragged_prompts_cross_page_boundaries_during_measured_decode,
         test_kv_observation_plan_covers_active_zero_inactive_and_sentinels,

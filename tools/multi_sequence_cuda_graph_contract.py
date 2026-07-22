@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import random
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -90,6 +93,52 @@ PRODUCTION_CACHE_DEFAULTS = {
     "max_total_capture_ns": 5_000_000_000,
     "max_single_capture_ns": 2_000_000_000,
 }
+PRODUCTION_WORKLOADS = (
+    "stable_exact_reuse",
+    "mixed_allowlist_and_fallback",
+    "page_width_transition",
+    "short_capture_cold_cost",
+    "long_decode",
+    "burst_arrivals",
+    "near_stable_service_rate",
+    "long_prompt_pressure",
+)
+PRODUCTION_POLICIES = ("baseline", "candidate")
+PRODUCTION_MEASURED_REPETITIONS = 5
+PRODUCTION_WARMUP_REPETITIONS = 1
+PRODUCTION_ARTIFACT_FILES = (
+    "manifest.json",
+    "environment.json",
+    "source_manifest.json",
+    "dispatch_events.jsonl",
+    "capture_events.jsonl",
+    "request_metrics.jsonl",
+    "model_step_metrics.jsonl",
+    "memory_trace.jsonl",
+    "correctness_rows.jsonl",
+    "case_summaries.json",
+    "summary.json",
+    "report.md",
+    "independent_verification.json",
+)
+PRODUCTION_MANIFEST_FIELDS = (
+    "schema_version",
+    "run_tag",
+    "source_tree_sha256",
+    "copied_file_sha256",
+    "model_sha256",
+    "config_sha256",
+    "commands",
+    "workload_sha256",
+    "arrival_sha256",
+    "paired_policy_order",
+    "processes",
+    "ports",
+    "policy_configs",
+    "capacity",
+    "thresholds",
+    "case_ids",
+)
 
 _LOWER_BOUND_THRESHOLDS = frozenset(
     {
@@ -151,6 +200,56 @@ class LegacyCompatibilityCase:
             f"__{_case_id_policy_name(self.split_policy_name)}"
             f"{split_suffix}"
         )
+
+
+@dataclass(frozen=True)
+class ProductionCase:
+    workload: str
+    policy: str
+    repetition: int
+    warmup: bool
+    policy_order: int
+    paired_order: tuple[str, str]
+
+    @property
+    def case_id(self) -> str:
+        phase = "warmup" if self.warmup else "measured"
+        return (
+            f"{self.workload}__{phase}{self.repetition}"
+            f"__{self.policy}"
+        )
+
+
+def build_production_matrix(
+    *,
+    order_seed: int = 20260722,
+) -> tuple[ProductionCase, ...]:
+    randomizer = random.Random(order_seed)
+    matrix = []
+    repetition_count = (
+        PRODUCTION_WARMUP_REPETITIONS
+        + PRODUCTION_MEASURED_REPETITIONS
+    )
+    for workload in PRODUCTION_WORKLOADS:
+        for repetition in range(repetition_count):
+            paired_order = list(PRODUCTION_POLICIES)
+            randomizer.shuffle(paired_order)
+            paired_order_tuple = tuple(paired_order)
+            for policy_order, policy in enumerate(paired_order):
+                matrix.append(
+                    ProductionCase(
+                        workload=workload,
+                        policy=policy,
+                        repetition=repetition,
+                        warmup=(
+                            repetition
+                            < PRODUCTION_WARMUP_REPETITIONS
+                        ),
+                        policy_order=policy_order,
+                        paired_order=paired_order_tuple,
+                    )
+                )
+    return tuple(matrix)
 
 
 def _case_id_policy_name(split_policy_name: str) -> str:
@@ -686,38 +785,362 @@ def classify_legacy_compatibility(
     }
 
 
-def classify_production_gate(case_rows: list[dict]) -> dict:
+def _production_ratio(
+    candidate_value: object,
+    baseline_value: object,
+    *,
+    metric_name: str,
+) -> float:
+    try:
+        from tools.arrival_load_gate import finite_ratio
+    except ModuleNotFoundError:
+        from arrival_load_gate import finite_ratio
+
+    return finite_ratio(
+        candidate_value,
+        baseline_value,
+        metric_name=metric_name,
+    )
+
+
+def _finite_positive_metric(row: dict, field: str) -> float:
+    value = row.get(field)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+    ):
+        raise ValueError(f"invalid positive metric {field}")
+    return float(value)
+
+
+def _valid_graph_event(event: dict) -> bool:
+    identity_sha256 = event.get("graph_identity_sha256")
+    return (
+        event.get("dispatch") == "graph"
+        and isinstance(identity_sha256, str)
+        and len(identity_sha256) == 64
+        and event.get("rebuilt_identity_sha256")
+        == identity_sha256
+        and isinstance(event.get("page_table_width"), int)
+        and event["page_table_width"] > 0
+    )
+
+
+def classify_production_gate(
+    case_rows: list[dict],
+    *,
+    producer_summary: dict | None = None,
+    independent_summary: dict | None = None,
+) -> dict:
+    expected = build_production_matrix()
+    expected_by_id = {case.case_id: case for case in expected}
+    incomplete_failures = []
     failures = []
-    if not case_rows:
-        failures.append("no production case rows")
+    rows_by_id = {}
 
-    for row_index, row in enumerate(case_rows):
-        prefix = f"row {row_index}"
-        structural_failures = row.get("structural_failures")
-        correctness_failures = row.get("correctness_failures")
-        if structural_failures != []:
-            failures.append(f"{prefix}: structural failures")
-        if correctness_failures != []:
-            failures.append(f"{prefix}: correctness failures")
-        if row.get("measured_repetitions_complete") is not True:
-            failures.append(f"{prefix}: measured repetitions incomplete")
-
-        for field, threshold in PRODUCTION_THRESHOLDS.items():
-            value = row.get(field)
-            if not isinstance(value, (int, float)):
-                failures.append(f"{prefix}: missing numeric {field}")
+    if not isinstance(case_rows, list) or not case_rows:
+        incomplete_failures.append("no production case rows")
+    else:
+        for row_index, row in enumerate(case_rows):
+            if not isinstance(row, dict):
+                incomplete_failures.append(
+                    f"row {row_index}: not an object"
+                )
                 continue
-            if field in _LOWER_BOUND_THRESHOLDS and value < threshold:
-                failures.append(
-                    f"{prefix}: {field}={value} below {threshold}"
+            case_id = row.get("case_id")
+            if not isinstance(case_id, str):
+                incomplete_failures.append(
+                    f"row {row_index}: missing case_id"
                 )
-            if field in _UPPER_BOUND_THRESHOLDS and value > threshold:
-                failures.append(
-                    f"{prefix}: {field}={value} above {threshold}"
+                continue
+            if case_id in rows_by_id:
+                incomplete_failures.append(
+                    f"duplicate case_id {case_id}"
                 )
+                continue
+            rows_by_id[case_id] = row
+
+    actual_ids = set(rows_by_id)
+    expected_ids = set(expected_by_id)
+    missing = sorted(expected_ids - actual_ids)
+    unexpected = sorted(actual_ids - expected_ids)
+    if missing:
+        incomplete_failures.append(f"missing cases: {missing}")
+    if unexpected:
+        incomplete_failures.append(
+            f"unexpected cases: {unexpected}"
+        )
+
+    metric_fields = (
+        "request_throughput_rps",
+        "decode_throughput_tps",
+        "p95_itl_ns",
+        "p99_itl_ns",
+        "peak_reserved_bytes",
+        "initialization_duration_ns",
+    )
+    for case in expected:
+        row = rows_by_id.get(case.case_id)
+        if row is None:
+            continue
+        expected_fields = {
+            "workload": case.workload,
+            "policy": case.policy,
+            "repetition": case.repetition,
+            "warmup": case.warmup,
+            "policy_order": case.policy_order,
+            "paired_order": list(case.paired_order),
+        }
+        for field, expected_value in expected_fields.items():
+            if row.get(field) != expected_value:
+                incomplete_failures.append(
+                    f"{case.case_id}: {field} mismatch"
+                )
+        if row.get("status") != "PASS":
+            incomplete_failures.append(
+                f"{case.case_id}: case did not pass"
+            )
+        for field in metric_fields:
+            try:
+                _finite_positive_metric(row, field)
+            except ValueError as exc:
+                incomplete_failures.append(
+                    f"{case.case_id}: {exc}"
+                )
+        if not isinstance(row.get("dispatch_events"), list):
+            incomplete_failures.append(
+                f"{case.case_id}: missing dispatch events"
+            )
+        if not isinstance(row.get("capture_events"), list):
+            incomplete_failures.append(
+                f"{case.case_id}: missing capture events"
+            )
+        capacity = row.get("capacity_snapshot")
+        if (
+            not isinstance(capacity, dict)
+            or not isinstance(
+                capacity.get("scheduler_visible_blocks"),
+                int,
+            )
+            or capacity["scheduler_visible_blocks"] <= 0
+        ):
+            incomplete_failures.append(
+                f"{case.case_id}: invalid capacity snapshot"
+            )
+        if row.get("output_match") is not True:
+            failures.append(f"{case.case_id}: output mismatch")
+        if row.get("replay_after_rejection") is not False:
+            failures.append(
+                f"{case.case_id}: replay after rejection"
+            )
+
+    if incomplete_failures:
+        return {
+            "classification": "INCOMPLETE",
+            "failures": incomplete_failures + failures,
+            "metrics": {},
+            "thresholds": dict(PRODUCTION_THRESHOLDS),
+        }
+
+    paired_rows = []
+    for workload in PRODUCTION_WORKLOADS:
+        for repetition in range(
+            PRODUCTION_WARMUP_REPETITIONS,
+            PRODUCTION_WARMUP_REPETITIONS
+            + PRODUCTION_MEASURED_REPETITIONS,
+        ):
+            baseline = next(
+                row for row in case_rows
+                if row["workload"] == workload
+                and row["repetition"] == repetition
+                and row["policy"] == "baseline"
+            )
+            candidate = next(
+                row for row in case_rows
+                if row["workload"] == workload
+                and row["repetition"] == repetition
+                and row["policy"] == "candidate"
+            )
+            if (
+                baseline["capacity_snapshot"][
+                    "scheduler_visible_blocks"
+                ]
+                != candidate["capacity_snapshot"][
+                    "scheduler_visible_blocks"
+                ]
+            ):
+                failures.append(
+                    f"{workload} r{repetition}: capacity mismatch"
+                )
+            paired_rows.append((baseline, candidate))
+
+    decode_ratios = [
+        _production_ratio(
+            candidate["decode_throughput_tps"],
+            baseline["decode_throughput_tps"],
+            metric_name="decode_throughput_tps",
+        )
+        for baseline, candidate in paired_rows
+    ]
+    stable_pairs = [
+        pair for pair in paired_rows
+        if pair[0]["workload"] == "stable_exact_reuse"
+    ]
+    stable_decode_ratios = [
+        _production_ratio(
+            candidate["decode_throughput_tps"],
+            baseline["decode_throughput_tps"],
+            metric_name="stable decode throughput",
+        )
+        for baseline, candidate in stable_pairs
+    ]
+    request_ratios = [
+        _production_ratio(
+            candidate["request_throughput_rps"],
+            baseline["request_throughput_rps"],
+            metric_name="request_throughput_rps",
+        )
+        for baseline, candidate in paired_rows
+    ]
+    p95_ratios = [
+        _production_ratio(
+            candidate["p95_itl_ns"],
+            baseline["p95_itl_ns"],
+            metric_name="p95_itl_ns",
+        )
+        for baseline, candidate in paired_rows
+    ]
+    p99_ratios = [
+        _production_ratio(
+            candidate["p99_itl_ns"],
+            baseline["p99_itl_ns"],
+            metric_name="p99_itl_ns",
+        )
+        for baseline, candidate in paired_rows
+    ]
+    reserved_ratios = [
+        _production_ratio(
+            candidate["peak_reserved_bytes"],
+            baseline["peak_reserved_bytes"],
+            metric_name="peak_reserved_bytes",
+        )
+        for baseline, candidate in paired_rows
+    ]
+    initialization_ratios = [
+        _production_ratio(
+            candidate["initialization_duration_ns"],
+            baseline["initialization_duration_ns"],
+            metric_name="initialization_duration_ns",
+        )
+        for baseline, candidate in paired_rows
+    ]
+
+    candidate_rows = [
+        candidate for _, candidate in paired_rows
+    ]
+    graph_events = [
+        event
+        for row in candidate_rows
+        for event in row["dispatch_events"]
+        if event.get("dispatch") == "graph"
+    ]
+    valid_graph_events = [
+        event for event in graph_events
+        if _valid_graph_event(event)
+    ]
+    if len(valid_graph_events) != len(graph_events):
+        failures.append("invalid or forged graph replay event")
+    if not valid_graph_events:
+        failures.append("missing allowlisted replay")
+    replayed_widths = {
+        event["page_table_width"]
+        for event in valid_graph_events
+    }
+    if len(replayed_widths) < 2:
+        failures.append("fewer than two replayed widths")
+
+    fallback_events = [
+        event
+        for row in candidate_rows
+        for event in row["dispatch_events"]
+        if event.get("dispatch") == "eager"
+        and event.get("fallback_reason") is not None
+    ]
+    for event in fallback_events:
+        if event.get("fallback_reason") not in FALLBACK_REASONS:
+            failures.append("unknown fallback reason")
+    if not any(
+        event.get("active_batch_size") not in (2, 4, 8)
+        and event.get("fallback_reason") == "batch_not_allowlisted"
+        for event in fallback_events
+    ):
+        failures.append("missing non-allowlisted eager fallback")
+
+    stable_candidates = [
+        candidate for _, candidate in stable_pairs
+    ]
+    graph_hits = sum(
+        int(row.get("graph_hits", 0))
+        for row in stable_candidates
+    )
+    graph_eligible_steps = sum(
+        int(row.get("graph_eligible_steps", 0))
+        for row in stable_candidates
+    )
+    if graph_eligible_steps <= 0:
+        failures.append("missing stable graph eligible steps")
+        stable_hit_rate = 0.0
+    else:
+        stable_hit_rate = graph_hits / graph_eligible_steps
+
+    metrics = {
+        "aggregate_decode_ratio": statistics.median(
+            decode_ratios
+        ),
+        "stable_decode_ratio": statistics.median(
+            stable_decode_ratios
+        ),
+        "minimum_request_ratio": min(request_ratios),
+        "maximum_p95_itl_ratio": max(p95_ratios),
+        "maximum_p99_itl_ratio": max(p99_ratios),
+        "peak_reserved_ratio": max(reserved_ratios),
+        "initialization_ratio": max(initialization_ratios),
+        "stable_graph_hit_rate": stable_hit_rate,
+    }
+    for field, threshold in PRODUCTION_THRESHOLDS.items():
+        value = metrics[field]
+        if field in _LOWER_BOUND_THRESHOLDS and value < threshold:
+            failures.append(
+                f"{field}={value} below {threshold}"
+            )
+        if field in _UPPER_BOUND_THRESHOLDS and value > threshold:
+            failures.append(
+                f"{field}={value} above {threshold}"
+            )
+
+    producer_classification = (
+        None
+        if producer_summary is None
+        else producer_summary.get("classification")
+    )
+    independent_classification = (
+        None
+        if independent_summary is None
+        else independent_summary.get("classification")
+    )
+    if (
+        producer_classification is not None
+        or independent_classification is not None
+    ) and producer_classification != independent_classification:
+        failures.append(
+            "producer and independent classifications disagree"
+        )
 
     return {
         "classification": "GO" if not failures else "NO_GO",
         "failures": failures,
+        "metrics": metrics,
         "thresholds": dict(PRODUCTION_THRESHOLDS),
     }
