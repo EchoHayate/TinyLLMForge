@@ -3795,6 +3795,33 @@ duplicates=[]
 ```
 
 因此当前 dependency-light suite 不存在已定义但未运行的 `test_*`。
-本次 source-owned verifier 变化后，上一条 tree SHA
-`fa9261f8...a299d` 的 preflight 仅对应旧 verifier；提交后必须重新运行
-source-bound remote preflight，再以新的 tree SHA 启动 smoke。
+case-domain 加固提交及当前 authoritative source-bound remote preflight：
+
+```text
+commit:
+e22bd51 fix: close cuda graph evidence case domains
+run tag:
+qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-184045
+base commit:
+e22bd51b6b3d8dac20419b011d90bcb72f84b961
+dirty:
+false
+patch size:
+0
+tree SHA:
+6dece69dbee0702a0de4ed4b8932f2e12aeb8b62bee598391ce7ddec680117b3
+classification:
+preflight exit 0
+```
+
+Artifact：
+
+```text
+experiments/cuda_graph/
+qwen3-06b-exact-cuda-graph-fallback-preflight-20260722-184045/
+```
+
+2026-07-22 18:42 CST GPU 0 仍为相同八个 unrelated compute processes，
+约占 13.3 GiB。没有启动 correctness smoke。恢复时以 tree SHA
+`6dece69d...117b3` 为当前来源基线；只有 GPU 0 compute process 列表为空
+才启动新 smoke。
