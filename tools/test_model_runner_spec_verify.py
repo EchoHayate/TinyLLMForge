@@ -321,6 +321,21 @@ def test_init_prepares_cuda_graph_dispatch_state_before_warmup():
         assert statement_index_by_attribute[attribute] < warmup_index
 
 
+def test_prefill_window_reserves_current_write_blocks_without_mutating_decode_window():
+    requested_decode_window = 2
+
+    effective_prefill_window = (
+        model_runner._resolve_blockwise_prefill_window_blocks(
+            requested_decode_window,
+            gpu_blocks=2,
+            write_blocks=[7],
+        )
+    )
+
+    assert effective_prefill_window == 1
+    assert requested_decode_window == 2
+
+
 def make_runner(**overrides):
     runner = object.__new__(ModelRunner)
     runner.block_size = 256
@@ -1608,6 +1623,7 @@ def test_replay_failure_publishes_terminal_event_before_reraising():
 def main():
     tests = (
         test_init_prepares_cuda_graph_dispatch_state_before_warmup,
+        test_prefill_window_reserves_current_write_blocks_without_mutating_decode_window,
         test_prepare_spec_verify_installs_reference_context,
         test_step_logits_recording_accessor_is_default_off_and_returns_clone,
         test_snapshot_kv_slots_uses_physical_block_and_offset_indices,

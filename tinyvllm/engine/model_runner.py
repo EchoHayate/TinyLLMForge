@@ -599,6 +599,26 @@ def _unique_ints_in_order(values) -> list[int]:
     return ordered
 
 
+def _resolve_blockwise_prefill_window_blocks(
+    requested_window_blocks: int,
+    *,
+    gpu_blocks: int,
+    write_blocks,
+) -> int:
+    unique_write_blocks = set(int(block) for block in write_blocks)
+    available_read_blocks = int(gpu_blocks) - len(unique_write_blocks)
+    if available_read_blocks <= 0:
+        raise RuntimeError(
+            "blockwise prefill has no GPU staging slot left after "
+            f"reserving current write blocks: gpu_blocks={gpu_blocks}, "
+            f"write_blocks={len(unique_write_blocks)}"
+        )
+    return min(
+        max(1, int(requested_window_blocks)),
+        available_read_blocks,
+    )
+
+
 def _stage_kv_offload_write_blocks(
     manager,
     write_blocks,
@@ -1914,6 +1934,15 @@ class ModelRunner:
             and min(len(seq) for seq in seqs) >= self.config.am_compact_min_seq_len
             and min(len(seq) for seq in seqs) > self.config.am_compact_blocks
         )
+        prefill_window_blocks = self.config.kv_offload_blockwise_blocks
+        if blockwise_prefill_active:
+            prefill_window_blocks = (
+                _resolve_blockwise_prefill_window_blocks(
+                    prefill_window_blocks,
+                    gpu_blocks=self.kv_offload.gpu_blocks,
+                    write_blocks=kv_offload_write_blocks,
+                )
+            )
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables,
                     am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
                     am_compact_selector=self.config.am_compact_selector,
@@ -1935,7 +1964,7 @@ class ModelRunner:
                     am_compact_layer_stride=self.config.am_compact_layer_stride,
                     kv_offload_manager=self.kv_offload,
                     kv_offload_blockwise_prefill=blockwise_prefill_active,
-                    kv_offload_blockwise_blocks=self.config.kv_offload_blockwise_blocks,
+                    kv_offload_blockwise_blocks=prefill_window_blocks,
                     kv_offload_logical_block_tables=logical_block_table_rows,
                     kv_offload_context_lens=prefill_chunk_ends,
                     kv_offload_write_blocks=[int(block) for block in kv_offload_write_blocks],
