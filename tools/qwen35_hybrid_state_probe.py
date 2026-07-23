@@ -249,8 +249,8 @@ def load_official_reference(
                 local_files_only=True,
                 trust_remote_code=False,
                 torch_dtype="auto",
-                device_map={"": "cuda:0"},
             )
+            model = model.to("cuda:0")
     except (OSError, TypeError, ValueError, RuntimeError) as exc:
         raise IncompleteRun(
             "INCOMPLETE_MODEL_LOAD",

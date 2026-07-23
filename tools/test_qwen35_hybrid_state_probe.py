@@ -89,10 +89,15 @@ class _FakeBackbone:
 class _FakeQwen35Model:
     def __init__(self, layer_types):
         self.model = _FakeBackbone(layer_types)
+        self.to_calls = []
 
     def named_parameters(self):
         yield "weight", torch.zeros((2, 2), dtype=torch.float16)
         yield "state_scale", torch.zeros((1,), dtype=torch.float32)
+
+    def to(self, device):
+        self.to_calls.append(device)
+        return self
 
 
 class _FakeQwen35Config:
@@ -612,9 +617,9 @@ def test_load_official_reference_uses_local_read_only_arguments():
             "local_files_only": True,
             "trust_remote_code": False,
             "torch_dtype": "auto",
-            "device_map": {"": "cuda:0"},
         },
     )]
+    assert model.to_calls == ["cuda:0"]
 
 
 def test_torch_custom_op_annotation_compatibility_is_temporary():
