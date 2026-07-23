@@ -444,7 +444,7 @@ The candidate must pass all of:
 
 ```text
 gpu_blocks=2, blockwise_blocks=1
-gpu_blocks=2, blockwise_blocks=2
+gpu_blocks=3, blockwise_blocks=2
 gpu_blocks=4, blockwise_blocks=1
 gpu_blocks=4, blockwise_blocks=2
 ```

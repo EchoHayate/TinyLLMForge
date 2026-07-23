@@ -257,6 +257,10 @@ def _passing_ratio_fixture():
 
 def test_canonical_matrix_is_closed_and_complete():
     matrix = contract.build_case_matrix()
+    assert all(
+        gpu_blocks >= blockwise_blocks + 1
+        for gpu_blocks, blockwise_blocks in contract.STAGING_SHAPES
+    )
     assert len(matrix) == (
         len(contract.STAGING_SHAPES)
         * len(contract.WORKLOADS)
