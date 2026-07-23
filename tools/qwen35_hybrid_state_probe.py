@@ -652,6 +652,10 @@ def _logit_record(
         "sequence_length": int(sequence_length),
         "position_metadata": {
             "last_position": int(sequence_length) - 1,
+            "actual_greedy_token_id": _greedy_token(value),
+            "oracle_greedy_token_id": _greedy_token(oracle_logits),
+            "actual_full_logit_sha256": _logit_sha256(value),
+            "oracle_full_logit_sha256": _logit_sha256(oracle_logits),
         },
     }
 
@@ -979,6 +983,12 @@ def run_interleaved_requests(
     stale_reads = []
     released = []
     retired_hashes = set()
+    decoded = []
+    records = []
+    decode_indices = {
+        (request_id, generations[request_id]): 0
+        for request_id in request_ids
+    }
     active_schedule = (
         "slot-0",
         "slot-1",
@@ -997,7 +1007,20 @@ def run_interleaved_requests(
         oracle_logits = _one_shot_logits(
             adapter, sequences[request_id]
         )
+        generation = generations[request_id]
+        decode_key = (request_id, generation)
+        step_index = decode_indices.setdefault(decode_key, 0)
+        records.append(_logit_record(
+            logits=logits,
+            oracle_logits=oracle_logits,
+            request_id=request_id,
+            request_generation=generation,
+            step_index=step_index,
+            sequence_length=len(sequences[request_id]),
+        ))
         token_id = _greedy_token(logits)
+        decoded.append(token_id)
+        decode_indices[decode_key] = step_index + 1
         if (
             token_id != _greedy_token(oracle_logits)
             or _logit_differences(logits, oracle_logits)["max_abs_diff"] != 0.0
@@ -1057,6 +1080,8 @@ def run_interleaved_requests(
             "slot_generations": slot_generations,
             "released_generations": released,
             "stale_state_reads": stale_reads,
+            "decoded_token_ids": decoded,
+            "logit_records": records,
         }
 
     retired_hashes.add(adapter.state_sha256(states["slot-0"]))
@@ -1099,6 +1124,8 @@ def run_interleaved_requests(
         "slot_generations": slot_generations,
         "released_generations": released,
         "stale_state_reads": stale_reads,
+        "decoded_token_ids": decoded,
+        "logit_records": records,
     }
 
 
@@ -1919,7 +1946,7 @@ def _run_reference_case(case, adapter, observer):
         tokens = _case_token_ids(
             adapter,
             case.prompt_length,
-            seed=case.prompt_length + len(case.chunk_schedule),
+            seed=case.prompt_length,
         )
         observer.capture_empty(
             case_id=case.case_id,
@@ -2007,6 +2034,8 @@ def _run_reference_case(case, adapter, observer):
                 "INCOMPLETE_REFERENCE_SEMANTICS",
                 f"{case.case_id} request isolation evidence failed",
             )
+        decoded = result["decoded_token_ids"]
+        records = result["logit_records"]
     elif case.execution_mode == "completion_release_slot_reuse":
         decoded, records = _run_slot_reuse_case(
             case,

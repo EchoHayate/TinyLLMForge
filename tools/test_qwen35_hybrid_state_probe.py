@@ -381,6 +381,15 @@ def test_reference_modes_emit_comparable_step_records():
         record["max_abs_diff"] == 0.0
         for record in cached["logit_records"]
     )
+    assert [
+        record["position_metadata"]["oracle_greedy_token_id"]
+        for record in cached["logit_records"]
+    ] == cached["decoded_token_ids"]
+    assert all(
+        record["position_metadata"]["actual_full_logit_sha256"]
+        == record["full_logit_sha256"]
+        for record in cached["logit_records"]
+    )
 
 
 def test_export_import_preserves_next_step_logits():
@@ -406,6 +415,12 @@ def test_interleaved_decode_does_not_mutate_inactive_requests():
     )
     assert result["inactive_request_hash_changes"] == []
     assert result["serial_oracle_mismatches"] == []
+    assert len(result["decoded_token_ids"]) == 6
+    assert len(result["logit_records"]) == 6
+    assert all(
+        set(record) == set(contract.LOGIT_RECORD_FIELDS)
+        for record in result["logit_records"]
+    )
 
 
 def test_slot_reuse_increments_generation_and_releases_old_state():
@@ -733,6 +748,33 @@ def test_reference_case_matrix_includes_before_prefill_state_snapshot():
             )
 
 
+def test_interleaved_matrix_row_carries_raw_correctness_records():
+    with tempfile.TemporaryDirectory() as temporary:
+        result = probe.run_reference_case_matrix(
+            adapter_factory=_FakeReferenceStateAdapter,
+            architecture=probe.inspect_model(
+                model=_FakeQwen35Model(_canonical_layer_types()),
+                config=_FakeQwen35Config(_canonical_layer_types()),
+                tokenizer=_FakeTokenizer(),
+            ),
+            run_dir=Path(temporary),
+            contract_sha256=probe.contract_file_sha256(),
+            parameter_bytes=1234,
+            cuda_module=_FakeCuda(),
+        )
+    row = next(
+        item
+        for item in result["case_rows"]
+        if item["phase"] == "interleaved_multi_request"
+    )
+    assert len(row["decoded_token_ids"]) == (
+        len(contract.MULTI_REQUEST_LENGTHS) * contract.DECODE_STEPS
+    )
+    assert len(row["logit_records"]) == (
+        len(contract.MULTI_REQUEST_LENGTHS) * contract.DECODE_STEPS
+    )
+
+
 def test_reference_case_matrix_materializes_real_state_and_allocator_rows():
     with tempfile.TemporaryDirectory() as temporary:
         result = _run_complete_reference_matrix(Path(temporary))
@@ -815,6 +857,52 @@ def test_same_path_repeatability_uses_identical_prompt_tokens():
         record["full_logit_sha256"]
         for record in rows[1]["logit_records"]
     ]
+
+
+def test_chunked_and_cached_cases_use_identical_prompt_tokens():
+    class RecordingAdapter(_FakeReferenceStateAdapter):
+        def __init__(self):
+            self.prefill_inputs = []
+
+        def prefill(self, input_ids, state):
+            self.prefill_inputs.append(tuple(
+                int(value) for value in input_ids.flatten()
+            ))
+            return super().prefill(input_ids, state)
+
+    adapter = RecordingAdapter()
+    observer = probe._StateEvidenceCollector(
+        adapter=adapter,
+        layer_schedule={0: "linear_attention"},
+        cuda=_FakeCuda(),
+    )
+    cached_case = next(
+        case
+        for case in contract.build_case_matrix()
+        if (
+            case.phase == "one_shot_vs_cached"
+            and case.prompt_length == 65
+        )
+    )
+    chunked_case = next(
+        case
+        for case in contract.build_case_matrix()
+        if (
+            case.phase == "one_shot_vs_chunked"
+            and case.prompt_length == 65
+            and case.chunk_schedule == (31, 34)
+        )
+    )
+    probe._run_reference_case(cached_case, adapter, observer)
+    cached_tokens = adapter.prefill_inputs[0]
+    adapter.prefill_inputs.clear()
+    probe._run_reference_case(chunked_case, adapter, observer)
+    chunked_tokens = tuple(
+        token_id
+        for chunk in adapter.prefill_inputs
+        for token_id in chunk
+    )
+    assert chunked_tokens == cached_tokens
 
 
 def test_decode_memory_phases_include_step_index():
