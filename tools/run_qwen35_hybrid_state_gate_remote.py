@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 from pathlib import Path, PurePosixPath
 
 
@@ -86,6 +87,32 @@ def validate_resolved_revision(value):
     if not REVISION_PATTERN.fullmatch(text):
         raise ValueError("resolved revision must be a 40-hex commit")
     return text.lower()
+
+
+def validate_remote_https_proxy(value):
+    if value is None:
+        return None
+    text = str(value)
+    parsed = urllib.parse.urlsplit(text)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("remote HTTPS proxy is invalid") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or port is None
+        or not 1 <= port <= 65535
+    ):
+        raise ValueError(
+            "remote HTTPS proxy must be http://127.0.0.1:<port>"
+        )
+    return f"http://127.0.0.1:{port}"
 
 
 def validate_artifact_path(value):
@@ -1118,9 +1145,25 @@ def build_process_manifests(execution):
     )
 
 
-def _remote_python(script, command_runner=_run):
+def _remote_python(
+    script,
+    command_runner=_run,
+    *,
+    remote_https_proxy=None,
+):
+    proxy = validate_remote_https_proxy(remote_https_proxy)
+    command = [REMOTE_PYTHON, "-c", script]
+    if proxy is not None:
+        command = [
+            "env",
+            f"HTTPS_PROXY={proxy}",
+            f"https_proxy={proxy}",
+            "NO_PROXY=127.0.0.1,localhost",
+            "no_proxy=127.0.0.1,localhost",
+            *command,
+        ]
     return command_runner(
-        build_ssh_command([REMOTE_PYTHON, "-c", script]),
+        build_ssh_command(command),
         text=True,
         capture_output=True,
     )
@@ -1169,10 +1212,17 @@ def build_preflight_script(run_tag):
     ])
 
 
-def run_remote_preflight(run_tag, command_runner=_run):
+def run_remote_preflight(
+    run_tag,
+    command_runner=_run,
+    *,
+    remote_https_proxy=None,
+):
+    proxy = validate_remote_https_proxy(remote_https_proxy)
     result = _remote_python(
         build_preflight_script(run_tag),
         command_runner=command_runner,
+        remote_https_proxy=proxy,
     )
     _require_success(result, "remote preflight")
     payload = json.loads(result.stdout)
@@ -1182,6 +1232,7 @@ def run_remote_preflight(run_tag, command_runner=_run):
             raise ValueError("model metadata failure detail is invalid")
         return {
             **payload,
+            "remote_https_proxy": proxy,
             "declared_model_file_bytes": 0,
             "allow_patterns": [],
             "files": {},
@@ -1202,6 +1253,7 @@ def run_remote_preflight(run_tag, command_runner=_run):
     return {
         **payload,
         **inventory,
+        "remote_https_proxy": proxy,
         "resolved_revision": revision,
         "disk_preflight": disk,
     }
@@ -1244,6 +1296,9 @@ def build_preflight_summary(payload):
         "runtime": {
             "python_executable": REMOTE_PYTHON,
             "packages": packages,
+            "remote_https_proxy": payload.get(
+                "remote_https_proxy"
+            ),
         },
         "gpu_processes": list(payload.get("gpu_processes", [])),
         "checked_cache_roots": list(
@@ -1265,9 +1320,15 @@ def acquire_model(
     resolved_revision,
     *,
     command_runner=_run,
+    remote_https_proxy=None,
 ):
     revision = validate_resolved_revision(resolved_revision)
-    preflight = run_remote_preflight(run_tag, command_runner=command_runner)
+    proxy = validate_remote_https_proxy(remote_https_proxy)
+    preflight = run_remote_preflight(
+        run_tag,
+        command_runner=command_runner,
+        remote_https_proxy=proxy,
+    )
     if preflight["resolved_revision"] != revision:
         raise ValueError("resolved revision drifted before acquisition")
     if not preflight["disk_preflight"]["can_acquire"]:
@@ -1281,7 +1342,11 @@ def acquire_model(
         remote_run_dir=remote_run_dir(run_tag),
         allow_patterns=preflight["allow_patterns"],
     )
-    result = _remote_python(script, command_runner=command_runner)
+    result = _remote_python(
+        script,
+        command_runner=command_runner,
+        remote_https_proxy=proxy,
+    )
     _require_success(result, "immutable model acquisition")
     model_dir = f"{remote_run_dir(run_tag)}/model"
     hash_result = _remote_python(
@@ -1541,6 +1606,7 @@ def execute_remote_gate(
     staged_source,
     smoke_run_tag=None,
     command_runner=_run,
+    remote_https_proxy=None,
 ):
     revision = validate_resolved_revision(resolved_revision)
     destination = local_run_dir(repo_root, run_tag)
@@ -1579,6 +1645,7 @@ def execute_remote_gate(
     runtime = run_remote_preflight(
         run_tag,
         command_runner=command_runner,
+        remote_https_proxy=remote_https_proxy,
     )
     if runtime["resolved_revision"] != revision:
         raise ValueError("resolved revision drifted before worker launch")
@@ -1719,6 +1786,7 @@ def parse_arguments(argv=None):
     parser.add_argument("--run-tag", required=True)
     parser.add_argument("--resolved-revision")
     parser.add_argument("--smoke-run-tag")
+    parser.add_argument("--remote-https-proxy")
     parser.add_argument("--repo-root", default=os.fspath(Path.cwd()))
     return parser.parse_args(argv)
 
@@ -1740,6 +1808,9 @@ def validate_mode_arguments(*, mode, resolved_revision, smoke_run_tag):
 def main(argv=None):
     arguments = parse_arguments(argv)
     run_tag = validate_run_tag(arguments.run_tag)
+    remote_https_proxy = validate_remote_https_proxy(
+        arguments.remote_https_proxy
+    )
     validate_mode_arguments(
         mode=arguments.mode,
         resolved_revision=arguments.resolved_revision,
@@ -1759,7 +1830,10 @@ def main(argv=None):
     commit = require_clean_owned_source(repo_root)
     staged = stage_owned_source(repo_root, run_tag)
     if arguments.mode == "preflight":
-        result = run_remote_preflight(run_tag)
+        result = run_remote_preflight(
+            run_tag,
+            remote_https_proxy=remote_https_proxy,
+        )
         result["source_commit"] = commit
         result["source_manifest"] = staged
         _atomic_json(destination / "preflight.json", result)
@@ -1775,6 +1849,7 @@ def main(argv=None):
             acquire=lambda: acquire_model(
                 run_tag,
                 arguments.resolved_revision,
+                remote_https_proxy=remote_https_proxy,
             ),
         )
         result["source_commit"] = commit
@@ -1805,6 +1880,7 @@ def main(argv=None):
                 source_commit=commit,
                 staged_source=staged,
                 smoke_run_tag=arguments.smoke_run_tag,
+                remote_https_proxy=remote_https_proxy,
             )
         except Exception as exc:
             manifest = preserve_failed_execution(

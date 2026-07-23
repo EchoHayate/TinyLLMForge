@@ -104,6 +104,57 @@ def test_ssh_command_uses_control_master_and_batch_mode():
     assert command[-1] == "python3 -V"
 
 
+def test_remote_https_proxy_is_explicit_loopback_only_and_network_scoped():
+    runner = _load_runner()
+    assert runner.validate_remote_https_proxy(None) is None
+    proxy = runner.validate_remote_https_proxy(
+        "http://127.0.0.1:15855"
+    )
+    assert proxy == "http://127.0.0.1:15855"
+    for invalid in (
+        "https://127.0.0.1:15855",
+        "http://localhost:15855",
+        "http://10.0.0.1:15855",
+        "http://user:secret@127.0.0.1:15855",
+        "http://127.0.0.1",
+        "http://127.0.0.1:0",
+        "http://127.0.0.1:70000",
+        "not-a-url",
+    ):
+        _expect_value_error(
+            lambda value=invalid: runner.validate_remote_https_proxy(
+                value
+            ),
+            "remote HTTPS proxy",
+        )
+    calls = []
+
+    def command_runner(command, **_kwargs):
+        calls.append(command)
+        return type("Result", (), {
+            "returncode": 0,
+            "stdout": "{}",
+            "stderr": "",
+        })()
+
+    runner._remote_python(
+        "print('{}')",
+        command_runner=command_runner,
+        remote_https_proxy=proxy,
+    )
+    assert calls[0][-1].startswith(
+        "env HTTPS_PROXY=http://127.0.0.1:15855 "
+        "https_proxy=http://127.0.0.1:15855 "
+    )
+    assert "NO_PROXY=127.0.0.1,localhost" in calls[0][-1]
+    calls.clear()
+    runner._remote_python(
+        "print('{}')",
+        command_runner=command_runner,
+    )
+    assert calls[0][-1].startswith(runner.REMOTE_PYTHON)
+
+
 def test_preflight_is_read_only_and_computes_frozen_peak_bytes():
     runner = _load_runner()
     result = runner.evaluate_disk_preflight(
@@ -213,6 +264,7 @@ def test_model_metadata_timeout_preserves_fail_closed_preflight_fields():
         "runtime": {
             "python_executable": runner.REMOTE_PYTHON,
             "packages": remote_payload["packages"],
+            "remote_https_proxy": None,
         },
         "gpu_processes": remote_payload["gpu_processes"],
         "checked_cache_roots": remote_payload["checked_cache_roots"],
@@ -693,6 +745,17 @@ def test_smoke_domain_is_explicit_and_canonical_requires_bound_smoke():
         "smoke-a",
     ])
     assert arguments.smoke_run_tag == "smoke-a"
+    assert arguments.remote_https_proxy is None
+    proxy_arguments = runner.parse_arguments([
+        "preflight",
+        "--run-tag",
+        "preflight-a",
+        "--remote-https-proxy",
+        "http://127.0.0.1:15855",
+    ])
+    assert proxy_arguments.remote_https_proxy == (
+        "http://127.0.0.1:15855"
+    )
     _expect_value_error(
         lambda: runner.validate_mode_arguments(
             mode="canonical",
