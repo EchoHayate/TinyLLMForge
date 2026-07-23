@@ -263,7 +263,7 @@ def _change_all_oracle_hashes_within_tolerance(run_dir):
     _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
 
 
-def _raise_repeatability_above_cap(run_dir):
+def _raise_oracle_difference_above_cap(run_dir):
     def mutate(rows):
         row = _find_case(
             rows,
@@ -273,6 +273,27 @@ def _raise_repeatability_above_cap(run_dir):
         row["logit_records"][0]["max_abs_diff"] = (
             contract.MAX_LOGIT_ATOL
         )
+        row["logit_records"][0]["position_metadata"][
+            "oracle_full_logit_sha256"
+        ] = "f" * 64
+
+    _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
+def _change_repeat_actual_hash(run_dir):
+    def mutate(rows):
+        rows = [
+            row
+            for row in rows
+            if row["phase"] == "same_path_repeatability"
+            and row["prompt_length"] == 17
+        ]
+        row = sorted(rows, key=lambda item: item["repeat_index"])[1]
+        record = row["logit_records"][0]
+        record["full_logit_sha256"] = "e" * 64
+        record["position_metadata"][
+            "actual_full_logit_sha256"
+        ] = "e" * 64
 
     _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
 
@@ -1276,9 +1297,14 @@ def test_correctness_tampering_separates_no_go_from_incomplete():
             "oracle greedy token mismatch",
         ),
         (
-            _raise_repeatability_above_cap,
+            _raise_oracle_difference_above_cap,
+            "NO_GO",
+            "logit tolerance mismatch",
+        ),
+        (
+            _change_repeat_actual_hash,
             "INCOMPLETE",
-            "INCOMPLETE_NUMERICAL_INSTABILITY",
+            "same-path full-logit hash mismatch",
         ),
         (
             _change_chunk_schedule,
@@ -1315,16 +1341,16 @@ def test_oracle_hash_difference_is_allowed_within_frozen_tolerance():
         assert result["classification"] == "GO"
 
 
-def test_smoke_numerical_instability_preserves_observed_case_count():
+def test_smoke_oracle_mismatch_preserves_observed_case_count():
     with tempfile.TemporaryDirectory() as temporary:
         run_dir = convert_to_smoke_run(
             write_complete_run(Path(temporary) / "complete")
         )
-        _raise_repeatability_above_cap(run_dir)
+        _raise_oracle_difference_above_cap(run_dir)
         result = verifier.verify_run(run_dir, domain="smoke")
         assert result["classification"] == "INCOMPLETE"
         assert result["observed_case_count"] == len(SMOKE_CASE_IDS)
-        assert "INCOMPLETE_NUMERICAL_INSTABILITY" in result["reasons"][0]
+        assert "logit tolerance mismatch" in result["reasons"][0]
 
 
 def test_lifecycle_tampering_is_incomplete():
@@ -1375,7 +1401,7 @@ if __name__ == "__main__":
     test_provenance_and_domain_tampering_is_incomplete()
     test_correctness_tampering_separates_no_go_from_incomplete()
     test_oracle_hash_difference_is_allowed_within_frozen_tolerance()
-    test_smoke_numerical_instability_preserves_observed_case_count()
+    test_smoke_oracle_mismatch_preserves_observed_case_count()
     test_lifecycle_tampering_is_incomplete()
     test_storage_ledger_tampering_is_incomplete()
     print("qwen35 hybrid-state verifier tests passed")

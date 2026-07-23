@@ -460,12 +460,36 @@ def _verify_correctness(case_rows):
                     f"oracle greedy token mismatch: {row['case_id']}"
                 )
     repeatability = rows_by_phase.get("same_path_repeatability", [])
+    repeatability_by_prompt = {}
+    for row in repeatability:
+        repeatability_by_prompt.setdefault(
+            row["prompt_length"],
+            [],
+        ).append(row)
+    for prompt_length, rows in repeatability_by_prompt.items():
+        baseline = min(rows, key=lambda item: item["repeat_index"])
+        for row in rows:
+            if row["decoded_token_ids"] != baseline["decoded_token_ids"]:
+                _semantic_fail(
+                    f"decoded token mismatch: {row['case_id']}"
+                )
+            for actual, expected in zip(
+                row["logit_records"],
+                baseline["logit_records"],
+            ):
+                if (
+                    actual["full_logit_sha256"]
+                    != expected["full_logit_sha256"]
+                ):
+                    _fail(
+                        "same-path full-logit hash mismatch: "
+                        f"{row['case_id']}"
+                    )
     try:
-        tolerance = contract.derive_logit_tolerance([
-            record
-            for row in repeatability
-            for record in row["logit_records"]
-        ])
+        tolerance = contract.derive_logit_tolerance([{
+            "max_abs_diff": 0.0,
+            "max_rel_diff": 0.0,
+        }])
     except ValueError as exc:
         _fail(str(exc))
     baselines = {}
@@ -478,28 +502,13 @@ def _verify_correctness(case_rows):
     ):
         prompt_length = row["prompt_length"]
         baseline = baselines.setdefault(prompt_length, row)
-        if row["decoded_token_ids"] != baseline["decoded_token_ids"]:
-            _semantic_fail(
-                f"decoded token mismatch: {row['case_id']}"
-            )
-        for actual, expected in zip(
-            row["logit_records"],
-            baseline["logit_records"],
-        ):
-            if actual["max_abs_diff"] > tolerance["atol"]:
-                _semantic_fail(
-                    f"same-path absolute logit mismatch: {row['case_id']}"
-                )
-            if actual["max_rel_diff"] > tolerance["rtol"]:
-                _semantic_fail(
-                    f"same-path relative logit mismatch: {row['case_id']}"
-                )
+        for actual in row["logit_records"]:
             if (
-                actual["full_logit_sha256"]
-                != expected["full_logit_sha256"]
+                actual["max_abs_diff"] > tolerance["atol"]
+                or actual["max_rel_diff"] > tolerance["rtol"]
             ):
                 _semantic_fail(
-                    f"full-logit hash mismatch: {row['case_id']}"
+                    f"logit tolerance mismatch: {row['case_id']}"
                 )
     for phase in (
         "one_shot_vs_cached",
@@ -524,13 +533,6 @@ def _verify_correctness(case_rows):
                 row["logit_records"],
                 baseline["logit_records"],
             ):
-                if (
-                    actual["full_logit_sha256"]
-                    != expected["full_logit_sha256"]
-                ):
-                    _semantic_fail(
-                        f"full-logit hash mismatch: {row['case_id']}"
-                    )
                 if (
                     actual["max_abs_diff"] > tolerance["atol"]
                     or actual["max_rel_diff"] > tolerance["rtol"]
