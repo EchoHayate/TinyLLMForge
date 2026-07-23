@@ -38,6 +38,17 @@ verifier = _load_module(
 )
 
 
+SMOKE_CASE_IDS = {
+    "environment_preflight",
+    "architecture_verification",
+    "same_path_repeatability__cached_repeatability__p17__r0__c17",
+    "same_path_repeatability__cached_repeatability__p17__r1__c17",
+    "one_shot_vs_cached__one_shot_vs_cached__p17__r0__c17",
+    "state_export_import__state_export_import__p17__r0__c17",
+    "post_run_audit",
+}
+
+
 def _json_bytes(payload):
     return (
         json.dumps(
@@ -1080,6 +1091,94 @@ def write_complete_run(run_dir):
     return run_dir
 
 
+def convert_to_smoke_run(run_dir):
+    case_rows = [
+        json.loads(line)
+        for line in (run_dir / "case_rows.jsonl").read_text().splitlines()
+    ]
+    case_rows = [
+        row for row in case_rows if row["case_id"] in SMOKE_CASE_IDS
+    ]
+    snapshot_ids = {
+        snapshot_id
+        for row in case_rows
+        for snapshot_id in row["state_snapshot_ids"]
+    }
+    memory_ids = {
+        memory_id
+        for row in case_rows
+        for memory_id in row["memory_snapshot_ids"]
+    }
+    state_snapshots = [
+        json.loads(line)
+        for line in (
+            run_dir / "state_snapshots.jsonl"
+        ).read_text().splitlines()
+    ]
+    state_snapshots = [
+        row for row in state_snapshots
+        if row["snapshot_id"] in snapshot_ids
+    ]
+    lifetime_epochs = {
+        row["lifetime_epoch"] for row in state_snapshots
+    }
+    state_components = [
+        json.loads(line)
+        for line in (
+            run_dir / "state_components.jsonl"
+        ).read_text().splitlines()
+    ]
+    state_components = [
+        row for row in state_components
+        if row["lifetime_epoch"] in lifetime_epochs
+    ]
+    memory_snapshots = [
+        json.loads(line)
+        for line in (
+            run_dir / "memory_snapshots.jsonl"
+        ).read_text().splitlines()
+    ]
+    lifecycle_phases = {
+        "before_model_load",
+        "after_model_load",
+        "after_model_release",
+    }
+    memory_snapshots = [
+        row for row in memory_snapshots
+        if (
+            row["snapshot_id"] in memory_ids
+            or row["phase"] in lifecycle_phases
+        )
+    ]
+    _write_jsonl(run_dir / "case_rows.jsonl", case_rows)
+    _write_jsonl(run_dir / "state_snapshots.jsonl", state_snapshots)
+    _write_jsonl(run_dir / "state_components.jsonl", state_components)
+    _write_jsonl(run_dir / "memory_snapshots.jsonl", memory_snapshots)
+    summary = json.loads((run_dir / "summary.json").read_text())
+    summary.update({
+        "case_row_count": len(case_rows),
+        "state_snapshot_count": len(state_snapshots),
+        "state_component_count": len(state_components),
+        "memory_snapshot_count": len(memory_snapshots),
+        "state_logical_bytes": sum(
+            row["logical_bytes"] for row in state_components
+        ),
+        "state_unique_storage_bytes": contract.unique_storage_bytes(
+            state_components
+        ),
+    })
+    _write_json(run_dir / "summary.json", summary)
+    for relative in (
+        "case_rows.jsonl",
+        "state_snapshots.jsonl",
+        "state_components.jsonl",
+        "memory_snapshots.jsonl",
+        "summary.json",
+    ):
+        _refresh_manifest_artifact(run_dir, relative)
+    return run_dir
+
+
 def test_complete_synthetic_domain_verifies_go():
     with tempfile.TemporaryDirectory() as temporary:
         run_dir = write_complete_run(Path(temporary) / "run")
@@ -1098,6 +1197,33 @@ def test_complete_synthetic_domain_verifies_go():
         lifecycle = _find_case(rows, "completion_release_slot_reuse")
         assert len(interleaved["logit_records"]) == 24
         assert len(lifecycle["logit_records"]) == 26
+
+
+def test_smoke_domain_verifies_smoke_pass_and_never_go():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = convert_to_smoke_run(
+            write_complete_run(Path(temporary) / "run")
+        )
+        result = verifier.verify_run(
+            run_dir,
+            write_report=True,
+            domain="smoke",
+        )
+        assert result["classification"] == "SMOKE_PASS"
+        assert result["observed_case_count"] == len(SMOKE_CASE_IDS)
+        assert result["expected_case_count"] == len(SMOKE_CASE_IDS)
+
+
+def test_local_verifier_outputs_do_not_change_input_inventory():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = write_complete_run(Path(temporary) / "run")
+        (run_dir / "local_verifier_process.json").write_text("{}\n")
+        (run_dir / "stdout" / "local_verifier.log").write_text("ok\n")
+        (run_dir / "stderr" / "local_verifier.log").write_text("")
+        first = verifier.verify_run(run_dir, write_report=True)
+        second = verifier.verify_run(run_dir, write_report=True)
+        assert first["classification"] == "GO"
+        assert second == first
 
 
 def test_provenance_and_domain_tampering_is_incomplete():
@@ -1218,6 +1344,8 @@ def test_storage_ledger_tampering_is_incomplete():
 
 if __name__ == "__main__":
     test_complete_synthetic_domain_verifies_go()
+    test_smoke_domain_verifies_smoke_pass_and_never_go()
+    test_local_verifier_outputs_do_not_change_input_inventory()
     test_provenance_and_domain_tampering_is_incomplete()
     test_correctness_tampering_separates_no_go_from_incomplete()
     test_lifecycle_tampering_is_incomplete()

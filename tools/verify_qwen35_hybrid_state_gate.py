@@ -28,7 +28,23 @@ REQUIRED_INPUT_FILES = {
     "summary.json",
 }
 REQUIRED_INPUT_DIRECTORIES = {"stdout", "stderr"}
-OUTPUT_FILES = {"independent_verification.json", "report.md"}
+OUTPUT_FILES = {
+    "independent_verification.json",
+    "report.md",
+    "local_verifier_process.json",
+    "smoke_evidence.json",
+    "stdout/local_verifier.log",
+    "stderr/local_verifier.log",
+}
+SMOKE_CASE_IDS = {
+    "environment_preflight",
+    "architecture_verification",
+    "same_path_repeatability__cached_repeatability__p17__r0__c17",
+    "same_path_repeatability__cached_repeatability__p17__r1__c17",
+    "one_shot_vs_cached__one_shot_vs_cached__p17__r0__c17",
+    "state_export_import__state_export_import__p17__r0__c17",
+    "post_run_audit",
+}
 
 
 def _load_contract():
@@ -243,17 +259,19 @@ def _verify_processes(processes, ports):
         _fail("process and port inventories disagree")
 
 
-def _verify_case_domain(case_rows):
+def _verify_case_domain(case_rows, domain):
     expected = {
-        case.case_id: case for case in contract.build_case_matrix()
+        case.case_id: case
+        for case in contract.build_case_matrix()
+        if domain == "canonical" or case.case_id in SMOKE_CASE_IDS
     }
     observed = {}
     for row in case_rows:
         case_id = row.get("case_id")
         if case_id in observed:
-            _fail(f"duplicate canonical case: {case_id}")
+            _fail(f"duplicate {domain} case: {case_id}")
         if case_id not in expected:
-            _fail(f"unknown canonical case: {case_id}")
+            _fail(f"unknown {domain} case: {case_id}")
         observed[case_id] = row
         case = expected[case_id]
         expected_fields = {
@@ -267,12 +285,12 @@ def _verify_case_domain(case_rows):
         }
         for field, value in expected_fields.items():
             if row.get(field) != value:
-                _fail(f"canonical case mismatch: {case_id}.{field}")
+                _fail(f"{domain} case mismatch: {case_id}.{field}")
         if row.get("complete") is not True:
-            _fail(f"incomplete canonical case: {case_id}")
+            _fail(f"incomplete {domain} case: {case_id}")
     missing = sorted(set(expected) - set(observed))
     if missing:
-        _fail(f"missing canonical case: {missing[0]}")
+        _fail(f"missing {domain} case: {missing[0]}")
     return len(expected)
 
 
@@ -545,6 +563,7 @@ def _verify_state_lifecycle(
     state_snapshots,
     state_components,
     summary,
+    domain,
 ):
     expected_component_fields = set(
         contract.StateComponent.__dataclass_fields__
@@ -662,6 +681,12 @@ def _verify_state_lifecycle(
             contract.canonical_json_sha256(components)
         ):
             _fail("state snapshot component hash mismatch")
+    if domain == "smoke":
+        return {
+            "state_snapshot_count": len(state_snapshots),
+            "state_component_count": len(state_components),
+            "released_component_count": 0,
+        }
     lifecycle_row = next(
         row
         for row in case_rows
@@ -746,6 +771,7 @@ def _verify_storage_ledger(
     memory_snapshots,
     model_manifest,
     summary,
+    domain,
 ):
     components_by_epoch = {}
     for component in state_components:
@@ -834,12 +860,15 @@ def _verify_storage_ledger(
     required_phases = {
         "before_model_load",
         "after_model_load",
-        "before_prefill",
-        "after_prefill",
-        "after_request_release",
-        "after_slot_reuse",
         "after_model_release",
     }
+    if domain == "canonical":
+        required_phases.update({
+            "before_prefill",
+            "after_prefill",
+            "after_request_release",
+            "after_slot_reuse",
+        })
     missing_phases = required_phases - observed_phases
     if missing_phases:
         _fail(f"missing memory epoch: {sorted(missing_phases)[0]}")
@@ -917,7 +946,7 @@ def _write_outputs(run_dir, result):
     _write_atomic(run_dir / "report.md", report)
 
 
-def _verify_complete_run(destination):
+def _verify_complete_run(destination, domain):
     manifest = _read_json(destination / "manifest.json")
     _verify_inventory(destination, manifest)
     source_manifest = _read_json(destination / "source_manifest.json")
@@ -940,13 +969,14 @@ def _verify_complete_run(destination):
     _verify_model(model_manifest, manifest)
     _verify_environment(environment)
     _verify_processes(processes, ports)
-    expected_case_count = _verify_case_domain(case_rows)
+    expected_case_count = _verify_case_domain(case_rows, domain)
     tolerance = _verify_correctness(case_rows)
     lifecycle = _verify_state_lifecycle(
         case_rows,
         state_snapshots,
         state_components,
         summary,
+        domain,
     )
     storage_ledger = _verify_storage_ledger(
         case_rows,
@@ -955,10 +985,13 @@ def _verify_complete_run(destination):
         memory_snapshots,
         model_manifest,
         summary,
+        domain,
     )
     return {
         "schema_version": contract.SCHEMA_VERSION,
-        "classification": "GO",
+        "classification": (
+            "GO" if domain == "canonical" else "SMOKE_PASS"
+        ),
         "expected_case_count": expected_case_count,
         "observed_case_count": len(case_rows),
         "guards": {
@@ -983,13 +1016,20 @@ def _verify_complete_run(destination):
     }
 
 
-def verify_run(run_dir, write_report=False):
+def verify_run(run_dir, write_report=False, domain="canonical"):
+    if domain not in {"canonical", "smoke"}:
+        raise ValueError("verification domain must be canonical or smoke")
     destination = Path(run_dir)
+    expected_case_count = (
+        len(contract.build_case_matrix())
+        if domain == "canonical"
+        else len(SMOKE_CASE_IDS)
+    )
     if not destination.is_dir():
         return {
             "schema_version": contract.SCHEMA_VERSION,
             "classification": "INCOMPLETE",
-            "expected_case_count": len(contract.build_case_matrix()),
+            "expected_case_count": expected_case_count,
             "observed_case_count": 0,
             "guards": {},
             "reasons": ["run directory does not exist"],
@@ -1000,12 +1040,12 @@ def verify_run(run_dir, write_report=False):
             ),
         }
     try:
-        result = _verify_complete_run(destination)
+        result = _verify_complete_run(destination, domain)
     except VerificationError as exc:
         result = {
             "schema_version": contract.SCHEMA_VERSION,
             "classification": "INCOMPLETE",
-            "expected_case_count": len(contract.build_case_matrix()),
+            "expected_case_count": expected_case_count,
             "observed_case_count": 0,
             "guards": {},
             "reasons": [str(exc)],
@@ -1018,8 +1058,10 @@ def verify_run(run_dir, write_report=False):
     except SemanticFailure as exc:
         result = {
             "schema_version": contract.SCHEMA_VERSION,
-            "classification": "NO_GO",
-            "expected_case_count": len(contract.build_case_matrix()),
+            "classification": (
+                "NO_GO" if domain == "canonical" else "INCOMPLETE"
+            ),
+            "expected_case_count": expected_case_count,
             "observed_case_count": len(
                 _read_jsonl(destination / "case_rows.jsonl")
             ),
@@ -1040,10 +1082,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--write-report", action="store_true")
+    parser.add_argument(
+        "--domain",
+        choices=("canonical", "smoke"),
+        default="canonical",
+    )
     arguments = parser.parse_args(argv)
     result = verify_run(
         Path(arguments.run_dir),
         write_report=arguments.write_report,
+        domain=arguments.domain,
     )
     print(json.dumps(result, sort_keys=True))
     return 0
