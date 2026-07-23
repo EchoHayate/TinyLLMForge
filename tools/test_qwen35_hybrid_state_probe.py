@@ -195,6 +195,92 @@ class _OpaqueCache:
         self.tokens = tokens
 
 
+class _FakeHybridLinearLayer:
+    def __init__(self):
+        self.conv_states = torch.zeros((1, 1, 4), dtype=torch.float32)
+        self.recurrent_states = torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+
+
+class _FakeHybridAttentionLayer:
+    def __init__(self):
+        self.keys = torch.zeros((1, 1, 0, 1), dtype=torch.float32)
+        self.values = torch.zeros((1, 1, 0, 1), dtype=torch.float32)
+
+
+class _FakeHybridCache:
+    def __init__(self, config=None):
+        layer_types = (
+            ["linear_attention", "full_attention"]
+            if config is None
+            else config.layer_types
+        )
+        self.layers = [
+            (
+                _FakeHybridLinearLayer()
+                if layer_type == "linear_attention"
+                else _FakeHybridAttentionLayer()
+            )
+            for layer_type in layer_types
+        ]
+
+    def update(self, keys, values, layer_idx):
+        layer = self.layers[layer_idx]
+        layer.keys = torch.cat((layer.keys, keys), dim=-2)
+        layer.values = torch.cat((layer.values, values), dim=-2)
+        return layer.keys, layer.values
+
+    def update_conv_state(self, conv_states, layer_idx):
+        self.layers[layer_idx].conv_states.copy_(conv_states)
+        return self.layers[layer_idx].conv_states
+
+    def update_recurrent_state(self, recurrent_states, layer_idx):
+        self.layers[layer_idx].recurrent_states.copy_(recurrent_states)
+        return self.layers[layer_idx].recurrent_states
+
+    def get_seq_length(self):
+        return int(self.layers[1].keys.shape[-2])
+
+
+class _FakeHybridCausalModel:
+    def __init__(self):
+        self.device = torch.device("cpu")
+        self.config = SimpleNamespace(
+            layer_types=["linear_attention", "full_attention"],
+        )
+
+    def __call__(
+        self,
+        *,
+        input_ids,
+        past_key_values=None,
+        use_cache,
+        return_dict,
+        cache_position=None,
+    ):
+        assert use_cache is True
+        assert return_dict is True
+        cache = past_key_values or _FakeHybridCache(self.config)
+        values = input_ids.to(dtype=torch.float32).reshape(1, 1, -1, 1)
+        cache.update(values, values * 2, 1)
+        tokens = cache.layers[1].keys.flatten()
+        conv = torch.zeros((1, 1, 4), dtype=torch.float32)
+        tail = tokens[-4:]
+        conv[..., -tail.numel():] = tail
+        recurrent = torch.full(
+            (1, 1, 2, 2),
+            float(tokens.sum()),
+            dtype=torch.float32,
+        )
+        cache.update_conv_state(conv, 0)
+        cache.update_recurrent_state(recurrent, 0)
+        logits = torch.arange(32, dtype=torch.float32).neg()
+        logits[int(tokens.sum()) % 32] = 1000.0
+        return SimpleNamespace(
+            logits=logits.reshape(1, 1, -1),
+            past_key_values=cache,
+        )
+
+
 class _FakeCausalModel:
     def __init__(self, cache_type=_FakeCache):
         self.device = torch.device("cpu")
@@ -479,6 +565,45 @@ def test_reference_state_adapter_uses_explicit_cache_codec():
     assert torch.equal(original_logits, restored_logits)
     assert exported["cache_codec"] == "legacy_cache"
     assert exported["request_generation"] == 0
+
+
+def test_reference_state_adapter_round_trips_explicit_hybrid_cache():
+    model = _FakeHybridCausalModel()
+    adapter = probe.ReferenceStateAdapter(
+        model=model,
+        layer_schedule={
+            0: "linear_attention",
+            1: "full_attention",
+        },
+        vocab_size=32,
+        device="cpu",
+    )
+    _, state = adapter.prefill(
+        torch.tensor([[1, 2, 3]], dtype=torch.long),
+        None,
+    )
+    exported = adapter.export_state(state, "request-a", 0, 3)
+    restored = adapter.import_state(exported)
+    original_logits, _ = adapter.decode_one(4, state, 3)
+    restored_logits, _ = adapter.decode_one(4, restored, 3)
+    assert exported["cache_codec"] == "hybrid_layers_v1"
+    assert torch.equal(original_logits, restored_logits)
+    assert adapter.state_for_normalization(restored) == {
+        "layers": {
+            "0": {
+                "linear_convolution_state": (
+                    restored.layers[0].conv_states
+                ),
+                "linear_recurrent_state": (
+                    restored.layers[0].recurrent_states
+                ),
+            },
+            "1": {
+                "full_attention_key": restored.layers[1].keys,
+                "full_attention_value": restored.layers[1].values,
+            },
+        },
+    }
 
 
 def test_reference_state_adapter_binds_explicit_vocab_size():

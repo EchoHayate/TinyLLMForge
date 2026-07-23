@@ -442,6 +442,51 @@ class ReferenceStateAdapter:
         self.device = torch.device(device)
         self._cache_type = None
 
+    def _hybrid_layer_state(self, state):
+        layers = getattr(state, "layers", None)
+        if not isinstance(layers, Sequence):
+            _reference_incomplete("hybrid cache has no layer sequence")
+        if len(layers) != len(self.layer_schedule):
+            _reference_incomplete("hybrid cache layer count mismatch")
+        result = {}
+        for index, layer in enumerate(layers):
+            layer_type = self.layer_schedule.get(index)
+            if layer_type == "linear_attention":
+                conv_states = getattr(layer, "conv_states", None)
+                recurrent_states = getattr(layer, "recurrent_states", None)
+                if not isinstance(conv_states, torch.Tensor):
+                    _reference_incomplete(
+                        f"linear layer {index} has no convolution state"
+                    )
+                if not isinstance(recurrent_states, torch.Tensor):
+                    _reference_incomplete(
+                        f"linear layer {index} has no recurrent state"
+                    )
+                result[str(index)] = {
+                    "linear_convolution_state": conv_states,
+                    "linear_recurrent_state": recurrent_states,
+                }
+            elif layer_type == "full_attention":
+                keys = getattr(layer, "keys", None)
+                values = getattr(layer, "values", None)
+                if not isinstance(keys, torch.Tensor):
+                    _reference_incomplete(
+                        f"attention layer {index} has no key state"
+                    )
+                if not isinstance(values, torch.Tensor):
+                    _reference_incomplete(
+                        f"attention layer {index} has no value state"
+                    )
+                result[str(index)] = {
+                    "full_attention_key": keys,
+                    "full_attention_value": values,
+                }
+            else:
+                _reference_incomplete(
+                    f"unsupported cache layer type at {index}: {layer_type}"
+                )
+        return {"layers": result}
+
     def _forward(self, input_ids, state, sequence_length):
         values = input_ids.to(device=self.device, dtype=torch.long)
         start = int(sequence_length)
@@ -540,20 +585,21 @@ class ReferenceStateAdapter:
         method = getattr(state, "to_legacy_cache", None)
         cache_type = type(state)
         constructor = getattr(cache_type, "from_legacy_cache", None)
-        if not callable(method) or not callable(constructor):
-            _reference_incomplete(
-                "cache has no explicit to/from legacy codec"
-            )
         observed = self._state_length(state)
         if observed is not None and observed != int(sequence_length):
             _reference_incomplete(
                 "export cache sequence length mismatch"
             )
-        payload = _encode_tensor_tree(method())
+        if callable(method) and callable(constructor):
+            cache_codec = "legacy_cache"
+            payload = _encode_tensor_tree(method())
+        else:
+            cache_codec = "hybrid_layers_v1"
+            payload = _encode_tensor_tree(self._hybrid_layer_state(state))
         return {
             "schema": "qwen35_reference_cache",
             "schema_version": contract.SCHEMA_VERSION,
-            "cache_codec": "legacy_cache",
+            "cache_codec": cache_codec,
             "cache_class_module": cache_type.__module__,
             "cache_class_name": cache_type.__qualname__,
             "request_id": str(request_id),
@@ -572,7 +618,8 @@ class ReferenceStateAdapter:
             _reference_incomplete("unsupported exported cache schema")
         if exported.get("schema_version") != contract.SCHEMA_VERSION:
             _reference_incomplete("unsupported exported cache version")
-        if exported.get("cache_codec") != "legacy_cache":
+        cache_codec = exported.get("cache_codec")
+        if cache_codec not in {"legacy_cache", "hybrid_layers_v1"}:
             _reference_incomplete("unsupported cache codec")
         expected_schedule = {
             str(index): layer_type
@@ -594,14 +641,66 @@ class ReferenceStateAdapter:
         ):
             _reference_incomplete("exported cache class mismatch")
         constructor = getattr(cache_type, "from_legacy_cache", None)
-        if not callable(constructor):
-            _reference_incomplete("cache type cannot import legacy payload")
+        if cache_codec == "legacy_cache":
+            if not callable(constructor):
+                _reference_incomplete(
+                    "cache type cannot import legacy payload"
+                )
+            try:
+                return constructor(_decode_tensor_tree(payload))
+            except (TypeError, ValueError, RuntimeError) as exc:
+                _reference_incomplete(
+                    f"cache import failed: {type(exc).__name__}: {exc}"
+                )
+        decoded = _decode_tensor_tree(payload)
+        layer_payloads = decoded.get("layers")
+        if not isinstance(layer_payloads, Mapping):
+            _reference_incomplete("hybrid cache payload has no layers")
         try:
-            return constructor(_decode_tensor_tree(payload))
+            restored = cache_type(config=self.model.config)
         except (TypeError, ValueError, RuntimeError) as exc:
             _reference_incomplete(
-                f"cache import failed: {type(exc).__name__}: {exc}"
+                f"hybrid cache construction failed: "
+                f"{type(exc).__name__}: {exc}"
             )
+        if len(getattr(restored, "layers", ())) != len(self.layer_schedule):
+            _reference_incomplete("restored hybrid cache layer count mismatch")
+        for index, layer_type in sorted(self.layer_schedule.items()):
+            layer_payload = layer_payloads.get(str(index))
+            if not isinstance(layer_payload, Mapping):
+                _reference_incomplete(
+                    f"hybrid cache payload missing layer {index}"
+                )
+            try:
+                if layer_type == "linear_attention":
+                    conv_states = layer_payload[
+                        "linear_convolution_state"
+                    ].to(self.device)
+                    recurrent_states = layer_payload[
+                        "linear_recurrent_state"
+                    ].to(self.device)
+                    restored.update_conv_state(conv_states, index)
+                    restored.update_recurrent_state(
+                        recurrent_states,
+                        index,
+                    )
+                elif layer_type == "full_attention":
+                    keys = layer_payload["full_attention_key"].to(self.device)
+                    values = layer_payload[
+                        "full_attention_value"
+                    ].to(self.device)
+                    restored.update(keys, values, index)
+                else:
+                    _reference_incomplete(
+                        f"unsupported cache layer type at "
+                        f"{index}: {layer_type}"
+                    )
+            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                _reference_incomplete(
+                    f"hybrid cache layer {index} import failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        return restored
 
     def state_sha256(self, state):
         exported = self.export_state(
@@ -614,21 +713,19 @@ class ReferenceStateAdapter:
 
     def state_for_normalization(self, state):
         method = getattr(state, "to_legacy_cache", None)
-        if not callable(method):
-            _reference_incomplete(
-                "cache has no explicit normalization codec"
-            )
-        payload = method()
-        if not isinstance(payload, Sequence):
-            _reference_incomplete(
-                "legacy cache payload is not layer-indexed"
-            )
-        return {
-            "layers": {
-                str(index): layer_state
-                for index, layer_state in enumerate(payload)
+        if callable(method):
+            payload = method()
+            if not isinstance(payload, Sequence):
+                _reference_incomplete(
+                    "legacy cache payload is not layer-indexed"
+                )
+            return {
+                "layers": {
+                    str(index): layer_state
+                    for index, layer_state in enumerate(payload)
+                }
             }
-        }
+        return self._hybrid_layer_state(state)
 
 
 def _canonical_logits(logits):
