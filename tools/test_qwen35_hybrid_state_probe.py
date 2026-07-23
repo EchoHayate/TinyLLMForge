@@ -113,6 +113,11 @@ class _FakeQwen35Config:
         self.mamba_ssm_dtype = "float32"
 
 
+class _FakeQwen35MultimodalConfig:
+    def __init__(self, layer_types):
+        self.text_config = _FakeQwen35Config(layer_types)
+
+
 class _FakeTokenizer:
     vocab_size = 151936
 
@@ -620,6 +625,26 @@ def test_load_official_reference_uses_local_read_only_arguments():
         },
     )]
     assert model.to_calls == ["cuda:0"]
+
+
+def test_inspect_model_reads_hybrid_fields_from_nested_text_config():
+    layer_types = _canonical_layer_types()
+    result = probe.inspect_model(
+        model=_FakeQwen35Model(layer_types),
+        config=_FakeQwen35MultimodalConfig(layer_types),
+        tokenizer=_FakeTokenizer(),
+    )
+    assert result["config_class"] == "_FakeQwen35MultimodalConfig"
+    assert result["num_hidden_layers"] == 24
+    assert result["linear_attention_layers"] == 18
+    assert result["full_attention_layers"] == 6
+    assert result["full_attention_interval"] == 4
+    assert result["linear_num_key_heads"] == 16
+    assert result["linear_num_value_heads"] == 16
+    assert result["linear_key_head_dim"] == 128
+    assert result["linear_value_head_dim"] == 128
+    assert result["linear_conv_kernel_dim"] == 4
+    assert result["mamba_ssm_dtype"] == "float32"
 
 
 def test_torch_custom_op_annotation_compatibility_is_temporary():

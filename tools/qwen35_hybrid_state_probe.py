@@ -148,7 +148,8 @@ def _layer_type(layer, config_layer_type):
 
 def inspect_model(*, model, config, tokenizer):
     layers = _model_layers(model)
-    configured_types = getattr(config, "layer_types", None)
+    architecture_config = getattr(config, "text_config", config)
+    configured_types = getattr(architecture_config, "layer_types", None)
     if configured_types is not None and len(configured_types) != len(layers):
         _architecture_incomplete(
             "config layer_types length does not match loaded model"
@@ -171,30 +172,30 @@ def inspect_model(*, model, config, tokenizer):
         "tokenizer_class": type(tokenizer).__name__,
         "tokenizer_vocab_size": int(tokenizer.vocab_size),
         "num_hidden_layers": int(
-            getattr(config, "num_hidden_layers", len(layers))
+            getattr(architecture_config, "num_hidden_layers", len(layers))
         ),
         "linear_attention_layers": layer_types.count("linear_attention"),
         "full_attention_layers": layer_types.count("full_attention"),
         "full_attention_interval": int(
-            getattr(config, "full_attention_interval", 0)
+            getattr(architecture_config, "full_attention_interval", 0)
         ),
         "linear_num_key_heads": int(
-            getattr(config, "linear_num_key_heads", -1)
+            getattr(architecture_config, "linear_num_key_heads", -1)
         ),
         "linear_num_value_heads": int(
-            getattr(config, "linear_num_value_heads", -1)
+            getattr(architecture_config, "linear_num_value_heads", -1)
         ),
         "linear_key_head_dim": int(
-            getattr(config, "linear_key_head_dim", -1)
+            getattr(architecture_config, "linear_key_head_dim", -1)
         ),
         "linear_value_head_dim": int(
-            getattr(config, "linear_value_head_dim", -1)
+            getattr(architecture_config, "linear_value_head_dim", -1)
         ),
         "linear_conv_kernel_dim": int(
-            getattr(config, "linear_conv_kernel_dim", -1)
+            getattr(architecture_config, "linear_conv_kernel_dim", -1)
         ),
         "mamba_ssm_dtype": _dtype_name(
-            getattr(config, "mamba_ssm_dtype", "")
+            getattr(architecture_config, "mamba_ssm_dtype", "")
         ),
         "layer_schedule": {
             str(index): layer_type
