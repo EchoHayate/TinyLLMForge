@@ -1132,8 +1132,6 @@ def build_preflight_script(run_tag):
         "import getpass,importlib.metadata,json,os,pathlib,platform,shutil,subprocess,sys",
         "from huggingface_hub import HfApi",
         f"repo={MODEL_REPOSITORY!r}",
-        "info=HfApi().model_info(repo,files_metadata=True)",
-        "siblings=[{'rfilename':x.rfilename,'size':x.size} for x in info.siblings]",
         f"root=pathlib.Path({destination!r})",
         "root.mkdir(parents=True,exist_ok=True)",
         "usage=shutil.disk_usage(root)",
@@ -1156,7 +1154,16 @@ def build_preflight_script(run_tag):
         " root_path=pathlib.Path(cache_root)",
         " if root_path.is_dir():",
         "  candidate_snapshots.extend(str(path) for path in sorted(root_path.glob('models--Qwen--Qwen3.5-2B/snapshots/*')) if path.is_dir())",
-        "out={'resolved_revision':info.sha,'siblings':siblings,'free_bytes':usage.free,'packages':{name:version(name) for name in ['torch','transformers','huggingface_hub','fla','causal_conv1d','triton','flash_attn']},'gpu_processes':gpu.stdout.splitlines(),'cuda_visible_devices':os.environ.get('CUDA_VISIBLE_DEVICES'),'host':'10.232.195.203','observed_hostname':platform.node(),'user':getpass.getuser(),'python_version':sys.version.split()[0],'gpu_name':gpu_fields[0] if len(gpu_fields)>0 else None,'gpu_uuid':gpu_fields[1] if len(gpu_fields)>1 else None,'driver_version':gpu_fields[2] if len(gpu_fields)>2 else None,'cuda_runtime_version':torch_cuda,'checked_cache_roots':cache_roots,'candidate_snapshots':candidate_snapshots}",
+        "resolved_revision=None",
+        "siblings=[]",
+        "metadata_error=None",
+        "try:",
+        " info=HfApi().model_info(repo,files_metadata=True)",
+        " resolved_revision=info.sha",
+        " siblings=[{'rfilename':x.rfilename,'size':x.size} for x in info.siblings]",
+        "except Exception as exc:",
+        " metadata_error=f'{type(exc).__name__}: {exc}'",
+        "out={'resolved_revision':resolved_revision,'siblings':siblings,'metadata_error':metadata_error,'free_bytes':usage.free,'packages':{name:version(name) for name in ['torch','transformers','huggingface_hub','fla','causal_conv1d','triton','flash_attn']},'gpu_processes':gpu.stdout.splitlines(),'cuda_visible_devices':os.environ.get('CUDA_VISIBLE_DEVICES'),'host':'10.232.195.203','observed_hostname':platform.node(),'user':getpass.getuser(),'python_version':sys.version.split()[0],'gpu_name':gpu_fields[0] if len(gpu_fields)>0 else None,'gpu_uuid':gpu_fields[1] if len(gpu_fields)>1 else None,'driver_version':gpu_fields[2] if len(gpu_fields)>2 else None,'cuda_runtime_version':torch_cuda,'checked_cache_roots':cache_roots,'candidate_snapshots':candidate_snapshots}",
         "print(json.dumps(out,sort_keys=True,separators=(',',':')))",
         "",
     ])
@@ -1169,6 +1176,23 @@ def run_remote_preflight(run_tag, command_runner=_run):
     )
     _require_success(result, "remote preflight")
     payload = json.loads(result.stdout)
+    metadata_error = payload.get("metadata_error")
+    if metadata_error is not None:
+        if not isinstance(metadata_error, str) or not metadata_error:
+            raise ValueError("model metadata failure detail is invalid")
+        return {
+            **payload,
+            "declared_model_file_bytes": 0,
+            "allow_patterns": [],
+            "files": {},
+            "disk_preflight": {
+                "declared_model_file_bytes": 0,
+                "free_bytes": int(payload["free_bytes"]),
+                "required_bytes": None,
+                "can_acquire": False,
+                "classification_detail": "INCOMPLETE_MODEL_METADATA",
+            },
+        }
     revision = validate_resolved_revision(payload["resolved_revision"])
     inventory = build_model_file_inventory(payload["siblings"])
     disk = evaluate_disk_preflight(
@@ -1198,16 +1222,25 @@ def build_preflight_summary(payload):
     packages = payload.get("packages")
     if not isinstance(packages, dict):
         raise ValueError("preflight runtime packages are missing")
+    metadata_incomplete = status == "INCOMPLETE_MODEL_METADATA"
+    resolved_revision = payload.get("resolved_revision")
+    required_bytes = disk.get("required_bytes")
+    if metadata_incomplete:
+        if resolved_revision is not None:
+            raise ValueError("metadata failure cannot bind a revision")
+        if required_bytes is not None:
+            raise ValueError("metadata failure cannot compute peak bytes")
+    else:
+        resolved_revision = validate_resolved_revision(resolved_revision)
+        required_bytes = int(required_bytes)
     return {
         "status": status,
-        "resolved_revision": validate_resolved_revision(
-            payload["resolved_revision"]
-        ),
+        "resolved_revision": resolved_revision,
         "declared_model_file_bytes": int(
             payload["declared_model_file_bytes"]
         ),
         "free_bytes": int(disk["free_bytes"]),
-        "required_acquisition_peak_bytes": int(disk["required_bytes"]),
+        "required_acquisition_peak_bytes": required_bytes,
         "runtime": {
             "python_executable": REMOTE_PYTHON,
             "packages": packages,
@@ -1218,6 +1251,11 @@ def build_preflight_summary(payload):
         ),
         "candidate_snapshots": list(
             payload.get("candidate_snapshots", [])
+        ),
+        **(
+            {"failure_detail": payload["metadata_error"]}
+            if metadata_incomplete
+            else {}
         ),
     }
 

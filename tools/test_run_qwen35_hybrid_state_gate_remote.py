@@ -166,6 +166,61 @@ def test_preflight_summary_has_closed_status_and_task6_fields():
     )
 
 
+def test_model_metadata_timeout_preserves_fail_closed_preflight_fields():
+    runner = _load_runner()
+    remote_payload = {
+        "resolved_revision": None,
+        "siblings": [],
+        "metadata_error": "ConnectTimeout: [Errno 110] timed out",
+        "free_bytes": 12 * runner.GIB,
+        "packages": {
+            "torch": "2.4",
+            "transformers": "5.8",
+            "huggingface_hub": "0.34",
+        },
+        "gpu_processes": ["1234, python, 1024"],
+        "cuda_visible_devices": None,
+        "host": "10.232.195.203",
+        "observed_hostname": "remote-host",
+        "user": "sitian",
+        "python_version": "3.11.0",
+        "gpu_name": "GPU",
+        "gpu_uuid": "GPU-uuid",
+        "driver_version": "550",
+        "cuda_runtime_version": "12.4",
+        "checked_cache_roots": ["/cache/hub"],
+        "candidate_snapshots": ["/cache/hub/snapshot"],
+    }
+
+    def command_runner(_command, **_kwargs):
+        return type("Result", (), {
+            "returncode": 0,
+            "stdout": json.dumps(remote_payload),
+            "stderr": "",
+        })()
+
+    payload = runner.run_remote_preflight(
+        "qwen35-metadata-timeout",
+        command_runner=command_runner,
+    )
+    summary = runner.build_preflight_summary(payload)
+    assert summary == {
+        "status": "INCOMPLETE_MODEL_METADATA",
+        "resolved_revision": None,
+        "declared_model_file_bytes": 0,
+        "free_bytes": 12 * runner.GIB,
+        "required_acquisition_peak_bytes": None,
+        "runtime": {
+            "python_executable": runner.REMOTE_PYTHON,
+            "packages": remote_payload["packages"],
+        },
+        "gpu_processes": remote_payload["gpu_processes"],
+        "checked_cache_roots": remote_payload["checked_cache_roots"],
+        "candidate_snapshots": remote_payload["candidate_snapshots"],
+        "failure_detail": remote_payload["metadata_error"],
+    }
+
+
 def test_insufficient_disk_stops_before_download_or_gpu():
     runner = _load_runner()
     result = runner.evaluate_disk_preflight(
