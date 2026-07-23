@@ -115,6 +115,7 @@ def test_case_matrix_covers_single_request_and_lifecycle_domain():
     ]
     assert len(slot_reuse) == 1
     assert slot_reuse[0].prompt_length == contract.SLOT_REUSE_PROMPT_LENGTH
+    assert slot_reuse[0].expected_state_snapshots == 34
 
 
 def test_deterministic_token_ids_are_repeatable_bounded_and_filtered():

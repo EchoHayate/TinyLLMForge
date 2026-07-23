@@ -356,7 +356,7 @@ def build_case_matrix() -> tuple[GateCase, ...]:
             request_count=len(MULTI_REQUEST_LENGTHS) + 1,
             decode_steps=DECODE_STEPS,
             repeat_index=0,
-            expected_state_snapshots=DECODE_STEPS + 3,
+            expected_state_snapshots=34,
         ),
         GateCase(
             phase="state_memory_ledger",

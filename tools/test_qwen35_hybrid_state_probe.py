@@ -6,6 +6,7 @@ Run: python3 tools/test_qwen35_hybrid_state_probe.py
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -13,6 +14,7 @@ import tempfile
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
@@ -47,6 +49,15 @@ def _expect_value_error(callable_, message_fragment):
         raise AssertionError("expected ValueError")
 
 
+def _expect_incomplete(callable_, failure_kind):
+    try:
+        callable_()
+    except probe.IncompleteRun as exc:
+        assert exc.failure_kind == failure_kind
+    else:
+        raise AssertionError("expected IncompleteRun")
+
+
 @dataclass
 class _DataclassState:
     recurrent_state: torch.Tensor
@@ -65,6 +76,236 @@ class _AdapterState:
         self.ignored = ignored
 
 
+class _FakeLayer:
+    def __init__(self, layer_type):
+        self.layer_type = layer_type
+
+
+class _FakeBackbone:
+    def __init__(self, layer_types):
+        self.layers = [_FakeLayer(layer_type) for layer_type in layer_types]
+
+
+class _FakeQwen35Model:
+    def __init__(self, layer_types):
+        self.model = _FakeBackbone(layer_types)
+
+    def named_parameters(self):
+        yield "weight", torch.zeros((2, 2), dtype=torch.float16)
+        yield "state_scale", torch.zeros((1,), dtype=torch.float32)
+
+
+class _FakeQwen35Config:
+    def __init__(self, layer_types):
+        self.num_hidden_layers = 24
+        self.layer_types = list(layer_types)
+        self.full_attention_interval = 4
+        self.linear_num_key_heads = 16
+        self.linear_num_value_heads = 16
+        self.linear_key_head_dim = 128
+        self.linear_value_head_dim = 128
+        self.linear_conv_kernel_dim = 4
+        self.mamba_ssm_dtype = "float32"
+
+
+class _FakeTokenizer:
+    vocab_size = 151936
+
+
+class _FakeReferenceStateAdapter:
+    vocab_size = 32
+
+    def _state(self, tokens):
+        values = [int(value) for value in tokens]
+        return {
+            "tokens": values,
+            "recurrent_state": torch.tensor(
+                values[-4:] or [0],
+                dtype=torch.float32,
+            ),
+        }
+
+    def _logits(self, tokens):
+        next_token = (sum(tokens) + len(tokens)) % self.vocab_size
+        logits = torch.arange(self.vocab_size, dtype=torch.float32).neg()
+        logits[next_token] = 1000.0 + len(tokens)
+        return logits
+
+    def prefill(self, input_ids, state):
+        prefix = [] if state is None else list(state["tokens"])
+        tokens = prefix + [int(value) for value in input_ids.flatten()]
+        return self._logits(tokens), self._state(tokens)
+
+    def decode_one(self, token_id, state, sequence_length):
+        assert sequence_length == len(state["tokens"])
+        tokens = [*state["tokens"], int(token_id)]
+        return self._logits(tokens), self._state(tokens)
+
+    def one_shot(self, token_ids):
+        return self._logits([int(value) for value in token_ids])
+
+    def export_state(
+        self,
+        state,
+        request_id,
+        request_generation,
+        sequence_length,
+    ):
+        assert sequence_length == len(state["tokens"])
+        return {
+            "request_id": request_id,
+            "request_generation": request_generation,
+            "tokens": list(state["tokens"]),
+        }
+
+    def import_state(self, exported):
+        return self._state(exported["tokens"])
+
+    def state_sha256(self, state):
+        return contract.canonical_json_sha256({
+            "tokens": state["tokens"],
+            "recurrent_state": state["recurrent_state"].tolist(),
+        })
+
+
+class _FakeCache:
+    def __init__(self, tokens):
+        self.tokens = tokens
+
+    def to_legacy_cache(self):
+        return (self.tokens,)
+
+    @classmethod
+    def from_legacy_cache(cls, payload):
+        return cls(payload[0])
+
+
+class _OpaqueCache:
+    def __init__(self, tokens):
+        self.tokens = tokens
+
+
+class _FakeCausalModel:
+    def __init__(self, cache_type=_FakeCache):
+        self.device = torch.device("cpu")
+        self.cache_type = cache_type
+        self.config = SimpleNamespace()
+        self.calls = []
+
+    def __call__(
+        self,
+        *,
+        input_ids,
+        past_key_values=None,
+        use_cache,
+        return_dict,
+        cache_position=None,
+    ):
+        assert use_cache is True
+        assert return_dict is True
+        prefix = (
+            []
+            if past_key_values is None
+            else past_key_values.tokens.flatten().tolist()
+        )
+        incoming = input_ids.flatten().tolist()
+        tokens = torch.tensor(prefix + incoming, dtype=torch.long)
+        vocab_size = 32
+        next_token = (int(tokens.sum()) + tokens.numel()) % vocab_size
+        logits = torch.arange(vocab_size, dtype=torch.float32).neg()
+        logits[next_token] = 1000.0 + tokens.numel()
+        logits = logits.reshape(1, 1, -1).repeat(
+            1, input_ids.shape[-1], 1
+        )
+        self.calls.append({
+            "input_ids": incoming,
+            "cache_position": (
+                None
+                if cache_position is None
+                else cache_position.flatten().tolist()
+            ),
+        })
+        return SimpleNamespace(
+            logits=logits,
+            past_key_values=self.cache_type(tokens),
+        )
+
+
+class _FakeAutoClass:
+    calls = []
+    result = None
+
+    @classmethod
+    def from_pretrained(cls, model_dir, **kwargs):
+        cls.calls.append((os.fspath(model_dir), kwargs))
+        return cls.result
+
+
+class _FakeCuda:
+    def __init__(self):
+        self.synchronize_calls = 0
+        self.reset_peak_calls = 0
+
+    def is_available(self):
+        return True
+
+    def synchronize(self):
+        self.synchronize_calls += 1
+
+    def memory_allocated(self):
+        return 101
+
+    def memory_reserved(self):
+        return 202
+
+    def max_memory_allocated(self):
+        return 303
+
+    def max_memory_reserved(self):
+        return 404
+
+    def reset_peak_memory_stats(self):
+        self.reset_peak_calls += 1
+
+
+class _CasePeakCuda(_FakeCuda):
+    def __init__(self):
+        super().__init__()
+        self.case_index = 0
+
+    def reset_peak_memory_stats(self):
+        super().reset_peak_memory_stats()
+        self.case_index += 1
+
+    def max_memory_allocated(self):
+        return 1000 if self.case_index == 1 else self.case_index * 10
+
+    def max_memory_reserved(self):
+        return 2000 if self.case_index == 1 else self.case_index * 20
+
+
+def _run_complete_reference_matrix(run_dir):
+    return probe.run_reference_case_matrix(
+        adapter_factory=_FakeReferenceStateAdapter,
+        architecture=probe.inspect_model(
+            model=_FakeQwen35Model(_canonical_layer_types()),
+            config=_FakeQwen35Config(_canonical_layer_types()),
+            tokenizer=_FakeTokenizer(),
+        ),
+        run_dir=run_dir,
+        contract_sha256=probe.contract_file_sha256(),
+        parameter_bytes=1234,
+        cuda_module=_FakeCuda(),
+    )
+
+
+def _canonical_layer_types():
+    return tuple(
+        "full_attention" if (index + 1) % 4 == 0 else "linear_attention"
+        for index in range(24)
+    )
+
+
 def test_walk_tensor_leaves_preserves_explicit_paths_and_aliases():
     storage = torch.arange(8, dtype=torch.float32)
     state = {"layers": [{"key": storage[:4], "value": storage[4:]}]}
@@ -76,6 +317,718 @@ def test_walk_tensor_leaves_preserves_explicit_paths_and_aliases():
     assert leaves[0][1].untyped_storage().data_ptr() == (
         leaves[1][1].untyped_storage().data_ptr()
     )
+
+
+def test_inspect_model_reconstructs_exact_hybrid_schedule():
+    layer_types = _canonical_layer_types()
+    result = probe.inspect_model(
+        model=_FakeQwen35Model(layer_types),
+        config=_FakeQwen35Config(layer_types),
+        tokenizer=_FakeTokenizer(),
+    )
+    assert result["num_hidden_layers"] == 24
+    assert result["linear_attention_layers"] == 18
+    assert result["full_attention_layers"] == 6
+    assert result["full_attention_interval"] == 4
+    assert result["layer_schedule"] == {
+        str(index): layer_type
+        for index, layer_type in enumerate(layer_types)
+    }
+    assert result["parameter_dtypes"] == {
+        "float16": 4,
+        "float32": 1,
+    }
+    assert result["tokenizer_vocab_size"] == _FakeTokenizer.vocab_size
+
+
+def test_architecture_mismatch_fails_before_correctness_execution():
+    _expect_incomplete(
+        lambda: probe.require_canonical_architecture({
+            "num_hidden_layers": 23,
+            "layer_schedule": {},
+        }),
+        "INCOMPLETE_ARCHITECTURE",
+    )
+
+
+def test_reference_modes_emit_comparable_step_records():
+    adapter = _FakeReferenceStateAdapter()
+    oracle = probe.run_one_shot_oracle(
+        adapter,
+        token_ids=(1, 2, 3),
+        decode_steps=2,
+    )
+    cached = probe.run_cached_decode(
+        adapter,
+        token_ids=(1, 2, 3),
+        decode_steps=2,
+    )
+    chunked = probe.run_chunked_prefill_decode(
+        adapter,
+        token_ids=(1, 2, 3),
+        chunk_schedule=(1, 2),
+        decode_steps=2,
+    )
+    assert cached["decoded_token_ids"] == oracle["decoded_token_ids"]
+    assert chunked["decoded_token_ids"] == oracle["decoded_token_ids"]
+    assert len(cached["state_snapshot_ids"]) == 3
+    assert len(chunked["state_snapshot_ids"]) == 4
+    assert all(
+        set(record) == set(contract.LOGIT_RECORD_FIELDS)
+        for record in cached["logit_records"]
+    )
+    assert all(
+        record["max_abs_diff"] == 0.0
+        for record in cached["logit_records"]
+    )
+
+
+def test_export_import_preserves_next_step_logits():
+    result = probe.run_export_import_continuation(
+        _FakeReferenceStateAdapter(),
+        token_ids=(1, 2, 3),
+    )
+    assert result["decoded_token_ids_equal"] is True
+    assert result["full_logit_sha256_equal"] is True
+    assert result["max_abs_diff"] == 0.0
+    assert result["max_rel_diff"] == 0.0
+
+
+def test_interleaved_decode_does_not_mutate_inactive_requests():
+    result = probe.run_interleaved_requests(
+        _FakeReferenceStateAdapter(),
+        request_token_ids={
+            "slot-0": (1, 2, 3),
+            "slot-1": (4, 5),
+            "slot-2": (6, 7, 8, 9),
+        },
+        replacement_token_ids=(10, 11, 12),
+    )
+    assert result["inactive_request_hash_changes"] == []
+    assert result["serial_oracle_mismatches"] == []
+
+
+def test_slot_reuse_increments_generation_and_releases_old_state():
+    result = probe.run_interleaved_requests(
+        _FakeReferenceStateAdapter(),
+        request_token_ids={
+            "slot-0": (1, 2, 3),
+            "slot-1": (4, 5),
+            "slot-2": (6, 7, 8, 9),
+        },
+        replacement_token_ids=(10, 11, 12),
+    )
+    assert result["slot_generations"]["slot-0"] == [0, 1]
+    assert result["released_generations"] == [["slot-0", 0]]
+    assert result["stale_state_reads"] == []
+
+
+def test_reference_state_adapter_uses_explicit_cache_codec():
+    model = _FakeCausalModel()
+    adapter = probe.ReferenceStateAdapter(
+        model=model,
+        layer_schedule={0: "linear_attention"},
+        vocab_size=32,
+        device="cpu",
+    )
+    logits, state = adapter.prefill(
+        torch.tensor([[1, 2, 3]], dtype=torch.long),
+        None,
+    )
+    exported = adapter.export_state(
+        state,
+        "request-a",
+        0,
+        3,
+    )
+    restored = adapter.import_state(exported)
+    original_logits, _ = adapter.decode_one(4, state, 3)
+    restored_logits, _ = adapter.decode_one(4, restored, 3)
+    assert torch.equal(logits, model(
+        input_ids=torch.tensor([[1, 2, 3]], dtype=torch.long),
+        past_key_values=None,
+        use_cache=True,
+        return_dict=True,
+        cache_position=torch.arange(3),
+    ).logits[-1, -1])
+    assert torch.equal(original_logits, restored_logits)
+    assert exported["cache_codec"] == "legacy_cache"
+    assert exported["request_generation"] == 0
+
+
+def test_reference_state_adapter_binds_explicit_vocab_size():
+    adapter = probe.ReferenceStateAdapter(
+        model=_FakeCausalModel(),
+        layer_schedule={0: "linear_attention"},
+        vocab_size=32,
+        device="cpu",
+    )
+    assert adapter.vocab_size == 32
+    token_ids = probe._case_token_ids(adapter, prompt_length=5, seed=7)
+    assert len(token_ids) == 5
+    assert all(0 < token_id < 32 for token_id in token_ids)
+
+
+def test_reference_state_adapter_one_shot_runs_full_token_path():
+    model = _FakeCausalModel()
+    adapter = probe.ReferenceStateAdapter(
+        model=model,
+        layer_schedule={0: "linear_attention"},
+        vocab_size=32,
+        device="cpu",
+    )
+    logits = adapter.one_shot((1, 2, 3, 4))
+    expected_logits = model(
+        input_ids=torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
+        past_key_values=None,
+        use_cache=True,
+        return_dict=True,
+        cache_position=torch.arange(4),
+    ).logits[-1, -1]
+    assert torch.equal(logits, expected_logits)
+    assert model.calls[0] == {
+        "input_ids": [1, 2, 3, 4],
+        "cache_position": [0, 1, 2, 3],
+    }
+
+
+def test_reference_state_adapter_runs_cached_worker_with_real_state_rows():
+    adapter = probe.ReferenceStateAdapter(
+        model=_FakeCausalModel(),
+        layer_schedule={0: "linear_attention"},
+        vocab_size=32,
+        device="cpu",
+    )
+    observer = probe._StateEvidenceCollector(
+        adapter=adapter,
+        layer_schedule={0: "linear_attention"},
+        cuda=_FakeCuda(),
+    )
+    case = next(
+        case
+        for case in contract.build_case_matrix()
+        if case.execution_mode == "one_shot_vs_cached"
+    )
+    row = probe._run_reference_case(case, adapter, observer)
+    assert row["complete"] is True
+    assert row["logit_records"]
+    assert observer.state_components
+    assert all(
+        component["request_id"] == "request-0"
+        for component in observer.state_components
+    )
+
+
+def test_cached_worker_fails_closed_without_one_shot_semantics():
+    class _NoOneShotAdapter(_FakeReferenceStateAdapter):
+        one_shot = None
+
+    case = next(
+        case
+        for case in contract.build_case_matrix()
+        if case.execution_mode == "one_shot_vs_cached"
+    )
+    adapter = _NoOneShotAdapter()
+    observer = probe._StateEvidenceCollector(
+        adapter=adapter,
+        layer_schedule={0: "linear_attention"},
+        cuda=_FakeCuda(),
+    )
+    _expect_incomplete(
+        lambda: probe._run_reference_case(case, adapter, observer),
+        "INCOMPLETE_REFERENCE_SEMANTICS",
+    )
+
+
+def test_reference_state_adapter_fails_closed_without_cache_codec():
+    adapter = probe.ReferenceStateAdapter(
+        model=_FakeCausalModel(cache_type=_OpaqueCache),
+        layer_schedule={0: "linear_attention"},
+        vocab_size=32,
+        device="cpu",
+    )
+    _, state = adapter.prefill(
+        torch.tensor([[1, 2, 3]], dtype=torch.long),
+        None,
+    )
+    _expect_incomplete(
+        lambda: adapter.export_state(state, "request-a", 0, 3),
+        "INCOMPLETE_REFERENCE_SEMANTICS",
+    )
+
+
+def test_load_official_reference_uses_local_read_only_arguments():
+    layer_types = _canonical_layer_types()
+    config = _FakeQwen35Config(layer_types)
+    tokenizer = _FakeTokenizer()
+    model = _FakeQwen35Model(layer_types)
+    config_auto = type("ConfigAuto", (_FakeAutoClass,), {
+        "calls": [],
+        "result": config,
+    })
+    tokenizer_auto = type("TokenizerAuto", (_FakeAutoClass,), {
+        "calls": [],
+        "result": tokenizer,
+    })
+    model_auto = type("ModelAuto", (_FakeAutoClass,), {
+        "calls": [],
+        "result": model,
+    })
+    loaded = probe.load_official_reference(
+        Path("/immutable/model"),
+        auto_config=config_auto,
+        auto_tokenizer=tokenizer_auto,
+        auto_model=model_auto,
+    )
+    assert loaded["config"] is config
+    assert loaded["tokenizer"] is tokenizer
+    assert loaded["model"] is model
+    assert config_auto.calls == [(
+        "/immutable/model",
+        {
+            "local_files_only": True,
+            "trust_remote_code": False,
+        },
+    )]
+    assert tokenizer_auto.calls == config_auto.calls
+    assert model_auto.calls == [(
+        "/immutable/model",
+        {
+            "local_files_only": True,
+            "trust_remote_code": False,
+            "torch_dtype": "auto",
+            "device_map": {"": "cuda:0"},
+        },
+    )]
+
+
+def test_capture_memory_snapshot_separates_allocator_and_state_ledger():
+    components = _synthetic_components()
+    fake_cuda = _FakeCuda()
+    snapshot = probe.capture_memory_snapshot(
+        snapshot_id="memory-0",
+        phase="after_prefill",
+        request_id="request-a",
+        request_generation=0,
+        components=components,
+        cuda=fake_cuda,
+    )
+    assert snapshot == {
+        "snapshot_id": "memory-0",
+        "phase": "after_prefill",
+        "request_id": "request-a",
+        "request_generation": 0,
+        "cuda_allocated_bytes": 101,
+        "cuda_reserved_bytes": 202,
+        "logical_state_bytes": sum(
+            component["logical_bytes"] for component in components
+        ),
+        "unique_storage_bytes": contract.unique_storage_bytes(components),
+    }
+    assert fake_cuda.synchronize_calls == 1
+
+
+def test_emit_raw_probe_artifacts_writes_exact_worker_schemas():
+    component = _synthetic_components()[0]
+    state_snapshot = {
+        "snapshot_id": "state-0",
+        "request_id": "request-a",
+        "request_generation": 0,
+        "lifetime_epoch": 1,
+        "sequence_length": 17,
+        "component_count": 1,
+        "component_sha256": contract.canonical_json_sha256([component]),
+    }
+    memory_snapshot = {
+        "snapshot_id": "memory-0",
+        "phase": "after_prefill",
+        "request_id": "request-a",
+        "request_generation": 0,
+        "cuda_allocated_bytes": 101,
+        "cuda_reserved_bytes": 202,
+        "logical_state_bytes": component["logical_bytes"],
+        "unique_storage_bytes": component["storage_nbytes"],
+    }
+    case_row = {
+        "row_id": "row-0",
+        "case_id": "case-0",
+        "phase": "one_shot_vs_cached",
+        "execution_mode": "cached_decode",
+        "prompt_length": 17,
+        "chunk_schedule": [17],
+        "request_count": 1,
+        "decode_steps": 1,
+        "repeat_index": 0,
+        "request_ids": ["request-a"],
+        "request_generations": [0],
+        "decoded_token_ids": [7],
+        "logit_records": [],
+        "state_snapshot_ids": ["state-0"],
+        "memory_snapshot_ids": ["memory-0"],
+        "complete": True,
+        "failure_kind": None,
+        "failure_detail": None,
+    }
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = Path(temporary)
+        summary = probe.emit_raw_probe_artifacts(
+            run_dir=run_dir,
+            architecture={"num_hidden_layers": 24},
+            case_rows=[case_row],
+            state_snapshots=[state_snapshot],
+            state_components=[component],
+            memory_snapshots=[memory_snapshot],
+            parameter_bytes=1234,
+            max_memory_allocated=303,
+            max_memory_reserved=404,
+        )
+        assert summary["parameter_bytes"] == 1234
+        assert summary["state_logical_bytes"] == component["logical_bytes"]
+        assert summary["state_unique_storage_bytes"] == (
+            component["storage_nbytes"]
+        )
+        assert summary["non_state_peak_allocator_observation_bytes"] == (
+            303 - component["storage_nbytes"]
+        )
+        for filename in (
+            "case_rows.jsonl",
+            "state_snapshots.jsonl",
+            "state_components.jsonl",
+            "memory_snapshots.jsonl",
+            "summary.json",
+        ):
+            assert (run_dir / filename).is_file()
+        assert not list(run_dir.glob("*.partial"))
+        assert set(json.loads(
+            (run_dir / "case_rows.jsonl").read_text().strip()
+        )) == set(contract.CASE_ROW_FIELDS)
+
+
+def test_reference_case_matrix_emits_every_frozen_case_exactly_once():
+    with tempfile.TemporaryDirectory() as temporary:
+        result = _run_complete_reference_matrix(Path(temporary))
+        expected_cases = contract.build_case_matrix()
+        rows = result["case_rows"]
+        assert len(rows) == len(expected_cases) == 34
+        assert [row["case_id"] for row in rows] == [
+            case.case_id for case in expected_cases
+        ]
+        assert all(
+            set(row) == set(contract.CASE_ROW_FIELDS)
+            for row in rows
+        )
+        assert all(row["complete"] is True for row in rows)
+        assert all(row["failure_kind"] is None for row in rows)
+
+
+def test_reference_case_matrix_includes_before_prefill_state_snapshot():
+    with tempfile.TemporaryDirectory() as temporary:
+        result = _run_complete_reference_matrix(Path(temporary))
+        rows_by_id = {
+            row["case_id"]: row for row in result["case_rows"]
+        }
+        for case in contract.build_case_matrix():
+            assert len(rows_by_id[case.case_id]["state_snapshot_ids"]) == (
+                case.expected_state_snapshots
+            )
+
+
+def test_reference_case_matrix_materializes_real_state_and_allocator_rows():
+    with tempfile.TemporaryDirectory() as temporary:
+        result = _run_complete_reference_matrix(Path(temporary))
+        assert result["state_components"]
+        components_by_epoch = {}
+        for component in result["state_components"]:
+            key = (
+                component["request_id"],
+                component["request_generation"],
+                component["lifetime_epoch"],
+            )
+            components_by_epoch.setdefault(key, []).append(component)
+        nonempty_snapshots = 0
+        for snapshot in result["state_snapshots"]:
+            if snapshot["sequence_length"] == 0:
+                assert snapshot["component_count"] == 0
+                continue
+            key = (
+                snapshot["request_id"],
+                snapshot["request_generation"],
+                snapshot["lifetime_epoch"],
+            )
+            components = sorted(
+                components_by_epoch[key],
+                key=probe._component_sort_key,
+            )
+            assert snapshot["component_count"] == len(components)
+            assert snapshot["component_sha256"] == (
+                contract.canonical_json_sha256(components)
+            )
+            nonempty_snapshots += 1
+        assert nonempty_snapshots > 0
+        for memory in result["memory_snapshots"]:
+            assert memory["cuda_allocated_bytes"] == 101
+            assert memory["cuda_reserved_bytes"] == 202
+
+
+def test_reference_case_matrix_resets_cuda_peak_before_every_case():
+    fake_cuda = _FakeCuda()
+    with tempfile.TemporaryDirectory() as temporary:
+        probe.run_reference_case_matrix(
+            adapter_factory=_FakeReferenceStateAdapter,
+            architecture=probe.inspect_model(
+                model=_FakeQwen35Model(_canonical_layer_types()),
+                config=_FakeQwen35Config(_canonical_layer_types()),
+                tokenizer=_FakeTokenizer(),
+            ),
+            run_dir=Path(temporary),
+            contract_sha256=probe.contract_file_sha256(),
+            parameter_bytes=1234,
+            cuda_module=fake_cuda,
+        )
+    assert fake_cuda.reset_peak_calls == len(contract.build_case_matrix())
+
+
+def test_same_path_repeatability_uses_identical_prompt_tokens():
+    adapter = _FakeReferenceStateAdapter()
+    observer = probe._StateEvidenceCollector(
+        adapter=adapter,
+        layer_schedule={0: "linear_attention"},
+        cuda=_FakeCuda(),
+    )
+    cases = [
+        case
+        for case in contract.build_case_matrix()
+        if (
+            case.execution_mode == "cached_repeatability"
+            and case.prompt_length == contract.PROMPT_LENGTHS[0]
+        )
+    ]
+    rows = [
+        probe._run_reference_case(case, adapter, observer)
+        for case in cases
+    ]
+    assert rows[0]["decoded_token_ids"] == rows[1]["decoded_token_ids"]
+    assert [
+        record["full_logit_sha256"]
+        for record in rows[0]["logit_records"]
+    ] == [
+        record["full_logit_sha256"]
+        for record in rows[1]["logit_records"]
+    ]
+
+
+def test_decode_memory_phases_include_step_index():
+    with tempfile.TemporaryDirectory() as temporary:
+        result = _run_complete_reference_matrix(Path(temporary))
+    phases = {
+        row["phase"]
+        for row in result["memory_snapshots"]
+        if row["phase"].startswith("after_decode")
+    }
+    assert "after_decode_step_0" in phases
+    assert f"after_decode_step_{contract.DECODE_STEPS - 1}" in phases
+
+
+def test_reference_case_matrix_aggregates_peak_across_cases():
+    fake_cuda = _CasePeakCuda()
+    with tempfile.TemporaryDirectory() as temporary:
+        result = probe.run_reference_case_matrix(
+            adapter_factory=_FakeReferenceStateAdapter,
+            architecture=probe.inspect_model(
+                model=_FakeQwen35Model(_canonical_layer_types()),
+                config=_FakeQwen35Config(_canonical_layer_types()),
+                tokenizer=_FakeTokenizer(),
+            ),
+            run_dir=Path(temporary),
+            contract_sha256=probe.contract_file_sha256(),
+            parameter_bytes=1234,
+            cuda_module=fake_cuda,
+        )
+    assert result["summary"]["max_memory_allocated"] == 1000
+    assert result["summary"]["max_memory_reserved"] == 2000
+
+
+def test_slot_reuse_case_records_release_allocator_phase():
+    case = next(
+        case
+        for case in contract.build_case_matrix()
+        if case.execution_mode == "completion_release_slot_reuse"
+    )
+    adapter = _FakeReferenceStateAdapter()
+    observer = probe._StateEvidenceCollector(
+        adapter=adapter,
+        layer_schedule={0: "linear_attention"},
+        cuda=_FakeCuda(),
+    )
+    probe._run_reference_case(case, adapter, observer)
+    assert "after_request_release" in {
+        row["phase"] for row in observer.memory_snapshots
+    }
+    released = [
+        component
+        for component in observer.state_components
+        if component["update_kind"] == "released"
+    ]
+    assert released
+    assert {
+        component["request_generation"] for component in released
+    } == {0}
+    release_snapshot = next(
+        row
+        for row in observer.state_snapshots
+        if row["snapshot_id"].endswith(":after_request_release")
+    )
+    assert release_snapshot["component_count"] == len(released)
+
+
+def test_slot_reuse_case_runs_full_interleaved_lifecycle_domain():
+    case = next(
+        case
+        for case in contract.build_case_matrix()
+        if case.execution_mode == "completion_release_slot_reuse"
+    )
+    adapter = _FakeReferenceStateAdapter()
+    observer = probe._StateEvidenceCollector(
+        adapter=adapter,
+        layer_schedule={0: "linear_attention"},
+        cuda=_FakeCuda(),
+    )
+    row = probe._run_reference_case(case, adapter, observer)
+    record_counts = {}
+    for record in row["logit_records"]:
+        key = (
+            record["request_id"],
+            record["request_generation"],
+        )
+        record_counts[key] = record_counts.get(key, 0) + 1
+    assert record_counts == {
+        ("slot-0", 0): 2,
+        ("slot-1", 0): contract.DECODE_STEPS,
+        ("slot-2", 0): contract.DECODE_STEPS,
+        ("slot-0", 1): contract.DECODE_STEPS,
+    }
+    assert len(row["state_snapshot_ids"]) == 34
+    assert row["request_ids"] == [
+        "slot-0",
+        "slot-1",
+        "slot-2",
+        "slot-0",
+    ]
+    assert row["request_generations"] == [0, 0, 0, 1]
+
+
+def test_reference_worker_rejects_wrong_contract_hash_before_execution():
+    adapter_calls = []
+
+    def adapter_factory():
+        adapter_calls.append("called")
+        return _FakeReferenceStateAdapter()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        _expect_incomplete(
+            lambda: probe.run_reference_case_matrix(
+                adapter_factory=adapter_factory,
+                architecture=probe.inspect_model(
+                    model=_FakeQwen35Model(_canonical_layer_types()),
+                    config=_FakeQwen35Config(_canonical_layer_types()),
+                    tokenizer=_FakeTokenizer(),
+                ),
+                run_dir=Path(temporary),
+                contract_sha256="0" * 64,
+                parameter_bytes=1234,
+                cuda_module=_FakeCuda(),
+            ),
+            "INCOMPLETE_CONTRACT_MISMATCH",
+        )
+        assert adapter_calls == []
+        assert not list(Path(temporary).iterdir())
+
+
+def test_run_canonical_cli_writes_complete_raw_artifact_set_atomically():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = Path(temporary) / "run"
+        model_dir = Path(temporary) / "model"
+        model_dir.mkdir()
+        stdout = io.StringIO()
+        exit_code = probe.main(
+            [
+                "run-canonical",
+                "--model-dir",
+                os.fspath(model_dir),
+                "--run-dir",
+                os.fspath(run_dir),
+                "--contract-sha256",
+                probe.contract_file_sha256(),
+            ],
+            reference_loader=lambda _model_dir: (
+                _FakeQwen35Config(_canonical_layer_types()),
+                _FakeTokenizer(),
+                _FakeQwen35Model(_canonical_layer_types()),
+            ),
+            adapter_factory=_FakeReferenceStateAdapter,
+            cuda_module=_FakeCuda(),
+            stdout=stdout,
+        )
+        assert exit_code == 0
+        assert json.loads(stdout.getvalue())["case_row_count"] == 34
+        for filename in (
+            "architecture.json",
+            "case_rows.jsonl",
+            "state_snapshots.jsonl",
+            "state_components.jsonl",
+            "memory_snapshots.jsonl",
+            "summary.json",
+        ):
+            assert (run_dir / filename).is_file()
+        assert not list(run_dir.rglob("*.partial"))
+        case_rows = [
+            json.loads(line)
+            for line in (run_dir / "case_rows.jsonl").read_text().splitlines()
+        ]
+        assert len(case_rows) == 34
+        assert all(
+            set(row) == set(contract.CASE_ROW_FIELDS)
+            for row in case_rows
+        )
+        memory_rows = [
+            json.loads(line)
+            for line in (
+                run_dir / "memory_snapshots.jsonl"
+            ).read_text().splitlines()
+        ]
+        assert {"before_model_load", "after_model_load", "after_model_release"} <= {
+            row["phase"] for row in memory_rows
+        }
+
+
+def test_run_canonical_cli_preserves_largest_per_case_peak():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = Path(temporary) / "run"
+        model_dir = Path(temporary) / "model"
+        model_dir.mkdir()
+        stdout = io.StringIO()
+        probe.main(
+            [
+                "run-canonical",
+                "--model-dir",
+                os.fspath(model_dir),
+                "--run-dir",
+                os.fspath(run_dir),
+                "--contract-sha256",
+                probe.contract_file_sha256(),
+            ],
+            reference_loader=lambda _model_dir: (
+                _FakeQwen35Config(_canonical_layer_types()),
+                _FakeTokenizer(),
+                _FakeQwen35Model(_canonical_layer_types()),
+            ),
+            adapter_factory=_FakeReferenceStateAdapter,
+            cuda_module=_CasePeakCuda(),
+            stdout=stdout,
+        )
+        summary = json.loads(stdout.getvalue())
+        assert summary["max_memory_allocated"] == 1000
+        assert summary["max_memory_reserved"] == 2000
 
 
 def test_walk_tensor_leaves_uses_frozen_container_order():
@@ -300,10 +1253,10 @@ def test_snapshot_comparison_distinguishes_growth_replacement_and_in_place():
     current[2]["storage_data_ptr"] = 2
     current[2]["content_sha256"] = "0" * 64
     transitions = probe.compare_state_snapshots(previous, current)
-    assert transitions["full_attention_key"] == "grown"
-    assert transitions["linear_recurrent_state"] == "mutated_in_place"
-    assert transitions["linear_convolution_state"] == "replaced"
-    assert transitions["position_or_sequence_metadata"] == "unchanged"
+    assert transitions[probe._component_key(current[0])] == "grown"
+    assert transitions[probe._component_key(current[1])] == "mutated_in_place"
+    assert transitions[probe._component_key(current[2])] == "replaced"
+    assert transitions[probe._component_key(current[3])] == "unchanged"
 
 
 def test_snapshot_comparison_emits_created_and_released():
@@ -317,8 +1270,36 @@ def test_snapshot_comparison_emits_created_and_released():
         content_sha256="1" * 64,
     ))
     transitions = probe.compare_state_snapshots(previous, current)
-    assert transitions["full_attention_key"] == "released"
-    assert transitions["full_attention_value"] == "created"
+    assert transitions[probe._component_key(previous[0])] == "released"
+    assert transitions[probe._component_key(current[-1])] == "created"
+
+
+def test_snapshot_comparison_keeps_transition_per_component_key():
+    first = _component(
+        role="linear_recurrent_state",
+        path="layers[0].recurrent_state",
+        shape=(1, 4),
+        storage_identity="recurrent-storage-0",
+        content_sha256="a" * 64,
+    )
+    second = dict(
+        _component(
+            role="linear_recurrent_state",
+            path="layers[1].recurrent_state",
+            shape=(1, 4),
+            storage_identity="recurrent-storage-1",
+            content_sha256="b" * 64,
+        ),
+        layer_index=1,
+    )
+    current_first = dict(first, content_sha256="c" * 64)
+    current_second = dict(second)
+    transitions = probe.compare_state_snapshots(
+        [first, second],
+        [current_first, current_second],
+    )
+    assert transitions[probe._component_key(first)] == "mutated_in_place"
+    assert transitions[probe._component_key(second)] == "unchanged"
 
 
 def test_snapshot_comparison_rejects_generation_aliasing():
