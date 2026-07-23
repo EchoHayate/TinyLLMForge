@@ -617,6 +617,105 @@ def test_load_official_reference_uses_local_read_only_arguments():
     )]
 
 
+def test_torch_custom_op_annotation_compatibility_is_temporary():
+    calls = []
+
+    def operation(input: "torch.Tensor") -> "torch.Tensor":
+        return input
+
+    original_annotations = dict(operation.__annotations__)
+
+    def infer_schema(function, mutates_args=()):
+        calls.append((
+            dict(function.__annotations__),
+            tuple(mutates_args),
+        ))
+        assert function.__annotations__ == {
+            "input": torch.Tensor,
+            "return": torch.Tensor,
+        }
+        return "(Tensor input) -> Tensor"
+
+    with probe.torch_custom_op_annotation_compatibility(
+        infer_schema_owner=SimpleNamespace(infer_schema=infer_schema),
+    ):
+        result = probe._resolve_custom_op_schema(
+            operation,
+            (),
+        )
+        assert result == "(Tensor input) -> Tensor"
+    assert calls == [({
+        "input": torch.Tensor,
+        "return": torch.Tensor,
+    }, ())]
+    assert operation.__annotations__ == original_annotations
+
+    already_resolved = lambda input: input
+    already_resolved.__annotations__ = {
+        "input": torch.Tensor,
+        "return": torch.Tensor,
+    }
+    with probe.torch_custom_op_annotation_compatibility(
+        infer_schema_owner=SimpleNamespace(infer_schema=infer_schema),
+    ):
+        probe._resolve_custom_op_schema(already_resolved, ())
+    assert already_resolved.__annotations__ == {
+        "input": torch.Tensor,
+        "return": torch.Tensor,
+    }
+
+
+def test_load_official_reference_scopes_custom_op_compatibility_to_model():
+    layer_types = _canonical_layer_types()
+    config = _FakeQwen35Config(layer_types)
+    tokenizer = _FakeTokenizer()
+    model = _FakeQwen35Model(layer_types)
+    events = []
+
+    class Compatibility:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    class ConfigAuto(_FakeAutoClass):
+        calls = []
+        result = config
+
+        @classmethod
+        def from_pretrained(cls, model_dir, **kwargs):
+            assert events == []
+            return super().from_pretrained(model_dir, **kwargs)
+
+    class TokenizerAuto(_FakeAutoClass):
+        calls = []
+        result = tokenizer
+
+        @classmethod
+        def from_pretrained(cls, model_dir, **kwargs):
+            assert events == []
+            return super().from_pretrained(model_dir, **kwargs)
+
+    class ModelAuto(_FakeAutoClass):
+        calls = []
+        result = model
+
+        @classmethod
+        def from_pretrained(cls, model_dir, **kwargs):
+            assert events == ["enter"]
+            return super().from_pretrained(model_dir, **kwargs)
+
+    probe.load_official_reference(
+        Path("/immutable/model"),
+        auto_config=ConfigAuto,
+        auto_tokenizer=TokenizerAuto,
+        auto_model=ModelAuto,
+        custom_op_compatibility=lambda: Compatibility(),
+    )
+    assert events == ["enter", "exit"]
+
+
 def test_capture_memory_snapshot_separates_allocator_and_state_ledger():
     components = _synthetic_components()
     fake_cuda = _FakeCuda()

@@ -9,7 +9,9 @@ import importlib.util
 import json
 import os
 import sys
+import typing
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
 
@@ -60,6 +62,49 @@ class IncompleteRun(RuntimeError):
         super().__init__(f"{failure_kind}: {detail}")
         self.failure_kind = failure_kind
         self.detail = detail
+
+
+_ORIGINAL_CUSTOM_OP_INFER_SCHEMA = None
+
+
+def _resolve_custom_op_schema(function, mutates_args=()):
+    original = _ORIGINAL_CUSTOM_OP_INFER_SCHEMA
+    if original is None:
+        raise RuntimeError("custom-op schema compatibility is not active")
+    annotations = getattr(function, "__annotations__", None)
+    if not annotations or not any(
+        isinstance(value, str) for value in annotations.values()
+    ):
+        return original(function, mutates_args)
+    resolved = typing.get_type_hints(
+        function,
+        globalns=function.__globals__,
+    )
+    function.__annotations__ = resolved
+    try:
+        return original(function, mutates_args)
+    finally:
+        function.__annotations__ = annotations
+
+
+@contextmanager
+def torch_custom_op_annotation_compatibility(
+    *,
+    infer_schema_owner=None,
+):
+    global _ORIGINAL_CUSTOM_OP_INFER_SCHEMA
+    if infer_schema_owner is None:
+        import torch._custom_op.impl as infer_schema_owner
+    if _ORIGINAL_CUSTOM_OP_INFER_SCHEMA is not None:
+        raise RuntimeError("custom-op schema compatibility is nested")
+    original = infer_schema_owner.infer_schema
+    _ORIGINAL_CUSTOM_OP_INFER_SCHEMA = original
+    infer_schema_owner.infer_schema = _resolve_custom_op_schema
+    try:
+        yield
+    finally:
+        infer_schema_owner.infer_schema = original
+        _ORIGINAL_CUSTOM_OP_INFER_SCHEMA = None
 
 
 def _architecture_incomplete(detail):
@@ -167,6 +212,7 @@ def load_official_reference(
     auto_config=None,
     auto_tokenizer=None,
     auto_model=None,
+    custom_op_compatibility=torch_custom_op_annotation_compatibility,
 ):
     if auto_config is None or auto_tokenizer is None or auto_model is None:
         try:
@@ -197,13 +243,14 @@ def load_official_reference(
             local_files_only=True,
             trust_remote_code=False,
         )
-        model = auto_model.from_pretrained(
-            model_path,
-            local_files_only=True,
-            trust_remote_code=False,
-            torch_dtype="auto",
-            device_map={"": "cuda:0"},
-        )
+        with custom_op_compatibility():
+            model = auto_model.from_pretrained(
+                model_path,
+                local_files_only=True,
+                trust_remote_code=False,
+                torch_dtype="auto",
+                device_map={"": "cuda:0"},
+            )
     except (OSError, TypeError, ValueError, RuntimeError) as exc:
         raise IncompleteRun(
             "INCOMPLETE_MODEL_LOAD",
