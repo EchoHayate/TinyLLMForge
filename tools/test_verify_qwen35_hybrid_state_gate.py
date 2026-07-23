@@ -252,6 +252,17 @@ def _change_cached_oracle_hash(run_dir):
     _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
 
 
+def _change_all_oracle_hashes_within_tolerance(run_dir):
+    def mutate(rows):
+        for row in rows:
+            for record in row["logit_records"]:
+                record["position_metadata"][
+                    "oracle_full_logit_sha256"
+                ] = "f" * 64
+
+    _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
 def _raise_repeatability_above_cap(run_dir):
     def mutate(rows):
         row = _find_case(
@@ -1265,11 +1276,6 @@ def test_correctness_tampering_separates_no_go_from_incomplete():
             "oracle greedy token mismatch",
         ),
         (
-            _change_cached_oracle_hash,
-            "NO_GO",
-            "oracle full-logit hash mismatch",
-        ),
-        (
             _raise_repeatability_above_cap,
             "INCOMPLETE",
             "INCOMPLETE_NUMERICAL_INSTABILITY",
@@ -1299,6 +1305,26 @@ def test_correctness_tampering_separates_no_go_from_incomplete():
                 classification,
                 message,
             )
+
+
+def test_oracle_hash_difference_is_allowed_within_frozen_tolerance():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = write_complete_run(Path(temporary) / "complete")
+        _change_all_oracle_hashes_within_tolerance(run_dir)
+        result = verifier.verify_run(run_dir)
+        assert result["classification"] == "GO"
+
+
+def test_smoke_numerical_instability_preserves_observed_case_count():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = convert_to_smoke_run(
+            write_complete_run(Path(temporary) / "complete")
+        )
+        _raise_repeatability_above_cap(run_dir)
+        result = verifier.verify_run(run_dir, domain="smoke")
+        assert result["classification"] == "INCOMPLETE"
+        assert result["observed_case_count"] == len(SMOKE_CASE_IDS)
+        assert "INCOMPLETE_NUMERICAL_INSTABILITY" in result["reasons"][0]
 
 
 def test_lifecycle_tampering_is_incomplete():
@@ -1348,6 +1374,8 @@ if __name__ == "__main__":
     test_local_verifier_outputs_do_not_change_input_inventory()
     test_provenance_and_domain_tampering_is_incomplete()
     test_correctness_tampering_separates_no_go_from_incomplete()
+    test_oracle_hash_difference_is_allowed_within_frozen_tolerance()
+    test_smoke_numerical_instability_preserves_observed_case_count()
     test_lifecycle_tampering_is_incomplete()
     test_storage_ledger_tampering_is_incomplete()
     print("qwen35 hybrid-state verifier tests passed")

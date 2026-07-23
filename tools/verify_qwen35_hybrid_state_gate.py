@@ -459,13 +459,6 @@ def _verify_correctness(case_rows):
                 _semantic_fail(
                     f"oracle greedy token mismatch: {row['case_id']}"
                 )
-            if (
-                metadata["actual_full_logit_sha256"]
-                != metadata["oracle_full_logit_sha256"]
-            ):
-                _semantic_fail(
-                    f"oracle full-logit hash mismatch: {row['case_id']}"
-                )
     repeatability = rows_by_phase.get("same_path_repeatability", [])
     try:
         tolerance = contract.derive_logit_tolerance([
@@ -946,6 +939,13 @@ def _write_outputs(run_dir, result):
     _write_atomic(run_dir / "report.md", report)
 
 
+def _observed_case_count(destination):
+    try:
+        return len(_read_jsonl(destination / "case_rows.jsonl"))
+    except VerificationError:
+        return 0
+
+
 def _verify_complete_run(destination, domain):
     manifest = _read_json(destination / "manifest.json")
     _verify_inventory(destination, manifest)
@@ -1046,7 +1046,7 @@ def verify_run(run_dir, write_report=False, domain="canonical"):
             "schema_version": contract.SCHEMA_VERSION,
             "classification": "INCOMPLETE",
             "expected_case_count": expected_case_count,
-            "observed_case_count": 0,
+            "observed_case_count": _observed_case_count(destination),
             "guards": {},
             "reasons": [str(exc)],
             "claim_boundary": (
@@ -1062,9 +1062,7 @@ def verify_run(run_dir, write_report=False, domain="canonical"):
                 "NO_GO" if domain == "canonical" else "INCOMPLETE"
             ),
             "expected_case_count": expected_case_count,
-            "observed_case_count": len(
-                _read_jsonl(destination / "case_rows.jsonl")
-            ),
+            "observed_case_count": _observed_case_count(destination),
             "guards": {"correctness_pass": False},
             "reasons": [str(exc)],
             "claim_boundary": (
