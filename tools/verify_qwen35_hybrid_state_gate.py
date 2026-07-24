@@ -666,7 +666,37 @@ def _verify_dtype_profiles(
             _fail(f"dtype profile request mismatch: {execution_dtype}")
         if profile["dominant_parameter_dtype"] != execution_dtype:
             _fail(f"dtype profile parameter mismatch: {execution_dtype}")
-        if profile["logit_dtype_before_comparison"] != execution_dtype:
+        observed_logit_dtypes = set()
+        for row in case_rows:
+            if row["execution_dtype"] != execution_dtype:
+                continue
+            for record in row["logit_records"]:
+                metadata = record["position_metadata"]
+                actual_dtype = metadata.get("actual_logit_dtype")
+                oracle_dtype = metadata.get("oracle_logit_dtype")
+                if (
+                    not isinstance(actual_dtype, str)
+                    or not actual_dtype
+                    or not isinstance(oracle_dtype, str)
+                    or not oracle_dtype
+                ):
+                    _fail(
+                        "missing logit dtype metadata: "
+                        f"{row['case_id']}"
+                    )
+                if actual_dtype != oracle_dtype:
+                    _fail(
+                        "actual/oracle logit dtype mismatch: "
+                        f"{row['case_id']}"
+                    )
+                observed_logit_dtypes.add(actual_dtype)
+        if len(observed_logit_dtypes) != 1:
+            _fail(f"mixed observed logit dtypes: {execution_dtype}")
+        observed_logit_dtype = next(iter(observed_logit_dtypes))
+        if (
+            profile["logit_dtype_before_comparison"]
+            != observed_logit_dtype
+        ):
             _fail(f"dtype profile logit mismatch: {execution_dtype}")
         if profile["comparison_accumulator_dtype"] != "float32":
             _fail(f"dtype profile accumulator mismatch: {execution_dtype}")

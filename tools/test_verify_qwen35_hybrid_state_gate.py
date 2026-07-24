@@ -411,6 +411,39 @@ def _tamper_fp32_dominant_parameter_dtype(run_dir):
         )
 
 
+def _tamper_bf16_profile_logit_dtype(run_dir):
+    for filename in (
+        "model_manifest.json",
+        "environment.json",
+        "summary.json",
+    ):
+        _mutate_json(
+            run_dir,
+            filename,
+            lambda payload: payload["dtype_profiles"]["bfloat16"].__setitem__(
+                "logit_dtype_before_comparison",
+                "bfloat16",
+            ),
+        )
+
+
+def _tamper_bf16_record_logit_dtype(run_dir):
+    def mutate(rows):
+        row = next(
+            item
+            for item in rows
+            if (
+                item["execution_dtype"] == "bfloat16"
+                and item["logit_records"]
+            )
+        )
+        row["logit_records"][0]["position_metadata"][
+            "actual_logit_dtype"
+        ] = "bfloat16"
+
+    _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
 def _mutate_component(run_dir, predicate, mutator):
     def mutate(rows):
         row = next(item for item in rows if predicate(item))
@@ -1093,10 +1126,10 @@ def write_complete_run(run_dir):
             ] = case.comparison_policy
             record["position_metadata"][
                 "actual_logit_dtype"
-            ] = case.execution_dtype
+            ] = "float32"
             record["position_metadata"][
                 "oracle_logit_dtype"
-            ] = case.execution_dtype
+            ] = "float32"
         decoded_token_ids = [
             record["topk_token_ids"][0] for record in logit_records
         ]
@@ -1159,7 +1192,7 @@ def write_complete_run(run_dir):
         "bfloat16": {
             "requested_model_dtype": "bfloat16",
             "dominant_parameter_dtype": "bfloat16",
-            "logit_dtype_before_comparison": "bfloat16",
+            "logit_dtype_before_comparison": "float32",
             "comparison_accumulator_dtype": "float32",
             "recurrent_state_dtypes": ["float32"],
             "kv_state_dtypes": ["float32"],
@@ -1528,6 +1561,16 @@ def test_dtype_aware_decision_and_fp32_guards():
             base_run,
             _tamper_fp32_dominant_parameter_dtype,
             "dtype profile parameter",
+        )
+        _expect_incomplete(
+            base_run,
+            _tamper_bf16_profile_logit_dtype,
+            "dtype profile logit",
+        )
+        _expect_incomplete(
+            base_run,
+            _tamper_bf16_record_logit_dtype,
+            "logit dtype",
         )
 
 
