@@ -149,6 +149,14 @@ def _layer_type(layer, config_layer_type):
 def inspect_model(*, model, config, tokenizer):
     layers = _model_layers(model)
     architecture_config = getattr(config, "text_config", config)
+    tokenizer_vocab_size = int(tokenizer.vocab_size)
+    model_vocab_size = int(
+        getattr(architecture_config, "vocab_size", tokenizer_vocab_size)
+    )
+    if model_vocab_size < tokenizer_vocab_size:
+        _architecture_incomplete(
+            "model vocabulary is smaller than tokenizer vocabulary"
+        )
     configured_types = getattr(architecture_config, "layer_types", None)
     if configured_types is not None and len(configured_types) != len(layers):
         _architecture_incomplete(
@@ -170,7 +178,8 @@ def inspect_model(*, model, config, tokenizer):
         "config_class": type(config).__name__,
         "model_class": type(model).__name__,
         "tokenizer_class": type(tokenizer).__name__,
-        "tokenizer_vocab_size": int(tokenizer.vocab_size),
+        "tokenizer_vocab_size": tokenizer_vocab_size,
+        "model_vocab_size": model_vocab_size,
         "num_hidden_layers": int(
             getattr(architecture_config, "num_hidden_layers", len(layers))
         ),
@@ -308,6 +317,7 @@ def load_official_reference(
             model=model,
             layer_schedule=architecture["layer_schedule"],
             vocab_size=architecture["tokenizer_vocab_size"],
+            model_vocab_size=architecture["model_vocab_size"],
             device="cuda:0",
             requested_model_dtype=requested_dtype,
             parameter_dtypes=architecture["parameter_dtypes"],
@@ -476,6 +486,7 @@ class ReferenceStateAdapter:
         model,
         layer_schedule,
         vocab_size,
+        model_vocab_size=None,
         device="cuda:0",
         requested_model_dtype=None,
         parameter_dtypes=None,
@@ -488,6 +499,15 @@ class ReferenceStateAdapter:
         self.vocab_size = int(vocab_size)
         if self.vocab_size <= 1:
             _reference_incomplete("vocab_size must be greater than one")
+        self.model_vocab_size = int(
+            self.vocab_size
+            if model_vocab_size is None
+            else model_vocab_size
+        )
+        if self.model_vocab_size < self.vocab_size:
+            _reference_incomplete(
+                "model_vocab_size must cover tokenizer vocabulary"
+            )
         self.device = torch.device(device)
         self._cache_type = None
         self.requested_model_dtype = (
@@ -610,7 +630,7 @@ class ReferenceStateAdapter:
         if not values:
             _reference_incomplete("one_shot requires at least one token")
         if any(
-            token_id < 0 or token_id >= self.vocab_size
+            token_id < 0 or token_id >= self.model_vocab_size
             for token_id in values
         ):
             _reference_incomplete("one_shot token is outside vocabulary")
@@ -2696,6 +2716,7 @@ def main(
                 model=model,
                 layer_schedule=architecture["layer_schedule"],
                 vocab_size=architecture["tokenizer_vocab_size"],
+                model_vocab_size=architecture["model_vocab_size"],
                 device="cuda:0",
                 requested_model_dtype="bfloat16",
                 parameter_dtypes=architecture["parameter_dtypes"],
@@ -2740,6 +2761,7 @@ def main(
                     model=_fp32_model,
                     layer_schedule=architecture["layer_schedule"],
                     vocab_size=architecture["tokenizer_vocab_size"],
+                    model_vocab_size=architecture["model_vocab_size"],
                     device="cuda:0",
                     requested_model_dtype="float32",
                     parameter_dtypes=architecture["parameter_dtypes"],

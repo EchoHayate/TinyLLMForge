@@ -115,6 +115,7 @@ class _FakeQwen35Model:
 class _FakeQwen35Config:
     def __init__(self, layer_types):
         self.num_hidden_layers = 24
+        self.vocab_size = 152064
         self.layer_types = list(layer_types)
         self.full_attention_interval = 4
         self.linear_num_key_heads = 16
@@ -542,6 +543,7 @@ def test_inspect_model_reconstructs_exact_hybrid_schedule():
         "float32": 1,
     }
     assert result["tokenizer_vocab_size"] == _FakeTokenizer.vocab_size
+    assert result["model_vocab_size"] == 152064
 
 
 def test_architecture_mismatch_fails_before_correctness_execution():
@@ -809,12 +811,26 @@ def test_reference_state_adapter_binds_explicit_vocab_size():
         model=_FakeCausalModel(),
         layer_schedule={0: "linear_attention"},
         vocab_size=32,
+        model_vocab_size=40,
         device="cpu",
     )
     assert adapter.vocab_size == 32
+    assert adapter.model_vocab_size == 40
     token_ids = probe._case_token_ids(adapter, prompt_length=5, seed=7)
     assert len(token_ids) == 5
     assert all(0 < token_id < 32 for token_id in token_ids)
+
+
+def test_reference_state_adapter_accepts_model_padding_vocab_tokens():
+    adapter = probe.ReferenceStateAdapter(
+        model=_FakeCausalModel(),
+        layer_schedule={0: "linear_attention"},
+        vocab_size=32,
+        model_vocab_size=40,
+        device="cpu",
+    )
+    logits = adapter.one_shot((1, 2, 35))
+    assert logits.shape == (32,)
 
 
 def test_reference_state_adapter_one_shot_runs_full_token_path():
