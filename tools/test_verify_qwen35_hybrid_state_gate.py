@@ -44,6 +44,7 @@ SMOKE_CASE_IDS = {
     "same_path_repeatability__cached_repeatability__p17__r0__c17",
     "same_path_repeatability__cached_repeatability__p17__r1__c17",
     "one_shot_vs_cached__one_shot_vs_cached__p17__r0__c17",
+    "fp32_path_control__cached_vs_one_shot__p17__r0__c17",
     "state_export_import__state_export_import__p17__r0__c17",
     "post_run_audit",
 }
@@ -326,6 +327,72 @@ def _make_topk_non_finite(run_dir):
         row["logit_records"][0]["topk_logits"][0] = float("nan")
 
     _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
+def _tie_actual_winner(run_dir):
+    def mutate(rows):
+        row = _find_case(rows, "one_shot_vs_cached", prompt_length=17)
+        record = row["logit_records"][0]
+        record["actual_topk_logits"][1] = (
+            record["actual_topk_logits"][0]
+        )
+        record["topk_logits"][1] = record["topk_logits"][0]
+        record["actual_runner_up_logit"] = record[
+            "actual_winner_logit"
+        ]
+        record["actual_winner_margin"] = 0.0
+        record["winner_margin_abs_diff"] = 1.0
+
+    _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
+def _break_fp32_allclose(run_dir):
+    def mutate(rows):
+        row = _find_case(rows, "fp32_path_control", prompt_length=17)
+        record = row["logit_records"][0]
+        record["allclose_violation_count"] = 1
+        record["max_allclose_scaled_error"] = 2.0
+
+    _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
+def _raise_bf16_drift_without_decision_change(run_dir):
+    def mutate(rows):
+        row = _find_case(rows, "one_shot_vs_cached", prompt_length=17)
+        record = row["logit_records"][0]
+        record["max_abs_diff"] = 1000.0
+        record["mean_abs_diff"] = 10.0
+        record["max_rel_diff"] = 5000.0
+        record["mean_rel_diff"] = 50.0
+        record["abs_diff_percentiles"] = {
+            "p50": 1.0,
+            "p95": 5.0,
+            "p99": 9.0,
+            "p99_9": 10.0,
+        }
+
+    _mutate_jsonl(run_dir, "case_rows.jsonl", mutate)
+
+
+def _downgrade_schema_version(run_dir):
+    _mutate_json(
+        run_dir,
+        "summary.json",
+        lambda payload: payload.__setitem__("schema_version", 1),
+    )
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["schema_version"] = 1
+    _write_json(manifest_path, manifest)
+
+
+def _tamper_dtype_profile(run_dir):
+    def mutate(payload):
+        payload["dtype_profiles"]["bfloat16"][
+            "recurrent_state_dtypes"
+        ] = ["bfloat16"]
+
+    _mutate_json(run_dir, "environment.json", mutate)
 
 
 def _mutate_component(run_dir, predicate, mutator):
@@ -634,13 +701,15 @@ def _logit_record(
     full_logit_sha256 = hashlib.sha256(
         f"{request_id}:{request_generation}:{step_index}".encode()
     ).hexdigest()
+    topk_token_ids = list(range(20))
+    topk_logits = [float(20 - index) for index in range(20)]
     return {
         "request_id": request_id,
         "request_generation": request_generation,
         "step_index": step_index,
         "full_logit_sha256": full_logit_sha256,
-        "topk_token_ids": list(range(20)),
-        "topk_logits": [float(20 - index) for index in range(20)],
+        "topk_token_ids": topk_token_ids,
+        "topk_logits": topk_logits,
         "max_abs_diff": 0.0,
         "mean_abs_diff": 0.0,
         "max_rel_diff": 0.0,
@@ -652,7 +721,38 @@ def _logit_record(
             "oracle_greedy_token_id": 0,
             "actual_full_logit_sha256": full_logit_sha256,
             "oracle_full_logit_sha256": full_logit_sha256,
+            "comparison_policy": "bf16_decision_preserving",
+            "actual_logit_dtype": "bfloat16",
+            "oracle_logit_dtype": "bfloat16",
         },
+        "actual_topk_token_ids": topk_token_ids,
+        "actual_topk_logits": topk_logits,
+        "oracle_topk_token_ids": topk_token_ids,
+        "oracle_topk_logits": topk_logits,
+        "topk_intersection_size": 20,
+        "oracle_topk_recall": 1.0,
+        "actual_winner_token_id": 0,
+        "oracle_winner_token_id": 0,
+        "actual_runner_up_token_id": 1,
+        "oracle_runner_up_token_id": 1,
+        "actual_winner_logit": 20.0,
+        "oracle_winner_logit": 20.0,
+        "actual_runner_up_logit": 19.0,
+        "oracle_runner_up_logit": 19.0,
+        "actual_winner_margin": 1.0,
+        "oracle_winner_margin": 1.0,
+        "winner_logit_abs_diff": 0.0,
+        "runner_up_logit_abs_diff": 0.0,
+        "winner_margin_abs_diff": 0.0,
+        "abs_diff_percentiles": {
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "p99_9": 0.0,
+        },
+        "cosine_similarity": 1.0,
+        "allclose_violation_count": 0,
+        "max_allclose_scaled_error": 0.0,
     }
 
 
@@ -839,41 +939,44 @@ def write_complete_run(run_dir):
             )
             snapshot_components = []
             if sequence_length > 0:
-                layer_index = 3
-                role = "full_attention_key"
-                layer_type = "full_attention"
-                if case.phase == "completion_release_slot_reuse":
-                    layer_index = 0
-                    role = "linear_recurrent_state"
-                    layer_type = "linear_attention"
-                update_kind = "created" if snapshot_index == 0 else "grown"
-                if role == "linear_recurrent_state":
-                    if phase in {"after_prefill", "after_slot_reuse"}:
-                        update_kind = "created"
-                    elif phase == "after_request_release":
-                        update_kind = "released"
-                    else:
-                        update_kind = "mutated_in_place"
-                storage_identity = (
-                    f"{case.case_id}:{request_id}:g{request_generation}:"
-                    f"{layer_index}"
-                )
-                if role == "full_attention_key":
-                    storage_identity += f":e{lifetime_epoch}"
-                component = _component(
-                    request_id=request_id,
-                    request_generation=request_generation,
-                    layer_index=layer_index,
-                    layer_type=layer_type,
-                    state_role=role,
-                    tensor_path=f"layers[{layer_index}].state",
-                    lifetime_epoch=lifetime_epoch,
-                    sequence_length=sequence_length,
-                    storage_identity=storage_identity,
-                    update_kind=update_kind,
-                )
-                snapshot_components.append(component)
-                state_components.append(component)
+                for layer_index, role, layer_type in (
+                    (
+                        0,
+                        "linear_recurrent_state",
+                        "linear_attention",
+                    ),
+                    (3, "full_attention_key", "full_attention"),
+                ):
+                    update_kind = (
+                        "created" if snapshot_index == 0 else "grown"
+                    )
+                    if role == "linear_recurrent_state":
+                        if phase in {"after_prefill", "after_slot_reuse"}:
+                            update_kind = "created"
+                        elif phase == "after_request_release":
+                            update_kind = "released"
+                        else:
+                            update_kind = "mutated_in_place"
+                    storage_identity = (
+                        f"{case.case_id}:{request_id}:"
+                        f"g{request_generation}:{layer_index}"
+                    )
+                    if role == "full_attention_key":
+                        storage_identity += f":e{lifetime_epoch}"
+                    component = _component(
+                        request_id=request_id,
+                        request_generation=request_generation,
+                        layer_index=layer_index,
+                        layer_type=layer_type,
+                        state_role=role,
+                        tensor_path=f"layers[{layer_index}].state",
+                        lifetime_epoch=lifetime_epoch,
+                        sequence_length=sequence_length,
+                        storage_identity=storage_identity,
+                        update_kind=update_kind,
+                    )
+                    snapshot_components.append(component)
+                    state_components.append(component)
             state_snapshots.append({
                 "snapshot_id": snapshot_id,
                 "request_id": request_id,
@@ -968,6 +1071,16 @@ def write_complete_run(run_dir):
                 )
                 for step_index in range(case.decode_steps)
             ]
+        for record in logit_records:
+            record["position_metadata"][
+                "comparison_policy"
+            ] = case.comparison_policy
+            record["position_metadata"][
+                "actual_logit_dtype"
+            ] = case.execution_dtype
+            record["position_metadata"][
+                "oracle_logit_dtype"
+            ] = case.execution_dtype
         decoded_token_ids = [
             record["topk_token_ids"][0] for record in logit_records
         ]
@@ -990,6 +1103,8 @@ def write_complete_run(run_dir):
             "complete": True,
             "failure_kind": None,
             "failure_detail": None,
+            "execution_dtype": case.execution_dtype,
+            "comparison_policy": case.comparison_policy,
         })
     memory_snapshots = [
         {
@@ -1024,6 +1139,26 @@ def write_complete_run(run_dir):
             "unique_storage_bytes": 0,
         },
     ]
+    dtype_profiles = {
+        "bfloat16": {
+            "requested_model_dtype": "bfloat16",
+            "dominant_parameter_dtype": "bfloat16",
+            "logit_dtype_before_comparison": "bfloat16",
+            "comparison_accumulator_dtype": "float32",
+            "recurrent_state_dtypes": ["float32"],
+            "kv_state_dtypes": ["float32"],
+        },
+        "float32": {
+            "requested_model_dtype": "float32",
+            "dominant_parameter_dtype": "float32",
+            "logit_dtype_before_comparison": "float32",
+            "comparison_accumulator_dtype": "float32",
+            "recurrent_state_dtypes": ["float32"],
+            "kv_state_dtypes": ["float32"],
+        },
+    }
+    model_manifest["dtype_profiles"] = dtype_profiles
+    environment["dtype_profiles"] = dtype_profiles
     for filename, payload in (
         ("source_manifest.json", source_manifest),
         ("model_manifest.json", model_manifest),
@@ -1075,6 +1210,7 @@ def write_complete_run(run_dir):
                 state_components
             ),
             "max_memory_allocated": 5000000000,
+            "dtype_profiles": dtype_profiles,
             "max_memory_reserved": 6000000000,
             "non_state_peak_allocator_observation_bytes": 1000000000,
             "claim_boundary": (
@@ -1293,13 +1429,13 @@ def test_correctness_tampering_separates_no_go_from_incomplete():
         ),
         (
             _change_cached_oracle_token,
-            "NO_GO",
-            "oracle greedy token mismatch",
+            "INCOMPLETE",
+            "oracle greedy winner mismatch",
         ),
         (
             _raise_oracle_difference_above_cap,
-            "NO_GO",
-            "logit tolerance mismatch",
+            "GO",
+            None,
         ),
         (
             _change_repeat_actual_hash,
@@ -1313,24 +1449,31 @@ def test_correctness_tampering_separates_no_go_from_incomplete():
         ),
         (
             _change_export_token,
-            "NO_GO",
-            "export/import token mismatch",
+            "INCOMPLETE",
+            "actual greedy winner mismatch",
         ),
         (
             _make_topk_non_finite,
             "INCOMPLETE",
-            "non-finite top-k logit",
+            "actual top-k logit alias mismatch",
         ),
     )
     with tempfile.TemporaryDirectory() as temporary:
         base_run = write_complete_run(Path(temporary) / "complete")
         for mutator, classification, message in cases:
-            _expect_classification(
-                base_run,
-                mutator,
-                classification,
-                message,
-            )
+            if classification == "GO":
+                run_dir = base_run.parent / mutator.__name__
+                shutil.copytree(base_run, run_dir)
+                mutator(run_dir)
+                result = verifier.verify_run(run_dir)
+                assert result["classification"] == "GO"
+            else:
+                _expect_classification(
+                    base_run,
+                    mutator,
+                    classification,
+                    message,
+                )
 
 
 def test_oracle_hash_difference_is_allowed_within_frozen_tolerance():
@@ -1341,16 +1484,50 @@ def test_oracle_hash_difference_is_allowed_within_frozen_tolerance():
         assert result["classification"] == "GO"
 
 
-def test_smoke_oracle_mismatch_preserves_observed_case_count():
+def test_dtype_aware_decision_and_fp32_guards():
+    with tempfile.TemporaryDirectory() as temporary:
+        base_run = write_complete_run(Path(temporary) / "complete")
+        _expect_classification(
+            base_run,
+            _tie_actual_winner,
+            "NO_GO",
+            "winner margin",
+        )
+        _expect_incomplete(
+            base_run,
+            _break_fp32_allclose,
+            "FP32 control",
+        )
+        _expect_incomplete(
+            base_run,
+            _downgrade_schema_version,
+            "schema-v2 evidence is required",
+        )
+        _expect_incomplete(
+            base_run,
+            _tamper_dtype_profile,
+            "dtype profile",
+        )
+
+
+def test_large_finite_bf16_drift_is_diagnostic_only():
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = write_complete_run(Path(temporary) / "complete")
+        _raise_bf16_drift_without_decision_change(run_dir)
+        result = verifier.verify_run(run_dir)
+        assert result["classification"] == "GO"
+
+
+def test_smoke_bf16_drift_preserves_observed_case_count():
     with tempfile.TemporaryDirectory() as temporary:
         run_dir = convert_to_smoke_run(
             write_complete_run(Path(temporary) / "complete")
         )
         _raise_oracle_difference_above_cap(run_dir)
         result = verifier.verify_run(run_dir, domain="smoke")
-        assert result["classification"] == "INCOMPLETE"
+        assert result["classification"] == "SMOKE_PASS"
         assert result["observed_case_count"] == len(SMOKE_CASE_IDS)
-        assert "logit tolerance mismatch" in result["reasons"][0]
+        assert result["reasons"] == []
 
 
 def test_lifecycle_tampering_is_incomplete():
@@ -1401,7 +1578,9 @@ if __name__ == "__main__":
     test_provenance_and_domain_tampering_is_incomplete()
     test_correctness_tampering_separates_no_go_from_incomplete()
     test_oracle_hash_difference_is_allowed_within_frozen_tolerance()
-    test_smoke_oracle_mismatch_preserves_observed_case_count()
+    test_dtype_aware_decision_and_fp32_guards()
+    test_large_finite_bf16_drift_is_diagnostic_only()
+    test_smoke_bf16_drift_preserves_observed_case_count()
     test_lifecycle_tampering_is_incomplete()
     test_storage_ledger_tampering_is_incomplete()
     print("qwen35 hybrid-state verifier tests passed")

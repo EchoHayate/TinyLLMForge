@@ -42,6 +42,7 @@ SMOKE_CASE_IDS = {
     "same_path_repeatability__cached_repeatability__p17__r0__c17",
     "same_path_repeatability__cached_repeatability__p17__r1__c17",
     "one_shot_vs_cached__one_shot_vs_cached__p17__r0__c17",
+    "fp32_path_control__cached_vs_one_shot__p17__r0__c17",
     "state_export_import__state_export_import__p17__r0__c17",
     "post_run_audit",
 }
@@ -282,6 +283,8 @@ def _verify_case_domain(case_rows, domain):
             "request_count": case.request_count,
             "decode_steps": case.decode_steps,
             "repeat_index": case.repeat_index,
+            "execution_dtype": case.execution_dtype,
+            "comparison_policy": case.comparison_policy,
         }
         for field, value in expected_fields.items():
             if row.get(field) != value:
@@ -396,27 +399,97 @@ def _verify_logit_record(row, record, expected):
             )
     if digest != actual_digest:
         _fail(f"actual full-logit hash mismatch: {row['case_id']}")
-    topk_ids = record.get("topk_token_ids")
-    topk_logits = record.get("topk_logits")
+    actual_ids = record.get("actual_topk_token_ids")
+    actual_logits = record.get("actual_topk_logits")
+    oracle_ids = record.get("oracle_topk_token_ids")
+    oracle_logits = record.get("oracle_topk_logits")
+    try:
+        contract.validate_ranked_topk(actual_ids, actual_logits)
+        contract.validate_ranked_topk(oracle_ids, oracle_logits)
+    except (TypeError, ValueError) as exc:
+        if "strict positive margin" in str(exc):
+            _semantic_fail(
+                f"winner margin boundary crossed: {row['case_id']}"
+            )
+        _fail(f"invalid top-k evidence: {row['case_id']}: {exc}")
+    if record.get("topk_token_ids") != actual_ids:
+        _fail(f"actual top-k token alias mismatch: {row['case_id']}")
+    if record.get("topk_logits") != actual_logits:
+        _fail(f"actual top-k logit alias mismatch: {row['case_id']}")
+    actual_winner = contract.winner_margin(actual_ids, actual_logits)
+    oracle_winner = contract.winner_margin(oracle_ids, oracle_logits)
+    expected_decision = {
+        "actual_winner_token_id": actual_winner["winner_token_id"],
+        "oracle_winner_token_id": oracle_winner["winner_token_id"],
+        "actual_runner_up_token_id": actual_winner["runner_up_token_id"],
+        "oracle_runner_up_token_id": oracle_winner["runner_up_token_id"],
+        "actual_winner_logit": actual_winner["winner_logit"],
+        "oracle_winner_logit": oracle_winner["winner_logit"],
+        "actual_runner_up_logit": actual_winner["runner_up_logit"],
+        "oracle_runner_up_logit": oracle_winner["runner_up_logit"],
+        "actual_winner_margin": actual_winner["winner_margin"],
+        "oracle_winner_margin": oracle_winner["winner_margin"],
+    }
+    for field, value in expected_decision.items():
+        if record.get(field) != value:
+            _fail(f"decision evidence mismatch: {row['case_id']}.{field}")
     if (
-        not isinstance(topk_ids, list)
-        or not isinstance(topk_logits, list)
-        or len(topk_ids) != 20
-        or len(topk_logits) != 20
+        actual_winner["winner_token_id"] not in oracle_ids
+        or oracle_winner["winner_token_id"] not in actual_ids
     ):
-        _fail(f"invalid top-k evidence: {row['case_id']}")
+        _fail(f"cross-path winner missing from top-k: {row['case_id']}")
+    intersection = len(set(actual_ids).intersection(oracle_ids))
+    if record.get("topk_intersection_size") != intersection:
+        _fail(f"top-k intersection mismatch: {row['case_id']}")
+    if record.get("oracle_topk_recall") != (
+        intersection / contract.DECISION_TOPK
+    ):
+        _fail(f"oracle top-k recall mismatch: {row['case_id']}")
+    if actual_winner["winner_margin"] <= 0 or oracle_winner[
+        "winner_margin"
+    ] <= 0:
+        _semantic_fail(f"winner margin boundary crossed: {row['case_id']}")
+    if actual_winner["winner_token_id"] != oracle_winner[
+        "winner_token_id"
+    ]:
+        _semantic_fail(f"winner token mismatch: {row['case_id']}")
+    if actual_token != actual_winner["winner_token_id"]:
+        _fail(f"actual greedy winner mismatch: {row['case_id']}")
+    if oracle_token != oracle_winner["winner_token_id"]:
+        _fail(f"oracle greedy winner mismatch: {row['case_id']}")
+    percentiles = record.get("abs_diff_percentiles")
+    if (
+        not isinstance(percentiles, dict)
+        or tuple(percentiles) != contract.ABS_DIFF_PERCENTILE_FIELDS
+    ):
+        _fail(f"invalid difference percentiles: {row['case_id']}")
+    percentile_values = [
+        percentiles[name]
+        for name in contract.ABS_DIFF_PERCENTILE_FIELDS
+    ]
     if any(
         not isinstance(value, (int, float))
         or isinstance(value, bool)
         or not math.isfinite(float(value))
-        for value in topk_logits
+        or value < 0
+        for value in percentile_values
+    ) or any(
+        left > right
+        for left, right in zip(
+            percentile_values,
+            percentile_values[1:],
+        )
     ):
-        _fail(f"non-finite top-k logit: {row['case_id']}")
+        _fail(f"invalid difference percentiles: {row['case_id']}")
     for field in (
         "max_abs_diff",
         "mean_abs_diff",
         "max_rel_diff",
         "mean_rel_diff",
+        "winner_logit_abs_diff",
+        "runner_up_logit_abs_diff",
+        "winner_margin_abs_diff",
+        "max_allclose_scaled_error",
     ):
         value = record.get(field)
         if (
@@ -426,6 +499,25 @@ def _verify_logit_record(row, record, expected):
             or value < 0
         ):
             _fail(f"invalid logit difference: {row['case_id']}.{field}")
+    cosine = record.get("cosine_similarity")
+    if (
+        not isinstance(cosine, (int, float))
+        or isinstance(cosine, bool)
+        or not math.isfinite(float(cosine))
+        or not -1.0 <= float(cosine) <= 1.0
+    ):
+        _fail(f"invalid cosine similarity: {row['case_id']}")
+    violations = record.get("allclose_violation_count")
+    if (
+        not isinstance(violations, int)
+        or isinstance(violations, bool)
+        or violations < 0
+    ):
+        _fail(f"invalid allclose violation count: {row['case_id']}")
+    if position_metadata.get("comparison_policy") != row.get(
+        "comparison_policy"
+    ):
+        _fail(f"comparison policy mismatch: {row['case_id']}")
 
 
 def _verify_correctness(case_rows):
@@ -485,13 +577,6 @@ def _verify_correctness(case_rows):
                         "same-path full-logit hash mismatch: "
                         f"{row['case_id']}"
                     )
-    try:
-        tolerance = contract.derive_logit_tolerance([{
-            "max_abs_diff": 0.0,
-            "max_rel_diff": 0.0,
-        }])
-    except ValueError as exc:
-        _fail(str(exc))
     baselines = {}
     for row in sorted(
         repeatability,
@@ -502,14 +587,6 @@ def _verify_correctness(case_rows):
     ):
         prompt_length = row["prompt_length"]
         baseline = baselines.setdefault(prompt_length, row)
-        for actual in row["logit_records"]:
-            if (
-                actual["max_abs_diff"] > tolerance["atol"]
-                or actual["max_rel_diff"] > tolerance["rtol"]
-            ):
-                _semantic_fail(
-                    f"logit tolerance mismatch: {row['case_id']}"
-                )
     for phase in (
         "one_shot_vs_cached",
         "one_shot_vs_chunked",
@@ -529,18 +606,101 @@ def _verify_correctness(case_rows):
                 _semantic_fail(
                     f"decoded token mismatch: {row['case_id']}"
                 )
-            for actual, expected in zip(
-                row["logit_records"],
-                baseline["logit_records"],
-            ):
-                if (
-                    actual["max_abs_diff"] > tolerance["atol"]
-                    or actual["max_rel_diff"] > tolerance["rtol"]
-                ):
-                    _semantic_fail(
-                        f"logit tolerance mismatch: {row['case_id']}"
-                    )
-    return tolerance
+    fp32_rows = rows_by_phase.get("fp32_path_control", [])
+    if len(fp32_rows) != 1:
+        _fail("FP32 control case is missing")
+    for record in fp32_rows[0]["logit_records"]:
+        if (
+            record["allclose_violation_count"] != 0
+            or record["max_allclose_scaled_error"] > 1.0
+            or record["mean_abs_diff"] > contract.FP32_MEAN_ABS_CAP
+        ):
+            _fail("FP32 control failed strict elementwise limits")
+    return {
+        "fp32_atol": contract.FP32_ATOL,
+        "fp32_rtol": contract.FP32_RTOL,
+        "fp32_mean_abs_cap": contract.FP32_MEAN_ABS_CAP,
+    }
+
+
+def _verify_dtype_profiles(
+    case_rows,
+    state_snapshots,
+    state_components,
+    model_manifest,
+    environment,
+    summary,
+):
+    profiles = model_manifest.get("dtype_profiles")
+    if (
+        not isinstance(profiles, dict)
+        or profiles != environment.get("dtype_profiles")
+        or profiles != summary.get("dtype_profiles")
+    ):
+        _fail("dtype profile manifests disagree")
+    snapshot_epochs = {
+        snapshot["snapshot_id"]: snapshot["lifetime_epoch"]
+        for snapshot in state_snapshots
+    }
+    components_by_epoch = {}
+    for component in state_components:
+        components_by_epoch.setdefault(
+            component["lifetime_epoch"],
+            [],
+        ).append(component)
+    for execution_dtype in ("bfloat16", "float32"):
+        profile = profiles.get(execution_dtype)
+        if not isinstance(profile, dict):
+            _fail(f"dtype profile is missing: {execution_dtype}")
+        expected_fields = {
+            "requested_model_dtype",
+            "dominant_parameter_dtype",
+            "logit_dtype_before_comparison",
+            "comparison_accumulator_dtype",
+            "recurrent_state_dtypes",
+            "kv_state_dtypes",
+        }
+        if set(profile) != expected_fields:
+            _fail(f"dtype profile schema mismatch: {execution_dtype}")
+        if profile["requested_model_dtype"] != execution_dtype:
+            _fail(f"dtype profile request mismatch: {execution_dtype}")
+        if profile["logit_dtype_before_comparison"] != execution_dtype:
+            _fail(f"dtype profile logit mismatch: {execution_dtype}")
+        if profile["comparison_accumulator_dtype"] != "float32":
+            _fail(f"dtype profile accumulator mismatch: {execution_dtype}")
+        epochs = {
+            snapshot_epochs[snapshot_id]
+            for row in case_rows
+            if row["execution_dtype"] == execution_dtype
+            for snapshot_id in row["state_snapshot_ids"]
+            if snapshot_id in snapshot_epochs
+        }
+        components = [
+            component
+            for epoch in epochs
+            for component in components_by_epoch.get(epoch, [])
+        ]
+        recurrent = sorted({
+            component["dtype"]
+            for component in components
+            if component["state_role"] in {
+                "linear_recurrent_state",
+                "linear_convolution_state",
+            }
+        })
+        kv = sorted({
+            component["dtype"]
+            for component in components
+            if component["state_role"] in {
+                "full_attention_key",
+                "full_attention_value",
+            }
+        })
+        if profile["recurrent_state_dtypes"] != recurrent:
+            _fail(f"dtype profile recurrent state mismatch: {execution_dtype}")
+        if profile["kv_state_dtypes"] != kv:
+            _fail(f"dtype profile KV state mismatch: {execution_dtype}")
+    return profiles
 
 
 def _component_key(component):
@@ -950,6 +1110,8 @@ def _observed_case_count(destination):
 
 def _verify_complete_run(destination, domain):
     manifest = _read_json(destination / "manifest.json")
+    if manifest.get("schema_version") != contract.SCHEMA_VERSION:
+        _fail("schema-v2 evidence is required")
     _verify_inventory(destination, manifest)
     source_manifest = _read_json(destination / "source_manifest.json")
     model_manifest = _read_json(destination / "model_manifest.json")
@@ -957,6 +1119,8 @@ def _verify_complete_run(destination, domain):
     processes = _read_json(destination / "processes.json")
     ports = _read_json(destination / "ports.json")
     summary = _read_json(destination / "summary.json")
+    if summary.get("schema_version") != contract.SCHEMA_VERSION:
+        _fail("summary schema version mismatch")
     case_rows = _read_jsonl(destination / "case_rows.jsonl")
     state_snapshots = _read_jsonl(
         destination / "state_snapshots.jsonl"
@@ -973,6 +1137,14 @@ def _verify_complete_run(destination, domain):
     _verify_processes(processes, ports)
     expected_case_count = _verify_case_domain(case_rows, domain)
     tolerance = _verify_correctness(case_rows)
+    dtype_profiles = _verify_dtype_profiles(
+        case_rows,
+        state_snapshots,
+        state_components,
+        model_manifest,
+        environment,
+        summary,
+    )
     lifecycle = _verify_state_lifecycle(
         case_rows,
         state_snapshots,
@@ -1009,6 +1181,7 @@ def _verify_complete_run(destination, domain):
         },
         "reasons": [],
         "logit_tolerance": tolerance,
+        "dtype_profiles": dtype_profiles,
         "state_lifecycle": lifecycle,
         "storage_ledger": storage_ledger,
         "claim_boundary": (
