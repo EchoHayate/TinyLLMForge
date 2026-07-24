@@ -170,6 +170,8 @@ def test_record_schemas_are_exact_and_frozen():
         "decode_steps",
         "repeat_index",
         "expected_state_snapshots",
+        "execution_dtype",
+        "comparison_policy",
     )
     assert tuple(field.name for field in fields(contract.StateComponent)) == (
         "request_id",
@@ -213,6 +215,8 @@ def test_record_schemas_are_exact_and_frozen():
         "complete",
         "failure_kind",
         "failure_detail",
+        "execution_dtype",
+        "comparison_policy",
     )
     assert contract.LOGIT_RECORD_FIELDS == (
         "request_id",
@@ -227,7 +231,108 @@ def test_record_schemas_are_exact_and_frozen():
         "mean_rel_diff",
         "sequence_length",
         "position_metadata",
+        "actual_topk_token_ids",
+        "actual_topk_logits",
+        "oracle_topk_token_ids",
+        "oracle_topk_logits",
+        "topk_intersection_size",
+        "oracle_topk_recall",
+        "actual_winner_token_id",
+        "oracle_winner_token_id",
+        "actual_runner_up_token_id",
+        "oracle_runner_up_token_id",
+        "actual_winner_logit",
+        "oracle_winner_logit",
+        "actual_runner_up_logit",
+        "oracle_runner_up_logit",
+        "actual_winner_margin",
+        "oracle_winner_margin",
+        "winner_logit_abs_diff",
+        "runner_up_logit_abs_diff",
+        "winner_margin_abs_diff",
+        "abs_diff_percentiles",
+        "cosine_similarity",
+        "allclose_violation_count",
+        "max_allclose_scaled_error",
     )
+
+
+def test_schema_v2_freezes_dtype_and_decision_fields():
+    assert contract.SCHEMA_VERSION == 2
+    assert contract.DECISION_TOPK == 20
+    assert contract.FP32_ATOL == 2e-5
+    assert contract.FP32_RTOL == 1e-5
+    assert contract.FP32_MEAN_ABS_CAP == 3e-6
+    assert contract.EXECUTION_DTYPES == (
+        "bfloat16",
+        "float32",
+        "metadata_only",
+    )
+    assert contract.COMPARISON_POLICIES == (
+        "bf16_decision_preserving",
+        "fp32_elementwise",
+        "none",
+    )
+    assert contract.ABS_DIFF_PERCENTILE_FIELDS == (
+        "p50",
+        "p95",
+        "p99",
+        "p99_9",
+    )
+
+
+def test_fp32_control_case_is_frozen():
+    cases = contract.build_case_matrix()
+    control = [
+        case
+        for case in cases
+        if case.case_id == contract.FP32_CONTROL_CASE_ID
+    ]
+    assert len(control) == 1
+    assert control[0].phase == "fp32_path_control"
+    assert control[0].execution_mode == "cached_vs_one_shot"
+    assert control[0].prompt_length == 17
+    assert control[0].execution_dtype == "float32"
+    assert control[0].comparison_policy == "fp32_elementwise"
+
+
+def test_ranked_topk_and_winner_margin():
+    token_ids = list(range(20))
+    logits = [float(20 - index) for index in range(20)]
+    contract.validate_ranked_topk(token_ids, logits)
+    result = contract.winner_margin(token_ids, logits)
+    assert result == {
+        "winner_token_id": 0,
+        "runner_up_token_id": 1,
+        "winner_logit": 20.0,
+        "runner_up_logit": 19.0,
+        "winner_margin": 1.0,
+    }
+
+
+def test_ranked_topk_rejects_duplicates_unsorted_and_ties():
+    token_ids = list(range(20))
+    logits = [float(20 - index) for index in range(20)]
+    invalid = (
+        ([0] + token_ids[:-1], logits),
+        (token_ids, [19.0, 20.0] + logits[2:]),
+        (token_ids, [20.0, 20.0] + logits[2:]),
+    )
+    for bad_ids, bad_logits in invalid:
+        _expect_value_error(
+            lambda ids=bad_ids, values=bad_logits: (
+                contract.validate_ranked_topk(ids, values)
+            ),
+            "top-k",
+        )
+
+
+def test_fp32_limits_are_not_derived_from_bf16_rows():
+    assert contract.FP32_ATOL == 2e-5
+    assert contract.FP32_RTOL == 1e-5
+    assert contract.FP32_MEAN_ABS_CAP == 3e-6
+    assert not hasattr(contract, "BF16_MAX_LOGIT_ATOL")
+    assert not hasattr(contract, "BF16_MAX_LOGIT_RTOL")
 
 
 def test_logical_bytes_supports_frozen_dtypes_and_rejects_bad_shapes():

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Mapping
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MODEL_REPOSITORY = "Qwen/Qwen3.5-2B"
 EXPECTED_NUM_HIDDEN_LAYERS = 24
 EXPECTED_LINEAR_LAYERS = 18
@@ -51,11 +51,26 @@ UPDATE_KINDS = (
     "released",
 )
 FINAL_CLASSIFICATIONS = ("GO", "NO_GO", "INCOMPLETE")
+DECISION_TOPK = 20
+FP32_ATOL = 2e-5
+FP32_RTOL = 1e-5
+FP32_MEAN_ABS_CAP = 3e-6
+EXECUTION_DTYPES = ("bfloat16", "float32", "metadata_only")
+COMPARISON_POLICIES = (
+    "bf16_decision_preserving",
+    "fp32_elementwise",
+    "none",
+)
+ABS_DIFF_PERCENTILE_FIELDS = ("p50", "p95", "p99", "p99_9")
+FP32_CONTROL_CASE_ID = (
+    "fp32_path_control__cached_vs_one_shot__p17__r0__c17"
+)
 
 REQUIRED_PHASES = (
     "environment_preflight",
     "architecture_verification",
     "same_path_repeatability",
+    "fp32_path_control",
     "one_shot_vs_cached",
     "one_shot_vs_chunked",
     "state_export_import",
@@ -84,6 +99,8 @@ CASE_ROW_FIELDS = (
     "complete",
     "failure_kind",
     "failure_detail",
+    "execution_dtype",
+    "comparison_policy",
 )
 
 LOGIT_RECORD_FIELDS = (
@@ -99,6 +116,29 @@ LOGIT_RECORD_FIELDS = (
     "mean_rel_diff",
     "sequence_length",
     "position_metadata",
+    "actual_topk_token_ids",
+    "actual_topk_logits",
+    "oracle_topk_token_ids",
+    "oracle_topk_logits",
+    "topk_intersection_size",
+    "oracle_topk_recall",
+    "actual_winner_token_id",
+    "oracle_winner_token_id",
+    "actual_runner_up_token_id",
+    "oracle_runner_up_token_id",
+    "actual_winner_logit",
+    "oracle_winner_logit",
+    "actual_runner_up_logit",
+    "oracle_runner_up_logit",
+    "actual_winner_margin",
+    "oracle_winner_margin",
+    "winner_logit_abs_diff",
+    "runner_up_logit_abs_diff",
+    "winner_margin_abs_diff",
+    "abs_diff_percentiles",
+    "cosine_similarity",
+    "allclose_violation_count",
+    "max_allclose_scaled_error",
 )
 
 GO_GUARDS = (
@@ -147,6 +187,8 @@ class GateCase:
     decode_steps: int
     repeat_index: int
     expected_state_snapshots: int
+    execution_dtype: str = "bfloat16"
+    comparison_policy: str = "bf16_decision_preserving"
 
     def __post_init__(self) -> None:
         if self.phase not in REQUIRED_PHASES:
@@ -172,6 +214,26 @@ class GateCase:
         if self.expected_state_snapshots < 0:
             raise ValueError(
                 "expected_state_snapshots must not be negative"
+            )
+        if self.execution_dtype not in EXECUTION_DTYPES:
+            raise ValueError(
+                f"unsupported execution dtype: {self.execution_dtype}"
+            )
+        if self.comparison_policy not in COMPARISON_POLICIES:
+            raise ValueError(
+                f"unsupported comparison policy: {self.comparison_policy}"
+            )
+        valid_pairs = {
+            ("bfloat16", "bf16_decision_preserving"),
+            ("float32", "fp32_elementwise"),
+            ("metadata_only", "none"),
+        }
+        if (
+            self.execution_dtype,
+            self.comparison_policy,
+        ) not in valid_pairs:
+            raise ValueError(
+                "execution dtype and comparison policy are inconsistent"
             )
 
 
@@ -216,6 +278,53 @@ def build_chunk_schedule(
     if not schedule or sum(schedule) != prompt_length:
         raise ValueError("chunk schedule does not cover prompt_length")
     return schedule
+
+
+def validate_ranked_topk(
+    token_ids: list[int],
+    logits: list[float],
+    *,
+    expected_count: int = DECISION_TOPK,
+) -> None:
+    if len(token_ids) != expected_count or len(logits) != expected_count:
+        raise ValueError("top-k length mismatch")
+    if any(
+        not isinstance(token_id, int) or isinstance(token_id, bool)
+        for token_id in token_ids
+    ):
+        raise ValueError("top-k token IDs must be integers")
+    if len(set(token_ids)) != len(token_ids):
+        raise ValueError("top-k token IDs must be unique")
+    if any(
+        not isinstance(logit, (int, float))
+        or isinstance(logit, bool)
+        or not math.isfinite(float(logit))
+        for logit in logits
+    ):
+        raise ValueError("top-k logits must be finite numbers")
+    if any(
+        float(left) < float(right)
+        for left, right in zip(logits, logits[1:])
+    ):
+        raise ValueError("top-k logits must be non-increasing")
+    if float(logits[0]) <= float(logits[1]):
+        raise ValueError("top-k winner must have a strict positive margin")
+
+
+def winner_margin(
+    token_ids: list[int],
+    logits: list[float],
+) -> dict[str, int | float]:
+    validate_ranked_topk(token_ids, logits)
+    winner_logit = float(logits[0])
+    runner_up_logit = float(logits[1])
+    return {
+        "winner_token_id": token_ids[0],
+        "runner_up_token_id": token_ids[1],
+        "winner_logit": winner_logit,
+        "runner_up_logit": runner_up_logit,
+        "winner_margin": winner_logit - runner_up_logit,
+    }
 
 
 def deterministic_token_ids(
@@ -289,6 +398,8 @@ def build_case_matrix() -> tuple[GateCase, ...]:
             decode_steps=0,
             repeat_index=0,
             expected_state_snapshots=0,
+            execution_dtype="metadata_only",
+            comparison_policy="none",
         ),
         GateCase(
             phase="architecture_verification",
@@ -300,6 +411,8 @@ def build_case_matrix() -> tuple[GateCase, ...]:
             decode_steps=0,
             repeat_index=0,
             expected_state_snapshots=0,
+            execution_dtype="metadata_only",
+            comparison_policy="none",
         ),
     ]
     for prompt_length in PROMPT_LENGTHS:
@@ -315,6 +428,19 @@ def build_case_matrix() -> tuple[GateCase, ...]:
             execution_mode="one_shot_vs_cached",
             prompt_length=prompt_length,
         ))
+    cases.append(GateCase(
+        phase="fp32_path_control",
+        case_id=FP32_CONTROL_CASE_ID,
+        execution_mode="cached_vs_one_shot",
+        prompt_length=PROMPT_LENGTHS[0],
+        chunk_schedule=(PROMPT_LENGTHS[0],),
+        request_count=1,
+        decode_steps=DECODE_STEPS,
+        repeat_index=0,
+        expected_state_snapshots=DECODE_STEPS + 2,
+        execution_dtype="float32",
+        comparison_policy="fp32_elementwise",
+    ))
     for prompt_length in PROMPT_LENGTHS[1:]:
         for template in CHUNK_TEMPLATES:
             if sum(template) <= prompt_length:
@@ -368,6 +494,8 @@ def build_case_matrix() -> tuple[GateCase, ...]:
             decode_steps=DECODE_STEPS,
             repeat_index=0,
             expected_state_snapshots=DECODE_STEPS + 2,
+            execution_dtype="metadata_only",
+            comparison_policy="none",
         ),
         GateCase(
             phase="post_run_audit",
@@ -379,6 +507,8 @@ def build_case_matrix() -> tuple[GateCase, ...]:
             decode_steps=0,
             repeat_index=0,
             expected_state_snapshots=0,
+            execution_dtype="metadata_only",
+            comparison_policy="none",
         ),
     ])
     case_ids = [case.case_id for case in cases]
