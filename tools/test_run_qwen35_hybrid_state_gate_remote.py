@@ -15,12 +15,24 @@ from pathlib import Path
 
 THIS_DIR = Path(__file__).resolve().parent
 RUNNER_PATH = THIS_DIR / "run_qwen35_hybrid_state_gate_remote.py"
+CONTRACT_PATH = THIS_DIR / "qwen35_hybrid_state_contract.py"
 
 
 def _load_runner():
     spec = importlib.util.spec_from_file_location(
         "qwen35_hybrid_state_remote_runner_under_test",
         os.fspath(RUNNER_PATH),
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_contract():
+    spec = importlib.util.spec_from_file_location(
+        "qwen35_hybrid_state_contract_for_runner_test",
+        os.fspath(CONTRACT_PATH),
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -411,7 +423,7 @@ def test_model_manifest_binds_remote_path_revision_and_file_hashes():
         files=files,
     )
     assert manifest == {
-        "schema_version": 1,
+        "schema_version": runner.contract.SCHEMA_VERSION,
         "repository": runner.MODEL_REPOSITORY,
         "resolved_revision": "b" * 40,
         "local_path": "/safe/model",
@@ -496,6 +508,43 @@ def test_environment_manifest_uses_exact_worker_ports_and_remote_identity():
             attempt,
         ),
         "remote runtime user",
+    )
+
+
+def test_environment_identity_excludes_ports_and_process_observations():
+    runner = _load_runner()
+    runtime = {
+        "host": "10.232.195.203",
+        "user": "sitian",
+        "gpu_name": "NVIDIA A100-SXM4-80GB",
+        "gpu_uuid": "GPU-a",
+        "driver_version": "550.54.15",
+        "cuda_runtime_version": "12.4",
+        "python_version": "3.11.9",
+        "packages": {
+            "torch": "2.4.0",
+            "transformers": "5.8.0",
+            "fla": "0.2.0",
+        },
+        "gpu_processes": ["old"],
+    }
+    first = runner.build_environment_manifest(
+        runtime,
+        {"tinyvllm_dist_port": 40101, "master_port": 40102},
+    )
+    second_runtime = dict(runtime)
+    second_runtime["gpu_processes"] = ["new"]
+    second = runner.build_environment_manifest(
+        second_runtime,
+        {"tinyvllm_dist_port": 40103, "master_port": 40104},
+    )
+    assert runner.environment_identity_sha256(first) == (
+        runner.environment_identity_sha256(second)
+    )
+    changed = dict(second)
+    changed["gpu_uuid"] = "GPU-b"
+    assert runner.environment_identity_sha256(first) != (
+        runner.environment_identity_sha256(changed)
     )
 
 
@@ -732,6 +781,7 @@ def test_smoke_domain_is_explicit_and_canonical_requires_bound_smoke():
         "same_path_repeatability__cached_repeatability__p17__r0__c17",
         "same_path_repeatability__cached_repeatability__p17__r1__c17",
         "one_shot_vs_cached__one_shot_vs_cached__p17__r0__c17",
+        "fp32_path_control__cached_vs_one_shot__p17__r0__c17",
         "state_export_import__state_export_import__p17__r0__c17",
         "post_run_audit",
     )
@@ -829,11 +879,17 @@ def test_smoke_probe_script_patches_the_contract_instance_used_by_probe():
 
 def test_smoke_audit_rejects_missing_cases_and_emits_only_smoke_pass():
     runner = _load_runner()
+    cases = {
+        case.case_id: case
+        for case in runner.contract.build_case_matrix()
+    }
     rows = [
         {
             "case_id": case_id,
             "complete": True,
             "failure_kind": None,
+            "execution_dtype": cases[case_id].execution_dtype,
+            "comparison_policy": cases[case_id].comparison_policy,
         }
         for case_id in runner.SMOKE_CASE_IDS
     ]
@@ -854,6 +910,12 @@ def test_smoke_audit_rejects_missing_cases_and_emits_only_smoke_pass():
     _expect_value_error(
         lambda: runner.audit_smoke_case_rows(tampered),
         "incomplete smoke case",
+    )
+    missing_v2 = [dict(row) for row in rows]
+    missing_v2[0].pop("execution_dtype")
+    _expect_value_error(
+        lambda: runner.audit_smoke_case_rows(missing_v2),
+        "schema-v2 smoke fields",
     )
 
 
@@ -1019,45 +1081,237 @@ def test_worker_launch_records_exact_environment_command_and_fresh_ports():
     assert "MASTER_PORT=40102" in remote_command
 
 
-def test_canonical_smoke_binding_requires_source_model_and_pass_label():
+def test_canonical_requires_schema_v2_smoke_pass():
     runner = _load_runner()
-    source_hashes = {"tools/a.py": "c" * 64}
-    model_files = {"config.json": {"size": 1, "sha256": "d" * 64}}
-    smoke = {
+    contract = _load_contract()
+    admission = {
+        "schema_version": contract.SCHEMA_VERSION,
         "classification": "SMOKE_PASS",
         "source_commit": "a" * 40,
-        "source_file_sha256": source_hashes,
-        "model_resolved_revision": "b" * 40,
-        "model_files": model_files,
+        "contract_sha256": "b" * 64,
+        "model_revision": (
+            "15852e8c16360a2fea060d615a32b45270f8a8fc"
+        ),
+        "model_file_sha256": {"config.json": "c" * 64},
+        "environment_identity_sha256": "d" * 64,
     }
-    assert runner.validate_smoke_binding(
-        smoke,
-        source_commit="a" * 40,
-        source_file_sha256=source_hashes,
-        model_resolved_revision="b" * 40,
-        model_files=model_files,
+    assert runner._validate_smoke_admission(
+        admission,
+        expected_source_commit="a" * 40,
+        expected_contract_sha256="b" * 64,
+        expected_model_revision=(
+            "15852e8c16360a2fea060d615a32b45270f8a8fc"
+        ),
+        expected_model_file_sha256={"config.json": "c" * 64},
+        expected_environment_identity_sha256="d" * 64,
     ) is True
     for field, replacement in (
+        ("schema_version", 1),
         ("classification", "GO"),
         ("source_commit", "e" * 40),
-        ("model_resolved_revision", "f" * 40),
-        ("source_file_sha256", {"tools/a.py": "0" * 64}),
+        ("contract_sha256", "0" * 64),
+        ("model_revision", "f" * 40),
         (
-            "model_files",
-            {"config.json": {"size": 1, "sha256": "1" * 64}},
+            "model_file_sha256",
+            {"config.json": "1" * 64},
         ),
+        ("environment_identity_sha256", "2" * 64),
     ):
-        tampered = dict(smoke)
+        tampered = dict(admission)
         tampered[field] = replacement
         _expect_value_error(
-            lambda payload=tampered: runner.validate_smoke_binding(
+            lambda payload=tampered: runner._validate_smoke_admission(
+                payload,
+                expected_source_commit="a" * 40,
+                expected_contract_sha256="b" * 64,
+                expected_model_revision=(
+                    "15852e8c16360a2fea060d615a32b45270f8a8fc"
+                ),
+                expected_model_file_sha256={
+                    "config.json": "c" * 64,
+                },
+                expected_environment_identity_sha256="d" * 64,
+            ),
+            "smoke admission",
+        )
+    additional_hash = dict(admission)
+    additional_hash["model_file_sha256"] = {
+        "config.json": "c" * 64,
+        "unexpected.json": "e" * 64,
+    }
+    _expect_value_error(
+        lambda: runner._validate_smoke_admission(
+            additional_hash,
+            expected_source_commit="a" * 40,
+            expected_contract_sha256="b" * 64,
+            expected_model_revision=(
+                "15852e8c16360a2fea060d615a32b45270f8a8fc"
+            ),
+            expected_model_file_sha256={"config.json": "c" * 64},
+            expected_environment_identity_sha256="d" * 64,
+        ),
+        "smoke admission",
+    )
+
+
+def test_smoke_admission_is_built_from_independent_verification():
+    runner = _load_runner()
+    verification = {
+        "schema_version": runner.contract.SCHEMA_VERSION,
+        "classification": "SMOKE_PASS",
+    }
+    admission = runner.build_smoke_admission(
+        verification,
+        source_commit="a" * 40,
+        contract_sha256="b" * 64,
+        model_revision="c" * 40,
+        model_file_sha256={"config.json": "d" * 64},
+        environment_identity_sha256="e" * 64,
+        independent_verification_sha256="f" * 64,
+    )
+    assert admission["schema_version"] == runner.contract.SCHEMA_VERSION
+    assert admission["classification"] == "SMOKE_PASS"
+    for invalid in (
+        {"schema_version": 1, "classification": "SMOKE_PASS"},
+        {
+            "schema_version": runner.contract.SCHEMA_VERSION,
+            "classification": "INCOMPLETE",
+        },
+    ):
+        _expect_value_error(
+            lambda payload=invalid: runner.build_smoke_admission(
                 payload,
                 source_commit="a" * 40,
-                source_file_sha256=source_hashes,
-                model_resolved_revision="b" * 40,
-                model_files=model_files,
+                contract_sha256="b" * 64,
+                model_revision="c" * 40,
+                model_file_sha256={"config.json": "d" * 64},
+                environment_identity_sha256="e" * 64,
+                independent_verification_sha256="f" * 64,
             ),
-            "smoke",
+            "independent verifier",
+        )
+
+
+def test_smoke_admission_references_unchanged_independent_verification():
+    runner = _load_runner()
+    with tempfile.TemporaryDirectory() as temporary:
+        run_dir = Path(temporary)
+        verification_path = run_dir / "independent_verification.json"
+        verification_path.write_text(json.dumps({
+            "schema_version": runner.contract.SCHEMA_VERSION,
+            "classification": "SMOKE_PASS",
+        }))
+        admission = {
+            "independent_verification_sha256": (
+                runner._sha256_path(verification_path)
+            ),
+        }
+        result = runner._read_bound_independent_verification(
+            run_dir,
+            admission,
+        )
+        assert result["classification"] == "SMOKE_PASS"
+        verification_path.write_text(json.dumps({
+            "schema_version": runner.contract.SCHEMA_VERSION,
+            "classification": "INCOMPLETE",
+        }))
+        _expect_value_error(
+            lambda: runner._read_bound_independent_verification(
+                run_dir,
+                admission,
+            ),
+            "independent verification hash mismatch",
+        )
+
+
+def test_canonical_rejects_schema_v1_admission_before_worker_launch():
+    runner = _load_runner()
+    revision = "b" * 40
+    source_commit = "a" * 40
+    contract_sha256 = "c" * 64
+    model_files = {
+        "config.json": {"size": 2, "sha256": "d" * 64},
+    }
+    with tempfile.TemporaryDirectory() as temporary:
+        repo_root = Path(temporary)
+        smoke_dir = runner.local_run_dir(repo_root, "smoke-v1")
+        smoke_dir.mkdir(parents=True)
+        verification_path = (
+            smoke_dir / "independent_verification.json"
+        )
+        verification_path.write_text(json.dumps({
+            "schema_version": runner.contract.SCHEMA_VERSION,
+            "classification": "SMOKE_PASS",
+        }))
+        (smoke_dir / "smoke_evidence.json").write_text(json.dumps({
+            "schema_version": 1,
+            "classification": "SMOKE_PASS",
+            "source_commit": source_commit,
+            "contract_sha256": contract_sha256,
+            "model_revision": revision,
+            "model_file_sha256": {
+                "config.json": "d" * 64,
+            },
+            "environment_identity_sha256": "e" * 64,
+            "independent_verification_sha256": (
+                runner._sha256_path(verification_path)
+            ),
+        }))
+        runner.build_source_manifest = lambda *_args, **_kwargs: {
+            "schema_version": runner.contract.SCHEMA_VERSION,
+            "branch": "feature",
+            "commit": source_commit,
+            "clean": True,
+            "local_file_sha256": {
+                "tools/qwen35_hybrid_state_contract.py": (
+                    contract_sha256
+                ),
+            },
+            "remote_file_sha256": {
+                "tools/qwen35_hybrid_state_contract.py": (
+                    contract_sha256
+                ),
+            },
+        }
+        runner.discover_model_snapshots = lambda *_args, **_kwargs: [{
+            "repository": runner.MODEL_REPOSITORY,
+            "resolved_revision": revision,
+            "remote_model_dir": "/remote/model",
+            "files": model_files,
+        }]
+        runner.verify_remote_model_snapshot = (
+            lambda *_args, **_kwargs: True
+        )
+        runner.run_remote_preflight = lambda *_args, **_kwargs: {
+            "resolved_revision": revision,
+            "host": "10.232.195.203",
+            "user": "sitian",
+            "gpu_name": "NVIDIA A100-SXM4-80GB",
+            "gpu_uuid": "GPU-a",
+            "driver_version": "550",
+            "cuda_runtime_version": "12.4",
+            "python_version": "3.11",
+            "packages": {
+                "torch": "2.4",
+                "transformers": "5.8",
+            },
+        }
+
+        def forbidden_launch(*_args, **_kwargs):
+            raise AssertionError("worker must not launch")
+
+        runner.launch_remote_worker = forbidden_launch
+        _expect_value_error(
+            lambda: runner.execute_remote_gate(
+                mode="canonical",
+                run_tag="canonical-v2",
+                resolved_revision=revision,
+                repo_root=repo_root,
+                source_commit=source_commit,
+                staged_source={"remote_source_dir": "/remote/source"},
+                smoke_run_tag="smoke-v1",
+            ),
+            "smoke admission mismatch: schema_version",
         )
 
 

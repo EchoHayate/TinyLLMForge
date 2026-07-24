@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -51,6 +52,7 @@ SMOKE_CASE_IDS = (
     "same_path_repeatability__cached_repeatability__p17__r0__c17",
     "same_path_repeatability__cached_repeatability__p17__r1__c17",
     "one_shot_vs_cached__one_shot_vs_cached__p17__r0__c17",
+    "fp32_path_control__cached_vs_one_shot__p17__r0__c17",
     "state_export_import__state_export_import__p17__r0__c17",
     "post_run_audit",
 )
@@ -73,6 +75,22 @@ DOWNLOAD_CHUNK_BYTES = 4 * MIB
 DOWNLOAD_ATTEMPTS = 3
 RUN_TAG_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 REVISION_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+THIS_DIR = Path(__file__).resolve().parent
+
+
+def _load_contract():
+    module_name = "qwen35_hybrid_state_contract_for_remote_runner"
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        os.fspath(THIS_DIR / "qwen35_hybrid_state_contract.py"),
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+contract = _load_contract()
 
 
 def validate_run_tag(value):
@@ -217,7 +235,7 @@ def build_source_manifest(repo_root, commit, staged, command_runner=_run):
     if not branch:
         raise ValueError("source branch must not be detached")
     return {
-        "schema_version": 1,
+        "schema_version": contract.SCHEMA_VERSION,
         "branch": branch,
         "commit": validate_resolved_revision(commit),
         "clean": True,
@@ -495,7 +513,7 @@ def build_model_manifest(*, resolved_revision, remote_model_dir, files):
         if name.endswith(".safetensors")
     )
     return {
-        "schema_version": 1,
+        "schema_version": contract.SCHEMA_VERSION,
         "repository": MODEL_REPOSITORY,
         "resolved_revision": revision,
         "local_path": root.as_posix(),
@@ -506,7 +524,12 @@ def build_model_manifest(*, resolved_revision, remote_model_dir, files):
     }
 
 
-def enrich_model_manifest(model_manifest, architecture):
+def enrich_model_manifest(
+    model_manifest,
+    architecture,
+    *,
+    dtype_profiles=None,
+):
     required = (
         "config_class",
         "model_class",
@@ -520,6 +543,7 @@ def enrich_model_manifest(model_manifest, architecture):
             raise ValueError(f"architecture is missing {field}")
         enriched[field] = architecture[field]
     enriched["requested_dtype"] = "auto"
+    enriched["dtype_profiles"] = dict(dtype_profiles or {})
     return enriched
 
 
@@ -540,7 +564,7 @@ def build_environment_manifest(runtime, worker_attempt):
     ):
         raise ValueError("worker attempt ports are invalid")
     return {
-        "schema_version": 1,
+        "schema_version": contract.SCHEMA_VERSION,
         "host": "10.232.195.203",
         "user": "sitian",
         "gpu_name": runtime.get("gpu_name"),
@@ -570,6 +594,58 @@ def build_environment_manifest(runtime, worker_attempt):
             runtime.get("gpu_processes_after", [])
         ),
     }
+
+
+def environment_identity_sha256(environment):
+    payload = {
+        "host": environment.get("host"),
+        "user": environment.get("user"),
+        "gpu_name": environment.get("gpu_name"),
+        "gpu_uuid": environment.get("gpu_uuid"),
+        "driver_version": environment.get("driver_version"),
+        "cuda_runtime_version": environment.get(
+            "cuda_runtime_version"
+        ),
+        "python_executable": environment.get("python_executable"),
+        "python_version": environment.get("python_version"),
+        "torch_version": environment.get("torch_version"),
+        "transformers_version": environment.get(
+            "transformers_version"
+        ),
+        "optional_packages": environment.get("optional_packages"),
+        "cuda_visible_devices": environment.get(
+            "environment",
+            {},
+        ).get("CUDA_VISIBLE_DEVICES"),
+    }
+    return contract.canonical_json_sha256(payload)
+
+
+def _runtime_environment_identity(runtime):
+    return environment_identity_sha256({
+        "host": runtime.get("host"),
+        "user": runtime.get("user"),
+        "gpu_name": runtime.get("gpu_name"),
+        "gpu_uuid": runtime.get("gpu_uuid"),
+        "driver_version": runtime.get("driver_version"),
+        "cuda_runtime_version": runtime.get("cuda_runtime_version"),
+        "python_executable": REMOTE_PYTHON,
+        "python_version": runtime.get("python_version"),
+        "torch_version": runtime.get("packages", {}).get("torch"),
+        "transformers_version": runtime.get("packages", {}).get(
+            "transformers"
+        ),
+        "optional_packages": {
+            name: runtime.get("packages", {}).get(name)
+            for name in (
+                "fla",
+                "causal_conv1d",
+                "triton",
+                "flash_attn",
+            )
+        },
+        "environment": {"CUDA_VISIBLE_DEVICES": "0"},
+    })
 
 
 def allocate_unique_port_pairs(count, allocator=None):
@@ -753,6 +829,17 @@ def audit_smoke_case_rows(rows):
             raise ValueError(f"incomplete smoke case: {case_id}")
         if row.get("failure_kind") is not None:
             raise ValueError(f"incomplete smoke case: {case_id}")
+        expected = next(
+            case
+            for case in contract.build_case_matrix()
+            if case.case_id == case_id
+        )
+        if (
+            row.get("execution_dtype") != expected.execution_dtype
+            or row.get("comparison_policy")
+            != expected.comparison_policy
+        ):
+            raise ValueError(f"schema-v2 smoke fields missing: {case_id}")
         observed[case_id] = row
     if set(observed) != set(SMOKE_CASE_IDS):
         raise ValueError("smoke case domain mismatch")
@@ -979,7 +1066,7 @@ def write_complete_manifest(
     destination = Path(run_dir)
     destination.mkdir(parents=True, exist_ok=True)
     manifest = {
-        "schema_version": 1,
+        "schema_version": contract.SCHEMA_VERSION,
         "classification": None,
         "source_commit": source_commit,
         "model_repository": MODEL_REPOSITORY,
@@ -1003,7 +1090,7 @@ def write_incomplete_manifest(
     destination = Path(run_dir)
     destination.mkdir(parents=True, exist_ok=True)
     manifest = {
-        "schema_version": 1,
+        "schema_version": contract.SCHEMA_VERSION,
         "classification": "INCOMPLETE",
         "source_commit": source_commit,
         "model_repository": MODEL_REPOSITORY,
@@ -1040,25 +1127,96 @@ def preserve_failed_execution(
     )
 
 
-def validate_smoke_binding(
-    smoke,
+def _validate_smoke_admission(
+    admission,
     *,
-    source_commit,
-    source_file_sha256,
-    model_resolved_revision,
-    model_files,
+    expected_source_commit,
+    expected_contract_sha256,
+    expected_model_revision,
+    expected_model_file_sha256,
+    expected_environment_identity_sha256,
 ):
     expected = {
+        "schema_version": contract.SCHEMA_VERSION,
         "classification": "SMOKE_PASS",
-        "source_commit": source_commit,
-        "source_file_sha256": source_file_sha256,
-        "model_resolved_revision": model_resolved_revision,
-        "model_files": model_files,
+        "source_commit": expected_source_commit,
+        "contract_sha256": expected_contract_sha256,
+        "model_revision": expected_model_revision,
+        "model_file_sha256": expected_model_file_sha256,
+        "environment_identity_sha256": (
+            expected_environment_identity_sha256
+        ),
     }
     for field, value in expected.items():
-        if smoke.get(field) != value:
-            raise ValueError(f"smoke binding mismatch: {field}")
+        if admission.get(field) != value:
+            raise ValueError(f"smoke admission mismatch: {field}")
     return True
+
+
+def _model_file_sha256(model_snapshot):
+    return {
+        name: entry["sha256"]
+        for name, entry in sorted(model_snapshot["files"].items())
+    }
+
+
+def build_smoke_admission(
+    independent_verification,
+    *,
+    source_commit,
+    contract_sha256,
+    model_revision,
+    model_file_sha256,
+    environment_identity_sha256,
+    independent_verification_sha256,
+):
+    if (
+        independent_verification.get("schema_version")
+        != contract.SCHEMA_VERSION
+        or independent_verification.get("classification")
+        != "SMOKE_PASS"
+    ):
+        raise ValueError(
+            "independent verifier did not produce schema-v2 SMOKE_PASS"
+        )
+    return {
+        "schema_version": independent_verification["schema_version"],
+        "classification": "SMOKE_PASS",
+        "case_ids": list(SMOKE_CASE_IDS),
+        "claim_boundary": (
+            "Smoke compatibility prerequisite only; not canonical GO."
+        ),
+        "source_commit": source_commit,
+        "contract_sha256": contract_sha256,
+        "model_revision": model_revision,
+        "model_file_sha256": dict(model_file_sha256),
+        "environment_identity_sha256": environment_identity_sha256,
+        "independent_verification_sha256": (
+            independent_verification_sha256
+        ),
+    }
+
+
+def _read_bound_independent_verification(smoke_run_dir, admission):
+    path = Path(smoke_run_dir) / "independent_verification.json"
+    expected = admission.get("independent_verification_sha256")
+    if (
+        not isinstance(expected, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected)
+        or not path.is_file()
+        or _sha256_path(path) != expected
+    ):
+        raise ValueError("independent verification hash mismatch")
+    verification = _read_json(path)
+    if (
+        verification.get("schema_version")
+        != contract.SCHEMA_VERSION
+        or verification.get("classification") != "SMOKE_PASS"
+    ):
+        raise ValueError(
+            "bound independent verifier is not schema-v2 SMOKE_PASS"
+        )
+    return verification
 
 
 def run_remote_source_tests(plan, command_runner=_run):
@@ -1629,19 +1787,6 @@ def execute_remote_gate(
         model_snapshot,
         command_runner=command_runner,
     )
-    if mode == "canonical":
-        smoke_path = local_run_dir(
-            repo_root,
-            validate_run_tag(smoke_run_tag),
-        ) / "smoke_evidence.json"
-        smoke = _read_json(smoke_path)
-        validate_smoke_binding(
-            smoke,
-            source_commit=source_commit,
-            source_file_sha256=source_manifest["local_file_sha256"],
-            model_resolved_revision=revision,
-            model_files=model_snapshot["files"],
-        )
     runtime = run_remote_preflight(
         run_tag,
         command_runner=command_runner,
@@ -1652,6 +1797,29 @@ def execute_remote_gate(
     contract_sha256 = source_manifest["local_file_sha256"][
         "tools/qwen35_hybrid_state_contract.py"
     ]
+    if mode == "canonical":
+        smoke_run_dir = local_run_dir(
+            repo_root,
+            validate_run_tag(smoke_run_tag),
+        )
+        smoke_path = smoke_run_dir / "smoke_evidence.json"
+        admission = _read_json(smoke_path)
+        _read_bound_independent_verification(
+            smoke_run_dir,
+            admission,
+        )
+        _validate_smoke_admission(
+            admission,
+            expected_source_commit=source_commit,
+            expected_contract_sha256=contract_sha256,
+            expected_model_revision=revision,
+            expected_model_file_sha256=_model_file_sha256(
+                model_snapshot
+            ),
+            expected_environment_identity_sha256=(
+                _runtime_environment_identity(runtime)
+            ),
+        )
     plan = build_remote_execution_plan(
         mode=mode,
         remote_source_dir=staged_source["remote_source_dir"],
@@ -1713,15 +1881,21 @@ def execute_remote_gate(
         command_runner=command_runner,
     )
     architecture = _read_json(destination / "architecture.json")
+    summary = _read_json(destination / "summary.json")
+    dtype_profiles = summary.get("dtype_profiles")
+    if not isinstance(dtype_profiles, dict):
+        raise ValueError("schema-v2 dtype profiles are missing")
     model_manifest = enrich_model_manifest(
         model_snapshot,
         architecture,
+        dtype_profiles=dtype_profiles,
     )
     successful_attempt = next(
         row for row in reversed(execution["attempts"])
         if row["exit_code"] == 0
     )
     environment = build_environment_manifest(runtime, successful_attempt)
+    environment["dtype_profiles"] = dtype_profiles
     _atomic_json(destination / "source_manifest.json", source_manifest)
     _atomic_json(destination / "model_manifest.json", model_manifest)
     _atomic_json(destination / "environment.json", environment)
@@ -1742,26 +1916,29 @@ def execute_remote_gate(
         verification = _read_json(
             destination / "independent_verification.json"
         )
-        if verification.get("classification") != "SMOKE_PASS":
+        if (
+            verification.get("schema_version")
+            != contract.SCHEMA_VERSION
+            or verification.get("classification") != "SMOKE_PASS"
+        ):
             return {
                 "classification": "INCOMPLETE",
                 "verification": verification,
                 "verifier_process": verifier,
             }
-        smoke_evidence = {
-            "classification": "SMOKE_PASS",
-            "case_ids": list(SMOKE_CASE_IDS),
-            "claim_boundary": (
-                "Smoke compatibility prerequisite only; not canonical GO."
+        smoke_evidence = build_smoke_admission(
+            verification,
+            source_commit=source_commit,
+            contract_sha256=contract_sha256,
+            model_revision=revision,
+            model_file_sha256=_model_file_sha256(model_snapshot),
+            environment_identity_sha256=(
+                environment_identity_sha256(environment)
             ),
-            "source_commit": source_commit,
-            "source_file_sha256": source_manifest["local_file_sha256"],
-            "model_resolved_revision": revision,
-            "model_files": model_snapshot["files"],
-            "independent_verification_sha256": _sha256_path(
+            independent_verification_sha256=_sha256_path(
                 destination / "independent_verification.json"
             ),
-        }
+        )
         _atomic_json(destination / "smoke_evidence.json", smoke_evidence)
         return smoke_evidence
     write_complete_manifest(
