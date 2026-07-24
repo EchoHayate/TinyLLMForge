@@ -191,6 +191,17 @@ class _FakeReferenceStateAdapter:
         })
 
 
+class _FakeBf16DriftReferenceStateAdapter(_FakeReferenceStateAdapter):
+    def decode_one(self, token_id, state, sequence_length):
+        logits, next_state = super().decode_one(
+            token_id,
+            state,
+            sequence_length,
+        )
+        logits[(int(token_id) + 1) % self.vocab_size] += 0.125
+        return logits, next_state
+
+
 class _FakeCache:
     def __init__(self, tokens):
         self.tokens = tokens
@@ -721,6 +732,32 @@ def test_interleaved_decode_does_not_mutate_inactive_requests():
         set(record) == set(contract.LOGIT_RECORD_FIELDS)
         for record in result["logit_records"]
     )
+
+
+def test_interleaved_bf16_drift_is_not_request_isolation_failure():
+    result = probe.run_interleaved_requests(
+        _FakeBf16DriftReferenceStateAdapter(),
+        request_token_ids={
+            "slot-0": (1, 2, 3),
+            "slot-1": (4, 5),
+            "slot-2": (6, 7, 8, 9),
+        },
+        replacement_token_ids=(10, 11, 12),
+        perform_slot_reuse=False,
+        comparison_policy="bf16_decision_preserving",
+    )
+    assert any(
+        record["max_abs_diff"] > 0.0
+        for record in result["logit_records"]
+    )
+    assert all(
+        record["position_metadata"]["actual_greedy_token_id"]
+        == record["position_metadata"]["oracle_greedy_token_id"]
+        for record in result["logit_records"]
+    )
+    assert result["inactive_request_hash_changes"] == []
+    assert result["serial_oracle_mismatches"] == []
+    assert result["stale_state_reads"] == []
 
 
 def test_slot_reuse_increments_generation_and_releases_old_state():

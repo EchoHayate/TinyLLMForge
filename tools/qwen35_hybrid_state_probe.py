@@ -1371,10 +1371,7 @@ def run_interleaved_requests(
         token_id = _greedy_token(logits)
         decoded.append(token_id)
         decode_indices[decode_key] = step_index + 1
-        if (
-            token_id != _greedy_token(oracle_logits)
-            or _logit_differences(logits, oracle_logits)["max_abs_diff"] != 0.0
-        ):
+        if token_id != _greedy_token(oracle_logits):
             serial_mismatches.append([
                 request_id,
                 generations[request_id],
