@@ -861,7 +861,11 @@ def _ranked_topk(logits):
     token_ids = [int(token_id) for token_id in top_indices.tolist()]
     values = [float(logit) for logit in top_values.tolist()]
     try:
-        contract.validate_ranked_topk(token_ids, values)
+        contract.validate_ranked_topk(
+            token_ids,
+            values,
+            require_positive_margin=False,
+        )
     except ValueError as exc:
         raise IncompleteRun(
             "INCOMPLETE_REFERENCE_SEMANTICS",
@@ -928,10 +932,15 @@ def _logit_record(
     oracle_value = _canonical_logits(oracle_logits)
     actual_ids, actual_logits = _ranked_topk(value)
     oracle_ids, oracle_logits_values = _ranked_topk(oracle_value)
-    actual_winner = contract.winner_margin(actual_ids, actual_logits)
+    actual_winner = contract.winner_margin(
+        actual_ids,
+        actual_logits,
+        require_positive_margin=False,
+    )
     oracle_winner = contract.winner_margin(
         oracle_ids,
         oracle_logits_values,
+        require_positive_margin=False,
     )
     differences = _logit_differences(value, oracle_logits)
     comparison = _comparison_metrics(value, oracle_value)

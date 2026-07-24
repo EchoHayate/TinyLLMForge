@@ -285,6 +285,7 @@ def validate_ranked_topk(
     logits: list[float],
     *,
     expected_count: int = DECISION_TOPK,
+    require_positive_margin: bool = True,
 ) -> None:
     if len(token_ids) != expected_count or len(logits) != expected_count:
         raise ValueError("top-k length mismatch")
@@ -307,15 +308,24 @@ def validate_ranked_topk(
         for left, right in zip(logits, logits[1:])
     ):
         raise ValueError("top-k logits must be non-increasing")
-    if float(logits[0]) <= float(logits[1]):
+    if (
+        require_positive_margin
+        and float(logits[0]) <= float(logits[1])
+    ):
         raise ValueError("top-k winner must have a strict positive margin")
 
 
 def winner_margin(
     token_ids: list[int],
     logits: list[float],
+    *,
+    require_positive_margin: bool = True,
 ) -> dict[str, int | float]:
-    validate_ranked_topk(token_ids, logits)
+    validate_ranked_topk(
+        token_ids,
+        logits,
+        require_positive_margin=require_positive_margin,
+    )
     winner_logit = float(logits[0])
     runner_up_logit = float(logits[1])
     return {

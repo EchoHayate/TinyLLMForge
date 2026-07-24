@@ -629,23 +629,27 @@ def test_logit_record_contains_independent_decision_evidence():
     }
 
 
-def test_logit_record_rejects_winner_tie():
+def test_logit_record_preserves_winner_tie_for_independent_verifier():
     actual = torch.zeros(32)
     oracle = torch.zeros(32)
     actual[3] = actual[4] = 2.0
     oracle[3] = 2.0
     oracle[4] = 1.0
-    _expect_incomplete(
-        lambda: probe._logit_record(
-            logits=actual,
-            oracle_logits=oracle,
-            request_id="request-0",
-            request_generation=0,
-            step_index=0,
-            sequence_length=17,
-            comparison_policy="bf16_decision_preserving",
-        ),
-        "INCOMPLETE_REFERENCE_SEMANTICS",
+    record = probe._logit_record(
+        logits=actual,
+        oracle_logits=oracle,
+        request_id="request-0",
+        request_generation=0,
+        step_index=0,
+        sequence_length=17,
+        comparison_policy="bf16_decision_preserving",
+    )
+    assert record["actual_winner_margin"] == 0.0
+    assert record["oracle_winner_margin"] == 1.0
+    assert record["actual_winner_token_id"] in {3, 4}
+    assert record["actual_runner_up_token_id"] in {3, 4}
+    assert record["actual_winner_token_id"] != (
+        record["actual_runner_up_token_id"]
     )
 
 

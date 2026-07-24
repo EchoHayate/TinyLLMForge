@@ -327,6 +327,26 @@ def test_ranked_topk_rejects_duplicates_unsorted_and_ties():
         )
 
 
+def test_ranked_topk_can_preserve_tie_evidence_without_accepting_it():
+    token_ids = list(range(20))
+    logits = [20.0, 20.0] + [
+        float(18 - index) for index in range(18)
+    ]
+    contract.validate_ranked_topk(
+        token_ids,
+        logits,
+        require_positive_margin=False,
+    )
+    result = contract.winner_margin(
+        token_ids,
+        logits,
+        require_positive_margin=False,
+    )
+    assert result["winner_token_id"] == 0
+    assert result["runner_up_token_id"] == 1
+    assert result["winner_margin"] == 0.0
+
+
 def test_fp32_limits_are_not_derived_from_bf16_rows():
     assert contract.FP32_ATOL == 2e-5
     assert contract.FP32_RTOL == 1e-5
