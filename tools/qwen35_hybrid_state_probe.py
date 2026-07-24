@@ -258,7 +258,7 @@ def load_official_reference(
                 model_path,
                 local_files_only=True,
                 trust_remote_code=False,
-                torch_dtype=dtype_by_name[requested_dtype],
+                dtype=dtype_by_name[requested_dtype],
             )
             model = model.to("cuda:0")
     except (OSError, TypeError, ValueError, RuntimeError) as exc:

@@ -538,6 +538,7 @@ def enrich_model_manifest(
         "parameter_dtypes",
     )
     enriched = dict(model_manifest)
+    enriched["schema_version"] = contract.SCHEMA_VERSION
     for field in required:
         if field not in architecture:
             raise ValueError(f"architecture is missing {field}")

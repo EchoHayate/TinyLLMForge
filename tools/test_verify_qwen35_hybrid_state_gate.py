@@ -395,6 +395,22 @@ def _tamper_dtype_profile(run_dir):
     _mutate_json(run_dir, "environment.json", mutate)
 
 
+def _tamper_fp32_dominant_parameter_dtype(run_dir):
+    for filename in (
+        "model_manifest.json",
+        "environment.json",
+        "summary.json",
+    ):
+        _mutate_json(
+            run_dir,
+            filename,
+            lambda payload: payload["dtype_profiles"]["float32"].__setitem__(
+                "dominant_parameter_dtype",
+                "bfloat16",
+            ),
+        )
+
+
 def _mutate_component(run_dir, predicate, mutator):
     def mutate(rows):
         row = next(item for item in rows if predicate(item))
@@ -1507,6 +1523,11 @@ def test_dtype_aware_decision_and_fp32_guards():
             base_run,
             _tamper_dtype_profile,
             "dtype profile",
+        )
+        _expect_incomplete(
+            base_run,
+            _tamper_fp32_dominant_parameter_dtype,
+            "dtype profile parameter",
         )
 
 

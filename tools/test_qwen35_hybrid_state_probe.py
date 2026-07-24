@@ -360,7 +360,8 @@ def test_load_official_reference_accepts_frozen_requested_dtype():
         auto_model=ModelAuto,
     )
     assert loaded["requested_model_dtype"] == "float32"
-    assert ModelAuto.calls[-1][1]["torch_dtype"] is torch.float32
+    assert ModelAuto.calls[-1][1]["dtype"] is torch.float32
+    assert "torch_dtype" not in ModelAuto.calls[-1][1]
 
 
 class _FakeCuda:
@@ -851,7 +852,7 @@ def test_load_official_reference_uses_local_read_only_arguments():
         {
             "local_files_only": True,
             "trust_remote_code": False,
-            "torch_dtype": torch.bfloat16,
+            "dtype": torch.bfloat16,
         },
     )]
     assert loaded["requested_model_dtype"] == "bfloat16"

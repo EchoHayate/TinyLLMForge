@@ -469,6 +469,7 @@ def test_model_manifest_is_enriched_from_observed_architecture():
         "parameter_dtypes": {"bfloat16": 2_000_000_000},
     }
     enriched = runner.enrich_model_manifest(base, architecture)
+    assert enriched["schema_version"] == runner.contract.SCHEMA_VERSION
     for key, value in architecture.items():
         assert enriched[key] == value
     assert enriched["requested_dtype"] == "auto"

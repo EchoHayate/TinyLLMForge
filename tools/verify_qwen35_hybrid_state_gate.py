@@ -664,6 +664,8 @@ def _verify_dtype_profiles(
             _fail(f"dtype profile schema mismatch: {execution_dtype}")
         if profile["requested_model_dtype"] != execution_dtype:
             _fail(f"dtype profile request mismatch: {execution_dtype}")
+        if profile["dominant_parameter_dtype"] != execution_dtype:
+            _fail(f"dtype profile parameter mismatch: {execution_dtype}")
         if profile["logit_dtype_before_comparison"] != execution_dtype:
             _fail(f"dtype profile logit mismatch: {execution_dtype}")
         if profile["comparison_accumulator_dtype"] != "float32":
