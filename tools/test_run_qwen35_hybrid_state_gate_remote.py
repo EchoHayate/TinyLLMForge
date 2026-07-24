@@ -944,6 +944,40 @@ def test_model_snapshot_selection_is_revision_and_hash_bound():
         resolved_revision=revision,
     )
     assert selected["run_tag"] == "acquired"
+    duplicate = {
+        **candidates[1],
+        "run_tag": "smoke-record",
+        "config_class": "Qwen3_5Config",
+    }
+    selected = runner.select_verified_model_snapshot(
+        [candidates[1], duplicate],
+        resolved_revision=revision,
+    )
+    assert selected["remote_model_dir"] == "/runs/acquired/model"
+    conflicting = {
+        **duplicate,
+        "files": {
+            "config.json": {"size": 2, "sha256": "e" * 64},
+        },
+    }
+    _expect_value_error(
+        lambda: runner.select_verified_model_snapshot(
+            [candidates[1], conflicting],
+            resolved_revision=revision,
+        ),
+        "conflicting model snapshot identity",
+    )
+    second_path = {
+        **duplicate,
+        "remote_model_dir": "/runs/other/model",
+    }
+    _expect_value_error(
+        lambda: runner.select_verified_model_snapshot(
+            [candidates[1], second_path],
+            resolved_revision=revision,
+        ),
+        "verified model snapshot",
+    )
     _expect_value_error(
         lambda: runner.select_verified_model_snapshot(
             candidates[:1],

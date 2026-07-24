@@ -884,9 +884,20 @@ def select_verified_model_snapshot(candidates, *, resolved_revision):
                 break
         if valid_files:
             matches.append(candidate)
-    if len(matches) != 1:
+    unique = {}
+    for candidate in matches:
+        remote_model_dir = candidate["remote_model_dir"]
+        existing = unique.get(remote_model_dir)
+        if (
+            existing is not None
+            and existing["files"] != candidate["files"]
+        ):
+            raise ValueError("conflicting model snapshot identity")
+        if existing is None:
+            unique[remote_model_dir] = candidate
+    if len(unique) != 1:
         raise ValueError("expected exactly one verified model snapshot")
-    return dict(matches[0])
+    return dict(next(iter(unique.values())))
 
 
 def verify_remote_model_snapshot(snapshot, command_runner=_run):
