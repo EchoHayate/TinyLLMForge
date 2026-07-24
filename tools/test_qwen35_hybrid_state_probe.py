@@ -337,6 +337,32 @@ class _FakeAutoClass:
         return cls.result
 
 
+def test_load_official_reference_accepts_frozen_requested_dtype():
+    layer_types = _canonical_layer_types()
+    config = _FakeQwen35Config(layer_types)
+    tokenizer = _FakeTokenizer()
+    model = _FakeQwen35Model(layer_types)
+
+    class ConfigAuto(_FakeAutoClass):
+        result = config
+
+    class TokenizerAuto(_FakeAutoClass):
+        result = tokenizer
+
+    class ModelAuto(_FakeAutoClass):
+        result = model
+
+    loaded = probe.load_official_reference(
+        Path("/immutable/model"),
+        requested_dtype="float32",
+        auto_config=ConfigAuto,
+        auto_tokenizer=TokenizerAuto,
+        auto_model=ModelAuto,
+    )
+    assert loaded["requested_model_dtype"] == "float32"
+    assert ModelAuto.calls[-1][1]["torch_dtype"] is torch.float32
+
+
 class _FakeCuda:
     def __init__(self):
         self.synchronize_calls = 0
@@ -486,6 +512,85 @@ def test_reference_modes_emit_comparable_step_records():
         == record["full_logit_sha256"]
         for record in cached["logit_records"]
     )
+
+
+def test_logit_record_contains_independent_decision_evidence():
+    actual = torch.linspace(-2.0, 2.0, 32, dtype=torch.float32)
+    oracle = actual.clone()
+    actual[7] = 4.0
+    actual[9] = 3.0
+    oracle[7] = 3.75
+    oracle[9] = 2.75
+    record = probe._logit_record(
+        logits=actual,
+        oracle_logits=oracle,
+        request_id="request-0",
+        request_generation=0,
+        step_index=1,
+        sequence_length=18,
+        comparison_policy="bf16_decision_preserving",
+    )
+    assert record["actual_winner_token_id"] == 7
+    assert record["oracle_winner_token_id"] == 7
+    assert record["actual_runner_up_token_id"] == 9
+    assert record["oracle_runner_up_token_id"] == 9
+    assert record["actual_winner_margin"] == 1.0
+    assert record["oracle_winner_margin"] == 1.0
+    assert record["topk_token_ids"] == record["actual_topk_token_ids"]
+    assert record["topk_logits"] == record["actual_topk_logits"]
+    assert set(record["abs_diff_percentiles"]) == {
+        "p50",
+        "p95",
+        "p99",
+        "p99_9",
+    }
+
+
+def test_logit_record_rejects_winner_tie():
+    actual = torch.zeros(32)
+    oracle = torch.zeros(32)
+    actual[3] = actual[4] = 2.0
+    oracle[3] = 2.0
+    oracle[4] = 1.0
+    _expect_incomplete(
+        lambda: probe._logit_record(
+            logits=actual,
+            oracle_logits=oracle,
+            request_id="request-0",
+            request_generation=0,
+            step_index=0,
+            sequence_length=17,
+            comparison_policy="bf16_decision_preserving",
+        ),
+        "INCOMPLETE_REFERENCE_SEMANTICS",
+    )
+
+
+def test_fp32_summary_counts_only_values_outside_frozen_allclose():
+    oracle = torch.linspace(-1.0, 1.0, 32, dtype=torch.float32)
+    oracle[-1] = 4.0
+    oracle[-2] = 3.0
+    threshold = (
+        contract.FP32_ATOL
+        + contract.FP32_RTOL * oracle.abs()
+    )
+    inside = oracle + threshold * 0.5
+    outside = inside.clone()
+    outside[0] = oracle[0] + threshold[0] * 2.0
+
+    def make_record(actual):
+        return probe._logit_record(
+            logits=actual,
+            oracle_logits=oracle,
+            request_id="request-0",
+            request_generation=0,
+            step_index=0,
+            sequence_length=17,
+            comparison_policy="fp32_elementwise",
+        )
+
+    assert make_record(inside)["allclose_violation_count"] == 0
+    assert make_record(outside)["allclose_violation_count"] == 1
 
 
 def test_export_import_preserves_next_step_logits():
@@ -746,9 +851,10 @@ def test_load_official_reference_uses_local_read_only_arguments():
         {
             "local_files_only": True,
             "trust_remote_code": False,
-            "torch_dtype": "auto",
+            "torch_dtype": torch.bfloat16,
         },
     )]
+    assert loaded["requested_model_dtype"] == "bfloat16"
     assert model.to_calls == ["cuda:0"]
 
 
@@ -937,6 +1043,8 @@ def test_emit_raw_probe_artifacts_writes_exact_worker_schemas():
         "complete": True,
         "failure_kind": None,
         "failure_detail": None,
+        "execution_dtype": "bfloat16",
+        "comparison_policy": "bf16_decision_preserving",
     }
     with tempfile.TemporaryDirectory() as temporary:
         run_dir = Path(temporary)
@@ -978,7 +1086,7 @@ def test_reference_case_matrix_emits_every_frozen_case_exactly_once():
         result = _run_complete_reference_matrix(Path(temporary))
         expected_cases = contract.build_case_matrix()
         rows = result["case_rows"]
-        assert len(rows) == len(expected_cases) == 34
+        assert len(rows) == len(expected_cases) == 35
         assert [row["case_id"] for row in rows] == [
             case.case_id for case in expected_cases
         ]
@@ -988,6 +1096,93 @@ def test_reference_case_matrix_emits_every_frozen_case_exactly_once():
         )
         assert all(row["complete"] is True for row in rows)
         assert all(row["failure_kind"] is None for row in rows)
+
+
+def test_reference_case_matrix_routes_fp32_to_dedicated_factory():
+    calls = []
+
+    def bf16_factory():
+        calls.append("bfloat16")
+        return _FakeReferenceStateAdapter()
+
+    def fp32_factory():
+        calls.append("float32")
+        return _FakeReferenceStateAdapter()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        result = probe.run_reference_case_matrix(
+            adapter_factory=bf16_factory,
+            fp32_adapter_factory=fp32_factory,
+            architecture=probe.inspect_model(
+                model=_FakeQwen35Model(_canonical_layer_types()),
+                config=_FakeQwen35Config(_canonical_layer_types()),
+                tokenizer=_FakeTokenizer(),
+            ),
+            run_dir=Path(temporary),
+            contract_sha256=probe.contract_file_sha256(),
+            parameter_bytes=1234,
+            cuda_module=_FakeCuda(),
+        )
+    assert calls == ["bfloat16", "float32"]
+    control = next(
+        row
+        for row in result["case_rows"]
+        if row["case_id"] == contract.FP32_CONTROL_CASE_ID
+    )
+    assert control["execution_dtype"] == "float32"
+    assert control["comparison_policy"] == "fp32_elementwise"
+
+
+def test_dtype_profile_reconstructs_parameter_and_state_dtypes():
+    components = _synthetic_components()
+    components.extend([
+        dict(
+            components[0],
+            state_role="linear_recurrent_state",
+            dtype="float32",
+        ),
+        dict(
+            components[0],
+            state_role="full_attention_key",
+            dtype="bfloat16",
+        ),
+    ])
+    profile = probe._dtype_profile(
+        requested_model_dtype="bfloat16",
+        architecture={
+            "parameter_dtypes": {
+                "bfloat16": 100,
+                "float32": 10,
+            },
+        },
+        state_components=components,
+        logit_dtype="bfloat16",
+    )
+    assert profile == {
+        "requested_model_dtype": "bfloat16",
+        "dominant_parameter_dtype": "bfloat16",
+        "logit_dtype_before_comparison": "bfloat16",
+        "comparison_accumulator_dtype": "float32",
+        "recurrent_state_dtypes": ["float32"],
+        "kv_state_dtypes": ["bfloat16", "float32"],
+    }
+
+
+def test_architecture_identity_ignores_only_parameter_dtype_counts():
+    left = probe.inspect_model(
+        model=_FakeQwen35Model(_canonical_layer_types()),
+        config=_FakeQwen35Config(_canonical_layer_types()),
+        tokenizer=_FakeTokenizer(),
+    )
+    right = dict(left)
+    right["parameter_dtypes"] = {"float32": 5}
+    assert probe._architecture_identity(left) == (
+        probe._architecture_identity(right)
+    )
+    right["full_attention_interval"] = 8
+    assert probe._architecture_identity(left) != (
+        probe._architecture_identity(right)
+    )
 
 
 def test_reference_case_matrix_includes_before_prefill_state_snapshot():
@@ -1312,7 +1507,7 @@ def test_run_canonical_cli_writes_complete_raw_artifact_set_atomically():
             stdout=stdout,
         )
         assert exit_code == 0
-        assert json.loads(stdout.getvalue())["case_row_count"] == 34
+        assert json.loads(stdout.getvalue())["case_row_count"] == 35
         for filename in (
             "architecture.json",
             "case_rows.jsonl",
@@ -1327,7 +1522,7 @@ def test_run_canonical_cli_writes_complete_raw_artifact_set_atomically():
             json.loads(line)
             for line in (run_dir / "case_rows.jsonl").read_text().splitlines()
         ]
-        assert len(case_rows) == 34
+        assert len(case_rows) == 35
         assert all(
             set(row) == set(contract.CASE_ROW_FIELDS)
             for row in case_rows

@@ -210,6 +210,7 @@ def inspect_model(*, model, config, tokenizer):
 def load_official_reference(
     model_dir,
     *,
+    requested_dtype="bfloat16",
     auto_config=None,
     auto_tokenizer=None,
     auto_model=None,
@@ -233,6 +234,14 @@ def load_official_reference(
     model_path = Path(model_dir)
     if not model_path.is_absolute():
         _reference_incomplete("model_dir must be an absolute path")
+    dtype_by_name = {
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    if requested_dtype not in dtype_by_name:
+        _reference_incomplete(
+            f"unsupported requested model dtype: {requested_dtype}"
+        )
     try:
         config = auto_config.from_pretrained(
             model_path,
@@ -249,7 +258,7 @@ def load_official_reference(
                 model_path,
                 local_files_only=True,
                 trust_remote_code=False,
-                torch_dtype="auto",
+                torch_dtype=dtype_by_name[requested_dtype],
             )
             model = model.to("cuda:0")
     except (OSError, TypeError, ValueError, RuntimeError) as exc:
@@ -267,11 +276,14 @@ def load_official_reference(
         "tokenizer": tokenizer,
         "model": model,
         "architecture": architecture,
+        "requested_model_dtype": requested_dtype,
         "adapter": ReferenceStateAdapter(
             model=model,
             layer_schedule=architecture["layer_schedule"],
             vocab_size=architecture["tokenizer_vocab_size"],
             device="cuda:0",
+            requested_model_dtype=requested_dtype,
+            parameter_dtypes=architecture["parameter_dtypes"],
         ),
     }
 
@@ -328,6 +340,14 @@ def require_canonical_architecture(architecture):
     if mismatches:
         _architecture_incomplete("; ".join(mismatches))
     return architecture
+
+
+def _architecture_identity(architecture):
+    return {
+        key: value
+        for key, value in architecture.items()
+        if key != "parameter_dtypes"
+    }
 
 
 def capture_memory_snapshot(
@@ -430,6 +450,8 @@ class ReferenceStateAdapter:
         layer_schedule,
         vocab_size,
         device="cuda:0",
+        requested_model_dtype=None,
+        parameter_dtypes=None,
     ):
         self.model = model
         self.layer_schedule = {
@@ -441,6 +463,16 @@ class ReferenceStateAdapter:
             _reference_incomplete("vocab_size must be greater than one")
         self.device = torch.device(device)
         self._cache_type = None
+        self.requested_model_dtype = (
+            None
+            if requested_model_dtype is None
+            else _dtype_name(requested_model_dtype)
+        )
+        self.parameter_dtypes = (
+            None
+            if parameter_dtypes is None
+            else dict(parameter_dtypes)
+        )
 
     def _hybrid_layer_state(self, state):
         layers = getattr(state, "layers", None)
@@ -769,6 +801,71 @@ def _logit_differences(actual, expected):
     }
 
 
+def _ranked_topk(logits):
+    value = _canonical_logits(logits)
+    if value.numel() < contract.DECISION_TOPK:
+        _reference_incomplete(
+            "reference vocabulary is smaller than DECISION_TOPK"
+        )
+    top_values, top_indices = torch.topk(
+        value,
+        k=contract.DECISION_TOPK,
+    )
+    token_ids = [int(token_id) for token_id in top_indices.tolist()]
+    values = [float(logit) for logit in top_values.tolist()]
+    try:
+        contract.validate_ranked_topk(token_ids, values)
+    except ValueError as exc:
+        raise IncompleteRun(
+            "INCOMPLETE_REFERENCE_SEMANTICS",
+            f"invalid winner evidence: {exc}",
+        ) from exc
+    return token_ids, values
+
+
+def _comparison_metrics(actual, oracle):
+    actual_value = _canonical_logits(actual)
+    oracle_value = _canonical_logits(oracle)
+    if actual_value.shape != oracle_value.shape:
+        _reference_incomplete(
+            "reference logit shapes differ: "
+            f"{tuple(actual_value.shape)} != {tuple(oracle_value.shape)}"
+        )
+    absolute = (actual_value - oracle_value).abs()
+    threshold = (
+        contract.FP32_ATOL
+        + contract.FP32_RTOL * oracle_value.abs()
+    )
+    scaled = absolute / threshold.clamp_min(
+        torch.finfo(torch.float32).tiny
+    )
+    quantiles = torch.quantile(
+        absolute,
+        torch.tensor(
+            [0.5, 0.95, 0.99, 0.999],
+            dtype=torch.float32,
+        ),
+    )
+    cosine = torch.nn.functional.cosine_similarity(
+        actual_value.reshape(1, -1),
+        oracle_value.reshape(1, -1),
+    )
+    return {
+        "abs_diff_percentiles": {
+            name: float(value)
+            for name, value in zip(
+                contract.ABS_DIFF_PERCENTILE_FIELDS,
+                quantiles.tolist(),
+            )
+        },
+        "cosine_similarity": float(cosine.item()),
+        "allclose_violation_count": int(
+            (absolute > threshold).sum().item()
+        ),
+        "max_allclose_scaled_error": float(scaled.max().item()),
+    }
+
+
 def _logit_record(
     *,
     logits,
@@ -777,31 +874,74 @@ def _logit_record(
     request_generation,
     step_index,
     sequence_length,
+    comparison_policy="bf16_decision_preserving",
 ):
     value = _canonical_logits(logits)
-    top_count = min(20, int(value.numel()))
-    top_values, top_indices = torch.topk(value, k=top_count)
+    oracle_value = _canonical_logits(oracle_logits)
+    actual_ids, actual_logits = _ranked_topk(value)
+    oracle_ids, oracle_logits_values = _ranked_topk(oracle_value)
+    actual_winner = contract.winner_margin(actual_ids, actual_logits)
+    oracle_winner = contract.winner_margin(
+        oracle_ids,
+        oracle_logits_values,
+    )
     differences = _logit_differences(value, oracle_logits)
+    comparison = _comparison_metrics(value, oracle_value)
+    intersection_size = len(set(actual_ids).intersection(oracle_ids))
     return {
         "request_id": request_id,
         "request_generation": int(request_generation),
         "step_index": int(step_index),
         "full_logit_sha256": _logit_sha256(value),
-        "topk_token_ids": [
-            int(token_id) for token_id in top_indices.tolist()
-        ],
-        "topk_logits": [
-            float(logit) for logit in top_values.tolist()
-        ],
+        "topk_token_ids": actual_ids,
+        "topk_logits": actual_logits,
         **differences,
         "sequence_length": int(sequence_length),
         "position_metadata": {
             "last_position": int(sequence_length) - 1,
             "actual_greedy_token_id": _greedy_token(value),
-            "oracle_greedy_token_id": _greedy_token(oracle_logits),
+            "oracle_greedy_token_id": _greedy_token(oracle_value),
             "actual_full_logit_sha256": _logit_sha256(value),
-            "oracle_full_logit_sha256": _logit_sha256(oracle_logits),
+            "oracle_full_logit_sha256": _logit_sha256(oracle_value),
+            "comparison_policy": comparison_policy,
+            "actual_logit_dtype": _dtype_name(logits.dtype),
+            "oracle_logit_dtype": _dtype_name(oracle_logits.dtype),
         },
+        "actual_topk_token_ids": actual_ids,
+        "actual_topk_logits": actual_logits,
+        "oracle_topk_token_ids": oracle_ids,
+        "oracle_topk_logits": oracle_logits_values,
+        "topk_intersection_size": intersection_size,
+        "oracle_topk_recall": (
+            intersection_size / contract.DECISION_TOPK
+        ),
+        "actual_winner_token_id": actual_winner["winner_token_id"],
+        "oracle_winner_token_id": oracle_winner["winner_token_id"],
+        "actual_runner_up_token_id": (
+            actual_winner["runner_up_token_id"]
+        ),
+        "oracle_runner_up_token_id": (
+            oracle_winner["runner_up_token_id"]
+        ),
+        "actual_winner_logit": actual_winner["winner_logit"],
+        "oracle_winner_logit": oracle_winner["winner_logit"],
+        "actual_runner_up_logit": actual_winner["runner_up_logit"],
+        "oracle_runner_up_logit": oracle_winner["runner_up_logit"],
+        "actual_winner_margin": actual_winner["winner_margin"],
+        "oracle_winner_margin": oracle_winner["winner_margin"],
+        "winner_logit_abs_diff": abs(
+            actual_winner["winner_logit"]
+            - oracle_winner["winner_logit"]
+        ),
+        "runner_up_logit_abs_diff": abs(
+            actual_winner["runner_up_logit"]
+            - oracle_winner["runner_up_logit"]
+        ),
+        "winner_margin_abs_diff": abs(
+            actual_winner["winner_margin"]
+            - oracle_winner["winner_margin"]
+        ),
+        **comparison,
     }
 
 
@@ -843,6 +983,7 @@ def run_one_shot_oracle(
     decode_steps,
     request_id="request-0",
     request_generation=0,
+    comparison_policy="bf16_decision_preserving",
 ):
     tokens = [int(token_id) for token_id in token_ids]
     decoded = []
@@ -856,6 +997,7 @@ def run_one_shot_oracle(
             request_generation=request_generation,
             step_index=step_index,
             sequence_length=len(tokens),
+            comparison_policy=comparison_policy,
         ))
         token_id = _greedy_token(logits)
         decoded.append(token_id)
@@ -877,6 +1019,7 @@ def run_cached_decode(
     request_id="request-0",
     request_generation=0,
     state_observer=None,
+    comparison_policy="bf16_decision_preserving",
 ):
     prompt = tuple(int(token_id) for token_id in token_ids)
     input_ids = torch.tensor([prompt], dtype=torch.long)
@@ -910,6 +1053,7 @@ def run_cached_decode(
             request_generation=request_generation,
             step_index=step_index,
             sequence_length=sequence_length,
+            comparison_policy=comparison_policy,
         ))
         token_id = _greedy_token(logits)
         decoded.append(token_id)
@@ -954,6 +1098,7 @@ def run_chunked_prefill_decode(
     request_id="request-0",
     request_generation=0,
     state_observer=None,
+    comparison_policy="bf16_decision_preserving",
 ):
     prompt = tuple(int(token_id) for token_id in token_ids)
     schedule = tuple(int(chunk) for chunk in chunk_schedule)
@@ -1002,6 +1147,7 @@ def run_chunked_prefill_decode(
             request_generation=request_generation,
             step_index=step_index,
             sequence_length=sequence_length,
+            comparison_policy=comparison_policy,
         ))
         token_id = _greedy_token(logits)
         decoded.append(token_id)
@@ -1090,6 +1236,7 @@ def run_interleaved_requests(
     decode_steps=2,
     state_observer=None,
     perform_slot_reuse=True,
+    comparison_policy="bf16_decision_preserving",
 ):
     request_ids = tuple(sorted(request_token_ids))
     if len(request_ids) != 3:
@@ -1162,6 +1309,7 @@ def run_interleaved_requests(
             request_generation=generation,
             step_index=step_index,
             sequence_length=len(sequences[request_id]),
+            comparison_policy=comparison_policy,
         ))
         token_id = _greedy_token(logits)
         decoded.append(token_id)
@@ -1376,6 +1524,60 @@ def classify_state_role(
 def _dtype_name(dtype):
     name = str(dtype)
     return name.removeprefix("torch.")
+
+
+def _dtype_profile(
+    *,
+    requested_model_dtype,
+    architecture,
+    state_components,
+    logit_dtype,
+):
+    parameter_dtypes = architecture.get("parameter_dtypes")
+    if not isinstance(parameter_dtypes, Mapping) or not parameter_dtypes:
+        _reference_incomplete("parameter dtype inventory is missing")
+    normalized_counts = {}
+    for dtype, count in parameter_dtypes.items():
+        name = _dtype_name(dtype)
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count <= 0
+        ):
+            _reference_incomplete("parameter dtype counts must be positive")
+        normalized_counts[name] = normalized_counts.get(name, 0) + count
+    dominant = max(
+        sorted(normalized_counts),
+        key=lambda name: normalized_counts[name],
+    )
+    recurrent = sorted({
+        row["dtype"]
+        for row in state_components
+        if row["state_role"] in {
+            "linear_recurrent_state",
+            "linear_convolution_state",
+        }
+    })
+    kv = sorted({
+        row["dtype"]
+        for row in state_components
+        if row["state_role"] in {
+            "full_attention_key",
+            "full_attention_value",
+        }
+    })
+    if not recurrent or not kv:
+        _reference_incomplete(
+            "dtype profile requires recurrent and KV state dtypes"
+        )
+    return {
+        "requested_model_dtype": _dtype_name(requested_model_dtype),
+        "dominant_parameter_dtype": dominant,
+        "logit_dtype_before_comparison": _dtype_name(logit_dtype),
+        "comparison_accumulator_dtype": "float32",
+        "recurrent_state_dtypes": recurrent,
+        "kv_state_dtypes": kv,
+    }
 
 
 def _tensor_content_sha256(tensor):
@@ -1618,6 +1820,7 @@ def emit_raw_probe_artifacts(
     parameter_bytes,
     max_memory_allocated,
     max_memory_reserved,
+    dtype_profiles=None,
 ):
     destination = Path(run_dir)
     components = list(state_components)
@@ -1642,6 +1845,7 @@ def emit_raw_probe_artifacts(
         "max_memory_allocated": int(max_memory_allocated),
         "max_memory_reserved": int(max_memory_reserved),
         "non_state_peak_allocator_observation_bytes": allocator_observation,
+        "dtype_profiles": dict(dtype_profiles or {}),
         "claim_boundary": (
             "Allocator observations are not exact state bytes and this "
             "worker summary is not an authoritative classification."
@@ -1968,6 +2172,7 @@ def _run_slot_reuse_case(case, adapter, observer):
             request_generation=generations[request_id],
             step_index=step_index,
             sequence_length=len(tokens),
+            comparison_policy=case.comparison_policy,
         ))
         token_id = _greedy_token(logits)
         decoded.append(token_id)
@@ -2066,6 +2271,7 @@ def _run_reference_case(case, adapter, observer):
     elif case.execution_mode in {
         "cached_repeatability",
         "one_shot_vs_cached",
+        "cached_vs_one_shot",
         "state_memory_ledger",
     }:
         tokens = _case_token_ids(
@@ -2084,6 +2290,7 @@ def _run_reference_case(case, adapter, observer):
             token_ids=tokens,
             decode_steps=case.decode_steps,
             state_observer=observe,
+            comparison_policy=case.comparison_policy,
         )
         decoded = result["decoded_token_ids"]
         records = result["logit_records"]
@@ -2105,6 +2312,7 @@ def _run_reference_case(case, adapter, observer):
             chunk_schedule=case.chunk_schedule,
             decode_steps=case.decode_steps,
             state_observer=observe,
+            comparison_policy=case.comparison_policy,
         )
         decoded = result["decoded_token_ids"]
         records = result["logit_records"]
@@ -2125,6 +2333,7 @@ def _run_reference_case(case, adapter, observer):
             token_ids=tokens,
             decode_steps=case.decode_steps,
             state_observer=observe,
+            comparison_policy=case.comparison_policy,
         )
         continuation = run_export_import_continuation(
             adapter,
@@ -2169,6 +2378,7 @@ def _run_reference_case(case, adapter, observer):
             decode_steps=case.decode_steps,
             state_observer=observe,
             perform_slot_reuse=False,
+            comparison_policy=case.comparison_policy,
         )
         if (
             result["inactive_request_hash_changes"]
@@ -2221,6 +2431,8 @@ def _run_reference_case(case, adapter, observer):
         "complete": True,
         "failure_kind": None,
         "failure_detail": None,
+        "execution_dtype": case.execution_dtype,
+        "comparison_policy": case.comparison_policy,
     }
     return row
 
@@ -2228,6 +2440,7 @@ def _run_reference_case(case, adapter, observer):
 def run_reference_case_matrix(
     *,
     adapter_factory,
+    fp32_adapter_factory=None,
     architecture,
     run_dir,
     contract_sha256,
@@ -2236,29 +2449,110 @@ def run_reference_case_matrix(
 ):
     _require_contract_sha256(contract_sha256)
     require_canonical_architecture(architecture)
-    adapter = adapter_factory()
     cuda_api = cuda_module or torch.cuda
-    observer = _StateEvidenceCollector(
-        adapter=adapter,
-        layer_schedule=architecture["layer_schedule"],
-        cuda=cuda_api,
-    )
-    case_rows = []
+    cases = contract.build_case_matrix()
+    case_rows_by_id = {}
     max_memory_allocated = 0
     max_memory_reserved = 0
-    for case in contract.build_case_matrix():
-        if cuda_api.is_available():
-            cuda_api.reset_peak_memory_stats()
-        case_rows.append(_run_reference_case(case, adapter, observer))
-        if cuda_api.is_available():
-            max_memory_allocated = max(
-                max_memory_allocated,
-                int(cuda_api.max_memory_allocated()),
+    observer = None
+    dtype_profiles = {}
+
+    def run_cases(adapter, selected):
+        nonlocal observer
+        nonlocal max_memory_allocated
+        nonlocal max_memory_reserved
+        if observer is None:
+            observer = _StateEvidenceCollector(
+                adapter=adapter,
+                layer_schedule=architecture["layer_schedule"],
+                cuda=cuda_api,
             )
-            max_memory_reserved = max(
-                max_memory_reserved,
-                int(cuda_api.max_memory_reserved()),
+        else:
+            observer.adapter = adapter
+        component_start = len(observer.state_components)
+        selected_rows = []
+        for case in selected:
+            if cuda_api.is_available():
+                cuda_api.reset_peak_memory_stats()
+            row = _run_reference_case(
+                case,
+                adapter,
+                observer,
             )
+            case_rows_by_id[case.case_id] = row
+            selected_rows.append(row)
+            if cuda_api.is_available():
+                max_memory_allocated = max(
+                    max_memory_allocated,
+                    int(cuda_api.max_memory_allocated()),
+                )
+                max_memory_reserved = max(
+                    max_memory_reserved,
+                    int(cuda_api.max_memory_reserved()),
+                )
+        requested_dtype = getattr(
+            adapter,
+            "requested_model_dtype",
+            None,
+        )
+        parameter_dtypes = getattr(adapter, "parameter_dtypes", None)
+        records = [
+            record
+            for row in selected_rows
+            for record in row["logit_records"]
+        ]
+        if requested_dtype is not None and parameter_dtypes and records:
+            dtype_profiles[requested_dtype] = _dtype_profile(
+                requested_model_dtype=requested_dtype,
+                architecture={"parameter_dtypes": parameter_dtypes},
+                state_components=observer.state_components[
+                    component_start:
+                ],
+                logit_dtype=records[0]["position_metadata"][
+                    "actual_logit_dtype"
+                ],
+            )
+
+    adapter = adapter_factory()
+    run_cases(
+        adapter,
+        [
+            case
+            for case in cases
+            if case.execution_dtype != "float32"
+        ],
+    )
+    if observer is not None:
+        observer.adapter = None
+    del adapter
+    gc.collect()
+    if cuda_api.is_available() and hasattr(cuda_api, "empty_cache"):
+        cuda_api.empty_cache()
+    fp32_factory = fp32_adapter_factory or adapter_factory
+    fp32_adapter = fp32_factory()
+    run_cases(
+        fp32_adapter,
+        [
+            case
+            for case in cases
+            if case.execution_dtype == "float32"
+        ],
+    )
+    if observer is not None:
+        observer.adapter = None
+    del fp32_adapter
+    gc.collect()
+    if cuda_api.is_available() and hasattr(cuda_api, "empty_cache"):
+        cuda_api.empty_cache()
+    case_rows = [
+        case_rows_by_id[case.case_id]
+        for case in cases
+    ]
+    if observer is None:
+        raise IncompleteRun(
+            "INCOMPLETE_REFERENCE_SEMANTICS",
+            "reference matrix emitted no cases",
+        )
     write_json_atomic(Path(run_dir) / "architecture.json", architecture)
     summary = emit_raw_probe_artifacts(
         run_dir=run_dir,
@@ -2270,6 +2564,7 @@ def run_reference_case_matrix(
         parameter_bytes=parameter_bytes,
         max_memory_allocated=max_memory_allocated,
         max_memory_reserved=max_memory_reserved,
+        dtype_profiles=dtype_profiles,
     )
     return {
         "case_rows": case_rows,
@@ -2277,6 +2572,7 @@ def run_reference_case_matrix(
         "state_components": observer.state_components,
         "memory_snapshots": observer.memory_snapshots,
         "summary": summary,
+        "dtype_profiles": dtype_profiles,
     }
 
 
@@ -2364,6 +2660,8 @@ def main(
     if arguments.command == "inspect-model":
         output.write(json.dumps(architecture, sort_keys=True) + "\n")
         return 0
+    parameter_bytes = _parameter_bytes(model)
+    fp32_adapter_factory = None
     if adapter_factory is None:
         if loaded_adapter is None:
             loaded_adapter = ReferenceStateAdapter(
@@ -2371,14 +2669,65 @@ def main(
                 layer_schedule=architecture["layer_schedule"],
                 vocab_size=architecture["tokenizer_vocab_size"],
                 device="cuda:0",
+                requested_model_dtype="bfloat16",
+                parameter_dtypes=architecture["parameter_dtypes"],
             )
-        adapter_factory = lambda: loaded_adapter
+        adapter_holder = [loaded_adapter]
+
+        def adapter_factory():
+            if not adapter_holder:
+                raise IncompleteRun(
+                    "INCOMPLETE_REFERENCE_SEMANTICS",
+                    "BF16 adapter factory was reused",
+                )
+            return adapter_holder.pop()
+
+        def fp32_adapter_factory():
+            fp32_loaded = reference_loader(
+                Path(arguments.model_dir),
+                requested_dtype="float32",
+            )
+            (
+                _fp32_config,
+                _fp32_tokenizer,
+                _fp32_model,
+                fp32_architecture,
+                fp32_adapter,
+            ) = _loaded_reference_parts(fp32_loaded)
+            fp32_architecture = fp32_architecture or inspect_model(
+                model=_fp32_model,
+                config=_fp32_config,
+                tokenizer=_fp32_tokenizer,
+            )
+            if (
+                _architecture_identity(fp32_architecture)
+                != _architecture_identity(architecture)
+            ):
+                raise IncompleteRun(
+                    "INCOMPLETE_ARCHITECTURE",
+                    "FP32 control architecture differs from BF16",
+                )
+            if fp32_adapter is None:
+                fp32_adapter = ReferenceStateAdapter(
+                    model=_fp32_model,
+                    layer_schedule=architecture["layer_schedule"],
+                    vocab_size=architecture["tokenizer_vocab_size"],
+                    device="cuda:0",
+                    requested_model_dtype="float32",
+                    parameter_dtypes=architecture["parameter_dtypes"],
+                )
+            return fp32_adapter
+        loaded_adapter = None
+        loaded = None
+        model = None
+        gc.collect()
     result = run_reference_case_matrix(
         adapter_factory=adapter_factory,
+        fp32_adapter_factory=fp32_adapter_factory,
         architecture=architecture,
         run_dir=Path(arguments.run_dir),
         contract_sha256=arguments.contract_sha256,
-        parameter_bytes=_parameter_bytes(model),
+        parameter_bytes=parameter_bytes,
         cuda_module=cuda_api,
     )
     parameter_bytes = result["summary"]["parameter_bytes"]
@@ -2417,6 +2766,7 @@ def main(
             int(result["summary"]["max_memory_reserved"]),
             int(cuda_api.max_memory_reserved()),
         ),
+        dtype_profiles=result["dtype_profiles"],
     )
     output.write(json.dumps(result["summary"], sort_keys=True) + "\n")
     return 0
