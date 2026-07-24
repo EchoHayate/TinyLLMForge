@@ -877,6 +877,7 @@ def _comparison_metrics(actual, oracle):
         actual_value.reshape(1, -1),
         oracle_value.reshape(1, -1),
     )
+    cosine = cosine.clamp(min=-1.0, max=1.0)
     return {
         "abs_diff_percentiles": {
             name: float(value)

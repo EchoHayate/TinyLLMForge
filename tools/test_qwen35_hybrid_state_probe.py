@@ -674,6 +674,18 @@ def test_fp32_summary_counts_only_values_outside_frozen_allclose():
     assert make_record(outside)["allclose_violation_count"] == 1
 
 
+def test_comparison_metrics_clamps_float32_cosine_to_definition_domain():
+    generator = torch.Generator().manual_seed(17)
+    value = torch.randn(32, generator=generator, dtype=torch.float32)
+    raw_cosine = torch.nn.functional.cosine_similarity(
+        value.reshape(1, -1),
+        value.reshape(1, -1),
+    )
+    assert raw_cosine.item() > 1.0
+    metrics = probe._comparison_metrics(value, value.clone())
+    assert metrics["cosine_similarity"] == 1.0
+
+
 def test_export_import_preserves_next_step_logits():
     result = probe.run_export_import_continuation(
         _FakeReferenceStateAdapter(),
