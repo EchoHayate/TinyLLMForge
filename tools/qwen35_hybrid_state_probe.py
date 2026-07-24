@@ -207,6 +207,29 @@ def inspect_model(*, model, config, tokenizer):
     return result
 
 
+def _require_parameter_dtype(architecture, requested_dtype):
+    parameter_dtypes = architecture.get("parameter_dtypes")
+    if not isinstance(parameter_dtypes, Mapping) or not parameter_dtypes:
+        raise IncompleteRun(
+            "INCOMPLETE_MODEL_LOAD",
+            "loaded model parameter dtype inventory is missing",
+        )
+    observed = {
+        _dtype_name(dtype)
+        for dtype, count in parameter_dtypes.items()
+        if isinstance(count, int)
+        and not isinstance(count, bool)
+        and count > 0
+    }
+    expected = _dtype_name(requested_dtype)
+    if observed != {expected}:
+        raise IncompleteRun(
+            "INCOMPLETE_MODEL_LOAD",
+            "loaded model parameter dtypes do not match requested dtype: "
+            f"requested {expected}, observed {sorted(observed)}",
+        )
+
+
 def load_official_reference(
     model_dir,
     *,
@@ -260,7 +283,10 @@ def load_official_reference(
                 trust_remote_code=False,
                 dtype=dtype_by_name[requested_dtype],
             )
-            model = model.to("cuda:0")
+            model = model.to(
+                device="cuda:0",
+                dtype=dtype_by_name[requested_dtype],
+            )
     except (OSError, TypeError, ValueError, RuntimeError) as exc:
         raise IncompleteRun(
             "INCOMPLETE_MODEL_LOAD",
@@ -271,6 +297,7 @@ def load_official_reference(
         config=config,
         tokenizer=tokenizer,
     )
+    _require_parameter_dtype(architecture, requested_dtype)
     return {
         "config": config,
         "tokenizer": tokenizer,

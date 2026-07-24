@@ -87,16 +87,28 @@ class _FakeBackbone:
 
 
 class _FakeQwen35Model:
-    def __init__(self, layer_types):
+    def __init__(self, layer_types, *, apply_dtype_conversion=True):
         self.model = _FakeBackbone(layer_types)
         self.to_calls = []
+        self.apply_dtype_conversion = apply_dtype_conversion
+        self._parameters = {
+            "weight": torch.zeros((2, 2), dtype=torch.float16),
+            "state_scale": torch.zeros((1,), dtype=torch.float32),
+        }
 
     def named_parameters(self):
-        yield "weight", torch.zeros((2, 2), dtype=torch.float16)
-        yield "state_scale", torch.zeros((1,), dtype=torch.float32)
+        yield from self._parameters.items()
 
-    def to(self, device):
-        self.to_calls.append(device)
+    def to(self, device=None, dtype=None):
+        self.to_calls.append({
+            "device": device,
+            "dtype": dtype,
+        })
+        if dtype is not None and self.apply_dtype_conversion:
+            self._parameters = {
+                name: parameter.to(dtype=dtype)
+                for name, parameter in self._parameters.items()
+            }
         return self
 
 
@@ -362,6 +374,74 @@ def test_load_official_reference_accepts_frozen_requested_dtype():
     assert loaded["requested_model_dtype"] == "float32"
     assert ModelAuto.calls[-1][1]["dtype"] is torch.float32
     assert "torch_dtype" not in ModelAuto.calls[-1][1]
+    assert model.to_calls == [{
+        "device": "cuda:0",
+        "dtype": torch.float32,
+    }]
+    assert loaded["architecture"]["parameter_dtypes"] == {
+        "float32": 5,
+    }
+
+
+def test_load_official_reference_explicitly_converts_bfloat16_parameters():
+    layer_types = _canonical_layer_types()
+    config = _FakeQwen35Config(layer_types)
+    tokenizer = _FakeTokenizer()
+    model = _FakeQwen35Model(layer_types)
+
+    class ConfigAuto(_FakeAutoClass):
+        result = config
+
+    class TokenizerAuto(_FakeAutoClass):
+        result = tokenizer
+
+    class ModelAuto(_FakeAutoClass):
+        result = model
+
+    loaded = probe.load_official_reference(
+        Path("/immutable/model"),
+        requested_dtype="bfloat16",
+        auto_config=ConfigAuto,
+        auto_tokenizer=TokenizerAuto,
+        auto_model=ModelAuto,
+    )
+    assert model.to_calls == [{
+        "device": "cuda:0",
+        "dtype": torch.bfloat16,
+    }]
+    assert loaded["architecture"]["parameter_dtypes"] == {
+        "bfloat16": 5,
+    }
+
+
+def test_load_official_reference_fails_closed_when_conversion_is_ignored():
+    layer_types = _canonical_layer_types()
+    config = _FakeQwen35Config(layer_types)
+    tokenizer = _FakeTokenizer()
+    model = _FakeQwen35Model(
+        layer_types,
+        apply_dtype_conversion=False,
+    )
+
+    class ConfigAuto(_FakeAutoClass):
+        result = config
+
+    class TokenizerAuto(_FakeAutoClass):
+        result = tokenizer
+
+    class ModelAuto(_FakeAutoClass):
+        result = model
+
+    _expect_incomplete(
+        lambda: probe.load_official_reference(
+            Path("/immutable/model"),
+            requested_dtype="float32",
+            auto_config=ConfigAuto,
+            auto_tokenizer=TokenizerAuto,
+            auto_model=ModelAuto,
+        ),
+        "INCOMPLETE_MODEL_LOAD",
+    )
 
 
 class _FakeCuda:
@@ -856,7 +936,10 @@ def test_load_official_reference_uses_local_read_only_arguments():
         },
     )]
     assert loaded["requested_model_dtype"] == "bfloat16"
-    assert model.to_calls == ["cuda:0"]
+    assert model.to_calls == [{
+        "device": "cuda:0",
+        "dtype": torch.bfloat16,
+    }]
 
 
 def test_inspect_model_reads_hybrid_fields_from_nested_text_config():
