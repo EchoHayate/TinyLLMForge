@@ -156,6 +156,7 @@ not compensate for a missing Phase 1 promotion gate.
 | MTP source | `PARTIAL` | Qwen3.5 native MTP passes TP1/4K, TP4/4K, and TP4/16K target-KV offload | TP4/32K batch-1 parity failed; no controlled native-MTP performance authority |
 | MTP target-forward reduction and TPOT benefit | `NOT_ESTABLISHED_AS_A_CONTROLLED_BENEFIT` | Native MTP authorities retain speculative-side first-target and verifier call counts, high acceptance in TP4/4K, exact parity in passing cells, and no accepted-prefix replay | Baseline native-MTP cells retain normalized zero placeholders rather than measured ordinary-decode forward counts; no native-MTP authority records controlled TTFT/TPOT/throughput timing, so generic n-gram gains cannot be transferred to MTP |
 | Independent learned draft source | `PARTIAL` | Qwen3 target/draft TP1 Proposal-KV offload and TP4 direct correctness authorities exist | TP4 has no offload, long-context, or positive performance authority; only one learned target/draft structure |
+| Independent learned draft exact-shape CUDA Graph | `INCONCLUSIVE_ENVIRONMENT` | The current tree contains a default-off exact TP4/B4/Q4 greedy dense-direct graph path, private capture scratch, shared eager/graph registration, TP failure convergence, source-bound gate/verifier tooling, and focused local regression coverage | No four clean remote GPUs or valid retained Python/model environment were available, so no loaded capture/replay, real eager/graph parity, or controlled performance result exists |
 | Model-free source | `ACHIEVED` within recorded scopes | Generic n-gram authorities cover Qwen3 and Qwen3.5 | SAM remains local/limited and is not needed to rescue the n-gram evidence |
 | Two materially different target structures | `PARTIAL_WITH_ASYMMETRIC_PROVENANCE` | Retained generic n-gram authorities identify Qwen3-0.6B and Qwen3.5 as separate checkpoint families; the Qwen3.5 authority self-contains `Qwen3_5ForConditionalGeneration`, `model_type=qwen3_5`, and the 18-linear/6-full-attention hybrid layout | The Qwen3 authority retains only the Qwen3-0.6B path/family label and model-manifest digest, without config, architecture/model-type receipt, model implementation, or per-file checkpoint manifest; its pure-Transformer structure cannot be independently verified from the bundle |
 | TP1 and TP4 | `ACHIEVED` for generic n-gram; `PARTIAL` for learned sources | Generic matrix includes both; native MTP and independent draft each have TP1/TP4 evidence in narrower scopes | No one learned path closes the full topology/context/performance matrix |
@@ -499,6 +500,29 @@ mid-flight cancellation, mixed finished/active states, or a complete learned
 4K/16K/32K performance matrix.
 
 ## Prompt-to-Artifact Checklist
+
+### Independent Qwen3 draft exact-shape CUDA Graph
+
+The current tree adds a second CUDA Graph family distinct from the
+speculative-verifier Variable-Q graph below. This path captures independent
+Qwen3 draft proposal generation, not target-side verification.
+
+| Explicit gate | Artifact | Raw evidence | Verdict |
+| --- | --- | --- | --- |
+| Default-off TP4/B4/Q4 greedy dense-direct admission | `tinyvllm/config.py`, `tinyvllm/engine/model_runner.py`, config/integration tests | Exact allowlists and fail-closed topology/offload checks | `ACHIEVED_LOCALLY` |
+| Two successful eager observations before capture | `tinyvllm/engine/autoregressive_draft_graph.py` | State-machine tests distinguish failed and successful eager observations | `ACHIEVED_LOCALLY` |
+| Private scratch capture and reverse rollback | `tinyvllm/engine/qwen3_draft_graph_scratch.py` | Ownership tests preserve live committed state and clear scratch transactions | `ACHIEVED_LOCALLY` |
+| Three-step GPU token chain with one final readback | `tinyvllm/engine/qwen3_draft_cuda_graph_backend.py` | Fake-torch tests cover three forwards, argmax/broadcast, and one `.tolist()` | `ACHIEVED_LOCALLY` |
+| Shared eager/graph proposal authority and finalization | `tinyvllm/engine/autoregressive_draft_executor.py` | Dispatch, logical digest, commit/abort, and TP convergence tests | `ACHIEVED_LOCALLY` |
+| Tamper-resistant source-bound controlled gate | `tools/autoregressive_draft_cuda_graph_contract.py`, gate/runner/verifier tools | Contract tests reject token, transaction, counter, source, order, memory, and aggregate tampering | `ACHIEVED_LOCALLY` |
+| Real TP4 eager/graph correctness and performance | `/tmp/autoregressive-draft-cuda-graph-preflight-20260817.json` | Read-only preflight found fewer than four clean GPUs and stopped before source upload | `INCONCLUSIVE_ENVIRONMENT` |
+
+Canonical focused audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-17-autoregressive-draft-cuda-graph-completion-audit.md
+```
 
 ### Generic n-gram coverage
 
@@ -1844,6 +1868,7 @@ artifact.
 | Future-window eviction/prefetch | `PARTIAL_WITH_EVICTION_HINT_ONLY` | Capacity-bounded future/cross-layer hints influence victim selection; current helpers do not stage future-only blocks early, and the historical 112-row canonical gate was source-bound `NO_GO` with exactly zero H2D/eviction improvement |
 | Prefix cache plus CPU-resident KV | `PARTIAL_WITH_LOCAL_CONTRACT_ONLY` | The local composition contract is established, but no loaded authority records ordinary prefix reuse plus CPU restore, real CUDA bytes, parity, or performance |
 | Variable-Q CUDA Graph | `PARTIAL` | Local exact-family contract plus legacy TP1/no-offload single-JSON evidence; no current exact-family PASS, source-closed authority, long-context run, or performance run, while TP4/offload/blockwise explicitly fall back to eager |
+| Independent Qwen3 draft exact-shape CUDA Graph | `INCONCLUSIVE_ENVIRONMENT` | Local exact TP4/B4/Q4 graph policy, backend, scratch ownership, executor integration, and source-bound gate contract are established; the remote preflight stopped before source upload because four clean GPUs and the prior Python/model environment were unavailable |
 | Verifier/sampling/KV-commit fusion | `MISSING` | Ordered phases exist, but no fused runtime/kernel or launch-count attribution |
 | TP collective overlap/fusion/ReduceScatter | `MISSING` | Current authorities use synchronous collectives; no optimization-specific artifact |
 
@@ -2273,6 +2298,53 @@ package boundary or canonical command-ack dataclass identity. It still does
 not execute real torch/CUDA kernels, loaded checkpoints, NCCL, TP4/32K,
 source-bound focused-H2D movement, or controlled performance measurements.
 
+## 2026-08-17 Independent Qwen3 Draft Exact-Shape CUDA Graph Reconciliation
+
+The current tree now contains a separate default-off CUDA Graph path for
+independent Qwen3 learned-draft proposal generation. It is intentionally
+narrower than the target-side Variable-Q verifier graph:
+
+```text
+TP=4
+batch=4
+Q=4
+sampling=greedy
+Proposal-KV=dense direct allocation
+Proposal-KV offload=false
+padding/rounding=forbidden
+```
+
+The implementation covers exact identity and capture budgets, two successful
+eager observations before capture, private scratch Proposal-KV transactions,
+three draft forward/argmax/broadcast steps with GPU-resident token chaining,
+one final host readback, shared eager/graph proposal registration, and TP-wide
+pre/post-replay convergence.
+
+Local focused verification establishes the dependency-light architecture and
+lifecycle contract. The source-bound gate requires exact eager/graph target,
+proposal, accepted-prefix, and transaction equality; zero live transactions;
+all-rank replay; no measured fallback/quarantine; positive median throughput;
+no median TPOT regression; and a positive paired-bootstrap lower bound.
+
+The read-only remote preflight found all eight GPUs occupied and fewer than
+four clean GPUs. The prior Python and model environment was also absent. It
+stopped before source upload, model loading, capture, correctness comparison,
+or performance measurement and did not alter any remote process.
+
+Strict classification:
+
+```text
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_SCOPE=TP4_B4_Q4_GREEDY_DENSE_DIRECT
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_DEFAULT=OFF
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_LOCAL_CONTRACT=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_REAL_CAPTURE_REPLAY=NOT_ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_REAL_CORRECTNESS_PARITY=NOT_ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_CONTROLLED_PERFORMANCE=NOT_ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_CLASSIFICATION=INCONCLUSIVE_ENVIRONMENT
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
 ## Final Classification
 
 ```text
@@ -2309,6 +2381,13 @@ CONTROLLED_NATIVE_MTP_PERFORMANCE=NOT_ESTABLISHED
 INDEPENDENT_QWEN3_DRAFT_TP1_PROPOSAL_KV_OFFLOAD=ESTABLISHED_IN_RECORDED_SCOPE
 INDEPENDENT_QWEN3_DRAFT_TP4_DIRECT_CORRECTNESS=ESTABLISHED_IN_RECORDED_SCOPE
 INDEPENDENT_QWEN3_DRAFT_TP4_PERFORMANCE=PILOT_ONLY_NEGATIVE
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_SCOPE=TP4_B4_Q4_GREEDY_DENSE_DIRECT
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_DEFAULT=OFF
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_LOCAL_CONTRACT=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_REAL_CAPTURE_REPLAY=NOT_ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_REAL_CORRECTNESS_PARITY=NOT_ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_CONTROLLED_PERFORMANCE=NOT_ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_CLASSIFICATION=INCONCLUSIVE_ENVIRONMENT
 INDEPENDENT_DRAFT_LONG_CONTEXT=NOT_ESTABLISHED
 SECOND_LEARNED_STRUCTURE=NOT_ESTABLISHED
 TWO_TARGET_CHECKPOINT_FAMILIES=RECORDED

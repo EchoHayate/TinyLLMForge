@@ -54,6 +54,13 @@ class AutoregressiveDraftDecodeRow:
 
 
 @dataclass(frozen=True)
+class AutoregressiveDraftGroupExecution:
+    transactions: tuple[ProposalKVTransaction, ...]
+    token_rows: tuple[tuple[int, ...], ...]
+    execution_mode: str
+
+
+@dataclass(frozen=True)
 class AutoregressiveDraftPendingPrompt:
     sequence_id: int
     sequence_epoch: int
@@ -129,6 +136,7 @@ class AutoregressiveDraftProposalExecutor:
         tensor_parallel_coordinator: (
             AutoregressiveDraftTensorParallelCoordinator | None
         ) = None,
+        graph_runner=None,
         clock=None,
     ):
         if not callable(getattr(backend, "prefill_batch", None)):
@@ -197,6 +205,24 @@ class AutoregressiveDraftProposalExecutor:
             if tensor_parallel_coordinator is None
             else tensor_parallel_coordinator
         )
+        if graph_runner is not None:
+            for method_name in (
+                "run",
+                "summary",
+                "bind_convergence",
+            ):
+                if not callable(
+                    getattr(
+                        graph_runner,
+                        method_name,
+                        None,
+                    )
+                ):
+                    raise ValueError(
+                        "graph runner must expose callable "
+                        f"{method_name}"
+                    )
+        self.graph_runner = graph_runner
         self._clock = time.perf_counter if clock is None else clock
         if not callable(self._clock):
             raise ValueError("clock must be callable")
@@ -215,6 +241,10 @@ class AutoregressiveDraftProposalExecutor:
                     "tensor parallel coordinator must expose "
                     f"callable {method_name}"
                 )
+        if self.graph_runner is not None:
+            self.graph_runner.bind_convergence(
+                self._converge_stage
+            )
         self._capabilities = DraftCapabilities(
             source_type="independent_draft_model",
             supports_batch=True,
@@ -1167,14 +1197,14 @@ class AutoregressiveDraftProposalExecutor:
             normalized.append(row)
         return tuple(normalized)
 
-    def _run_exact_q_group(
+    def _run_exact_q_group_eager(
         self,
         exact_q: int,
         indexed_rows: tuple[
             tuple[int, ModelRunnerProposalInput, int],
             ...,
         ],
-    ) -> tuple[DraftProposal, ...]:
+    ) -> AutoregressiveDraftGroupExecution:
         transactions = []
         proposal_tokens = []
         blockwise_allocator = (
@@ -1441,52 +1471,6 @@ class AutoregressiveDraftProposalExecutor:
                     readback_started_at,
                 )
 
-            materialize_started_at = self._clock()
-            proposals = []
-            materialized_rows = []
-            for (
-                transaction,
-                tokens,
-                indexed_row,
-            ) in zip(
-                transactions,
-                proposal_tokens,
-                indexed_rows,
-            ):
-                self.proposal_kv_cache.mark_materialized(
-                    transaction,
-                    exact_q - 1,
-                )
-                proposals.append(
-                    DraftProposal(
-                        sequence_id=transaction.sequence_id,
-                        token_ids=tuple(tokens),
-                        source_type=(
-                            self.capabilities.source_type
-                        ),
-                        metadata={
-                            "exact_q": exact_q,
-                            "staged_entry_count": exact_q - 1,
-                        },
-                        proposal_transaction_id=(
-                            transaction.transaction_id
-                        ),
-                    )
-                )
-                input_index, _, _ = indexed_row
-                materialized_rows.append({
-                    "batch_index": input_index,
-                    "sequence_id": transaction.sequence_id,
-                    "sequence_epoch": transaction.sequence_epoch,
-                    "exact_q": exact_q,
-                    "proposal_token_ids": tuple(tokens),
-                    "staged_entry_count": exact_q - 1,
-                    "logical_state": "materialized",
-                })
-            self._assert_logical_authority(
-                stage="proposal_materialized",
-                rows=tuple(materialized_rows),
-            )
         except BaseException:
             for transaction in reversed(transactions):
                 if transaction.state in (
@@ -1497,22 +1481,149 @@ class AutoregressiveDraftProposalExecutor:
                         transaction.transaction_id
                     )
             raise
+        return AutoregressiveDraftGroupExecution(
+            transactions=tuple(transactions),
+            token_rows=tuple(
+                tuple(tokens) for tokens in proposal_tokens
+            ),
+            execution_mode="eager",
+        )
 
-        registrations = tuple(
-            ProposalKVRegistration(
-                sequence_id=proposal.sequence_id,
-                sequence_epoch=(
-                    self._bootstrapped[
-                        proposal.sequence_id
-                    ].sequence_epoch
-                ),
-                proposal=proposal,
+    def _register_exact_q_group(
+        self,
+        exact_q: int,
+        indexed_rows: tuple[
+            tuple[int, ModelRunnerProposalInput, int],
+            ...,
+        ],
+        execution: AutoregressiveDraftGroupExecution,
+    ) -> tuple[DraftProposal, ...]:
+        if not isinstance(
+            execution,
+            AutoregressiveDraftGroupExecution,
+        ):
+            raise ValueError(
+                "exact-Q execution must return "
+                "AutoregressiveDraftGroupExecution"
             )
-            for proposal in proposals
-        )
-        registered = self.proposal_kv_lifecycle.register_batch(
-            registrations
-        )
+        if (
+            len(execution.transactions) != len(indexed_rows)
+            or len(execution.token_rows) != len(indexed_rows)
+        ):
+            raise ValueError(
+                "exact-Q execution result count must match rows"
+            )
+        if (
+            not isinstance(execution.execution_mode, str)
+            or not execution.execution_mode
+        ):
+            raise ValueError(
+                "exact-Q execution mode must be non-empty"
+            )
+        materialize_started_at = self._clock()
+        proposals = []
+        materialized_rows = []
+        try:
+            for transaction, tokens, indexed_row in zip(
+                execution.transactions,
+                execution.token_rows,
+                indexed_rows,
+            ):
+                input_index, input_row, _ = indexed_row
+                if (
+                    not isinstance(transaction, ProposalKVTransaction)
+                    or self.proposal_kv_cache.transaction(
+                        transaction.transaction_id
+                    )
+                    is not transaction
+                    or transaction.sequence_id
+                    != input_row.sequence_id
+                ):
+                    raise ValueError(
+                        "exact-Q transaction ownership is invalid"
+                    )
+                if (
+                    not isinstance(tokens, tuple)
+                    or len(tokens) != exact_q
+                    or any(
+                        isinstance(token_id, bool)
+                        or not isinstance(token_id, int)
+                        or token_id < 0
+                        for token_id in tokens
+                    )
+                    or tokens[0]
+                    != input_row.first_target_token
+                ):
+                    raise ValueError(
+                        "exact-Q proposal tokens are invalid"
+                    )
+                self.proposal_kv_cache.mark_materialized(
+                    transaction,
+                    exact_q - 1,
+                )
+                metadata = {
+                    "exact_q": exact_q,
+                    "staged_entry_count": exact_q - 1,
+                }
+                if execution.execution_mode != "eager":
+                    metadata["execution_mode"] = (
+                        execution.execution_mode
+                    )
+                proposals.append(
+                    DraftProposal(
+                        sequence_id=transaction.sequence_id,
+                        token_ids=tokens,
+                        source_type=(
+                            self.capabilities.source_type
+                        ),
+                        metadata=metadata,
+                        proposal_transaction_id=(
+                            transaction.transaction_id
+                        ),
+                    )
+                )
+                materialized_rows.append({
+                    "batch_index": input_index,
+                    "sequence_id": transaction.sequence_id,
+                    "sequence_epoch": transaction.sequence_epoch,
+                    "exact_q": exact_q,
+                    "proposal_token_ids": tokens,
+                    "staged_entry_count": exact_q - 1,
+                    "logical_state": "materialized",
+                })
+            self._assert_logical_authority(
+                stage="proposal_materialized",
+                rows=tuple(materialized_rows),
+            )
+            registrations = tuple(
+                ProposalKVRegistration(
+                    sequence_id=proposal.sequence_id,
+                    sequence_epoch=(
+                        self._bootstrapped[
+                            proposal.sequence_id
+                        ].sequence_epoch
+                    ),
+                    proposal=proposal,
+                )
+                for proposal in proposals
+            )
+            registered = (
+                self.proposal_kv_lifecycle.register_batch(
+                    registrations
+                )
+            )
+        except BaseException:
+            for transaction in reversed(
+                execution.transactions
+            ):
+                if transaction.state in (
+                    "reserved",
+                    "materialized",
+                ):
+                    self.proposal_kv_cache.abort(
+                        transaction.transaction_id
+                    )
+            raise
         for proposal in registered:
             transaction_id = proposal.proposal_transaction_id
             self._proposal_exact_q_by_transaction[
@@ -1526,6 +1637,31 @@ class AutoregressiveDraftProposalExecutor:
             materialize_started_at,
         )
         return registered
+
+    def _run_exact_q_group(
+        self,
+        exact_q: int,
+        indexed_rows: tuple[
+            tuple[int, ModelRunnerProposalInput, int],
+            ...,
+        ],
+    ) -> tuple[DraftProposal, ...]:
+        if exact_q == 1 or self.graph_runner is None:
+            execution = self._run_exact_q_group_eager(
+                exact_q,
+                indexed_rows,
+            )
+        else:
+            execution = self.graph_runner.run(
+                exact_q=exact_q,
+                rows=indexed_rows,
+                eager=self._run_exact_q_group_eager,
+            )
+        return self._register_exact_q_group(
+            exact_q,
+            indexed_rows,
+            execution,
+        )
 
     def propose_batch(
         self,
@@ -2022,6 +2158,11 @@ class AutoregressiveDraftProposalExecutor:
                 None
                 if not callable(backend_snapshot)
                 else backend_snapshot()
+            ),
+            "cuda_graph": (
+                None
+                if self.graph_runner is None
+                else self.graph_runner.summary()
             ),
         }
         assert_tensor_free(

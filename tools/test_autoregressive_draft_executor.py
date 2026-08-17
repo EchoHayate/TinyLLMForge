@@ -22,6 +22,7 @@ for package_name in (
     sys.modules.setdefault(package_name, package)
 
 from tinyvllm.engine.autoregressive_draft_executor import (
+    AutoregressiveDraftGroupExecution,
     AutoregressiveDraftProposalExecutor,
 )
 from tinyvllm.engine.proposal_kv_allocator import (
@@ -422,6 +423,43 @@ class _RecordingBackend:
         return tuple(outputs)
 
 
+class _RecordingGraphRunner:
+
+    def __init__(self):
+        self.calls = []
+        self.eager_result_types = []
+        self.convergence = None
+
+    def bind_convergence(self, convergence):
+        self.convergence = convergence
+
+    def run(self, *, exact_q, rows, eager):
+        self.calls.append((exact_q, rows))
+        result = eager(exact_q, rows)
+        self.eager_result_types.append(type(result))
+        return result
+
+    def summary(self):
+        return {
+            "captures": 0,
+            "replays": len(self.calls),
+            "ready_entries": (),
+        }
+
+
+class _CudaGraphRecordingRunner(_RecordingGraphRunner):
+
+    def run(self, *, exact_q, rows, eager):
+        self.calls.append((exact_q, rows))
+        result = eager(exact_q, rows)
+        self.eager_result_types.append(type(result))
+        return AutoregressiveDraftGroupExecution(
+            transactions=result.transactions,
+            token_rows=result.token_rows,
+            execution_mode="cuda_graph",
+        )
+
+
 class _RecordingCoordinator:
 
     def __init__(self):
@@ -487,6 +525,7 @@ def _ready_executor(
     prompts,
     *,
     backend=None,
+    graph_runner=None,
     rank=0,
     world_size=1,
     coordinator=None,
@@ -506,6 +545,7 @@ def _ready_executor(
         tensor_parallel_rank=rank,
         tensor_parallel_size=world_size,
         tensor_parallel_coordinator=coordinator,
+        graph_runner=graph_runner,
         clock=clock,
     )
     executor.observe_target_prefill(tuple(
@@ -556,6 +596,173 @@ def _proposal_input(
         first_target_token=first_target_token,
         context_token_count=context_token_count,
     )
+
+
+def test_q4_batch_four_dispatches_through_graph_runner_then_registers():
+    graph_runner = _RecordingGraphRunner()
+    executor, backend, cache = _ready_executor(
+        {
+            1: (2, 3),
+            2: (3, 4),
+            3: (4, 5),
+            4: (5, 6),
+        },
+        graph_runner=graph_runner,
+    )
+
+    proposals = executor.propose_batch(tuple(
+        _proposal_input(
+            sequence_id,
+            first_target_token=sequence_id + 5,
+            exact_q=4,
+            context_token_count=2,
+        )
+        for sequence_id in range(1, 5)
+    ))
+
+    assert len(graph_runner.calls) == 1
+    exact_q, rows = graph_runner.calls[0]
+    assert exact_q == 4
+    assert tuple(
+        row[1].sequence_id for row in rows
+    ) == (1, 2, 3, 4)
+    assert graph_runner.eager_result_types == [
+        AutoregressiveDraftGroupExecution
+    ]
+    assert len(backend.decode_calls) == 3
+    assert all(
+        proposal.proposal_transaction_id is not None
+        for proposal in proposals
+    )
+    assert cache.authority_snapshot()[
+        "active_transaction_count"
+    ] == 4
+
+    ticket = executor.prepare_finalize_batch(tuple(
+        _finalize_row(
+            proposal,
+            accepted=4 if index < 2 else 0,
+        )
+        for index, proposal in enumerate(proposals)
+    ))
+    executor.commit_finalize_batch(ticket)
+    assert tuple(
+        cache.committed_length(sequence_id)
+        for sequence_id in range(1, 5)
+    ) == (5, 5, 2, 2)
+    assert cache.authority_snapshot()[
+        "active_transaction_count"
+    ] == 0
+
+
+def test_graph_path_does_not_change_materialized_authority_digest_rows():
+    prompts = {
+        1: (2, 3),
+        2: (3, 4),
+        3: (4, 5),
+        4: (5, 6),
+    }
+    inputs = tuple(
+        _proposal_input(
+            sequence_id,
+            first_target_token=sequence_id + 5,
+            exact_q=4,
+            context_token_count=2,
+        )
+        for sequence_id in range(1, 5)
+    )
+    eager_coordinator = _RecordingCoordinator()
+    graph_coordinator = _RecordingCoordinator()
+    eager_executor, _, _ = _ready_executor(
+        prompts,
+        coordinator=eager_coordinator,
+    )
+    graph_executor, _, _ = _ready_executor(
+        prompts,
+        coordinator=graph_coordinator,
+        graph_runner=_CudaGraphRecordingRunner(),
+    )
+
+    eager_executor.propose_batch(inputs)
+    graph_executor.propose_batch(inputs)
+
+    eager_rows = next(
+        rows
+        for stage, rows in eager_coordinator.stages
+        if stage == "proposal_materialized"
+    )
+    graph_rows = next(
+        rows
+        for stage, rows in graph_coordinator.stages
+        if stage == "proposal_materialized"
+    )
+    assert graph_rows == eager_rows
+
+
+def test_q1_bypasses_graph_runner():
+    graph_runner = _RecordingGraphRunner()
+    executor, _, _ = _ready_executor(
+        {1: (2, 3)},
+        graph_runner=graph_runner,
+    )
+
+    proposal = executor.propose_batch((
+        _proposal_input(
+            1,
+            first_target_token=4,
+            exact_q=1,
+            context_token_count=2,
+        ),
+    ))[0]
+
+    assert proposal.token_ids == (4,)
+    assert graph_runner.calls == []
+
+
+def test_authority_snapshot_includes_tensor_free_graph_summary():
+    graph_runner = _RecordingGraphRunner()
+    executor, _, _ = _ready_executor(
+        {1: (2, 3)},
+        graph_runner=graph_runner,
+    )
+
+    snapshot = executor.authority_snapshot()
+
+    assert snapshot["cuda_graph"] == {
+        "captures": 0,
+        "replays": 0,
+        "ready_entries": (),
+    }
+    assert_tensor_free(
+        snapshot,
+        name="executor graph authority snapshot",
+    )
+
+
+def test_executor_binds_graph_convergence_to_tp_coordinator():
+    graph_runner = _RecordingGraphRunner()
+    coordinator = _RecordingCoordinator()
+    executor, _, _ = _ready_executor(
+        {1: (2, 3)},
+        graph_runner=graph_runner,
+        coordinator=coordinator,
+    )
+
+    assert graph_runner.convergence is not None
+    digest = graph_runner.convergence(
+        stage="graph_pre_replay",
+        rows={"exact_q": 4},
+        local_error=None,
+    )
+
+    assert digest == "graph_pre_replay-digest"
+    assert coordinator.stages[-1] == (
+        "graph_pre_replay",
+        {"exact_q": 4},
+    )
+    assert executor.authority_snapshot()[
+        "logical_authority_rows"
+    ][-1]["stage"] == "graph_pre_replay"
 
 
 @pytest.mark.parametrize("rank", (0, 1, 2, 3))

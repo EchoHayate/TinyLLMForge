@@ -596,6 +596,7 @@ def test_production_adapter_passes_direct_tp4_engine_kwargs():
         "autoregressive_draft_max_proposal_tokens": 4,
         "autoregressive_draft_gpu_slot_capacity": 0,
         "autoregressive_draft_proposal_kv_offload_enabled": False,
+        "autoregressive_draft_cuda_graphs": False,
         "autoregressive_draft_logical_entry_capacity": 0,
         "autoregressive_draft_cpu_backing_capacity": 0,
         "proposal_kv_async_copy": True,

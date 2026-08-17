@@ -48146,3 +48146,174 @@ Current classification remains:
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-17 independent Qwen3 draft exact-shape CUDA Graph
+
+Authoritative checkout:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+```
+
+Branch:
+
+```text
+feat/kv-sparse-attention
+```
+
+Approved and implemented first slice:
+
+```text
+tensor parallel size: 4
+batch size:           4
+proposal length:      4
+sampling:             greedy
+Proposal-KV:          dense direct allocation
+Proposal-KV offload:  disabled
+default:              off
+shape admission:      exact only; no padding or rounding
+```
+
+Design and plan:
+
+```text
+docs/superpowers/specs/
+  2026-08-17-autoregressive-draft-exact-cuda-graph-design.md
+docs/superpowers/plans/
+  2026-08-17-autoregressive-draft-exact-cuda-graph.md
+```
+
+Completion audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-17-autoregressive-draft-cuda-graph-completion-audit.md
+```
+
+Core implementation:
+
+```text
+tinyvllm/config.py
+tinyvllm/engine/autoregressive_draft_graph.py
+tinyvllm/engine/autoregressive_draft_executor.py
+tinyvllm/engine/autoregressive_draft_registration.py
+tinyvllm/engine/qwen3_draft_graph_scratch.py
+tinyvllm/engine/qwen3_draft_cuda_graph_backend.py
+tinyvllm/engine/qwen3_draft_backend.py
+tinyvllm/engine/model_runner.py
+```
+
+Gate and verification tooling:
+
+```text
+tools/autoregressive_draft_cuda_graph_contract.py
+tools/autoregressive_draft_cuda_graph_gate.py
+tools/autoregressive_draft_performance_worker.py
+tools/run_autoregressive_draft_cuda_graph_gate_remote.py
+tools/verify_autoregressive_draft_cuda_graph_gate.py
+```
+
+Runtime semantics:
+
+- graph admission requires two successful eager observations for the exact
+  identity;
+- capture uses private scratch Proposal-KV transactions and live committed
+  state read leases;
+- the graph captures three draft forwards, root argmax, and TP broadcast;
+- selected token tensors remain on GPU until one final host readback;
+- eager and graph proposals share executor registration and finalization;
+- accepted prefixes commit and rejected suffixes abort through the existing
+  transaction lifecycle;
+- pre-replay failures converge all ranks onto one eager fallback;
+- replay-started failures abort live transactions, quarantine the identity,
+  and do not retry eagerly; and
+- `execution_mode` is telemetry, not part of the logical proposal-authority
+  digest.
+
+Gate contract:
+
+```text
+warmup pairs:             2
+measured balanced pairs:  8
+prompt length:            256
+output length:            16
+target shape:             B4 x output16
+proposal shape:           calls x B4 x Q4
+```
+
+`GO` requires exact target/proposal/accepted-prefix/transaction equality,
+zero active transactions, replay on all four ranks, no measured
+fallback/quarantine, median throughput improvement, no median TPOT
+regression, and paired-bootstrap throughput-confidence lower bound greater
+than zero.
+
+Fresh final local verification after audit and handoff updates:
+
+```text
+environment:
+  uv-managed Python 3.11
+  PyTorch 2.7.1
+  pytest 8.4.2
+  Transformers 4.57.6
+
+21-file exact graph/runtime/Proposal-KV suite:
+  491 passed in 12.28s
+
+focused Python 3.11 compileall:
+  PASS
+
+focused git diff --check:
+  PASS
+```
+
+The system Python 3.9 has no PyTorch and cannot collect the torch-dependent
+tests. The successful result above comes from the isolated uv environment and
+does not alter repository dependency files.
+
+Remote preflight:
+
+```text
+receipt:
+  /tmp/autoregressive-draft-cuda-graph-preflight-20260817.json
+
+host:
+  n232-195-203
+
+result:
+  all GPU indices 0..7 occupied
+  fewer than four clean GPUs available
+  prior Python environment absent
+  target and draft model paths absent
+
+side effects:
+  no source upload
+  no model fingerprinting
+  no model load
+  no CUDA Graph capture
+  no A/B performance run
+  no remote process termination or reassignment
+```
+
+Honest classification:
+
+```text
+AUTOREGRESSIVE_DRAFT_EXACT_CUDA_GRAPH=INCONCLUSIVE_ENVIRONMENT
+REAL_TP4_CAPTURE_REPLAY=NOT_ESTABLISHED
+REAL_EAGER_GRAPH_CORRECTNESS_PARITY=NOT_ESTABLISHED
+CONTROLLED_GRAPH_PERFORMANCE=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Next action:
+
+1. finish fresh local verification;
+2. stage only the focused versionable files, never `git add -A`;
+3. commit with exactly one final
+   `Co-authored-by: TRAE CLI <noreply@bytedance.com>` trailer;
+4. push `feat/kv-sparse-attention` to
+   `https://github.com/EchoHayate/TinyLLMForge.git`;
+5. when four clean GPUs and a valid Python/model environment are available,
+   rerun the source-bound paired gate; and
+6. classify that real result as `GO`, `NO_GO_CORRECTNESS`, or
+   `NO_GO_PERFORMANCE`.

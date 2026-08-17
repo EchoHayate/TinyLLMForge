@@ -681,6 +681,17 @@ def _authority_rank(rank: int, *, offset: int) -> dict:
             "draft": {"composite_sha256": "2" * 64},
         },
         "executor": {
+            "last_logical_authority_sha256": "a" * 64,
+            "proposal_kv_lifecycle": {
+                "active_transaction_count": 0,
+            },
+            "cuda_graph": {
+                "capture_attempts": 1,
+                "captures": 1,
+                "replays": 4,
+                "quarantines": 0,
+                "fallback_pre_replay": 0,
+            },
             "timing_ms": {
                 "prompt_bootstrap": offset + rank * 0.1,
                 "proposal_forward": offset * 2 + rank * 0.1,
@@ -970,6 +981,26 @@ def test_worker_records_step_end_timing_memory_and_proposal_kv_delta():
         "h2d_bytes": 120,
         "d2h_entries": 12,
         "d2h_bytes": 60,
+    }
+    assert run["correctness"] == {
+        "proposal_token_rows": [
+            [[31, 32, 33, 34]],
+            [[31, 32, 33, 34]],
+        ],
+        "accepted_prefix_counts": [2, 2],
+        "transaction_digest": "a" * 64,
+        "active_transaction_count": 0,
+        "rank_graph_counters": [
+            {
+                "rank": rank,
+                "capture_attempts": 1,
+                "captures": 1,
+                "replays": 4,
+                "quarantines": 0,
+                "fallback_pre_replay": 0,
+            }
+            for rank in range(4)
+        ],
     }
     assert engine.events.index("reset") < engine.events.index("step-0")
     assert engine.events.index("memory") > engine.events.index("step-1")

@@ -63,8 +63,17 @@ class AutoregressiveDraftRegistrationDependencies:
     build_proposal_kv_allocator: object
     build_proposal_kv_cache: object
     build_backend: object
+    build_graph_components: object
     build_executor: object
     build_descriptor: object
+
+
+@dataclass(frozen=True)
+class AutoregressiveDraftGraphComponents:
+    scratch_cache: object
+    scratch_owner: object
+    backend: object
+    runner: object
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,9 @@ class AutoregressiveDraftRegistrationCandidate:
     backend: object
     executor: object
     descriptor: object
+    graph_components: (
+        AutoregressiveDraftGraphComponents | None
+    ) = None
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -512,9 +524,21 @@ def build_autoregressive_draft_registration_dependencies(
     from tinyvllm.engine.autoregressive_draft_executor import (
         AutoregressiveDraftProposalExecutor,
     )
+    from tinyvllm.engine.autoregressive_draft_graph import (
+        AutoregressiveDraftExactGraphRunner,
+    )
+    from tinyvllm.engine.proposal_kv_allocator import (
+        DirectProposalKVAllocator,
+    )
     from tinyvllm.engine.proposal_kv_cache import ProposalKVCache
     from tinyvllm.engine.qwen3_draft_backend import (
         Qwen3AutoregressiveDraftBackend,
+    )
+    from tinyvllm.engine.qwen3_draft_cuda_graph_backend import (
+        Qwen3DraftCudaGraphBackend,
+    )
+    from tinyvllm.engine.qwen3_draft_graph_scratch import (
+        Qwen3DraftGraphScratchOwner,
     )
     from tinyvllm.engine.qwen3_draft_proposal_kv import (
         build_qwen3_draft_proposal_kv_allocator,
@@ -583,6 +607,109 @@ def build_autoregressive_draft_registration_dependencies(
             tensor_parallel_size=tensor_parallel_size,
         )
 
+    def build_graph_components(
+        *,
+        config,
+        backend,
+        proposal_kv_cache,
+        physical_store,
+        device,
+        dtype,
+    ):
+        device = torch.device(device)
+        if device.type != "cuda":
+            raise RuntimeError(
+                "autoregressive draft CUDA graph requires a CUDA device"
+            )
+        device_index = (
+            torch.cuda.current_device()
+            if device.index is None
+            else device.index
+        )
+        scratch_allocator = DirectProposalKVAllocator(
+            physical_store
+        )
+        scratch_cache = ProposalKVCache(
+            scratch_allocator
+        )
+        scratch_owner = Qwen3DraftGraphScratchOwner(
+            live_cache=proposal_kv_cache,
+            scratch_cache=scratch_cache,
+        )
+        block_table_width = int(
+            physical_store.gpu_capacity
+        )
+        graph_backend = Qwen3DraftCudaGraphBackend(
+            backend=backend,
+            proposal_kv_cache=proposal_kv_cache,
+            device=device,
+            compute_dtype=dtype,
+            block_table_width=block_table_width,
+        )
+        runner = AutoregressiveDraftExactGraphRunner(
+            enabled=True,
+            q_allowlist=(
+                config
+                .autoregressive_draft_cuda_graph_q_allowlist
+            ),
+            batch_allowlist=(
+                config
+                .autoregressive_draft_cuda_graph_batch_allowlist
+            ),
+            min_observations=(
+                config
+                .autoregressive_draft_cuda_graph_min_observations
+            ),
+            max_entries=(
+                config
+                .autoregressive_draft_cuda_graph_max_entries
+            ),
+            max_static_bytes=(
+                config
+                .autoregressive_draft_cuda_graph_max_static_bytes
+            ),
+            max_reserved_bytes=(
+                config
+                .autoregressive_draft_cuda_graph_max_reserved_bytes
+            ),
+            max_total_capture_ns=(
+                config
+                .autoregressive_draft_cuda_graph_max_total_capture_ns
+            ),
+            max_single_capture_ns=(
+                config
+                .autoregressive_draft_cuda_graph_max_single_capture_ns
+            ),
+            tensor_parallel_size=(
+                backend.tensor_parallel_size
+            ),
+            tensor_parallel_rank=(
+                backend.tensor_parallel_rank
+            ),
+            device_index=device_index,
+            compute_dtype=str(dtype),
+            backend_identity=backend.backend_identity,
+            model_fingerprint=backend.model_fingerprint,
+            tokenizer_fingerprint=(
+                backend.tokenizer_fingerprint
+            ),
+            local_query_heads=backend.local_query_heads,
+            local_kv_heads=physical_store.local_kv_heads,
+            kv_block_table_width=block_table_width,
+            proposal_kv_capacity=int(
+                physical_store.gpu_capacity
+            ),
+            blockwise_offload=False,
+            capture_backend=graph_backend,
+            scratch_owner=scratch_owner,
+        )
+        return AutoregressiveDraftGraphComponents(
+            scratch_cache=scratch_cache,
+            scratch_owner=scratch_owner,
+            backend=graph_backend,
+            runner=runner,
+        )
+
     return AutoregressiveDraftRegistrationDependencies(
         build_checkpoint_fingerprint=build_checkpoint_fingerprint,
         load_tokenizer=load_tokenizer,
@@ -599,6 +726,7 @@ def build_autoregressive_draft_registration_dependencies(
         ),
         build_proposal_kv_cache=ProposalKVCache,
         build_backend=build_backend,
+        build_graph_components=build_graph_components,
         build_executor=(
             lambda **kwargs: AutoregressiveDraftProposalExecutor(
                 **kwargs

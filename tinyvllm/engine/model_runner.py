@@ -2224,6 +2224,7 @@ class ModelRunner:
         self.autoregressive_draft_registration_consensus_sha256 = None
         self.autoregressive_draft_checkpoint_identity = None
         self.autoregressive_draft_tokenizer_contract = None
+        self.autoregressive_draft_graph_components = None
 
         self.exact_cuda_graph_cache = ExactCudaGraphCache(
             ExactCudaGraphCacheConfig(
@@ -2543,6 +2544,25 @@ class ModelRunner:
                 "autoregressive draft requires matching "
                 "TP1 or TP4 topology"
             )
+        graph_enabled = bool(
+            getattr(
+                config,
+                "autoregressive_draft_cuda_graphs",
+                False,
+            )
+        )
+        if graph_enabled and tensor_parallel_size != 4:
+            raise RuntimeError(
+                "autoregressive draft CUDA graph requires TP4"
+            )
+        if graph_enabled and bool(
+            config
+            .autoregressive_draft_proposal_kv_offload_enabled
+        ):
+            raise RuntimeError(
+                "autoregressive draft CUDA graph does not support "
+                "proposal KV offload"
+            )
         dependencies = (
             _autoregressive_draft_registration_dependencies()
             if registration_dependencies is None
@@ -2715,6 +2735,19 @@ class ModelRunner:
                 tensor_parallel_rank=self.rank,
                 tensor_parallel_size=self.world_size,
             )
+            graph_components = None
+            if graph_enabled:
+                stage = "build_autoregressive_draft_graph"
+                graph_components = (
+                    dependencies.build_graph_components(
+                        config=config,
+                        backend=backend,
+                        proposal_kv_cache=proposal_kv_cache,
+                        physical_store=physical_store,
+                        device=device,
+                        dtype=dtype,
+                    )
+                )
             stage = "build_autoregressive_draft_executor"
             executor = dependencies.build_executor(
                 backend=backend,
@@ -2726,6 +2759,11 @@ class ModelRunner:
                 tensor_parallel_rank=self.rank,
                 tensor_parallel_size=self.world_size,
                 tensor_parallel_coordinator=coordinator,
+                graph_runner=(
+                    None
+                    if graph_components is None
+                    else graph_components.runner
+                ),
             )
             stage = "build_executor_descriptor"
             descriptor = dependencies.build_descriptor(executor)
@@ -2748,6 +2786,7 @@ class ModelRunner:
                 backend=backend,
                 executor=executor,
                 descriptor=descriptor,
+                graph_components=graph_components,
             )
             stage = "registry_preflight"
             self.speculative_proposal_executors.preflight_registration(
@@ -2835,6 +2874,9 @@ class ModelRunner:
             "target": candidate.target_tokenizer_contract,
             "draft": candidate.draft_tokenizer_contract,
         }
+        self.autoregressive_draft_graph_components = (
+            candidate.graph_components
+        )
         return candidate.descriptor
 
     def autoregressive_draft_authority_snapshot(self) -> dict:

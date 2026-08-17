@@ -429,6 +429,13 @@ class _Dependencies:
             name="backend",
             backend_identity="qwen3",
         )
+        self.graph_components = SimpleNamespace(
+            scratch_cache=object(),
+            scratch_owner=object(),
+            backend=object(),
+            runner=object(),
+        )
+        self.expect_graph_runner = False
         self.executor = _FakeExecutor(
             rank=rank,
             world_size=world_size,
@@ -568,6 +575,26 @@ class _Dependencies:
         self._fail("build_qwen3_draft_backend")
         return self.backend
 
+    def build_graph_components(
+        self,
+        *,
+        config,
+        backend,
+        proposal_kv_cache,
+        physical_store,
+        device,
+        dtype,
+    ):
+        assert config.autoregressive_draft_cuda_graphs is True
+        assert backend is self.backend
+        assert proposal_kv_cache is self.cache
+        assert physical_store is self.store
+        assert device == torch.device("cpu")
+        assert dtype == torch.float32
+        self.calls.append("build_graph_components")
+        self._fail("build_autoregressive_draft_graph")
+        return self.graph_components
+
     def build_executor(
         self,
         *,
@@ -577,6 +604,7 @@ class _Dependencies:
         tensor_parallel_rank,
         tensor_parallel_size,
         tensor_parallel_coordinator,
+        graph_runner=None,
     ):
         assert backend is self.backend
         assert proposal_kv_cache is self.cache
@@ -584,6 +612,11 @@ class _Dependencies:
         assert tensor_parallel_rank == self.rank
         assert tensor_parallel_size == self.world_size
         assert tensor_parallel_coordinator is not None
+        assert graph_runner is (
+            self.graph_components.runner
+            if self.expect_graph_runner
+            else None
+        )
         self.calls.append("build_executor")
         self._fail("build_autoregressive_draft_executor")
         return self.executor
@@ -789,6 +822,7 @@ def _runner(
     tensor_parallel_size=1,
     rank=0,
     register_mtp=False,
+    graph_enabled=False,
 ):
     target = tmp_path / "target"
     draft = tmp_path / "draft"
@@ -810,6 +844,23 @@ def _runner(
         proposal_kv_async_copy=False,
         proposal_kv_batch_copy=True,
         tensor_parallel_size=tensor_parallel_size,
+        autoregressive_draft_cuda_graphs=graph_enabled,
+        autoregressive_draft_cuda_graph_q_allowlist=(4,),
+        autoregressive_draft_cuda_graph_batch_allowlist=(4,),
+        autoregressive_draft_cuda_graph_min_observations=2,
+        autoregressive_draft_cuda_graph_max_entries=4,
+        autoregressive_draft_cuda_graph_max_static_bytes=(
+            64 * 1024 * 1024
+        ),
+        autoregressive_draft_cuda_graph_max_reserved_bytes=(
+            512 * 1024 * 1024
+        ),
+        autoregressive_draft_cuda_graph_max_total_capture_ns=(
+            5_000_000_000
+        ),
+        autoregressive_draft_cuda_graph_max_single_capture_ns=(
+            2_000_000_000
+        ),
     )
     runner.rank = rank
     runner.world_size = tensor_parallel_size
@@ -825,6 +876,7 @@ def _runner(
     runner.autoregressive_draft_registration_consensus_sha256 = None
     runner.autoregressive_draft_checkpoint_identity = None
     runner.autoregressive_draft_tokenizer_contract = None
+    runner.autoregressive_draft_graph_components = None
     if register_mtp:
         mtp = _ExistingMTPExecutor()
         runner.speculative_proposal_executors.register(
@@ -850,6 +902,67 @@ def test_disabled_config_performs_no_registration_work(tmp_path):
         .lifecycle_executor_ids()
         == ()
     )
+
+
+def test_default_off_builds_no_graph_components(tmp_path):
+    runner = _runner(tmp_path)
+    dependencies = _Dependencies()
+
+    descriptor = runner._maybe_register_autoregressive_draft_executor(
+        registration_dependencies=dependencies,
+    )
+
+    assert descriptor.executor_id == "autoregressive-draft"
+    assert "build_graph_components" not in dependencies.calls
+    assert runner.autoregressive_draft_graph_components is None
+
+
+def test_enabled_tp4_wires_graph_components_before_executor(tmp_path):
+    runner = _runner(
+        tmp_path,
+        tensor_parallel_size=4,
+        graph_enabled=True,
+    )
+    dependencies = _Dependencies(rank=0, world_size=4)
+    dependencies.expect_graph_runner = True
+    coordinator = _RegistrationCoordinator.matching(
+        0,
+        dependencies.calls,
+    )
+
+    descriptor = runner._maybe_register_autoregressive_draft_executor(
+        registration_dependencies=dependencies,
+        tensor_parallel_coordinator=coordinator,
+    )
+
+    assert descriptor.executor_id == "autoregressive-draft"
+    assert dependencies.calls.index(
+        "build_graph_components"
+    ) < dependencies.calls.index("build_executor")
+    assert runner.autoregressive_draft_graph_components is (
+        dependencies.graph_components
+    )
+
+
+def test_graph_mode_rejects_offload_before_dependency_work(tmp_path):
+    runner = _runner(
+        tmp_path,
+        proposal_kv_offload_enabled=True,
+        tensor_parallel_size=4,
+        graph_enabled=True,
+    )
+    dependencies = _Dependencies(rank=0, world_size=4)
+
+    with pytest.raises(
+        RuntimeError,
+        match="graph.*offload",
+    ):
+        runner._maybe_register_autoregressive_draft_executor(
+            registration_dependencies=dependencies,
+        )
+
+    assert dependencies.calls == []
+    assert runner.autoregressive_draft_executor is None
 
 
 @pytest.mark.parametrize(

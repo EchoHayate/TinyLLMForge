@@ -319,6 +319,41 @@ class Qwen3AutoregressiveDraftBackend:
         )
 
     @torch.inference_mode()
+    def decode_step_static(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        slot_mapping: torch.Tensor,
+        context_lens: torch.Tensor,
+        block_tables: torch.Tensor,
+    ) -> torch.Tensor | None:
+        with temporary_context(
+            mode="decode",
+            is_prefill=False,
+            slot_mapping=slot_mapping,
+            context_lens=context_lens,
+            block_tables=block_tables,
+            cu_seqlens_q=None,
+            cu_seqlens_k=None,
+            max_seqlen_q=1,
+            max_seqlen_k=int(block_tables.shape[1]),
+            quest_top_k_blocks=-1,
+            am_compact_blocks=0,
+            kv_offload_manager=None,
+            kv_offload_blockwise_decode=False,
+            kv_offload_blockwise_prefill=False,
+            force_attention_backend=True,
+        ):
+            hidden = self.model(input_ids, positions)
+            self._decode_forward_count += 1
+            logits = self.model.compute_logits(hidden)
+        if self.tensor_parallel_rank != 0:
+            if logits is not None:
+                raise ValueError("non-root logits must be None")
+            return None
+        return logits
+
+    @torch.inference_mode()
     def decode_step_batch(
         self,
         rows: tuple[AutoregressiveDraftDecodeRow, ...],

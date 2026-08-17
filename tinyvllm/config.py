@@ -76,6 +76,15 @@ class Config:
     autoregressive_draft_proposal_kv_offload_enabled: bool = False
     autoregressive_draft_logical_entry_capacity: int = 0
     autoregressive_draft_cpu_backing_capacity: int = 0
+    autoregressive_draft_cuda_graphs: bool = False
+    autoregressive_draft_cuda_graph_q_allowlist: tuple = (4,)
+    autoregressive_draft_cuda_graph_batch_allowlist: tuple = (4,)
+    autoregressive_draft_cuda_graph_min_observations: int = 2
+    autoregressive_draft_cuda_graph_max_entries: int = 4
+    autoregressive_draft_cuda_graph_max_static_bytes: int = 64 * 1024 * 1024
+    autoregressive_draft_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
+    autoregressive_draft_cuda_graph_max_total_capture_ns: int = 5_000_000_000
+    autoregressive_draft_cuda_graph_max_single_capture_ns: int = 2_000_000_000
     hf_config: AutoConfig | None = None                 # hugging face config, 加载模型的层数，隐藏层数，注意力头数
     eos: int  = -1                                      # end of sentence, 使用模型默认的句子结束符
     kvcache_block_size: int = 256                       
@@ -413,6 +422,98 @@ class Config:
                 raise ValueError(
                     "autoregressive draft proposal KV offload "
                     "requires logical == cpu > gpu > 0"
+                )
+        if not isinstance(
+            self.autoregressive_draft_cuda_graphs,
+            bool,
+        ):
+            raise ValueError(
+                "autoregressive_draft_cuda_graphs must be a bool"
+            )
+        self.autoregressive_draft_cuda_graph_q_allowlist = (
+            _normalize_positive_int_tuple(
+                self.autoregressive_draft_cuda_graph_q_allowlist,
+                name=(
+                    "autoregressive_draft_cuda_graph_q_allowlist"
+                ),
+                allow_empty=False,
+            )
+        )
+        if (
+            self.autoregressive_draft_cuda_graph_q_allowlist[0]
+            < 2
+        ):
+            raise ValueError(
+                "autoregressive_draft_cuda_graph_q_allowlist "
+                "must contain only values at least two"
+            )
+        self.autoregressive_draft_cuda_graph_batch_allowlist = (
+            _normalize_positive_int_tuple(
+                self.autoregressive_draft_cuda_graph_batch_allowlist,
+                name=(
+                    "autoregressive_draft_cuda_graph_batch_allowlist"
+                ),
+                allow_empty=False,
+            )
+        )
+        for name in (
+            "autoregressive_draft_cuda_graph_min_observations",
+            "autoregressive_draft_cuda_graph_max_entries",
+            "autoregressive_draft_cuda_graph_max_static_bytes",
+            "autoregressive_draft_cuda_graph_max_reserved_bytes",
+            "autoregressive_draft_cuda_graph_max_total_capture_ns",
+            "autoregressive_draft_cuda_graph_max_single_capture_ns",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+            ):
+                raise ValueError(
+                    f"{name} must be a positive integer"
+                )
+        if self.autoregressive_draft_cuda_graphs:
+            if not self.autoregressive_draft_enabled:
+                raise ValueError(
+                    "autoregressive draft CUDA graph mode requires "
+                    "autoregressive draft"
+                )
+            if self.tensor_parallel_size != 4:
+                raise ValueError(
+                    "autoregressive draft CUDA graph mode requires "
+                    "tensor_parallel_size 4"
+                )
+            if (
+                self.autoregressive_draft_proposal_kv_offload_enabled
+            ):
+                raise ValueError(
+                    "autoregressive draft CUDA graphs are "
+                    "incompatible with proposal KV offload"
+                )
+            if (
+                self.autoregressive_draft_cuda_graph_q_allowlist
+                != (4,)
+            ):
+                raise ValueError(
+                    "autoregressive draft CUDA graphs support "
+                    "Q4 only"
+                )
+            if (
+                self.autoregressive_draft_cuda_graph_batch_allowlist
+                != (4,)
+            ):
+                raise ValueError(
+                    "autoregressive draft CUDA graphs support "
+                    "batch size 4 only"
+                )
+            if (
+                self.autoregressive_draft_max_proposal_tokens
+                != 4
+            ):
+                raise ValueError(
+                    "autoregressive draft CUDA graphs require "
+                    "max proposal tokens 4"
                 )
         self.qwen35_mtp_cuda_graph_q_allowlist = (
             _normalize_positive_int_tuple(

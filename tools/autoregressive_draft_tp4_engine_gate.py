@@ -145,6 +145,7 @@ class _TinyVLLMTP4EngineAdapter:
         max_num_batched_tokens,
         proposal_slot_capacity,
         learned_enabled,
+        cuda_graph_enabled=False,
         llm_type=None,
         sampling_params_type=None,
         runtime_type=None,
@@ -155,6 +156,12 @@ class _TinyVLLMTP4EngineAdapter:
             raise ValueError("TP4 adapter requires tensor parallel four")
         if learned_enabled is not (mode == "learned"):
             raise ValueError("learned engine mode mismatch")
+        if not isinstance(cuda_graph_enabled, bool):
+            raise ValueError("CUDA graph enable flag must be bool")
+        if cuda_graph_enabled and not learned_enabled:
+            raise ValueError(
+                "draft CUDA graph requires learned mode"
+            )
         if (
             llm_type is None
             or sampling_params_type is None
@@ -197,6 +204,9 @@ class _TinyVLLMTP4EngineAdapter:
                 proposal_slot_capacity if learned_enabled else 0
             ),
             autoregressive_draft_proposal_kv_offload_enabled=False,
+            autoregressive_draft_cuda_graphs=(
+                cuda_graph_enabled
+            ),
             autoregressive_draft_logical_entry_capacity=0,
             autoregressive_draft_cpu_backing_capacity=0,
             proposal_kv_async_copy=True,

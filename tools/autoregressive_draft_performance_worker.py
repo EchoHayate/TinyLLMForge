@@ -538,6 +538,131 @@ def _runtime_result(
     }
 
 
+def _correctness_result(
+    observations: list[dict],
+    after_authority: tuple[dict, ...],
+) -> dict:
+    proposal_token_rows = []
+    accepted_prefix_counts = []
+    for observation in observations:
+        proposal_rows = observation.get(
+            "speculative_proposal_token_ids_by_seq",
+            {},
+        )
+        accepted_rows = observation.get(
+            "speculative_accepted_draft_token_counts",
+            {},
+        )
+        if not isinstance(proposal_rows, dict) or not isinstance(
+            accepted_rows,
+            dict,
+        ):
+            raise ValueError(
+                "correctness observation rows are invalid"
+            )
+        if not proposal_rows:
+            if accepted_rows:
+                raise ValueError(
+                    "accepted rows exist without proposal rows"
+                )
+            continue
+        if set(proposal_rows) != set(accepted_rows):
+            raise ValueError(
+                "proposal and accepted row inventories differ"
+            )
+        proposal_token_rows.append([
+            list(proposal_rows[sequence_id])
+            for sequence_id in sorted(proposal_rows)
+        ])
+        accepted_prefix_counts.extend(
+            int(accepted_rows[sequence_id])
+            for sequence_id in sorted(accepted_rows)
+        )
+    authority_rows = _rank_rows(
+        after_authority,
+        name="correctness Proposal-KV authority",
+    )
+    digests = []
+    active_transaction_counts = []
+    rank_graph_counters = []
+    counter_names = (
+        "capture_attempts",
+        "captures",
+        "replays",
+        "quarantines",
+        "fallback_pre_replay",
+    )
+    for rank, row in enumerate(authority_rows):
+        executor = row.get("executor")
+        if not isinstance(executor, dict):
+            raise ValueError(
+                "correctness executor authority is missing"
+            )
+        digest = executor.get(
+            "last_logical_authority_sha256"
+        )
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in digest
+            )
+        ):
+            raise ValueError(
+                "correctness transaction digest is invalid"
+            )
+        digests.append(digest)
+        lifecycle = executor.get("proposal_kv_lifecycle")
+        if not isinstance(lifecycle, dict):
+            raise ValueError(
+                "correctness Proposal-KV lifecycle is missing"
+            )
+        active = lifecycle.get("active_transaction_count")
+        if (
+            isinstance(active, bool)
+            or not isinstance(active, int)
+            or active < 0
+        ):
+            raise ValueError(
+                "correctness active transaction count is invalid"
+            )
+        active_transaction_counts.append(active)
+        graph = executor.get("cuda_graph")
+        if graph is None:
+            graph = {name: 0 for name in counter_names}
+        if not isinstance(graph, dict):
+            raise ValueError(
+                "correctness graph summary is invalid"
+            )
+        graph_row = {"rank": rank}
+        for name in counter_names:
+            value = graph.get(name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"correctness graph counter {name} is invalid"
+                )
+            graph_row[name] = value
+        rank_graph_counters.append(graph_row)
+    if len(set(digests)) != 1:
+        raise ValueError(
+            "correctness transaction digests differ across ranks"
+        )
+    return {
+        "proposal_token_rows": proposal_token_rows,
+        "accepted_prefix_counts": accepted_prefix_counts,
+        "transaction_digest": digests[0],
+        "active_transaction_count": sum(
+            active_transaction_counts
+        ),
+        "rank_graph_counters": rank_graph_counters,
+    }
+
+
 def run_request_batch(
     *,
     engine,
@@ -639,6 +764,10 @@ def run_request_batch(
                 draft_executor_timing=draft_executor_timing,
             )
         )
+        correctness = _correctness_result(
+            observations,
+            after_authority,
+        )
     else:
         proposal_kv = _zero_proposal_kv()
         draft_executor_timing = (
@@ -647,6 +776,7 @@ def run_request_batch(
         draft_executor_proposal_detail = (
             _zero_draft_executor_proposal_detail()
         )
+        correctness = None
     memory = _memory_result(
         engine.memory_snapshots(timeout_s=60.0)
     )
@@ -681,6 +811,7 @@ def run_request_batch(
         ),
         "memory": memory,
         "proposal_kv": proposal_kv,
+        "correctness": correctness,
     }
 
 
@@ -698,21 +829,30 @@ def run_policy_campaign(
     run_batch_fn=run_request_batch,
     warmup_runs: int = WARMUP_RUNS,
     measured_runs: int = MEASURED_RUNS,
+    cuda_graph_mode: str = "eager",
 ) -> dict:
     if policy not in POLICIES:
         raise ValueError("unsupported policy")
     if batch_size not in BATCH_SIZES:
         raise ValueError("unsupported batch size")
-    for name, value in (
-        ("warmup runs", warmup_runs),
-        ("measured runs", measured_runs),
+    if cuda_graph_mode not in ("eager", "graph"):
+        raise ValueError("CUDA graph mode is invalid")
+    if policy != "learned" and cuda_graph_mode != "eager":
+        raise ValueError(
+            "target policy cannot enable draft CUDA graphs"
+        )
+    for name, value, minimum in (
+        ("warmup runs", warmup_runs, 0),
+        ("measured runs", measured_runs, 1),
     ):
         if (
             isinstance(value, bool)
             or not isinstance(value, int)
-            or value <= 0
+            or value < minimum
         ):
-            raise ValueError(f"{name} must be positive")
+            raise ValueError(
+                f"{name} must be an integer >= {minimum}"
+            )
     proposal_slot_capacity = proposal_slot_capacity_for_batch(
         batch_size
     )
@@ -726,6 +866,7 @@ def run_policy_campaign(
         max_num_batched_tokens=2048,
         proposal_slot_capacity=proposal_slot_capacity,
         learned_enabled=policy == "learned",
+        cuda_graph_enabled=cuda_graph_mode == "graph",
     )
     try:
         engine = adapter.engine
@@ -803,6 +944,7 @@ def run_policy_campaign(
             "tensor_parallel_size": TENSOR_PARALLEL_SIZE,
             "proposal_kv_allocator": "direct",
             "proposal_slot_capacity": proposal_slot_capacity,
+            "cuda_graph_mode": cuda_graph_mode,
         }
     finally:
         adapter.close()
@@ -851,6 +993,11 @@ def parse_args(argv=None):
         type=int,
         default=MEASURED_RUNS,
     )
+    parser.add_argument(
+        "--cuda-graph-mode",
+        choices=("eager", "graph"),
+        default="eager",
+    )
     return parser.parse_args(argv)
 
 
@@ -863,6 +1010,7 @@ def main(argv=None):
         batch_size=args.batch_size,
         warmup_runs=args.warmup_runs,
         measured_runs=args.measured_runs,
+        cuda_graph_mode=args.cuda_graph_mode,
         **_default_dependencies(),
     )
     write_json_atomic(Path(args.out), result)
