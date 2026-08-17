@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -60,6 +61,12 @@ MAX_IDLE_MEMORY_USED_MIB = 1024
 MAX_IDLE_UTILIZATION_PERCENT = 5
 RUN_TAG_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 GPU_PROCESS_MARKER = "__TINYLLM_GPU_PROCESSES__"
+EXPECTED_KERBEROS_PRINCIPAL = "sitian@BYTEDANCE.COM"
+EXPECTED_KERBEROS_TGT = (
+    "krbtgt/BYTEDANCE.COM@BYTEDANCE.COM"
+)
+MINIMUM_KERBEROS_LIFETIME_SECONDS = 5400
+KERBEROS_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
 
 
 def _sha256_path(path: Path) -> str:
@@ -75,6 +82,174 @@ def validate_run_tag(value: object) -> str:
     if not RUN_TAG_PATTERN.fullmatch(text):
         raise ValueError("run tag must match [A-Za-z0-9_-]+")
     return text
+
+
+def _kerberos_inconclusive(
+    reason: str,
+    *,
+    minimum: int,
+    principal=None,
+    tgt_principal=None,
+    expires_at=None,
+    remaining=None,
+) -> dict:
+    result = {
+        "status": "INCONCLUSIVE_ENVIRONMENT",
+        "reason": reason,
+        "minimum_required_lifetime_seconds": minimum,
+    }
+    if principal is not None:
+        result["principal"] = principal
+    if tgt_principal is not None:
+        result["tgt_principal"] = tgt_principal
+    if expires_at is not None:
+        result["expires_at"] = expires_at
+    if remaining is not None:
+        result["remaining_lifetime_seconds"] = remaining
+    return result
+
+
+def classify_local_kerberos_payload(
+    payload,
+    *,
+    now: datetime,
+    minimum_lifetime_seconds: int = (
+        MINIMUM_KERBEROS_LIFETIME_SECONDS
+    ),
+) -> dict:
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(now, datetime)
+        or now.utcoffset() is None
+        or isinstance(minimum_lifetime_seconds, bool)
+        or not isinstance(minimum_lifetime_seconds, int)
+        or minimum_lifetime_seconds <= 0
+    ):
+        return _kerberos_inconclusive(
+            "local Kerberos payload is invalid",
+            minimum=minimum_lifetime_seconds,
+        )
+    principal = payload.get("principal")
+    tickets = payload.get("tickets")
+    if not isinstance(principal, str) or not isinstance(
+        tickets,
+        list,
+    ):
+        return _kerberos_inconclusive(
+            "local Kerberos payload is invalid",
+            minimum=minimum_lifetime_seconds,
+        )
+    if principal != EXPECTED_KERBEROS_PRINCIPAL:
+        return _kerberos_inconclusive(
+            "local Kerberos principal is unexpected",
+            minimum=minimum_lifetime_seconds,
+            principal=principal,
+        )
+    if any(not isinstance(ticket, dict) for ticket in tickets):
+        return _kerberos_inconclusive(
+            "local Kerberos payload is invalid",
+            minimum=minimum_lifetime_seconds,
+            principal=principal,
+        )
+    matching = [
+        ticket
+        for ticket in tickets
+        if ticket.get("Principal") == EXPECTED_KERBEROS_TGT
+    ]
+    if not matching:
+        return _kerberos_inconclusive(
+            "local Kerberos TGT is missing",
+            minimum=minimum_lifetime_seconds,
+            principal=principal,
+        )
+    expires_value = matching[0].get("Expires")
+    if not isinstance(expires_value, str):
+        return _kerberos_inconclusive(
+            "local Kerberos payload is invalid",
+            minimum=minimum_lifetime_seconds,
+            principal=principal,
+            tgt_principal=EXPECTED_KERBEROS_TGT,
+        )
+    try:
+        expires_at = datetime.strptime(
+            expires_value,
+            KERBEROS_TIMESTAMP_FORMAT,
+        ).replace(tzinfo=now.tzinfo)
+    except ValueError:
+        return _kerberos_inconclusive(
+            "local Kerberos payload is invalid",
+            minimum=minimum_lifetime_seconds,
+            principal=principal,
+            tgt_principal=EXPECTED_KERBEROS_TGT,
+        )
+    remaining = int((expires_at - now).total_seconds())
+    normalized = {
+        "minimum": minimum_lifetime_seconds,
+        "principal": principal,
+        "tgt_principal": EXPECTED_KERBEROS_TGT,
+        "expires_at": expires_at.isoformat(),
+        "remaining": remaining,
+    }
+    if remaining <= 0:
+        return _kerberos_inconclusive(
+            "local Kerberos TGT is expired",
+            **normalized,
+        )
+    if remaining < minimum_lifetime_seconds:
+        return _kerberos_inconclusive(
+            "local Kerberos TGT lifetime is insufficient",
+            **normalized,
+        )
+    return {
+        "status": "READY",
+        "principal": principal,
+        "tgt_principal": EXPECTED_KERBEROS_TGT,
+        "expires_at": expires_at.isoformat(),
+        "remaining_lifetime_seconds": remaining,
+        "minimum_required_lifetime_seconds": (
+            minimum_lifetime_seconds
+        ),
+    }
+
+
+def _local_kerberos_preflight(
+    *,
+    command_runner=subprocess.run,
+    now=None,
+) -> dict:
+    current = (
+        datetime.now().astimezone()
+        if now is None
+        else now
+    )
+    try:
+        result = command_runner(
+            ["klist", "--json"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return _kerberos_inconclusive(
+            "local Kerberos cache is unavailable",
+            minimum=MINIMUM_KERBEROS_LIFETIME_SECONDS,
+        )
+    if result.returncode != 0:
+        return _kerberos_inconclusive(
+            "local Kerberos cache is unavailable",
+            minimum=MINIMUM_KERBEROS_LIFETIME_SECONDS,
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError):
+        return _kerberos_inconclusive(
+            "local Kerberos payload is invalid",
+            minimum=MINIMUM_KERBEROS_LIFETIME_SECONDS,
+        )
+    return classify_local_kerberos_payload(
+        payload,
+        now=current,
+    )
 
 
 def classify_gpu_preflight(rows) -> dict:
@@ -602,6 +777,31 @@ def _remote_preflight(
     }
 
 
+def _preflight_only(
+    *,
+    target_model: str,
+    draft_model: str,
+    kerberos_command_runner=subprocess.run,
+    command_runner=subprocess.run,
+    now=None,
+) -> dict:
+    local_kerberos = _local_kerberos_preflight(
+        command_runner=kerberos_command_runner,
+        now=now,
+    )
+    if local_kerberos["status"] != "READY":
+        return local_kerberos
+    remote_preflight = _remote_preflight(
+        target_model=target_model,
+        draft_model=draft_model,
+        command_runner=command_runner,
+    )
+    return {
+        **remote_preflight,
+        "local_kerberos": local_kerberos,
+    }
+
+
 def _run_checked(
     command,
     *,
@@ -641,16 +841,32 @@ def execute_remote_gate(
     local_run: Path,
     target_model: str,
     draft_model: str,
+    kerberos_command_runner=subprocess.run,
     command_runner=subprocess.run,
+    now=None,
 ) -> dict:
     run_tag = validate_run_tag(run_tag)
     local_run = Path(local_run)
+    local_kerberos = _local_kerberos_preflight(
+        command_runner=kerberos_command_runner,
+        now=now,
+    )
+    if local_kerberos["status"] != "READY":
+        return {
+            "classification": "INCONCLUSIVE_ENVIRONMENT",
+            "preflight": local_kerberos,
+            "local_run": str(local_run),
+        }
     local_run.mkdir(parents=True, exist_ok=False)
-    preflight = _remote_preflight(
+    remote_preflight = _remote_preflight(
         target_model=target_model,
         draft_model=draft_model,
         command_runner=command_runner,
     )
+    preflight = {
+        **remote_preflight,
+        "local_kerberos": local_kerberos,
+    }
     (local_run / "preflight.json").write_bytes(
         canonical_json_bytes(preflight)
     )
@@ -868,7 +1084,7 @@ def parse_args(argv=None):
 def main(argv=None) -> int:
     args = parse_args(argv)
     if args.preflight_only:
-        result = _remote_preflight(
+        result = _preflight_only(
             target_model=args.target_model,
             draft_model=args.draft_model,
         )

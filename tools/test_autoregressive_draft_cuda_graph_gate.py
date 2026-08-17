@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import importlib.util
 import json
 from pathlib import Path
 import sys
 import tarfile
 import types
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -518,6 +520,344 @@ def test_remote_preflight_requires_four_clean_gpus():
     assert blocked["gpu_indices"] == []
 
 
+def _kerberos_payload(
+    *,
+    expires,
+    principal="sitian@BYTEDANCE.COM",
+):
+    return {
+        "version": 1,
+        "cache": "API:redacted",
+        "principal": principal,
+        "tickets": [{
+            "Issued": "20260817120000",
+            "Expires": expires,
+            "Principal": (
+                "krbtgt/BYTEDANCE.COM@BYTEDANCE.COM"
+            ),
+        }],
+    }
+
+
+def _kerberos_now():
+    return datetime(
+        2026,
+        8,
+        17,
+        20,
+        0,
+        tzinfo=ZoneInfo("Asia/Shanghai"),
+    )
+
+
+def test_local_kerberos_payload_accepts_expected_tgt_with_sufficient_lifetime():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_kerberos_ready_test",
+    )
+
+    result = runner.classify_local_kerberos_payload(
+        _kerberos_payload(expires="20260817220001"),
+        now=_kerberos_now(),
+    )
+
+    assert result == {
+        "status": "READY",
+        "principal": "sitian@BYTEDANCE.COM",
+        "tgt_principal": (
+            "krbtgt/BYTEDANCE.COM@BYTEDANCE.COM"
+        ),
+        "expires_at": "2026-08-17T22:00:01+08:00",
+        "remaining_lifetime_seconds": 7201,
+        "minimum_required_lifetime_seconds": 5400,
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    (
+        (
+            _kerberos_payload(expires="20260817195959"),
+            "local Kerberos TGT is expired",
+        ),
+        (
+            _kerberos_payload(expires="20260817212959"),
+            "local Kerberos TGT lifetime is insufficient",
+        ),
+        (
+            {
+                **_kerberos_payload(expires="20260817220001"),
+                "tickets": [],
+            },
+            "local Kerberos TGT is missing",
+        ),
+        (
+            _kerberos_payload(
+                expires="20260817220001",
+                principal="someone@BYTEDANCE.COM",
+            ),
+            "local Kerberos principal is unexpected",
+        ),
+        (
+            None,
+            "local Kerberos payload is invalid",
+        ),
+        (
+            _kerberos_payload(expires="not-a-timestamp"),
+            "local Kerberos payload is invalid",
+        ),
+    ),
+)
+def test_local_kerberos_payload_rejects_invalid_or_short_credentials(
+    payload,
+    reason,
+):
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_kerberos_reject_test",
+    )
+
+    result = runner.classify_local_kerberos_payload(
+        payload,
+        now=_kerberos_now(),
+    )
+
+    assert result["status"] == "INCONCLUSIVE_ENVIRONMENT"
+    assert result["reason"] == reason
+    assert result["minimum_required_lifetime_seconds"] == 5400
+    assert "cache" not in result
+
+
+def test_local_kerberos_preflight_runs_klist_and_classifies_payload():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_kerberos_command_test",
+    )
+    commands = []
+
+    def command_runner(command, **_kwargs):
+        commands.append(command)
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                _kerberos_payload(expires="20260817220001")
+            ),
+            stderr="",
+        )
+
+    result = runner._local_kerberos_preflight(
+        command_runner=command_runner,
+        now=_kerberos_now(),
+    )
+
+    assert commands == [["klist", "--json"]]
+    assert result["status"] == "READY"
+    assert result["remaining_lifetime_seconds"] == 7201
+    assert "cache" not in result
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "reason"),
+    (
+        (
+            1,
+            "",
+            "local Kerberos cache is unavailable",
+        ),
+        (
+            0,
+            "not-json",
+            "local Kerberos payload is invalid",
+        ),
+    ),
+)
+def test_local_kerberos_preflight_rejects_command_or_json_failure(
+    returncode,
+    stdout,
+    reason,
+):
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_kerberos_failure_test",
+    )
+
+    def command_runner(_command, **_kwargs):
+        return types.SimpleNamespace(
+            returncode=returncode,
+            stdout=stdout,
+            stderr="secret detail must not leak",
+        )
+
+    result = runner._local_kerberos_preflight(
+        command_runner=command_runner,
+        now=_kerberos_now(),
+    )
+
+    assert result == {
+        "status": "INCONCLUSIVE_ENVIRONMENT",
+        "reason": reason,
+        "minimum_required_lifetime_seconds": 5400,
+    }
+
+
+def test_local_kerberos_preflight_rejects_subprocess_start_failure():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_kerberos_oserror_test",
+    )
+
+    def command_runner(_command, **_kwargs):
+        raise FileNotFoundError("klist is unavailable")
+
+    result = runner._local_kerberos_preflight(
+        command_runner=command_runner,
+        now=_kerberos_now(),
+    )
+
+    assert result == {
+        "status": "INCONCLUSIVE_ENVIRONMENT",
+        "reason": "local Kerberos cache is unavailable",
+        "minimum_required_lifetime_seconds": 5400,
+    }
+
+
+def test_preflight_only_avoids_ssh_when_local_kerberos_is_expired():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_preflight_auth_test",
+    )
+    kerberos_commands = []
+    remote_commands = []
+
+    def expired_kerberos(command, **_kwargs):
+        kerberos_commands.append(command)
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                _kerberos_payload(expires="20260817195959")
+            ),
+            stderr="",
+        )
+
+    def forbidden_remote(command, **_kwargs):
+        remote_commands.append(command)
+        raise AssertionError("SSH must not run")
+
+    result = runner._preflight_only(
+        target_model="/models/target",
+        draft_model="/models/draft",
+        kerberos_command_runner=expired_kerberos,
+        command_runner=forbidden_remote,
+        now=_kerberos_now(),
+    )
+
+    assert result["status"] == "INCONCLUSIVE_ENVIRONMENT"
+    assert result["reason"] == "local Kerberos TGT is expired"
+    assert kerberos_commands == [["klist", "--json"]]
+    assert remote_commands == []
+
+
+def test_execute_remote_gate_avoids_side_effects_when_local_kerberos_is_expired(
+    tmp_path,
+):
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_execute_auth_test",
+    )
+    local_run = tmp_path / "must-not-exist"
+    remote_commands = []
+
+    def expired_kerberos(_command, **_kwargs):
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                _kerberos_payload(expires="20260817195959")
+            ),
+            stderr="",
+        )
+
+    def forbidden_remote(command, **_kwargs):
+        remote_commands.append(command)
+        raise AssertionError("remote command must not run")
+
+    result = runner.execute_remote_gate(
+        repo_root=tmp_path,
+        run_tag="fresh-tag",
+        local_run=local_run,
+        target_model="/models/target",
+        draft_model="/models/draft",
+        kerberos_command_runner=expired_kerberos,
+        command_runner=forbidden_remote,
+        now=_kerberos_now(),
+    )
+
+    assert result["classification"] == "INCONCLUSIVE_ENVIRONMENT"
+    assert result["preflight"]["reason"] == (
+        "local Kerberos TGT is expired"
+    )
+    assert not local_run.exists()
+    assert remote_commands == []
+
+
+def test_ready_kerberos_creates_local_run_before_remote_preflight(
+    tmp_path,
+):
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_execute_order_test",
+    )
+    local_run = tmp_path / "ready-run"
+    observations = []
+    gpu_output = "\n".join((
+        "0, GPU-a, 0, 0",
+        "1, GPU-b, 0, 0",
+        "2, GPU-c, 0, 0",
+        runner.GPU_PROCESS_MARKER,
+    ))
+
+    def valid_kerberos(_command, **_kwargs):
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                _kerberos_payload(expires="20260817220001")
+            ),
+            stderr="",
+        )
+
+    def remote_runner(_command, **_kwargs):
+        observations.append(
+            (
+                "local-run-exists-before-ssh"
+                if local_run.is_dir()
+                else "local-run-missing-before-ssh"
+            )
+        )
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=gpu_output,
+            stderr="",
+        )
+
+    result = runner.execute_remote_gate(
+        repo_root=tmp_path,
+        run_tag="ready-tag",
+        local_run=local_run,
+        target_model="/models/target",
+        draft_model="/models/draft",
+        kerberos_command_runner=valid_kerberos,
+        command_runner=remote_runner,
+        now=_kerberos_now(),
+    )
+
+    assert result["classification"] == "INCONCLUSIVE_ENVIRONMENT"
+    assert observations == ["local-run-exists-before-ssh"]
+    preflight = json.loads(
+        (local_run / "preflight.json").read_text()
+    )
+    assert preflight["local_kerberos"]["status"] == "READY"
+    assert "cache" not in preflight["local_kerberos"]
+
+
 def test_collective_diagnostic_is_source_bound_and_uses_exact_tp4():
     runner = _load_path(
         RUNNER_PATH,
@@ -808,6 +1148,8 @@ def test_remote_runner_source_has_no_process_destruction():
         "rm -rf",
         "git reset",
         "git clean",
+        "kinit",
+        "--keychain",
     ):
         assert forbidden not in source
 
