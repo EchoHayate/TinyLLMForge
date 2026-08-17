@@ -1,0 +1,33 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-072211-attempt51-qwen35-recurrent-contiguous-r399/authorization.json",
+  "claim_boundary": "cached-continuation authority only; no Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "classification": "FAILED",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-072211-attempt51-qwen35-recurrent-contiguous-r399/executor_configuration.json",
+  "error": "ValueError: guarded_authority command returncode mismatch",
+  "execution_performed": true,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-071955-attempt51-qwen35-recurrent-contiguous-r398/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-072211-attempt51-qwen35-recurrent-contiguous-r399/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 24833,
+    "master_port": 43363
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-072211-attempt51-qwen35-recurrent-contiguous-r399/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-071955-attempt51-qwen35-recurrent-contiguous-r398",
+  "root_pass_evidence": [
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-071955-attempt51-qwen35-recurrent-contiguous-r398/artifacts/tp4_real_root_logit_correctness.json",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-071955-attempt51-qwen35-recurrent-contiguous-r398/independent_verification.json"
+  ],
+  "run_tag": "qwen35-tp4-cached-continuation-20260804-072211-attempt51-qwen35-recurrent-contiguous-r399",
+  "schema_version": "qwen35.tp4-cached-continuation-r399-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-071955-attempt51-qwen35-recurrent-contiguous-r398",
+  "source_tree_sha256": "ce0020b00c8c56bf7b0747c6dad9284d9d5c5affc8a6c84f9fad255f1b261f24"
+}

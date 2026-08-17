@@ -1,0 +1,12 @@
+{
+  "artifact_sha256": "2ecde42b605f6147a36a424ba12f71cff8a5714ef858bd0a28011706ea1dc600",
+  "cells": {
+    "16384:b1": "PASS",
+    "16384:b4": "PASS",
+    "32768:b1": "PASS",
+    "32768:b4": "PASS"
+  },
+  "classification": "NOT_PROMOTABLE",
+  "schema_version": 1,
+  "status": "PASS"
+}

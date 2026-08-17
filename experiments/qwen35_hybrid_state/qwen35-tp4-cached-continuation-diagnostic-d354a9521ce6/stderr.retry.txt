@@ -1,0 +1,43 @@
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+
+Loading weights:   0%|          | 0/320 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 320/320 [00:00<00:00, 6424.76it/s]
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 166, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 149, in main
+    result = run_authority(
+             ^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 114, in run_authority
+    result = producer.produce_configured_authority(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 103, in produce_configured_authority
+    return produce_authority(
+           ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 180, in produce_authority
+    rows.append(executor.run_continuation(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/qwen35_tp4_cached_continuation_correctness_executor.py", line 129, in run_continuation
+    row = session.run()
+          ^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 493, in run
+    self.engine = self.engine_factory(self.configuration)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 13, in _default_engine_factory
+    return backend._default_engine_factory(configuration)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tools/qwen35_tp4_engine_backend_session.py", line 25, in _default_engine_factory
+    return module.LLMEngine(
+           ^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tinyvllm/engine/llm_engine.py", line 83, in __init__
+    config  = Config(model, **config_kwargs)       
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 85, in __init__
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-175905-attempt7/source/tinyvllm/config.py", line 264, in __post_init__
+    self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
+                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 434, in __getattribute__
+    return super().__getattribute__(key)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Qwen3_5Config' object has no attribute 'max_position_embeddings'

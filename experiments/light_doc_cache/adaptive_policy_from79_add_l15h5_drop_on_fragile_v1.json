@@ -1,0 +1,25 @@
+{
+  "kind": "task_adaptive_light_doc_cache_policy",
+  "default_policy_dir": "experiments/light_doc_cache/policy_taskaware_budget75_from79_add_l15h5",
+  "base_safe_policy_dir": "experiments/light_doc_cache/policy_recovery_seed78_add_l11h3_b050",
+  "note": "Default adds 15:5 at 75% budget over the 79-head safe frontier, but fragile first-doc tasks fall back by keeping 15:5 full.",
+  "overrides": {
+    "topk8_quality": {
+      "drop_heads": ["15:5"],
+      "reason": "Frequent late-frontier flip; 15:5 budget75 flips sweet_spot and is near topk8 boundary."
+    },
+    "route_phase3": {
+      "drop_heads": ["15:5"],
+      "reason": "Frequent late-frontier flip; learned_values 15:5 flips route_phase3."
+    },
+    "sweet_spot": {
+      "drop_heads": ["15:5"],
+      "reason": "15:5 budget75 directly flips sweet_spot."
+    },
+    "quest_decode_selection": {
+      "drop_heads": ["15:5"],
+      "reason": "Frequent late-frontier flip; use conservative fallback."
+    }
+  },
+  "claim_boundary": "Quality-only adaptive simulation; report average effective entry saving, not global runtime compression."
+}

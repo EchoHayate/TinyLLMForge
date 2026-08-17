@@ -1,0 +1,15 @@
+{
+  "case_count": 2,
+  "classification": "INCOMPLETE",
+  "exact_outputs": true,
+  "lifecycle_complete": true,
+  "p5_smoke": {
+    "classification": "INCOMPLETE",
+    "demand_activation_count": 1,
+    "distinct_selected_chunk_tokens": 0,
+    "draining_decision_count": 0,
+    "largest_chunk_admission_count": 0,
+    "slo_suppression_count": 150,
+    "smaller_chunk_admission_count": 0
+  }
+}

@@ -1,0 +1,884 @@
+{
+  "schema_version": "qwen35.weighted-tile-policy-estimator.v1",
+  "timestamp_utc": "2026-07-27T13:59:50.798901+00:00",
+  "calibration": {
+    "path": "experiments/qwen35_hybrid_state/20260727-five-binding-synthetic-tile-replay.json",
+    "sha256": "21e3edfbb60fa1fa6338906fd147a1b83bce575c88c5499d575927c22c3f3155",
+    "schema_version": "qwen35.five-binding-synthetic-tile-replay.v1",
+    "fits": [
+      {
+        "kind": "axis0",
+        "calibration_bytes": 33554432,
+        "intercept_seconds_per_calibration_bytes": 0.001012456215508,
+        "per_tile_seconds": 9.8511609015e-05,
+        "r_squared": 0.975593072113597,
+        "max_absolute_residual_seconds": 5.7771435177e-05,
+        "points": [
+          {
+            "budget_bytes": 4194304,
+            "tile_count": 8,
+            "median_seconds": 0.0017850000003818423
+          },
+          {
+            "budget_bytes": 8388608,
+            "tile_count": 4,
+            "median_seconds": 0.0014620410001953132
+          },
+          {
+            "budget_bytes": 16777216,
+            "tile_count": 2,
+            "median_seconds": 0.0011517079983605072
+          },
+          {
+            "budget_bytes": 33554432,
+            "tile_count": 1,
+            "median_seconds": 0.0011287499983154703
+          }
+        ]
+      },
+      {
+        "kind": "axis1",
+        "calibration_bytes": 33554432,
+        "intercept_seconds_per_calibration_bytes": 0.002161648262225,
+        "per_tile_seconds": 5.69743302e-05,
+        "r_squared": 0.96744429452366,
+        "max_absolute_residual_seconds": 4.494507761e-05,
+        "points": [
+          {
+            "budget_bytes": 4194304,
+            "tile_count": 8,
+            "median_seconds": 0.0026176669998676516
+          },
+          {
+            "budget_bytes": 8388608,
+            "tile_count": 4,
+            "median_seconds": 0.002374040999711724
+          },
+          {
+            "budget_bytes": 16777216,
+            "tile_count": 2,
+            "median_seconds": 0.002320542000234127
+          },
+          {
+            "budget_bytes": 33554432,
+            "tile_count": 1,
+            "median_seconds": 0.002188958002079744
+          }
+        ]
+      },
+      {
+        "kind": "segmented_axis0",
+        "calibration_bytes": 33554432,
+        "intercept_seconds_per_calibration_bytes": 0.001162842325143,
+        "per_tile_seconds": 6.206970551e-05,
+        "r_squared": 0.743620124324992,
+        "max_absolute_residual_seconds": 0.000114218439729,
+        "points": [
+          {
+            "budget_bytes": 4194304,
+            "tile_count": 8,
+            "median_seconds": 0.001654415998928016
+          },
+          {
+            "budget_bytes": 8388608,
+            "tile_count": 4,
+            "median_seconds": 0.0014360409986693412
+          },
+          {
+            "budget_bytes": 16777216,
+            "tile_count": 3,
+            "median_seconds": 0.001234833001944935
+          },
+          {
+            "budget_bytes": 33554432,
+            "tile_count": 3,
+            "median_seconds": 0.0014433340002142359
+          }
+        ]
+      },
+      {
+        "kind": "squeeze_axis0",
+        "calibration_bytes": 33554432,
+        "intercept_seconds_per_calibration_bytes": 0.001397424303634,
+        "per_tile_seconds": 3.5695251964e-05,
+        "r_squared": 0.949731268102361,
+        "max_absolute_residual_seconds": 3.7002685396e-05,
+        "points": [
+          {
+            "budget_bytes": 4194304,
+            "tile_count": 8,
+            "median_seconds": 0.0016676669984008186
+          },
+          {
+            "budget_bytes": 8388608,
+            "tile_count": 4,
+            "median_seconds": 0.001577207996888319
+          },
+          {
+            "budget_bytes": 16777216,
+            "tile_count": 2,
+            "median_seconds": 0.0014650419980171137
+          },
+          {
+            "budget_bytes": 33554432,
+            "tile_count": 1,
+            "median_seconds": 0.0014152090006973594
+          }
+        ]
+      },
+      {
+        "kind": "replicated",
+        "calibration_bytes": 33554432,
+        "intercept_seconds_per_calibration_bytes": 0.001060637651909,
+        "per_tile_seconds": 6.1427226288e-05,
+        "r_squared": 0.997806421138495,
+        "max_absolute_residual_seconds": 9.810122087e-06,
+        "points": [
+          {
+            "budget_bytes": 4194304,
+            "tile_count": 8,
+            "median_seconds": 0.0015569170027447399
+          },
+          {
+            "budget_bytes": 8388608,
+            "tile_count": 4,
+            "median_seconds": 0.0012966669964953326
+          },
+          {
+            "budget_bytes": 16777216,
+            "tile_count": 2,
+            "median_seconds": 0.0011785000024246983
+          },
+          {
+            "budget_bytes": 33554432,
+            "tile_count": 1,
+            "median_seconds": 0.0011318750002828892
+          }
+        ]
+      }
+    ]
+  },
+  "budgets_bytes": [
+    4194304,
+    8388608,
+    16777216,
+    33554432
+  ],
+  "baseline_budget_bytes": 8388608,
+  "payload_open_count": 0,
+  "ranks": [
+    {
+      "name": "tp1-rank0",
+      "tensor_parallel_size": 1,
+      "tensor_parallel_rank": 0,
+      "binding_count": 320,
+      "budget_evaluations": [
+        {
+          "budget_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "tile_count": 1096,
+          "estimated_latency_proxy_seconds": 0.234184697550824,
+          "proxy_reduction_vs_baseline_fraction": -0.192978844631763,
+          "extra_peak_bytes_vs_baseline": -4194304,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 2504263360,
+              "tile_count": 675,
+              "byte_copy_proxy_seconds": 0.075562507036357,
+              "tile_call_proxy_seconds": 0.066495336085125,
+              "estimated_proxy_seconds": 0.142057843121482
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 805306368,
+              "tile_count": 216,
+              "byte_copy_proxy_seconds": 0.0518795582934,
+              "tile_call_proxy_seconds": 0.0123064553232,
+              "estimated_proxy_seconds": 0.0641860136166
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 452984832,
+              "tile_count": 108,
+              "byte_copy_proxy_seconds": 0.015698371389431,
+              "tile_call_proxy_seconds": 0.00670352819508,
+              "estimated_proxy_seconds": 0.02240189958451
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 884736,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 3.6846148631e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000679360683983
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "tile_count": 651,
+          "estimated_latency_proxy_seconds": 0.196302473094659,
+          "proxy_reduction_vs_baseline_fraction": 0.0,
+          "extra_peak_bytes_vs_baseline": 0,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 2504263360,
+              "tile_count": 380,
+              "byte_copy_proxy_seconds": 0.075562507036357,
+              "tile_call_proxy_seconds": 0.0374344114257,
+              "estimated_proxy_seconds": 0.112996918462057
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 805306368,
+              "tile_count": 120,
+              "byte_copy_proxy_seconds": 0.0518795582934,
+              "tile_call_proxy_seconds": 0.006836919624,
+              "estimated_proxy_seconds": 0.0587164779174
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 452984832,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.015698371389431,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.019050135486971
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 884736,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 3.6846148631e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000679360683983
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "tile_count": 488,
+          "estimated_latency_proxy_seconds": 0.182238870208334,
+          "proxy_reduction_vs_baseline_fraction": 0.071642515066753,
+          "extra_peak_bytes_vs_baseline": 8388608,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 2504263360,
+              "tile_count": 265,
+              "byte_copy_proxy_seconds": 0.075562507036357,
+              "tile_call_proxy_seconds": 0.026105576388975,
+              "estimated_proxy_seconds": 0.101668083425332
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 805306368,
+              "tile_count": 72,
+              "byte_copy_proxy_seconds": 0.0518795582934,
+              "tile_call_proxy_seconds": 0.0041021517744,
+              "estimated_proxy_seconds": 0.0559817100678
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 452984832,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.015698371389431,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.019050135486971
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 884736,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 3.6846148631e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000679360683983
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "tile_count": 386,
+          "estimated_latency_proxy_seconds": 0.173187580780364,
+          "proxy_reduction_vs_baseline_fraction": 0.117751406540603,
+          "extra_peak_bytes_vs_baseline": 25165824,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 2504263360,
+              "tile_count": 187,
+              "byte_copy_proxy_seconds": 0.075562507036357,
+              "tile_call_proxy_seconds": 0.018421670885805,
+              "estimated_proxy_seconds": 0.093984177922162
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 805306368,
+              "tile_count": 48,
+              "byte_copy_proxy_seconds": 0.0518795582934,
+              "tile_call_proxy_seconds": 0.0027347678496,
+              "estimated_proxy_seconds": 0.054614326143
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 452984832,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.015698371389431,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.019050135486971
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 884736,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 3.6846148631e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000679360683983
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        }
+      ],
+      "pareto_frontier_budget_bytes": [
+        4194304,
+        8388608,
+        16777216,
+        33554432
+      ],
+      "incremental_comparisons": [
+        {
+          "lower_budget_bytes": 8388608,
+          "upper_budget_bytes": 16777216,
+          "proxy_reduction_seconds": 0.014063602886325,
+          "proxy_reduction_fraction_of_lower": 0.071642515066753,
+          "extra_peak_bytes": 8388608,
+          "tile_count_reduction": 163
+        },
+        {
+          "lower_budget_bytes": 16777216,
+          "upper_budget_bytes": 33554432,
+          "proxy_reduction_seconds": 0.00905128942797,
+          "proxy_reduction_fraction_of_lower": 0.049667172637882,
+          "extra_peak_bytes": 16777216,
+          "tile_count_reduction": 102
+        }
+      ]
+    },
+    {
+      "name": "tp2-rank0",
+      "tensor_parallel_size": 2,
+      "tensor_parallel_rank": 0,
+      "binding_count": 320,
+      "budget_evaluations": [
+        {
+          "budget_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "tile_count": 651,
+          "estimated_latency_proxy_seconds": 0.12471383166075,
+          "proxy_reduction_vs_baseline_fraction": -0.127099627737738,
+          "extra_peak_bytes_vs_baseline": -4194304,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 380,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.0374344114257,
+              "estimated_proxy_seconds": 0.075215664943878
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 120,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.006836919624,
+              "estimated_proxy_seconds": 0.0327766987707
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "tile_count": 488,
+          "estimated_latency_proxy_seconds": 0.110650228774425,
+          "proxy_reduction_vs_baseline_fraction": 0.0,
+          "extra_peak_bytes_vs_baseline": 0,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 265,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.026105576388975,
+              "estimated_proxy_seconds": 0.063886829907153
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 72,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.0041021517744,
+              "estimated_proxy_seconds": 0.0300419309211
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "tile_count": 386,
+          "estimated_latency_proxy_seconds": 0.101598939346455,
+          "proxy_reduction_vs_baseline_fraction": 0.081800910203469,
+          "extra_peak_bytes_vs_baseline": 8388608,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 187,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.018421670885805,
+              "estimated_proxy_seconds": 0.056202924403983
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 48,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.0027347678496,
+              "estimated_proxy_seconds": 0.0286745469963
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "tile_count": 371,
+          "estimated_latency_proxy_seconds": 0.10012126521123,
+          "proxy_reduction_vs_baseline_fraction": 0.095155370936102,
+          "extra_peak_bytes_vs_baseline": 25165824,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 172,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.01694399675058,
+              "estimated_proxy_seconds": 0.054725250268758
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 48,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.0027347678496,
+              "estimated_proxy_seconds": 0.0286745469963
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        }
+      ],
+      "pareto_frontier_budget_bytes": [
+        4194304,
+        8388608,
+        16777216,
+        33554432
+      ],
+      "incremental_comparisons": [
+        {
+          "lower_budget_bytes": 8388608,
+          "upper_budget_bytes": 16777216,
+          "proxy_reduction_seconds": 0.00905128942797,
+          "proxy_reduction_fraction_of_lower": 0.081800910203469,
+          "extra_peak_bytes": 8388608,
+          "tile_count_reduction": 102
+        },
+        {
+          "lower_budget_bytes": 16777216,
+          "upper_budget_bytes": 33554432,
+          "proxy_reduction_seconds": 0.001477674135225,
+          "proxy_reduction_fraction_of_lower": 0.014544188598132,
+          "extra_peak_bytes": 16777216,
+          "tile_count_reduction": 15
+        }
+      ]
+    },
+    {
+      "name": "tp2-rank1",
+      "tensor_parallel_size": 2,
+      "tensor_parallel_rank": 1,
+      "binding_count": 320,
+      "budget_evaluations": [
+        {
+          "budget_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "tile_count": 651,
+          "estimated_latency_proxy_seconds": 0.12471383166075,
+          "proxy_reduction_vs_baseline_fraction": -0.127099627737738,
+          "extra_peak_bytes_vs_baseline": -4194304,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 380,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.0374344114257,
+              "estimated_proxy_seconds": 0.075215664943878
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 120,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.006836919624,
+              "estimated_proxy_seconds": 0.0327766987707
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "tile_count": 488,
+          "estimated_latency_proxy_seconds": 0.110650228774425,
+          "proxy_reduction_vs_baseline_fraction": 0.0,
+          "extra_peak_bytes_vs_baseline": 0,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 265,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.026105576388975,
+              "estimated_proxy_seconds": 0.063886829907153
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 72,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.0041021517744,
+              "estimated_proxy_seconds": 0.0300419309211
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "tile_count": 386,
+          "estimated_latency_proxy_seconds": 0.101598939346455,
+          "proxy_reduction_vs_baseline_fraction": 0.081800910203469,
+          "extra_peak_bytes_vs_baseline": 8388608,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 187,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.018421670885805,
+              "estimated_proxy_seconds": 0.056202924403983
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 48,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.0027347678496,
+              "estimated_proxy_seconds": 0.0286745469963
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        },
+        {
+          "budget_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "tile_count": 371,
+          "estimated_latency_proxy_seconds": 0.10012126521123,
+          "proxy_reduction_vs_baseline_fraction": 0.095155370936102,
+          "extra_peak_bytes_vs_baseline": 25165824,
+          "pareto_dominated": false,
+          "by_kind": {
+            "axis0": {
+              "binding_count": 157,
+              "destination_bytes": 1252131680,
+              "tile_count": 172,
+              "byte_copy_proxy_seconds": 0.037781253518178,
+              "tile_call_proxy_seconds": 0.01694399675058,
+              "estimated_proxy_seconds": 0.054725250268758
+            },
+            "axis1": {
+              "binding_count": 48,
+              "destination_bytes": 402653184,
+              "tile_count": 48,
+              "byte_copy_proxy_seconds": 0.0259397791467,
+              "tile_call_proxy_seconds": 0.0027347678496,
+              "estimated_proxy_seconds": 0.0286745469963
+            },
+            "segmented_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 226492416,
+              "tile_count": 54,
+              "byte_copy_proxy_seconds": 0.007849185694715,
+              "tile_call_proxy_seconds": 0.00335176409754,
+              "estimated_proxy_seconds": 0.011200949792255
+            },
+            "squeeze_axis0": {
+              "binding_count": 18,
+              "destination_bytes": 442368,
+              "tile_count": 18,
+              "byte_copy_proxy_seconds": 1.8423074315e-05,
+              "tile_call_proxy_seconds": 0.000642514535352,
+              "estimated_proxy_seconds": 0.000660937609667
+            },
+            "replicated": {
+              "binding_count": 79,
+              "destination_bytes": 216064,
+              "tile_count": 79,
+              "byte_copy_proxy_seconds": 6.829667497e-06,
+              "tile_call_proxy_seconds": 0.004852750876752,
+              "estimated_proxy_seconds": 0.004859580544249
+            }
+          }
+        }
+      ],
+      "pareto_frontier_budget_bytes": [
+        4194304,
+        8388608,
+        16777216,
+        33554432
+      ],
+      "incremental_comparisons": [
+        {
+          "lower_budget_bytes": 8388608,
+          "upper_budget_bytes": 16777216,
+          "proxy_reduction_seconds": 0.00905128942797,
+          "proxy_reduction_fraction_of_lower": 0.081800910203469,
+          "extra_peak_bytes": 8388608,
+          "tile_count_reduction": 102
+        },
+        {
+          "lower_budget_bytes": 16777216,
+          "upper_budget_bytes": 33554432,
+          "proxy_reduction_seconds": 0.001477674135225,
+          "proxy_reduction_fraction_of_lower": 0.014544188598132,
+          "extra_peak_bytes": 16777216,
+          "tile_count_reduction": 15
+        }
+      ]
+    }
+  ],
+  "interpretation_limits": [
+    "Proxy seconds are derived from local synthetic fits and real static tile distributions; they are not measured or predicted real checkpoint load latency.",
+    "The artifact reads config/index/header evidence and builds meta plans without opening safetensors payloads.",
+    "It does not establish RSS, disk, page-cache, GPU, inference, cache, compression, accuracy, or quality gains."
+  ]
+}

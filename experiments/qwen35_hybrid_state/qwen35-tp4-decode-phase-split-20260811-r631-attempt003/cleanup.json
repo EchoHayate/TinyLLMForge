@@ -1,0 +1,6 @@
+{
+  "classification": "FAILED",
+  "returncode": 255,
+  "stderr": "Connection closed by UNKNOWN port 65535\n",
+  "stdout": ""
+}

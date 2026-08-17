@@ -1,0 +1,128 @@
+{
+  "by_policy": {
+    "exact_restore": {
+      "median_collective_count": 25,
+      "median_collective_cuda_ns": 43472896,
+      "median_cuda_imbalance_ns": 1965072,
+      "median_first_collective_cuda_ns": 63212832,
+      "median_first_cuda_ns": 97415169,
+      "median_first_non_cuda_upper_bound_ns": 1062,
+      "median_first_wall_ns": 97416126,
+      "median_steady_cuda_ns": 76574002,
+      "median_steady_cuda_p90_ns": 120559309,
+      "median_steady_non_cuda_upper_bound_ns": 1093,
+      "median_steady_wall_ns": 76575202,
+      "median_steady_wall_p90_ns": 120559922,
+      "median_wall_imbalance_ns": 1996010
+    },
+    "recompute": {
+      "median_collective_count": 25,
+      "median_collective_cuda_ns": 47072256,
+      "median_cuda_imbalance_ns": 1906399,
+      "median_first_collective_cuda_ns": 48269824,
+      "median_first_cuda_ns": 83608673,
+      "median_first_non_cuda_upper_bound_ns": 624,
+      "median_first_wall_ns": 83607886,
+      "median_steady_cuda_ns": 75819358,
+      "median_steady_cuda_p90_ns": 84439526,
+      "median_steady_non_cuda_upper_bound_ns": 1057,
+      "median_steady_wall_ns": 75820293,
+      "median_steady_wall_p90_ns": 84439707,
+      "median_wall_imbalance_ns": 1906420
+    }
+  },
+  "classification": "mixed_or_inconclusive",
+  "collective": {
+    "paired_median_ratio": 0.9235354260479889,
+    "paired_ratios": [
+      0.8323846522419425,
+      1.537648862483952,
+      2.279300770403973,
+      0.9235354260479889,
+      0.5342674545836081
+    ],
+    "ratio_of_medians": 0.9235354260479889
+  },
+  "first_step": {
+    "paired_median_ratio": 1.0790980185654058,
+    "paired_ratios": [
+      1.0790980185654058,
+      1.1651547558564033,
+      1.1468558033731946,
+      0.9534926386606396,
+      0.9620840306880425
+    ],
+    "ratio_of_medians": 1.1651547558564033
+  },
+  "generated_tokens": 8,
+  "measured_pairs": 5,
+  "non_cuda_upper_bound": {
+    "evidence_boundary": "step wall minus CUDA interval is an upper bound that combines host orchestration, launch gaps, and possible synchronization waiting",
+    "paired_median_ratio": 1.0340586565752128,
+    "paired_ratios": [
+      1.0340586565752128,
+      1.3888888888888888,
+      1.1690391459074734,
+      0.8757062146892656,
+      1.0238322211630124
+    ],
+    "ratio_of_medians": 1.0340586565752128
+  },
+  "paired_repetitions": [
+    {
+      "collective_ratio": 0.8323846522419425,
+      "first_step_ratio": 1.0790980185654058,
+      "non_cuda_ratio": 1.0340586565752128,
+      "repetition": 0,
+      "steady_state_ratio": 0.980609592952753
+    },
+    {
+      "collective_ratio": 1.537648862483952,
+      "first_step_ratio": 1.1651547558564033,
+      "non_cuda_ratio": 1.3888888888888888,
+      "repetition": 1,
+      "steady_state_ratio": 1.0325174604759297
+    },
+    {
+      "collective_ratio": 2.279300770403973,
+      "first_step_ratio": 1.1468558033731946,
+      "non_cuda_ratio": 1.1690391459074734,
+      "repetition": 2,
+      "steady_state_ratio": 1.5172103595009847
+    },
+    {
+      "collective_ratio": 0.9235354260479889,
+      "first_step_ratio": 0.9534926386606396,
+      "non_cuda_ratio": 0.8757062146892656,
+      "repetition": 3,
+      "steady_state_ratio": 0.9873624894405179
+    },
+    {
+      "collective_ratio": 0.5342674545836081,
+      "first_step_ratio": 0.9620840306880425,
+      "non_cuda_ratio": 1.0238322211630124,
+      "repetition": 4,
+      "steady_state_ratio": 0.9693574627315656
+    }
+  ],
+  "representative_repetition": 3,
+  "schema_version": "qwen35.tp4-decode-internal-summary.v1",
+  "steady_state": {
+    "paired_median_ratio": 0.9873624894405179,
+    "paired_ratios": [
+      0.980609592952753,
+      1.0325174604759297,
+      1.5172103595009847,
+      0.9873624894405179,
+      0.9693574627315656
+    ],
+    "ratio_of_medians": 1.0099565560898056
+  },
+  "thresholds": {
+    "collective_absolute_ns": 500000,
+    "first_step_absolute_ns": 2000000,
+    "non_cuda_absolute_ns": 1000000,
+    "relative_regression": 1.03,
+    "steady_step_absolute_ns": 1000000
+  }
+}

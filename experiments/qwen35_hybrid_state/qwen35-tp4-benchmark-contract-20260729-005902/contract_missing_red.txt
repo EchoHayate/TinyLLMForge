@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py", line 28, in <module>
+    contract = _load_contract()
+  File "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py", line 24, in _load_contract
+    spec.loader.exec_module(module)
+FileNotFoundError: tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py
+
+EXIT_CODE=1
+
+Expected RED:
+  the production contract did not exist yet.

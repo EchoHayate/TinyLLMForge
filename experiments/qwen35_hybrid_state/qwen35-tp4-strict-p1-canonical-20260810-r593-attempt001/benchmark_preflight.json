@@ -1,0 +1,236 @@
+{
+  "authorized": true,
+  "classification": "READY",
+  "maximum_gpu_utilization_percent": 10,
+  "remote_path_created": false,
+  "remote_query_executed": true,
+  "resource_policy": "shared-low-utilization",
+  "run_tag": "qwen35-tp4-strict-p1-canonical-20260810-r593-attempt001",
+  "schema_version": "qwen35.tp4-hybrid-prefix-performance-cache.v1",
+  "selected_gpus": [
+    {
+      "compute_processes": [
+        {
+          "pid": 1097889,
+          "process_name": "inferencer_worker_0_0",
+          "used_bytes": 11857297408
+        },
+        {
+          "pid": 1118290,
+          "process_name": "m13p4_kvcache_d2h_0_lr0_0",
+          "used_bytes": 455081984
+        },
+        {
+          "pid": 1118204,
+          "process_name": "m13p4_kvcache_0_lr0_0",
+          "used_bytes": 455081984
+        },
+        {
+          "pid": 1118571,
+          "process_name": "m13p4_qhid_0_lr0",
+          "used_bytes": 455081984
+        }
+      ],
+      "free_bytes": 71518126080,
+      "gpu_index": 2,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-63c05907-407b-8240-07a0-f38872840867",
+      "total_bytes": 85899345920,
+      "utilization_percent": 0
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 2889069,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        },
+        {
+          "pid": 2890161,
+          "process_name": "python3",
+          "used_bytes": 7725907968
+        },
+        {
+          "pid": 2134914,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        },
+        {
+          "pid": 2135786,
+          "process_name": "python3",
+          "used_bytes": 18356371456
+        }
+      ],
+      "free_bytes": 56869519360,
+      "gpu_index": 4,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1",
+      "total_bytes": 85899345920,
+      "utilization_percent": 0
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 252431,
+          "process_name": "python",
+          "used_bytes": 1337982976
+        }
+      ],
+      "free_bytes": 83635470336,
+      "gpu_index": 5,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8",
+      "total_bytes": 85899345920,
+      "utilization_percent": 0
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 4053853,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        },
+        {
+          "pid": 4055491,
+          "process_name": "python3",
+          "used_bytes": 19748880384
+        },
+        {
+          "pid": 4033570,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        }
+      ],
+      "free_bytes": 63191384064,
+      "gpu_index": 6,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31",
+      "total_bytes": 85899345920,
+      "utilization_percent": 0
+    }
+  ],
+  "source_bundle": {
+    "owned_files": [
+      "tinyvllm/__init__.py",
+      "tinyvllm/config.py",
+      "tinyvllm/engine/attention_matching.py",
+      "tinyvllm/engine/block_manager.py",
+      "tinyvllm/engine/exact_cuda_graph_cache.py",
+      "tinyvllm/engine/flash_attn_split_policy.py",
+      "tinyvllm/engine/hybrid_state.py",
+      "tinyvllm/engine/kv_cartridge.py",
+      "tinyvllm/engine/llm_engine.py",
+      "tinyvllm/engine/model_runner.py",
+      "tinyvllm/engine/model_runner_command_ack.py",
+      "tinyvllm/engine/qwen35_hybrid_model_owner.py",
+      "tinyvllm/engine/qwen35_hybrid_model_publication.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_acquisition.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_cache.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_engine_publication.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_engine_restore.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_int8_cache.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_owner.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_publication_candidate.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_publication_coordinator.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_publication_ticket.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_representation.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_restore_ticket.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_runtime_identity.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_source_publication.py",
+      "tinyvllm/engine/qwen35_hybrid_state.py",
+      "tinyvllm/engine/qwen35_layer_state.py",
+      "tinyvllm/engine/qwen35_recurrent_capture.py",
+      "tinyvllm/engine/qwen35_recurrent_capture_contract.py",
+      "tinyvllm/engine/qwen35_recurrent_int8_codec.py",
+      "tinyvllm/engine/qwen35_state_transaction.py",
+      "tinyvllm/engine/scheduler.py",
+      "tinyvllm/engine/sequence.py",
+      "tinyvllm/layers/activation.py",
+      "tinyvllm/layers/attention.py",
+      "tinyvllm/layers/embed_head.py",
+      "tinyvllm/layers/gated_delta.py",
+      "tinyvllm/layers/layernorm.py",
+      "tinyvllm/layers/linear.py",
+      "tinyvllm/layers/quantization.py",
+      "tinyvllm/layers/qwen35_decoder_layer.py",
+      "tinyvllm/layers/qwen35_full_attention.py",
+      "tinyvllm/layers/qwen35_linear_attention.py",
+      "tinyvllm/layers/qwen35_packed_full_decoder_layer.py",
+      "tinyvllm/layers/qwen35_packed_layer_stack.py",
+      "tinyvllm/layers/qwen35_packed_stateful_decoder_layer.py",
+      "tinyvllm/layers/qwen35_primitives.py",
+      "tinyvllm/layers/qwen35_rotary_embedding.py",
+      "tinyvllm/layers/qwen35_stateful_decoder_layer.py",
+      "tinyvllm/layers/rotary_embedding.py",
+      "tinyvllm/layers/sampler.py",
+      "tinyvllm/llm.py",
+      "tinyvllm/models/qwen3.py",
+      "tinyvllm/models/qwen35_checkpoint.py",
+      "tinyvllm/models/qwen35_checkpoint_assignment.py",
+      "tinyvllm/models/qwen35_checkpoint_binding.py",
+      "tinyvllm/models/qwen35_checkpoint_candidate_factory.py",
+      "tinyvllm/models/qwen35_checkpoint_candidate_loader.py",
+      "tinyvllm/models/qwen35_checkpoint_loader_configuration.py",
+      "tinyvllm/models/qwen35_checkpoint_metadata.py",
+      "tinyvllm/models/qwen35_checkpoint_reader.py",
+      "tinyvllm/models/qwen35_checkpoint_streaming.py",
+      "tinyvllm/models/qwen35_checkpoint_tile_policy.py",
+      "tinyvllm/models/qwen35_checkpoint_tiled_loading.py",
+      "tinyvllm/models/qwen35_checkpoint_tiles.py",
+      "tinyvllm/models/qwen35_checkpoint_worker.py",
+      "tinyvllm/models/qwen35_components.py",
+      "tinyvllm/models/qwen35_factory.py",
+      "tinyvllm/models/qwen35_packed.py",
+      "tinyvllm/sampling_params.py",
+      "tinyvllm/speculative/__init__.py",
+      "tinyvllm/speculative/ngram.py",
+      "tinyvllm/speculative/router.py",
+      "tinyvllm/speculative/sam.py",
+      "tinyvllm/speculative/verifier.py",
+      "tinyvllm/utils/context.py",
+      "tinyvllm/utils/cpu_offload.py",
+      "tinyvllm/utils/loader.py",
+      "tinyvllm/utils/torch_compile.py",
+      "tools/qwen35_tp4_engine_remote_execution_source_contract.py",
+      "tools/qwen35_tp4_engine_remote_subprocess_adapter.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_assembler.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_authorization.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_executor.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_plan.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_receipt.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "tools/verify_qwen35_tp4_hybrid_prefix_benchmark.py"
+    ],
+    "owned_paths": [
+      "tinyvllm",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_assembler.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_authorization.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_receipt.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_executor.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_plan.py",
+      "tools/qwen35_tp4_engine_remote_execution_source_contract.py",
+      "tools/qwen35_tp4_engine_remote_subprocess_adapter.py",
+      "tools/verify_qwen35_tp4_hybrid_prefix_benchmark.py"
+    ],
+    "source_tree_sha256": "e32c614d0d7f4902169fcc5b43a810dde1837dc5a59a4b867f2be681d5fa4983",
+    "tar_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-canonical-20260810-r593-attempt001/benchmark_source.tar",
+    "tar_sha256": "3f4e609db1a70c4966c1da81a12a302fbc615fb98e295b3128dbc37a61e6d2f9"
+  },
+  "worker_authorization": {
+    "gpu_indices": [
+      2,
+      4,
+      5,
+      6
+    ],
+    "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+    "prerequisites_sha256": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8",
+    "source_tree_sha256": "e32c614d0d7f4902169fcc5b43a810dde1837dc5a59a4b867f2be681d5fa4983",
+    "workload_manifest_sha256": "71909b825d1a8d162604f6cc3d34ad413b2af6c191425ec007859715a4d084e3"
+  }
+}

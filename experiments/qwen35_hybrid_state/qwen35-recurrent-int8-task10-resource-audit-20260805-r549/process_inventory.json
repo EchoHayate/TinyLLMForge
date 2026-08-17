@@ -1,0 +1,131 @@
+{
+  "schema_version": "qwen35.recurrent-int8-resource-process-inventory.v1",
+  "classification": "BLOCKED_RESOURCES",
+  "source_tree_sha256": "e265b3ead9d9717d92d8bc0507ac051d93ec22f8403b7929c3625ee4153ccfd7",
+  "required_gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "processes": [
+    {
+      "pid": 1097889,
+      "user": "zengjun+",
+      "gpu_indices": [
+        2
+      ],
+      "command": "inferencer_worker_0_0",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 1118204,
+      "user": "zengjun+",
+      "gpu_indices": [
+        2
+      ],
+      "command": "m13p4_kvcache_0_lr0_0",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 1118290,
+      "user": "zengjun+",
+      "gpu_indices": [
+        2
+      ],
+      "command": "m13p4_kvcache_d2h_0_lr0_0",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 1118571,
+      "user": "zengjun+",
+      "gpu_indices": [
+        2
+      ],
+      "command": "m13p4_qhid_0_lr0",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 756625,
+      "user": "sitian",
+      "gpu_indices": [
+        2
+      ],
+      "command": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -B engine_construct_diag.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 46321,
+      "user": "root",
+      "gpu_indices": [
+        4
+      ],
+      "command": "python3 /opt/tiger/test/main_model.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 47092,
+      "user": "root",
+      "gpu_indices": [
+        4
+      ],
+      "command": "python3 /opt/tiger/test/main_model.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 2889069,
+      "user": "root",
+      "gpu_indices": [
+        4
+      ],
+      "command": "python3 /opt/tiger/test/main_model.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 2890161,
+      "user": "root",
+      "gpu_indices": [
+        4
+      ],
+      "command": "python3 /opt/tiger/test/main_model.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 757668,
+      "user": "sitian",
+      "gpu_indices": [
+        4
+      ],
+      "command": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python -B -c multiprocessing.spawn_main",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 3931720,
+      "user": "root",
+      "gpu_indices": [
+        6
+      ],
+      "command": "python3 /opt/tiger/test/main_model.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 3933150,
+      "user": "root",
+      "gpu_indices": [
+        6
+      ],
+      "command": "python3 /opt/tiger/test/main_model.py",
+      "external_to_current_authority": true
+    },
+    {
+      "pid": 4038724,
+      "user": "wangmin+",
+      "gpu_indices": [
+        6
+      ],
+      "command": "python3 /opt/tiger/models/search.bert_qrec.7.16/pp_server/runner/main_model.py",
+      "external_to_current_authority": true
+    }
+  ],
+  "decision": "Do not terminate any process. The fixed GPU set remains blocked by multiple external owners. Even removing the two sitian diagnostic processes would not make GPUs 2 and 4 eligible."
+}

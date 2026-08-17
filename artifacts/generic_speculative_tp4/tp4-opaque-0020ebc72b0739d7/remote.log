@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1216, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 campaign independent verification failed: ["current source tree identity mismatch"]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1297, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1286, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1229, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 campaign independent verification failed: ["current source tree identity mismatch"]; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/artifacts/generic_speculative_tp4/tp4-opaque-0020ebc72b0739d7/authority.failed

@@ -1,0 +1,207 @@
+{
+  "classification": "COMPLETE",
+  "cleanup": {
+    "classification": "CLEAN",
+    "matched_attempt_scoped_gpu_pids": [],
+    "remaining_attempt_scoped_pids": [],
+    "remaining_profiler_children": [],
+    "terminated_attempt_scoped_pids": []
+  },
+  "exclusive": false,
+  "nsys": {
+    "classification": "COMPLETE",
+    "effective_trace": "cuda,nvtx,osrt",
+    "nccl_evidence_boundary": "Nsight Systems 2024.7.1 on the target rejects the nccl trace argument; NCCL evidence is limited to CUDA kernel names and any supported stats reports",
+    "nccl_trace_argument_supported": false,
+    "requested_trace": "cuda,nvtx,osrt,nccl",
+    "rows": [
+      {
+        "case_id": "w2_long_reuse__nsys_replay__r3__recompute",
+        "policy": "recompute",
+        "reports": {
+          "cuda_gpu_kern_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-recompute-cuda_gpu_kern_sum.csv",
+            "returncode": 0
+          },
+          "nccl_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-recompute-nccl_sum.csv",
+            "returncode": 0
+          }
+        },
+        "returncode": 0
+      },
+      {
+        "case_id": "w2_long_reuse__nsys_replay__r3__exact_restore",
+        "policy": "exact_restore",
+        "reports": {
+          "cuda_gpu_kern_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-exact_restore-cuda_gpu_kern_sum.csv",
+            "returncode": 0
+          },
+          "nccl_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-exact_restore-nccl_sum.csv",
+            "returncode": 0
+          }
+        },
+        "returncode": 0
+      }
+    ],
+    "version": "NVIDIA Nsight Systems version 2024.7.1.84-247135125610v0"
+  },
+  "overhead": {
+    "boundary": "fresh-process wall time includes model initialization; the ratio is a smoke estimate, not per-token profiler overhead",
+    "classification": "COMPLETE",
+    "decode_internal_to_baseline_ratio": 1.0974361757664055,
+    "rows": [
+      {
+        "elapsed_ns": 29252770458,
+        "label": "baseline",
+        "returncode": 0
+      },
+      {
+        "elapsed_ns": 32103048542,
+        "label": "decode_internal",
+        "returncode": 0
+      }
+    ]
+  },
+  "preserve_attempt": true,
+  "resource_policy": "shared-low-utilization",
+  "run_tag": "qwen35-tp4-decode-internal-profile-20260811-r615-attempt001",
+  "source_tree_sha256": "cc84e39d5baaceeddac91a39952cfad858fdb0488d780a434f25494104989d54",
+  "structured": {
+    "by_policy": {
+      "exact_restore": {
+        "median_collective_count": 1,
+        "median_collective_cuda_ns": 660992,
+        "median_cuda_imbalance_ns": 1945984,
+        "median_first_collective_cuda_ns": 235520,
+        "median_first_cuda_ns": 74555966,
+        "median_first_non_cuda_upper_bound_ns": 1626,
+        "median_first_wall_ns": 74556860,
+        "median_steady_cuda_ns": 72465664,
+        "median_steady_cuda_p90_ns": 83755519,
+        "median_steady_non_cuda_upper_bound_ns": 1888,
+        "median_steady_wall_ns": 72466510,
+        "median_steady_wall_p90_ns": 83756725,
+        "median_wall_imbalance_ns": 1946863
+      },
+      "recompute": {
+        "median_collective_count": 1,
+        "median_collective_cuda_ns": 828928,
+        "median_cuda_imbalance_ns": 1889682,
+        "median_first_collective_cuda_ns": 359936,
+        "median_first_cuda_ns": 75901954,
+        "median_first_non_cuda_upper_bound_ns": 901,
+        "median_first_wall_ns": 75901816,
+        "median_steady_cuda_ns": 72031040,
+        "median_steady_cuda_p90_ns": 78337129,
+        "median_steady_non_cuda_upper_bound_ns": 2196,
+        "median_steady_wall_ns": 72031292,
+        "median_steady_wall_p90_ns": 78339380,
+        "median_wall_imbalance_ns": 1888734
+      }
+    },
+    "classification": "no_material_decode_regression",
+    "collective": {
+      "paired_median_ratio": 1.1118378552971577,
+      "paired_ratios": [
+        1.8055944055944055,
+        0.13166243654822335,
+        1.1118378552971577,
+        1.250154416306362,
+        0.8964974419519874
+      ],
+      "ratio_of_medians": 0.7974058060531192
+    },
+    "first_step": {
+      "paired_median_ratio": 0.9292287288620341,
+      "paired_ratios": [
+        0.8649597827567531,
+        0.9292287288620341,
+        1.0029878080459853,
+        1.0192423573393283,
+        0.8403537646667544
+      ],
+      "ratio_of_medians": 0.982280318563129
+    },
+    "generated_tokens": 8,
+    "measured_pairs": 5,
+    "non_cuda_upper_bound": {
+      "evidence_boundary": "step wall minus CUDA interval is an upper bound that combines host orchestration, launch gaps, and possible synchronization waiting",
+      "paired_median_ratio": 0.8834244080145719,
+      "paired_ratios": [
+        0.8489208633093526,
+        0.5994090333474039,
+        1.1248439450686643,
+        0.8834244080145719,
+        0.9626794258373206
+      ],
+      "ratio_of_medians": 0.8597449908925319
+    },
+    "paired_repetitions": [
+      {
+        "collective_ratio": 1.8055944055944055,
+        "first_step_ratio": 0.8649597827567531,
+        "non_cuda_ratio": 0.8489208633093526,
+        "repetition": 0,
+        "steady_state_ratio": 1.0629609797433164
+      },
+      {
+        "collective_ratio": 0.13166243654822335,
+        "first_step_ratio": 0.9292287288620341,
+        "non_cuda_ratio": 0.5994090333474039,
+        "repetition": 1,
+        "steady_state_ratio": 0.9456781480635162
+      },
+      {
+        "collective_ratio": 1.1118378552971577,
+        "first_step_ratio": 1.0029878080459853,
+        "non_cuda_ratio": 1.1248439450686643,
+        "repetition": 2,
+        "steady_state_ratio": 1.0060420684943427
+      },
+      {
+        "collective_ratio": 1.250154416306362,
+        "first_step_ratio": 1.0192423573393283,
+        "non_cuda_ratio": 0.8834244080145719,
+        "repetition": 3,
+        "steady_state_ratio": 1.0284388207268096
+      },
+      {
+        "collective_ratio": 0.8964974419519874,
+        "first_step_ratio": 0.8403537646667544,
+        "non_cuda_ratio": 0.9626794258373206,
+        "repetition": 4,
+        "steady_state_ratio": 1.0329036503089977
+      }
+    ],
+    "regenerated_summary_sha256": "afb92f1d49ebcd5d6ca51beb51ccee5a4e30093de3a11d7ed2e963c9e8839936",
+    "representative_repetition": 3,
+    "schema_version": "qwen35.tp4-decode-internal-summary.v1",
+    "steady_state": {
+      "paired_median_ratio": 1.0284388207268096,
+      "paired_ratios": [
+        1.0629609797433164,
+        0.9456781480635162,
+        1.0060420684943427,
+        1.0284388207268096,
+        1.0329036503089977
+      ],
+      "ratio_of_medians": 1.0060420684943427
+    },
+    "summary_sha256": "afb92f1d49ebcd5d6ca51beb51ccee5a4e30093de3a11d7ed2e963c9e8839936",
+    "thresholds": {
+      "collective_absolute_ns": 500000,
+      "first_step_absolute_ns": 2000000,
+      "non_cuda_absolute_ns": 1000000,
+      "relative_regression": 1.03,
+      "steady_step_absolute_ns": 1000000
+    }
+  },
+  "worker_count": 12
+}

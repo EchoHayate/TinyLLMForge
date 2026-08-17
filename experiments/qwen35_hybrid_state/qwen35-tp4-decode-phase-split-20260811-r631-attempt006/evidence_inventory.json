@@ -1,0 +1,236 @@
+{
+  "all_guards_ready": true,
+  "candidate_matches_r620_exact_restore": 24,
+  "candidate_matches_r620_recompute": 24,
+  "candidate_recompute_exact_matches": 24,
+  "cleanup_classification": "CLEAN",
+  "collective_inventory": {
+    "r620": {
+      "all_profiles": {
+        "replicated_weight_row_parallel_all_gather": 32256,
+        "vocab_parallel_embedding_all_reduce": 1344
+      },
+      "all_profiles_rank_complete": true,
+      "measured_profiles": {
+        "replicated_weight_row_parallel_all_gather": 26880,
+        "vocab_parallel_embedding_all_reduce": 1120
+      },
+      "profile_count": 12
+    },
+    "r631": {
+      "all_profiles": {
+        "row_parallel_all_reduce": 32256,
+        "vocab_parallel_embedding_all_reduce": 1344
+      },
+      "all_profiles_rank_complete": true,
+      "measured_profiles": {
+        "row_parallel_all_reduce": 26880,
+        "vocab_parallel_embedding_all_reduce": 1120
+      },
+      "profile_count": 12
+    }
+  },
+  "guard_count": 12,
+  "maximum_observed_utilization_percent": 0,
+  "minimum_observed_free_bytes": 56982765568,
+  "pair_count": 24,
+  "pair_rows": [
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "warmup",
+      "repetition": 0,
+      "request_id": "request-0"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "warmup",
+      "repetition": 0,
+      "request_id": "request-1"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "warmup",
+      "repetition": 0,
+      "request_id": "request-2"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "warmup",
+      "repetition": 0,
+      "request_id": "request-3"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 0,
+      "request_id": "request-0"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 0,
+      "request_id": "request-1"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 0,
+      "request_id": "request-2"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 0,
+      "request_id": "request-3"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 1,
+      "request_id": "request-0"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 1,
+      "request_id": "request-1"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 1,
+      "request_id": "request-2"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 1,
+      "request_id": "request-3"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 2,
+      "request_id": "request-0"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 2,
+      "request_id": "request-1"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 2,
+      "request_id": "request-2"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 2,
+      "request_id": "request-3"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 3,
+      "request_id": "request-0"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 3,
+      "request_id": "request-1"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 3,
+      "request_id": "request-2"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 3,
+      "request_id": "request-3"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 4,
+      "request_id": "request-0"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 4,
+      "request_id": "request-1"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 4,
+      "request_id": "request-2"
+    },
+    {
+      "candidate_matches_r620_exact_restore": true,
+      "candidate_matches_r620_recompute": true,
+      "candidate_recompute_exact_match": true,
+      "phase": "measured",
+      "repetition": 4,
+      "request_id": "request-3"
+    }
+  ],
+  "receipt_classification": "DOWNLOADED",
+  "run_complete": true,
+  "run_tag": "qwen35-tp4-decode-phase-split-20260811-r631-attempt006",
+  "schema_version": "qwen35.decode-phase-split-evidence.v1",
+  "worker_complete_markers": 12
+}

@@ -141,6 +141,7 @@ class BlockwiseDecodePlanIdentity:
 
 @dataclass(frozen=True)
 class BlockwiseDecodeWindow:
+    start_block: int
     window_rows: tuple[tuple[int, ...], ...]
     window_lens: tuple[int, ...]
     required_blocks: tuple[int, ...]
@@ -152,6 +153,24 @@ class BlockwiseDecodeWindow:
 @dataclass(frozen=True)
 class BlockwiseDecodePlan:
     identity: BlockwiseDecodePlanIdentity
+    forward_windows: tuple[BlockwiseDecodeWindow, ...]
+    reverse_windows: tuple[BlockwiseDecodeWindow, ...]
+
+
+@dataclass(frozen=True)
+class BlockwiseSpecVerifyPlanIdentity:
+    block_rows: tuple[tuple[int, ...], ...]
+    context_lens: tuple[int, ...]
+    query_lens: tuple[int, ...]
+    block_size: int
+    window_blocks: int
+    write_blocks: tuple[int, ...]
+    gpu_blocks: int
+
+
+@dataclass(frozen=True)
+class BlockwiseSpecVerifyPlan:
+    identity: BlockwiseSpecVerifyPlanIdentity
     forward_windows: tuple[BlockwiseDecodeWindow, ...]
     reverse_windows: tuple[BlockwiseDecodeWindow, ...]
 
@@ -422,6 +441,7 @@ def _materialize_decode_direction(
             gpu_blocks=gpu_blocks,
         )
         records.append(BlockwiseDecodeWindow(
+            start_block=raw_window["start_block"],
             window_rows=raw_window["window_rows"],
             window_lens=raw_window["window_lens"],
             required_blocks=required_blocks,
@@ -635,7 +655,7 @@ def _blockwise_online_decode_attention(
         if reverse_windows
         else plan_cache.forward_windows
     )
-    for window_plan in window_plans:
+    for window_ordinal, window_plan in enumerate(window_plans):
         window_rows = window_plan.window_rows
         window_lens = window_plan.window_lens
         required_blocks = window_plan.required_blocks
@@ -686,6 +706,18 @@ def _blockwise_online_decode_attention(
                 v_dense[row_idx, copied:copied + take] = v_cache[slot, :take]
                 copied += take
 
+        manager.record_h2d_slot_read_window(
+            engine_step=None,
+            attention_stage="decode",
+            layer_index=int(layer_idx),
+            window_ordinal=window_ordinal,
+            logical_blocks=tuple(required_blocks),
+            physical_slots=tuple(
+                manager.logical_to_slot[int(block)]
+                for block in required_blocks
+            ),
+            current_stream=None,
+        )
         k_dense = k_dense.to(torch.float32)
         v_dense = v_dense.to(torch.float32)
         scores = _gqa_scores_decode(q_fp, k_dense, num_heads, scale)
@@ -728,6 +760,340 @@ def _blockwise_online_decode_attention(
     return (running_o / running_l.clamp_min(1e-20).unsqueeze(-1)).to(q.dtype)
 
 
+def _blockwise_online_spec_verify_attention(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    context,
+    num_heads: int,
+    head_dim: int,
+    scale: float,
+    layer_idx: int = -1,
+) -> torch.Tensor:
+    manager = context.kv_offload_manager
+    logical_rows = context.kv_offload_logical_block_tables
+    context_lens = context.kv_offload_context_lens
+    query_lens = context.spec_verify_query_lens
+    if (
+        manager is None
+        or logical_rows is None
+        or context_lens is None
+    ):
+        raise RuntimeError(
+            "blockwise spec_verify requires logical KV metadata"
+        )
+    block_rows, max_blocks = _normalize_logical_block_rows(
+        logical_rows
+    )
+    batch = len(block_rows)
+    if batch <= 0 or any(not row for row in block_rows):
+        raise RuntimeError(
+            "blockwise spec_verify requires non-empty logical rows"
+        )
+    if (
+        not isinstance(query_lens, tuple)
+        or len(query_lens) != batch
+        or len(context_lens) != batch
+    ):
+        raise RuntimeError(
+            "blockwise spec_verify row metadata mismatch"
+        )
+    if any(
+        isinstance(query_len, bool)
+        or not isinstance(query_len, int)
+        or query_len <= 0
+        for query_len in query_lens
+    ):
+        raise RuntimeError(
+            "blockwise spec_verify query lengths must be positive integers"
+        )
+    query_len = query_lens[0]
+    if any(row_query_len != query_len for row_query_len in query_lens):
+        raise RuntimeError(
+            "blockwise spec_verify requires homogeneous query lengths"
+        )
+    if q.size(0) != batch * query_len:
+        raise RuntimeError(
+            "blockwise spec_verify flattened query count mismatch"
+        )
+    if any(
+        int(query_len) > int(context_len)
+        for context_len in context_lens
+    ):
+        raise RuntimeError(
+            "blockwise spec_verify query length exceeds context length"
+        )
+
+    window_blocks = max(
+        1,
+        int(context.kv_offload_blockwise_blocks),
+    )
+    if window_blocks > manager.gpu_blocks:
+        raise RuntimeError(
+            "kv_offload_blockwise_blocks="
+            f"{window_blocks} exceeds gpu staging blocks="
+            f"{manager.gpu_blocks}"
+        )
+    block_size = int(k_cache.shape[1])
+    write_blocks = set(
+        int(block)
+        for block in (context.kv_offload_write_blocks or [])
+    )
+    if write_blocks:
+        manager.mark_dirty(list(write_blocks))
+
+    plan_identity = BlockwiseSpecVerifyPlanIdentity(
+        block_rows=tuple(
+            tuple(int(block) for block in row)
+            for row in block_rows
+        ),
+        context_lens=tuple(
+            int(length) for length in context_lens
+        ),
+        query_lens=tuple(
+            int(length) for length in query_lens
+        ),
+        block_size=block_size,
+        window_blocks=window_blocks,
+        write_blocks=tuple(sorted(write_blocks)),
+        gpu_blocks=int(manager.gpu_blocks),
+    )
+    plan_cache = getattr(
+        context,
+        "kv_offload_spec_verify_window_plan_cache",
+        None,
+    )
+    if plan_cache is None or plan_cache.identity != plan_identity:
+        decode_plan = _build_blockwise_decode_window_plan(
+            block_rows,
+            context_lens,
+            max_blocks,
+            block_size,
+            window_blocks,
+            write_blocks,
+            manager.gpu_blocks,
+        )
+        plan_cache = BlockwiseSpecVerifyPlan(
+            identity=plan_identity,
+            forward_windows=decode_plan.forward_windows,
+            reverse_windows=decode_plan.reverse_windows,
+        )
+        context.kv_offload_spec_verify_window_plan_cache = plan_cache
+
+    q_batched = q.to(torch.float32).view(
+        batch,
+        query_len,
+        num_heads,
+        head_dim,
+    )
+    running_m = torch.full(
+        (batch, query_len, num_heads),
+        float("-inf"),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    running_l = torch.zeros(
+        (batch, query_len, num_heads),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    running_o = torch.zeros(
+        (batch, query_len, num_heads, head_dim),
+        device=q.device,
+        dtype=torch.float32,
+    )
+
+    position_template_tokens = block_size * window_blocks
+    position_template_cache = getattr(
+        context,
+        "kv_offload_spec_verify_position_template_cache",
+        None,
+    )
+    if (
+        position_template_cache is None
+        or position_template_cache[0] != position_template_tokens
+        or position_template_cache[1] != query_len
+        or position_template_cache[2] != q.device
+    ):
+        position_template_cache = (
+            position_template_tokens,
+            query_len,
+            q.device,
+            torch.arange(
+                position_template_tokens,
+                device=q.device,
+            ).view(1, 1, -1),
+            torch.arange(
+                query_len,
+                device=q.device,
+            ).view(1, query_len, 1),
+        )
+        context.kv_offload_spec_verify_position_template_cache = (
+            position_template_cache
+        )
+    key_offsets = position_template_cache[3]
+    query_offsets = position_template_cache[4]
+
+    reverse_windows = (
+        int(layer_idx) >= 0
+        and int(layer_idx) % 2 == 1
+    )
+    window_plans = (
+        plan_cache.reverse_windows
+        if reverse_windows
+        else plan_cache.forward_windows
+    )
+    for window_ordinal, window_plan in enumerate(window_plans):
+        future_hint_blocks = set(
+            window_plan.intra_layer_future_blocks
+        )
+        future_hint_blocks.update(
+            window_plan.cross_layer_reuse_blocks
+        )
+        future_hint_blocks.update(write_blocks)
+        _stage_blockwise_read_window(
+            manager,
+            window_plan.required_blocks,
+            future_extra_blocks=future_hint_blocks,
+            protected_extra_blocks=write_blocks,
+            capacity_extra_blocks=write_blocks,
+            capacity_error_prefix=(
+                "blockwise spec_verify staging capacity exceeded"
+            ),
+        )
+
+        max_window_tokens = window_plan.max_window_tokens
+        dense_shape = (
+            batch,
+            max_window_tokens,
+            k_cache.shape[2],
+            head_dim,
+        )
+        k_dense = q.new_zeros(
+            dense_shape,
+            dtype=k_cache.dtype,
+        )
+        v_dense = q.new_zeros(
+            dense_shape,
+            dtype=v_cache.dtype,
+        )
+        for row_idx, window in enumerate(
+            window_plan.window_rows
+        ):
+            copied = 0
+            window_len = window_plan.window_lens[row_idx]
+            for logical_block in window:
+                if copied >= window_len:
+                    break
+                slot = manager.logical_to_slot[
+                    int(logical_block)
+                ]
+                take = min(
+                    block_size,
+                    window_len - copied,
+                )
+                k_dense[
+                    row_idx,
+                    copied:copied + take,
+                ] = k_cache[slot, :take]
+                v_dense[
+                    row_idx,
+                    copied:copied + take,
+                ] = v_cache[slot, :take]
+                copied += take
+
+        manager.record_h2d_slot_read_window(
+            engine_step=None,
+            attention_stage="spec_verify",
+            layer_index=int(layer_idx),
+            window_ordinal=window_ordinal,
+            logical_blocks=tuple(
+                window_plan.required_blocks
+            ),
+            physical_slots=tuple(
+                manager.logical_to_slot[int(block)]
+                for block in window_plan.required_blocks
+            ),
+            current_stream=None,
+        )
+        mask_cache = getattr(
+            context,
+            "kv_offload_spec_verify_window_mask_cache",
+            None,
+        )
+        if mask_cache is None:
+            mask_cache = {}
+            context.kv_offload_spec_verify_window_mask_cache = (
+                mask_cache
+            )
+        mask_key = (
+            int(window_plan.start_block),
+            tuple(
+                int(length)
+                for length in window_plan.window_lens
+            ),
+            int(max_window_tokens),
+            tuple(int(length) for length in context_lens),
+            int(query_len),
+            q.device,
+        )
+        mask = mask_cache.get(mask_key)
+        if mask is None:
+            query_starts = torch.tensor(
+                [
+                    int(context_len) - query_len
+                    for context_len in context_lens
+                ],
+                device=q.device,
+                dtype=torch.int64,
+            ).view(batch, 1, 1)
+            query_positions = query_starts + query_offsets
+            key_positions = (
+                int(window_plan.start_block) * block_size
+                + key_offsets[:, :, :max_window_tokens]
+            )
+            window_lens = torch.tensor(
+                window_plan.window_lens,
+                device=q.device,
+                dtype=torch.int64,
+            ).view(batch, 1, 1)
+            mask = (
+                key_positions <= query_positions
+            ) & (
+                key_offsets[:, :, :max_window_tokens]
+                < window_lens
+            )
+            mask_cache[mask_key] = mask
+
+        k_dense = k_dense.to(torch.float32)
+        v_dense = v_dense.to(torch.float32)
+        for row_idx in range(batch):
+            scores = _gqa_scores_prefill(
+                q_batched[row_idx],
+                k_dense[row_idx],
+                num_heads,
+                scale,
+            )
+            (
+                running_m[row_idx],
+                running_l[row_idx],
+                running_o[row_idx],
+            ) = _merge_attention_window(
+                running_m[row_idx],
+                running_l[row_idx],
+                running_o[row_idx],
+                scores,
+                v_dense[row_idx],
+                mask[row_idx].unsqueeze(1),
+            )
+
+    output = (
+        running_o
+        / running_l.clamp_min(1e-20).unsqueeze(-1)
+    )
+    return output.to(q.dtype).view_as(q)
+
+
 def _blockwise_online_prefill_attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -738,6 +1104,7 @@ def _blockwise_online_prefill_attention(
     num_heads: int,
     head_dim: int,
     scale: float,
+    layer_idx: int = -1,
 ) -> torch.Tensor:
     """Exact chunked-prefill attention over offloaded logical KV blocks.
 
@@ -797,6 +1164,7 @@ def _blockwise_online_prefill_attention(
         )
         context.kv_offload_prefill_window_plan_cache = prefill_plan_cache
 
+    window_ordinal = 0
     for row_plan in prefill_plan_cache:
         q_start = row_plan["q_start"]
         q_end = row_plan["q_end"]
@@ -831,6 +1199,20 @@ def _blockwise_online_prefill_attention(
                 k_dense[copied:copied + take] = k_cache[slot, :take]
                 v_dense[copied:copied + take] = v_cache[slot, :take]
                 copied += take
+            required_blocks = _unique_blocks_in_order(window)
+            manager.record_h2d_slot_read_window(
+                engine_step=None,
+                attention_stage="prefill",
+                layer_index=int(layer_idx),
+                window_ordinal=window_ordinal,
+                logical_blocks=tuple(required_blocks),
+                physical_slots=tuple(
+                    manager.logical_to_slot[int(block)]
+                    for block in required_blocks
+                ),
+                current_stream=None,
+            )
+            window_ordinal += 1
             k_dense = k_dense.to(torch.float32)
             v_dense = v_dense.to(torch.float32)
             scores = _gqa_scores_prefill(q_row, k_dense, num_heads, scale)
@@ -1310,12 +1692,63 @@ def _flash_attn_spec_verify(
     context,
     scale: float,
 ) -> torch.Tensor:
-    if context.context_lens is None or context.context_lens.numel() != 1:
-        raise RuntimeError("spec_verify requires one context length")
-    if context.block_tables is None or context.block_tables.size(0) != 1:
-        raise RuntimeError("spec_verify requires one block-table row")
+    if context.context_lens is None:
+        raise RuntimeError(
+            "spec_verify requires context lengths"
+        )
+    batch_size = int(context.context_lens.numel())
+    if batch_size <= 0:
+        raise RuntimeError(
+            "spec_verify requires at least one context length"
+        )
+    if (
+        context.block_tables is None
+        or context.block_tables.size(0) != batch_size
+    ):
+        raise RuntimeError(
+            "spec_verify block-table row count mismatch"
+        )
+    query_lens = getattr(
+        context,
+        "spec_verify_query_lens",
+        (),
+    )
+    if (
+        not isinstance(query_lens, tuple)
+        or len(query_lens) != batch_size
+    ):
+        raise RuntimeError(
+            "spec_verify query length row count mismatch"
+        )
+    if any(
+        isinstance(query_len, bool)
+        or not isinstance(query_len, int)
+        or query_len <= 0
+        for query_len in query_lens
+    ):
+        raise RuntimeError(
+            "spec_verify query lengths must be positive integers"
+        )
+    query_len = query_lens[0]
+    if any(
+        row_query_len != query_len
+        for row_query_len in query_lens
+    ):
+        raise RuntimeError(
+            "spec_verify requires homogeneous query lengths"
+        )
+    if q.size(0) != batch_size * query_len:
+        raise RuntimeError(
+            "spec_verify flattened query count mismatch"
+        )
+    batched_q = q.view(
+        batch_size,
+        query_len,
+        q.size(1),
+        q.size(2),
+    )
     output = flash_attn_with_kvcache(
-        q.unsqueeze(0),
+        batched_q,
         k_cache,
         v_cache,
         cache_seqlens=context.context_lens,
@@ -1404,20 +1837,42 @@ class Attention(nn.Module):
         if context.mode == "spec_verify":
             if self.kv_quant_bits != 0:
                 raise RuntimeError("spec_verify requires FP16/BF16 KV")
-            o = _flash_attn_spec_verify(
-                q,
-                k_cache,
-                v_cache,
-                context,
-                self.scale,
-            )
+            if context.kv_offload_blockwise_decode:
+                o = _blockwise_online_spec_verify_attention(
+                    q,
+                    k_cache,
+                    v_cache,
+                    context,
+                    self.num_heads,
+                    self.head_dim,
+                    self.scale,
+                    layer_idx=getattr(self, "layer_idx", -1),
+                )
+            else:
+                o = _flash_attn_spec_verify(
+                    q,
+                    k_cache,
+                    v_cache,
+                    context,
+                    self.scale,
+                )
         elif context.mode == "prefill":
             # prefill传入的 q = [batch_size, seq_len, num_heads, head_dim]
             # 经过 view变成 q = [batch_size * seq_len, num_heads, head_dim]
             if context.kv_offload_blockwise_prefill:
                 assert self.kv_quant_bits == 0, "KV offload blockwise prefill MVP 仅支持 fp16/bf16 KV"
                 o = _blockwise_online_prefill_attention(
-                    q, k, v, k_cache, v_cache, context, self.num_heads, self.head_dim, self.scale)
+                    q,
+                    k,
+                    v,
+                    k_cache,
+                    v_cache,
+                    context,
+                    self.num_heads,
+                    self.head_dim,
+                    self.scale,
+                    layer_idx=getattr(self, "layer_idx", -1),
+                )
                 o = o.view(-1, self.num_heads * self.head_dim)
                 return o
             if self.kv_quant_bits in (4, 8):
@@ -1612,6 +2067,16 @@ class Attention(nn.Module):
                     k_cache.shape[1],
                     context.quest_top_k_blocks,
                 )
+            elif (
+                block_tables is not None
+                and int(k_cache.shape[1]) % 256 != 0
+            ):
+                k_cache, v_cache = gather_kv_cache_dense(
+                    k_cache,
+                    v_cache,
+                    block_tables,
+                )
+                block_tables = None
             o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache, cache_seqlens = cache_seqlens,
                                         block_table = block_tables, softmax_scale = self.scale, causal = True,
                                         num_splits=context.flash_attn_num_splits)

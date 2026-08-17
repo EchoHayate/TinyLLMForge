@@ -1,0 +1,15 @@
+{
+  "capability.json": "cbd9d22f47e07bef004b18b310d363da03c25949c4b1379ac66bda02379fa565",
+  "case_rows.json": "ac7518cfba5c4535e3f2ee1ea8a39b597d3f052bbcf6e8971b8261aed88e130d",
+  "event_rows.json": "e9eb2196dd0128118e8df529d56017ad283b118f5f1c7e83653bf351b86152d6",
+  "manifest.json": "f5c96c6283a6fb8da9ca726936cfe8f54419473a608eadc45282e484c2c0b3be",
+  "remote_exitcode": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "report.md": "fb0cc975d52c4a14242f17c1da91a206600fe7ce2eb7208941caddc0eeb6dbe6",
+  "router_rows.json": "e2d4b92f76f64fc3530e6b2c06faac7e98c4d6bb2ed73e333e881d2bd680408c",
+  "runner.log": "615ca19823fec66c2ffbc0c6a43ff790ced860aed4173c881303c1e09ada3326",
+  "source.patch": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source_evidence.json": "2bf1f3d3eca8334d1d5f9cae00ef7c67be2bc7d201ddf1c65ae8755feea57078",
+  "source_preflight.json": "3462fa9b5902efe102a5359d92fc761dad95c5d403782b181948275b3080d84c",
+  "source_snapshot.tar.gz": "8b22ea9a6da3dee7d105c133b28471364fb43306726897e8782490b904d4468e",
+  "summary.json": "615ca19823fec66c2ffbc0c6a43ff790ced860aed4173c881303c1e09ada3326"
+}

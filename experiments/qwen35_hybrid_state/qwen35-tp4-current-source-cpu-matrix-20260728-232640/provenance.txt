@@ -1,0 +1,2 @@
+supersedes_local_snapshot=qwen35-tp4-current-source-cpu-matrix-20260728-232504
+reason=previous continuation SSH failed before remote command startup

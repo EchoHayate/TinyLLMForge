@@ -1,0 +1,36 @@
+{
+  "kind": "task_adaptive_light_doc_cache_policy",
+  "default_policy_dir": "experiments/light_doc_cache/policy_taskaware_budget75_from79_add_l6h4",
+  "base_safe_policy_dir": "experiments/light_doc_cache/policy_recovery_seed78_add_l11h3_b050",
+  "failure_diagnostics": "experiments/light_doc_cache/task_failure_diagnostics_round4_round7_20260709.tsv",
+  "doc_filter": "first",
+  "top_tasks": 4,
+  "note": "Auto top4 first-doc fallback for default 80-head policy adding 6:4 at 75pct budget.",
+  "overrides": {
+    "topk8_quality": {
+      "drop_heads": [
+        "6:4"
+      ],
+      "reason": "fragile_task_count=14"
+    },
+    "route_phase3": {
+      "drop_heads": [
+        "6:4"
+      ],
+      "reason": "fragile_task_count=8"
+    },
+    "sweet_spot": {
+      "drop_heads": [
+        "6:4"
+      ],
+      "reason": "fragile_task_count=7"
+    },
+    "quest_decode_selection": {
+      "drop_heads": [
+        "6:4"
+      ],
+      "reason": "fragile_task_count=6"
+    }
+  },
+  "claim_boundary": "Quality-only adaptive simulation; report average effective entry saving, not global runtime compression."
+}

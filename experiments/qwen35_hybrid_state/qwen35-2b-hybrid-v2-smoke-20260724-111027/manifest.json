@@ -1,0 +1,1 @@
+{"artifacts":[],"classification":"INCOMPLETE","failure_detail":"expected exactly one verified model snapshot","failure_kind":"INCOMPLETE_RUNNER_FAILURE","model_repository":"Qwen/Qwen3.5-2B","model_resolved_revision":"15852e8c16360a2fea060d615a32b45270f8a8fc","schema_version":2,"source_commit":"8459af1090c200ac633a4e8ecb6832f668f99458"}

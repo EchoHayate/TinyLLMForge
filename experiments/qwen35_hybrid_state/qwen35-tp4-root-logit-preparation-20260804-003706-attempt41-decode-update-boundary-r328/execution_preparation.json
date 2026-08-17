@@ -1,0 +1,21 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-003706-attempt41-decode-update-boundary-r328/authorization.json",
+  "engine_source_tree_sha256": "cfbb395cfea8494c4d8651091a8297201b56e1bd93826e3a402cf3bdf8fbbacb",
+  "execution_performed": false,
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-003706-attempt41-decode-update-boundary-r328/plan/remote_execution_plan.json",
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-003706-attempt41-decode-update-boundary-r328/resource_baseline.json",
+  "resource_baseline_sha256": "e8f3125832ed8b70919acd417594aa04bcf34aa0625839ce0890d88d9dad28c7",
+  "root_source_tree_sha256": "c824b3548be707e18744b4fa254ef9cecc160b6572887632eea8a97ea0835dda",
+  "run_tag": "qwen35-tp4-root-logit-current-source-20260804-003706-attempt41-decode-update-boundary-r328",
+  "schema_version": "qwen35.tp4-current-source-root-execution.v1",
+  "source_tag": "qwen35-tp4-source-prep-20260804-003706-attempt41-decode-update-boundary-r328"
+}

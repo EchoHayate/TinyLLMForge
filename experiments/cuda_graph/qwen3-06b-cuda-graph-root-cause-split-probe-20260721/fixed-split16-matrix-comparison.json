@@ -1,0 +1,200 @@
+{
+  "all_processes_pass": true,
+  "all_tensors_equal": false,
+  "batches": [
+    4,
+    5,
+    8,
+    9,
+    16
+  ],
+  "hypothesis": "fixed FlashAttention num_splits=16 makes exact CUDA Graph replay tensor-identical to eager for every historically corrupt ragged batch",
+  "rows": [
+    {
+      "batch_size": 4,
+      "case_id": "b4__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "producer_exit": 0
+    },
+    {
+      "batch_size": 5,
+      "case_id": "b5__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "producer_exit": 0
+    },
+    {
+      "batch_size": 8,
+      "case_id": "b8__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": false,
+          "max_abs": 1.0,
+          "nonzero": 1736365
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": false,
+          "max_abs": 1.5,
+          "nonzero": 1901108
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": false,
+        "max_abs": 9.5,
+        "nonzero": 3883278
+      },
+      "logits": {
+        "equal": false,
+        "max_abs": 0.84375,
+        "nonzero": 10759199
+      },
+      "producer_exit": 0
+    },
+    {
+      "batch_size": 9,
+      "case_id": "b9__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": false,
+          "max_abs": 3.0,
+          "nonzero": 2075200
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": false,
+          "max_abs": 1.5,
+          "nonzero": 2279208
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": false,
+        "max_abs": 9.5,
+        "nonzero": 4647041
+      },
+      "logits": {
+        "equal": false,
+        "max_abs": 0.84375,
+        "nonzero": 12872009
+      },
+      "producer_exit": 0
+    },
+    {
+      "batch_size": 16,
+      "case_id": "b16__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": false,
+          "max_abs": 22.625,
+          "nonzero": 4554581
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": false,
+          "max_abs": 12.0,
+          "nonzero": 4998829
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": false,
+        "max_abs": 17.5,
+        "nonzero": 10148377
+      },
+      "logits": {
+        "equal": false,
+        "max_abs": 5.75,
+        "nonzero": 27470195
+      },
+      "producer_exit": 0
+    }
+  ],
+  "schema_version": 1
+}

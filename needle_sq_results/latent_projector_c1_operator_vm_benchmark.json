@@ -1,0 +1,1958 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B",
+    "task": "arithmetic",
+    "train_cases": 64,
+    "eval_cases": 32,
+    "context_len": 512,
+    "depth": 0.5,
+    "latent_steps": 1,
+    "max_new_tokens": 16,
+    "epochs": 80,
+    "batch_size": 8,
+    "lr": 0.0001,
+    "weight_decay": 0.0,
+    "hidden_loss_weight": 1.0,
+    "logit_loss_weight": 0.0,
+    "soft_step_epochs": 0,
+    "soft_step_lr": 1e-05,
+    "seed": 0,
+    "train_device": "cpu",
+    "max_model_len": 1024,
+    "gpu_memory_utilization": 0.7,
+    "skip_eval": false,
+    "checkpoint": "needle_sq_results/latent_projector_c1_operator_vm_benchmark.pt",
+    "out_json": "needle_sq_results/latent_projector_c1_operator_vm_benchmark.json",
+    "hf_teacher_forcing": false,
+    "hf_device": "cuda",
+    "hf_dtype": "bfloat16",
+    "step_hidden_loss_weight": 0.0,
+    "step_hidden_mode": "input",
+    "projector_kind": "shared",
+    "max_latent_steps": 16,
+    "latent_step_curriculum": "none",
+    "state_supervision_weight": 0.0,
+    "state_min_value": -256,
+    "state_max_value": 2048,
+    "state_embedding_loss_weight": 0.0,
+    "state_embedding_mse_weight": 0.1,
+    "arithmetic_state_machine_weight": 0.0,
+    "arithmetic_state_machine_value_weight": 1.0,
+    "arithmetic_state_machine_phase_weight": 0.2,
+    "arithmetic_state_machine_source": "output",
+    "arithmetic_state_machine_no_repeat_final": false,
+    "pure_latent_arithmetic": false,
+    "pure_hidden_size": 128,
+    "pure_numeric_representation": "id_embedding",
+    "pure_arith_a_min": 20,
+    "pure_arith_a_max": 90,
+    "pure_arith_b_min": 10,
+    "pure_arith_b_max": 80,
+    "pure_arith_c_min": 2,
+    "pure_arith_c_max": 9,
+    "pure_arith_d_min": 10,
+    "pure_arith_d_max": 120,
+    "pure_arith_value_weight": 1.0,
+    "pure_arith_phase_weight": 0.0,
+    "pure_arith_regression_weight": 0.0,
+    "pure_arith_digit_weight": 0.0,
+    "pure_digit_arithmetic": false,
+    "pure_digit_mode": "deterministic",
+    "pure_digit_num_digits": 4,
+    "pure_digit_operator_hidden_size": 64,
+    "pure_digit_operator_depth": 2,
+    "pure_digit_combo_heldout_frac": 0.2,
+    "pure_digit_combo_split_seed": 0,
+    "pure_digit_carry_loss_weight": 1.0,
+    "oracle_decode_bridge": false,
+    "decode_bridge_hidden_size": 1024,
+    "decode_bridge_depth": 2,
+    "textual_oracle_eval": false,
+    "textual_oracle_mode": "final_answer",
+    "embedding_oracle_eval": false,
+    "embedding_oracle_mode": "final_abs",
+    "digit_slot_renderer_eval": false,
+    "digit_slot_renderer_input_mode": "inputs_embeds",
+    "digit_slot_predictor": false,
+    "digit_slot_predictor_hidden_size": 256,
+    "digit_slot_predictor_depth": 2,
+    "digit_slot_digit_loss_weight": 1.0,
+    "digit_slot_decode_input_mode": "inputs_embeds",
+    "primitive_digit_renderer_eval": false,
+    "primitive_digit_renderer_input_mode": "inputs_embeds",
+    "operator_vm_benchmark": true,
+    "operator_vm_input_mode": "inputs_embeds",
+    "operator_vm_baseline_max_new_tokens": 128,
+    "operator_vm_final_max_new_tokens": 8,
+    "canonical_embedding_bridge": false,
+    "canonical_embedding_mode": "final_abs",
+    "canonical_embedding_cosine_weight": 1.0,
+    "canonical_embedding_token_ce_weight": 0.0,
+    "canonical_embedding_token_ce_temperature": 0.05,
+    "canonical_embedding_target_tokens": 0,
+    "canonical_embedding_decode_mode": "continuous",
+    "bridge_supervision_weight": 1.0
+  },
+  "benchmark": "C1 arithmetic operator VM token-saving benchmark",
+  "eval_cases": 32,
+  "num_digits": 4,
+  "baseline_max_new_tokens": 128,
+  "operator_vm_final_max_new_tokens": 8,
+  "input_mode": "inputs_embeds",
+  "elapsed_s": 222.24520659446716,
+  "baseline": {
+    "accuracy": 1.0,
+    "contains_accuracy": 1.0,
+    "avg_generated_tokens": 83.46875,
+    "avg_latency_s": 6.597350515425205,
+    "avg_prefill_tokens": 511.21875,
+    "avg_total_kv_tokens": 594.6875
+  },
+  "operator_vm": {
+    "accuracy": 1.0,
+    "contains_accuracy": 1.0,
+    "avg_generated_tokens": 4.0,
+    "avg_latency_s": 0.33683500438928604,
+    "avg_llm_latency_s": 0.32542509585618973,
+    "operator_overhead_s": 0.011409908533096313,
+    "avg_prefill_tokens": 558.21875,
+    "avg_rendered_suffix_tokens": 47.0,
+    "avg_total_kv_tokens": 562.21875
+  },
+  "speedup": {
+    "latency": 19.586297235902872,
+    "llm_latency": 20.273023191612346,
+    "generated_tokens": 20.8671875,
+    "total_kv_tokens": 1.0577510977711078
+  },
+  "token_saving": {
+    "generated_token_reduction": 0.9520778734556345,
+    "total_kv_token_reduction": 0.05459800315291641
+  },
+  "details": [
+    {
+      "expected": "116",
+      "baseline": {
+        "answer_only": null,
+        "answer": "116",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 90,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 602,
+        "latency_s": 7.1609086990356445,
+        "raw": " Let's break down the steps. First, we start with 58. Then we add 14, which gives us 58 + 14 = 72. Next, we multiply the result by 3, so 72 * 3 = 216. Finally, "
+      },
+      "operator_vm": {
+        "answer_only": "116",
+        "answer": "116",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.45221567153930664,
+        "llm_latency_s": 0.31362295150756836,
+        "operator_overhead_s": 0.13859272003173828,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            6,
+            1,
+            1,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            1,
+            1,
+            6
+          ],
+          "rendered_abs": "116",
+          "overflow": false
+        },
+        "raw": " 116"
+      },
+      "meta": {
+        "a": 58,
+        "b": 14,
+        "c": 3,
+        "d": 100,
+        "teacher_steps": [
+          " (58 + 14) = 72;",
+          " 72 * 3 = 216;",
+          " 216 - 100 = 116.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "85",
+      "baseline": {
+        "answer_only": null,
+        "answer": "85",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 66,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 578,
+        "latency_s": 5.344040870666504,
+        "raw": " Let's break down the steps. Start with 23. Add 10: 23 + 10 = 33. Multiply by 6: 33 * 6 = 198. Subtract 113: 198 - 113 = 85"
+      },
+      "operator_vm": {
+        "answer_only": "85",
+        "answer": "85",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 46,
+        "total_kv_tokens": 561,
+        "latency_s": 0.360668420791626,
+        "llm_latency_s": 0.3543691635131836,
+        "operator_overhead_s": 0.006299257278442383,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            5,
+            8,
+            0,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            0,
+            8,
+            5
+          ],
+          "rendered_abs": "85",
+          "overflow": false
+        },
+        "raw": " 85"
+      },
+      "meta": {
+        "a": 23,
+        "b": 10,
+        "c": 6,
+        "d": 113,
+        "teacher_steps": [
+          " (23 + 10) = 33;",
+          " 33 * 6 = 198;",
+          " 198 - 113 = 85.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "423",
+      "baseline": {
+        "answer_only": null,
+        "answer": "423",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 87,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 599,
+        "latency_s": 8.879983901977539,
+        "raw": " Let's break down the steps. First, we start with 84. Then we add 51 to it. 84 + 51 equals 135. Next, we multiply that result by 4. 135 * 4 equals 540. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "423",
+        "answer": "423",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.2997281551361084,
+        "llm_latency_s": 0.2935209274291992,
+        "operator_overhead_s": 0.00620722770690918,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            3,
+            2,
+            4,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            4,
+            2,
+            3
+          ],
+          "rendered_abs": "423",
+          "overflow": false
+        },
+        "raw": " 423"
+      },
+      "meta": {
+        "a": 84,
+        "b": 51,
+        "c": 4,
+        "d": 117,
+        "teacher_steps": [
+          " (84 + 51) = 135;",
+          " 135 * 4 = 540;",
+          " 540 - 117 = 423.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "63",
+      "baseline": {
+        "answer_only": null,
+        "answer": "63",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 84,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 596,
+        "latency_s": 7.518266677856445,
+        "raw": " Let's break down the steps. First, we start with 33. Then we add 58 to it. 33 + 58 equals 91. Next, we multiply that result by 2. 91 * 2 equals 182. Finally, w"
+      },
+      "operator_vm": {
+        "answer_only": "63",
+        "answer": "63",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 46,
+        "total_kv_tokens": 561,
+        "latency_s": 0.28644657135009766,
+        "llm_latency_s": 0.2790102958679199,
+        "operator_overhead_s": 0.007436275482177734,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            3,
+            6,
+            0,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            0,
+            6,
+            3
+          ],
+          "rendered_abs": "63",
+          "overflow": false
+        },
+        "raw": " 63"
+      },
+      "meta": {
+        "a": 33,
+        "b": 58,
+        "c": 2,
+        "d": 119,
+        "teacher_steps": [
+          " (33 + 58) = 91;",
+          " 91 * 2 = 182;",
+          " 182 - 119 = 63.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "343",
+      "baseline": {
+        "answer_only": null,
+        "answer": "343",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 8.343161582946777,
+        "raw": " Let's break down the steps. First, we start with 59. Then we add 12, which gives us 59 + 12 = 71. Next, we multiply the result by 5, so 71 * 5 = 355. Finally, "
+      },
+      "operator_vm": {
+        "answer_only": "343",
+        "answer": "343",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.4135298728942871,
+        "llm_latency_s": 0.4073810577392578,
+        "operator_overhead_s": 0.006148815155029297,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            3,
+            4,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            4,
+            3
+          ],
+          "rendered_abs": "343",
+          "overflow": false
+        },
+        "raw": " 343"
+      },
+      "meta": {
+        "a": 59,
+        "b": 12,
+        "c": 5,
+        "d": 12,
+        "teacher_steps": [
+          " (59 + 12) = 71;",
+          " 71 * 5 = 355;",
+          " 355 - 12 = 343.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "323",
+      "baseline": {
+        "answer_only": null,
+        "answer": "323",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 87,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 599,
+        "latency_s": 8.66029953956604,
+        "raw": " Let's break down the steps. First, we start with 62. Then we add 44 to it. 62 + 44 equals 106. Next, we multiply that result by 4. 106 * 4 equals 424. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "323",
+        "answer": "323",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.3416013717651367,
+        "llm_latency_s": 0.33500242233276367,
+        "operator_overhead_s": 0.006598949432373047,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            3,
+            2,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            2,
+            3
+          ],
+          "rendered_abs": "323",
+          "overflow": false
+        },
+        "raw": " 323"
+      },
+      "meta": {
+        "a": 62,
+        "b": 44,
+        "c": 4,
+        "d": 101,
+        "teacher_steps": [
+          " (62 + 44) = 106;",
+          " 106 * 4 = 424;",
+          " 424 - 101 = 323.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "380",
+      "baseline": {
+        "answer_only": null,
+        "answer": "380",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 84,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 595,
+        "latency_s": 10.798535823822021,
+        "raw": " Let's break down the steps. First, we start with 35. Then we add 21, which gives us 35 + 21 = 56. Next, we multiply the result by 7, so 56 * 7 = 392. Finally, "
+      },
+      "operator_vm": {
+        "answer_only": "380",
+        "answer": "380",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.4045090675354004,
+        "llm_latency_s": 0.39708375930786133,
+        "operator_overhead_s": 0.0074253082275390625,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            0,
+            8,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            8,
+            0
+          ],
+          "rendered_abs": "380",
+          "overflow": false
+        },
+        "raw": " 380"
+      },
+      "meta": {
+        "a": 35,
+        "b": 21,
+        "c": 7,
+        "d": 12,
+        "teacher_steps": [
+          " (35 + 21) = 56;",
+          " 56 * 7 = 392;",
+          " 392 - 12 = 380.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "145",
+      "baseline": {
+        "answer_only": null,
+        "answer": "145",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 8.63193130493164,
+        "raw": " Let's break down the steps. First, we start with 72. Then we add 29 to it. 72 + 29 equals 101. Next, we multiply that result by 2. 101 * 2 equals 202. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "145",
+        "answer": "145",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.34516453742980957,
+        "llm_latency_s": 0.338254451751709,
+        "operator_overhead_s": 0.006910085678100586,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            5,
+            4,
+            1,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            1,
+            4,
+            5
+          ],
+          "rendered_abs": "145",
+          "overflow": false
+        },
+        "raw": " 145"
+      },
+      "meta": {
+        "a": 72,
+        "b": 29,
+        "c": 2,
+        "d": 57,
+        "teacher_steps": [
+          " (72 + 29) = 101;",
+          " 101 * 2 = 202;",
+          " 202 - 57 = 145.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "794",
+      "baseline": {
+        "answer_only": null,
+        "answer": "794",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 597,
+        "latency_s": 9.08401894569397,
+        "raw": " Let's break down the steps. First, we start with 79. Then we add 62 to it. 79 + 62 equals 141. Next, we multiply this result by 6. 141 multiplied by 6 is 846. "
+      },
+      "operator_vm": {
+        "answer_only": "794",
+        "answer": "794",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.39209699630737305,
+        "llm_latency_s": 0.3858377933502197,
+        "operator_overhead_s": 0.00625920295715332,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            4,
+            9,
+            7,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            7,
+            9,
+            4
+          ],
+          "rendered_abs": "794",
+          "overflow": false
+        },
+        "raw": " 794"
+      },
+      "meta": {
+        "a": 79,
+        "b": 62,
+        "c": 6,
+        "d": 52,
+        "teacher_steps": [
+          " (79 + 62) = 141;",
+          " 141 * 6 = 846;",
+          " 846 - 52 = 794.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1221",
+      "baseline": {
+        "answer_only": null,
+        "answer": "1221",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 10.821900367736816,
+        "raw": " Let's break down the steps. First, we start with 68. Then we add 77 to it. 68 + 77 equals 145. Next, we multiply that result by 9. 145 * 9 equals 1305. Finally"
+      },
+      "operator_vm": {
+        "answer_only": "1221",
+        "answer": "1221",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 559,
+        "rendered_suffix_tokens": 48,
+        "total_kv_tokens": 564,
+        "latency_s": 0.42487025260925293,
+        "llm_latency_s": 0.4181814193725586,
+        "operator_overhead_s": 0.006688833236694336,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            1,
+            2,
+            2,
+            1
+          ],
+          "final_digits_msd": [
+            1,
+            2,
+            2,
+            1
+          ],
+          "rendered_abs": "1221",
+          "overflow": false
+        },
+        "raw": " 1221"
+      },
+      "meta": {
+        "a": 68,
+        "b": 77,
+        "c": 9,
+        "d": 84,
+        "teacher_steps": [
+          " (68 + 77) = 145;",
+          " 145 * 9 = 1305;",
+          " 1305 - 84 = 1221.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "225",
+      "baseline": {
+        "answer_only": null,
+        "answer": "225",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 11.19670557975769,
+        "raw": " Let's break down the steps. First, we start with 60. Then we add 31, which gives us 60 + 31 = 91. Next, we multiply the result by 3, so 91 * 3 = 273. Finally, "
+      },
+      "operator_vm": {
+        "answer_only": "225",
+        "answer": "225",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 1.4018700122833252,
+        "llm_latency_s": 1.3957884311676025,
+        "operator_overhead_s": 0.006081581115722656,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            5,
+            2,
+            2,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            2,
+            2,
+            5
+          ],
+          "rendered_abs": "225",
+          "overflow": false
+        },
+        "raw": " 225"
+      },
+      "meta": {
+        "a": 60,
+        "b": 31,
+        "c": 3,
+        "d": 48,
+        "teacher_steps": [
+          " (60 + 31) = 91;",
+          " 91 * 3 = 273;",
+          " 273 - 48 = 225.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1179",
+      "baseline": {
+        "answer_only": null,
+        "answer": "1179",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 91,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 603,
+        "latency_s": 9.313971757888794,
+        "raw": " Let's break down the steps. First, we start with 83. Then we add 79 to it. 83 + 79 equals 162. Next, we multiply that result by 8. 162 multiplied by 8 equals 1"
+      },
+      "operator_vm": {
+        "answer_only": "1179",
+        "answer": "1179",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 560,
+        "rendered_suffix_tokens": 48,
+        "total_kv_tokens": 565,
+        "latency_s": 0.39327144622802734,
+        "llm_latency_s": 0.3870213031768799,
+        "operator_overhead_s": 0.006250143051147461,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            9,
+            7,
+            1,
+            1
+          ],
+          "final_digits_msd": [
+            1,
+            1,
+            7,
+            9
+          ],
+          "rendered_abs": "1179",
+          "overflow": false
+        },
+        "raw": " 1179"
+      },
+      "meta": {
+        "a": 83,
+        "b": 79,
+        "c": 8,
+        "d": 117,
+        "teacher_steps": [
+          " (83 + 79) = 162;",
+          " 162 * 8 = 1296;",
+          " 1296 - 117 = 1179.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "370",
+      "baseline": {
+        "answer_only": null,
+        "answer": "370",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 80,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 591,
+        "latency_s": 8.179638624191284,
+        "raw": " Let's do the math step by step. First, we start with 29. Then we add 59. 29 + 59 equals 88. Next, we multiply the result by 5. 88 times 5 equals 440. Finally, "
+      },
+      "operator_vm": {
+        "answer_only": "370",
+        "answer": "370",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.40502095222473145,
+        "llm_latency_s": 0.3985865116119385,
+        "operator_overhead_s": 0.006434440612792969,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            0,
+            7,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            7,
+            0
+          ],
+          "rendered_abs": "370",
+          "overflow": false
+        },
+        "raw": " 370"
+      },
+      "meta": {
+        "a": 29,
+        "b": 59,
+        "c": 5,
+        "d": 70,
+        "teacher_steps": [
+          " (29 + 59) = 88;",
+          " 88 * 5 = 440;",
+          " 440 - 70 = 370.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "208",
+      "baseline": {
+        "answer_only": null,
+        "answer": "208",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 65,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 576,
+        "latency_s": 7.406826972961426,
+        "raw": " Let's break down the steps. Start with 30. Add 39: 30 + 39 = 69. Multiply by 4: 69 * 4 = 276. Subtract 68: 276 - 68 = 208"
+      },
+      "operator_vm": {
+        "answer_only": "208",
+        "answer": "208",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.34754061698913574,
+        "llm_latency_s": 0.3423442840576172,
+        "operator_overhead_s": 0.005196332931518555,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            8,
+            0,
+            2,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            2,
+            0,
+            8
+          ],
+          "rendered_abs": "208",
+          "overflow": false
+        },
+        "raw": " 208"
+      },
+      "meta": {
+        "a": 30,
+        "b": 39,
+        "c": 4,
+        "d": 68,
+        "teacher_steps": [
+          " (30 + 39) = 69;",
+          " 69 * 4 = 276;",
+          " 276 - 68 = 208.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "74",
+      "baseline": {
+        "answer_only": null,
+        "answer": "74",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 82,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 593,
+        "latency_s": 6.335125684738159,
+        "raw": " Let's break down the steps. First, we start with 27. Then we add 52 to it. 27 + 52 equals 79. Next, we multiply that result by 2. 79 * 2 equals 158. Finally, w"
+      },
+      "operator_vm": {
+        "answer_only": "74",
+        "answer": "74",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 557,
+        "rendered_suffix_tokens": 46,
+        "total_kv_tokens": 560,
+        "latency_s": 0.2224409580230713,
+        "llm_latency_s": 0.2169508934020996,
+        "operator_overhead_s": 0.00549006462097168,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            4,
+            7,
+            0,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            0,
+            7,
+            4
+          ],
+          "rendered_abs": "74",
+          "overflow": false
+        },
+        "raw": " 74"
+      },
+      "meta": {
+        "a": 27,
+        "b": 52,
+        "c": 2,
+        "d": 84,
+        "teacher_steps": [
+          " (27 + 52) = 79;",
+          " 79 * 2 = 158;",
+          " 158 - 84 = 74.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "341",
+      "baseline": {
+        "answer_only": null,
+        "answer": "341",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 8.901304721832275,
+        "raw": " Let's break down the steps. First, we start with 24. Then we add 76 to it. 24 + 76 equals 100. Next, we multiply that result by 4. 100 * 4 equals 400. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "341",
+        "answer": "341",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.45038819313049316,
+        "llm_latency_s": 0.4440269470214844,
+        "operator_overhead_s": 0.006361246109008789,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            1,
+            4,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            4,
+            1
+          ],
+          "rendered_abs": "341",
+          "overflow": false
+        },
+        "raw": " 341"
+      },
+      "meta": {
+        "a": 24,
+        "b": 76,
+        "c": 4,
+        "d": 59,
+        "teacher_steps": [
+          " (24 + 76) = 100;",
+          " 100 * 4 = 400;",
+          " 400 - 59 = 341.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "526",
+      "baseline": {
+        "answer_only": null,
+        "answer": "526",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 8.718796253204346,
+        "raw": " Let's break down the steps. First, we start with 74. Then we add 71 to it. 74 + 71 equals 145. Next, we multiply that result by 4. 145 * 4 equals 580. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "526",
+        "answer": "526",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.5885095596313477,
+        "llm_latency_s": 0.516808271408081,
+        "operator_overhead_s": 0.0717012882232666,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            6,
+            2,
+            5,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            5,
+            2,
+            6
+          ],
+          "rendered_abs": "526",
+          "overflow": false
+        },
+        "raw": " 526"
+      },
+      "meta": {
+        "a": 74,
+        "b": 71,
+        "c": 4,
+        "d": 54,
+        "teacher_steps": [
+          " (74 + 71) = 145;",
+          " 145 * 4 = 580;",
+          " 580 - 54 = 526.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "641",
+      "baseline": {
+        "answer_only": null,
+        "answer": "641",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 6.683484315872192,
+        "raw": " Let's break down the steps. First, we start with 75. Then we add 68 to it. 75 + 68 equals 143. Next, we multiply that result by 5. 143 * 5 equals 715. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "641",
+        "answer": "641",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.28629040718078613,
+        "llm_latency_s": 0.28034448623657227,
+        "operator_overhead_s": 0.005945920944213867,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            1,
+            4,
+            6,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            6,
+            4,
+            1
+          ],
+          "rendered_abs": "641",
+          "overflow": false
+        },
+        "raw": " 641"
+      },
+      "meta": {
+        "a": 75,
+        "b": 68,
+        "c": 5,
+        "d": 74,
+        "teacher_steps": [
+          " (75 + 68) = 143;",
+          " 143 * 5 = 715;",
+          " 715 - 74 = 641.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "601",
+      "baseline": {
+        "answer_only": null,
+        "answer": "601",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 6.118584632873535,
+        "raw": " Let's break down the steps. First, we start with 62. Then we add 77 to it. 62 + 77 equals 139. Next, we multiply that result by 5. 139 * 5 equals 695. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "601",
+        "answer": "601",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20550203323364258,
+        "llm_latency_s": 0.2016749382019043,
+        "operator_overhead_s": 0.0038270950317382812,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            1,
+            0,
+            6,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            6,
+            0,
+            1
+          ],
+          "rendered_abs": "601",
+          "overflow": false
+        },
+        "raw": " 601"
+      },
+      "meta": {
+        "a": 62,
+        "b": 77,
+        "c": 5,
+        "d": 94,
+        "teacher_steps": [
+          " (62 + 77) = 139;",
+          " 139 * 5 = 695;",
+          " 695 - 94 = 601.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "108",
+      "baseline": {
+        "answer_only": null,
+        "answer": "108",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 5.450209140777588,
+        "raw": " Let's break down the steps. First, we start with 65. Then we add 37 to it. 65 + 37 equals 102. Next, we multiply that result by 2. 102 * 2 equals 204. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "108",
+        "answer": "108",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.2596755027770996,
+        "llm_latency_s": 0.2542107105255127,
+        "operator_overhead_s": 0.005464792251586914,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            8,
+            0,
+            1,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            1,
+            0,
+            8
+          ],
+          "rendered_abs": "108",
+          "overflow": false
+        },
+        "raw": " 108"
+      },
+      "meta": {
+        "a": 65,
+        "b": 37,
+        "c": 2,
+        "d": 96,
+        "teacher_steps": [
+          " (65 + 37) = 102;",
+          " 102 * 2 = 204;",
+          " 204 - 96 = 108.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "255",
+      "baseline": {
+        "answer_only": null,
+        "answer": "255",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 83,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 594,
+        "latency_s": 4.976553678512573,
+        "raw": " Let's break down the steps. First, we start with 28. Then we add 39 to it. 28 + 39 equals 67. Next, we multiply that result by 4. 67 * 4 equals 268. Finally, w"
+      },
+      "operator_vm": {
+        "answer_only": "255",
+        "answer": "255",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.19695806503295898,
+        "llm_latency_s": 0.19319605827331543,
+        "operator_overhead_s": 0.0037620067596435547,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            5,
+            5,
+            2,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            2,
+            5,
+            5
+          ],
+          "rendered_abs": "255",
+          "overflow": false
+        },
+        "raw": " 255"
+      },
+      "meta": {
+        "a": 28,
+        "b": 39,
+        "c": 4,
+        "d": 13,
+        "teacher_steps": [
+          " (28 + 39) = 67;",
+          " 67 * 4 = 268;",
+          " 268 - 13 = 255.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "626",
+      "baseline": {
+        "answer_only": null,
+        "answer": "626",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 72,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 583,
+        "latency_s": 3.0574028491973877,
+        "raw": " Let's break down the steps. First, we start with 68. Then we add 30, which gives us 98. Next, we multiply that result by 7. 98 times 7 is 686. Finally, we subt"
+      },
+      "operator_vm": {
+        "answer_only": "626",
+        "answer": "626",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.21695804595947266,
+        "llm_latency_s": 0.2134556770324707,
+        "operator_overhead_s": 0.003502368927001953,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            6,
+            2,
+            6,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            6,
+            2,
+            6
+          ],
+          "rendered_abs": "626",
+          "overflow": false
+        },
+        "raw": " 626"
+      },
+      "meta": {
+        "a": 68,
+        "b": 30,
+        "c": 7,
+        "d": 60,
+        "teacher_steps": [
+          " (68 + 30) = 98;",
+          " 98 * 7 = 686;",
+          " 686 - 60 = 626.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "306",
+      "baseline": {
+        "answer_only": null,
+        "answer": "306",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 4.655838489532471,
+        "raw": " Let's break down the steps. First, we start with 38. Then we add 19, which gives us 38 + 19 = 57. Next, we multiply the result by 6, so 57 * 6 = 342. Finally, "
+      },
+      "operator_vm": {
+        "answer_only": "306",
+        "answer": "306",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.195387601852417,
+        "llm_latency_s": 0.19169139862060547,
+        "operator_overhead_s": 0.0036962032318115234,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            6,
+            0,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            0,
+            6
+          ],
+          "rendered_abs": "306",
+          "overflow": false
+        },
+        "raw": " 306"
+      },
+      "meta": {
+        "a": 38,
+        "b": 19,
+        "c": 6,
+        "d": 36,
+        "teacher_steps": [
+          " (38 + 19) = 57;",
+          " 57 * 6 = 342;",
+          " 342 - 36 = 306.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "717",
+      "baseline": {
+        "answer_only": null,
+        "answer": "717",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 4.113289833068848,
+        "raw": " Let's break down the steps. First, we start with 68. Then we add 47 to it. 68 + 47 equals 115. Next, we multiply that result by 7. 115 * 7 equals 805. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "717",
+        "answer": "717",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.19283795356750488,
+        "llm_latency_s": 0.18944931030273438,
+        "operator_overhead_s": 0.003388643264770508,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            7,
+            1,
+            7,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            7,
+            1,
+            7
+          ],
+          "rendered_abs": "717",
+          "overflow": false
+        },
+        "raw": " 717"
+      },
+      "meta": {
+        "a": 68,
+        "b": 47,
+        "c": 7,
+        "d": 88,
+        "teacher_steps": [
+          " (68 + 47) = 115;",
+          " 115 * 7 = 805;",
+          " 805 - 88 = 717.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "751",
+      "baseline": {
+        "answer_only": null,
+        "answer": "751",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 597,
+        "latency_s": 4.351344347000122,
+        "raw": " Let's break down the steps. First, we start with 74. Then we add 36 to it. 74 + 36 equals 110. Next, we multiply that result by 7. 110 multiplied by 7 is 770. "
+      },
+      "operator_vm": {
+        "answer_only": "751",
+        "answer": "751",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20095109939575195,
+        "llm_latency_s": 0.1972212791442871,
+        "operator_overhead_s": 0.0037298202514648438,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            1,
+            5,
+            7,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            7,
+            5,
+            1
+          ],
+          "rendered_abs": "751",
+          "overflow": false
+        },
+        "raw": " 751"
+      },
+      "meta": {
+        "a": 74,
+        "b": 36,
+        "c": 7,
+        "d": 19,
+        "teacher_steps": [
+          " (74 + 36) = 110;",
+          " 110 * 7 = 770;",
+          " 770 - 19 = 751.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "172",
+      "baseline": {
+        "answer_only": null,
+        "answer": "172",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 4.279884099960327,
+        "raw": " Let's break down the steps. First, we start with 56. Then we add 75 to it. 56 + 75 equals 131. Next, we multiply that result by 2. 131 * 2 equals 262. Finally,"
+      },
+      "operator_vm": {
+        "answer_only": "172",
+        "answer": "172",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.19963765144348145,
+        "llm_latency_s": 0.19559884071350098,
+        "operator_overhead_s": 0.004038810729980469,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            2,
+            7,
+            1,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            1,
+            7,
+            2
+          ],
+          "rendered_abs": "172",
+          "overflow": false
+        },
+        "raw": " 172"
+      },
+      "meta": {
+        "a": 56,
+        "b": 75,
+        "c": 2,
+        "d": 90,
+        "teacher_steps": [
+          " (56 + 75) = 131;",
+          " 131 * 2 = 262;",
+          " 262 - 90 = 172.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "472",
+      "baseline": {
+        "answer_only": null,
+        "answer": "472",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 598,
+        "latency_s": 3.988379716873169,
+        "raw": " Let's break down the steps. First, we start with 37. Then we add 47 to it. 37 + 47 equals 84. Next, we multiply that result by 7. 84 multiplied by 7 is 588. Fi"
+      },
+      "operator_vm": {
+        "answer_only": "472",
+        "answer": "472",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.2559847831726074,
+        "llm_latency_s": 0.25182271003723145,
+        "operator_overhead_s": 0.0041620731353759766,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            2,
+            7,
+            4,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            4,
+            7,
+            2
+          ],
+          "rendered_abs": "472",
+          "overflow": false
+        },
+        "raw": " 472"
+      },
+      "meta": {
+        "a": 37,
+        "b": 47,
+        "c": 7,
+        "d": 116,
+        "teacher_steps": [
+          " (37 + 47) = 84;",
+          " 84 * 7 = 588;",
+          " 588 - 116 = 472.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1101",
+      "baseline": {
+        "answer_only": null,
+        "answer": "1101",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 4.014981985092163,
+        "raw": " Let's break down the steps. First, we start with 90. Then we add 56 to it. 90 + 56 equals 146. Next, we multiply that result by 8. 146 * 8 equals 1168. Finally"
+      },
+      "operator_vm": {
+        "answer_only": "1101",
+        "answer": "1101",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 559,
+        "rendered_suffix_tokens": 48,
+        "total_kv_tokens": 564,
+        "latency_s": 0.24518918991088867,
+        "llm_latency_s": 0.24114990234375,
+        "operator_overhead_s": 0.004039287567138672,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            1,
+            0,
+            1,
+            1
+          ],
+          "final_digits_msd": [
+            1,
+            1,
+            0,
+            1
+          ],
+          "rendered_abs": "1101",
+          "overflow": false
+        },
+        "raw": " 1101"
+      },
+      "meta": {
+        "a": 90,
+        "b": 56,
+        "c": 8,
+        "d": 67,
+        "teacher_steps": [
+          " (90 + 56) = 146;",
+          " 146 * 8 = 1168;",
+          " 1168 - 67 = 1101.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "304",
+      "baseline": {
+        "answer_only": null,
+        "answer": "304",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 68,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 579,
+        "latency_s": 3.2179887294769287,
+        "raw": " Let's break down the steps. First, we start with 31. Then we add 80, which gives us 111. Next, we multiply that result by 3, resulting in 333. Finally, we subt"
+      },
+      "operator_vm": {
+        "answer_only": "304",
+        "answer": "304",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20187711715698242,
+        "llm_latency_s": 0.19845318794250488,
+        "operator_overhead_s": 0.003423929214477539,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            4,
+            0,
+            3,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            3,
+            0,
+            4
+          ],
+          "rendered_abs": "304",
+          "overflow": false
+        },
+        "raw": " 304"
+      },
+      "meta": {
+        "a": 31,
+        "b": 80,
+        "c": 3,
+        "d": 29,
+        "teacher_steps": [
+          " (31 + 80) = 111;",
+          " 111 * 3 = 333;",
+          " 333 - 29 = 304.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "629",
+      "baseline": {
+        "answer_only": null,
+        "answer": "629",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 597,
+        "latency_s": 3.607337713241577,
+        "raw": " Let's break down the steps. First, we start with 59. Then we add 54 to it. 59 + 54 equals 113. Next, we multiply this result by 6. 113 multiplied by 6 is 678. "
+      },
+      "operator_vm": {
+        "answer_only": "629",
+        "answer": "629",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.18099498748779297,
+        "llm_latency_s": 0.1778724193572998,
+        "operator_overhead_s": 0.003122568130493164,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            9,
+            2,
+            6,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            6,
+            2,
+            9
+          ],
+          "rendered_abs": "629",
+          "overflow": false
+        },
+        "raw": " 629"
+      },
+      "meta": {
+        "a": 59,
+        "b": 54,
+        "c": 6,
+        "d": 49,
+        "teacher_steps": [
+          " (59 + 54) = 113;",
+          " 113 * 6 = 678;",
+          " 678 - 49 = 629.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "772",
+      "baseline": {
+        "answer_only": null,
+        "answer": "772",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.7539761066436768,
+        "raw": " Let's do the math step by step. First, we start with 21. Then we add 68 to it. 21 + 68 equals 89. Next, we multiply that result by 9. 89 times 9 is 801. Finall"
+      },
+      "operator_vm": {
+        "answer_only": "772",
+        "answer": "772",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20917773246765137,
+        "llm_latency_s": 0.20561838150024414,
+        "operator_overhead_s": 0.0035593509674072266,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            2,
+            7,
+            7,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            7,
+            7,
+            2
+          ],
+          "rendered_abs": "772",
+          "overflow": false
+        },
+        "raw": " 772"
+      },
+      "meta": {
+        "a": 21,
+        "b": 68,
+        "c": 9,
+        "d": 29,
+        "teacher_steps": [
+          " (21 + 68) = 89;",
+          " 89 * 9 = 801;",
+          " 801 - 29 = 772.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "550",
+      "baseline": {
+        "answer_only": null,
+        "answer": "550",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 83,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 594,
+        "latency_s": 3.5505435466766357,
+        "raw": " Let's break down the steps. First, we start with 47. Then we add 24 to it. 47 + 24 equals 71. Next, we multiply that result by 9. 71 * 9 equals 639. Finally, w"
+      },
+      "operator_vm": {
+        "answer_only": "550",
+        "answer": "550",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "rendered_suffix_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20142531394958496,
+        "llm_latency_s": 0.19805288314819336,
+        "operator_overhead_s": 0.0033724308013916016,
+        "predicted": {
+          "final_sign": "positive",
+          "final_digits_lsd": [
+            0,
+            5,
+            5,
+            0
+          ],
+          "final_digits_msd": [
+            0,
+            5,
+            5,
+            0
+          ],
+          "rendered_abs": "550",
+          "overflow": false
+        },
+        "raw": " 550"
+      },
+      "meta": {
+        "a": 47,
+        "b": 24,
+        "c": 9,
+        "d": 89,
+        "teacher_steps": [
+          " (47 + 24) = 71;",
+          " 71 * 9 = 639;",
+          " 639 - 89 = 550.",
+          "\nFinal integer:"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": "qwen35.recurrent-int8-task10-completion-audit.v1",
+  "classification": "INVALID_ARTIFACT",
+  "run_tag": "qwen35-recurrent-int8-task10-completion-audit-20260805-r546",
+  "timestamp": "2026-08-05T22:29:39+08:00",
+  "local_gate": {
+    "test_commands_passed": 24,
+    "test_commands_failed": 0,
+    "schema_v2_contract_tests_passed": 578,
+    "py_compile": "PASS",
+    "scoped_diff_check": "FAIL_PREEXISTING_UNRELATED",
+    "scoped_diff_check_reasons": [
+      "tinyvllm/engine/model_runner.py:1132 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1134 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1294 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1320 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1345 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1382 trailing whitespace"
+    ],
+    "log_path": "/tmp/qwen35_task10_local_gate_fresh_1785939425.log",
+    "log_sha256": "885642f1f5556f0dba0ec5ee38ed2ae73acca86fc14ab9eadb9241bf0a594adf"
+  },
+  "prerequisites": {
+    "correctness_prerequisites": {
+      "path": "experiments/qwen35_hybrid_state/qwen35-tp4-performance-correctness-prerequisites-20260804-attempt67-r542/correctness_prerequisites.json",
+      "sha256": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8",
+      "classification": "BLOCKED_CORRECTNESS",
+      "authorized": false,
+      "reasons": [
+        "tp4_root_logit execution plan identity is invalid",
+        "cached_continuation execution receipt resource guard schema fields are invalid",
+        "engine_correctness execution receipt resource guard schema fields are invalid"
+      ]
+    },
+    "calibration": {
+      "candidate_count": 0,
+      "required_classification": "PASS",
+      "authorized": false
+    },
+    "p1_authority": {
+      "candidate_count": 0,
+      "required_classification": "GO",
+      "authorized": false
+    },
+    "gate1_audit": {
+      "candidate_count": 0,
+      "required_classification": "PASS",
+      "authorized": false
+    }
+  },
+  "preflight": {
+    "invoked": false,
+    "reason": "authoritative prerequisites failed before GPU query"
+  },
+  "side_effects": {
+    "gpu_query": false,
+    "ssh": false,
+    "remote_directory_created": false,
+    "source_staged": false,
+    "worker_launched": false,
+    "authorization_created": false,
+    "authorization_consumed": false
+  },
+  "claim_boundary": "No correctness, accuracy, cache, capacity, memory, compression, latency, throughput, or speed benefit is established."
+}

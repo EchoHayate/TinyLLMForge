@@ -1,0 +1,68 @@
+[
+  {
+    "case_id": "k1-route-fallback",
+    "draft_len": 1,
+    "policy": "routed_native",
+    "route": "baseline_short_draft",
+    "route_fallback_reason": null,
+    "spec_verify_forward_calls": 0,
+    "spec_verify_prepare_calls": 0,
+    "speculative_reservation_attempted": false,
+    "target_forward_count": 0
+  },
+  {
+    "case_id": "k16-full-multiblock",
+    "draft_len": 16,
+    "policy": "routed_native",
+    "route": "native_multi_token",
+    "route_fallback_reason": null,
+    "spec_verify_forward_calls": 1,
+    "spec_verify_prepare_calls": 1,
+    "speculative_reservation_attempted": true,
+    "target_forward_count": 2
+  },
+  {
+    "case_id": "k2-full-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "route": "native_multi_token",
+    "route_fallback_reason": null,
+    "spec_verify_forward_calls": 1,
+    "spec_verify_prepare_calls": 1,
+    "speculative_reservation_attempted": true,
+    "target_forward_count": 2
+  },
+  {
+    "case_id": "k2-zero-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "route": "native_multi_token",
+    "route_fallback_reason": null,
+    "spec_verify_forward_calls": 1,
+    "spec_verify_prepare_calls": 1,
+    "speculative_reservation_attempted": true,
+    "target_forward_count": 2
+  },
+  {
+    "case_id": "k4-full-boundary",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "route": "native_multi_token",
+    "route_fallback_reason": null,
+    "spec_verify_forward_calls": 1,
+    "spec_verify_prepare_calls": 1,
+    "speculative_reservation_attempted": true,
+    "target_forward_count": 2
+  },
+  {
+    "case_id": "k4-partial-boundary",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "route": "native_multi_token",
+    "route_fallback_reason": null,
+    "spec_verify_forward_calls": 1,
+    "spec_verify_prepare_calls": 1,
+    "speculative_reservation_attempted": true,
+    "target_forward_count": 2
+  }
+]

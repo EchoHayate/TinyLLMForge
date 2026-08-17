@@ -1,0 +1,43 @@
+{
+  "classification": "CPU_WORKER_BOUNDARY_PASS",
+  "claim_boundary": {
+    "correctness_prerequisites_complete": false,
+    "gpu_worker_implemented": false,
+    "gpu_workload_launched": false,
+    "independent_performance_verifier_implemented": false,
+    "performance_or_cache_benefit_measured": false,
+    "remote_runner_implemented": false
+  },
+  "files": {
+    "contract": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "b92ebe04976b683c7417d1c7a2a7e38d9c568780dc3b1b6c1ae04be520b7a0e5"
+    },
+    "contract_tests": {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "6c86878b867bd3bc24930ec0d64250cc98c1b0e298a5ea5eb248b534ae74ed86"
+    },
+    "worker": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "sha256": "13387921dae26efe26c64592fc796f2f124e792eaa9b2297265e530a3d62e97b"
+    },
+    "worker_tests": {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "sha256": "cf005cdf23b7c90130284138c906cd1c61fc03d44d4c1f92a1f8a5fde0a3c938"
+    }
+  },
+  "green": {
+    "contract_tests": 13,
+    "diff_check": "PASS",
+    "py_compile": "PASS",
+    "worker_tests": 7
+  },
+  "run_tag": "qwen35-tp4-benchmark-worker-20260729-010533",
+  "safety": {
+    "subprocess_import": false,
+    "tinyvllm_top_level_import": false,
+    "torch_top_level_import": false,
+    "worker_uses_injected_engine_factory": true
+  },
+  "schema_version": "qwen35.tp4-hybrid-prefix-worker-validation.v1"
+}

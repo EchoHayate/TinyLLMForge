@@ -1,0 +1,1 @@
+/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/artifacts/qwen35_generic_speculative_tp4_32k/opaque-03a0a96654a14441b314800f/artifacts/authority

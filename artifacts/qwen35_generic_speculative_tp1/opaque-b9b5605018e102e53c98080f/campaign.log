@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_gate.py", line 745, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_gate.py", line 736, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_gate.py", line 604, in run_campaign
+    raise ValueError(
+ValueError: authority output path already exists

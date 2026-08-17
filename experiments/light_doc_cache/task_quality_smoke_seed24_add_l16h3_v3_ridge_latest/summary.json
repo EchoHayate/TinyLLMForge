@@ -1,0 +1,44 @@
+{
+  "settings": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "text_file": "/data00/home/sitian/light-doc-cache-work/TinyLLMForge/docs/kv-sparse-attention.md",
+    "task_file": "/data00/home/sitian/light-doc-cache-work/probe/task_quality_tasks.json",
+    "policy_dir": "/data00/home/sitian/light-doc-cache-work/probe/task_quality_policy",
+    "output_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/task_quality_smoke_qwen3_0_6b_seed24_add_l16h3_v3_ridge",
+    "thresholds": "0.965",
+    "max_prompt_tokens": 1536,
+    "max_doc_tokens": 1200,
+    "bank_train_tokens": 512,
+    "ridge": 1.0,
+    "bank_method": "ridge",
+    "bank_train_epochs": 100,
+    "bank_train_lr": 0.001,
+    "bank_weight_decay": 0.0001,
+    "task_limit": 0,
+    "min_baseline_accuracy": 0.8,
+    "choice_scoring": "text_only",
+    "device": "auto",
+    "dtype": "auto"
+  },
+  "elapsed_s": 16.788093134760857,
+  "summary": [
+    {
+      "threshold": 0.965,
+      "tasks": 13,
+      "compressed_heads": 25,
+      "baseline_accuracy": 1.0,
+      "min_baseline_accuracy": 0.8,
+      "baseline_gate_pass": true,
+      "compact_accuracy": 0.9230769230769231,
+      "agreement": 0.9230769230769231,
+      "baseline_correct_tasks": 13,
+      "compact_accuracy_on_baseline_correct": 0.9230769230769231,
+      "agreement_on_baseline_correct": 0.9230769230769231,
+      "mean_answer_score_delta": 0.5827221579949344,
+      "mean_baseline_margin": 2.463061332168693,
+      "mean_compact_margin": 2.4327550584685715,
+      "mean_bank_build_s": 0.09547451396401112
+    }
+  ],
+  "note": "This is a quality-only simulation. It keeps the full KV tensor shape, but selected heads are forced to attend only to their compact bank during decode scoring."
+}

@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 166, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 152, in main
+    configuration=load_configuration(
+                  ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 48, in load_configuration
+    configuration = engine_driver.load_configuration(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_engine_correctness_authority.py", line 102, in load_configuration
+    _verify_manifest(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_engine_correctness_authority.py", line 78, in _verify_manifest
+    raise ValueError(f"{label} is missing")
+ValueError: model manifest is missing

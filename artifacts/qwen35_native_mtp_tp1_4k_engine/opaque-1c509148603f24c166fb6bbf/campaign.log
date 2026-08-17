@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 997, in run_campaign
+    raise RuntimeError(
+RuntimeError: worker failed for native_mtp:b4; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/.authority.campaign.rx8q2ich/cells/native_mtp:b4.log
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 1102, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 1093, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 1075, in run_campaign
+    raise RuntimeError(
+RuntimeError: worker failed for native_mtp:b4; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/.authority.campaign.rx8q2ich/cells/native_mtp:b4.log; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/authority.failed

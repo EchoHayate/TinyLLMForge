@@ -1,0 +1,44 @@
+{
+  "classification": "COMPLETE",
+  "effective_trace": "cuda,nvtx,osrt",
+  "nccl_evidence_boundary": "Nsight Systems 2024.7.1 on the target rejects the nccl trace argument; NCCL evidence is limited to CUDA kernel names and any supported stats reports",
+  "nccl_trace_argument_supported": false,
+  "requested_trace": "cuda,nvtx,osrt,nccl",
+  "rows": [
+    {
+      "case_id": "w2_long_reuse__nsys_replay__r3__recompute",
+      "policy": "recompute",
+      "reports": {
+        "cuda_gpu_kern_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-recompute-cuda_gpu_kern_sum.csv",
+          "returncode": 0
+        },
+        "nccl_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-recompute-nccl_sum.csv",
+          "returncode": 0
+        }
+      },
+      "returncode": 0
+    },
+    {
+      "case_id": "w2_long_reuse__nsys_replay__r3__exact_restore",
+      "policy": "exact_restore",
+      "reports": {
+        "cuda_gpu_kern_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-exact_restore-cuda_gpu_kern_sum.csv",
+          "returncode": 0
+        },
+        "nccl_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r615-attempt001/nsys_stats/r3-exact_restore-nccl_sum.csv",
+          "returncode": 0
+        }
+      },
+      "returncode": 0
+    }
+  ],
+  "version": "NVIDIA Nsight Systems version 2024.7.1.84-247135125610v0"
+}

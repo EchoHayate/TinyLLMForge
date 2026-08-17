@@ -1,0 +1,21 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]:W0812 12:58:40.233000 139956257632768 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 12:58:40.359000 139956257632768 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 12:59:11.637000 139956257632768 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 12:59:11.767000 139956257632768 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:00:36.693000 139956257632768 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:00:36.748000 139956257632768 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]: [rank0]: Traceback (most recent call last):
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 884, in <module>
+[rank0]: [rank0]:     main()
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 611, in main
+[rank0]: [rank0]:     artifact = run_live_gate(
+[rank0]: [rank0]:                ^^^^^^^^^^^^^^
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 535, in run_live_gate
+[rank0]: [rank0]:     artifact = build_parity_artifact(
+[rank0]: [rank0]:                ^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 647, in build_parity_artifact
+[rank0]: [rank0]:     validate_parity_artifact(artifact)
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 713, in validate_parity_artifact
+[rank0]: [rank0]:     raise ValueError("exact token parity failed")
+[rank0]: [rank0]: ValueError: exact token parity failed

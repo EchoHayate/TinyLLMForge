@@ -1,0 +1,77 @@
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+
+Loading weights:   0%|          | 0/320 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 320/320 [00:00<00:00, 8088.96it/s]
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 166, in <module>
+[rank0]:     raise SystemExit(main())
+[rank0]:                      ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 149, in main
+[rank0]:     result = run_authority(
+[rank0]:              ^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 114, in run_authority
+[rank0]:     result = producer.produce_configured_authority(**kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 103, in produce_configured_authority
+[rank0]:     return produce_authority(
+[rank0]:            ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 180, in produce_authority
+[rank0]:     rows.append(executor.run_continuation(
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/qwen35_tp4_cached_continuation_correctness_executor.py", line 129, in run_continuation
+[rank0]:     row = session.run()
+[rank0]:           ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 493, in run
+[rank0]:     self.engine = self.engine_factory(self.configuration)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 13, in _default_engine_factory
+[rank0]:     return backend._default_engine_factory(configuration)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tools/qwen35_tp4_engine_backend_session.py", line 25, in _default_engine_factory
+[rank0]:     return module.LLMEngine(
+[rank0]:            ^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tinyvllm/engine/llm_engine.py", line 109, in __init__
+[rank0]:     self.model_runner = ModelRunner(config, 0, self.events)     # 生成主进程
+[rank0]:                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tinyvllm/engine/model_runner.py", line 777, in __init__
+[rank0]:     torch.set_default_dtype(hf_config.torch_dtype)
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/__init__.py", line 1009, in set_default_dtype
+[rank0]:     _C._set_default_dtype(d)
+[rank0]: TypeError: invalid dtype object: only floating-point types are supported as the default type
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Process SpawnProcess-2:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tinyvllm/engine/model_runner.py", line 777, in __init__
+    torch.set_default_dtype(hf_config.torch_dtype)
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/__init__.py", line 1009, in set_default_dtype
+    _C._set_default_dtype(d)
+TypeError: invalid dtype object: only floating-point types are supported as the default type
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Process SpawnProcess-3:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tinyvllm/engine/model_runner.py", line 777, in __init__
+    torch.set_default_dtype(hf_config.torch_dtype)
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/__init__.py", line 1009, in set_default_dtype
+    _C._set_default_dtype(d)
+TypeError: invalid dtype object: only floating-point types are supported as the default type
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Process SpawnProcess-4:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-180658-attempt8/source/tinyvllm/engine/model_runner.py", line 777, in __init__
+    torch.set_default_dtype(hf_config.torch_dtype)
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/__init__.py", line 1009, in set_default_dtype
+    _C._set_default_dtype(d)
+TypeError: invalid dtype object: only floating-point types are supported as the default type

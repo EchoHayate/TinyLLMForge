@@ -1,0 +1,33 @@
+{
+  "candidate_run_tag": "qwen35-tp4-decode-phase-split-20260811-r631-attempt001",
+  "claim_boundary": "source preparation only; no GPU, parity, performance, cleanup, or completion claim",
+  "classification": "READY",
+  "owned_file_count": 93,
+  "owned_paths": [
+    "tinyvllm",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+    "tools/qwen35_tp4_decode_internal_profile.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_assembler.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_authorization.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_receipt.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_executor.py",
+    "tools/qwen35_tp4_hybrid_prefix_benchmark_remote_execution_plan.py",
+    "tools/qwen35_tp4_engine_remote_execution_source_contract.py",
+    "tools/qwen35_tp4_engine_remote_subprocess_adapter.py",
+    "tools/verify_qwen35_tp4_hybrid_prefix_benchmark.py"
+  ],
+  "remote_execution_performed": false,
+  "reproducible_tar_sha256": "f791f27e807e602f889345d301b72035dcd4a93d55a32adf51fd5eb3eaefb79c",
+  "required_phase_split_files": [
+    "tinyvllm/layers/linear.py",
+    "tinyvllm/layers/qwen35_full_attention.py",
+    "tinyvllm/layers/qwen35_linear_attention.py",
+    "tinyvllm/models/qwen35_components.py"
+  ],
+  "schema_version": "qwen35.tp4-decode-phase-split-source-prep.v1",
+  "source_tar": "first/benchmark_source.tar",
+  "source_tar_sha256": "f791f27e807e602f889345d301b72035dcd4a93d55a32adf51fd5eb3eaefb79c",
+  "source_tree_sha256": "6f881fae7010cc5f048100b147a72fbf27ffba0f77bc34e2e2e68388a98a2837"
+}

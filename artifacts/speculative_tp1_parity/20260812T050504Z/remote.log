@@ -1,0 +1,16 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]:W0812 13:05:15.405000 139809898693120 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:05:15.539000 139809898693120 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:05:45.634000 139809898693120 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:05:45.768000 139809898693120 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:07:07.939000 139809898693120 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:07:07.997000 139809898693120 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]: [rank0]: Traceback (most recent call last):
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 903, in <module>
+[rank0]: [rank0]:     main()
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 630, in main
+[rank0]: [rank0]:     artifact = run_live_gate(
+[rank0]: [rank0]:                ^^^^^^^^^^^^^^
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_tp1_parity_gate.py", line 569, in run_live_gate
+[rank0]: [rank0]:     raise RuntimeError("exact token parity failed")
+[rank0]: [rank0]: RuntimeError: exact token parity failed

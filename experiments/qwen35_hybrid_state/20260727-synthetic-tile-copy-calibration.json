@@ -1,0 +1,173 @@
+{
+  "schema_version": "qwen35.synthetic-safetensors-tile-copy.v1",
+  "environment": {
+    "timestamp_utc": "2026-07-27T13:35:33.317310+00:00",
+    "python": "3.12.13",
+    "pytorch": "2.12.0",
+    "safetensors": "0.7.0",
+    "platform": "macOS-26.4.1-arm64-arm-64bit",
+    "cpu": "Apple M5 Pro"
+  },
+  "tensor": {
+    "name": "synthetic.weight",
+    "dtype": "bfloat16",
+    "shape": [
+      16384,
+      2048
+    ],
+    "payload_bytes": 67108864,
+    "row_bytes": 4096,
+    "source_checksum": 274758369280.0
+  },
+  "baseline": {
+    "raw_seconds": [
+      0.002099166998959845,
+      0.0020347909994598012,
+      0.0019727910002984572,
+      0.001967500000318978,
+      0.0021487080011866055
+    ],
+    "median_seconds": 0.0020347909994598012,
+    "min_seconds": 0.001967500000318978,
+    "max_seconds": 0.0021487080011866055,
+    "call_count": 1,
+    "requested_tile_bytes": 67108864,
+    "peak_tile_bytes": 67108864,
+    "ratio_to_baseline_median": 1.0,
+    "destination_checksum": 274758369280.0,
+    "checksum_verified": true
+  },
+  "tile_results": [
+    {
+      "raw_seconds": [
+        0.003898667000612477,
+        0.00427204099833034,
+        0.0039765410001564305,
+        0.0038094580013421364,
+        0.003741417000128422
+      ],
+      "median_seconds": 0.003898667000612477,
+      "min_seconds": 0.003741417000128422,
+      "max_seconds": 0.00427204099833034,
+      "call_count": 64,
+      "requested_tile_bytes": 1048576,
+      "peak_tile_bytes": 1048576,
+      "ratio_to_baseline_median": 1.9160036591706469,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    },
+    {
+      "raw_seconds": [
+        0.002803499999572523,
+        0.0031189159999485128,
+        0.0027610830002231523,
+        0.0027847499986819457,
+        0.002865916001610458
+      ],
+      "median_seconds": 0.002803499999572523,
+      "min_seconds": 0.0027610830002231523,
+      "max_seconds": 0.0031189159999485128,
+      "call_count": 32,
+      "requested_tile_bytes": 2097152,
+      "peak_tile_bytes": 2097152,
+      "ratio_to_baseline_median": 1.3777827798121771,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    },
+    {
+      "raw_seconds": [
+        0.0022764169989386573,
+        0.002245542000309797,
+        0.0023352909993263893,
+        0.0022429580021707807,
+        0.0022418749977077823
+      ],
+      "median_seconds": 0.002245542000309797,
+      "min_seconds": 0.0022418749977077823,
+      "max_seconds": 0.0023352909993263893,
+      "call_count": 16,
+      "requested_tile_bytes": 4194304,
+      "peak_tile_bytes": 4194304,
+      "ratio_to_baseline_median": 1.1035737827157415,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    },
+    {
+      "raw_seconds": [
+        0.0020480419989326037,
+        0.0020253329967090394,
+        0.001986416002182523,
+        0.0019933330004278105,
+        0.001985957998840604
+      ],
+      "median_seconds": 0.0019933330004278105,
+      "min_seconds": 0.001985957998840604,
+      "max_seconds": 0.0020480419989326037,
+      "call_count": 8,
+      "requested_tile_bytes": 8388608,
+      "peak_tile_bytes": 8388608,
+      "ratio_to_baseline_median": 0.9796254263740123,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    },
+    {
+      "raw_seconds": [
+        0.0018395830011286307,
+        0.0019579170002543833,
+        0.0018729580006038304,
+        0.0018874579982366413,
+        0.0018406249982945155
+      ],
+      "median_seconds": 0.0018729580006038304,
+      "min_seconds": 0.0018395830011286307,
+      "max_seconds": 0.0019579170002543833,
+      "call_count": 4,
+      "requested_tile_bytes": 16777216,
+      "peak_tile_bytes": 16777216,
+      "ratio_to_baseline_median": 0.9204670165638955,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    },
+    {
+      "raw_seconds": [
+        0.0017628329987928737,
+        0.0017831250006565824,
+        0.0018447919974278193,
+        0.0017610840004635975,
+        0.001780165999662131
+      ],
+      "median_seconds": 0.001780165999662131,
+      "min_seconds": 0.0017610840004635975,
+      "max_seconds": 0.0018447919974278193,
+      "call_count": 2,
+      "requested_tile_bytes": 33554432,
+      "peak_tile_bytes": 33554432,
+      "ratio_to_baseline_median": 0.8748642981685744,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    },
+    {
+      "raw_seconds": [
+        0.0017095830007747281,
+        0.0017625000000407454,
+        0.0017332499992335215,
+        0.001689875000010943,
+        0.0016997499988065101
+      ],
+      "median_seconds": 0.0017095830007747281,
+      "min_seconds": 0.001689875000010943,
+      "max_seconds": 0.0017625000000407454,
+      "call_count": 1,
+      "requested_tile_bytes": 67108864,
+      "peak_tile_bytes": 67108864,
+      "ratio_to_baseline_median": 0.84017621526171,
+      "destination_checksum": 274758369280.0,
+      "checksum_verified": true
+    }
+  ],
+  "interpretation_limits": [
+    "This is a warm-cache CPU microbenchmark over one temporary synthetic safetensors payload.",
+    "It does not measure real checkpoint loading, cold-cache or disk throughput, RSS, or page-cache peak.",
+    "It does not establish GPU, inference, KV-cache, compression, memory, quality, or accuracy benefits."
+  ]
+}

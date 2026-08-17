@@ -1,0 +1,31 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-034904-attempt44-qwen35-decode-eager-r364/authorization.json",
+  "claim_boundary": "cached-continuation authority only; no Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-034904-attempt44-qwen35-decode-eager-r364/executor_configuration.json",
+  "execution_performed": false,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-033651-attempt44-qwen35-decode-eager-r362/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-034904-attempt44-qwen35-decode-eager-r364/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 33521,
+    "master_port": 34241
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-034904-attempt44-qwen35-decode-eager-r364/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-033651-attempt44-qwen35-decode-eager-r362",
+  "root_pass_evidence": [
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-033651-attempt44-qwen35-decode-eager-r362/artifacts/tp4_real_root_logit_correctness.json",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-033651-attempt44-qwen35-decode-eager-r362/independent_verification.json"
+  ],
+  "run_tag": "qwen35-tp4-cached-continuation-20260804-034904-attempt44-qwen35-decode-eager-r364",
+  "schema_version": "qwen35.tp4-cached-continuation-r364-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-033651-attempt44-qwen35-decode-eager-r362",
+  "source_tree_sha256": "5c6c1578adb5d65e970d7039c5535e660c82c7fc5e81d09106e36ecfb1ee9757"
+}

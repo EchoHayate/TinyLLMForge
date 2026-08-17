@@ -1,0 +1,11 @@
+{
+  "claim_boundary": "Compatibility only; no native support, compression, quality, latency, throughput, speedup, or memory-reduction claim.",
+  "classification": "INCOMPLETE",
+  "expected_case_count": 8,
+  "guards": {},
+  "observed_case_count": 8,
+  "reasons": [
+    "FP32 control failed strict elementwise limits"
+  ],
+  "schema_version": 2
+}

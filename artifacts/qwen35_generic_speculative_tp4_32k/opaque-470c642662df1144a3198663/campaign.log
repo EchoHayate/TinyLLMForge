@@ -1,0 +1,19 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1734, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 worker failed: baseline:b1; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/artifacts/.authority.rh1ic92q/cells/baseline:b1.log
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tools/qwen35_generic_speculative_tp4_32k_gate.py", line 143, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1884, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tools/qwen35_generic_speculative_tp4_32k_gate.py", line 125, in run_campaign
+    return _run_campaign_impl(
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1831, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 worker failed: baseline:b1; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/artifacts/.authority.rh1ic92q/cells/baseline:b1.log; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/artifacts/authority.failed

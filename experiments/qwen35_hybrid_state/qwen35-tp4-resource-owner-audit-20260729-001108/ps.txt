@@ -1,0 +1,43 @@
+  50059 wangmin+  367513 python3         python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+ 330288 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330289 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330290 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330291 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330292 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330293 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330294 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330295 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330296 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330297 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330298 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330299 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330300 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330301 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330302 root     1324261 python3         python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 934497 root     1144609 python          python server.py
+ 935127 root     1144606 python          python server.py
+1097889 zengjun+  896545 inferencer_work inferencer_worker_0_0
+1118204 zengjun+  896419 m13p4_kvcache_0 m13p4_kvcache_0_lr0_0
+1118290 zengjun+  896419 m13p4_kvcache_d m13p4_kvcache_d2h_0_lr0_0
+1118571 zengjun+  896418 m13p4_qhid_0_lr m13p4_qhid_0_lr0
+1302034 root      620112 python3         python3 /opt/tiger/manhattan_runtime/logs/manhattan_worker.py
+1302036 root      620112 python3         python3 /opt/tiger/manhattan_runtime/logs/manhattan_worker.py
+1525915 root     2886974 python3         python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+2086069 root     1336604 python3         python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+2811316 sunchao+ 1241433 python3         python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+2812359 sunchao+ 1241428 python3         python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+2889069 root      140511 python3         python3 /opt/tiger/test/main_model.py
+2890161 root      140509 python3         python3 /opt/tiger/test/main_model.py
+2936972 root     2959711 python3         python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+3472365 sunchao+ 1237254 python3         python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+3473815 sunchao+ 1237250 python3         python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+3568083 root     1084538 python          python server.py
+3568682 root     1084536 python          python server.py
+3873877 root       15269 python3         python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3874827 root       15266 python3         python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3874829 root       15266 python3         python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3966762 root       14948 python3         python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3967697 root       14945 python3         python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3967698 root       14945 python3         python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+4038724 wangmin+ 1001685 python3         python3 /opt/tiger/models/search.bert_qrec.7.16/pp_server/runner/main_model.py
+4039206 wangmin+ 1001681 python3         python3 /opt/tiger/models/search.bert_qrec.7.16/pp_server/runner/main_model.py

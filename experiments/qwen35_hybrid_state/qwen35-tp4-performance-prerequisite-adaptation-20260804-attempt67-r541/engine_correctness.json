@@ -1,0 +1,1 @@
+{"checks":{"restore_hits":1,"restore_misses":2,"scenario_count":6},"classification":"PASS","model_manifest_sha256":"3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0","schema_version":"qwen35.tp4-engine-model-runner-correctness.v1","source_tree_sha256":"76d99b2bb06f54f05559298396019337bf312300bc52ea3da15d0b1595bec8b5"}

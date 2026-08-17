@@ -1,0 +1,13 @@
+{
+  "claim_boundary": "Compatibility only; no native support, compression, quality, latency, throughput, speedup, or memory-reduction claim.",
+  "classification": "INCOMPLETE",
+  "expected_case_count": 7,
+  "guards": {
+    "correctness_pass": false
+  },
+  "observed_case_count": 7,
+  "reasons": [
+    "logit tolerance mismatch: same_path_repeatability__cached_repeatability__p17__r0__c17"
+  ],
+  "schema_version": 1
+}

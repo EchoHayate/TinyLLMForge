@@ -1,0 +1,420 @@
+{
+  "calibration": {
+    "lambda_ref_rps": 0.5625,
+    "maximum_stable_throughput_rps": 0.6454756774238248,
+    "stable_rate_rps": 0.5625,
+    "status": "PASS",
+    "unstable_rate_rps": 0.625
+  },
+  "canonical_policy_by_name": {
+    "P0": "P0",
+    "P1": "P0",
+    "P2": "P2",
+    "P3": "P3"
+  },
+  "common_engine_config": {
+    "enforce_eager": false,
+    "max_num_batched_tokens": 16384,
+    "max_num_prefill_tokens_per_step": 128,
+    "max_num_seqs": 512
+  },
+  "drain_timeout_ns": 120000000000,
+  "environment_sha256": "3c861fac729eecb7097e6e5a0466bb7d8db9f37f409102d58ff9bcc5a4d687c1",
+  "expected_case_ids": [
+    "steady_moderate__P0__r0",
+    "steady_moderate__P2__r0",
+    "steady_moderate__P3__r0",
+    "near_saturation__P0__r0",
+    "near_saturation__P2__r0",
+    "near_saturation__P3__r0",
+    "overload__P0__r0",
+    "overload__P2__r0",
+    "overload__P3__r0",
+    "burst__P0__r0",
+    "burst__P2__r0",
+    "burst__P3__r0",
+    "long_prompt_pressure__P0__r0",
+    "long_prompt_pressure__P2__r0",
+    "long_prompt_pressure__P3__r0",
+    "mixed_service_fairness__P0__r0",
+    "mixed_service_fairness__P2__r0",
+    "mixed_service_fairness__P3__r0",
+    "steady_moderate__P2__r1",
+    "steady_moderate__P3__r1",
+    "steady_moderate__P0__r1",
+    "near_saturation__P2__r1",
+    "near_saturation__P3__r1",
+    "near_saturation__P0__r1",
+    "overload__P2__r1",
+    "overload__P3__r1",
+    "overload__P0__r1",
+    "burst__P2__r1",
+    "burst__P3__r1",
+    "burst__P0__r1",
+    "long_prompt_pressure__P2__r1",
+    "long_prompt_pressure__P3__r1",
+    "long_prompt_pressure__P0__r1",
+    "mixed_service_fairness__P2__r1",
+    "mixed_service_fairness__P3__r1",
+    "mixed_service_fairness__P0__r1",
+    "steady_moderate__P3__r2",
+    "steady_moderate__P0__r2",
+    "steady_moderate__P2__r2",
+    "near_saturation__P3__r2",
+    "near_saturation__P0__r2",
+    "near_saturation__P2__r2",
+    "overload__P3__r2",
+    "overload__P0__r2",
+    "overload__P2__r2",
+    "burst__P3__r2",
+    "burst__P0__r2",
+    "burst__P2__r2",
+    "long_prompt_pressure__P3__r2",
+    "long_prompt_pressure__P0__r2",
+    "long_prompt_pressure__P2__r2",
+    "mixed_service_fairness__P3__r2",
+    "mixed_service_fairness__P0__r2",
+    "mixed_service_fairness__P2__r2"
+  ],
+  "measured_repetitions": 3,
+  "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "policy_identity_by_name": {
+    "P0": "9a310b586915704813266d28e2163e9ddbb6ec6e3638894c3aa4fa2b23eabce5",
+    "P1": "9a310b586915704813266d28e2163e9ddbb6ec6e3638894c3aa4fa2b23eabce5",
+    "P2": "824f0319883203be14e32424d5616c3c7efa27591eb012c9d9f98c2f489d8fb1",
+    "P3": "e0b85b5fa03a1100ffb17eee33b8e06e4936f53046cc64bd3a72ef0c1e9af491"
+  },
+  "process_port_pairs": [
+    {
+      "case_id": "steady_moderate__P0__r0",
+      "master_port": 38679,
+      "tinyvllm_dist_port": 49487
+    },
+    {
+      "case_id": "steady_moderate__P2__r0",
+      "master_port": 40035,
+      "tinyvllm_dist_port": 41845
+    },
+    {
+      "case_id": "steady_moderate__P3__r0",
+      "master_port": 18231,
+      "tinyvllm_dist_port": 26109
+    },
+    {
+      "case_id": "near_saturation__P0__r0",
+      "master_port": 60117,
+      "tinyvllm_dist_port": 17321
+    },
+    {
+      "case_id": "near_saturation__P2__r0",
+      "master_port": 48047,
+      "tinyvllm_dist_port": 28573
+    },
+    {
+      "case_id": "near_saturation__P3__r0",
+      "master_port": 59755,
+      "tinyvllm_dist_port": 35385
+    },
+    {
+      "case_id": "overload__P0__r0",
+      "master_port": 34611,
+      "tinyvllm_dist_port": 14379
+    },
+    {
+      "case_id": "overload__P2__r0",
+      "master_port": 44635,
+      "tinyvllm_dist_port": 44557
+    },
+    {
+      "case_id": "overload__P3__r0",
+      "master_port": 45501,
+      "tinyvllm_dist_port": 14095
+    },
+    {
+      "case_id": "burst__P0__r0",
+      "master_port": 19771,
+      "tinyvllm_dist_port": 63337
+    },
+    {
+      "case_id": "burst__P2__r0",
+      "master_port": 46091,
+      "tinyvllm_dist_port": 56157
+    },
+    {
+      "case_id": "burst__P3__r0",
+      "master_port": 32915,
+      "tinyvllm_dist_port": 52401
+    },
+    {
+      "case_id": "long_prompt_pressure__P0__r0",
+      "master_port": 38857,
+      "tinyvllm_dist_port": 43697
+    },
+    {
+      "case_id": "long_prompt_pressure__P2__r0",
+      "master_port": 59313,
+      "tinyvllm_dist_port": 47487
+    },
+    {
+      "case_id": "long_prompt_pressure__P3__r0",
+      "master_port": 46649,
+      "tinyvllm_dist_port": 35731
+    },
+    {
+      "case_id": "mixed_service_fairness__P0__r0",
+      "master_port": 38379,
+      "tinyvllm_dist_port": 28685
+    },
+    {
+      "case_id": "mixed_service_fairness__P2__r0",
+      "master_port": 53121,
+      "tinyvllm_dist_port": 33177
+    },
+    {
+      "case_id": "mixed_service_fairness__P3__r0",
+      "master_port": 12427,
+      "tinyvllm_dist_port": 57793
+    },
+    {
+      "case_id": "steady_moderate__P2__r1",
+      "master_port": 38927,
+      "tinyvllm_dist_port": 53757
+    },
+    {
+      "case_id": "steady_moderate__P3__r1",
+      "master_port": 62635,
+      "tinyvllm_dist_port": 10319
+    },
+    {
+      "case_id": "steady_moderate__P0__r1",
+      "master_port": 64003,
+      "tinyvllm_dist_port": 44473
+    },
+    {
+      "case_id": "near_saturation__P2__r1",
+      "master_port": 29499,
+      "tinyvllm_dist_port": 32263
+    },
+    {
+      "case_id": "near_saturation__P3__r1",
+      "master_port": 30519,
+      "tinyvllm_dist_port": 28199
+    },
+    {
+      "case_id": "near_saturation__P0__r1",
+      "master_port": 54605,
+      "tinyvllm_dist_port": 61829
+    },
+    {
+      "case_id": "overload__P2__r1",
+      "master_port": 19411,
+      "tinyvllm_dist_port": 22251
+    },
+    {
+      "case_id": "overload__P3__r1",
+      "master_port": 58629,
+      "tinyvllm_dist_port": 61259
+    },
+    {
+      "case_id": "overload__P0__r1",
+      "master_port": 13533,
+      "tinyvllm_dist_port": 40341
+    },
+    {
+      "case_id": "burst__P2__r1",
+      "master_port": 36415,
+      "tinyvllm_dist_port": 60591
+    },
+    {
+      "case_id": "burst__P3__r1",
+      "master_port": 16721,
+      "tinyvllm_dist_port": 10535
+    },
+    {
+      "case_id": "burst__P0__r1",
+      "master_port": 57337,
+      "tinyvllm_dist_port": 15315
+    },
+    {
+      "case_id": "long_prompt_pressure__P2__r1",
+      "master_port": 23029,
+      "tinyvllm_dist_port": 58457
+    },
+    {
+      "case_id": "long_prompt_pressure__P3__r1",
+      "master_port": 35985,
+      "tinyvllm_dist_port": 35461
+    },
+    {
+      "case_id": "long_prompt_pressure__P0__r1",
+      "master_port": 22457,
+      "tinyvllm_dist_port": 38877
+    },
+    {
+      "case_id": "mixed_service_fairness__P2__r1",
+      "master_port": 43375,
+      "tinyvllm_dist_port": 15585
+    },
+    {
+      "case_id": "mixed_service_fairness__P3__r1",
+      "master_port": 25111,
+      "tinyvllm_dist_port": 26389
+    },
+    {
+      "case_id": "mixed_service_fairness__P0__r1",
+      "master_port": 60047,
+      "tinyvllm_dist_port": 28467
+    },
+    {
+      "case_id": "steady_moderate__P3__r2",
+      "master_port": 44551,
+      "tinyvllm_dist_port": 11899
+    },
+    {
+      "case_id": "steady_moderate__P0__r2",
+      "master_port": 23855,
+      "tinyvllm_dist_port": 58297
+    },
+    {
+      "case_id": "steady_moderate__P2__r2",
+      "master_port": 46751,
+      "tinyvllm_dist_port": 55991
+    },
+    {
+      "case_id": "near_saturation__P3__r2",
+      "master_port": 22693,
+      "tinyvllm_dist_port": 39479
+    },
+    {
+      "case_id": "near_saturation__P0__r2",
+      "master_port": 19777,
+      "tinyvllm_dist_port": 44473
+    },
+    {
+      "case_id": "near_saturation__P2__r2",
+      "master_port": 28181,
+      "tinyvllm_dist_port": 34695
+    },
+    {
+      "case_id": "overload__P3__r2",
+      "master_port": 35323,
+      "tinyvllm_dist_port": 27401
+    },
+    {
+      "case_id": "overload__P0__r2",
+      "master_port": 12973,
+      "tinyvllm_dist_port": 12647
+    },
+    {
+      "case_id": "overload__P2__r2",
+      "master_port": 38341,
+      "tinyvllm_dist_port": 37099
+    },
+    {
+      "case_id": "burst__P3__r2",
+      "master_port": 60949,
+      "tinyvllm_dist_port": 38829
+    },
+    {
+      "case_id": "burst__P0__r2",
+      "master_port": 43887,
+      "tinyvllm_dist_port": 28259
+    },
+    {
+      "case_id": "burst__P2__r2",
+      "master_port": 46179,
+      "tinyvllm_dist_port": 36855
+    },
+    {
+      "case_id": "long_prompt_pressure__P3__r2",
+      "master_port": 20207,
+      "tinyvllm_dist_port": 51163
+    },
+    {
+      "case_id": "long_prompt_pressure__P0__r2",
+      "master_port": 27257,
+      "tinyvllm_dist_port": 61319
+    },
+    {
+      "case_id": "long_prompt_pressure__P2__r2",
+      "master_port": 52089,
+      "tinyvllm_dist_port": 50277
+    },
+    {
+      "case_id": "mixed_service_fairness__P3__r2",
+      "master_port": 64761,
+      "tinyvllm_dist_port": 28925
+    },
+    {
+      "case_id": "mixed_service_fairness__P0__r2",
+      "master_port": 51165,
+      "tinyvllm_dist_port": 21527
+    },
+    {
+      "case_id": "mixed_service_fairness__P2__r2",
+      "master_port": 37521,
+      "tinyvllm_dist_port": 15819
+    }
+  ],
+  "prompt_bank_sha256": "8099ccbc0ddcd8072b9b5c3b5b2c68c36bb7e1ca97f59a404d763d6680d9fa01",
+  "required_scenarios": [
+    "steady_moderate",
+    "near_saturation",
+    "overload",
+    "burst",
+    "long_prompt_pressure",
+    "mixed_service_fairness"
+  ],
+  "resolved_policy_config_by_name": {
+    "P0": {
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P1": {
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P2": {
+      "chunked_prefill_decode_first": false,
+      "chunked_prefill_max_consecutive_chunks": 2,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P3": {
+      "chunked_prefill_decode_first": false,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": true,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    }
+  },
+  "run_tag": "qwen3-06b-arrival-final-calibration-20260719-2317",
+  "schema_version": 1,
+  "smoke_verification": {
+    "environment_sha256": "3c861fac729eecb7097e6e5a0466bb7d8db9f37f409102d58ff9bcc5a4d687c1",
+    "run_tag": "qwen3-06b-arrival-final-smoke-20260719-2313",
+    "source_tree_sha256": "153b12d9c827157229950264b078c873300b462cab43e4f3bd1b02017725a5c3",
+    "status": "PASS"
+  },
+  "source_tree_sha256": "153b12d9c827157229950264b078c873300b462cab43e4f3bd1b02017725a5c3",
+  "workload_sha256": "09e7a5a9839ec7397ca50259020e654e3a914b2ef55ae7d5783a91a0fd1094db"
+}

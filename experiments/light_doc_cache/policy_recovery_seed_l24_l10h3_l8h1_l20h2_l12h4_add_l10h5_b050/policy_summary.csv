@@ -1,0 +1,2 @@
+threshold,compact_layer,compressed_heads,selected_budget,budget_fraction,entry_saving_fraction,note
+0.944,heads,13,768,0.5,0.0290179,"Layer24 safe seed plus 10:3,8:1,20:2,12:4 and candidate 10:5 at 50% per-head budget."

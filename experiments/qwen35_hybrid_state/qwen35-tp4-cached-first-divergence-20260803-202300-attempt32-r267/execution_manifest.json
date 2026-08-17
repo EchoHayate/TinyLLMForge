@@ -1,0 +1,25 @@
+{
+  "claim_boundary": "diagnostic boundary comparison only; no cached-continuation correctness, Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "configuration_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260803-202300-attempt32-r267",
+  "dist_port": 12283,
+  "engine_source_tree_sha256": "45e92225e36297255fd5a4d4b6a2d6c662a46bfe821c72c1c401ea46833cdde6",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "master_port": 40749,
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "official_vs_recompute_first_mismatch": null,
+  "recompute_vs_restore_first_mismatch": null,
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "remote_run_root": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-first-divergence-probes/qwen35-tp4-cached-first-divergence-20260803-202300-attempt32-r267",
+  "remote_source_root": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-root-logit-tests/qwen35-tp4-source-prep-20260803-202300-attempt32-cached-divergence-r267/source",
+  "result_sha256": "e74f4207ed3a690fae5eedd2dd055ee1f569e35bcc3a7af94ef506e62e50dc73",
+  "root_source_tree_sha256": "8bf77ed78172a4c1221b547f11195493defaf43886e1fe3bfcccae56a5a6916d",
+  "schema_version": "qwen35.tp4-cached-core-gated-execution.v1",
+  "source_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260803-202300-attempt32-cached-divergence-r267",
+  "tag": "qwen35-tp4-cached-first-divergence-20260803-202300-attempt32-r267"
+}

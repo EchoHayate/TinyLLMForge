@@ -1,0 +1,750 @@
+{
+  "claim_boundary": "default_off_restored_sidecar_read_path_logits_compare",
+  "decode_token": 576,
+  "kv_cache_shape": [
+    2,
+    28,
+    503,
+    256,
+    8,
+    128
+  ],
+  "logit_compare": {
+    "argmax_match": false,
+    "max_abs_logit_diff": 5.21875,
+    "mean_abs_logit_diff": 0.8861417174339294,
+    "original_argmax": 1815,
+    "restored_argmax": 3491
+  },
+  "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "plan": {
+    "applied_added_heads": [],
+    "compression_ratio": 1.2143452877397831,
+    "doc_id": "second",
+    "dropped_added_heads": [
+      [
+        6,
+        4
+      ]
+    ],
+    "effective_saving_fraction": 0.17651098901098902,
+    "enabled": true,
+    "fallback_reason": "task_override",
+    "num_kv_heads": 8,
+    "num_layers": 28,
+    "recovered_head_token_entries": 514,
+    "recovered_heads": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        0,
+        3
+      ],
+      [
+        0,
+        4
+      ],
+      [
+        0,
+        5
+      ],
+      [
+        0,
+        7
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        5
+      ],
+      [
+        1,
+        7
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        2,
+        7
+      ],
+      [
+        3,
+        0
+      ],
+      [
+        3,
+        1
+      ],
+      [
+        3,
+        6
+      ],
+      [
+        3,
+        7
+      ],
+      [
+        4,
+        0
+      ],
+      [
+        4,
+        1
+      ],
+      [
+        4,
+        2
+      ],
+      [
+        4,
+        3
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        4,
+        6
+      ],
+      [
+        4,
+        7
+      ],
+      [
+        5,
+        2
+      ],
+      [
+        6,
+        0
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        8,
+        0
+      ],
+      [
+        8,
+        1
+      ],
+      [
+        8,
+        3
+      ],
+      [
+        8,
+        4
+      ],
+      [
+        8,
+        7
+      ],
+      [
+        9,
+        6
+      ],
+      [
+        9,
+        7
+      ],
+      [
+        10,
+        0
+      ],
+      [
+        10,
+        1
+      ],
+      [
+        10,
+        2
+      ],
+      [
+        10,
+        3
+      ],
+      [
+        10,
+        5
+      ],
+      [
+        10,
+        6
+      ],
+      [
+        10,
+        7
+      ],
+      [
+        11,
+        0
+      ],
+      [
+        11,
+        2
+      ],
+      [
+        11,
+        3
+      ],
+      [
+        12,
+        0
+      ],
+      [
+        12,
+        4
+      ],
+      [
+        12,
+        5
+      ],
+      [
+        12,
+        7
+      ],
+      [
+        13,
+        0
+      ],
+      [
+        13,
+        1
+      ],
+      [
+        13,
+        3
+      ],
+      [
+        13,
+        5
+      ],
+      [
+        14,
+        1
+      ],
+      [
+        15,
+        3
+      ],
+      [
+        16,
+        2
+      ],
+      [
+        16,
+        5
+      ],
+      [
+        16,
+        6
+      ],
+      [
+        17,
+        1
+      ],
+      [
+        17,
+        5
+      ],
+      [
+        18,
+        0
+      ],
+      [
+        18,
+        5
+      ],
+      [
+        18,
+        6
+      ],
+      [
+        20,
+        1
+      ],
+      [
+        20,
+        2
+      ],
+      [
+        20,
+        3
+      ],
+      [
+        20,
+        6
+      ],
+      [
+        20,
+        7
+      ],
+      [
+        22,
+        0
+      ],
+      [
+        22,
+        1
+      ],
+      [
+        23,
+        3
+      ],
+      [
+        23,
+        7
+      ],
+      [
+        24,
+        0
+      ],
+      [
+        24,
+        1
+      ],
+      [
+        24,
+        2
+      ],
+      [
+        24,
+        3
+      ],
+      [
+        24,
+        4
+      ],
+      [
+        24,
+        5
+      ],
+      [
+        24,
+        6
+      ],
+      [
+        24,
+        7
+      ],
+      [
+        26,
+        5
+      ]
+    ],
+    "recovered_kv_head_equivalent": 39.5,
+    "recovered_kv_heads": 79,
+    "seq_len": 13,
+    "stored_head_token_entries": 2398,
+    "stored_kv_heads": 184,
+    "stored_kv_heads_equivalent": 184.46153846153845,
+    "task_id": "smoothquant_status",
+    "total_head_token_entries": 2912,
+    "total_kv_heads": 224
+  },
+  "prompt_tokens": 13,
+  "recovery_mode": "correlated",
+  "sidecar": {
+    "claim_boundary": "sidecar_materialized_not_attention_hot_path",
+    "error_metrics": {
+      "mae_missing_compact_tokens": 1.459791208086889,
+      "max_abs_missing_compact_tokens": 174.0,
+      "mse_missing_compact_tokens": 11.548846984339127,
+      "num_missing_compact_tokens": 553
+    },
+    "kv_cache_shape": [
+      2,
+      28,
+      503,
+      256,
+      8,
+      128
+    ],
+    "logical_byte_saving_fraction": 0.18990384615384615,
+    "logical_full_kv_bytes": 1490944,
+    "logical_saved_kv_bytes": 283136,
+    "logical_stored_kv_bytes": 1207808,
+    "plan": {
+      "applied_added_heads": [],
+      "compression_ratio": 1.2143452877397831,
+      "doc_id": "second",
+      "dropped_added_heads": [
+        [
+          6,
+          4
+        ]
+      ],
+      "effective_saving_fraction": 0.17651098901098902,
+      "enabled": true,
+      "fallback_reason": "task_override",
+      "num_kv_heads": 8,
+      "num_layers": 28,
+      "recovered_head_token_entries": 514,
+      "recovered_heads": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          0,
+          7
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          5,
+          2
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          7
+        ],
+        [
+          8,
+          0
+        ],
+        [
+          8,
+          1
+        ],
+        [
+          8,
+          3
+        ],
+        [
+          8,
+          4
+        ],
+        [
+          8,
+          7
+        ],
+        [
+          9,
+          6
+        ],
+        [
+          9,
+          7
+        ],
+        [
+          10,
+          0
+        ],
+        [
+          10,
+          1
+        ],
+        [
+          10,
+          2
+        ],
+        [
+          10,
+          3
+        ],
+        [
+          10,
+          5
+        ],
+        [
+          10,
+          6
+        ],
+        [
+          10,
+          7
+        ],
+        [
+          11,
+          0
+        ],
+        [
+          11,
+          2
+        ],
+        [
+          11,
+          3
+        ],
+        [
+          12,
+          0
+        ],
+        [
+          12,
+          4
+        ],
+        [
+          12,
+          5
+        ],
+        [
+          12,
+          7
+        ],
+        [
+          13,
+          0
+        ],
+        [
+          13,
+          1
+        ],
+        [
+          13,
+          3
+        ],
+        [
+          13,
+          5
+        ],
+        [
+          14,
+          1
+        ],
+        [
+          15,
+          3
+        ],
+        [
+          16,
+          2
+        ],
+        [
+          16,
+          5
+        ],
+        [
+          16,
+          6
+        ],
+        [
+          17,
+          1
+        ],
+        [
+          17,
+          5
+        ],
+        [
+          18,
+          0
+        ],
+        [
+          18,
+          5
+        ],
+        [
+          18,
+          6
+        ],
+        [
+          20,
+          1
+        ],
+        [
+          20,
+          2
+        ],
+        [
+          20,
+          3
+        ],
+        [
+          20,
+          6
+        ],
+        [
+          20,
+          7
+        ],
+        [
+          22,
+          0
+        ],
+        [
+          22,
+          1
+        ],
+        [
+          23,
+          3
+        ],
+        [
+          23,
+          7
+        ],
+        [
+          24,
+          0
+        ],
+        [
+          24,
+          1
+        ],
+        [
+          24,
+          2
+        ],
+        [
+          24,
+          3
+        ],
+        [
+          24,
+          4
+        ],
+        [
+          24,
+          5
+        ],
+        [
+          24,
+          6
+        ],
+        [
+          24,
+          7
+        ],
+        [
+          26,
+          5
+        ]
+      ],
+      "recovered_kv_head_equivalent": 39.5,
+      "recovered_kv_heads": 79,
+      "seq_len": 13,
+      "stored_head_token_entries": 2398,
+      "stored_kv_heads": 184,
+      "stored_kv_heads_equivalent": 184.46153846153845,
+      "task_id": "smoothquant_status",
+      "total_head_token_entries": 2912,
+      "total_kv_heads": 224
+    },
+    "sidecar_storage": {
+      "byte_saving_fraction": 0.9999182153174702,
+      "claim_boundary": "storage_prototype_fill_missing_not_recovered",
+      "compact_heads": 79,
+      "full_heads": 145,
+      "full_shape": [
+        2,
+        28,
+        503,
+        256,
+        8,
+        128
+      ],
+      "full_tensor_bytes": 14768144384,
+      "saved_tensor_bytes": 14766936576,
+      "stored_compact_head_bytes": 242688,
+      "stored_full_head_bytes": 965120,
+      "stored_tensor_bytes": 1207808
+    }
+  }
+}

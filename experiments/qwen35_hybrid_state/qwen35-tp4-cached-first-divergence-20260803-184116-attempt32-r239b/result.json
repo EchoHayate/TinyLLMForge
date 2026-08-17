@@ -1,0 +1,30 @@
+{
+  "claim_boundary": "official attention head-batch diagnostic only; no cached-continuation correctness, Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "official_global_vs_local_attention_variants": [
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "local_two_head_additive_mask",
+      "nonzero_count": 0,
+      "shape": [
+        64,
+        512
+      ],
+      "shape_equal": true
+    },
+    {
+      "allclose": false,
+      "max_abs_diff": 0.365234375,
+      "mean_abs_diff": 0.03337213397026062,
+      "name": "local_two_head_masked_fill",
+      "nonzero_count": 31750,
+      "shape": [
+        64,
+        512
+      ],
+      "shape_equal": true
+    }
+  ],
+  "schema_version": "qwen35.tp4-official-attention-head-batch.v1"
+}

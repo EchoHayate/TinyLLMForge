@@ -1,0 +1,146 @@
+[
+  {
+    "name": "add_l10_h3",
+    "candidate": {
+      "layer": 10,
+      "kv_head": 3
+    },
+    "threshold": 0.901,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l10_h3",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,10:3",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l8_h1",
+    "candidate": {
+      "layer": 8,
+      "kv_head": 1
+    },
+    "threshold": 0.902,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l8_h1",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,8:1",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l20_h2",
+    "candidate": {
+      "layer": 20,
+      "kv_head": 2
+    },
+    "threshold": 0.903,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l20_h2",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,20:2",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l4_h6",
+    "candidate": {
+      "layer": 4,
+      "kv_head": 6
+    },
+    "threshold": 0.904,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l4_h6",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,4:6",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l8_h5",
+    "candidate": {
+      "layer": 8,
+      "kv_head": 5
+    },
+    "threshold": 0.905,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l8_h5",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,8:5",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l12_h4",
+    "candidate": {
+      "layer": 12,
+      "kv_head": 4
+    },
+    "threshold": 0.906,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l12_h4",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,12:4",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l10_h5",
+    "candidate": {
+      "layer": 10,
+      "kv_head": 5
+    },
+    "threshold": 0.907,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l10_h5",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,10:5",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l12_h7",
+    "candidate": {
+      "layer": 12,
+      "kv_head": 7
+    },
+    "threshold": 0.908,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l12_h7",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,12:7",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l4_h5",
+    "candidate": {
+      "layer": 4,
+      "kv_head": 5
+    },
+    "threshold": 0.909,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l4_h5",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,4:5",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l12_h1",
+    "candidate": {
+      "layer": 12,
+      "kv_head": 1
+    },
+    "threshold": 0.91,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l12_h1",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,12:1",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l16_h6",
+    "candidate": {
+      "layer": 16,
+      "kv_head": 6
+    },
+    "threshold": 0.911,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l16_h6",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,16:6",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  },
+  {
+    "name": "add_l12_h3",
+    "candidate": {
+      "layer": 12,
+      "kv_head": 3
+    },
+    "threshold": 0.912,
+    "policy_dir": "experiments/light_doc_cache/policy_add_one_from_l24_seed_top12/add_l12_h3",
+    "heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,12:3",
+    "compressed_heads": 9,
+    "budget_fraction": 0.5
+  }
+]

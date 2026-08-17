@@ -1,0 +1,415 @@
+{
+  "schema_version": "qwen35.five-binding-synthetic-tile-replay.v1",
+  "environment": {
+    "timestamp_utc": "2026-07-27T13:50:14.378066+00:00",
+    "python": "3.12.13",
+    "pytorch": "2.12.0",
+    "safetensors": "0.7.0",
+    "platform": "macOS-26.4.1-arm64-arm-64bit",
+    "cpu": "Apple M5 Pro"
+  },
+  "configuration": {
+    "tensor_parallel_size": 2,
+    "tensor_parallel_rank": 1,
+    "tile_mib": [
+      4,
+      8,
+      16,
+      32
+    ],
+    "repeats": 3,
+    "warmups": 1,
+    "local_payload_mib": 32
+  },
+  "cases": [
+    {
+      "kind": "axis0",
+      "source_shape": [
+        16384,
+        2048
+      ],
+      "local_shape": [
+        8192,
+        2048
+      ],
+      "source_payload_bytes": 67108864,
+      "local_payload_bytes": 33554432,
+      "expected_checksum": 1073741440.0,
+      "destination_checksum": 1073741440.0,
+      "budget_results": [
+        {
+          "raw_seconds": [
+            0.001706541999737965,
+            0.0017850000003818423,
+            0.0018019579983956646
+          ],
+          "median_seconds": 0.0017850000003818423,
+          "min_seconds": 0.001706541999737965,
+          "max_seconds": 0.0018019579983956646,
+          "tile_count": 8,
+          "requested_tile_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "destination_checksum": 1073741440.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0016087090007204097,
+            0.0012538329974631779,
+            0.0014620410001953132
+          ],
+          "median_seconds": 0.0014620410001953132,
+          "min_seconds": 0.0012538329974631779,
+          "max_seconds": 0.0016087090007204097,
+          "tile_count": 4,
+          "requested_tile_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "destination_checksum": 1073741440.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0011172919985256158,
+            0.0011517079983605072,
+            0.0011707080011547077
+          ],
+          "median_seconds": 0.0011517079983605072,
+          "min_seconds": 0.0011172919985256158,
+          "max_seconds": 0.0011707080011547077,
+          "tile_count": 2,
+          "requested_tile_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "destination_checksum": 1073741440.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0011511670018080622,
+            0.0011287499983154703,
+            0.0010594579980534036
+          ],
+          "median_seconds": 0.0011287499983154703,
+          "min_seconds": 0.0010594579980534036,
+          "max_seconds": 0.0011511670018080622,
+          "tile_count": 1,
+          "requested_tile_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "destination_checksum": 1073741440.0,
+          "exact_destination_verified": true
+        }
+      ]
+    },
+    {
+      "kind": "axis1",
+      "source_shape": [
+        8192,
+        4096
+      ],
+      "local_shape": [
+        8192,
+        2048
+      ],
+      "source_payload_bytes": 67108864,
+      "local_payload_bytes": 33554432,
+      "expected_checksum": 1342176384.0,
+      "destination_checksum": 1342176384.0,
+      "budget_results": [
+        {
+          "raw_seconds": [
+            0.0026078750015585683,
+            0.0026783330031321384,
+            0.0026176669998676516
+          ],
+          "median_seconds": 0.0026176669998676516,
+          "min_seconds": 0.0026078750015585683,
+          "max_seconds": 0.0026783330031321384,
+          "tile_count": 8,
+          "requested_tile_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "destination_checksum": 1342176384.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.002374040999711724,
+            0.002181332998588914,
+            0.0025327500006824266
+          ],
+          "median_seconds": 0.002374040999711724,
+          "min_seconds": 0.002181332998588914,
+          "max_seconds": 0.0025327500006824266,
+          "tile_count": 4,
+          "requested_tile_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "destination_checksum": 1342176384.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.002320542000234127,
+            0.0023301670007640496,
+            0.002272999998240266
+          ],
+          "median_seconds": 0.002320542000234127,
+          "min_seconds": 0.002272999998240266,
+          "max_seconds": 0.0023301670007640496,
+          "tile_count": 2,
+          "requested_tile_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "destination_checksum": 1342176384.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0022288330001174472,
+            0.002188958002079744,
+            0.0021703749989683274
+          ],
+          "median_seconds": 0.002188958002079744,
+          "min_seconds": 0.0021703749989683274,
+          "max_seconds": 0.0022288330001174472,
+          "tile_count": 1,
+          "requested_tile_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "destination_checksum": 1342176384.0,
+          "exact_destination_verified": true
+        }
+      ]
+    },
+    {
+      "kind": "segmented_axis0",
+      "source_shape": [
+        16384,
+        2048
+      ],
+      "local_shape": [
+        8192,
+        2048
+      ],
+      "source_payload_bytes": 67108864,
+      "local_payload_bytes": 33554432,
+      "expected_checksum": 1610612224.0,
+      "destination_checksum": 1610612224.0,
+      "budget_results": [
+        {
+          "raw_seconds": [
+            0.001654415998928016,
+            0.0016676669984008186,
+            0.0016298750015266705
+          ],
+          "median_seconds": 0.001654415998928016,
+          "min_seconds": 0.0016298750015266705,
+          "max_seconds": 0.0016676669984008186,
+          "tile_count": 8,
+          "requested_tile_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "destination_checksum": 1610612224.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0013996249981573783,
+            0.0014672079996671528,
+            0.0014360409986693412
+          ],
+          "median_seconds": 0.0014360409986693412,
+          "min_seconds": 0.0013996249981573783,
+          "max_seconds": 0.0014672079996671528,
+          "tile_count": 4,
+          "requested_tile_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "destination_checksum": 1610612224.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0011794999991252553,
+            0.001234833001944935,
+            0.00142529100048705
+          ],
+          "median_seconds": 0.001234833001944935,
+          "min_seconds": 0.0011794999991252553,
+          "max_seconds": 0.00142529100048705,
+          "tile_count": 3,
+          "requested_tile_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "destination_checksum": 1610612224.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.001309916999161942,
+            0.0015080410012160428,
+            0.0014433340002142359
+          ],
+          "median_seconds": 0.0014433340002142359,
+          "min_seconds": 0.001309916999161942,
+          "max_seconds": 0.0015080410012160428,
+          "tile_count": 3,
+          "requested_tile_bytes": 33554432,
+          "peak_tile_bytes": 16777216,
+          "destination_checksum": 1610612224.0,
+          "exact_destination_verified": true
+        }
+      ]
+    },
+    {
+      "kind": "squeeze_axis0",
+      "source_shape": [
+        8388608,
+        1,
+        4
+      ],
+      "local_shape": [
+        4194304,
+        4
+      ],
+      "source_payload_bytes": 67108864,
+      "local_payload_bytes": 33554432,
+      "expected_checksum": 1879047680.0,
+      "destination_checksum": 1879047680.0,
+      "budget_results": [
+        {
+          "raw_seconds": [
+            0.001524125000287313,
+            0.0016676669984008186,
+            0.0017048750014510006
+          ],
+          "median_seconds": 0.0016676669984008186,
+          "min_seconds": 0.001524125000287313,
+          "max_seconds": 0.0017048750014510006,
+          "tile_count": 8,
+          "requested_tile_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "destination_checksum": 1879047680.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.001577207996888319,
+            0.0015694169997004792,
+            0.001589291998243425
+          ],
+          "median_seconds": 0.001577207996888319,
+          "min_seconds": 0.0015694169997004792,
+          "max_seconds": 0.001589291998243425,
+          "tile_count": 4,
+          "requested_tile_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "destination_checksum": 1879047680.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.001611291001609061,
+            0.0014433750002353918,
+            0.0014650419980171137
+          ],
+          "median_seconds": 0.0014650419980171137,
+          "min_seconds": 0.0014433750002353918,
+          "max_seconds": 0.001611291001609061,
+          "tile_count": 2,
+          "requested_tile_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "destination_checksum": 1879047680.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.001425332997314399,
+            0.001400166001985781,
+            0.0014152090006973594
+          ],
+          "median_seconds": 0.0014152090006973594,
+          "min_seconds": 0.001400166001985781,
+          "max_seconds": 0.001425332997314399,
+          "tile_count": 1,
+          "requested_tile_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "destination_checksum": 1879047680.0,
+          "exact_destination_verified": true
+        }
+      ]
+    },
+    {
+      "kind": "replicated",
+      "source_shape": [
+        16777216
+      ],
+      "local_shape": [
+        16777216
+      ],
+      "source_payload_bytes": 33554432,
+      "local_payload_bytes": 33554432,
+      "expected_checksum": 2147483136.0,
+      "destination_checksum": 2147483136.0,
+      "budget_results": [
+        {
+          "raw_seconds": [
+            0.0015569170027447399,
+            0.0016512920010427479,
+            0.0015127090009627864
+          ],
+          "median_seconds": 0.0015569170027447399,
+          "min_seconds": 0.0015127090009627864,
+          "max_seconds": 0.0016512920010427479,
+          "tile_count": 8,
+          "requested_tile_bytes": 4194304,
+          "peak_tile_bytes": 4194304,
+          "destination_checksum": 2147483136.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0012692500022239983,
+            0.0012966669964953326,
+            0.0013333330025488976
+          ],
+          "median_seconds": 0.0012966669964953326,
+          "min_seconds": 0.0012692500022239983,
+          "max_seconds": 0.0013333330025488976,
+          "tile_count": 4,
+          "requested_tile_bytes": 8388608,
+          "peak_tile_bytes": 8388608,
+          "destination_checksum": 2147483136.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0011785000024246983,
+            0.0011318750002828892,
+            0.0012656670005526394
+          ],
+          "median_seconds": 0.0011785000024246983,
+          "min_seconds": 0.0011318750002828892,
+          "max_seconds": 0.0012656670005526394,
+          "tile_count": 2,
+          "requested_tile_bytes": 16777216,
+          "peak_tile_bytes": 16777216,
+          "destination_checksum": 2147483136.0,
+          "exact_destination_verified": true
+        },
+        {
+          "raw_seconds": [
+            0.0011318750002828892,
+            0.001114000002417015,
+            0.0011656249989755452
+          ],
+          "median_seconds": 0.0011318750002828892,
+          "min_seconds": 0.001114000002417015,
+          "max_seconds": 0.0011656249989755452,
+          "tile_count": 1,
+          "requested_tile_bytes": 33554432,
+          "peak_tile_bytes": 33554432,
+          "destination_checksum": 2147483136.0,
+          "exact_destination_verified": true
+        }
+      ]
+    }
+  ],
+  "interpretation_limits": [
+    "This is a warm-cache CPU replay over temporary synthetic safetensors payloads and exact planner-generated slices.",
+    "It does not measure real checkpoint loading, cold-cache or disk throughput, RSS, allocator, or page-cache peak.",
+    "It does not establish GPU, inference, KV-cache, compression, memory, accuracy, or quality benefits."
+  ]
+}

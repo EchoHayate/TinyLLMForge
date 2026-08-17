@@ -1,0 +1,12 @@
+{
+  "archive_roots": [
+    "qwen3-06b-heuristic-exact-width-canonical-20260722-055943",
+    "qwen3-06b-fixed-split-canonical-20260721-174406",
+    "qwen3-06b-cuda-graph-canonical-20260721-r3",
+    "qwen3-06b-cuda-graph-canonical-20260721-r1"
+  ],
+  "file_count": 13934,
+  "generated_at_unix": 1786087595.6226408,
+  "schema_version": "tinyllmforge.cuda-graph-archive.v1",
+  "total_bytes": 69169127166
+}

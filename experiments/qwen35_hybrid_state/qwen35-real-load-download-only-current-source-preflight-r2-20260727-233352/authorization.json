@@ -1,0 +1,34 @@
+{
+  "schema_version": "qwen35.real-checkpoint-load-safety.v1",
+  "decision": "BLOCKED",
+  "run_tag": "qwen35-real-load-download-only-current-source-preflight-r2-20260727-233352",
+  "checks": {
+    "preflight_valid": true,
+    "preflight_ready": false,
+    "source_schema": true,
+    "remote_target": true,
+    "source_hash_maps": false,
+    "recorded_source_tree": true,
+    "current_source_hashes": false,
+    "branch_match": true,
+    "commit_match": true,
+    "owned_source_tracked": false,
+    "owned_source_staged_clean": true,
+    "owned_source_unstaged_clean": true,
+    "owned_source_untracked_clean": false
+  },
+  "reasons": [
+    "preflight is not READY",
+    "source hash maps disagree",
+    "current owned source hashes differ",
+    "owned source is not tracked",
+    "owned source is untracked"
+  ],
+  "worker_implementation_authorized": false,
+  "worker_execution_authorized": false,
+  "claim_boundary": "Authorization permits worker implementation only; worker execution, checkpoint payload access, inference speed, cache or memory reduction, compression safety, quality retention, and native execution remain unproven.",
+  "source_tree_sha256": "51d7cedddfbbc73232c2ac1cde1f452b22bf44fab3bf305d5140850da066b504",
+  "current_source_tree_sha256": "353b8abb20ef01d6de8fd74599e22c3533987c82da948cfd59de1f8e9c424676",
+  "current_branch": "feat/adaptive-ngram-speculation",
+  "current_commit": "3217895019a26154270db40c432495c7657abcb1"
+}

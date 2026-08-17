@@ -1,0 +1,167 @@
+[
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k1-route-fallback",
+    "draft_len": 1,
+    "policy": "always_native",
+    "target_forward_count": 1,
+    "verifier_commit_ms": 29.87467870116234
+  },
+  {
+    "accepted_count": 16,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-full-multiblock",
+    "draft_len": 16,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 203.5280130803585
+  },
+  {
+    "accepted_count": 16,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-full-multiblock",
+    "draft_len": 16,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 206.39033615589142
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-full-current",
+    "draft_len": 2,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 70.0923353433609
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-full-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 70.92789933085442
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-zero-current",
+    "draft_len": 2,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 74.23131167888641
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-zero-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 127.55150347948074
+  },
+  {
+    "accepted_count": 4,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-full-boundary",
+    "draft_len": 4,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 112.766083329916
+  },
+  {
+    "accepted_count": 4,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-full-boundary",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 100.9443886578083
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-partial-boundary",
+    "draft_len": 4,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 114.21483382582664
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-partial-boundary",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 105.25178536772728
+  }
+]

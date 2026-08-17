@@ -1,0 +1,1 @@
+{"artifact_names": ["tp4_real_root_logit_correctness.json", "reference_logits.pt", "native_rank0_logits.pt", "rank_evidence.json", "source_manifest.json"], "provenance": "synthetic-runner-fixture", "remote_run_dir": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-root-logit-tests/qwen35-tp4-synthetic-runner-fixture-20260728-231109"}

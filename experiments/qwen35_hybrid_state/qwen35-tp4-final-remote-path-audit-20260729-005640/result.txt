@@ -1,0 +1,3 @@
+REMOTE_PATHS qwen35-tp4-preflight-20260729-005500 [False, False, False, False]
+REMOTE_PATHS qwen35-tp4-native-smoke-20260729-005503 [False, False, False, False]
+REMOTE_PATHS qwen35-tp4-authority-20260729-005506 [False, False, False, False]

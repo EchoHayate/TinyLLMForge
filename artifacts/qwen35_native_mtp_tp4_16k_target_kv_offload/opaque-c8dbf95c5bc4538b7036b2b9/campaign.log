@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1065, in run_campaign
+    raise RuntimeError(
+RuntimeError: worker failed for native_mtp:b4; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/artifacts/.authority.campaign.yshypcdq/cells/native_mtp:b4.log
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1233, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1222, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1164, in run_campaign
+    raise RuntimeError(
+RuntimeError: worker failed for native_mtp:b4; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/artifacts/.authority.campaign.yshypcdq/cells/native_mtp:b4.log; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-c8dbf95c5bc4538b7036b2b9/artifacts/authority.failed

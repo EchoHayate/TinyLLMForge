@@ -1,0 +1,61 @@
+{
+  "claim_boundary": "Compatibility only; no native support, compression, quality, latency, throughput, speedup, or memory-reduction claim.",
+  "classification": "SMOKE_PASS",
+  "dtype_profiles": {
+    "bfloat16": {
+      "comparison_accumulator_dtype": "float32",
+      "dominant_parameter_dtype": "bfloat16",
+      "kv_state_dtypes": [
+        "bfloat16"
+      ],
+      "logit_dtype_before_comparison": "float32",
+      "recurrent_state_dtypes": [
+        "bfloat16"
+      ],
+      "requested_model_dtype": "bfloat16"
+    },
+    "float32": {
+      "comparison_accumulator_dtype": "float32",
+      "dominant_parameter_dtype": "float32",
+      "kv_state_dtypes": [
+        "float32"
+      ],
+      "logit_dtype_before_comparison": "float32",
+      "recurrent_state_dtypes": [
+        "float32"
+      ],
+      "requested_model_dtype": "float32"
+    }
+  },
+  "expected_case_count": 8,
+  "guards": {
+    "artifact_inventory_pass": true,
+    "case_domain_pass": true,
+    "correctness_pass": true,
+    "environment_pass": true,
+    "model_provenance_pass": true,
+    "process_and_port_pass": true,
+    "source_provenance_pass": true,
+    "state_lifecycle_pass": true,
+    "storage_ledger_pass": true
+  },
+  "logit_tolerance": {
+    "fp32_atol": 2e-05,
+    "fp32_mean_abs_cap": 3e-06,
+    "fp32_rtol": 1e-05
+  },
+  "observed_case_count": 8,
+  "reasons": [],
+  "schema_version": 2,
+  "state_lifecycle": {
+    "released_component_count": 0,
+    "state_component_count": 2160,
+    "state_snapshot_count": 50
+  },
+  "storage_ledger": {
+    "memory_snapshot_count": 53,
+    "parameter_bytes": 3763650176,
+    "state_logical_bytes": 571318272,
+    "state_unique_storage_bytes": 50528256
+  }
+}

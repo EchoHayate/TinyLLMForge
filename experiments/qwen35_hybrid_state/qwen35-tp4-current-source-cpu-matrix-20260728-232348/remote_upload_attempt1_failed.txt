@@ -1,0 +1,2 @@
+status=FAILED_BEFORE_UPLOAD
+error=Connection closed by UNKNOWN port 65535

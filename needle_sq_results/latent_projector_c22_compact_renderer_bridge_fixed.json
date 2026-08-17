@@ -1,0 +1,3527 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B",
+    "task": "arithmetic",
+    "train_cases": 64,
+    "eval_cases": 32,
+    "context_len": 512,
+    "depth": 0.5,
+    "latent_steps": 1,
+    "max_new_tokens": 16,
+    "epochs": 1,
+    "batch_size": 4,
+    "lr": 0.0001,
+    "weight_decay": 0.0,
+    "hidden_loss_weight": 1.0,
+    "logit_loss_weight": 0.0,
+    "soft_step_epochs": 0,
+    "soft_step_lr": 1e-05,
+    "seed": 0,
+    "train_device": "cpu",
+    "max_model_len": 1024,
+    "gpu_memory_utilization": 0.7,
+    "skip_eval": false,
+    "checkpoint": "needle_sq_results/latent_projector_c22_compact_renderer_bridge_fixed.pt",
+    "out_json": "needle_sq_results/latent_projector_c22_compact_renderer_bridge_fixed.json",
+    "hf_teacher_forcing": false,
+    "hf_device": "cuda",
+    "hf_dtype": "bfloat16",
+    "step_hidden_loss_weight": 0.0,
+    "step_hidden_mode": "input",
+    "projector_kind": "shared",
+    "max_latent_steps": 16,
+    "latent_step_curriculum": "none",
+    "state_supervision_weight": 0.0,
+    "state_min_value": -256,
+    "state_max_value": 2048,
+    "state_embedding_loss_weight": 0.0,
+    "state_embedding_mse_weight": 0.1,
+    "arithmetic_state_machine_weight": 0.0,
+    "arithmetic_state_machine_value_weight": 1.0,
+    "arithmetic_state_machine_phase_weight": 0.2,
+    "arithmetic_state_machine_source": "output",
+    "arithmetic_state_machine_no_repeat_final": false,
+    "pure_latent_arithmetic": false,
+    "pure_hidden_size": 128,
+    "pure_numeric_representation": "id_embedding",
+    "pure_arith_a_min": 20,
+    "pure_arith_a_max": 90,
+    "pure_arith_b_min": 10,
+    "pure_arith_b_max": 80,
+    "pure_arith_c_min": 2,
+    "pure_arith_c_max": 9,
+    "pure_arith_d_min": 10,
+    "pure_arith_d_max": 120,
+    "pure_arith_value_weight": 1.0,
+    "pure_arith_phase_weight": 0.0,
+    "pure_arith_regression_weight": 0.0,
+    "pure_arith_digit_weight": 0.0,
+    "pure_digit_arithmetic": false,
+    "pure_digit_mode": "deterministic",
+    "pure_digit_num_digits": 4,
+    "pure_digit_operator_hidden_size": 64,
+    "pure_digit_operator_depth": 2,
+    "pure_digit_combo_heldout_frac": 0.2,
+    "pure_digit_combo_split_seed": 0,
+    "pure_digit_carry_loss_weight": 1.0,
+    "oracle_decode_bridge": false,
+    "decode_bridge_hidden_size": 1024,
+    "decode_bridge_depth": 2,
+    "textual_oracle_eval": false,
+    "textual_oracle_mode": "final_answer",
+    "embedding_oracle_eval": false,
+    "embedding_oracle_mode": "final_abs",
+    "digit_slot_renderer_eval": false,
+    "digit_slot_renderer_input_mode": "inputs_embeds",
+    "digit_slot_predictor": false,
+    "digit_slot_predictor_hidden_size": 256,
+    "digit_slot_predictor_depth": 2,
+    "digit_slot_digit_loss_weight": 1.0,
+    "digit_slot_decode_input_mode": "inputs_embeds",
+    "primitive_digit_renderer_eval": false,
+    "primitive_digit_renderer_input_mode": "inputs_embeds",
+    "operator_vm_benchmark": false,
+    "operator_vm_input_mode": "inputs_embeds",
+    "operator_vm_baseline_max_new_tokens": 0,
+    "operator_vm_final_max_new_tokens": 8,
+    "minimal_embedding_suffix_benchmark": false,
+    "minimal_embedding_suffix_modes": [
+      "final_abs",
+      "sign_final_abs",
+      "signed_answer"
+    ],
+    "compact_renderer_bridge": true,
+    "compact_renderer_hidden_size": 1024,
+    "compact_renderer_depth": 2,
+    "compact_renderer_cosine_weight": 1.0,
+    "compact_renderer_token_ce_weight": 0.0,
+    "compact_renderer_token_ce_temperature": 0.05,
+    "compact_renderer_run_variable": false,
+    "compact_renderer_fixed_ks": [
+      8,
+      4,
+      2,
+      1
+    ],
+    "compact_renderer_fixed_epochs": 5,
+    "compact_renderer_fixed_lr": 0.0001,
+    "compact_renderer_include_c21_reference": false,
+    "canonical_embedding_bridge": false,
+    "canonical_embedding_mode": "final_abs",
+    "canonical_embedding_cosine_weight": 1.0,
+    "canonical_embedding_token_ce_weight": 0.0,
+    "canonical_embedding_token_ce_temperature": 0.05,
+    "canonical_embedding_target_tokens": 0,
+    "canonical_embedding_decode_mode": "continuous",
+    "bridge_supervision_weight": 1.0
+  },
+  "benchmark": "C2.2 learned compact renderer bridge",
+  "train_cases": 64,
+  "eval_cases": 32,
+  "num_digits": 4,
+  "feature_dim": 42,
+  "hidden_size": 4096,
+  "max_suffix_tokens": 11,
+  "c21_signed_answer": null,
+  "history": {
+    "K8": [
+      {
+        "epoch": 1,
+        "loss": 2.624315161575643,
+        "tokens": 258,
+        "answer_ce": 2.624315161575643,
+        "answer_ce_accuracy": 0.3682170542635659
+      },
+      {
+        "epoch": 2,
+        "loss": 1.324727669704792,
+        "tokens": 258,
+        "answer_ce": 1.324727669704792,
+        "answer_ce_accuracy": 0.5193798449612403
+      },
+      {
+        "epoch": 3,
+        "loss": 1.23977903340214,
+        "tokens": 258,
+        "answer_ce": 1.23977903340214,
+        "answer_ce_accuracy": 0.5542635658914729
+      },
+      {
+        "epoch": 4,
+        "loss": 1.0753880053065543,
+        "tokens": 258,
+        "answer_ce": 1.0753880053065543,
+        "answer_ce_accuracy": 0.5697674418604651
+      },
+      {
+        "epoch": 5,
+        "loss": 0.992122004660525,
+        "tokens": 258,
+        "answer_ce": 0.992122004660525,
+        "answer_ce_accuracy": 0.6162790697674418
+      }
+    ],
+    "K4": [
+      {
+        "epoch": 1,
+        "loss": 2.942981559176778,
+        "tokens": 258,
+        "answer_ce": 2.942981559176778,
+        "answer_ce_accuracy": 0.24806201550387597
+      },
+      {
+        "epoch": 2,
+        "loss": 1.7783264268276304,
+        "tokens": 258,
+        "answer_ce": 1.7783264268276304,
+        "answer_ce_accuracy": 0.3953488372093023
+      },
+      {
+        "epoch": 3,
+        "loss": 1.5954852640166763,
+        "tokens": 258,
+        "answer_ce": 1.5954852640166763,
+        "answer_ce_accuracy": 0.45348837209302323
+      },
+      {
+        "epoch": 4,
+        "loss": 1.4310293992360432,
+        "tokens": 258,
+        "answer_ce": 1.4310293992360432,
+        "answer_ce_accuracy": 0.49612403100775193
+      },
+      {
+        "epoch": 5,
+        "loss": 1.2486310989357705,
+        "tokens": 258,
+        "answer_ce": 1.2486310989357705,
+        "answer_ce_accuracy": 0.5775193798449613
+      }
+    ],
+    "K2": [
+      {
+        "epoch": 1,
+        "loss": 3.025043865506963,
+        "tokens": 258,
+        "answer_ce": 3.025043865506963,
+        "answer_ce_accuracy": 0.24806201550387597
+      },
+      {
+        "epoch": 2,
+        "loss": 1.3654103038846985,
+        "tokens": 258,
+        "answer_ce": 1.3654103038846985,
+        "answer_ce_accuracy": 0.5155038759689923
+      },
+      {
+        "epoch": 3,
+        "loss": 1.1770003650539604,
+        "tokens": 258,
+        "answer_ce": 1.1770003650539604,
+        "answer_ce_accuracy": 0.5697674418604651
+      },
+      {
+        "epoch": 4,
+        "loss": 1.04709715020749,
+        "tokens": 258,
+        "answer_ce": 1.04709715020749,
+        "answer_ce_accuracy": 0.5697674418604651
+      },
+      {
+        "epoch": 5,
+        "loss": 0.9780573801014775,
+        "tokens": 258,
+        "answer_ce": 0.9780573801014775,
+        "answer_ce_accuracy": 0.6201550387596899
+      }
+    ],
+    "K1": [
+      {
+        "epoch": 1,
+        "loss": 4.018144839493803,
+        "tokens": 258,
+        "answer_ce": 4.018144839493803,
+        "answer_ce_accuracy": 0.10077519379844961
+      },
+      {
+        "epoch": 2,
+        "loss": 2.2247660645218783,
+        "tokens": 258,
+        "answer_ce": 2.2247660645218783,
+        "answer_ce_accuracy": 0.29069767441860467
+      },
+      {
+        "epoch": 3,
+        "loss": 1.6589577904967374,
+        "tokens": 258,
+        "answer_ce": 1.6589577904967374,
+        "answer_ce_accuracy": 0.4069767441860465
+      },
+      {
+        "epoch": 4,
+        "loss": 1.4261250278746436,
+        "tokens": 258,
+        "answer_ce": 1.4261250278746436,
+        "answer_ce_accuracy": 0.4883720930232558
+      },
+      {
+        "epoch": 5,
+        "loss": 1.228794902794121,
+        "tokens": 258,
+        "answer_ce": 1.228794902794121,
+        "answer_ce_accuracy": 0.562015503875969
+      }
+    ]
+  },
+  "c22_bridge": {
+    "K8": {
+      "accuracy": 0.03125,
+      "contains_accuracy": 0.03125,
+      "avg_generated_tokens": 4.84375,
+      "avg_latency_s": 0.21564356237649918,
+      "avg_prefill_tokens": 519.21875,
+      "avg_llm_latency_s": 0.21564356237649918,
+      "avg_injected_latent_slots": 8.0,
+      "avg_total_kv_units": 524.0625,
+      "details": [
+        {
+          "expected": "116",
+          "answer_only": "104",
+          "answer": "104",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 525,
+          "latency_s": 0.22184276580810547,
+          "raw": " 104\n\n",
+          "meta": {
+            "a": 58,
+            "b": 14,
+            "c": 3,
+            "d": 100,
+            "teacher_steps": [
+              " (58 + 14) = 72;",
+              " 72 * 3 = 216;",
+              " 216 - 100 = 116.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "85",
+          "answer_only": "135",
+          "answer": "135",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 525,
+          "latency_s": 0.2176651954650879,
+          "raw": " 135\n\n",
+          "meta": {
+            "a": 23,
+            "b": 10,
+            "c": 6,
+            "d": 113,
+            "teacher_steps": [
+              " (23 + 10) = 33;",
+              " 33 * 6 = 198;",
+              " 198 - 113 = 85.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "423",
+          "answer_only": "435",
+          "answer": "435",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 525,
+          "latency_s": 0.22544264793395996,
+          "raw": " 435\n\n",
+          "meta": {
+            "a": 84,
+            "b": 51,
+            "c": 4,
+            "d": 117,
+            "teacher_steps": [
+              " (84 + 51) = 135;",
+              " 135 * 4 = 540;",
+              " 540 - 117 = 423.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "63",
+          "answer_only": "33",
+          "answer": "33",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.19440507888793945,
+          "raw": " 33 +",
+          "meta": {
+            "a": 33,
+            "b": 58,
+            "c": 2,
+            "d": 119,
+            "teacher_steps": [
+              " (33 + 58) = 91;",
+              " 91 * 2 = 182;",
+              " 182 - 119 = 63.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "343",
+          "answer_only": "318",
+          "answer": "318",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.2257840633392334,
+          "raw": " 318\n\n",
+          "meta": {
+            "a": 59,
+            "b": 12,
+            "c": 5,
+            "d": 12,
+            "teacher_steps": [
+              " (59 + 12) = 71;",
+              " 71 * 5 = 355;",
+              " 355 - 12 = 343.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "323",
+          "answer_only": "315",
+          "answer": "315",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 525,
+          "latency_s": 0.20341110229492188,
+          "raw": " 315\n\n",
+          "meta": {
+            "a": 62,
+            "b": 44,
+            "c": 4,
+            "d": 101,
+            "teacher_steps": [
+              " (62 + 44) = 106;",
+              " 106 * 4 = 424;",
+              " 424 - 101 = 323.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "380",
+          "answer_only": "35",
+          "answer": "35",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 523,
+          "latency_s": 0.1885991096496582,
+          "raw": " 35 +",
+          "meta": {
+            "a": 35,
+            "b": 21,
+            "c": 7,
+            "d": 12,
+            "teacher_steps": [
+              " (35 + 21) = 56;",
+              " 56 * 7 = 392;",
+              " 392 - 12 = 380.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "145",
+          "answer_only": "127",
+          "answer": "127",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.22960853576660156,
+          "raw": " 127\n\n",
+          "meta": {
+            "a": 72,
+            "b": 29,
+            "c": 2,
+            "d": 57,
+            "teacher_steps": [
+              " (72 + 29) = 101;",
+              " 101 * 2 = 202;",
+              " 202 - 57 = 145.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "794",
+          "answer_only": "79",
+          "answer": "79",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 523,
+          "latency_s": 0.21576929092407227,
+          "raw": " 79 +",
+          "meta": {
+            "a": 79,
+            "b": 62,
+            "c": 6,
+            "d": 52,
+            "teacher_steps": [
+              " (79 + 62) = 141;",
+              " 141 * 6 = 846;",
+              " 846 - 52 = 794.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1221",
+          "answer_only": "1167",
+          "answer": "1167",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 525,
+          "latency_s": 0.3121368885040283,
+          "raw": " 1167\n\n",
+          "meta": {
+            "a": 68,
+            "b": 77,
+            "c": 9,
+            "d": 84,
+            "teacher_steps": [
+              " (68 + 77) = 145;",
+              " 145 * 9 = 1305;",
+              " 1305 - 84 = 1221.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "225",
+          "answer_only": "159",
+          "answer": "159",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.2077350616455078,
+          "raw": " 159\n\n",
+          "meta": {
+            "a": 60,
+            "b": 31,
+            "c": 3,
+            "d": 48,
+            "teacher_steps": [
+              " (60 + 31) = 91;",
+              " 91 * 3 = 273;",
+              " 273 - 48 = 225.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1179",
+          "answer_only": "1055",
+          "answer": "1055",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 526,
+          "latency_s": 0.2454681396484375,
+          "raw": " 1055\n\n",
+          "meta": {
+            "a": 83,
+            "b": 79,
+            "c": 8,
+            "d": 117,
+            "teacher_steps": [
+              " (83 + 79) = 162;",
+              " 162 * 8 = 1296;",
+              " 1296 - 117 = 1179.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "370",
+          "answer_only": "355",
+          "answer": "355",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.20943164825439453,
+          "raw": " 355\n\n",
+          "meta": {
+            "a": 29,
+            "b": 59,
+            "c": 5,
+            "d": 70,
+            "teacher_steps": [
+              " (29 + 59) = 88;",
+              " 88 * 5 = 440;",
+              " 440 - 70 = 370.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "208",
+          "answer_only": "232",
+          "answer": "232",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.20034527778625488,
+          "raw": " 232\n\n",
+          "meta": {
+            "a": 30,
+            "b": 39,
+            "c": 4,
+            "d": 68,
+            "teacher_steps": [
+              " (30 + 39) = 69;",
+              " 69 * 4 = 276;",
+              " 276 - 68 = 208.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "74",
+          "answer_only": "122",
+          "answer": "122",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.20025944709777832,
+          "raw": " 122\n\n",
+          "meta": {
+            "a": 27,
+            "b": 52,
+            "c": 2,
+            "d": 84,
+            "teacher_steps": [
+              " (27 + 52) = 79;",
+              " 79 * 2 = 158;",
+              " 158 - 84 = 74.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "341",
+          "answer_only": "455",
+          "answer": "455",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.20094037055969238,
+          "raw": " 455\n\n",
+          "meta": {
+            "a": 24,
+            "b": 76,
+            "c": 4,
+            "d": 59,
+            "teacher_steps": [
+              " (24 + 76) = 100;",
+              " 100 * 4 = 400;",
+              " 400 - 59 = 341.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "526",
+          "answer_only": "550",
+          "answer": "550",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.2035517692565918,
+          "raw": " 550\n\n",
+          "meta": {
+            "a": 74,
+            "b": 71,
+            "c": 4,
+            "d": 54,
+            "teacher_steps": [
+              " (74 + 71) = 145;",
+              " 145 * 4 = 580;",
+              " 580 - 54 = 526.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "641",
+          "answer_only": "536",
+          "answer": "536",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.21812987327575684,
+          "raw": " 536\n\n",
+          "meta": {
+            "a": 75,
+            "b": 68,
+            "c": 5,
+            "d": 74,
+            "teacher_steps": [
+              " (75 + 68) = 143;",
+              " 143 * 5 = 715;",
+              " 715 - 74 = 641.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "601",
+          "answer_only": "546",
+          "answer": "546",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.23080039024353027,
+          "raw": " 546\n\n",
+          "meta": {
+            "a": 62,
+            "b": 77,
+            "c": 5,
+            "d": 94,
+            "teacher_steps": [
+              " (62 + 77) = 139;",
+              " 139 * 5 = 695;",
+              " 695 - 94 = 601.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "108",
+          "answer_only": "108",
+          "answer": "108",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 523,
+          "latency_s": 0.18579530715942383,
+          "raw": " 108",
+          "meta": {
+            "a": 65,
+            "b": 37,
+            "c": 2,
+            "d": 96,
+            "teacher_steps": [
+              " (65 + 37) = 102;",
+              " 102 * 2 = 204;",
+              " 204 - 96 = 108.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "255",
+          "answer_only": "287",
+          "answer": "287",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.23143720626831055,
+          "raw": " 287\n\n",
+          "meta": {
+            "a": 28,
+            "b": 39,
+            "c": 4,
+            "d": 13,
+            "teacher_steps": [
+              " (28 + 39) = 67;",
+              " 67 * 4 = 268;",
+              " 268 - 13 = 255.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "626",
+          "answer_only": "536",
+          "answer": "536",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.2042837142944336,
+          "raw": " 536\n\n",
+          "meta": {
+            "a": 68,
+            "b": 30,
+            "c": 7,
+            "d": 60,
+            "teacher_steps": [
+              " (68 + 30) = 98;",
+              " 98 * 7 = 686;",
+              " 686 - 60 = 626.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "306",
+          "answer_only": "366",
+          "answer": "366",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.2044987678527832,
+          "raw": " 366\n\n",
+          "meta": {
+            "a": 38,
+            "b": 19,
+            "c": 6,
+            "d": 36,
+            "teacher_steps": [
+              " (38 + 19) = 57;",
+              " 57 * 6 = 342;",
+              " 342 - 36 = 306.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "717",
+          "answer_only": "68",
+          "answer": "68",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 523,
+          "latency_s": 0.1812424659729004,
+          "raw": " 68 +",
+          "meta": {
+            "a": 68,
+            "b": 47,
+            "c": 7,
+            "d": 88,
+            "teacher_steps": [
+              " (68 + 47) = 115;",
+              " 115 * 7 = 805;",
+              " 805 - 88 = 717.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "751",
+          "answer_only": "635",
+          "answer": "635",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.24101877212524414,
+          "raw": " 635\n\n",
+          "meta": {
+            "a": 74,
+            "b": 36,
+            "c": 7,
+            "d": 19,
+            "teacher_steps": [
+              " (74 + 36) = 110;",
+              " 110 * 7 = 770;",
+              " 770 - 19 = 751.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "172",
+          "answer_only": "176",
+          "answer": "176",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.2292497158050537,
+          "raw": " 176\n\n",
+          "meta": {
+            "a": 56,
+            "b": 75,
+            "c": 2,
+            "d": 90,
+            "teacher_steps": [
+              " (56 + 75) = 131;",
+              " 131 * 2 = 262;",
+              " 262 - 90 = 172.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "472",
+          "answer_only": "37",
+          "answer": "37",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 520,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.19414067268371582,
+          "raw": " 37 +",
+          "meta": {
+            "a": 37,
+            "b": 47,
+            "c": 7,
+            "d": 116,
+            "teacher_steps": [
+              " (37 + 47) = 84;",
+              " 84 * 7 = 588;",
+              " 588 - 116 = 472.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1101",
+          "answer_only": "1035",
+          "answer": "1035",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 525,
+          "latency_s": 0.2781388759613037,
+          "raw": " 1035\n\n",
+          "meta": {
+            "a": 90,
+            "b": 56,
+            "c": 8,
+            "d": 67,
+            "teacher_steps": [
+              " (90 + 56) = 146;",
+              " 146 * 8 = 1168;",
+              " 1168 - 67 = 1101.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "304",
+          "answer_only": "340",
+          "answer": "340",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.23541259765625,
+          "raw": " 340\n\n",
+          "meta": {
+            "a": 31,
+            "b": 80,
+            "c": 3,
+            "d": 29,
+            "teacher_steps": [
+              " (31 + 80) = 111;",
+              " 111 * 3 = 333;",
+              " 333 - 29 = 304.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "629",
+          "answer_only": "59",
+          "answer": "59",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 523,
+          "latency_s": 0.1732344627380371,
+          "raw": " 59 +",
+          "meta": {
+            "a": 59,
+            "b": 54,
+            "c": 6,
+            "d": 49,
+            "teacher_steps": [
+              " (59 + 54) = 113;",
+              " 113 * 6 = 678;",
+              " 678 - 49 = 629.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "772",
+          "answer_only": "746",
+          "answer": "746",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 524,
+          "latency_s": 0.21341228485107422,
+          "raw": " 746\n\n",
+          "meta": {
+            "a": 21,
+            "b": 68,
+            "c": 9,
+            "d": 29,
+            "teacher_steps": [
+              " (21 + 68) = 89;",
+              " 89 * 9 = 801;",
+              " 801 - 29 = 772.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "550",
+          "answer_only": "47",
+          "answer": "47",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 519,
+          "injected_latent_slots": 8,
+          "total_kv_units": 523,
+          "latency_s": 0.17740249633789062,
+          "raw": " 47 +",
+          "meta": {
+            "a": 47,
+            "b": 24,
+            "c": 9,
+            "d": 89,
+            "teacher_steps": [
+              " (47 + 24) = 71;",
+              " 71 * 9 = 639;",
+              " 639 - 89 = 550.",
+              "\nFinal integer:"
+            ]
+          }
+        }
+      ]
+    },
+    "K4": {
+      "accuracy": 0.03125,
+      "contains_accuracy": 0.03125,
+      "avg_generated_tokens": 6.40625,
+      "avg_latency_s": 0.2746536657214165,
+      "avg_prefill_tokens": 515.21875,
+      "avg_llm_latency_s": 0.2746536657214165,
+      "avg_injected_latent_slots": 4.0,
+      "avg_total_kv_units": 521.625,
+      "details": [
+        {
+          "expected": "116",
+          "answer_only": "14",
+          "answer": "14",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 520,
+          "latency_s": 0.20989704132080078,
+          "raw": " 14 ",
+          "meta": {
+            "a": 58,
+            "b": 14,
+            "c": 3,
+            "d": 100,
+            "teacher_steps": [
+              " (58 + 14) = 72;",
+              " 72 * 3 = 216;",
+              " 216 - 100 = 116.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "85",
+          "answer_only": "113",
+          "answer": "113",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 521,
+          "latency_s": 0.21393775939941406,
+          "raw": " 113 ",
+          "meta": {
+            "a": 23,
+            "b": 10,
+            "c": 6,
+            "d": 113,
+            "teacher_steps": [
+              " (23 + 10) = 33;",
+              " 33 * 6 = 198;",
+              " 198 - 113 = 85.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "423",
+          "answer_only": "2433243",
+          "answer": "2433243",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 524,
+          "latency_s": 0.31589317321777344,
+          "raw": " 2433243",
+          "meta": {
+            "a": 84,
+            "b": 51,
+            "c": 4,
+            "d": 117,
+            "teacher_steps": [
+              " (84 + 51) = 135;",
+              " 135 * 4 = 540;",
+              " 540 - 117 = 423.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "63",
+          "answer_only": "1093529",
+          "answer": "1093529",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 524,
+          "latency_s": 0.35508108139038086,
+          "raw": " 1093529",
+          "meta": {
+            "a": 33,
+            "b": 58,
+            "c": 2,
+            "d": 119,
+            "teacher_steps": [
+              " (33 + 58) = 91;",
+              " 91 * 2 = 182;",
+              " 182 - 119 = 63.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "343",
+          "answer_only": "2343434",
+          "answer": "2343434",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.35244107246398926,
+          "raw": " 2343434",
+          "meta": {
+            "a": 59,
+            "b": 12,
+            "c": 5,
+            "d": 12,
+            "teacher_steps": [
+              " (59 + 12) = 71;",
+              " 71 * 5 = 355;",
+              " 355 - 12 = 343.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "323",
+          "answer_only": "2023",
+          "answer": "2023",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 522,
+          "latency_s": 0.2744312286376953,
+          "raw": " 2023-",
+          "meta": {
+            "a": 62,
+            "b": 44,
+            "c": 4,
+            "d": 101,
+            "teacher_steps": [
+              " (62 + 44) = 106;",
+              " 106 * 4 = 424;",
+              " 424 - 101 = 323.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "380",
+          "answer_only": "2122222",
+          "answer": "2122222",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.35132813453674316,
+          "raw": " 2122222",
+          "meta": {
+            "a": 35,
+            "b": 21,
+            "c": 7,
+            "d": 12,
+            "teacher_steps": [
+              " (35 + 21) = 56;",
+              " 56 * 7 = 392;",
+              " 392 - 12 = 380.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "145",
+          "answer_only": "1767777",
+          "answer": "1767777",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.32164430618286133,
+          "raw": " 1767777",
+          "meta": {
+            "a": 72,
+            "b": 29,
+            "c": 2,
+            "d": 57,
+            "teacher_steps": [
+              " (72 + 29) = 101;",
+              " 101 * 2 = 202;",
+              " 202 - 57 = 145.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "794",
+          "answer_only": "5299292",
+          "answer": "5299292",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.30066728591918945,
+          "raw": " 5299292",
+          "meta": {
+            "a": 79,
+            "b": 62,
+            "c": 6,
+            "d": 52,
+            "teacher_steps": [
+              " (79 + 62) = 141;",
+              " 141 * 6 = 846;",
+              " 846 - 52 = 794.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1221",
+          "answer_only": "1234567",
+          "answer": "1234567",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.30083775520324707,
+          "raw": " 1234567",
+          "meta": {
+            "a": 68,
+            "b": 77,
+            "c": 9,
+            "d": 84,
+            "teacher_steps": [
+              " (68 + 77) = 145;",
+              " 145 * 9 = 1305;",
+              " 1305 - 84 = 1221.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "225",
+          "answer_only": "225",
+          "answer": "225",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 519,
+          "latency_s": 0.16530346870422363,
+          "raw": " 225",
+          "meta": {
+            "a": 60,
+            "b": 31,
+            "c": 3,
+            "d": 48,
+            "teacher_steps": [
+              " (60 + 31) = 91;",
+              " 91 * 3 = 273;",
+              " 273 - 48 = 225.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1179",
+          "answer_only": "1234567",
+          "answer": "1234567",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 524,
+          "latency_s": 0.32803988456726074,
+          "raw": " 1234567",
+          "meta": {
+            "a": 83,
+            "b": 79,
+            "c": 8,
+            "d": 117,
+            "teacher_steps": [
+              " (83 + 79) = 162;",
+              " 162 * 8 = 1296;",
+              " 1296 - 117 = 1179.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "370",
+          "answer_only": "29",
+          "answer": "29",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 519,
+          "latency_s": 0.19680190086364746,
+          "raw": " 29+",
+          "meta": {
+            "a": 29,
+            "b": 59,
+            "c": 5,
+            "d": 70,
+            "teacher_steps": [
+              " (29 + 59) = 88;",
+              " 88 * 5 = 440;",
+              " 440 - 70 = 370.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "208",
+          "answer_only": "2000",
+          "answer": "2000",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 521,
+          "latency_s": 0.3313755989074707,
+          "raw": " 2000 ",
+          "meta": {
+            "a": 30,
+            "b": 39,
+            "c": 4,
+            "d": 68,
+            "teacher_steps": [
+              " (30 + 39) = 69;",
+              " 69 * 4 = 276;",
+              " 276 - 68 = 208.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "74",
+          "answer_only": "27",
+          "answer": "27",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 519,
+          "latency_s": 0.18845033645629883,
+          "raw": " 27 ",
+          "meta": {
+            "a": 27,
+            "b": 52,
+            "c": 2,
+            "d": 84,
+            "teacher_steps": [
+              " (27 + 52) = 79;",
+              " 79 * 2 = 158;",
+              " 158 - 84 = 74.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "341",
+          "answer_only": "4444444",
+          "answer": "4444444",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.3214437961578369,
+          "raw": " 4444444",
+          "meta": {
+            "a": 24,
+            "b": 76,
+            "c": 4,
+            "d": 59,
+            "teacher_steps": [
+              " (24 + 76) = 100;",
+              " 100 * 4 = 400;",
+              " 400 - 59 = 341.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "526",
+          "answer_only": "5454545",
+          "answer": "5454545",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.33030056953430176,
+          "raw": " 5454545",
+          "meta": {
+            "a": 74,
+            "b": 71,
+            "c": 4,
+            "d": 54,
+            "teacher_steps": [
+              " (74 + 71) = 145;",
+              " 145 * 4 = 580;",
+              " 580 - 54 = 526.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "641",
+          "answer_only": "200",
+          "answer": "200",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 520,
+          "latency_s": 0.23369145393371582,
+          "raw": " 200 ",
+          "meta": {
+            "a": 75,
+            "b": 68,
+            "c": 5,
+            "d": 74,
+            "teacher_steps": [
+              " (75 + 68) = 143;",
+              " 143 * 5 = 715;",
+              " 715 - 74 = 641.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "601",
+          "answer_only": "200",
+          "answer": "200",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 520,
+          "latency_s": 0.22979331016540527,
+          "raw": " 200 ",
+          "meta": {
+            "a": 62,
+            "b": 77,
+            "c": 5,
+            "d": 94,
+            "teacher_steps": [
+              " (62 + 77) = 139;",
+              " 139 * 5 = 695;",
+              " 695 - 94 = 601.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "108",
+          "answer_only": "2023",
+          "answer": "2023",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 521,
+          "latency_s": 0.28280162811279297,
+          "raw": " 2023-",
+          "meta": {
+            "a": 65,
+            "b": 37,
+            "c": 2,
+            "d": 96,
+            "teacher_steps": [
+              " (65 + 37) = 102;",
+              " 102 * 2 = 204;",
+              " 204 - 96 = 108.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "255",
+          "answer_only": "28",
+          "answer": "28",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 519,
+          "latency_s": 0.18439865112304688,
+          "raw": " 28+",
+          "meta": {
+            "a": 28,
+            "b": 39,
+            "c": 4,
+            "d": 13,
+            "teacher_steps": [
+              " (28 + 39) = 67;",
+              " 67 * 4 = 268;",
+              " 268 - 13 = 255.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "626",
+          "answer_only": "2023",
+          "answer": "2023",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 521,
+          "latency_s": 0.2684500217437744,
+          "raw": " 2023-",
+          "meta": {
+            "a": 68,
+            "b": 30,
+            "c": 7,
+            "d": 60,
+            "teacher_steps": [
+              " (68 + 30) = 98;",
+              " 98 * 7 = 686;",
+              " 686 - 60 = 626.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "306",
+          "answer_only": "2222222",
+          "answer": "2222222",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.3437783718109131,
+          "raw": " 2222222",
+          "meta": {
+            "a": 38,
+            "b": 19,
+            "c": 6,
+            "d": 36,
+            "teacher_steps": [
+              " (38 + 19) = 57;",
+              " 57 * 6 = 342;",
+              " 342 - 36 = 306.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "717",
+          "answer_only": "7777777",
+          "answer": "7777777",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.3175485134124756,
+          "raw": " 7777777",
+          "meta": {
+            "a": 68,
+            "b": 47,
+            "c": 7,
+            "d": 88,
+            "teacher_steps": [
+              " (68 + 47) = 115;",
+              " 115 * 7 = 805;",
+              " 805 - 88 = 717.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "751",
+          "answer_only": "74",
+          "answer": "74",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 519,
+          "latency_s": 0.17422747611999512,
+          "raw": " 74 ",
+          "meta": {
+            "a": 74,
+            "b": 36,
+            "c": 7,
+            "d": 19,
+            "teacher_steps": [
+              " (74 + 36) = 110;",
+              " 110 * 7 = 770;",
+              " 770 - 19 = 751.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "172",
+          "answer_only": "1234567",
+          "answer": "1234567",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.3048727512359619,
+          "raw": " 1234567",
+          "meta": {
+            "a": 56,
+            "b": 75,
+            "c": 2,
+            "d": 90,
+            "teacher_steps": [
+              " (56 + 75) = 131;",
+              " 131 * 2 = 262;",
+              " 262 - 90 = 172.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "472",
+          "answer_only": "47",
+          "answer": "47",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 516,
+          "injected_latent_slots": 4,
+          "total_kv_units": 520,
+          "latency_s": 0.18102264404296875,
+          "raw": " 47 ",
+          "meta": {
+            "a": 37,
+            "b": 47,
+            "c": 7,
+            "d": 116,
+            "teacher_steps": [
+              " (37 + 47) = 84;",
+              " 84 * 7 = 588;",
+              " 588 - 116 = 472.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1101",
+          "answer_only": "1000000",
+          "answer": "1000000",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.3563361167907715,
+          "raw": " 1000000",
+          "meta": {
+            "a": 90,
+            "b": 56,
+            "c": 8,
+            "d": 67,
+            "teacher_steps": [
+              " (90 + 56) = 146;",
+              " 146 * 8 = 1168;",
+              " 1168 - 67 = 1101.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "304",
+          "answer_only": "29",
+          "answer": "29",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 519,
+          "latency_s": 0.19622516632080078,
+          "raw": " 29.",
+          "meta": {
+            "a": 31,
+            "b": 80,
+            "c": 3,
+            "d": 29,
+            "teacher_steps": [
+              " (31 + 80) = 111;",
+              " 111 * 3 = 333;",
+              " 333 - 29 = 304.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "629",
+          "answer_only": "6666666",
+          "answer": "6666666",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.3056633472442627,
+          "raw": " 6666666",
+          "meta": {
+            "a": 59,
+            "b": 54,
+            "c": 6,
+            "d": 49,
+            "teacher_steps": [
+              " (59 + 54) = 113;",
+              " 113 * 6 = 678;",
+              " 678 - 49 = 629.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "772",
+          "answer_only": "7777777",
+          "answer": "7777777",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 8,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 523,
+          "latency_s": 0.306671142578125,
+          "raw": " 7777777",
+          "meta": {
+            "a": 21,
+            "b": 68,
+            "c": 9,
+            "d": 29,
+            "teacher_steps": [
+              " (21 + 68) = 89;",
+              " 89 * 9 = 801;",
+              " 801 - 29 = 772.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "550",
+          "answer_only": "5400",
+          "answer": "5400",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 515,
+          "injected_latent_slots": 4,
+          "total_kv_units": 521,
+          "latency_s": 0.24556231498718262,
+          "raw": " 5400 ",
+          "meta": {
+            "a": 47,
+            "b": 24,
+            "c": 9,
+            "d": 89,
+            "teacher_steps": [
+              " (47 + 24) = 71;",
+              " 71 * 9 = 639;",
+              " 639 - 89 = 550.",
+              "\nFinal integer:"
+            ]
+          }
+        }
+      ]
+    },
+    "K2": {
+      "accuracy": 0.0,
+      "contains_accuracy": 0.0,
+      "avg_generated_tokens": 5.0,
+      "avg_latency_s": 0.2234090119600296,
+      "avg_prefill_tokens": 513.21875,
+      "avg_llm_latency_s": 0.2234090119600296,
+      "avg_injected_latent_slots": 2.0,
+      "avg_total_kv_units": 518.21875,
+      "details": [
+        {
+          "expected": "116",
+          "answer_only": "104",
+          "answer": "104",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 519,
+          "latency_s": 0.2383120059967041,
+          "raw": " 104\n\n",
+          "meta": {
+            "a": 58,
+            "b": 14,
+            "c": 3,
+            "d": 100,
+            "teacher_steps": [
+              " (58 + 14) = 72;",
+              " 72 * 3 = 216;",
+              " 216 - 100 = 116.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "85",
+          "answer_only": "117",
+          "answer": "117",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 519,
+          "latency_s": 0.2341771125793457,
+          "raw": " 117\n\n",
+          "meta": {
+            "a": 23,
+            "b": 10,
+            "c": 6,
+            "d": 113,
+            "teacher_steps": [
+              " (23 + 10) = 33;",
+              " 33 * 6 = 198;",
+              " 198 - 113 = 85.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "423",
+          "answer_only": "435",
+          "answer": "435",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 519,
+          "latency_s": 0.21257495880126953,
+          "raw": " 435\n\n",
+          "meta": {
+            "a": 84,
+            "b": 51,
+            "c": 4,
+            "d": 117,
+            "teacher_steps": [
+              " (84 + 51) = 135;",
+              " 135 * 4 = 540;",
+              " 540 - 117 = 423.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "63",
+          "answer_only": "13",
+          "answer": "13",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.17058205604553223,
+          "raw": " 13\n\n",
+          "meta": {
+            "a": 33,
+            "b": 58,
+            "c": 2,
+            "d": 119,
+            "teacher_steps": [
+              " (33 + 58) = 91;",
+              " 91 * 2 = 182;",
+              " 182 - 119 = 63.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "343",
+          "answer_only": "338",
+          "answer": "338",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.22894525527954102,
+          "raw": " 338\n\n",
+          "meta": {
+            "a": 59,
+            "b": 12,
+            "c": 5,
+            "d": 12,
+            "teacher_steps": [
+              " (59 + 12) = 71;",
+              " 71 * 5 = 355;",
+              " 355 - 12 = 343.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "323",
+          "answer_only": "285",
+          "answer": "285",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 519,
+          "latency_s": 0.23821711540222168,
+          "raw": " 285\n\n",
+          "meta": {
+            "a": 62,
+            "b": 44,
+            "c": 4,
+            "d": 101,
+            "teacher_steps": [
+              " (62 + 44) = 106;",
+              " 106 * 4 = 424;",
+              " 424 - 101 = 323.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "380",
+          "answer_only": "355",
+          "answer": "355",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.24301648139953613,
+          "raw": " 355\n\n",
+          "meta": {
+            "a": 35,
+            "b": 21,
+            "c": 7,
+            "d": 12,
+            "teacher_steps": [
+              " (35 + 21) = 56;",
+              " 56 * 7 = 392;",
+              " 392 - 12 = 380.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "145",
+          "answer_only": "127",
+          "answer": "127",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.20187067985534668,
+          "raw": " 127\n\n",
+          "meta": {
+            "a": 72,
+            "b": 29,
+            "c": 2,
+            "d": 57,
+            "teacher_steps": [
+              " (72 + 29) = 101;",
+              " 101 * 2 = 202;",
+              " 202 - 57 = 145.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "794",
+          "answer_only": "730",
+          "answer": "730",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21047186851501465,
+          "raw": " 730\n\n",
+          "meta": {
+            "a": 79,
+            "b": 62,
+            "c": 6,
+            "d": 52,
+            "teacher_steps": [
+              " (79 + 62) = 141;",
+              " 141 * 6 = 846;",
+              " 846 - 52 = 794.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1221",
+          "answer_only": "1161",
+          "answer": "1161",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 519,
+          "latency_s": 0.24448060989379883,
+          "raw": " 1161\n\n",
+          "meta": {
+            "a": 68,
+            "b": 77,
+            "c": 9,
+            "d": 84,
+            "teacher_steps": [
+              " (68 + 77) = 145;",
+              " 145 * 9 = 1305;",
+              " 1305 - 84 = 1221.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "225",
+          "answer_only": "165",
+          "answer": "165",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.20969939231872559,
+          "raw": " 165\n\n",
+          "meta": {
+            "a": 60,
+            "b": 31,
+            "c": 3,
+            "d": 48,
+            "teacher_steps": [
+              " (60 + 31) = 91;",
+              " 91 * 3 = 273;",
+              " 273 - 48 = 225.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1179",
+          "answer_only": "1000",
+          "answer": "1000",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 520,
+          "latency_s": 0.24762344360351562,
+          "raw": " 1000\n\n",
+          "meta": {
+            "a": 83,
+            "b": 79,
+            "c": 8,
+            "d": 117,
+            "teacher_steps": [
+              " (83 + 79) = 162;",
+              " 162 * 8 = 1296;",
+              " 1296 - 117 = 1179.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "370",
+          "answer_only": "355",
+          "answer": "355",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.20940756797790527,
+          "raw": " 355\n\n",
+          "meta": {
+            "a": 29,
+            "b": 59,
+            "c": 5,
+            "d": 70,
+            "teacher_steps": [
+              " (29 + 59) = 88;",
+              " 88 * 5 = 440;",
+              " 440 - 70 = 370.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "208",
+          "answer_only": "184",
+          "answer": "184",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21225833892822266,
+          "raw": " 184\n\n",
+          "meta": {
+            "a": 30,
+            "b": 39,
+            "c": 4,
+            "d": 68,
+            "teacher_steps": [
+              " (30 + 39) = 69;",
+              " 69 * 4 = 276;",
+              " 276 - 68 = 208.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "74",
+          "answer_only": "106",
+          "answer": "106",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.2292919158935547,
+          "raw": " 106\n\n",
+          "meta": {
+            "a": 27,
+            "b": 52,
+            "c": 2,
+            "d": 84,
+            "teacher_steps": [
+              " (27 + 52) = 79;",
+              " 79 * 2 = 158;",
+              " 158 - 84 = 74.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "341",
+          "answer_only": "355",
+          "answer": "355",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.22893667221069336,
+          "raw": " 355\n\n",
+          "meta": {
+            "a": 24,
+            "b": 76,
+            "c": 4,
+            "d": 59,
+            "teacher_steps": [
+              " (24 + 76) = 100;",
+              " 100 * 4 = 400;",
+              " 400 - 59 = 341.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "526",
+          "answer_only": "550",
+          "answer": "550",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.23183536529541016,
+          "raw": " 550\n\n",
+          "meta": {
+            "a": 74,
+            "b": 71,
+            "c": 4,
+            "d": 54,
+            "teacher_steps": [
+              " (74 + 71) = 145;",
+              " 145 * 4 = 580;",
+              " 580 - 54 = 526.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "641",
+          "answer_only": "618",
+          "answer": "618",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.22438883781433105,
+          "raw": " 618\n\n",
+          "meta": {
+            "a": 75,
+            "b": 68,
+            "c": 5,
+            "d": 74,
+            "teacher_steps": [
+              " (75 + 68) = 143;",
+              " 143 * 5 = 715;",
+              " 715 - 74 = 641.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "601",
+          "answer_only": "546",
+          "answer": "546",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.24460530281066895,
+          "raw": " 546\n\n",
+          "meta": {
+            "a": 62,
+            "b": 77,
+            "c": 5,
+            "d": 94,
+            "teacher_steps": [
+              " (62 + 77) = 139;",
+              " 139 * 5 = 695;",
+              " 695 - 94 = 601.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "108",
+          "answer_only": "134",
+          "answer": "134",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.2493433952331543,
+          "raw": " 134\n\n",
+          "meta": {
+            "a": 65,
+            "b": 37,
+            "c": 2,
+            "d": 96,
+            "teacher_steps": [
+              " (65 + 37) = 102;",
+              " 102 * 2 = 204;",
+              " 204 - 96 = 108.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "255",
+          "answer_only": "233",
+          "answer": "233",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.20644307136535645,
+          "raw": " 233\n\n",
+          "meta": {
+            "a": 28,
+            "b": 39,
+            "c": 4,
+            "d": 13,
+            "teacher_steps": [
+              " (28 + 39) = 67;",
+              " 67 * 4 = 268;",
+              " 268 - 13 = 255.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "626",
+          "answer_only": "536",
+          "answer": "536",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21483683586120605,
+          "raw": " 536\n\n",
+          "meta": {
+            "a": 68,
+            "b": 30,
+            "c": 7,
+            "d": 60,
+            "teacher_steps": [
+              " (68 + 30) = 98;",
+              " 98 * 7 = 686;",
+              " 686 - 60 = 626.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "306",
+          "answer_only": "366",
+          "answer": "366",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.26457834243774414,
+          "raw": " 366\n\n",
+          "meta": {
+            "a": 38,
+            "b": 19,
+            "c": 6,
+            "d": 36,
+            "teacher_steps": [
+              " (38 + 19) = 57;",
+              " 57 * 6 = 342;",
+              " 342 - 36 = 306.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "717",
+          "answer_only": "552",
+          "answer": "552",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.23365211486816406,
+          "raw": " 552\n\n",
+          "meta": {
+            "a": 68,
+            "b": 47,
+            "c": 7,
+            "d": 88,
+            "teacher_steps": [
+              " (68 + 47) = 115;",
+              " 115 * 7 = 805;",
+              " 805 - 88 = 717.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "751",
+          "answer_only": "665",
+          "answer": "665",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.23727107048034668,
+          "raw": " 665\n\n",
+          "meta": {
+            "a": 74,
+            "b": 36,
+            "c": 7,
+            "d": 19,
+            "teacher_steps": [
+              " (74 + 36) = 110;",
+              " 110 * 7 = 770;",
+              " 770 - 19 = 751.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "172",
+          "answer_only": "212",
+          "answer": "212",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21337461471557617,
+          "raw": " 212\n\n",
+          "meta": {
+            "a": 56,
+            "b": 75,
+            "c": 2,
+            "d": 90,
+            "teacher_steps": [
+              " (56 + 75) = 131;",
+              " 131 * 2 = 262;",
+              " 262 - 90 = 172.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "472",
+          "answer_only": "37",
+          "answer": "37",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 4,
+          "prefill_tokens": 514,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.1762523651123047,
+          "raw": " 37 +",
+          "meta": {
+            "a": 37,
+            "b": 47,
+            "c": 7,
+            "d": 116,
+            "teacher_steps": [
+              " (37 + 47) = 84;",
+              " 84 * 7 = 588;",
+              " 588 - 116 = 472.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1101",
+          "answer_only": "755",
+          "answer": "755",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21377801895141602,
+          "raw": " 755\n\n",
+          "meta": {
+            "a": 90,
+            "b": 56,
+            "c": 8,
+            "d": 67,
+            "teacher_steps": [
+              " (90 + 56) = 146;",
+              " 146 * 8 = 1168;",
+              " 1168 - 67 = 1101.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "304",
+          "answer_only": "302",
+          "answer": "302",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21669721603393555,
+          "raw": " 302\n\n",
+          "meta": {
+            "a": 31,
+            "b": 80,
+            "c": 3,
+            "d": 29,
+            "teacher_steps": [
+              " (31 + 80) = 111;",
+              " 111 * 3 = 333;",
+              " 333 - 29 = 304.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "629",
+          "answer_only": "601",
+          "answer": "601",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.2157754898071289,
+          "raw": " 601\n\n",
+          "meta": {
+            "a": 59,
+            "b": 54,
+            "c": 6,
+            "d": 49,
+            "teacher_steps": [
+              " (59 + 54) = 113;",
+              " 113 * 6 = 678;",
+              " 678 - 49 = 629.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "772",
+          "answer_only": "733",
+          "answer": "733",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.21175527572631836,
+          "raw": " 733\n\n",
+          "meta": {
+            "a": 21,
+            "b": 68,
+            "c": 9,
+            "d": 29,
+            "teacher_steps": [
+              " (21 + 68) = 89;",
+              " 89 * 9 = 801;",
+              " 801 - 29 = 772.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "550",
+          "answer_only": "553",
+          "answer": "553",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 2,
+          "total_kv_units": 518,
+          "latency_s": 0.234635591506958,
+          "raw": " 553\n\n",
+          "meta": {
+            "a": 47,
+            "b": 24,
+            "c": 9,
+            "d": 89,
+            "teacher_steps": [
+              " (47 + 24) = 71;",
+              " 71 * 9 = 639;",
+              " 639 - 89 = 550.",
+              "\nFinal integer:"
+            ]
+          }
+        }
+      ]
+    },
+    "K1": {
+      "accuracy": 0.03125,
+      "contains_accuracy": 0.03125,
+      "avg_generated_tokens": 5.03125,
+      "avg_latency_s": 0.22632544487714767,
+      "avg_prefill_tokens": 512.21875,
+      "avg_llm_latency_s": 0.22632544487714767,
+      "avg_injected_latent_slots": 1.0,
+      "avg_total_kv_units": 517.25,
+      "details": [
+        {
+          "expected": "116",
+          "answer_only": "104",
+          "answer": "104",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.20991849899291992,
+          "raw": " 104\n",
+          "meta": {
+            "a": 58,
+            "b": 14,
+            "c": 3,
+            "d": 100,
+            "teacher_steps": [
+              " (58 + 14) = 72;",
+              " 72 * 3 = 216;",
+              " 216 - 100 = 116.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "85",
+          "answer_only": "127",
+          "answer": "127",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.22304940223693848,
+          "raw": " 127\n",
+          "meta": {
+            "a": 23,
+            "b": 10,
+            "c": 6,
+            "d": 113,
+            "teacher_steps": [
+              " (23 + 10) = 33;",
+              " 33 * 6 = 198;",
+              " 198 - 113 = 85.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "423",
+          "answer_only": "435",
+          "answer": "435",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.22943782806396484,
+          "raw": " 435\n",
+          "meta": {
+            "a": 84,
+            "b": 51,
+            "c": 4,
+            "d": 117,
+            "teacher_steps": [
+              " (84 + 51) = 135;",
+              " 135 * 4 = 540;",
+              " 540 - 117 = 423.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "63",
+          "answer_only": "117",
+          "answer": "117",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.23382806777954102,
+          "raw": " 117\n",
+          "meta": {
+            "a": 33,
+            "b": 58,
+            "c": 2,
+            "d": 119,
+            "teacher_steps": [
+              " (33 + 58) = 91;",
+              " 91 * 2 = 182;",
+              " 182 - 119 = 63.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "343",
+          "answer_only": "336",
+          "answer": "336",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.6265993118286133,
+          "raw": " 336\n",
+          "meta": {
+            "a": 59,
+            "b": 12,
+            "c": 5,
+            "d": 12,
+            "teacher_steps": [
+              " (59 + 12) = 71;",
+              " 71 * 5 = 355;",
+              " 355 - 12 = 343.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "323",
+          "answer_only": "315",
+          "answer": "315",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.24306988716125488,
+          "raw": " 315\n",
+          "meta": {
+            "a": 62,
+            "b": 44,
+            "c": 4,
+            "d": 101,
+            "teacher_steps": [
+              " (62 + 44) = 106;",
+              " 106 * 4 = 424;",
+              " 424 - 101 = 323.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "380",
+          "answer_only": "350",
+          "answer": "350",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.21793532371520996,
+          "raw": " 350\n",
+          "meta": {
+            "a": 35,
+            "b": 21,
+            "c": 7,
+            "d": 12,
+            "teacher_steps": [
+              " (35 + 21) = 56;",
+              " 56 * 7 = 392;",
+              " 392 - 12 = 380.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "145",
+          "answer_only": "127",
+          "answer": "127",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.21846318244934082,
+          "raw": " 127\n",
+          "meta": {
+            "a": 72,
+            "b": 29,
+            "c": 2,
+            "d": 57,
+            "teacher_steps": [
+              " (72 + 29) = 101;",
+              " 101 * 2 = 202;",
+              " 202 - 57 = 145.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "794",
+          "answer_only": "622",
+          "answer": "622",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.19273018836975098,
+          "raw": " 622\n",
+          "meta": {
+            "a": 79,
+            "b": 62,
+            "c": 6,
+            "d": 52,
+            "teacher_steps": [
+              " (79 + 62) = 141;",
+              " 141 * 6 = 846;",
+              " 846 - 52 = 794.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1221",
+          "answer_only": "1179",
+          "answer": "1179",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.22710919380187988,
+          "raw": " 1179\n",
+          "meta": {
+            "a": 68,
+            "b": 77,
+            "c": 9,
+            "d": 84,
+            "teacher_steps": [
+              " (68 + 77) = 145;",
+              " 145 * 9 = 1305;",
+              " 1305 - 84 = 1221.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "225",
+          "answer_only": "225",
+          "answer": "225",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 516,
+          "latency_s": 0.16009855270385742,
+          "raw": " 225",
+          "meta": {
+            "a": 60,
+            "b": 31,
+            "c": 3,
+            "d": 48,
+            "teacher_steps": [
+              " (60 + 31) = 91;",
+              " 91 * 3 = 273;",
+              " 273 - 48 = 225.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1179",
+          "answer_only": "6165",
+          "answer": "6165",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 519,
+          "latency_s": 0.24013066291809082,
+          "raw": " 6165\n",
+          "meta": {
+            "a": 83,
+            "b": 79,
+            "c": 8,
+            "d": 117,
+            "teacher_steps": [
+              " (83 + 79) = 162;",
+              " 162 * 8 = 1296;",
+              " 1296 - 117 = 1179.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "370",
+          "answer_only": "355",
+          "answer": "355",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.19370341300964355,
+          "raw": " 355\n",
+          "meta": {
+            "a": 29,
+            "b": 59,
+            "c": 5,
+            "d": 70,
+            "teacher_steps": [
+              " (29 + 59) = 88;",
+              " 88 * 5 = 440;",
+              " 440 - 70 = 370.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "208",
+          "answer_only": "172",
+          "answer": "172",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.1931781768798828,
+          "raw": " 172\n",
+          "meta": {
+            "a": 30,
+            "b": 39,
+            "c": 4,
+            "d": 68,
+            "teacher_steps": [
+              " (30 + 39) = 69;",
+              " 69 * 4 = 276;",
+              " 276 - 68 = 208.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "74",
+          "answer_only": "122",
+          "answer": "122",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.20719575881958008,
+          "raw": " 122\n",
+          "meta": {
+            "a": 27,
+            "b": 52,
+            "c": 2,
+            "d": 84,
+            "teacher_steps": [
+              " (27 + 52) = 79;",
+              " 79 * 2 = 158;",
+              " 158 - 84 = 74.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "341",
+          "answer_only": "345",
+          "answer": "345",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.22098326683044434,
+          "raw": " 345\n",
+          "meta": {
+            "a": 24,
+            "b": 76,
+            "c": 4,
+            "d": 59,
+            "teacher_steps": [
+              " (24 + 76) = 100;",
+              " 100 * 4 = 400;",
+              " 400 - 59 = 341.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "526",
+          "answer_only": "484",
+          "answer": "484",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.21589875221252441,
+          "raw": " 484\n",
+          "meta": {
+            "a": 74,
+            "b": 71,
+            "c": 4,
+            "d": 54,
+            "teacher_steps": [
+              " (74 + 71) = 145;",
+              " 145 * 4 = 580;",
+              " 580 - 54 = 526.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "641",
+          "answer_only": "558",
+          "answer": "558",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.2226104736328125,
+          "raw": " 558\n",
+          "meta": {
+            "a": 75,
+            "b": 68,
+            "c": 5,
+            "d": 74,
+            "teacher_steps": [
+              " (75 + 68) = 143;",
+              " 143 * 5 = 715;",
+              " 715 - 74 = 641.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "601",
+          "answer_only": "546",
+          "answer": "546",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.21584701538085938,
+          "raw": " 546\n",
+          "meta": {
+            "a": 62,
+            "b": 77,
+            "c": 5,
+            "d": 94,
+            "teacher_steps": [
+              " (62 + 77) = 139;",
+              " 139 * 5 = 695;",
+              " 695 - 94 = 601.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "108",
+          "answer_only": "158",
+          "answer": "158",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.2842898368835449,
+          "raw": " 158\n",
+          "meta": {
+            "a": 65,
+            "b": 37,
+            "c": 2,
+            "d": 96,
+            "teacher_steps": [
+              " (65 + 37) = 102;",
+              " 102 * 2 = 204;",
+              " 204 - 96 = 108.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "255",
+          "answer_only": "205",
+          "answer": "205",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.22748637199401855,
+          "raw": " 205\n",
+          "meta": {
+            "a": 28,
+            "b": 39,
+            "c": 4,
+            "d": 13,
+            "teacher_steps": [
+              " (28 + 39) = 67;",
+              " 67 * 4 = 268;",
+              " 268 - 13 = 255.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "626",
+          "answer_only": "566",
+          "answer": "566",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.20340371131896973,
+          "raw": " 566\n",
+          "meta": {
+            "a": 68,
+            "b": 30,
+            "c": 7,
+            "d": 60,
+            "teacher_steps": [
+              " (68 + 30) = 98;",
+              " 98 * 7 = 686;",
+              " 686 - 60 = 626.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "306",
+          "answer_only": "240",
+          "answer": "240",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.21657419204711914,
+          "raw": " 240\n",
+          "meta": {
+            "a": 38,
+            "b": 19,
+            "c": 6,
+            "d": 36,
+            "teacher_steps": [
+              " (38 + 19) = 57;",
+              " 57 * 6 = 342;",
+              " 342 - 36 = 306.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "717",
+          "answer_only": "557",
+          "answer": "557",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.22820401191711426,
+          "raw": " 557 -",
+          "meta": {
+            "a": 68,
+            "b": 47,
+            "c": 7,
+            "d": 88,
+            "teacher_steps": [
+              " (68 + 47) = 115;",
+              " 115 * 7 = 805;",
+              " 805 - 88 = 717.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "751",
+          "answer_only": "637",
+          "answer": "637",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.2262866497039795,
+          "raw": " 637\n",
+          "meta": {
+            "a": 74,
+            "b": 36,
+            "c": 7,
+            "d": 19,
+            "teacher_steps": [
+              " (74 + 36) = 110;",
+              " 110 * 7 = 770;",
+              " 770 - 19 = 751.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "172",
+          "answer_only": "196",
+          "answer": "196",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.19242644309997559,
+          "raw": " 196\n",
+          "meta": {
+            "a": 56,
+            "b": 75,
+            "c": 2,
+            "d": 90,
+            "teacher_steps": [
+              " (56 + 75) = 131;",
+              " 131 * 2 = 262;",
+              " 262 - 90 = 172.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "472",
+          "answer_only": "333",
+          "answer": "333",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 513,
+          "injected_latent_slots": 1,
+          "total_kv_units": 518,
+          "latency_s": 0.2035059928894043,
+          "raw": " 333\n",
+          "meta": {
+            "a": 37,
+            "b": 47,
+            "c": 7,
+            "d": 116,
+            "teacher_steps": [
+              " (37 + 47) = 84;",
+              " 84 * 7 = 588;",
+              " 588 - 116 = 472.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "1101",
+          "answer_only": "697",
+          "answer": "697",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.1963188648223877,
+          "raw": " 697\n\n",
+          "meta": {
+            "a": 90,
+            "b": 56,
+            "c": 8,
+            "d": 67,
+            "teacher_steps": [
+              " (90 + 56) = 146;",
+              " 146 * 8 = 1168;",
+              " 1168 - 67 = 1101.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "304",
+          "answer_only": "220",
+          "answer": "220",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.20488357543945312,
+          "raw": " 220\n",
+          "meta": {
+            "a": 31,
+            "b": 80,
+            "c": 3,
+            "d": 29,
+            "teacher_steps": [
+              " (31 + 80) = 111;",
+              " 111 * 3 = 333;",
+              " 333 - 29 = 304.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "629",
+          "answer_only": "433",
+          "answer": "433",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.19072532653808594,
+          "raw": " 433\n",
+          "meta": {
+            "a": 59,
+            "b": 54,
+            "c": 6,
+            "d": 49,
+            "teacher_steps": [
+              " (59 + 54) = 113;",
+              " 113 * 6 = 678;",
+              " 678 - 49 = 629.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "772",
+          "answer_only": "620",
+          "answer": "620",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.18790388107299805,
+          "raw": " 620\n",
+          "meta": {
+            "a": 21,
+            "b": 68,
+            "c": 9,
+            "d": 29,
+            "teacher_steps": [
+              " (21 + 68) = 89;",
+              " 89 * 9 = 801;",
+              " 801 - 29 = 772.",
+              "\nFinal integer:"
+            ]
+          }
+        },
+        {
+          "expected": "550",
+          "answer_only": "500",
+          "answer": "500",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 512,
+          "injected_latent_slots": 1,
+          "total_kv_units": 517,
+          "latency_s": 0.18861842155456543,
+          "raw": " 500\n",
+          "meta": {
+            "a": 47,
+            "b": 24,
+            "c": 9,
+            "d": 89,
+            "teacher_steps": [
+              " (47 + 24) = 71;",
+              " 71 * 9 = 639;",
+              " 639 - 89 = 550.",
+              "\nFinal integer:"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "elapsed_s": 197.28331112861633
+}

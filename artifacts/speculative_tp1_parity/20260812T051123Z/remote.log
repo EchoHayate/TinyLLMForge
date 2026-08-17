@@ -1,0 +1,8 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]:W0812 13:11:33.574000 140378686280192 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:11:33.698000 140378686280192 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:12:01.566000 140378686280192 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:12:01.694000 140378686280192 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:13:20.434000 140378686280192 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 13:13:20.493000 140378686280192 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+{"accepted_draft_tokens": 50, "output_sequences": 2, "proposal_rows": 17, "proposed_tokens": 58, "schema_version": 1, "selected_rows": 24, "status": "PASS", "target_invocations": 28}

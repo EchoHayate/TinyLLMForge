@@ -1,0 +1,2 @@
+TAG=learned-aa-preflight-only-20260815T214850Z
+REMOTE=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/preflight/learned-aa-preflight-only-20260815T214850Z

@@ -1,0 +1,43 @@
+  50059 wangmin+ Fri Jul 24 18:03:38 2026  4-04:39:51 python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+ 330288 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330289 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330290 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330291 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330292 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330293 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330294 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330295 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330296 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330297 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330298 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330299 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330300 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330301 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 330302 root     Mon Jul 13 16:17:50 2026 15-06:25:39 python3 /opt/tiger/qwen3vl-encoder/main_model.py
+ 934497 root     Wed Jul 15 18:12:02 2026 13-04:31:27 python server.py
+ 935127 root     Wed Jul 15 18:12:05 2026 13-04:31:24 python server.py
+1097889 zengjun+ Sat Jul 18 15:06:26 2026 10-07:37:03 inferencer_worker_0_0
+1118204 zengjun+ Sat Jul 18 15:08:32 2026 10-07:34:57 m13p4_kvcache_0_lr0_0
+1118290 zengjun+ Sat Jul 18 15:08:32 2026 10-07:34:57 m13p4_kvcache_d2h_0_lr0_0
+1118571 zengjun+ Sat Jul 18 15:08:33 2026 10-07:34:56 m13p4_qhid_0_lr0
+1302034 root     Tue Jul 21 19:53:39 2026  7-02:49:50 python3 /opt/tiger/manhattan_runtime/logs/manhattan_worker.py
+1302036 root     Tue Jul 21 19:53:39 2026  7-02:49:50 python3 /opt/tiger/manhattan_runtime/logs/manhattan_worker.py
+1525915 root     Thu Jun 25 14:12:37 2026 33-08:30:52 python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+2086069 root     Mon Jul 13 12:52:07 2026 15-09:51:22 python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+2811316 sunchao+ Tue Jul 14 15:18:18 2026 14-07:25:11 python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+2812359 sunchao+ Tue Jul 14 15:18:23 2026 14-07:25:06 python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+2889069 root     Mon Jul 27 09:07:00 2026  1-13:36:29 python3 /opt/tiger/test/main_model.py
+2890161 root     Mon Jul 27 09:07:02 2026  1-13:36:27 python3 /opt/tiger/test/main_model.py
+2936972 root     Wed Jun 24 18:00:20 2026 34-04:43:09 python3 q_score/SarScoreTrace.py matx_sug_retriever_model {}
+3472365 sunchao+ Tue Jul 14 16:27:57 2026 14-06:15:32 python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+3473815 sunchao+ Tue Jul 14 16:28:01 2026 14-06:15:28 python3 /opt/tiger/models/search.bert_qrec.0709/pp_server/runner/main_model.py
+3568083 root     Thu Jul 16 10:53:13 2026 12-11:50:16 python server.py
+3568682 root     Thu Jul 16 10:53:15 2026 12-11:50:14 python server.py
+3873877 root     Tue Jul 28 19:54:22 2026    02:49:07 python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3874827 root     Tue Jul 28 19:54:25 2026    02:49:04 python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3874829 root     Tue Jul 28 19:54:25 2026    02:49:04 python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3966762 root     Tue Jul 28 19:59:43 2026    02:43:46 python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3967697 root     Tue Jul 28 19:59:46 2026    02:43:43 python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+3967698 root     Tue Jul 28 19:59:46 2026    02:43:43 python3 /opt/tiger/toutiao_rawrank_test/main_model.py
+4038724 wangmin+ Fri Jul 17 09:54:06 2026 11-12:49:23 python3 /opt/tiger/models/search.bert_qrec.7.16/pp_server/runner/main_model.py
+4039206 wangmin+ Fri Jul 17 09:54:10 2026 11-12:49:19 python3 /opt/tiger/models/search.bert_qrec.7.16/pp_server/runner/main_model.py

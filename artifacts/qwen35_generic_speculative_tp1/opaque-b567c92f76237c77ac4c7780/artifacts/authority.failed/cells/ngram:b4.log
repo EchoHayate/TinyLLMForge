@@ -1,0 +1,20 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b567c92f76237c77ac4c7780/source/tools/qwen35_generic_speculative_tp1_worker.py", line 508, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b567c92f76237c77ac4c7780/source/tools/qwen35_generic_speculative_tp1_worker.py", line 496, in main
+[rank0]:     result = run_policy_cell(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b567c92f76237c77ac4c7780/source/tools/qwen35_generic_speculative_tp1_worker.py", line 451, in run_policy_cell
+[rank0]:     return gate.validate_cell_result(cell)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b567c92f76237c77ac4c7780/source/tools/qwen35_generic_speculative_tp1_gate.py", line 380, in validate_cell_result
+[rank0]:     runtime = _validate_runtime(
+[rank0]:               ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b567c92f76237c77ac4c7780/source/tools/qwen35_generic_speculative_tp1_gate.py", line 342, in _validate_runtime
+[rank0]:     receipts = _validate_side_state(
+[rank0]:                ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b567c92f76237c77ac4c7780/source/tools/qwen35_generic_speculative_tp1_gate.py", line 251, in _validate_side_state
+[rank0]:     raise ValueError(
+[rank0]: ValueError: side-state lifecycle receipts are incomplete

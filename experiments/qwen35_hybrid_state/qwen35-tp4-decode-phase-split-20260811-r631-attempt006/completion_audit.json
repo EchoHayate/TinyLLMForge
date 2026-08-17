@@ -1,0 +1,138 @@
+{
+  "artifacts": {
+    "attempt_receipt.json": "831c149ebb0f738320a4e9d28a3f598326cb1de6017592b8cfb81c8249f3871c",
+    "decode_summary.json": "dd06ac6b52faba6674171ecc81c7c7b2d407ea7e0d41b3c949b3413b8c071888",
+    "decode_summary.regenerated.json": "dd06ac6b52faba6674171ecc81c7c7b2d407ea7e0d41b3c949b3413b8c071888",
+    "download/result.tar": "f4151e149c20783e0e5c3f520be8c47a99688b03770b36553728e73292e79269",
+    "evidence_inventory.json": "3cad0e7694fbf5ade4c0c139775e0b0e027ef08d1c9d26a1a31dd7bda190d234",
+    "inputs/benchmark_source.tar": "f791f27e807e602f889345d301b72035dcd4a93d55a32adf51fd5eb3eaefb79c",
+    "inputs/prerequisites_bundle.tar": "d84c103e572acad38ae63f24b7bfb67914899cd7235a299698ac144b40763b66",
+    "inputs/workload_manifest.json": "71909b825d1a8d162604f6cc3d34ad413b2af6c191425ec007859715a4d084e3",
+    "row_parallel_comparison.json": "460e57ac8faa02a9c6c24d1063222e95ff271fe72141be3bbb3c0292ec227b77",
+    "three_way_metrics.json": "7db5e27f5cf6c27ffc7365967774f6e244387400e190ee5d5f4a29ad6257ac98"
+  },
+  "audit_date": "2026-08-11",
+  "checklist": [
+    {
+      "evidence": "tinyvllm/models/qwen35_components.py and tinyvllm/models/qwen35_checkpoint_binding.py",
+      "requirement": "Both Qwen3.5 attention output projections use local axis-1 decode weight shards",
+      "status": "PASS"
+    },
+    {
+      "evidence": "evidence_inventory.json: measured replicated_weight_row_parallel_all_gather=0",
+      "requirement": "Legacy projection-input AllGather is absent from decode",
+      "status": "PASS"
+    },
+    {
+      "evidence": "evidence_inventory.json: measured row_parallel_all_reduce=26880",
+      "requirement": "Decode executes and records the replacement row-parallel AllReduce",
+      "status": "PASS"
+    },
+    {
+      "evidence": "The measured projection collective count remains 26880; operation type changed from AllGather to AllReduce",
+      "requirement": "Do not overclaim a reduction in collective operation count",
+      "status": "PASS"
+    },
+    {
+      "evidence": "RowParallelLinear.forward_prefill plus both attention-shell prefill dispatch tests",
+      "requirement": "Long prefill preserves the dense BF16 numerical path",
+      "status": "PASS"
+    },
+    {
+      "evidence": "evidence_inventory.json: 24/24 recompute versus exact-restore pairs match",
+      "requirement": "All warmup and measured recompute/exact-restore token pairs match",
+      "status": "PASS"
+    },
+    {
+      "evidence": "evidence_inventory.json: all 24 candidate recompute and exact-restore outputs also match r620",
+      "requirement": "The phase split restores the accepted r620 output behavior",
+      "status": "PASS"
+    },
+    {
+      "evidence": "row_parallel_comparison.json: output_parity=true and output_key_sets_match=true",
+      "requirement": "The fail-closed comparison authority accepts measured output parity",
+      "status": "PASS"
+    },
+    {
+      "evidence": "row_parallel_comparison.json: PERFORMANCE_PASS",
+      "requirement": "Both policies pass the repeated steady decode wall/CUDA and tail gates",
+      "status": "PASS"
+    },
+    {
+      "evidence": "row_parallel_comparison.json: recompute wall 13.6684%, CUDA 13.6680%, collective 28.5959% faster than r620",
+      "requirement": "Recompute decode improvement is measured against r620",
+      "status": "PASS"
+    },
+    {
+      "evidence": "row_parallel_comparison.json: exact-restore wall 6.7341%, CUDA 6.7338%, collective 33.7067% faster than r620",
+      "requirement": "Exact-restore decode improvement is measured against r620",
+      "status": "PASS"
+    },
+    {
+      "evidence": "three_way_metrics.json labels r630 NO_GO_parity_6_of_24_mismatch",
+      "requirement": "The parity-failed r630 run remains diagnostic-only",
+      "status": "PASS"
+    },
+    {
+      "evidence": "commands.json, 12 case directories, 12 profiles, 12 case-row files, 12 logs, and 12 worker completion markers",
+      "requirement": "The w2-only run contains exactly 12 complete workers",
+      "status": "PASS"
+    },
+    {
+      "evidence": "12 worker guards are READY on GPUs 2,4,5,6",
+      "requirement": "Only the fixed TP4 GPU set is used",
+      "status": "PASS"
+    },
+    {
+      "evidence": "minimum observed free bytes 56982765568; maximum observed utilization 0%",
+      "requirement": "Every worker admission has at least 25 GiB free and at most 10% utilization",
+      "status": "PASS"
+    },
+    {
+      "evidence": "All guards label resource_policy=shared-low-utilization and exclusive=false",
+      "requirement": "Results are classified shared and non-exclusive",
+      "status": "PASS"
+    },
+    {
+      "evidence": "attempt_receipt.json: DOWNLOADED and cleanup=CLEAN",
+      "requirement": "The attempt completes, downloads, and runs exact-tag cleanup",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Independent read-only remote checks returned 0 tagged processes three consecutive times",
+      "requirement": "Attempt cleanup is independently confirmed stable",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Fresh attempt006 path was absent locally and remotely before launch; attempts001-005 remain preserved",
+      "requirement": "The real run uses a fresh tag and does not overwrite earlier attempts",
+      "status": "PASS"
+    },
+    {
+      "evidence": "decode_summary.json and decode_summary.regenerated.json are byte-identical",
+      "requirement": "Decode aggregation is reproducible",
+      "status": "PASS"
+    },
+    {
+      "evidence": "47 focused tests passed, 8 deselected; py_compile and scoped git diff --check passed",
+      "requirement": "Current implementation and focused contracts pass local validation",
+      "status": "PASS"
+    },
+    {
+      "evidence": "No canonical manifest, case-matrix schema, existing profile.json schema, or r607-r630 artifact was modified",
+      "requirement": "Canonical artifacts and earlier attempts remain unchanged",
+      "status": "PASS"
+    },
+    {
+      "evidence": "decode_summary.json evidence_boundary",
+      "requirement": "step_wall_ns - step_cuda_ns is described only as an upper bound on host orchestration, launch gaps, and possible synchronization waiting",
+      "status": "PASS"
+    }
+  ],
+  "classification": "PASS",
+  "objective": "Optimize Qwen3.5 TP4 decode projection communication and weight layout instead of further subdividing the already-small restore path.",
+  "run_tag": "qwen35-tp4-decode-phase-split-20260811-r631-attempt006",
+  "schema_version": "qwen35.decode-phase-split-completion-audit.v1",
+  "source_tar_sha256": "f791f27e807e602f889345d301b72035dcd4a93d55a32adf51fd5eb3eaefb79c",
+  "source_tree_sha256": "6f881fae7010cc5f048100b147a72fbf27ffba0f77bc34e2e2e68388a98a2837"
+}

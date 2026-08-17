@@ -1,0 +1,54 @@
+{
+  "classification": "NOT_PROMOTABLE",
+  "commands": [
+    [
+      "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+      "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py",
+      "--model",
+      "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B",
+      "--policy",
+      "baseline",
+      "--batch-size",
+      "1",
+      "--out",
+      "/tmp/tinyllmforge-speculative-runtime-performance-20260812T072647Z/workers/worker-baseline-b1.json"
+    ],
+    [
+      "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+      "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py",
+      "--model",
+      "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B",
+      "--policy",
+      "baseline",
+      "--batch-size",
+      "4",
+      "--out",
+      "/tmp/tinyllmforge-speculative-runtime-performance-20260812T072647Z/workers/worker-baseline-b4.json"
+    ],
+    [
+      "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+      "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py",
+      "--model",
+      "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B",
+      "--policy",
+      "ngram",
+      "--batch-size",
+      "1",
+      "--out",
+      "/tmp/tinyllmforge-speculative-runtime-performance-20260812T072647Z/workers/worker-ngram-b1.json"
+    ]
+  ],
+  "failure_reason": "worker_ngram_b1_failed",
+  "limitations": [
+    "classification remains NOT_PROMOTABLE",
+    "no TP4 evidence",
+    "no 16K or 32K evidence",
+    "no second-model evidence",
+    "no learned-drafter or MTP evidence",
+    "five runs do not establish statistical significance"
+  ],
+  "schema_version": 1,
+  "status": "FAIL",
+  "worker_log": "/tmp/tinyllmforge-speculative-runtime-performance-20260812T072647Z/workers/worker-ngram-b1.log",
+  "worker_status": 1
+}

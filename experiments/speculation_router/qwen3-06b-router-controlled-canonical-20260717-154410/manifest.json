@@ -1,0 +1,1166 @@
+{
+  "bf16_supported": true,
+  "case_matrix": [
+    {
+      "acceptance_case": "full",
+      "block_case": "current_block",
+      "case_id": "k1-route-fallback",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 1,
+      "eos_case": false,
+      "expected_accepted_count": 1,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "zero",
+      "block_case": "current_block",
+      "case_id": "k2-zero-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 2,
+      "eos_case": false,
+      "expected_accepted_count": 0,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "one",
+      "block_case": "current_block",
+      "case_id": "k2-one-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 2,
+      "eos_case": false,
+      "expected_accepted_count": 1,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "full",
+      "block_case": "current_block",
+      "case_id": "k2-full-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 2,
+      "eos_case": false,
+      "expected_accepted_count": 2,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "zero",
+      "block_case": "current_block",
+      "case_id": "k4-zero-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 4,
+      "eos_case": false,
+      "expected_accepted_count": 0,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "one",
+      "block_case": "current_block",
+      "case_id": "k4-one-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 4,
+      "eos_case": false,
+      "expected_accepted_count": 1,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "partial",
+      "block_case": "one_new_block",
+      "case_id": "k4-partial-boundary",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 4,
+      "eos_case": false,
+      "expected_accepted_count": 2,
+      "history_len": 255,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "full",
+      "block_case": "one_new_block",
+      "case_id": "k4-full-boundary",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 4,
+      "eos_case": false,
+      "expected_accepted_count": 4,
+      "history_len": 255,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "zero",
+      "block_case": "current_block",
+      "case_id": "k8-zero-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 8,
+      "eos_case": false,
+      "expected_accepted_count": 0,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "one",
+      "block_case": "current_block",
+      "case_id": "k8-one-current",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 8,
+      "eos_case": false,
+      "expected_accepted_count": 1,
+      "history_len": 52,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "partial",
+      "block_case": "one_new_block",
+      "case_id": "k8-partial-boundary",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 8,
+      "eos_case": false,
+      "expected_accepted_count": 4,
+      "history_len": 255,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "full",
+      "block_case": "one_new_block",
+      "case_id": "k8-full-boundary",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 8,
+      "eos_case": false,
+      "expected_accepted_count": 8,
+      "history_len": 255,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "partial",
+      "block_case": "real_eos_history",
+      "case_id": "k8-eos-boundary",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 8,
+      "eos_case": true,
+      "expected_accepted_count": 2,
+      "history_len": 255,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "full",
+      "block_case": "one_new_block",
+      "case_id": "k8-budget-boundary",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 8,
+      "eos_case": false,
+      "expected_accepted_count": 3,
+      "history_len": 255,
+      "output_budget_case": true
+    },
+    {
+      "acceptance_case": "zero",
+      "block_case": "multi_block_context",
+      "case_id": "k16-zero-multiblock",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 16,
+      "eos_case": false,
+      "expected_accepted_count": 0,
+      "history_len": 511,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "one",
+      "block_case": "multi_block_context",
+      "case_id": "k16-one-multiblock",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 16,
+      "eos_case": false,
+      "expected_accepted_count": 1,
+      "history_len": 511,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "partial",
+      "block_case": "multi_block_context",
+      "case_id": "k16-partial-multiblock",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 16,
+      "eos_case": false,
+      "expected_accepted_count": 8,
+      "history_len": 511,
+      "output_budget_case": false
+    },
+    {
+      "acceptance_case": "full",
+      "block_case": "multi_block_context",
+      "case_id": "k16-full-multiblock",
+      "continuation_steps": 16,
+      "draft_construction": "controlled_target_derived",
+      "draft_len": 16,
+      "eos_case": false,
+      "expected_accepted_count": 16,
+      "history_len": 511,
+      "output_budget_case": false
+    }
+  ],
+  "classification_on_success": "READY_FOR_REAL_DRAFTER_GATE",
+  "created_unix_s": 1784274262.8201506,
+  "cuda_version": "12.1",
+  "flash_attn_version": "2.6.3",
+  "gpu_name": "NVIDIA A100 80GB PCIe",
+  "host": "sitian@10.232.195.203",
+  "model_identifier": "Qwen3-0.6B",
+  "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "policies": [
+    "baseline",
+    "legacy_rematerialize",
+    "always_native",
+    "routed_native",
+    "oracle"
+  ],
+  "process_port_pairs": [
+    {
+      "case_id": "k1-route-fallback",
+      "master_port": 48909,
+      "policy": "probe",
+      "tinyvllm_dist_port": 47049
+    },
+    {
+      "case_id": "k1-route-fallback",
+      "master_port": 15335,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 30877
+    },
+    {
+      "case_id": "k1-route-fallback",
+      "master_port": 47699,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 41035
+    },
+    {
+      "case_id": "k1-route-fallback",
+      "master_port": 25765,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 57219
+    },
+    {
+      "case_id": "k1-route-fallback",
+      "master_port": 14397,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 28699
+    },
+    {
+      "case_id": "k1-route-fallback",
+      "master_port": 51253,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 64915
+    },
+    {
+      "case_id": "k2-zero-current",
+      "master_port": 18471,
+      "policy": "probe",
+      "tinyvllm_dist_port": 19997
+    },
+    {
+      "case_id": "k2-zero-current",
+      "master_port": 21671,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 49355
+    },
+    {
+      "case_id": "k2-zero-current",
+      "master_port": 39821,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 37053
+    },
+    {
+      "case_id": "k2-zero-current",
+      "master_port": 40823,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 35625
+    },
+    {
+      "case_id": "k2-zero-current",
+      "master_port": 48101,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 27807
+    },
+    {
+      "case_id": "k2-zero-current",
+      "master_port": 40007,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 39451
+    },
+    {
+      "case_id": "k2-one-current",
+      "master_port": 31569,
+      "policy": "probe",
+      "tinyvllm_dist_port": 10277
+    },
+    {
+      "case_id": "k2-one-current",
+      "master_port": 18437,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 45497
+    },
+    {
+      "case_id": "k2-one-current",
+      "master_port": 12673,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 11455
+    },
+    {
+      "case_id": "k2-one-current",
+      "master_port": 48453,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 10003
+    },
+    {
+      "case_id": "k2-one-current",
+      "master_port": 36815,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 34289
+    },
+    {
+      "case_id": "k2-one-current",
+      "master_port": 33511,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 40275
+    },
+    {
+      "case_id": "k2-full-current",
+      "master_port": 12619,
+      "policy": "probe",
+      "tinyvllm_dist_port": 27141
+    },
+    {
+      "case_id": "k2-full-current",
+      "master_port": 38471,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 54893
+    },
+    {
+      "case_id": "k2-full-current",
+      "master_port": 47885,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 46305
+    },
+    {
+      "case_id": "k2-full-current",
+      "master_port": 62917,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 23869
+    },
+    {
+      "case_id": "k2-full-current",
+      "master_port": 31169,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 36639
+    },
+    {
+      "case_id": "k2-full-current",
+      "master_port": 40951,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 37523
+    },
+    {
+      "case_id": "k4-zero-current",
+      "master_port": 37351,
+      "policy": "probe",
+      "tinyvllm_dist_port": 18585
+    },
+    {
+      "case_id": "k4-zero-current",
+      "master_port": 52591,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 21099
+    },
+    {
+      "case_id": "k4-zero-current",
+      "master_port": 14987,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 54083
+    },
+    {
+      "case_id": "k4-zero-current",
+      "master_port": 29253,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 51111
+    },
+    {
+      "case_id": "k4-zero-current",
+      "master_port": 64925,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 34805
+    },
+    {
+      "case_id": "k4-zero-current",
+      "master_port": 25721,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 51725
+    },
+    {
+      "case_id": "k4-one-current",
+      "master_port": 49407,
+      "policy": "probe",
+      "tinyvllm_dist_port": 64945
+    },
+    {
+      "case_id": "k4-one-current",
+      "master_port": 17641,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 50139
+    },
+    {
+      "case_id": "k4-one-current",
+      "master_port": 24821,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 54275
+    },
+    {
+      "case_id": "k4-one-current",
+      "master_port": 64757,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 49317
+    },
+    {
+      "case_id": "k4-one-current",
+      "master_port": 54351,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 53545
+    },
+    {
+      "case_id": "k4-one-current",
+      "master_port": 29265,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 55507
+    },
+    {
+      "case_id": "k4-partial-boundary",
+      "master_port": 31009,
+      "policy": "probe",
+      "tinyvllm_dist_port": 37739
+    },
+    {
+      "case_id": "k4-partial-boundary",
+      "master_port": 38879,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 61707
+    },
+    {
+      "case_id": "k4-partial-boundary",
+      "master_port": 61879,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 40855
+    },
+    {
+      "case_id": "k4-partial-boundary",
+      "master_port": 19883,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 37107
+    },
+    {
+      "case_id": "k4-partial-boundary",
+      "master_port": 26629,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 55941
+    },
+    {
+      "case_id": "k4-partial-boundary",
+      "master_port": 25723,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 16689
+    },
+    {
+      "case_id": "k4-full-boundary",
+      "master_port": 21907,
+      "policy": "probe",
+      "tinyvllm_dist_port": 18993
+    },
+    {
+      "case_id": "k4-full-boundary",
+      "master_port": 54293,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 20607
+    },
+    {
+      "case_id": "k4-full-boundary",
+      "master_port": 21735,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 41029
+    },
+    {
+      "case_id": "k4-full-boundary",
+      "master_port": 36425,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 15039
+    },
+    {
+      "case_id": "k4-full-boundary",
+      "master_port": 28429,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 11505
+    },
+    {
+      "case_id": "k4-full-boundary",
+      "master_port": 42999,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 46857
+    },
+    {
+      "case_id": "k8-zero-current",
+      "master_port": 63267,
+      "policy": "probe",
+      "tinyvllm_dist_port": 34065
+    },
+    {
+      "case_id": "k8-zero-current",
+      "master_port": 57025,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 54701
+    },
+    {
+      "case_id": "k8-zero-current",
+      "master_port": 13921,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 15137
+    },
+    {
+      "case_id": "k8-zero-current",
+      "master_port": 31539,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 10589
+    },
+    {
+      "case_id": "k8-zero-current",
+      "master_port": 59959,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 36245
+    },
+    {
+      "case_id": "k8-zero-current",
+      "master_port": 49897,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 53665
+    },
+    {
+      "case_id": "k8-one-current",
+      "master_port": 53695,
+      "policy": "probe",
+      "tinyvllm_dist_port": 45421
+    },
+    {
+      "case_id": "k8-one-current",
+      "master_port": 64021,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 61317
+    },
+    {
+      "case_id": "k8-one-current",
+      "master_port": 35125,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 38327
+    },
+    {
+      "case_id": "k8-one-current",
+      "master_port": 59835,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 14451
+    },
+    {
+      "case_id": "k8-one-current",
+      "master_port": 15953,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 52457
+    },
+    {
+      "case_id": "k8-one-current",
+      "master_port": 20787,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 45729
+    },
+    {
+      "case_id": "k8-partial-boundary",
+      "master_port": 30525,
+      "policy": "probe",
+      "tinyvllm_dist_port": 35421
+    },
+    {
+      "case_id": "k8-partial-boundary",
+      "master_port": 31529,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 40133
+    },
+    {
+      "case_id": "k8-partial-boundary",
+      "master_port": 51267,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 13439
+    },
+    {
+      "case_id": "k8-partial-boundary",
+      "master_port": 11359,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 60889
+    },
+    {
+      "case_id": "k8-partial-boundary",
+      "master_port": 53895,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 47711
+    },
+    {
+      "case_id": "k8-partial-boundary",
+      "master_port": 12957,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 29895
+    },
+    {
+      "case_id": "k8-full-boundary",
+      "master_port": 56099,
+      "policy": "probe",
+      "tinyvllm_dist_port": 45573
+    },
+    {
+      "case_id": "k8-full-boundary",
+      "master_port": 52535,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 39823
+    },
+    {
+      "case_id": "k8-full-boundary",
+      "master_port": 37547,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 43279
+    },
+    {
+      "case_id": "k8-full-boundary",
+      "master_port": 10539,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 55523
+    },
+    {
+      "case_id": "k8-full-boundary",
+      "master_port": 26563,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 64525
+    },
+    {
+      "case_id": "k8-full-boundary",
+      "master_port": 48513,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 33295
+    },
+    {
+      "case_id": "k8-eos-boundary",
+      "master_port": 30133,
+      "policy": "probe",
+      "tinyvllm_dist_port": 28953
+    },
+    {
+      "case_id": "k8-eos-boundary",
+      "master_port": 17581,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 25723
+    },
+    {
+      "case_id": "k8-eos-boundary",
+      "master_port": 36811,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 24271
+    },
+    {
+      "case_id": "k8-eos-boundary",
+      "master_port": 46959,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 58695
+    },
+    {
+      "case_id": "k8-eos-boundary",
+      "master_port": 10435,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 18615
+    },
+    {
+      "case_id": "k8-eos-boundary",
+      "master_port": 24091,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 56499
+    },
+    {
+      "case_id": "k8-budget-boundary",
+      "master_port": 56409,
+      "policy": "probe",
+      "tinyvllm_dist_port": 50165
+    },
+    {
+      "case_id": "k8-budget-boundary",
+      "master_port": 46517,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 47849
+    },
+    {
+      "case_id": "k8-budget-boundary",
+      "master_port": 35165,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 33207
+    },
+    {
+      "case_id": "k8-budget-boundary",
+      "master_port": 16987,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 39981
+    },
+    {
+      "case_id": "k8-budget-boundary",
+      "master_port": 45197,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 35995
+    },
+    {
+      "case_id": "k8-budget-boundary",
+      "master_port": 40725,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 17709
+    },
+    {
+      "case_id": "k16-zero-multiblock",
+      "master_port": 28479,
+      "policy": "probe",
+      "tinyvllm_dist_port": 11417
+    },
+    {
+      "case_id": "k16-zero-multiblock",
+      "master_port": 13957,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 14519
+    },
+    {
+      "case_id": "k16-zero-multiblock",
+      "master_port": 50327,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 57161
+    },
+    {
+      "case_id": "k16-zero-multiblock",
+      "master_port": 34447,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 41813
+    },
+    {
+      "case_id": "k16-zero-multiblock",
+      "master_port": 35953,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 11577
+    },
+    {
+      "case_id": "k16-zero-multiblock",
+      "master_port": 23435,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 11041
+    },
+    {
+      "case_id": "k16-one-multiblock",
+      "master_port": 62925,
+      "policy": "probe",
+      "tinyvllm_dist_port": 57291
+    },
+    {
+      "case_id": "k16-one-multiblock",
+      "master_port": 32611,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 52009
+    },
+    {
+      "case_id": "k16-one-multiblock",
+      "master_port": 50645,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 37317
+    },
+    {
+      "case_id": "k16-one-multiblock",
+      "master_port": 63133,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 50609
+    },
+    {
+      "case_id": "k16-one-multiblock",
+      "master_port": 56183,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 49811
+    },
+    {
+      "case_id": "k16-one-multiblock",
+      "master_port": 54797,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 56205
+    },
+    {
+      "case_id": "k16-partial-multiblock",
+      "master_port": 62203,
+      "policy": "probe",
+      "tinyvllm_dist_port": 64367
+    },
+    {
+      "case_id": "k16-partial-multiblock",
+      "master_port": 12365,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 55201
+    },
+    {
+      "case_id": "k16-partial-multiblock",
+      "master_port": 60221,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 19237
+    },
+    {
+      "case_id": "k16-partial-multiblock",
+      "master_port": 40129,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 46671
+    },
+    {
+      "case_id": "k16-partial-multiblock",
+      "master_port": 21057,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 54983
+    },
+    {
+      "case_id": "k16-partial-multiblock",
+      "master_port": 15019,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 61035
+    },
+    {
+      "case_id": "k16-full-multiblock",
+      "master_port": 31863,
+      "policy": "probe",
+      "tinyvllm_dist_port": 51437
+    },
+    {
+      "case_id": "k16-full-multiblock",
+      "master_port": 22393,
+      "policy": "baseline",
+      "tinyvllm_dist_port": 24409
+    },
+    {
+      "case_id": "k16-full-multiblock",
+      "master_port": 55615,
+      "policy": "legacy_rematerialize",
+      "tinyvllm_dist_port": 53387
+    },
+    {
+      "case_id": "k16-full-multiblock",
+      "master_port": 33609,
+      "policy": "always_native",
+      "tinyvllm_dist_port": 37749
+    },
+    {
+      "case_id": "k16-full-multiblock",
+      "master_port": 40813,
+      "policy": "routed_native",
+      "tinyvllm_dist_port": 18449
+    },
+    {
+      "case_id": "k16-full-multiblock",
+      "master_port": 55267,
+      "policy": "oracle",
+      "tinyvllm_dist_port": 44581
+    }
+  ],
+  "python_bin": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+  "run_tag": "qwen3-06b-router-controlled-canonical-20260717-154410",
+  "schema_version": 1,
+  "source_commit": "63953089f30d0e9506461a3eb1e44bc9df8d778e",
+  "source_dirty": false,
+  "source_evidence": {
+    "base_commit": "63953089f30d0e9506461a3eb1e44bc9df8d778e",
+    "dirty": false,
+    "files": [
+      {
+        "path": "tinyvllm/__init__.py",
+        "sha256": "2e240e69afb6561ce1abb5d6d6f11872c2a36abe1eb365f0bbd69f6b22d497b3",
+        "size_bytes": 81
+      },
+      {
+        "path": "tinyvllm/config.py",
+        "sha256": "a9209163d15b6f6aecb4fb7256686595cdde95f304f750f19fda4e1ee26d1ae4",
+        "size_bytes": 14311
+      },
+      {
+        "path": "tinyvllm/engine/attention_matching.py",
+        "sha256": "f87017ecfba905011f37a68944a6e37b7018c3110667f841c66e1f0dc8043b6b",
+        "size_bytes": 46567
+      },
+      {
+        "path": "tinyvllm/engine/block_manager.py",
+        "sha256": "f3cd65eee63ea4f0ef28e87384756bbc93bcc37404affdfb40a4c8f64130b39c",
+        "size_bytes": 18427
+      },
+      {
+        "path": "tinyvllm/engine/kv_cartridge.py",
+        "sha256": "00bcbe84b229d73691348de1b670dd9acfbaa09f0979a22d1f974116c2848471",
+        "size_bytes": 3605
+      },
+      {
+        "path": "tinyvllm/engine/llm_engine.py",
+        "sha256": "63f209dccb6100d0c09549305760d05adef3604ffc4491438021e53de440f40c",
+        "size_bytes": 5830
+      },
+      {
+        "path": "tinyvllm/engine/model_runner.py",
+        "sha256": "5defbabc004912ba65f36b0145c2a207f50c22802d6caa7fa0a282507c582217",
+        "size_bytes": 76087
+      },
+      {
+        "path": "tinyvllm/engine/scheduler.py",
+        "sha256": "502b9858b12a05d731a1745b2425b2a77ba3073ea0fa1ca4ae5dd7c2b518d98b",
+        "size_bytes": 18495
+      },
+      {
+        "path": "tinyvllm/engine/sequence.py",
+        "sha256": "ddfe2464815e4af39382bcdf35cef4e119ddfd6e07c5373bb7f3e5840687d77b",
+        "size_bytes": 6838
+      },
+      {
+        "path": "tinyvllm/layers/activation.py",
+        "sha256": "cdd56cad2201d57a749c699acf928eb05249274c8a1c897de13d9e1f7329b988",
+        "size_bytes": 662
+      },
+      {
+        "path": "tinyvllm/layers/attention.py",
+        "sha256": "c6c6f79fb68dfa0e0c59afffcab4f009ff7d61fd26593f9bd69bb372cc41d6da",
+        "size_bytes": 64815
+      },
+      {
+        "path": "tinyvllm/layers/embed_head.py",
+        "sha256": "56feff0d94253fb3ebbb7bc173deb4971194cd1b57dcd34bcb61e7e78617fa61",
+        "size_bytes": 5024
+      },
+      {
+        "path": "tinyvllm/layers/layernorm.py",
+        "sha256": "e0d610cfae9fd388689a4d4a165c3f1de8341c9215509c0faa4eb05d1a215e3b",
+        "size_bytes": 2440
+      },
+      {
+        "path": "tinyvllm/layers/linear.py",
+        "sha256": "2bf6cad9150640b632a09d419297b1401cec963229e1fd10ff969c5611684e9d",
+        "size_bytes": 14793
+      },
+      {
+        "path": "tinyvllm/layers/quantization.py",
+        "sha256": "731dcc39c962a2afddce9eb4b62efec5f8f8fedd08d7b552c29b0b1c16c70e4a",
+        "size_bytes": 12379
+      },
+      {
+        "path": "tinyvllm/layers/rotary_embedding.py",
+        "sha256": "3b22cdc67227ce3d2a9d1e9e688956d6dc384dfc67c5323a2aa19c5dd75cea85",
+        "size_bytes": 3848
+      },
+      {
+        "path": "tinyvllm/layers/sampler.py",
+        "sha256": "538eff63051641b4fbfb91515adae07a224d46ed4ac63b41ff8b568ecc06d51d",
+        "size_bytes": 1743
+      },
+      {
+        "path": "tinyvllm/llm.py",
+        "sha256": "283d4fb01c1b59fe7d20bc11c7de5ddf9251ec1de4ec90a338c9c8a90e459bd6",
+        "size_bytes": 81
+      },
+      {
+        "path": "tinyvllm/models/qwen3.py",
+        "sha256": "452ffe4a8e5ac6f2b2e7e72a115913ac98ff4fa40ca72e7ff6bf4cc517438d58",
+        "size_bytes": 10370
+      },
+      {
+        "path": "tinyvllm/sampling_params.py",
+        "sha256": "fc6b30007f6e2c67bd96b518c45f6a2daea8eb8252cabd50c641fd128099cf2c",
+        "size_bytes": 505
+      },
+      {
+        "path": "tinyvllm/speculative/__init__.py",
+        "sha256": "9436033638629bd19f53d657e4bb7b6a5fcd3c8cddb8a6d334e4994df98e27e4",
+        "size_bytes": 266
+      },
+      {
+        "path": "tinyvllm/speculative/ngram.py",
+        "sha256": "3e6a3acc2a0e5163a8091a313318fb3f8c31e9d7f50a33570e6d999fd6f0b840",
+        "size_bytes": 12783
+      },
+      {
+        "path": "tinyvllm/speculative/router.py",
+        "sha256": "fa2cb365bcaba0972f8e4c87bd526d73ce128f232c17e0ced593e5a3ee478934",
+        "size_bytes": 1852
+      },
+      {
+        "path": "tinyvllm/speculative/sam.py",
+        "sha256": "d81424437d85107514bc63061d7fa3e6542c886c4fc6eff1cf9acd4551251d0f",
+        "size_bytes": 7076
+      },
+      {
+        "path": "tinyvllm/speculative/verifier.py",
+        "sha256": "74f00d7f54be9e7b07ae7cafbbf4527e9ed5f78ea25febb36f8788a74788af46",
+        "size_bytes": 3025
+      },
+      {
+        "path": "tinyvllm/utils/context.py",
+        "sha256": "c4bea35ba3c877f01c488361dd64d1810e2d54a0ba3b4114b16860cd2b638b06",
+        "size_bytes": 9544
+      },
+      {
+        "path": "tinyvllm/utils/cpu_offload.py",
+        "sha256": "0112483f8e316f18af5c8b1a43b03240577ac3e46d70e579da8bcdfd7fd5205b",
+        "size_bytes": 7445
+      },
+      {
+        "path": "tinyvllm/utils/loader.py",
+        "sha256": "9afe153aec1d9df87be2b71587e65667523365d0b917c60b233d0cce99c89881",
+        "size_bytes": 8615
+      },
+      {
+        "path": "tools/draft_model_schema.py",
+        "sha256": "5a2bda19535896ef0410d977dc4b91c8f8c115a78c7d153b44764149c04cca5a",
+        "size_bytes": 5169
+      },
+      {
+        "path": "tools/native_verifier_gate.py",
+        "sha256": "6ff2cd1695b3c194bdb2e24b5febd755ae6a77b22e24895406751e1194f254ab",
+        "size_bytes": 47941
+      },
+      {
+        "path": "tools/native_verifier_oracle.py",
+        "sha256": "da246f7385873d8facabe0f25bdf414930b10b6afa33353b65b10f5ea80bcd12",
+        "size_bytes": 36068
+      },
+      {
+        "path": "tools/profile_ngram_commit.py",
+        "sha256": "9ab3e06cf7d1c6e1766b33ceefb97cfd661d04fc03b9902fa207034a9f27bc60",
+        "size_bytes": 112973
+      },
+      {
+        "path": "tools/run_speculation_router_gate_remote.sh",
+        "sha256": "bd8731d3a585e8561bff4a2324fc5a42cd0e3a54d2d281e42144599ab66f016c",
+        "size_bytes": 16585
+      },
+      {
+        "path": "tools/source_audit.py",
+        "sha256": "90dfa25a43efbbf293b70d2ee330c498426907b8175b72b117a671a55bc713ca",
+        "size_bytes": 13633
+      },
+      {
+        "path": "tools/speculation_router_gate.py",
+        "sha256": "f22ac10a82defb622e590892058d7d5c5256b3c82711680568e4e33b2a792e4d",
+        "size_bytes": 85767
+      },
+      {
+        "path": "tools/test_model_runner_spec_verify.py",
+        "sha256": "344242765493da723decb3f7f140be4f2e7dfa65c2d98cef3835eb26549504c2",
+        "size_bytes": 11540
+      },
+      {
+        "path": "tools/test_native_verifier_attention.py",
+        "sha256": "03b8d325c378fbd53fd317face8778701c8e4c64c6dea27a50ed8aa483a76091",
+        "size_bytes": 5521
+      },
+      {
+        "path": "tools/test_native_verifier_contract.py",
+        "sha256": "b6bf1b310db6eb3c2612c3451a3d3ef8b4127788da59253916a2874d48aae618",
+        "size_bytes": 3890
+      },
+      {
+        "path": "tools/test_native_verifier_gate.py",
+        "sha256": "9a58cb4d4a8a311042e017a8589e5f6ecb9b7b74601ae71fd23736f1f301ba96",
+        "size_bytes": 16538
+      },
+      {
+        "path": "tools/test_native_verifier_oracle.py",
+        "sha256": "17abb7fcb6fa84b5c2f81b0ba2c04c88e34f758c4be584a66de7102b99ffe600",
+        "size_bytes": 29565
+      },
+      {
+        "path": "tools/test_ngram_speculative.py",
+        "sha256": "505895af1eb8b9b13e9cc005bfa8dd29765c2db62383513841eba5d9b2bdd84b",
+        "size_bytes": 57816
+      },
+      {
+        "path": "tools/test_run_speculation_router_gate_remote.py",
+        "sha256": "baf7f1caf530e6dcf98e999c3b0f59383dc9d0f96a960e50b8d5424bdb1246a2",
+        "size_bytes": 7376
+      },
+      {
+        "path": "tools/test_speculation_router.py",
+        "sha256": "4ecd135ba1e74c114b8caf7a8091e3d92a542996666928e8994dd9c4adc81439",
+        "size_bytes": 15240
+      },
+      {
+        "path": "tools/test_speculation_router_gate.py",
+        "sha256": "4cbc84b423f32185fa0a85b1dc0860e0045609e842c133bfaf13854ef73d1476",
+        "size_bytes": 50890
+      }
+    ],
+    "owned_roots": [
+      "tinyvllm",
+      "tools/draft_model_schema.py",
+      "tools/profile_ngram_commit.py",
+      "tools/source_audit.py",
+      "tools/speculation_router_gate.py",
+      "tools/test_speculation_router.py",
+      "tools/test_speculation_router_gate.py",
+      "tools/test_ngram_speculative.py",
+      "tools/test_model_runner_spec_verify.py",
+      "tools/test_native_verifier_contract.py",
+      "tools/test_native_verifier_attention.py",
+      "tools/native_verifier_oracle.py",
+      "tools/test_native_verifier_oracle.py",
+      "tools/native_verifier_gate.py",
+      "tools/test_native_verifier_gate.py",
+      "tools/run_speculation_router_gate_remote.sh",
+      "tools/test_run_speculation_router_gate_remote.py"
+    ],
+    "patch_path": "source.patch",
+    "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "patch_size_bytes": 0,
+    "schema_version": 1,
+    "tree_sha256": "a67f8a574e43c88758b517e75f588d94ff647390e33219544f5b45426b5ffcc1"
+  },
+  "source_preflight": {
+    "bf16_supported": true,
+    "cuda": "12.1",
+    "flash_attn": "2.6.3",
+    "gpu": "NVIDIA A100 80GB PCIe",
+    "hidden_size": 1024,
+    "host": "n232-195-203",
+    "model_identifier": "Qwen3-0.6B",
+    "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "model_type": "qwen3",
+    "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "python": "3.11.15 | packaged by conda-forge | (main, Mar  5 2026, 16:45:40) [GCC 14.3.0]",
+    "schema_version": 1,
+    "source_tree_sha256": "a67f8a574e43c88758b517e75f588d94ff647390e33219544f5b45426b5ffcc1",
+    "tinyvllm_file": "/data00/home/sitian/sitian-workspace01/tllm/speculation-router-runs/qwen3-06b-router-controlled-canonical-20260717-154410/staging/source/tinyvllm/__init__.py",
+    "torch": "2.4.1+cu121"
+  },
+  "source_tree_sha256": "a67f8a574e43c88758b517e75f588d94ff647390e33219544f5b45426b5ffcc1",
+  "stage": "controlled",
+  "thresholds": {
+    "max_required_lifecycle_elapsed_ratio": 1.05,
+    "min_continuation_steps": 16,
+    "profitable_region_max_elapsed_ratio": 0.95
+  },
+  "torch_version": "2.4.1+cu121"
+}

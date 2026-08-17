@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py", line 423, in <module>
+    _run()
+  File "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py", line 415, in _run
+    test()
+  File "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py", line 398, in test_classifier_rejects_missing_measured_repetition_as_invalid
+    assert contract.classify_run(metrics) == "INVALID"
+AssertionError
+
+EXIT_CODE=1
+
+Expected RED:
+  the initial classifier did not explicitly reject an incomplete measured
+  matrix.

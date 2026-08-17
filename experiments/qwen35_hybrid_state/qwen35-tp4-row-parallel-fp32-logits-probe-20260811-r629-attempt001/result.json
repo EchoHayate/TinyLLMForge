@@ -1,0 +1,313 @@
+{
+  "claim_boundary": "diagnostic comparison only; no cached-continuation correctness, Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "classification": "ENGINE_WIDE_DIVERGENCE",
+  "cleanup": {
+    "owned_children_remaining": [],
+    "process_group_destroyed": true,
+    "rank_cleanup_receipts": [
+      {
+        "process_group_destroyed": true,
+        "rank": 0
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 1
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 2
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 3
+      }
+    ],
+    "rank_exit_codes": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "diagnostic_identity": {
+    "exclusive": false,
+    "gpu_indices": [
+      2,
+      4,
+      5,
+      6
+    ],
+    "resource_policy": "shared-low-utilization",
+    "source_tree_sha256": "7a80d62c2c9e71f7899dc397f810427286b330d95da2b63f67839aa98d47b3b3",
+    "tag": "qwen35-tp4-row-parallel-logits-probe-20260811-r629-attempt001"
+  },
+  "generated_tokens": 1,
+  "official_output_token_ids": [
+    197
+  ],
+  "recompute": {
+    "comparison": {
+      "allclose": false,
+      "first_mismatch_engine_argmax": 197,
+      "first_mismatch_reference_argmax": 197,
+      "first_mismatch_step": 0,
+      "max_abs_diff": 0.109375,
+      "per_step_max_abs_diff": [
+        0.109375
+      ],
+      "step_diagnostics": [
+        {
+          "allclose": false,
+          "engine_argmax": 197,
+          "engine_selected_logits": {
+            "13": 10.125,
+            "197": 10.6875,
+            "68": 10.625
+          },
+          "engine_top10": [
+            {
+              "logit": 10.6875,
+              "token_id": 197
+            },
+            {
+              "logit": 10.625,
+              "token_id": 68
+            },
+            {
+              "logit": 10.5,
+              "token_id": 220
+            },
+            {
+              "logit": 10.3125,
+              "token_id": 287
+            },
+            {
+              "logit": 10.1875,
+              "token_id": 78
+            },
+            {
+              "logit": 10.125,
+              "token_id": 13
+            },
+            {
+              "logit": 10.0,
+              "token_id": 510
+            },
+            {
+              "logit": 9.75,
+              "token_id": 785
+            },
+            {
+              "logit": 9.6875,
+              "token_id": 62
+            },
+            {
+              "logit": 9.5625,
+              "token_id": 290
+            }
+          ],
+          "engine_top2_margin": 0.0625,
+          "max_abs_diff": 0.109375,
+          "mean_abs_diff": 0.017657553777098656,
+          "nonzero_count": 212368,
+          "reference_argmax": 197,
+          "reference_selected_logits": {
+            "13": 10.125,
+            "197": 10.6875,
+            "68": 10.625
+          },
+          "reference_top10": [
+            {
+              "logit": 10.6875,
+              "token_id": 197
+            },
+            {
+              "logit": 10.625,
+              "token_id": 68
+            },
+            {
+              "logit": 10.5,
+              "token_id": 220
+            },
+            {
+              "logit": 10.3125,
+              "token_id": 287
+            },
+            {
+              "logit": 10.1875,
+              "token_id": 78
+            },
+            {
+              "logit": 10.125,
+              "token_id": 13
+            },
+            {
+              "logit": 10.0,
+              "token_id": 510
+            },
+            {
+              "logit": 9.8125,
+              "token_id": 785
+            },
+            {
+              "logit": 9.6875,
+              "token_id": 62
+            },
+            {
+              "logit": 9.5625,
+              "token_id": 290
+            }
+          ],
+          "reference_top2_margin": 0.0625,
+          "selected_engine_minus_reference": {
+            "13": 0.0,
+            "197": 0.0,
+            "68": 0.0
+          },
+          "step": 0
+        }
+      ]
+    },
+    "executed_prefill_tokens": 3904,
+    "output_token_ids": [
+      197
+    ],
+    "restore_hits": 0,
+    "restore_misses": 0
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "request_index": 1,
+  "restore": {
+    "comparison": {
+      "allclose": false,
+      "first_mismatch_engine_argmax": 197,
+      "first_mismatch_reference_argmax": 197,
+      "first_mismatch_step": 0,
+      "max_abs_diff": 0.109375,
+      "per_step_max_abs_diff": [
+        0.109375
+      ],
+      "step_diagnostics": [
+        {
+          "allclose": false,
+          "engine_argmax": 197,
+          "engine_selected_logits": {
+            "13": 10.125,
+            "197": 10.6875,
+            "68": 10.625
+          },
+          "engine_top10": [
+            {
+              "logit": 10.6875,
+              "token_id": 197
+            },
+            {
+              "logit": 10.625,
+              "token_id": 68
+            },
+            {
+              "logit": 10.5,
+              "token_id": 220
+            },
+            {
+              "logit": 10.3125,
+              "token_id": 287
+            },
+            {
+              "logit": 10.1875,
+              "token_id": 78
+            },
+            {
+              "logit": 10.125,
+              "token_id": 13
+            },
+            {
+              "logit": 10.0,
+              "token_id": 510
+            },
+            {
+              "logit": 9.75,
+              "token_id": 785
+            },
+            {
+              "logit": 9.6875,
+              "token_id": 62
+            },
+            {
+              "logit": 9.5625,
+              "token_id": 290
+            }
+          ],
+          "engine_top2_margin": 0.0625,
+          "max_abs_diff": 0.109375,
+          "mean_abs_diff": 0.017657553777098656,
+          "nonzero_count": 212368,
+          "reference_argmax": 197,
+          "reference_selected_logits": {
+            "13": 10.125,
+            "197": 10.6875,
+            "68": 10.625
+          },
+          "reference_top10": [
+            {
+              "logit": 10.6875,
+              "token_id": 197
+            },
+            {
+              "logit": 10.625,
+              "token_id": 68
+            },
+            {
+              "logit": 10.5,
+              "token_id": 220
+            },
+            {
+              "logit": 10.3125,
+              "token_id": 287
+            },
+            {
+              "logit": 10.1875,
+              "token_id": 78
+            },
+            {
+              "logit": 10.125,
+              "token_id": 13
+            },
+            {
+              "logit": 10.0,
+              "token_id": 510
+            },
+            {
+              "logit": 9.8125,
+              "token_id": 785
+            },
+            {
+              "logit": 9.6875,
+              "token_id": 62
+            },
+            {
+              "logit": 9.5625,
+              "token_id": 290
+            }
+          ],
+          "reference_top2_margin": 0.0625,
+          "selected_engine_minus_reference": {
+            "13": 0.0,
+            "197": 0.0,
+            "68": 0.0
+          },
+          "step": 0
+        }
+      ]
+    },
+    "executed_prefill_tokens": 64,
+    "output_token_ids": [
+      197
+    ],
+    "restore_hits": 1,
+    "restore_misses": 0
+  },
+  "schema_version": "qwen35.tp4-cached-first-divergence-probe.v1",
+  "workload": "w2_long_reuse"
+}

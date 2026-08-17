@@ -1,0 +1,15 @@
+{
+  "baseline_path": "experiments/qwen35_hybrid_state/qwen35-tp4-resource-baseline-controlled-shared-20260729-175308-attempt6.json",
+  "campaign_tag": "qwen35-tp4-correctness-campaign-controlled-shared-20260729-175308-attempt6",
+  "classification": "READY",
+  "configuration_dir": "experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260729-175308-attempt6",
+  "dist_port": 11975,
+  "master_port": 45519,
+  "preparation_dir": "experiments/qwen35_hybrid_state/qwen35-tp4-correctness-campaign-preparation-controlled-shared-20260729-175308-attempt6",
+  "preparation_manifest_sha256": "0250e1bb82654621d94adb452bfbaeeaba2232ae04e29e7299b12fe28e39d09e",
+  "remote_model_manifest": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-2b-hybrid-acquire-20260723-222004/model_manifest.json",
+  "resource_baseline_sha256": "3e9230f808af07c15f8ed2d317431369de5bf925e5c953de97fefdf1cab81ff4",
+  "root_source_tree_sha256": "ec19a8fa68abfba72e9594bdd1e05428b0add9169d3dbdde24190686c013411f",
+  "source_tree_sha256": "04a86ba55aa7650377bb3f9aac0c78e6ce52ba9063e7775b19708ba3695246d4",
+  "stamp": "20260729-175308"
+}

@@ -1,0 +1,26 @@
+{
+  "kind": "layer_recovery_task_policy",
+  "settings": {
+    "output_dir": "/Users/bytedance/dev/TinyLLMForge/experiments/light_doc_cache/policy_recovery_seed37_add_l4h4_b050",
+    "threshold": 0.901,
+    "compact_layer": null,
+    "compact_layer_range": null,
+    "compact_heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7,10:3,8:1,20:2,12:4,10:5,12:7,20:7,8:3,12:5,16:5,8:0,20:6,10:2,12:0,20:1,10:1,20:3,0:0,8:7,4:1,0:2,0:5,0:4,10:7,10:6,0:7,4:2,4:7,10:0,4:4",
+    "budget_fraction": 0.5,
+    "seq_len": 1536,
+    "num_layers": 28,
+    "num_kv_heads": 8,
+    "note": "seed37_add_l4h4_b050"
+  },
+  "summary": [
+    {
+      "threshold": 0.901,
+      "compact_layer": "heads",
+      "compressed_heads": 38,
+      "selected_budget": 768,
+      "budget_fraction": 0.5,
+      "entry_saving_fraction": 0.0848214285714286,
+      "note": "seed37_add_l4h4_b050"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "claim_boundary": "fresh source preparation only; no correctness, performance, cache, memory, compression, or quality claim",
+  "engine_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-partition-diagnostic-20260730-183000-attempt20-production-fullk-r81/configuration/source_inventory.json",
+  "engine_source_tree_sha256": "cdce33aa7f71b6cdc5fdb5c432f7b09bf28a189d30f524a481c8395a20a2c06f",
+  "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+  "root_source_tree_sha256": "b0b76fdadd25020bf2649492095fc805b1e3d00c3f8f71eca87593e5a9773352",
+  "schema_version": "qwen35.tp4-current-source-preparation.v1",
+  "source_count": 111,
+  "source_tag": "qwen35-tp4-source-prep-20260730-161436-attempt20-current-r83",
+  "source_tar_sha256": "52a1077808ad508bf645080b71916ad2c8346abcd3283fde6dc381ca2691eab7"
+}

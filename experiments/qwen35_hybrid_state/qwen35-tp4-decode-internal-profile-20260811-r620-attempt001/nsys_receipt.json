@@ -1,0 +1,64 @@
+{
+  "classification": "COMPLETE",
+  "effective_trace": "cuda,nvtx,osrt",
+  "nccl_evidence_boundary": "Nsight Systems 2024.7.1 on the target rejects the nccl trace argument; NCCL evidence is limited to CUDA kernel names and any supported stats reports",
+  "nccl_trace_argument_supported": false,
+  "requested_trace": "cuda,nvtx,osrt,nccl",
+  "rows": [
+    {
+      "case_id": "w2_long_reuse__nsys_replay__r4__recompute",
+      "policy": "recompute",
+      "reports": {
+        "cuda_gpu_kern_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-recompute-cuda_gpu_kern_sum.csv",
+          "returncode": 0
+        },
+        "nccl_sum": {
+          "available": false,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-recompute-nccl_sum.csv",
+          "returncode": 0
+        },
+        "nvtx_kern_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-recompute-nvtx_kern_sum.csv",
+          "returncode": 0
+        },
+        "nvtx_pushpop_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-recompute-nvtx_pushpop_sum.csv",
+          "returncode": 0
+        }
+      },
+      "returncode": 0
+    },
+    {
+      "case_id": "w2_long_reuse__nsys_replay__r4__exact_restore",
+      "policy": "exact_restore",
+      "reports": {
+        "cuda_gpu_kern_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-exact_restore-cuda_gpu_kern_sum.csv",
+          "returncode": 0
+        },
+        "nccl_sum": {
+          "available": false,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-exact_restore-nccl_sum.csv",
+          "returncode": 0
+        },
+        "nvtx_kern_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-exact_restore-nvtx_kern_sum.csv",
+          "returncode": 0
+        },
+        "nvtx_pushpop_sum": {
+          "available": true,
+          "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001/nsys_stats/r4-exact_restore-nvtx_pushpop_sum.csv",
+          "returncode": 0
+        }
+      },
+      "returncode": 0
+    }
+  ],
+  "version": "NVIDIA Nsight Systems version 2024.7.1.84-247135125610v0"
+}

@@ -1,0 +1,55 @@
+{
+  "classification": "BLOCKED_CORRECTNESS",
+  "claim_boundary": {
+    "correctness_prerequisites_complete": false,
+    "gpu_workload_launched": false,
+    "performance_or_cache_benefit_measured": false,
+    "real_engine_worker_implemented": false,
+    "remote_path_created": false,
+    "remote_query_executed": false
+  },
+  "files": {
+    "contract": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "5e3253172a8c09525ebfe140439b780a0add37f69854e9e8bfaba3eec2e6c756"
+    },
+    "remote_runner": {
+      "path": "tools/run_qwen35_tp4_hybrid_prefix_benchmark_remote.py",
+      "sha256": "493e7d89ffb1eb34128dbdf2477312bbc66405bdb510ecf5dec13f58cc979e98"
+    },
+    "remote_runner_tests": {
+      "path": "tools/test_run_qwen35_tp4_hybrid_prefix_benchmark_remote.py",
+      "sha256": "d05985c6699c9a52b3e3e2617d52e994af2dda73e9eb54d17f490969866ba6ff"
+    },
+    "verifier": {
+      "path": "tools/verify_qwen35_tp4_hybrid_prefix_benchmark.py",
+      "sha256": "2f2ed79318fb5458bf121c9cdb7bb0f7babbbe570c52f939fe37a999b7298577"
+    },
+    "worker_boundary": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "sha256": "13387921dae26efe26c64592fc796f2f124e792eaa9b2297265e530a3d62e97b"
+    }
+  },
+  "fresh_validation": {
+    "contract_tests": 13,
+    "diff_check": "PASS",
+    "forbidden_command_audit": "PASS",
+    "py_compile": "PASS",
+    "runner_tests": 9,
+    "verifier_tests": 8,
+    "worker_tests": 7
+  },
+  "live_preflight": {
+    "authorized": false,
+    "classification": "BLOCKED_CORRECTNESS",
+    "exit_code": 2,
+    "local_files": [
+      "benchmark_preflight.json"
+    ],
+    "reason": "correctness prerequisite file is missing",
+    "remote_path_created": false,
+    "remote_query_executed": false
+  },
+  "run_tag": "qwen35-tp4-benchmark-preflight-20260729-012133",
+  "schema_version": "qwen35.tp4-hybrid-prefix-runner-validation.v1"
+}

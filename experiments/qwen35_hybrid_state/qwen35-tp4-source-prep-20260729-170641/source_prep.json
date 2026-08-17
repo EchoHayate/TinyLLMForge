@@ -1,0 +1,35 @@
+{
+  "authorized_source_delta": {
+    "tinyvllm/models/qwen35_checkpoint_assignment.py": {
+      "after": "e69920aced486b93b9be63e450a8556a33e7d7ff5df11d8b906f4cfc265a8686",
+      "before": "6294b8f432efdc3b8be32e7d34288dc88052406add7e9d7b1d1f7f435865c57e"
+    },
+    "tinyvllm/models/qwen35_checkpoint_binding.py": {
+      "after": "aecf987495a37a3f14f384fdd58e857e9923c1312607c352708250147f6f9bdc",
+      "before": "69578fe68404bfc6db58eac8664bd8cc23fcce84abe5f13cf9e9124fa2824b90"
+    },
+    "tinyvllm/models/qwen35_checkpoint_tiles.py": {
+      "after": "0eb6f610c91d4d26e7facfb8cb7a8399bc416f07bc10c06925f369ca18977fa4",
+      "before": "09c656a9dfae4069dd0661d918d15d2b6cb8f59f3a16156271a241ff6b0d08aa"
+    }
+  },
+  "claim_boundary": "frozen TP4 authority source with segmented Q/K/V conv_weight TP sharding aligned to in_proj_qkv; correctness only; no performance or cache claim",
+  "source_count": 80,
+  "source_tree_sha256": "ec19a8fa68abfba72e9594bdd1e05428b0add9169d3dbdde24190686c013411f",
+  "supersedes": "qwen35-tp4-source-prep-20260729-010400",
+  "tag": "qwen35-tp4-source-prep-20260729-170641",
+  "test_only_files": [
+    "tools/test_qwen35_checkpoint_target_binding.py",
+    "tools/test_qwen35_checkpoint_assignment.py",
+    "tools/test_qwen35_checkpoint_tiles.py",
+    "tools/test_qwen35_real_checkpoint_tiles.py",
+    "tools/test_qwen35_checkpoint_candidate_loader.py",
+    "tools/test_qwen35_streamed_fresh_checkpoint.py",
+    "tools/test_qwen35_tiled_checkpoint_loading.py",
+    "tools/test_qwen35_policy_tiled_checkpoint_loading.py",
+    "tools/test_qwen35_tp4_real_root_logit_correctness_contract.py",
+    "tools/test_qwen35_tp4_real_root_logit_correctness_preflight.py",
+    "tools/test_qwen35_transactional_root_causal_lm.py",
+    "tools/test_verify_qwen35_tp4_real_root_logit_correctness_gate.py"
+  ]
+}

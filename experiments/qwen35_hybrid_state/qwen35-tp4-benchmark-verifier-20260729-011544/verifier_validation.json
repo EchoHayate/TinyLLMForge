@@ -1,0 +1,63 @@
+{
+  "classification": "SYNTHETIC_VERIFIER_PASS",
+  "claim_boundary": {
+    "correctness_prerequisites_complete": false,
+    "gpu_workload_launched": false,
+    "real_performance_or_cache_result": false,
+    "remote_runner_implemented": false,
+    "synthetic_go_is_performance_evidence": false
+  },
+  "files": {
+    "contract": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "5e3253172a8c09525ebfe140439b780a0add37f69854e9e8bfaba3eec2e6c756"
+    },
+    "contract_tests": {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "588576c2c9c8cc8e28145a4f88e5261f879be254a45c09025aa3cd479c790077"
+    },
+    "verifier": {
+      "path": "tools/verify_qwen35_tp4_hybrid_prefix_benchmark.py",
+      "sha256": "2f2ed79318fb5458bf121c9cdb7bb0f7babbbe570c52f939fe37a999b7298577"
+    },
+    "verifier_tests": {
+      "path": "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark.py",
+      "sha256": "7c4125c1fd337b15a80ae85e4000fc65bfcc3fce60308f7034bd58cea0032e74"
+    },
+    "worker": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "sha256": "13387921dae26efe26c64592fc796f2f124e792eaa9b2297265e530a3d62e97b"
+    },
+    "worker_tests": {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_worker.py",
+      "sha256": "cf005cdf23b7c90130284138c906cd1c61fc03d44d4c1f92a1f8a5fde0a3c938"
+    }
+  },
+  "green": {
+    "contract_tests": 13,
+    "diff_check": "PASS",
+    "py_compile": "PASS",
+    "verifier_tests": 8,
+    "worker_tests": 7
+  },
+  "reconstructed_synthetic_fixture": {
+    "case_rows": 280,
+    "classification": "GO",
+    "process_rows": 70,
+    "trusted_as_real_benchmark": false,
+    "w1_median_ttft_ratio": 0.8,
+    "w2_median_ttft_ratio": 0.7,
+    "w3_throughput_ratio": 1.25
+  },
+  "run_tag": "qwen35-tp4-benchmark-verifier-20260729-011544",
+  "schema_version": "qwen35.tp4-hybrid-prefix-verifier-validation.v1",
+  "tamper_rejections": [
+    "artifact hash mismatch",
+    "unexpected top-level file",
+    "signed extra nested file",
+    "resigned output-token mismatch",
+    "resigned missing measured process row",
+    "resigned cache accounting mismatch",
+    "resigned worker traceback"
+  ]
+}

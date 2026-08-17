@@ -1,0 +1,138 @@
+{
+  "name": "qwen3_8b_fixes_doc_smoke_candidate",
+  "description": "Candidate multiple-choice questions for docs/qwen3-8b-fixes.md. Must be baseline-gated before compact policy interpretation.",
+  "tasks": [
+    {
+      "id": "qwen3_8b_goal",
+      "question": "What was the main goal of the Qwen3-8B validation section?",
+      "choices": {
+        "A": "Validate W4A8C4 quality at a 7B-scale model and check tensor-parallel memory behavior",
+        "B": "Train a new tokenizer from scratch",
+        "C": "Replace all attention with CPU disk IO",
+        "D": "Remove KV cache allocation"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "qwen3_8b_model_choice",
+      "question": "Which model was chosen because Qwen3 had no 7B model on modelscope?",
+      "choices": {
+        "A": "Qwen2.5-7B",
+        "B": "Qwen3-8B",
+        "C": "Llama-7B",
+        "D": "BERT-base"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "w4a8_failure_symptom",
+      "question": "What output symptom showed W4A8 and W4A8C4 collapsed on Qwen3-8B?",
+      "choices": {
+        "A": "They generated repeated backslashes or garbage text",
+        "B": "They always answered Paris correctly",
+        "C": "They refused to allocate tokenizer merges",
+        "D": "They produced empty JSON reports"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "c4_quality_boundary",
+      "question": "What did the Qwen3-8B results imply about the C4-only path?",
+      "choices": {
+        "A": "C4-only was also completely unusable",
+        "B": "C4-only was roughly online while W4A8 was the main problem",
+        "C": "C4-only required tokenizer retraining",
+        "D": "C4-only disabled TP"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "tp_memory_correction",
+      "question": "What was corrected about tensor parallel memory measurement?",
+      "choices": {
+        "A": "Peak memory alone was misleading because KV cache filled freed space",
+        "B": "Tensor parallel never split weights",
+        "C": "The tokenizer consumed all GPU memory",
+        "D": "The model had no KV cache"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "weight_mem_metric",
+      "question": "Which metric was added to observe whether TP split model weights?",
+      "choices": {
+        "A": "tokenizer_vocab_gb",
+        "B": "weight_mem_gb",
+        "C": "disk_cache_hit_rate",
+        "D": "beam_search_depth"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "tp_true_weight_split",
+      "question": "After separating weight and KV cache memory, what did the document conclude about TP?",
+      "choices": {
+        "A": "TP weight splitting was working correctly",
+        "B": "TP always duplicated all weights",
+        "C": "TP disabled CUDA",
+        "D": "TP only changed tokenizer output"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "gpu_utilization_semantics",
+      "question": "What is the corrected interpretation of gpu_memory_utilization?",
+      "choices": {
+        "A": "It means each GPU may fill memory up to that utilization with weights and KV cache",
+        "B": "It must be divided by TP size automatically",
+        "C": "It controls tokenizer vocabulary size",
+        "D": "It disables KV cache on TP runs"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "w4a8_root_cause_hypothesis",
+      "question": "Which issue was suspected in the W4A8 numerical collapse?",
+      "choices": {
+        "A": "Activation outlier channels and coarse W4 group scaling",
+        "B": "Needle prompts were too short",
+        "C": "CSV headers were missing",
+        "D": "CPU offload was disabled"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "act_quant_fix",
+      "question": "What activation fake-quantization fix was introduced?",
+      "choices": {
+        "A": "Soft outlier clipping using a p999-based clip value",
+        "B": "Always quantize activations to float64",
+        "C": "Remove all activation scales",
+        "D": "Train a tokenizer calibrator"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "w4_group_size_fix",
+      "question": "Which W4 group size was needed for the 8B lightweight fix?",
+      "choices": {
+        "A": "128",
+        "B": "32",
+        "C": "1",
+        "D": "4096"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "smoothquant_status",
+      "question": "How did the document frame a full SmoothQuant approach at that point?",
+      "choices": {
+        "A": "As a more complete future direction rather than the lightweight fix",
+        "B": "As already replacing all model weights",
+        "C": "As tokenizer-only training",
+        "D": "As unrelated to activation outliers"
+      },
+      "answer": "A"
+    }
+  ]
+}

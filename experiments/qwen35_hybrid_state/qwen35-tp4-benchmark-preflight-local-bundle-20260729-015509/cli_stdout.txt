@@ -1,0 +1,1 @@
+{"authorized": false, "classification": "BLOCKED_CORRECTNESS", "reasons": ["correctness prerequisite file is missing"], "remote_path_created": false, "remote_query_executed": false, "run_tag": "qwen35-tp4-benchmark-preflight-local-bundle-20260729-015509", "schema_version": "qwen35.tp4-hybrid-prefix-performance-cache.v1"}

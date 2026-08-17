@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "tools/test_run_qwen35_tp4_hybrid_prefix_benchmark_remote.py", line 27, in <module>
+    runner = _load(...)
+FileNotFoundError:
+  tools/run_qwen35_tp4_hybrid_prefix_benchmark_remote.py
+
+EXIT_CODE=1
+
+Expected RED:
+  the fail-closed remote runner did not exist yet.

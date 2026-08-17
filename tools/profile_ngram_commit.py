@@ -70,6 +70,70 @@ _ROUTER_SPEC.loader.exec_module(router)
 
 choose_speculation_route = router.choose_speculation_route
 
+for package_name, package_path in (
+    ("tinyvllm", os.path.join(_REPO_ROOT, "tinyvllm")),
+    (
+        "tinyvllm.speculative",
+        os.path.join(_REPO_ROOT, "tinyvllm", "speculative"),
+    ),
+):
+    if package_name not in sys.modules:
+        package = importlib.util.module_from_spec(
+            importlib.util.spec_from_loader(
+                package_name,
+                loader=None,
+                is_package=True,
+            )
+        )
+        package.__path__ = [package_path]
+        sys.modules[package_name] = package
+
+_VERIFIER_MODULE_NAME = "tinyvllm.speculative.verifier"
+if _VERIFIER_MODULE_NAME not in sys.modules:
+    _VERIFIER_PATH = os.path.join(
+        _REPO_ROOT,
+        "tinyvllm",
+        "speculative",
+        "verifier.py",
+    )
+    _VERIFIER_SPEC = importlib.util.spec_from_file_location(
+        _VERIFIER_MODULE_NAME,
+        _VERIFIER_PATH,
+    )
+    verifier_runtime = importlib.util.module_from_spec(
+        _VERIFIER_SPEC
+    )
+    sys.modules[_VERIFIER_MODULE_NAME] = verifier_runtime
+    _VERIFIER_SPEC.loader.exec_module(verifier_runtime)
+
+_RUNTIME_MODULE_NAME = "tinyvllm.speculative.runtime"
+if _RUNTIME_MODULE_NAME not in sys.modules:
+    _RUNTIME_PATH = os.path.join(
+        _REPO_ROOT,
+        "tinyvllm",
+        "speculative",
+        "runtime.py",
+    )
+    _RUNTIME_SPEC = importlib.util.spec_from_file_location(
+        _RUNTIME_MODULE_NAME,
+        _RUNTIME_PATH,
+    )
+    speculative_runtime = importlib.util.module_from_spec(
+        _RUNTIME_SPEC
+    )
+    sys.modules[_RUNTIME_MODULE_NAME] = speculative_runtime
+    _RUNTIME_SPEC.loader.exec_module(speculative_runtime)
+else:
+    speculative_runtime = sys.modules[_RUNTIME_MODULE_NAME]
+
+NativeSpeculativeStepError = (
+    speculative_runtime.NativeSpeculativeStepError
+)
+NativeTailResult = speculative_runtime.NativeTailResult
+execute_native_speculative_step = (
+    speculative_runtime.execute_native_speculative_step
+)
+
 
 DEFAULT_PROMPTS = [
     "Repeat the following phrase five times: alpha beta gamma alpha beta gamma.",
@@ -949,6 +1013,219 @@ def summarize_route_events(route_events: list[dict]) -> dict:
     }
 
 
+def _verify_and_commit_native_block(
+    llm,
+    seq,
+    draft_tokens: list[int],
+    *,
+    draft_source: str,
+    simulate_kv_upload_mb: float,
+    capture_oracle_evidence: bool,
+    defer_finish_for_oracle_evidence: bool,
+) -> dict:
+    from tinyvllm.utils.context import reset_context
+
+    total_t0 = time.perf_counter()
+    history_len = len(seq)
+    block_manager = llm.scheduler.block_manager
+    simulated_kv_upload_ms = 0.0
+
+    def run_first_target():
+        target = llm.model_runner.run(
+            [seq],
+            is_prefill=False,
+        )[0]
+        cuda_sync_if_available()
+        return int(target)
+
+    def prepare_tail(plan, proxy_block_table):
+        input_ids, positions, metadata = (
+            llm.model_runner.prepare_spec_verify(
+                seq,
+                input_tokens=list(plan.input_tokens),
+                proxy_block_table=list(proxy_block_table),
+                slot_positions=list(plan.logical_slots),
+            )
+        )
+        cuda_sync_if_available()
+        return input_ids, positions, metadata
+
+    def run_tail(prepared_tail):
+        nonlocal simulated_kv_upload_ms
+        input_ids, positions, metadata = prepared_tail
+        simulated_kv_upload_ms = _simulate_kv_upload(
+            llm,
+            simulate_kv_upload_mb,
+        )
+        logits = llm.model_runner.run_model(
+            input_ids,
+            positions,
+            is_prefill=False,
+            execution_mode="spec_verify",
+        )
+        target_tokens = tuple(
+            int(token_id)
+            for token_id in logits.argmax(dim=-1).tolist()
+        )
+        oracle_evidence = None
+        if capture_oracle_evidence:
+            kv_snapshot = llm.model_runner.snapshot_kv_slots(
+                list(metadata.physical_slots)
+            )
+            oracle_evidence = {
+                "logits": _tensor_to_float_list(logits),
+                "physical_slots": list(
+                    metadata.physical_slots
+                ),
+                "kv": {
+                    name: _tensor_to_float_list(tensor)
+                    for name, tensor in kv_snapshot.items()
+                },
+            }
+        cuda_sync_if_available()
+        return NativeTailResult(
+            target_tokens=target_tokens,
+            metadata=metadata,
+            auxiliary=oracle_evidence,
+        )
+
+    try:
+        result = execute_native_speculative_step(
+            block_manager=block_manager,
+            seq=seq,
+            draft_tokens=draft_tokens,
+            eos_token=llm.scheduler.eos,
+            run_first_target=run_first_target,
+            prepare_tail=prepare_tail,
+            run_tail=run_tail,
+        )
+        if (
+            result.plan.query_len == 0
+            and simulate_kv_upload_mb > 0.0
+        ):
+            simulated_kv_upload_ms = _simulate_kv_upload(
+                llm,
+                simulate_kv_upload_mb,
+            )
+
+        timing_ms = dict(result.timing_ms)
+        timing_ms["target_forward_ms"] = max(
+            0.0,
+            timing_ms["target_forward_ms"]
+            - simulated_kv_upload_ms,
+        )
+        timing_ms["simulated_kv_upload_ms"] = (
+            simulated_kv_upload_ms
+        )
+        rematerialization = _empty_rematerialization_event()
+        timing_ms["accepted_kv_rematerialize_ms"] = 0.0
+
+        finish_t0 = time.perf_counter()
+        accepted_tokens = list(result.accepted_tokens)
+        finish_would_trigger = bool(accepted_tokens) and (
+            (
+                not seq.ignore_eos
+                and any(
+                    int(token_id) == int(llm.scheduler.eos)
+                    for token_id in accepted_tokens
+                )
+            )
+            or seq.num_completion_tokens >= seq.max_tokens
+        )
+        if defer_finish_for_oracle_evidence:
+            finished = False
+        else:
+            finished = _finish_if_needed(
+                llm,
+                seq,
+                accepted_tokens,
+            )
+        timing_ms["finish_check_ms"] = (
+            time.perf_counter() - finish_t0
+        ) * 1000.0
+        timing_ms["verify_commit_total_ms"] = (
+            time.perf_counter() - total_t0
+        ) * 1000.0
+
+        event = {
+            "verifier_mode": "native",
+            "draft_source": draft_source,
+            "history_len": history_len,
+            "draft_len": len(draft_tokens),
+            "query_len": result.plan.query_len,
+            "draft_tokens": list(draft_tokens),
+            "target_tokens": list(result.target_tokens),
+            "accepted_tokens": accepted_tokens,
+            "accepted_count": len(accepted_tokens),
+            "eos_truncated": result.eos_truncated,
+            "output_budget_truncated": (
+                result.output_budget_truncated
+            ),
+            "accepted_kv_rematerialization": rematerialization,
+            "accepted_kv_copy_calls": 0,
+            "accepted_kv_replay_calls": 0,
+            "reserved_blocks": list(result.reserved_blocks),
+            "committed_blocks": list(result.committed_blocks),
+            "released_blocks": list(result.released_blocks),
+            "target_forward_count": (
+                1 + int(result.plan.query_len > 0)
+            ),
+            "block_table_after": list(seq.block_table),
+            "num_tokens_after": seq.num_tokens,
+            "last_token_after": int(seq.last_token),
+            "finished": finished,
+            "finish_would_trigger": finish_would_trigger,
+            "finish_deferred_for_oracle_evidence": bool(
+                defer_finish_for_oracle_evidence
+                and finish_would_trigger
+            ),
+            "timing_ms": timing_ms,
+            "target_hidden_debug": None,
+            "hidden_to_draft_stub": None,
+        }
+        if result.tail_auxiliary is not None:
+            event["oracle_evidence"] = result.tail_auxiliary
+        metadata = result.tail_metadata
+        if metadata is not None:
+            event.update({
+                "input_tokens": list(metadata.input_tokens),
+                "positions": list(metadata.positions),
+                "logical_slots": list(metadata.logical_slots),
+                "physical_slots": list(metadata.physical_slots),
+                "context_len": int(metadata.context_len),
+                "proxy_block_table": list(metadata.block_table),
+            })
+        else:
+            event.update({
+                "input_tokens": [],
+                "positions": [],
+                "logical_slots": [],
+                "physical_slots": [],
+                "context_len": history_len,
+                "proxy_block_table": list(
+                    result.proxy_block_table
+                ),
+            })
+            if capture_oracle_evidence:
+                event["oracle_evidence"] = {
+                    "logits": [],
+                    "physical_slots": [],
+                    "kv": {"keys": [], "values": []},
+                }
+        return event
+    except NativeSpeculativeStepError as exc:
+        raise RuntimeError(
+            f"spec_verify {exc.phase} failed: {exc.cause}"
+            + (
+                ""
+                if exc.rollback_error is None
+                else f"; rollback failed: {exc.rollback_error}"
+            )
+        ) from exc
+    finally:
+        reset_context()
+
+
 def verify_and_commit_block(
     llm,
     seq,
@@ -990,8 +1267,34 @@ def verify_and_commit_block(
             greedy=True,
             mixed_batch=False,
         )
+        return _verify_and_commit_native_block(
+            llm,
+            seq,
+            draft_tokens,
+            draft_source=draft_source,
+            simulate_kv_upload_mb=simulate_kv_upload_mb,
+            capture_oracle_evidence=capture_oracle_evidence,
+            defer_finish_for_oracle_evidence=(
+                defer_finish_for_oracle_evidence
+            ),
+        )
     t0 = time.perf_counter()
-    reserved_blocks = block_manager.reserve_append_blocks(seq, len(draft_tokens))
+    kv_transaction = None
+    if verifier_mode == "native":
+        kv_transaction = (
+            block_manager.begin_speculative_kv_transaction(
+                seq,
+                proposed_token_count=len(draft_tokens),
+            )
+        )
+        reserved_blocks = list(
+            kv_transaction.reserved_block_ids
+        )
+    else:
+        reserved_blocks = block_manager.reserve_append_blocks(
+            seq,
+            len(draft_tokens),
+        )
     timing_ms = {
         "reserve_blocks_ms": (time.perf_counter() - t0) * 1000.0,
     }
@@ -1195,6 +1498,13 @@ def verify_and_commit_block(
                 llm.model_runner.kv_offload.writeback_dirty(dirty_blocks)
         timing_ms["target_forward_ms"] = (time.perf_counter() - t0) * 1000.0
 
+        if verifier_mode == "native":
+            phase = "kv_materialize"
+            block_manager.mark_speculative_kv_materialized(
+                kv_transaction,
+                query_len,
+            )
+
         t0 = time.perf_counter()
         phase = "acceptance"
         target_tokens = [int(first_target)] + tail_targets
@@ -1229,7 +1539,19 @@ def verify_and_commit_block(
         block_table_before_commit = list(seq.block_table)
         t0 = time.perf_counter()
         phase = "metadata_commit"
-        block_manager.commit_accepted_tokens(seq, accepted_tokens, reserved_blocks)
+        if verifier_mode == "native":
+            block_manager.commit_speculative_kv_transaction(
+                kv_transaction,
+                seq,
+                accepted_tokens,
+            )
+            kv_transaction = None
+        else:
+            block_manager.commit_accepted_tokens(
+                seq,
+                accepted_tokens,
+                reserved_blocks,
+            )
         committed_blocks = list(
             seq.block_table[len(block_table_before_commit):]
         )
@@ -1312,11 +1634,31 @@ def verify_and_commit_block(
             })
         return event
     except Exception as exc:
-        block_manager.release_reserved_blocks(reserved_blocks)
+        cleanup_error = None
+        try:
+            if kv_transaction is not None:
+                block_manager.rollback_speculative_kv_transaction(
+                    kv_transaction,
+                    seq,
+                )
+            else:
+                block_manager.release_reserved_blocks(
+                    reserved_blocks
+                )
+        except Exception as rollback_exc:
+            cleanup_error = rollback_exc
         if verifier_mode == "native":
+            cleanup_suffix = (
+                ""
+                if cleanup_error is None
+                else f"; rollback failed: {cleanup_error}"
+            )
             raise RuntimeError(
                 f"spec_verify {phase} failed: {exc}"
+                f"{cleanup_suffix}"
             ) from exc
+        if cleanup_error is not None:
+            raise cleanup_error from exc
         raise
     finally:
         reset_context()

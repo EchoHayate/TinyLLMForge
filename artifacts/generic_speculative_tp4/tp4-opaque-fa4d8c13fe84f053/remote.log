@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1279, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1268, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/generic_speculative_tp4_gate.py", line 1130, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 worker failed: ngram:b1; log=/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/artifacts/generic_speculative_tp4/tp4-opaque-fa4d8c13fe84f053/.authority.itu25130/cells/ngram:b1.log

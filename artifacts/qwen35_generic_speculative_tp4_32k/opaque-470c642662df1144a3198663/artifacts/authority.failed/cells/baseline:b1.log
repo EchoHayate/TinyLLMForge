@@ -1,0 +1,307 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+Process SpawnProcess-3:
+Process SpawnProcess-1:
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 1961, in __init__
+    self.loop()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 2280, in loop
+    execute_acknowledged_command(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner_command_ack.py", line 149, in execute_acknowledged_command
+    return method(*envelope.args)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7825, in run
+    return run_profiled_step(
+           ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/decode_internal_profiler.py", line 45, in run_profiled_step
+    return call()
+           ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7839, in <lambda>
+    call=lambda: self._run_model_step(
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7727, in _run_model_step
+    logits = self.run_model(
+             ^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7468, in run_model
+    logits = self._run_eager_logits(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 4790, in _run_eager_logits
+    return _run_model_runner_eager(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 652, in _run_model_runner_eager
+    hidden_states, logits = run_step(
+                            ^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/models/qwen35_packed.py", line 285, in run_step
+    prepared = self.prepare_step(
+               ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/models/qwen35_packed.py", line 226, in prepare_step
+    prepared_stack = self.layer_stack.prepare_transactional(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 463, in prepare_transactional
+    hidden_states = self._run_full_layer(
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 263, in _run_full_layer
+    outputs.append(layer(
+                   ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_decoder_layer.py", line 82, in forward
+    mixed = self.full_attention(position_ids, normalized)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_full_attention.py", line 696, in forward
+    attention_output = qwen35_prefill_eager_attention(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_full_attention.py", line 108, in qwen35_prefill_eager_attention
+    probabilities = torch.softmax(
+                    ^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_device.py", line 79, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.00 GiB. GPU 1 has a total capacity of 79.15 GiB of which 4.10 GiB is free. Process 4053853 has 946.00 MiB memory in use. Process 4055491 has 18.39 GiB memory in use. Process 4033570 has 946.00 MiB memory in use. Process 2834828 has 26.58 GiB memory in use. Including non-PyTorch memory, this process has 28.16 GiB memory in use. Of the allocated memory 24.46 GiB is allocated by PyTorch, and 3.04 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 1961, in __init__
+    self.loop()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 2280, in loop
+    execute_acknowledged_command(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner_command_ack.py", line 149, in execute_acknowledged_command
+    return method(*envelope.args)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7825, in run
+    return run_profiled_step(
+           ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/decode_internal_profiler.py", line 45, in run_profiled_step
+    return call()
+           ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7839, in <lambda>
+    call=lambda: self._run_model_step(
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7727, in _run_model_step
+    logits = self.run_model(
+             ^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7468, in run_model
+    logits = self._run_eager_logits(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 4790, in _run_eager_logits
+    return _run_model_runner_eager(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 652, in _run_model_runner_eager
+    hidden_states, logits = run_step(
+                            ^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/models/qwen35_packed.py", line 285, in run_step
+    prepared = self.prepare_step(
+               ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/models/qwen35_packed.py", line 226, in prepare_step
+    prepared_stack = self.layer_stack.prepare_transactional(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 463, in prepare_transactional
+    hidden_states = self._run_full_layer(
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 263, in _run_full_layer
+    outputs.append(layer(
+                   ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_decoder_layer.py", line 82, in forward
+    mixed = self.full_attention(position_ids, normalized)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_full_attention.py", line 696, in forward
+    attention_output = qwen35_prefill_eager_attention(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_full_attention.py", line 108, in qwen35_prefill_eager_attention
+    probabilities = torch.softmax(
+                    ^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_device.py", line 79, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.00 GiB. GPU 3 has a total capacity of 79.15 GiB of which 7.75 GiB is free. Process 1595383 has 36.00 MiB memory in use. Process 1185613 has 4.70 GiB memory in use. Process 1190106 has 438.00 MiB memory in use. Process 2834775 has 45.96 GiB memory in use. Including non-PyTorch memory, this process has 20.14 GiB memory in use. Of the allocated memory 16.46 GiB is allocated by PyTorch, and 3.04 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Process SpawnProcess-2:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 1961, in __init__
+    self.loop()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 2280, in loop
+    execute_acknowledged_command(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner_command_ack.py", line 149, in execute_acknowledged_command
+    return method(*envelope.args)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7825, in run
+    return run_profiled_step(
+           ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/decode_internal_profiler.py", line 45, in run_profiled_step
+    return call()
+           ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7839, in <lambda>
+    call=lambda: self._run_model_step(
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7727, in _run_model_step
+    logits = self.run_model(
+             ^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 7468, in run_model
+    logits = self._run_eager_logits(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 4790, in _run_eager_logits
+    return _run_model_runner_eager(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/engine/model_runner.py", line 652, in _run_model_runner_eager
+    hidden_states, logits = run_step(
+                            ^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/models/qwen35_packed.py", line 285, in run_step
+    prepared = self.prepare_step(
+               ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/models/qwen35_packed.py", line 226, in prepare_step
+    prepared_stack = self.layer_stack.prepare_transactional(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 463, in prepare_transactional
+    hidden_states = self._run_full_layer(
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 263, in _run_full_layer
+    outputs.append(layer(
+                   ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_decoder_layer.py", line 82, in forward
+    mixed = self.full_attention(position_ids, normalized)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_full_attention.py", line 696, in forward
+    attention_output = qwen35_prefill_eager_attention(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-32k-runs/opaque-470c642662df1144a3198663/source/tinyvllm/layers/qwen35_full_attention.py", line 108, in qwen35_prefill_eager_attention
+    probabilities = torch.softmax(
+                    ^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_device.py", line 79, in __torch_function__
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.00 GiB. GPU 2 has a total capacity of 79.15 GiB of which 2.20 GiB is free. Process 252431 has 1.25 GiB memory in use. Process 2723298 has 1.50 GiB memory in use. Process 2834751 has 45.96 GiB memory in use. Including non-PyTorch memory, this process has 28.18 GiB memory in use. Of the allocated memory 24.46 GiB is allocated by PyTorch, and 3.04 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank0]:[E813 16:10:14.708433279 ProcessGroupNCCL.cpp:607] [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=6, OpType=ALLREDUCE, NumelIn=1, NumelOut=1, Timeout(ms)=600000) ran for 600087 milliseconds before timing out.
+[rank0]:[E813 16:10:14.708544107 ProcessGroupNCCL.cpp:1664] [PG 0 (default_pg) Rank 0] Exception (either an error or timeout) detected by watchdog at work: 6, last enqueued NCCL work: 6, last completed NCCL work: 5.
+[rank0]:[E813 16:10:14.708554397 ProcessGroupNCCL.cpp:1709] [PG 0 (default_pg) Rank 0] Timeout at NCCL work: 6, last enqueued NCCL work: 6, last completed NCCL work: 5.
+[rank0]:[E813 16:10:14.708562276 ProcessGroupNCCL.cpp:621] [Rank 0] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank0]:[E813 16:10:14.708572870 ProcessGroupNCCL.cpp:627] [Rank 0] To avoid data inconsistency, we are taking the entire process down.
+[rank0]:[E813 16:10:14.712668616 ProcessGroupNCCL.cpp:1515] [PG 0 (default_pg) Rank 0] Process group watchdog thread terminated with exception: [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=6, OpType=ALLREDUCE, NumelIn=1, NumelOut=1, Timeout(ms)=600000) ran for 600087 milliseconds before timing out.
+Exception raised from checkTimeout at ../torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:609 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f2da25f1f86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x1d2 (0x7f2da38ee8f2 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0x233 (0x7f2da38f5333 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x10c (0x7f2da38f771c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xbbb2f (0x7f2df104db2f in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x7fa3 (0x7f2df3564fa3 in /usr/lib/x86_64-linux-gnu/libpthread.so.0)
+frame #6: clone + 0x3f (0x7f2df330906f in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG 0 (default_pg) Rank 0] Process group watchdog thread terminated with exception: [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=6, OpType=ALLREDUCE, NumelIn=1, NumelOut=1, Timeout(ms)=600000) ran for 600087 milliseconds before timing out.
+Exception raised from checkTimeout at ../torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:609 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f2da25f1f86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x1d2 (0x7f2da38ee8f2 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0x233 (0x7f2da38f5333 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x10c (0x7f2da38f771c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xbbb2f (0x7f2df104db2f in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x7fa3 (0x7f2df3564fa3 in /usr/lib/x86_64-linux-gnu/libpthread.so.0)
+frame #6: clone + 0x3f (0x7f2df330906f in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at ../torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1521 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f2da25f1f86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xe5aa84 (0x7f2da3580a84 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xbbb2f (0x7f2df104db2f in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #3: <unknown function> + 0x7fa3 (0x7f2df3564fa3 in /usr/lib/x86_64-linux-gnu/libpthread.so.0)
+frame #4: clone + 0x3f (0x7f2df330906f in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 15 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

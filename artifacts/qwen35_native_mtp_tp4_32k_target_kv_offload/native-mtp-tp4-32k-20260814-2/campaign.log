@@ -1,0 +1,25 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1108, in run_campaign
+    result = assemble_authority(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 729, in assemble_authority
+    return validate_result({
+           ^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_32k_target_kv_offload_gate.py", line 85, in validate_result
+    normalized = _frozen_validate_result(value)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 686, in validate_result
+    raise ValueError(
+ValueError: baseline/native output parity mismatch for batch 1
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_32k_target_kv_offload_gate.py", line 118, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1222, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 1164, in run_campaign
+    raise RuntimeError(
+RuntimeError: baseline/native output parity mismatch for batch 1; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-32k-target-kv-offload-runs/native-mtp-tp4-32k-20260814-2/artifacts/authority.failed

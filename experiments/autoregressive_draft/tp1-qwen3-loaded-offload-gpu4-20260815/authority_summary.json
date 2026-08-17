@@ -1,0 +1,65 @@
+{
+  "classification": "PASS_CORRECTNESS_AND_REAL_PROPOSAL_KV_MOVEMENT",
+  "performance_promotion": false,
+  "run": {
+    "host": "sitian@10.232.195.203",
+    "gpu": "CUDA_VISIBLE_DEVICES=4",
+    "started_at_utc": "2026-08-15T11:50:14Z",
+    "finished_at_utc": "2026-08-15T11:52:50Z",
+    "exit_code": 0,
+    "gate_pass": true,
+    "schema_version": 2
+  },
+  "configuration": {
+    "tensor_parallel_size": 1,
+    "dtype": "bfloat16",
+    "temperature": 0.0,
+    "max_proposal_tokens": 4,
+    "max_output_tokens": 8,
+    "proposal_kv_offload": true,
+    "proposal_kv_gpu_slot_capacity": 8
+  },
+  "correctness": {
+    "batch_1_exact_output_parity": true,
+    "batch_4_exact_output_parity": true,
+    "batch_1_acceptance_row_count": 4,
+    "batch_4_acceptance_row_count": 14,
+    "extra_target_forward_count": 0,
+    "first_target_forward_count": 8,
+    "tail_verification_forward_count": 8,
+    "real_draft_forward_count": 45,
+    "accepted_entry_copy_count": 0,
+    "accepted_entry_replay_count": 0,
+    "accepted_entry_rematerialization_count": 0
+  },
+  "proposal_kv": {
+    "allocator_mode": "residency",
+    "logical_entry_capacity": 90,
+    "gpu_slot_capacity": 8,
+    "cpu_backing_capacity": 90,
+    "async_copy": true,
+    "batch_copy": true,
+    "live_slots_before_release": 46,
+    "live_slots_after_release": 0,
+    "h2d_operation_count": 9838,
+    "h2d_entry_count": 18266,
+    "h2d_bytes": 2094891008,
+    "d2h_operation_count": 58,
+    "d2h_entry_count": 83,
+    "d2h_bytes": 9519104,
+    "real_bidirectional_movement": true,
+    "proposal_and_target_storage_distinct": true
+  },
+  "provenance": {
+    "result_sha256": "da8dcf291c2650c0cd5400400e6ed017e1859c1096766f3e34ed1717e4b092d2",
+    "source_inventory_sha256": "4d5e8c856c712f5b97587f20bd85dacd481423d4f90f6ceacb973f7ec8f68b7d",
+    "flash_attention_wheel_sha256": "a37b7740067ab5f5e257ad2921265fb9f4227f3907ceda4a9bd1237270c7f308",
+    "flash_attention_extension_sha256": "69935f7ed04a7109c0f02f240983362482176700c54040520f40cbd683fcd053"
+  },
+  "boundaries": [
+    "The gate explicitly sets performance_pass_criterion=false.",
+    "This bundle proves TP1 batch-1/batch-4 exact greedy parity and real Proposal-KV H2D/D2H movement for the recorded Qwen3 target/draft checkpoints.",
+    "This bundle does not prove TP4, 4K/16K/32K long-context coverage, a second learned model structure, or performance improvement.",
+    "The compact bundle preserves a source hash inventory and receipt but does not contain a frozen source tarball or an independent current/archive verifier."
+  ]
+}

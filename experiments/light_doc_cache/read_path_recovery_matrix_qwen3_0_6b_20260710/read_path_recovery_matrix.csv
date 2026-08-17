@@ -1,0 +1,7 @@
+mode,role,prompt_tokens,logical_byte_saving_fraction,missing_tokens,missing_mse,missing_mae,missing_max_abs,max_abs_logit_diff,mean_abs_logit_diff,argmax_match,original_argmax,restored_argmax,artifact
+repeat_last,baseline,13,0.18990384615384615,553,13.739910267722324,1.5905538986674483,224.0,5.5625,0.7872850298881531,False,1815,3491,experiments/light_doc_cache/tinyllm_sidecar_read_path_repeat_last_smoke_qwen3_0_6b_20260710
+linear_tail,baseline,13,0.18990384615384615,553,38.58595409486837,2.548733401902114,336.0,17.5,3.1362242698669434,False,1815,50927,experiments/light_doc_cache/tinyllm_sidecar_read_path_smoke_qwen3_0_6b_20260710
+correlated_same_layer,correlated,13,0.18990384615384615,553,11.548846984339127,1.459791208086889,174.0,5.21875,0.8861417174339294,False,1815,3491,experiments/light_doc_cache/tinyllm_sidecar_read_path_correlated_smoke_qwen3_0_6b_20260710
+correlated_prefix_fit,correlated_ablation,13,0.18990384615384615,553,13.205773939082022,1.4927183992581383,198.0,6.9375,1.1095695495605469,False,1815,13173,experiments/light_doc_cache/tinyllm_sidecar_read_path_correlated_prefixfit_smoke_qwen3_0_6b_20260710
+multi_correlated2,multi_source_ablation,13,0.18990384615384615,553,18.3975272047528,1.7277806489366303,384.0,6.96875,1.047234296798706,False,1815,3972,experiments/light_doc_cache/tinyllm_sidecar_read_path_multi_correlated2_smoke_qwen3_0_6b_20260710
+oracle,upper_bound,13,0.18990384615384615,553,0.0,0.0,0.0,0.0,0.0,True,1815,1815,experiments/light_doc_cache/tinyllm_sidecar_read_path_oracle_smoke_qwen3_0_6b_20260710

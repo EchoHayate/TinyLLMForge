@@ -1,0 +1,11 @@
+{
+  "attempt": "attempt9",
+  "campaign_tag": "qwen35-tp4-correctness-campaign-controlled-shared-20260729-181536-attempt9",
+  "classification": "READY",
+  "dist_port": 61213,
+  "master_port": 61214,
+  "preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-correctness-campaign-preparation-controlled-shared-20260729-181536-attempt9",
+  "resource_baseline_sha256": "504397882d0f2053a62111bae4d97138bb1e2742d819495f52fb72a530ae249c",
+  "source_tree_sha256": "3aef01fbc8e9a195aa032a61cdb3ac321aa569576980a152743ced7f8f43fb5e",
+  "suffix": "20260729-181536-attempt9"
+}

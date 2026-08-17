@@ -1,0 +1,25 @@
+# TinyLLM Read-Path Recovery Matrix
+
+Boundary: default-off restored-sidecar read-path comparison; no attention hot-path or KV allocation lifetime change.
+
+| Mode | Role | Missing MSE | Missing Max Abs | Max Logit Diff | Mean Logit Diff | Argmax Match | Restored Argmax |
+|---|---|---:|---:|---:|---:|---|---:|
+| `repeat_last_target` | baseline | 15.2284 | 217 | 4.0625 | 0.598329 | True | 785 |
+| `correlated_same_layer_target` | baseline | 11.4076 | 246 | 3.59375 | 0.507468 | True | 785 |
+| `calibrated_single_pair_target` | trained | 13.5193 | 219 | 3.89062 | 0.684234 | True | 785 |
+| `calibrated_multiprompt_same_layer_target` | trained | 9.55884 | 146 | 4.0625 | 0.538956 | True | 785 |
+| `calibrated_multiprompt_calfit_target` | trained | 11.5086 | 211 | 3.4375 | 0.533486 | True | 785 |
+| `calibrated_multiprompt_holdout_target` | trained | 11.7772 | 252 | 3.10938 | 0.455011 | True | 785 |
+
+Common setup:
+
+- Prompt tokens: `14`.
+- Logical byte saving fraction: `17.63%`.
+- Missing compact tokens: `553`.
+- Original argmax: `785`.
+
+Interpretation:
+
+- Non-oracle argmax-preserving modes: `repeat_last_target`, `correlated_same_layer_target`, `calibrated_single_pair_target`, `calibrated_multiprompt_same_layer_target`, `calibrated_multiprompt_calfit_target`, `calibrated_multiprompt_holdout_target`.
+- `calibrated_multiprompt_holdout_target` has the best non-oracle mean logit diff.
+- `calibrated_multiprompt_same_layer_target` has the best non-oracle missing-token MSE.

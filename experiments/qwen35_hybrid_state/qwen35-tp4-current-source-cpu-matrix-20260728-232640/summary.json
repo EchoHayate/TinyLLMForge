@@ -1,0 +1,33 @@
+{
+  "claim_boundary": "CPU regression coverage only; not frozen authority source, not real TP4 execution, not correctness authority, and not performance or cache evidence",
+  "failed_or_superseded_evidence": [
+    "qwen35-tp4-current-source-cpu-matrix-20260728-232152",
+    "qwen35-tp4-current-source-cpu-matrix-20260728-232348",
+    "qwen35-tp4-current-source-cpu-matrix-20260728-232504"
+  ],
+  "file_count": 320,
+  "historical_provenance_source_lock": {
+    "error": "TP4 real-candidate source does not match prerequisite",
+    "interpretation": "the historical gate binds an earlier 57-file prerequisite and is not a current-source regression gate; its whitelist was not weakened",
+    "status": "EXPECTED_FAIL_CLOSED"
+  },
+  "kv_head_parallel_linear": "PASS",
+  "passed_test_counts": {
+    "concrete_component_factory": 2,
+    "live_concurrent_ownership": 18,
+    "provenance_behavior_excluding_source_lock": 18,
+    "tp1_contract": 7,
+    "tp1_preflight": 30,
+    "tp4_contract": 6,
+    "tp4_independent_verifier": 4,
+    "tp4_preflight": 28,
+    "transactional_root": 14
+  },
+  "remote_path": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cpu-matrix-runs/qwen35-tp4-current-source-cpu-matrix-20260728-232640",
+  "run_tag": "qwen35-tp4-current-source-cpu-matrix-20260728-232640",
+  "schema_version": "qwen35.tp4-current-source-cpu-matrix-result.v1",
+  "source_tar_sha256": "37c227887c257784b6a5575791b7ab60a3c0186aba721a0835e57cdbbf282fb2",
+  "source_tree_sha256": "a1ecef03f2c96e374e61004ee06dbfc75842cc702edc2210f286045b9698f011",
+  "status": "PASS_WITH_EXPECTED_STALE_SOURCE_LOCK",
+  "syntax": "PASS"
+}

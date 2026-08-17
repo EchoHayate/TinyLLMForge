@@ -1,0 +1,17 @@
+{
+  "bf16_supported": true,
+  "cuda": "12.1",
+  "flash_attn": "2.6.3",
+  "gpu": "NVIDIA A100 80GB PCIe",
+  "host": "n232-195-203",
+  "model_identifier": "Qwen3-0.6B",
+  "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "model_type": "qwen3",
+  "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "python": "3.11.15 | packaged by conda-forge | (main, Mar  5 2026, 16:45:40) [GCC 14.3.0]",
+  "run_tag": "qwen3-06b-arrival-canonical-20260719-200154",
+  "schema_version": 1,
+  "source_tree_sha256": "af9028ca88c89b8fbef8beea20786c6497db3bd538267eea8dd87e53977d0b67",
+  "tinyvllm_file": "/data00/home/sitian/sitian-workspace01/tllm/arrival-load-runs/qwen3-06b-arrival-canonical-20260719-200154/staging/source/tinyvllm/__init__.py",
+  "torch": "2.4.1+cu121"
+}

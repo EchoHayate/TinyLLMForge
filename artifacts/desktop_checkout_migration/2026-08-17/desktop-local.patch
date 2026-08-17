@@ -1,0 +1,302 @@
+diff --git a/AGENT_HANDOFF_STATE.md b/AGENT_HANDOFF_STATE.md
+index 9521ca2..aa92311 100644
+--- a/AGENT_HANDOFF_STATE.md
++++ b/AGENT_HANDOFF_STATE.md
+@@ -1571,6 +1571,252 @@ ssh sitian@10.232.195.203 'cd /data00/home/sitian/sitian-workspace01/tllm/TinyLL
+   --out-json profile_out/ngram_spec_s4_06b_candidate_n5d4_verify.json'
+ ```
+ 
++## 2026-07-13 Light Doc Cache calibrated read-path handoff
++
++当前 Light Doc Cache 主线已推进到 TinyLLM calibrated recovery bank 的
++default-off restored-sidecar read-path 对比，并已完成 same-target
++artifact-backed recovery matrix。
++
++已落盘的核心代码/脚本：
++
++- `tinyvllm/engine/light_doc_cache_runtime.py`：planner、compressed storage、
++  recovery callbacks、multi-source calibrated bank save/load/apply。
++- `tinyvllm/engine/model_runner.py`：default-off summary/materialize sidecar
++  wrappers；未改 `run()`、attention hot path、slot mapping、KV writes。
++- `experiments/light_doc_cache/run_tinyllm_calibrated_kv_smoke.py`：从真实
++  TinyLLM `ModelRunner.kv_cache` fit calibrated bank。
++- `experiments/light_doc_cache/run_tinyllm_sidecar_read_path_smoke.py`：支持
++  `--recover-mode calibrated_multi_correlated` 和 `--recovery-bank-file`。
++- `experiments/light_doc_cache/make_read_path_recovery_matrix.py`：基于
++  `tinyllm_sidecar_read_path_summary.json` 生成最终 matrix。
++
++已拉回/已生成的 calibrated artifacts：
++
++- Bank：
++  `experiments/light_doc_cache/tinyllm_calibrated_kv_smoke_qwen3_0_6b_20260710/multi_source_recovery_bank.json`
++- Calibrated read-path：
++  `experiments/light_doc_cache/tinyllm_sidecar_read_path_calibrated_smoke_qwen3_0_6b_20260710/tinyllm_sidecar_read_path_summary.json`
++- Calibrated result：
++  `prompt_tokens=14`、`logical_byte_saving_fraction=17.6339%`、
++  `missing_tokens=553`、`missing_mse=13.5193`、
++  `max_abs_logit_diff=3.890625`、`mean_abs_logit_diff=0.6842344403266907`、
++  original/restored argmax `785/785`，`argmax_match=true`。
++
++已拉回/已生成的 same-target baseline 和 final matrix：
++
++- Repeat-last baseline：
++  `experiments/light_doc_cache/tinyllm_sidecar_read_path_repeat_last_target_smoke_qwen3_0_6b_20260710/tinyllm_sidecar_read_path_summary.json`
++- Same-layer correlated baseline：
++  `experiments/light_doc_cache/tinyllm_sidecar_read_path_correlated_target_smoke_qwen3_0_6b_20260710/tinyllm_sidecar_read_path_summary.json`
++- Final artifact-backed matrix：
++  `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_target_qwen3_0_6b_20260710/read_path_recovery_matrix.md`
++  and
++  `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_target_qwen3_0_6b_20260710/read_path_recovery_matrix.csv`
++
++Final matrix rows:
++
++- `repeat_last_target`: missing MSE `15.2284`, missing max abs `217`,
++  max logit diff `4.0625`, mean logit diff `0.598329`, argmax `785 -> 785`。
++- `correlated_same_layer_target`: missing MSE `11.4076`, missing max abs
++  `246`, max logit diff `3.59375`, mean logit diff `0.507468`, argmax
++  `785 -> 785`。
++- `calibrated_multi_correlated_target`: missing MSE `13.5193`, missing max abs
++  `219`, max logit diff `3.890625`, mean logit diff `0.684234`, argmax
++  `785 -> 785`。
++
++Interpretation：三种 non-oracle read-path mode 都保持 target-prompt argmax；
++trained/calibrated bank 验证了 JSON bank + restored-sidecar read-path plumbing，
++但在这个单 target prompt 上没有打过 cheap same-layer correlated baseline。
++下一步应扩大 calibration prompt/source-head selection，再考虑 attention hot
++path 或 physical KV allocation。
++
++仍保留的非最终 provisional 对照（仅作历史 handoff，不用于最终结论）：
++
++- `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_target_qwen3_0_6b_20260710_provisional/read_path_recovery_matrix_provisional.md`
++- `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_target_qwen3_0_6b_20260710_provisional/read_path_recovery_matrix_provisional.csv`
++
++SSH 恢复后已拉取的 remote baseline directories：
++
++- remote
++  `/tmp/light_doc_cache_tinyllm_read_path_repeat_last_target_qwen3_0_6b_20260710/`
++  -> local
++  `experiments/light_doc_cache/tinyllm_sidecar_read_path_repeat_last_target_smoke_qwen3_0_6b_20260710/`
++- remote
++  `/tmp/light_doc_cache_tinyllm_read_path_correlated_target_qwen3_0_6b_20260710/`
++  -> local
++  `experiments/light_doc_cache/tinyllm_sidecar_read_path_correlated_target_smoke_qwen3_0_6b_20260710/`
++
++Final matrix 生成命令：
++
++```bash
++python3 experiments/light_doc_cache/make_read_path_recovery_matrix.py \
++  --artifact repeat_last_target:baseline:experiments/light_doc_cache/tinyllm_sidecar_read_path_repeat_last_target_smoke_qwen3_0_6b_20260710/tinyllm_sidecar_read_path_summary.json \
++  --artifact correlated_same_layer_target:baseline:experiments/light_doc_cache/tinyllm_sidecar_read_path_correlated_target_smoke_qwen3_0_6b_20260710/tinyllm_sidecar_read_path_summary.json \
++  --artifact calibrated_multi_correlated_target:trained:experiments/light_doc_cache/tinyllm_sidecar_read_path_calibrated_smoke_qwen3_0_6b_20260710/tinyllm_sidecar_read_path_summary.json \
++  --output-dir experiments/light_doc_cache/read_path_recovery_matrix_calibrated_target_qwen3_0_6b_20260710
++```
++
++SSH blocker 处理记录：
++
++- 之前 `klist` 在当前 TRAE 进程中为 `Cache not found`，file ticket 过期，
++  direct SSH 报 `Connection closed by UNKNOWN port 65535`。
++- 外部刷新后 `/tmp/ssh-sitian-10.232.195.203` 出现，direct SSH 仍偶发断开，
++  但 `ssh -S /tmp/ssh-sitian-10.232.195.203 ...` 可用。
++- artifact pull 使用：
++
++```bash
++rsync -av -e 'ssh -S /tmp/ssh-sitian-10.232.195.203 -o BatchMode=yes -o ConnectTimeout=10' \
++  sitian@10.232.195.203:/tmp/light_doc_cache_tinyllm_read_path_repeat_last_target_qwen3_0_6b_20260710/ \
++  experiments/light_doc_cache/tinyllm_sidecar_read_path_repeat_last_target_smoke_qwen3_0_6b_20260710/
++
++rsync -av -e 'ssh -S /tmp/ssh-sitian-10.232.195.203 -o BatchMode=yes -o ConnectTimeout=10' \
++  sitian@10.232.195.203:/tmp/light_doc_cache_tinyllm_read_path_correlated_target_qwen3_0_6b_20260710/ \
++  experiments/light_doc_cache/tinyllm_sidecar_read_path_correlated_target_smoke_qwen3_0_6b_20260710/
++```
++
++验证状态：
++
++- `PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m pytest -q tools/test_light_doc_cache_runtime.py tools/test_light_doc_cache_recovery_probe.py`
++  -> `61 passed`。
++- `PYTHONPYCACHEPREFIX=/private/tmp/tinyllmforge_pycache python3 -m py_compile ...`
++  -> passed。
++- `bash -n experiments/light_doc_cache/run_task_quality_smoke_remote.sh experiments/light_doc_cache/run_recovery_probe_remote.sh && git diff --check`
++  -> passed。
++
++Claim boundary:
++
++- 当前结果证明 trained/calibrated recovery bank 可通过 JSON 加载并在
++  default-off restored-sidecar read-path logits compare 中保持一个 target
++  prompt 的 argmax。
++- 当前不证明 2x+ runtime doc-cache compression，不证明 physical KV memory
++  saving，不证明 attention hot-path integration。
++
++2026-07-13 继续推进：multi-prompt calibrated bank 已实现并远程验证。
++
++代码变化：
++
++- `experiments/light_doc_cache/run_tinyllm_calibrated_kv_smoke.py` 新增
++  repeatable `--calibration-prompt-extra` 和 `--calibration-prompts-file`。
++- 新增 `copy_kv_prompt_prefix(...)`，只复制 prompt-prefix KV blocks，避免多
++  calibration prompt 时 clone 完整预分配 `ModelRunner.kv_cache` 导致 OOM。
++- 新增 `stack_calibration_kv_samples(...)`，把多个 calibration prompt prefix
++  连续拼成一个 calibration KV tensor。
++- `run_calibrated_smoke(...)` 现在 fit 使用 calibration-length plan，target
++  storage/readback 使用 target-length plan。
++
++本地测试新增并通过：
++
++- 多 calibration KV 连续拼接测试。
++- prompt-prefix-only KV copy 测试。
++- calibration tokens 不被 target tokens 截断测试。
++
++远程第一轮 multi-prompt KV smoke 曾 OOM：
++
++- `torch.OutOfMemoryError: Tried to allocate 21.52 GiB`
++- 根因是每个 calibration sample 保留完整 preallocated KV clone。
++- prefix-copy 修复后远程通过。
++
++远程 artifacts：
++
++- `experiments/light_doc_cache/tinyllm_calibrated_kv_smoke_qwen3_0_6b_20260713_multiprompt/`
++- `experiments/light_doc_cache/tinyllm_sidecar_read_path_calibrated_multiprompt_smoke_qwen3_0_6b_20260713/`
++- `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_multiprompt_target_qwen3_0_6b_20260713/`
++
++Multi-prompt result：
++
++- Calibration tokens `31`，target tokens `14`。
++- KV-only MSE `11.6785`，比 single-pair KV-only `13.5483` 改善。
++- Read-path row：missing MSE `9.55884`，missing max abs `146`，max logit
++  diff `4.0625`，mean logit diff `0.538956`，argmax `785 -> 785`。
++- Extended matrix 中 `calibrated_multiprompt_target` 是最佳 missing-token MSE，
++  但 `correlated_same_layer_target` 仍是最佳 mean logit diff (`0.507468`)。
++
++下一步建议：
++
++- 不要进入 attention hot path / physical KV allocation。
++- calibration-fit source-head selection 已试过，结果 mixed/negative；下一步
++  应用 calibration holdout error 或 read-path/logit sensitivity 选 source
++  heads，而不是固定 same-layer top-2 或 prefix-fit。
++
++2026-07-13 继续推进：calibration-fit source-head selection 已实现并远程验证。
++
++代码变化：
++
++- `experiments/light_doc_cache/run_tinyllm_calibrated_kv_smoke.py` 新增
++  `--source-map {same_layer,calibration_fit}`。
++- `build_calibration_fit_source_heads(...)` 按 calibration-prefix reconstruction
++  fit 为每个 compact target head 选择 retained source heads。
++- Summary 记录 `source_map` 和 `source_heads`。
++
++本地测试：
++
++- 新增 toy test 验证 calibration-fit selector 会选中 prefix fit error 最低的
++  source head。
++- 完整本地验证：`65 passed`，`py_compile` 和 `git diff --check` 通过。
++
++远程 artifacts：
++
++- `experiments/light_doc_cache/tinyllm_calibrated_kv_smoke_qwen3_0_6b_20260713_calfit/`
++- `experiments/light_doc_cache/tinyllm_sidecar_read_path_calfit_smoke_qwen3_0_6b_20260713/`
++- `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_sourcefit_target_qwen3_0_6b_20260713/`
++
++Calibration-fit result：
++
++- KV-only missing-token MSE `20.7961`，比 same-layer multi-prompt `11.6785`
++  更差。
++- Read-path row：missing MSE `11.5086`，missing max abs `211`，max logit diff
++  `3.4375`，mean logit diff `0.533486`，argmax `785 -> 785`。
++- 对比 multi-prompt same-layer trained bank：max logit diff 改善
++  (`4.0625 -> 3.4375`)，mean logit diff 略改善 (`0.538956 -> 0.533486`)，
++  但 missing MSE 变差 (`9.55884 -> 11.5086`)。
++- 仍未打过 cheap `correlated_same_layer_target` mean logit diff `0.507468`。
++
++结论：prefix-fit source selection 不是可靠方向。下一步建议做 held-out
++missing-token selector：在 calibration tokens 内切 train/holdout，fit weights
++后用 heldout missing-token MSE 选 source heads；或者做小规模 read-path/logit
++sensitivity selector。
++
++2026-07-13 继续推进：calibration-holdout source-head selection 已实现并远程验证。
++
++代码变化：
++
++- `experiments/light_doc_cache/run_tinyllm_calibrated_kv_smoke.py` 的
++  `--source-map` 新增 `calibration_holdout`。
++- `build_calibration_holdout_source_heads(...)` 对每个 compact target head：
++  在 selected calibration prefix 上拟合 affine map，在剩余 calibration tokens
++  上打分，选择 held-out MSE 最低的 retained source heads。
++- 修复远程 torch 设备不一致：heldout target slice 会转到 prediction 的 device
++  和 dtype 后再算 diff。
++
++本地测试：
++
++- 新增 toy test：prefix-only source 在 prefix 上完美但 holdout 崩坏，
++  `calibration_holdout` 会选择泛化更好的 source。
++- 完整验证：`66 passed`，`py_compile` 和 `git diff --check` 通过。
++
++远程 artifacts：
++
++- `experiments/light_doc_cache/tinyllm_calibrated_kv_smoke_qwen3_0_6b_20260713_holdout/`
++- `experiments/light_doc_cache/tinyllm_sidecar_read_path_holdout_smoke_qwen3_0_6b_20260713/`
++- `experiments/light_doc_cache/read_path_recovery_matrix_calibrated_holdout_target_qwen3_0_6b_20260713/`
++
++Holdout result：
++
++- KV-only missing-token MSE `7.07867`，max abs `155`。
++- Read-path row：missing MSE `11.7772`，missing max abs `252`，max logit diff
++  `3.10938`，mean logit diff `0.455011`，argmax `785 -> 785`。
++- 这是第一个 trained/calibrated row 在该 target prompt 上打过 cheap
++  `correlated_same_layer_target` 的 mean logit diff (`0.455011` vs `0.507468`)
++  和 max logit diff (`3.10938` vs `3.59375`)。
++- 但它不是最佳 missing-token MSE；`calibrated_multiprompt_same_layer_target`
++  仍是 MSE 最好 (`9.55884`)。
++
++下一步建议：
++
++- 在更多 target prompts 上确认 holdout selector，不要只基于单 target prompt。
++- 生成 multi-target read-path matrix；稳定后再讨论 runtime hot-path /
++  physical KV allocation。
++
+ 2026-07-14 继续推进：Light Doc Cache multi-target gate 已完成，最终结论
+ `NO_GO`。
+ 
+diff --git a/tinyvllm/engine/model_runner.py b/tinyvllm/engine/model_runner.py
+index aca4ab1..1e3c3e3 100644
+--- a/tinyvllm/engine/model_runner.py
++++ b/tinyvllm/engine/model_runner.py
+@@ -15,6 +15,10 @@ from tinyvllm.layers.linear import set_quant_config
+ from tinyvllm.layers.sampler import Sampler
+ from tinyvllm.utils.context import reset_context, set_context, get_context
+ from tinyvllm.engine.kv_cartridge import compress_decode_block_table_rows, should_use_kv_cartridge
++from tinyvllm.engine.light_doc_cache_runtime import (
++    build_model_runner_light_doc_cache_summary,
++    materialize_model_runner_light_doc_cache_sidecar,
++)
+ 
+ from multiprocessing.synchronize import Event
+ from multiprocessing.shared_memory import SharedMemory
+@@ -918,6 +922,29 @@ class ModelRunner:
+             return None
+         return self.kv_offload.summary()
+ 
++    def light_doc_cache_planning_summary(self, plan) -> dict | None:
++        return build_model_runner_light_doc_cache_summary(self, plan)
++
++    def light_doc_cache_materialize_sidecar(
++        self,
++        plan,
++        *,
++        fill_value: float = -1.0,
++        recover_missing_fn=None,
++        evaluate_readback: bool = False,
++    ) -> dict | None:
++        result = materialize_model_runner_light_doc_cache_sidecar(
++            self,
++            plan,
++            fill_value=fill_value,
++            recover_missing_fn=recover_missing_fn,
++            evaluate_readback=evaluate_readback,
++        )
++        if result is None:
++            return None
++        self.light_doc_cache_sidecar, summary = result
++        return summary
++
+     # ---- pinned host buffer 池：把多次小 H2D 改成 buffer 复用 + non_blocking copy ----
+     def _get_pinned(self, name: str, n: int, dtype: torch.dtype) -> torch.Tensor:
+         """按 (name, dtype) 拿一个长度 ≥ n 的 1D pinned host tensor；按需翻倍扩容并复用。"""

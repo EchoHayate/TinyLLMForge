@@ -1,0 +1,13 @@
+{
+  "classification": "PASS",
+  "configuration_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260730-233325-attempt22-r151",
+  "dist_port": 62909,
+  "engine_source_tree_sha256": "a21ec18d85fa786bcc6e3b93d7a6524d97e8135b01f647cb599e2ad0f7f18ba3",
+  "local_run_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260730-233325-attempt22-r151",
+  "master_port": 31675,
+  "minimum_observed_free_bytes": 66628616192,
+  "root_preparation_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260730-233325-attempt22-r151",
+  "root_source_tree_sha256": "8d9eb80a04236f71a6fbc852c3b52b430b05b9df9f02ce214844a5705c015372",
+  "run_tag": "qwen35-tp4-root-logit-current-source-20260730-233325-attempt22-r151",
+  "source_preparation_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260730-233325-attempt22-publication-boundary-r151"
+}

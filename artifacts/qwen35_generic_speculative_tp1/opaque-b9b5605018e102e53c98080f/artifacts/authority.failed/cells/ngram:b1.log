@@ -1,0 +1,23 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_worker.py", line 508, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_worker.py", line 496, in main
+[rank0]:     result = run_policy_cell(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_worker.py", line 395, in run_policy_cell
+[rank0]:     output_rows, observations = _run_generation(
+[rank0]:                                 ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tools/qwen35_generic_speculative_tp1_worker.py", line 309, in _run_generation
+[rank0]:     step_outputs, _ = engine.step()
+[rank0]:                       ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tinyvllm/engine/llm_engine.py", line 3299, in step
+[rank0]:     _commit_prepared_speculative_publication(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tinyvllm/engine/llm_engine.py", line 243, in _commit_prepared_speculative_publication
+[rank0]:     seal_prepared_speculative_side_state(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tinyvllm/speculative/batch_runtime.py", line 1025, in seal_prepared_speculative_side_state
+[rank0]:     _require_active_prepared_container(prepared)
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-b9b5605018e102e53c98080f/source/tinyvllm/speculative/batch_runtime.py", line 892, in _require_active_prepared_container
+[rank0]:     raise RuntimeError(
+[rank0]: RuntimeError: prepared speculative batch is not active: committed

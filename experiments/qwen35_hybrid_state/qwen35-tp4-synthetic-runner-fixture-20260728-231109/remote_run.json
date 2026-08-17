@@ -1,0 +1,14 @@
+{
+  "artifact_names": [
+    "native_rank0_logits.pt",
+    "rank_evidence.json",
+    "reference_logits.pt",
+    "source_manifest.json",
+    "tp4_real_root_logit_correctness.json"
+  ],
+  "claim_boundary": "runner transport/verification only; not TP4 authority",
+  "provenance": "synthetic-runner-fixture",
+  "remote_run_dir": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-root-logit-tests/qwen35-tp4-synthetic-runner-fixture-20260728-231109",
+  "run_tag": "qwen35-tp4-synthetic-runner-fixture-20260728-231109",
+  "status": "SYNTHETIC_FIXTURE_READY"
+}

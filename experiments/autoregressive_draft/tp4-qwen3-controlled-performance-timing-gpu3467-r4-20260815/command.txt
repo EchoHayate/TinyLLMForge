@@ -1,0 +1,10 @@
+REMOTE_HOST=sitian@10.232.195.203
+REMOTE_PYTHON=/data00/home/sitian/miniconda3/envs/py311/bin/python
+REMOTE_PACKAGE_ROOT=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/run_packages
+TARGET_MODEL=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/target-qwen3-1.7b
+DRAFT_MODEL=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/draft
+GPU_INDICES=3,4,6,7
+DIST_PORT=29631
+MASTER_PORT=29731
+HARD_TIMEOUT_SECONDS=3600
+REMOTE_RUN=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/run/tp4-qwen3-controlled-performance-timing-gpu3467-r4-20260815

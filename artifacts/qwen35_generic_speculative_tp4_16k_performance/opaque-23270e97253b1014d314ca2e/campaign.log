@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/source/tools/qwen35_generic_speculative_tp4_16k_performance_gate.py", line 1478, in run_campaign
+    validate_worker_result(raw_worker)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/source/tools/qwen35_generic_speculative_tp4_16k_performance_gate.py", line 632, in validate_worker_result
+    run_groups[group_name] = [
+                             ^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/source/tools/qwen35_generic_speculative_tp4_16k_performance_gate.py", line 633, in <listcomp>
+    validate_run(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/source/tools/qwen35_generic_speculative_tp4_16k_performance_gate.py", line 470, in validate_run
+    raise ValueError("per-request token timing mismatch")
+ValueError: per-request token timing mismatch
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/remote_campaign.py", line 132, in <module>
+    gate.run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/source/tools/qwen35_generic_speculative_tp4_16k_performance_gate.py", line 1554, in run_campaign
+    raise RuntimeError(
+RuntimeError: per-request token timing mismatch; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-23270e97253b1014d314ca2e/artifacts/authority.failed

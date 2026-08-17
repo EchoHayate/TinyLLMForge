@@ -1,0 +1,100 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/speculative/batch_runtime.py", line 663, in prepare_native_speculative_batch
+[rank0]:     run_tail_batch(tail_items),
+[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/llm_engine.py", line 3078, in run_tail_batch
+[rank0]:     return run_model_runner_tail_batch(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/speculative_model_runner.py", line 716, in run_model_runner_tail_batch
+[rank0]:     model_runner.call(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tools/qwen35_generic_speculative_tp1_worker.py", line 192, in recorded_call
+[rank0]:     result = original_call(method_name, *args, **kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 2362, in call
+[rank0]:     return method(*args)            #执行函数并返回结果
+[rank0]:            ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 6602, in run_spec_verify_batch
+[rank0]:     return run_profiled_step(
+[rank0]:            ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/decode_internal_profiler.py", line 45, in run_profiled_step
+[rank0]:     return call()
+[rank0]:            ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 6611, in <lambda>
+[rank0]:     call=lambda: self._run_spec_verify_batch(
+[rank0]:                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 6554, in _run_spec_verify_batch
+[rank0]:     prepared_step = self.run_model(
+[rank0]:                     ^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 7207, in run_model
+[rank0]:     return self._run_eager_logits(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 4790, in _run_eager_logits
+[rank0]:     return _run_model_runner_eager(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/model_runner.py", line 641, in _run_model_runner_eager
+[rank0]:     return prepare_step(
+[rank0]:            ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/models/qwen35_packed.py", line 226, in prepare_step
+[rank0]:     prepared_stack = self.layer_stack.prepare_transactional(
+[rank0]:                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 397, in prepare_transactional
+[rank0]:     hidden_states = self._run_full_layer(
+[rank0]:                     ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/layers/qwen35_packed_layer_stack.py", line 197, in _run_full_layer
+[rank0]:     outputs.append(layer(
+[rank0]:                    ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/layers/qwen35_decoder_layer.py", line 82, in forward
+[rank0]:     mixed = self.full_attention(position_ids, normalized)
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/layers/qwen35_full_attention.py", line 768, in forward
+[rank0]:     attention_output = self.attention_backend(
+[rank0]:                        ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/layers/attention.py", line 1791, in forward
+[rank0]:     store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/layers/attention.py", line 1228, in store_kvcache
+[rank0]:     assert slot_mapping.numel() == N
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: AssertionError
+
+[rank0]: The above exception was the direct cause of the following exception:
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tools/qwen35_generic_speculative_tp1_worker.py", line 508, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tools/qwen35_generic_speculative_tp1_worker.py", line 496, in main
+[rank0]:     result = run_policy_cell(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tools/qwen35_generic_speculative_tp1_worker.py", line 395, in run_policy_cell
+[rank0]:     output_rows, observations = _run_generation(
+[rank0]:                                 ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tools/qwen35_generic_speculative_tp1_worker.py", line 309, in _run_generation
+[rank0]:     step_outputs, _ = engine.step()
+[rank0]:                       ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/engine/llm_engine.py", line 3143, in step
+[rank0]:     prepare_native_speculative_batch(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp1-runs/opaque-68c4fa3269d1952a1bf9e134/source/tinyvllm/speculative/batch_runtime.py", line 870, in prepare_native_speculative_batch
+[rank0]:     raise NativeSpeculativeBatchError(
+[rank0]: tinyvllm.speculative.batch_runtime.NativeSpeculativeBatchError: native speculative batch tail_batch failed: 

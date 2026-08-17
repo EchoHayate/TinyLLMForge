@@ -1,0 +1,1 @@
+437c539e98e07b631a01ff8d35aa9f101814957d285b33f86d997bd37b99b466  experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260728-234204/source.tar.gz

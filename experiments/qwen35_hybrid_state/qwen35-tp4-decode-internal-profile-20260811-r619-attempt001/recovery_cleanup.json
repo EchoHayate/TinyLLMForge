@@ -1,0 +1,8 @@
+{
+  "classification": "CLEAN",
+  "matched_attempt_scoped_gpu_pids": [],
+  "remaining_attempt_scoped_pids": [],
+  "remaining_profiler_children": [],
+  "terminated_attempt_scoped_pids": [],
+  "reason": "The runner exited during a transient GPU-query SSH failure before its normal final receipt; cleanup was rerun explicitly for this attempt tag only."
+}

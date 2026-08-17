@@ -1,0 +1,7 @@
+name,kind,heads,first_gate,second_gate,first_saving,second_saving,first_delta,second_delta,first_bank_build_s,second_bank_build_s,fallback_tasks,claim
+static_79_head,fixed_global,79,13/13,6/6,17.63%,17.63%,0.6782,1.4649,0.2862,0.2954,0,quality_only
+first_doc_adaptive_15h5,task_adaptive,80,13/13,6/6,17.71%,17.75%,0.9575,1.7281,0.2921,0.2999,4,quality_only
+two_doc_adaptive_6h6,doc_task_adaptive,80,13/13,6/6,17.71%,17.69%,0.7536,1.6298,0.2902,0.3003,7,quality_only
+two_doc_adaptive_5h5,doc_task_adaptive,80,13/13,6/6,17.71%,17.69%,0.6721,1.5364,0.2908,0.2960,7,quality_only
+two_doc_adaptive_7h7,doc_task_adaptive,80,13/13,6/6,17.71%,17.69%,0.7426,1.4269,0.2908,0.2989,7,quality_only
+two_doc_adaptive_6h4,doc_task_adaptive,80,13/13,6/6,17.71%,17.69%,0.6108,1.4672,0.2894,0.3027,7,quality_only

@@ -1,0 +1,2 @@
+threshold,compact_layer,compressed_heads,selected_budget,budget_fraction,entry_saving_fraction,note
+0.82,22:28,48,768,0.5,0.107143,high_layers_22_28_2x_recovery_task_policy

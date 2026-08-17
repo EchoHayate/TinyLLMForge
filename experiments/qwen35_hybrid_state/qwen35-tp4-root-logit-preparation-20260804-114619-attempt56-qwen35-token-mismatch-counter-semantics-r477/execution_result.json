@@ -1,0 +1,23 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-114619-attempt56-qwen35-token-mismatch-counter-semantics-r477/authorization.json",
+  "engine_source_tree_sha256": "45eb6ed220497952e32594169a77eabeebfe9070acfe6d835fd04da46bd05856",
+  "execution_performed": true,
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "local_run_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-114619-attempt56-qwen35-token-mismatch-counter-semantics-r477",
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-114619-attempt56-qwen35-token-mismatch-counter-semantics-r477/plan/remote_execution_plan.json",
+  "receipt_classification": "PASS",
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-114619-attempt56-qwen35-token-mismatch-counter-semantics-r477/resource_baseline.json",
+  "resource_baseline_sha256": "7385ba902e0960cb6bd887b17643f6b8d5bf4af4bef1967af58122b073c3867e",
+  "root_source_tree_sha256": "ba045c37982df5f956536e71966ffb762a407008de75631d095030acfda6cb65",
+  "run_tag": "qwen35-tp4-root-logit-current-source-20260804-114619-attempt56-qwen35-token-mismatch-counter-semantics-r477",
+  "schema_version": "qwen35.tp4-current-source-root-execution.v1",
+  "source_tag": "qwen35-tp4-source-prep-20260804-114619-attempt56-qwen35-token-mismatch-counter-semantics-r477"
+}

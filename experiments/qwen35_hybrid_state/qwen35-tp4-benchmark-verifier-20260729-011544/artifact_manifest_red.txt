@@ -1,0 +1,16 @@
+Failure discovered during spec self-review:
+
+  the design required one manifest to hash every file, including itself.
+
+Resolution:
+
+  artifact_manifest.json now hashes only producer/raw top-level inputs and
+  nested prerequisites/logits/log files. It excludes itself,
+  independent_verification.json, and report.md. The verifier separately
+  requires the exact final inventory.
+
+TDD:
+
+  the contract test first failed because artifact_manifest.json and its
+  explicit hash domain were absent, then passed after the contract and spec
+  were corrected.

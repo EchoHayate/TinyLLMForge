@@ -1,0 +1,250 @@
+{
+  "base_commit": "9c91d7f9569926e13a4f6fd81d9b109178265f61",
+  "dirty": true,
+  "files": [
+    {
+      "path": "tinyvllm/__init__.py",
+      "sha256": "2e240e69afb6561ce1abb5d6d6f11872c2a36abe1eb365f0bbd69f6b22d497b3",
+      "size_bytes": 81
+    },
+    {
+      "path": "tinyvllm/config.py",
+      "sha256": "a9209163d15b6f6aecb4fb7256686595cdde95f304f750f19fda4e1ee26d1ae4",
+      "size_bytes": 14311
+    },
+    {
+      "path": "tinyvllm/engine/attention_matching.py",
+      "sha256": "f87017ecfba905011f37a68944a6e37b7018c3110667f841c66e1f0dc8043b6b",
+      "size_bytes": 46567
+    },
+    {
+      "path": "tinyvllm/engine/block_manager.py",
+      "sha256": "f3cd65eee63ea4f0ef28e87384756bbc93bcc37404affdfb40a4c8f64130b39c",
+      "size_bytes": 18427
+    },
+    {
+      "path": "tinyvllm/engine/kv_cartridge.py",
+      "sha256": "00bcbe84b229d73691348de1b670dd9acfbaa09f0979a22d1f974116c2848471",
+      "size_bytes": 3605
+    },
+    {
+      "path": "tinyvllm/engine/llm_engine.py",
+      "sha256": "63f209dccb6100d0c09549305760d05adef3604ffc4491438021e53de440f40c",
+      "size_bytes": 5830
+    },
+    {
+      "path": "tinyvllm/engine/model_runner.py",
+      "sha256": "5defbabc004912ba65f36b0145c2a207f50c22802d6caa7fa0a282507c582217",
+      "size_bytes": 76087
+    },
+    {
+      "path": "tinyvllm/engine/scheduler.py",
+      "sha256": "502b9858b12a05d731a1745b2425b2a77ba3073ea0fa1ca4ae5dd7c2b518d98b",
+      "size_bytes": 18495
+    },
+    {
+      "path": "tinyvllm/engine/sequence.py",
+      "sha256": "ddfe2464815e4af39382bcdf35cef4e119ddfd6e07c5373bb7f3e5840687d77b",
+      "size_bytes": 6838
+    },
+    {
+      "path": "tinyvllm/layers/activation.py",
+      "sha256": "cdd56cad2201d57a749c699acf928eb05249274c8a1c897de13d9e1f7329b988",
+      "size_bytes": 662
+    },
+    {
+      "path": "tinyvllm/layers/attention.py",
+      "sha256": "c6c6f79fb68dfa0e0c59afffcab4f009ff7d61fd26593f9bd69bb372cc41d6da",
+      "size_bytes": 64815
+    },
+    {
+      "path": "tinyvllm/layers/embed_head.py",
+      "sha256": "56feff0d94253fb3ebbb7bc173deb4971194cd1b57dcd34bcb61e7e78617fa61",
+      "size_bytes": 5024
+    },
+    {
+      "path": "tinyvllm/layers/layernorm.py",
+      "sha256": "e0d610cfae9fd388689a4d4a165c3f1de8341c9215509c0faa4eb05d1a215e3b",
+      "size_bytes": 2440
+    },
+    {
+      "path": "tinyvllm/layers/linear.py",
+      "sha256": "2bf6cad9150640b632a09d419297b1401cec963229e1fd10ff969c5611684e9d",
+      "size_bytes": 14793
+    },
+    {
+      "path": "tinyvllm/layers/quantization.py",
+      "sha256": "731dcc39c962a2afddce9eb4b62efec5f8f8fedd08d7b552c29b0b1c16c70e4a",
+      "size_bytes": 12379
+    },
+    {
+      "path": "tinyvllm/layers/rotary_embedding.py",
+      "sha256": "3b22cdc67227ce3d2a9d1e9e688956d6dc384dfc67c5323a2aa19c5dd75cea85",
+      "size_bytes": 3848
+    },
+    {
+      "path": "tinyvllm/layers/sampler.py",
+      "sha256": "538eff63051641b4fbfb91515adae07a224d46ed4ac63b41ff8b568ecc06d51d",
+      "size_bytes": 1743
+    },
+    {
+      "path": "tinyvllm/llm.py",
+      "sha256": "283d4fb01c1b59fe7d20bc11c7de5ddf9251ec1de4ec90a338c9c8a90e459bd6",
+      "size_bytes": 81
+    },
+    {
+      "path": "tinyvllm/models/qwen3.py",
+      "sha256": "452ffe4a8e5ac6f2b2e7e72a115913ac98ff4fa40ca72e7ff6bf4cc517438d58",
+      "size_bytes": 10370
+    },
+    {
+      "path": "tinyvllm/sampling_params.py",
+      "sha256": "fc6b30007f6e2c67bd96b518c45f6a2daea8eb8252cabd50c641fd128099cf2c",
+      "size_bytes": 505
+    },
+    {
+      "path": "tinyvllm/speculative/__init__.py",
+      "sha256": "9436033638629bd19f53d657e4bb7b6a5fcd3c8cddb8a6d334e4994df98e27e4",
+      "size_bytes": 266
+    },
+    {
+      "path": "tinyvllm/speculative/ngram.py",
+      "sha256": "3e6a3acc2a0e5163a8091a313318fb3f8c31e9d7f50a33570e6d999fd6f0b840",
+      "size_bytes": 12783
+    },
+    {
+      "path": "tinyvllm/speculative/router.py",
+      "sha256": "fa2cb365bcaba0972f8e4c87bd526d73ce128f232c17e0ced593e5a3ee478934",
+      "size_bytes": 1852
+    },
+    {
+      "path": "tinyvllm/speculative/sam.py",
+      "sha256": "d81424437d85107514bc63061d7fa3e6542c886c4fc6eff1cf9acd4551251d0f",
+      "size_bytes": 7076
+    },
+    {
+      "path": "tinyvllm/speculative/verifier.py",
+      "sha256": "74f00d7f54be9e7b07ae7cafbbf4527e9ed5f78ea25febb36f8788a74788af46",
+      "size_bytes": 3025
+    },
+    {
+      "path": "tinyvllm/utils/context.py",
+      "sha256": "c4bea35ba3c877f01c488361dd64d1810e2d54a0ba3b4114b16860cd2b638b06",
+      "size_bytes": 9544
+    },
+    {
+      "path": "tinyvllm/utils/cpu_offload.py",
+      "sha256": "0112483f8e316f18af5c8b1a43b03240577ac3e46d70e579da8bcdfd7fd5205b",
+      "size_bytes": 7445
+    },
+    {
+      "path": "tinyvllm/utils/loader.py",
+      "sha256": "9afe153aec1d9df87be2b71587e65667523365d0b917c60b233d0cce99c89881",
+      "size_bytes": 8615
+    },
+    {
+      "path": "tools/draft_model_schema.py",
+      "sha256": "5a2bda19535896ef0410d977dc4b91c8f8c115a78c7d153b44764149c04cca5a",
+      "size_bytes": 5169
+    },
+    {
+      "path": "tools/native_verifier_gate.py",
+      "sha256": "6ff2cd1695b3c194bdb2e24b5febd755ae6a77b22e24895406751e1194f254ab",
+      "size_bytes": 47941
+    },
+    {
+      "path": "tools/native_verifier_oracle.py",
+      "sha256": "da246f7385873d8facabe0f25bdf414930b10b6afa33353b65b10f5ea80bcd12",
+      "size_bytes": 36068
+    },
+    {
+      "path": "tools/profile_ngram_commit.py",
+      "sha256": "9ab3e06cf7d1c6e1766b33ceefb97cfd661d04fc03b9902fa207034a9f27bc60",
+      "size_bytes": 112973
+    },
+    {
+      "path": "tools/run_speculation_router_gate_remote.sh",
+      "sha256": "e5d96e7bde5d99c8af7b6583d2197a0a45abcaeeeb6b281e1b559011757f2208",
+      "size_bytes": 16578
+    },
+    {
+      "path": "tools/source_audit.py",
+      "sha256": "90dfa25a43efbbf293b70d2ee330c498426907b8175b72b117a671a55bc713ca",
+      "size_bytes": 13633
+    },
+    {
+      "path": "tools/speculation_router_gate.py",
+      "sha256": "f22ac10a82defb622e590892058d7d5c5256b3c82711680568e4e33b2a792e4d",
+      "size_bytes": 85767
+    },
+    {
+      "path": "tools/test_model_runner_spec_verify.py",
+      "sha256": "344242765493da723decb3f7f140be4f2e7dfa65c2d98cef3835eb26549504c2",
+      "size_bytes": 11540
+    },
+    {
+      "path": "tools/test_native_verifier_attention.py",
+      "sha256": "03b8d325c378fbd53fd317face8778701c8e4c64c6dea27a50ed8aa483a76091",
+      "size_bytes": 5521
+    },
+    {
+      "path": "tools/test_native_verifier_contract.py",
+      "sha256": "b6bf1b310db6eb3c2612c3451a3d3ef8b4127788da59253916a2874d48aae618",
+      "size_bytes": 3890
+    },
+    {
+      "path": "tools/test_native_verifier_gate.py",
+      "sha256": "9a58cb4d4a8a311042e017a8589e5f6ecb9b7b74601ae71fd23736f1f301ba96",
+      "size_bytes": 16538
+    },
+    {
+      "path": "tools/test_native_verifier_oracle.py",
+      "sha256": "17abb7fcb6fa84b5c2f81b0ba2c04c88e34f758c4be584a66de7102b99ffe600",
+      "size_bytes": 29565
+    },
+    {
+      "path": "tools/test_ngram_speculative.py",
+      "sha256": "505895af1eb8b9b13e9cc005bfa8dd29765c2db62383513841eba5d9b2bdd84b",
+      "size_bytes": 57816
+    },
+    {
+      "path": "tools/test_run_speculation_router_gate_remote.py",
+      "sha256": "1a42feecd676e66ce91ad827bcffdc437800f07a7b029acf44d081a32487bf19",
+      "size_bytes": 6954
+    },
+    {
+      "path": "tools/test_speculation_router.py",
+      "sha256": "4ecd135ba1e74c114b8caf7a8091e3d92a542996666928e8994dd9c4adc81439",
+      "size_bytes": 15240
+    },
+    {
+      "path": "tools/test_speculation_router_gate.py",
+      "sha256": "4cbc84b423f32185fa0a85b1dc0860e0045609e842c133bfaf13854ef73d1476",
+      "size_bytes": 50890
+    }
+  ],
+  "owned_roots": [
+    "tinyvllm",
+    "tools/draft_model_schema.py",
+    "tools/profile_ngram_commit.py",
+    "tools/source_audit.py",
+    "tools/speculation_router_gate.py",
+    "tools/test_speculation_router.py",
+    "tools/test_speculation_router_gate.py",
+    "tools/test_ngram_speculative.py",
+    "tools/test_model_runner_spec_verify.py",
+    "tools/test_native_verifier_contract.py",
+    "tools/test_native_verifier_attention.py",
+    "tools/native_verifier_oracle.py",
+    "tools/test_native_verifier_oracle.py",
+    "tools/native_verifier_gate.py",
+    "tools/test_native_verifier_gate.py",
+    "tools/run_speculation_router_gate_remote.sh",
+    "tools/test_run_speculation_router_gate_remote.py"
+  ],
+  "patch_path": "source.patch",
+  "patch_sha256": "a09baeb96d24f9af771efc5c0c7e0ad9976bdba0fba2768b9d68fc55ec9fbd01",
+  "patch_size_bytes": 2049,
+  "schema_version": 1,
+  "tree_sha256": "266645943bac4ed6aa75c9ee3a52ca51a1e584f992b24d7b93bda4895453a41e"
+}

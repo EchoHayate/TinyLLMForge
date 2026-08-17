@@ -1,0 +1,11 @@
+{
+  "claim_boundary": "Synthetic or real checkpoint-load verification only; this result does not establish inference speed, production cache or memory reduction, compression safety, quality retention, or native Qwen3.5 execution.",
+  "classification": "INCOMPLETE",
+  "expected_case_count": 6,
+  "guards": {},
+  "observed_case_count": 0,
+  "reasons": [
+    "invalid JSON artifact manifest.json: [Errno 2] No such file or directory: '/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-real-load-download-only-current-source-preflight-r2-20260727-233352/manifest.json'"
+  ],
+  "schema_version": "qwen35.real-checkpoint-load-safety.v1"
+}

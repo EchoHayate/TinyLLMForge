@@ -1,0 +1,84 @@
+{
+  "checks": {
+    "all_json_parse": {
+      "file_count": 23,
+      "passed": true
+    },
+    "authorization_boundary": {
+      "fields": {
+        "execution_authorized": false,
+        "gpu_authorized": false,
+        "remote_path_creation_authorized": false,
+        "ssh_authorized": false
+      },
+      "passed": true
+    },
+    "canonical_workload": {
+      "case_count": 70,
+      "passed": true,
+      "workload_count": 5
+    },
+    "correctness_prerequisites_sha256": {
+      "actual": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8",
+      "expected": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8",
+      "passed": true
+    },
+    "evidence_inventory": {
+      "file_count": 18,
+      "passed": true,
+      "sha256": "4fd3253b38b43609455f3794e037322ad2c98a4fc58bb2fd984b4cf69222c2b1",
+      "total_bytes": 198222
+    },
+    "gate1_binding": {
+      "classification": "PASS",
+      "passed": true,
+      "sha256": "9c1cd090753a064ebc81b68069f1faffc8b821d65bfad7732d11a24e0731573f",
+      "source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c"
+    },
+    "model_manifest_sha256": {
+      "actual": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+      "expected": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+      "passed": true
+    },
+    "production_prerequisite_validator": {
+      "authorized": true,
+      "classification": "PASS",
+      "passed": true,
+      "reasons": []
+    },
+    "resource_policy": {
+      "gpu_indices": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "minimum_free_bytes_per_gpu": 25769803776,
+      "passed": true,
+      "requires_no_active_compute_processes": true,
+      "world_size": 4
+    },
+    "source_tar_sha256": {
+      "actual": "8f807c0e51010fddd0bd474670ae41c09beda604c8247f672fc047f533c53a5d",
+      "expected": "8f807c0e51010fddd0bd474670ae41c09beda604c8247f672fc047f533c53a5d",
+      "passed": true
+    },
+    "source_tree_binding": {
+      "current_source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c",
+      "owned_file_count": 91,
+      "passed": true,
+      "tar_file_count": 91,
+      "tar_metadata_canonical": true,
+      "tar_source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c"
+    },
+    "workload_manifest_sha256": {
+      "actual": "71909b825d1a8d162604f6cc3d34ad413b2af6c191425ec007859715a4d084e3",
+      "expected": "71909b825d1a8d162604f6cc3d34ad413b2af6c191425ec007859715a4d084e3",
+      "passed": true
+    }
+  },
+  "claim_boundary": "local package integrity and readiness only; no SSH, remote query, remote path, CUDA, GPU, correctness rerun, performance, cache, memory, compression, or quality claim",
+  "classification": "PASS",
+  "readiness_classification": "READY_FOR_RESOURCE_PREFLIGHT",
+  "schema_version": "qwen35.tp4-strict-p1-readiness-audit.v1"
+}

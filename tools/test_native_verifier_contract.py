@@ -36,7 +36,7 @@ def test_reference_h52_k4_contract():
     )
 
     assert plan.input_tokens == (10, 20, 30)
-    assert plan.positions == (53, 54, 55)
+    assert plan.positions == (52, 53, 54)
     assert plan.logical_slots == (52, 53, 54)
     assert plan.context_len == 55
     assert plan.visible_block_count == 1
@@ -62,7 +62,9 @@ def test_required_k_values_have_consecutive_positions_and_slots():
         plan = build_spec_verify_plan(255, draft, block_size=256)
 
         assert plan.query_len == max(0, draft_len - 1)
-        assert plan.positions == tuple(range(256, 256 + plan.query_len))
+        assert plan.positions == tuple(
+            range(255, 255 + plan.query_len)
+        )
         assert plan.logical_slots == tuple(range(255, 255 + plan.query_len))
         assert plan.visible_block_count == (
             plan.context_len + 255

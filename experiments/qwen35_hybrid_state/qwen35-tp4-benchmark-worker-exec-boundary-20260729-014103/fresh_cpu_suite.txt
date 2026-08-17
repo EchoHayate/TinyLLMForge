@@ -1,0 +1,4 @@
+qwen35 TP4 hybrid-prefix benchmark contract tests passed (13 tests)
+qwen35 TP4 hybrid-prefix benchmark worker tests passed (15 tests)
+qwen35 TP4 hybrid-prefix benchmark verifier tests passed (8 tests)
+qwen35 TP4 hybrid-prefix remote runner tests passed (15 tests)

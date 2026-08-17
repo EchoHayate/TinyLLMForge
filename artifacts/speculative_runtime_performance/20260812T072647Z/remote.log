@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_gate.py", line 1428, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_gate.py", line 1414, in main
+    run_performance_gate(
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_gate.py", line 1353, in run_performance_gate
+    raise RuntimeError(
+RuntimeError: worker ngram b1 failed with status 1

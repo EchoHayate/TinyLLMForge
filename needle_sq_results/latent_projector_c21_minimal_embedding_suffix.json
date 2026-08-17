@@ -1,0 +1,4060 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B",
+    "task": "arithmetic",
+    "train_cases": 64,
+    "eval_cases": 32,
+    "context_len": 512,
+    "depth": 0.5,
+    "latent_steps": 1,
+    "max_new_tokens": 16,
+    "epochs": 80,
+    "batch_size": 8,
+    "lr": 0.0001,
+    "weight_decay": 0.0,
+    "hidden_loss_weight": 1.0,
+    "logit_loss_weight": 0.0,
+    "soft_step_epochs": 0,
+    "soft_step_lr": 1e-05,
+    "seed": 0,
+    "train_device": "cpu",
+    "max_model_len": 1024,
+    "gpu_memory_utilization": 0.7,
+    "skip_eval": false,
+    "checkpoint": "needle_sq_results/latent_projector_c21_minimal_embedding_suffix.pt",
+    "out_json": "needle_sq_results/latent_projector_c21_minimal_embedding_suffix.json",
+    "hf_teacher_forcing": false,
+    "hf_device": "cuda",
+    "hf_dtype": "bfloat16",
+    "step_hidden_loss_weight": 0.0,
+    "step_hidden_mode": "input",
+    "projector_kind": "shared",
+    "max_latent_steps": 16,
+    "latent_step_curriculum": "none",
+    "state_supervision_weight": 0.0,
+    "state_min_value": -256,
+    "state_max_value": 2048,
+    "state_embedding_loss_weight": 0.0,
+    "state_embedding_mse_weight": 0.1,
+    "arithmetic_state_machine_weight": 0.0,
+    "arithmetic_state_machine_value_weight": 1.0,
+    "arithmetic_state_machine_phase_weight": 0.2,
+    "arithmetic_state_machine_source": "output",
+    "arithmetic_state_machine_no_repeat_final": false,
+    "pure_latent_arithmetic": false,
+    "pure_hidden_size": 128,
+    "pure_numeric_representation": "id_embedding",
+    "pure_arith_a_min": 20,
+    "pure_arith_a_max": 90,
+    "pure_arith_b_min": 10,
+    "pure_arith_b_max": 80,
+    "pure_arith_c_min": 2,
+    "pure_arith_c_max": 9,
+    "pure_arith_d_min": 10,
+    "pure_arith_d_max": 120,
+    "pure_arith_value_weight": 1.0,
+    "pure_arith_phase_weight": 0.0,
+    "pure_arith_regression_weight": 0.0,
+    "pure_arith_digit_weight": 0.0,
+    "pure_digit_arithmetic": false,
+    "pure_digit_mode": "deterministic",
+    "pure_digit_num_digits": 4,
+    "pure_digit_operator_hidden_size": 64,
+    "pure_digit_operator_depth": 2,
+    "pure_digit_combo_heldout_frac": 0.2,
+    "pure_digit_combo_split_seed": 0,
+    "pure_digit_carry_loss_weight": 1.0,
+    "oracle_decode_bridge": false,
+    "decode_bridge_hidden_size": 1024,
+    "decode_bridge_depth": 2,
+    "textual_oracle_eval": false,
+    "textual_oracle_mode": "final_answer",
+    "embedding_oracle_eval": false,
+    "embedding_oracle_mode": "final_abs",
+    "digit_slot_renderer_eval": false,
+    "digit_slot_renderer_input_mode": "inputs_embeds",
+    "digit_slot_predictor": false,
+    "digit_slot_predictor_hidden_size": 256,
+    "digit_slot_predictor_depth": 2,
+    "digit_slot_digit_loss_weight": 1.0,
+    "digit_slot_decode_input_mode": "inputs_embeds",
+    "primitive_digit_renderer_eval": false,
+    "primitive_digit_renderer_input_mode": "inputs_embeds",
+    "operator_vm_benchmark": false,
+    "operator_vm_input_mode": "inputs_embeds",
+    "operator_vm_baseline_max_new_tokens": 128,
+    "operator_vm_final_max_new_tokens": 8,
+    "minimal_embedding_suffix_benchmark": true,
+    "minimal_embedding_suffix_modes": [
+      "final_abs",
+      "sign_final_abs",
+      "signed_answer",
+      "digits_msd"
+    ],
+    "canonical_embedding_bridge": false,
+    "canonical_embedding_mode": "final_abs",
+    "canonical_embedding_cosine_weight": 1.0,
+    "canonical_embedding_token_ce_weight": 0.0,
+    "canonical_embedding_token_ce_temperature": 0.05,
+    "canonical_embedding_target_tokens": 0,
+    "canonical_embedding_decode_mode": "continuous",
+    "bridge_supervision_weight": 1.0
+  },
+  "benchmark": "C2.1 minimal embedding suffix upper bound",
+  "eval_cases": 32,
+  "num_digits": 4,
+  "baseline_max_new_tokens": 128,
+  "operator_vm_final_max_new_tokens": 8,
+  "text_input_mode": "inputs_embeds",
+  "minimal_embedding_suffix_modes": [
+    "final_abs",
+    "sign_final_abs",
+    "signed_answer",
+    "digits_msd"
+  ],
+  "elapsed_s": 134.28555560112,
+  "baseline": {
+    "accuracy": 1.0,
+    "contains_accuracy": 1.0,
+    "avg_generated_tokens": 83.46875,
+    "avg_latency_s": 3.2389515042304993,
+    "avg_prefill_tokens": 511.21875,
+    "avg_total_kv_tokens": 594.6875
+  },
+  "operator_vm_text": {
+    "accuracy": 1.0,
+    "contains_accuracy": 1.0,
+    "avg_generated_tokens": 4.0,
+    "avg_latency_s": 0.18529776483774185,
+    "avg_prefill_tokens": 558.21875,
+    "avg_total_kv_tokens": 562.21875,
+    "avg_llm_latency_s": 0.17826315015554428,
+    "operator_overhead_s": 0.007034614682197571,
+    "avg_injected_tokens": 47.0
+  },
+  "minimal_embedding_suffix": {
+    "final_abs": {
+      "accuracy": 1.0,
+      "contains_accuracy": 1.0,
+      "avg_generated_tokens": 4.0,
+      "avg_latency_s": 0.18655143678188324,
+      "avg_prefill_tokens": 522.21875,
+      "avg_total_kv_tokens": 526.21875,
+      "avg_llm_latency_s": 0.17951682209968567,
+      "operator_overhead_s": 0.007034614682197571,
+      "avg_injected_tokens": 11.0
+    },
+    "sign_final_abs": {
+      "accuracy": 1.0,
+      "contains_accuracy": 1.0,
+      "avg_generated_tokens": 4.0,
+      "avg_latency_s": 0.18642465770244598,
+      "avg_prefill_tokens": 527.21875,
+      "avg_total_kv_tokens": 531.21875,
+      "avg_llm_latency_s": 0.1793900430202484,
+      "operator_overhead_s": 0.007034614682197571,
+      "avg_injected_tokens": 16.0
+    },
+    "signed_answer": {
+      "accuracy": 1.0,
+      "contains_accuracy": 1.0,
+      "avg_generated_tokens": 4.0,
+      "avg_latency_s": 0.18742020428180695,
+      "avg_prefill_tokens": 521.21875,
+      "avg_total_kv_tokens": 525.21875,
+      "avg_llm_latency_s": 0.18038558959960938,
+      "operator_overhead_s": 0.007034614682197571,
+      "avg_injected_tokens": 10.0
+    },
+    "digits_msd": {
+      "accuracy": 0.375,
+      "contains_accuracy": 0.375,
+      "avg_generated_tokens": 5.125,
+      "avg_latency_s": 0.2264854833483696,
+      "avg_prefill_tokens": 528.21875,
+      "avg_total_kv_tokens": 533.34375,
+      "avg_llm_latency_s": 0.21945086866617203,
+      "operator_overhead_s": 0.007034614682197571,
+      "avg_injected_tokens": 17.0
+    }
+  },
+  "speedup": {
+    "text_vm_vs_baseline": {
+      "latency": 17.479711679559248,
+      "generated_tokens": 20.8671875,
+      "total_kv_tokens": 1.0577510977711078,
+      "generated_token_reduction": 0.9520778734556345,
+      "total_kv_token_reduction": 0.05459800315291641
+    },
+    "minimal_vs_baseline": {
+      "final_abs": {
+        "latency": 17.362243679835583,
+        "generated_tokens": 20.8671875,
+        "total_kv_tokens": 1.1301146148821188,
+        "generated_token_reduction": 0.9520778734556345,
+        "total_kv_token_reduction": 0.11513399894902787
+      },
+      "sign_final_abs": {
+        "latency": 17.37405096594152,
+        "generated_tokens": 20.8671875,
+        "total_kv_tokens": 1.1194776163303723,
+        "generated_token_reduction": 0.9520778734556345,
+        "total_kv_token_reduction": 0.10672622175512347
+      },
+      "signed_answer": {
+        "latency": 17.281762746135836,
+        "generated_tokens": 20.8671875,
+        "total_kv_tokens": 1.1322663176057595,
+        "generated_token_reduction": 0.9520778734556345,
+        "total_kv_token_reduction": 0.11681555438780877
+      },
+      "digits_msd": {
+        "latency": 14.30092320419712,
+        "generated_tokens": 16.286585365853657,
+        "total_kv_tokens": 1.115017284818656,
+        "generated_token_reduction": 0.9385997753650318,
+        "total_kv_token_reduction": 0.10315291644771418
+      }
+    },
+    "minimal_vs_text_vm": {
+      "final_abs": {
+        "latency": 0.9932797518702191,
+        "generated_tokens": 1.0,
+        "total_kv_tokens": 1.068412613575628,
+        "generated_token_reduction": 0.0,
+        "total_kv_token_reduction": 0.06403201600800401
+      },
+      "sign_final_abs": {
+        "latency": 0.9939552370453979,
+        "generated_tokens": 1.0,
+        "total_kv_tokens": 1.0583563739043473,
+        "generated_token_reduction": 0.0,
+        "total_kv_token_reduction": 0.05513868045133674
+      },
+      "signed_answer": {
+        "latency": 0.988675503517893,
+        "generated_tokens": 1.0,
+        "total_kv_tokens": 1.0704468376271792,
+        "generated_token_reduction": 0.0,
+        "total_kv_token_reduction": 0.06581068311933747
+      },
+      "digits_msd": {
+        "latency": 0.8181441128071123,
+        "generated_tokens": 0.7804878048780488,
+        "total_kv_tokens": 1.0541395675865706,
+        "generated_token_reduction": -0.28125,
+        "total_kv_token_reduction": 0.05135901283975319
+      }
+    }
+  },
+  "details": [
+    {
+      "expected": "116",
+      "baseline": {
+        "answer_only": null,
+        "answer": "116",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 90,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 602,
+        "latency_s": 4.155529499053955,
+        "raw": " Let's break down the steps. First, we start with 58. Then we add 14, which gives us 58 + 14 = 72. Next, we multiply the result by 3, so 72 * 3 = 216. Finally, "
+      },
+      "operator_vm_text": {
+        "answer_only": "116",
+        "answer": "116",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.2871716022491455,
+        "llm_latency_s": 0.16533875465393066,
+        "operator_overhead_s": 0.12183284759521484,
+        "raw": " 116"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "116",
+          "answer": "116",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 527,
+          "latency_s": 0.28620076179504395,
+          "llm_latency_s": 0.1643679141998291,
+          "operator_overhead_s": 0.12183284759521484,
+          "suffix": "\nfinal_abs=116\nFinal integer:",
+          "raw": " 116"
+        },
+        "sign_final_abs": {
+          "answer_only": "116",
+          "answer": "116",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 532,
+          "latency_s": 0.28637027740478516,
+          "llm_latency_s": 0.1645374298095703,
+          "operator_overhead_s": 0.12183284759521484,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=116\nFinal integer:",
+          "raw": " 116"
+        },
+        "signed_answer": {
+          "answer_only": "116",
+          "answer": "116",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 526,
+          "latency_s": 0.28784894943237305,
+          "llm_latency_s": 0.1660161018371582,
+          "operator_overhead_s": 0.12183284759521484,
+          "suffix": "\nanswer=116\nFinal integer:",
+          "raw": " 116"
+        },
+        "digits_msd": {
+          "answer_only": "116",
+          "answer": "116",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.303041934967041,
+          "llm_latency_s": 0.18120908737182617,
+          "operator_overhead_s": 0.12183284759521484,
+          "suffix": "\nsign=positive\ndigits_msd=0116\nFinal integer:",
+          "raw": " 116"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          1,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          1,
+          6
+        ],
+        "rendered_abs": "116",
+        "overflow": false
+      },
+      "meta": {
+        "a": 58,
+        "b": 14,
+        "c": 3,
+        "d": 100,
+        "teacher_steps": [
+          " (58 + 14) = 72;",
+          " 72 * 3 = 216;",
+          " 216 - 100 = 116.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "85",
+      "baseline": {
+        "answer_only": null,
+        "answer": "85",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 66,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 578,
+        "latency_s": 2.545811891555786,
+        "raw": " Let's break down the steps. Start with 23. Add 10: 23 + 10 = 33. Multiply by 6: 33 * 6 = 198. Subtract 113: 198 - 113 = 85"
+      },
+      "operator_vm_text": {
+        "answer_only": "85",
+        "answer": "85",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 46,
+        "total_kv_tokens": 561,
+        "latency_s": 0.13541626930236816,
+        "llm_latency_s": 0.13245439529418945,
+        "operator_overhead_s": 0.002961874008178711,
+        "raw": " 85"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "85",
+          "answer": "85",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.13472676277160645,
+          "llm_latency_s": 0.13176488876342773,
+          "operator_overhead_s": 0.002961874008178711,
+          "suffix": "\nfinal_abs=85\nFinal integer:",
+          "raw": " 85"
+        },
+        "sign_final_abs": {
+          "answer_only": "85",
+          "answer": "85",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 15,
+          "total_kv_tokens": 530,
+          "latency_s": 0.13546323776245117,
+          "llm_latency_s": 0.13250136375427246,
+          "operator_overhead_s": 0.002961874008178711,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=85\nFinal integer:",
+          "raw": " 85"
+        },
+        "signed_answer": {
+          "answer_only": "85",
+          "answer": "85",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 9,
+          "total_kv_tokens": 524,
+          "latency_s": 0.13460540771484375,
+          "llm_latency_s": 0.13164353370666504,
+          "operator_overhead_s": 0.002961874008178711,
+          "suffix": "\nanswer=85\nFinal integer:",
+          "raw": " 85"
+        },
+        "digits_msd": {
+          "answer_only": "100",
+          "answer": "100",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.20194578170776367,
+          "llm_latency_s": 0.19898390769958496,
+          "operator_overhead_s": 0.002961874008178711,
+          "suffix": "\nsign=positive\ndigits_msd=0085\nFinal integer:",
+          "raw": " 100\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          8,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          8,
+          5
+        ],
+        "rendered_abs": "85",
+        "overflow": false
+      },
+      "meta": {
+        "a": 23,
+        "b": 10,
+        "c": 6,
+        "d": 113,
+        "teacher_steps": [
+          " (23 + 10) = 33;",
+          " 33 * 6 = 198;",
+          " 198 - 113 = 85.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "423",
+      "baseline": {
+        "answer_only": null,
+        "answer": "423",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 87,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 599,
+        "latency_s": 3.2565245628356934,
+        "raw": " Let's break down the steps. First, we start with 84. Then we add 51 to it. 84 + 51 equals 135. Next, we multiply that result by 4. 135 * 4 equals 540. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "423",
+        "answer": "423",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.16591358184814453,
+        "llm_latency_s": 0.16303133964538574,
+        "operator_overhead_s": 0.002882242202758789,
+        "raw": " 423"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "423",
+          "answer": "423",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 527,
+          "latency_s": 0.1727743148803711,
+          "llm_latency_s": 0.1698920726776123,
+          "operator_overhead_s": 0.002882242202758789,
+          "suffix": "\nfinal_abs=423\nFinal integer:",
+          "raw": " 423"
+        },
+        "sign_final_abs": {
+          "answer_only": "423",
+          "answer": "423",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 532,
+          "latency_s": 0.17879176139831543,
+          "llm_latency_s": 0.17590951919555664,
+          "operator_overhead_s": 0.002882242202758789,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=423\nFinal integer:",
+          "raw": " 423"
+        },
+        "signed_answer": {
+          "answer_only": "423",
+          "answer": "423",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 526,
+          "latency_s": 0.18349575996398926,
+          "llm_latency_s": 0.18061351776123047,
+          "operator_overhead_s": 0.002882242202758789,
+          "suffix": "\nanswer=423\nFinal integer:",
+          "raw": " 423"
+        },
+        "digits_msd": {
+          "answer_only": "1083",
+          "answer": "1083",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 535,
+          "latency_s": 0.2636418342590332,
+          "llm_latency_s": 0.2607595920562744,
+          "operator_overhead_s": 0.002882242202758789,
+          "suffix": "\nsign=positive\ndigits_msd=0423\nFinal integer:",
+          "raw": " 1083\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          2,
+          4,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          4,
+          2,
+          3
+        ],
+        "rendered_abs": "423",
+        "overflow": false
+      },
+      "meta": {
+        "a": 84,
+        "b": 51,
+        "c": 4,
+        "d": 117,
+        "teacher_steps": [
+          " (84 + 51) = 135;",
+          " 135 * 4 = 540;",
+          " 540 - 117 = 423.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "63",
+      "baseline": {
+        "answer_only": null,
+        "answer": "63",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 84,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 596,
+        "latency_s": 3.070448398590088,
+        "raw": " Let's break down the steps. First, we start with 33. Then we add 58 to it. 33 + 58 equals 91. Next, we multiply that result by 2. 91 * 2 equals 182. Finally, w"
+      },
+      "operator_vm_text": {
+        "answer_only": "63",
+        "answer": "63",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 46,
+        "total_kv_tokens": 561,
+        "latency_s": 0.13485479354858398,
+        "llm_latency_s": 0.13192081451416016,
+        "operator_overhead_s": 0.002933979034423828,
+        "raw": " 63"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "63",
+          "answer": "63",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.13770580291748047,
+          "llm_latency_s": 0.13477182388305664,
+          "operator_overhead_s": 0.002933979034423828,
+          "suffix": "\nfinal_abs=63\nFinal integer:",
+          "raw": " 63"
+        },
+        "sign_final_abs": {
+          "answer_only": "63",
+          "answer": "63",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 15,
+          "total_kv_tokens": 530,
+          "latency_s": 0.14607596397399902,
+          "llm_latency_s": 0.1431419849395752,
+          "operator_overhead_s": 0.002933979034423828,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=63\nFinal integer:",
+          "raw": " 63"
+        },
+        "signed_answer": {
+          "answer_only": "63",
+          "answer": "63",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 9,
+          "total_kv_tokens": 524,
+          "latency_s": 0.14985871315002441,
+          "llm_latency_s": 0.14692473411560059,
+          "operator_overhead_s": 0.002933979034423828,
+          "suffix": "\nanswer=63\nFinal integer:",
+          "raw": " 63"
+        },
+        "digits_msd": {
+          "answer_only": "103",
+          "answer": "103",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.22431015968322754,
+          "llm_latency_s": 0.2213761806488037,
+          "operator_overhead_s": 0.002933979034423828,
+          "suffix": "\nsign=positive\ndigits_msd=0063\nFinal integer:",
+          "raw": " 103\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          6,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          6,
+          3
+        ],
+        "rendered_abs": "63",
+        "overflow": false
+      },
+      "meta": {
+        "a": 33,
+        "b": 58,
+        "c": 2,
+        "d": 119,
+        "teacher_steps": [
+          " (33 + 58) = 91;",
+          " 91 * 2 = 182;",
+          " 182 - 119 = 63.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "343",
+      "baseline": {
+        "answer_only": null,
+        "answer": "343",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 3.1961653232574463,
+        "raw": " Let's break down the steps. First, we start with 59. Then we add 12, which gives us 59 + 12 = 71. Next, we multiply the result by 5, so 71 * 5 = 355. Finally, "
+      },
+      "operator_vm_text": {
+        "answer_only": "343",
+        "answer": "343",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.16782259941101074,
+        "llm_latency_s": 0.1649465560913086,
+        "operator_overhead_s": 0.0028760433197021484,
+        "raw": " 343"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "343",
+          "answer": "343",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.17169904708862305,
+          "llm_latency_s": 0.1688230037689209,
+          "operator_overhead_s": 0.0028760433197021484,
+          "suffix": "\nfinal_abs=343\nFinal integer:",
+          "raw": " 343"
+        },
+        "sign_final_abs": {
+          "answer_only": "343",
+          "answer": "343",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.18561434745788574,
+          "llm_latency_s": 0.1827383041381836,
+          "operator_overhead_s": 0.0028760433197021484,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=343\nFinal integer:",
+          "raw": " 343"
+        },
+        "signed_answer": {
+          "answer_only": "343",
+          "answer": "343",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.19666457176208496,
+          "llm_latency_s": 0.1937885284423828,
+          "operator_overhead_s": 0.0028760433197021484,
+          "suffix": "\nanswer=343\nFinal integer:",
+          "raw": " 343"
+        },
+        "digits_msd": {
+          "answer_only": "287",
+          "answer": "287",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.23644256591796875,
+          "llm_latency_s": 0.2335665225982666,
+          "operator_overhead_s": 0.0028760433197021484,
+          "suffix": "\nsign=positive\ndigits_msd=0343\nFinal integer:",
+          "raw": " 287\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          4,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          4,
+          3
+        ],
+        "rendered_abs": "343",
+        "overflow": false
+      },
+      "meta": {
+        "a": 59,
+        "b": 12,
+        "c": 5,
+        "d": 12,
+        "teacher_steps": [
+          " (59 + 12) = 71;",
+          " 71 * 5 = 355;",
+          " 355 - 12 = 343.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "323",
+      "baseline": {
+        "answer_only": null,
+        "answer": "323",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 87,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 599,
+        "latency_s": 3.1972532272338867,
+        "raw": " Let's break down the steps. First, we start with 62. Then we add 44 to it. 62 + 44 equals 106. Next, we multiply that result by 4. 106 * 4 equals 424. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "323",
+        "answer": "323",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.17432737350463867,
+        "llm_latency_s": 0.17128372192382812,
+        "operator_overhead_s": 0.003043651580810547,
+        "raw": " 323"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "323",
+          "answer": "323",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 527,
+          "latency_s": 0.17763018608093262,
+          "llm_latency_s": 0.17458653450012207,
+          "operator_overhead_s": 0.003043651580810547,
+          "suffix": "\nfinal_abs=323\nFinal integer:",
+          "raw": " 323"
+        },
+        "sign_final_abs": {
+          "answer_only": "323",
+          "answer": "323",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 532,
+          "latency_s": 0.17422223091125488,
+          "llm_latency_s": 0.17117857933044434,
+          "operator_overhead_s": 0.003043651580810547,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=323\nFinal integer:",
+          "raw": " 323"
+        },
+        "signed_answer": {
+          "answer_only": "323",
+          "answer": "323",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 526,
+          "latency_s": 0.17155027389526367,
+          "llm_latency_s": 0.16850662231445312,
+          "operator_overhead_s": 0.003043651580810547,
+          "suffix": "\nanswer=323\nFinal integer:",
+          "raw": " 323"
+        },
+        "digits_msd": {
+          "answer_only": "433",
+          "answer": "433",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.20523715019226074,
+          "llm_latency_s": 0.2021934986114502,
+          "operator_overhead_s": 0.003043651580810547,
+          "suffix": "\nsign=positive\ndigits_msd=0323\nFinal integer:",
+          "raw": " 433\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          2,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          2,
+          3
+        ],
+        "rendered_abs": "323",
+        "overflow": false
+      },
+      "meta": {
+        "a": 62,
+        "b": 44,
+        "c": 4,
+        "d": 101,
+        "teacher_steps": [
+          " (62 + 44) = 106;",
+          " 106 * 4 = 424;",
+          " 424 - 101 = 323.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "380",
+      "baseline": {
+        "answer_only": null,
+        "answer": "380",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 84,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 595,
+        "latency_s": 3.196946859359741,
+        "raw": " Let's break down the steps. First, we start with 35. Then we add 21, which gives us 35 + 21 = 56. Next, we multiply the result by 7, so 56 * 7 = 392. Finally, "
+      },
+      "operator_vm_text": {
+        "answer_only": "380",
+        "answer": "380",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17055153846740723,
+        "llm_latency_s": 0.16750240325927734,
+        "operator_overhead_s": 0.003049135208129883,
+        "raw": " 380"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "380",
+          "answer": "380",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.16822481155395508,
+          "llm_latency_s": 0.1651756763458252,
+          "operator_overhead_s": 0.003049135208129883,
+          "suffix": "\nfinal_abs=380\nFinal integer:",
+          "raw": " 380"
+        },
+        "sign_final_abs": {
+          "answer_only": "380",
+          "answer": "380",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.17089152336120605,
+          "llm_latency_s": 0.16784238815307617,
+          "operator_overhead_s": 0.003049135208129883,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=380\nFinal integer:",
+          "raw": " 380"
+        },
+        "signed_answer": {
+          "answer_only": "380",
+          "answer": "380",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.17551207542419434,
+          "llm_latency_s": 0.17246294021606445,
+          "operator_overhead_s": 0.003049135208129883,
+          "suffix": "\nanswer=380\nFinal integer:",
+          "raw": " 380"
+        },
+        "digits_msd": {
+          "answer_only": "380",
+          "answer": "380",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.17780280113220215,
+          "llm_latency_s": 0.17475366592407227,
+          "operator_overhead_s": 0.003049135208129883,
+          "suffix": "\nsign=positive\ndigits_msd=0380\nFinal integer:",
+          "raw": " 380"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          8,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          8,
+          0
+        ],
+        "rendered_abs": "380",
+        "overflow": false
+      },
+      "meta": {
+        "a": 35,
+        "b": 21,
+        "c": 7,
+        "d": 12,
+        "teacher_steps": [
+          " (35 + 21) = 56;",
+          " 56 * 7 = 392;",
+          " 392 - 12 = 380.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "145",
+      "baseline": {
+        "answer_only": null,
+        "answer": "145",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.5389084815979004,
+        "raw": " Let's break down the steps. First, we start with 72. Then we add 29 to it. 72 + 29 equals 101. Next, we multiply that result by 2. 101 * 2 equals 202. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "145",
+        "answer": "145",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17555642127990723,
+        "llm_latency_s": 0.1724555492401123,
+        "operator_overhead_s": 0.003100872039794922,
+        "raw": " 145"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "145",
+          "answer": "145",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1771702766418457,
+          "llm_latency_s": 0.17406940460205078,
+          "operator_overhead_s": 0.003100872039794922,
+          "suffix": "\nfinal_abs=145\nFinal integer:",
+          "raw": " 145"
+        },
+        "sign_final_abs": {
+          "answer_only": "145",
+          "answer": "145",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.17532682418823242,
+          "llm_latency_s": 0.1722259521484375,
+          "operator_overhead_s": 0.003100872039794922,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=145\nFinal integer:",
+          "raw": " 145"
+        },
+        "signed_answer": {
+          "answer_only": "145",
+          "answer": "145",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.18332862854003906,
+          "llm_latency_s": 0.18022775650024414,
+          "operator_overhead_s": 0.003100872039794922,
+          "suffix": "\nanswer=145\nFinal integer:",
+          "raw": " 145"
+        },
+        "digits_msd": {
+          "answer_only": "145",
+          "answer": "145",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.19373846054077148,
+          "llm_latency_s": 0.19063758850097656,
+          "operator_overhead_s": 0.003100872039794922,
+          "suffix": "\nsign=positive\ndigits_msd=0145\nFinal integer:",
+          "raw": " 145"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          4,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          4,
+          5
+        ],
+        "rendered_abs": "145",
+        "overflow": false
+      },
+      "meta": {
+        "a": 72,
+        "b": 29,
+        "c": 2,
+        "d": 57,
+        "teacher_steps": [
+          " (72 + 29) = 101;",
+          " 101 * 2 = 202;",
+          " 202 - 57 = 145.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "794",
+      "baseline": {
+        "answer_only": null,
+        "answer": "794",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 597,
+        "latency_s": 3.5233142375946045,
+        "raw": " Let's break down the steps. First, we start with 79. Then we add 62 to it. 79 + 62 equals 141. Next, we multiply this result by 6. 141 multiplied by 6 is 846. "
+      },
+      "operator_vm_text": {
+        "answer_only": "794",
+        "answer": "794",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.1758708953857422,
+        "llm_latency_s": 0.1727283000946045,
+        "operator_overhead_s": 0.0031425952911376953,
+        "raw": " 794"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "794",
+          "answer": "794",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.19704341888427734,
+          "llm_latency_s": 0.19390082359313965,
+          "operator_overhead_s": 0.0031425952911376953,
+          "suffix": "\nfinal_abs=794\nFinal integer:",
+          "raw": " 794"
+        },
+        "sign_final_abs": {
+          "answer_only": "794",
+          "answer": "794",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.19870829582214355,
+          "llm_latency_s": 0.19556570053100586,
+          "operator_overhead_s": 0.0031425952911376953,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=794\nFinal integer:",
+          "raw": " 794"
+        },
+        "signed_answer": {
+          "answer_only": "794",
+          "answer": "794",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.20058226585388184,
+          "llm_latency_s": 0.19743967056274414,
+          "operator_overhead_s": 0.0031425952911376953,
+          "suffix": "\nanswer=794\nFinal integer:",
+          "raw": " 794"
+        },
+        "digits_msd": {
+          "answer_only": "794",
+          "answer": "794",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.18718266487121582,
+          "llm_latency_s": 0.18404006958007812,
+          "operator_overhead_s": 0.0031425952911376953,
+          "suffix": "\nsign=positive\ndigits_msd=0794\nFinal integer:",
+          "raw": " 794"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          9,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          9,
+          4
+        ],
+        "rendered_abs": "794",
+        "overflow": false
+      },
+      "meta": {
+        "a": 79,
+        "b": 62,
+        "c": 6,
+        "d": 52,
+        "teacher_steps": [
+          " (79 + 62) = 141;",
+          " 141 * 6 = 846;",
+          " 846 - 52 = 794.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1221",
+      "baseline": {
+        "answer_only": null,
+        "answer": "1221",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 3.548788070678711,
+        "raw": " Let's break down the steps. First, we start with 68. Then we add 77 to it. 68 + 77 equals 145. Next, we multiply that result by 9. 145 * 9 equals 1305. Finally"
+      },
+      "operator_vm_text": {
+        "answer_only": "1221",
+        "answer": "1221",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 559,
+        "injected_text_tokens": 48,
+        "total_kv_tokens": 564,
+        "latency_s": 0.23929166793823242,
+        "llm_latency_s": 0.23551416397094727,
+        "operator_overhead_s": 0.0037775039672851562,
+        "raw": " 1221"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "1221",
+          "answer": "1221",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 12,
+          "total_kv_tokens": 528,
+          "latency_s": 0.2473468780517578,
+          "llm_latency_s": 0.24356937408447266,
+          "operator_overhead_s": 0.0037775039672851562,
+          "suffix": "\nfinal_abs=1221\nFinal integer:",
+          "raw": " 1221"
+        },
+        "sign_final_abs": {
+          "answer_only": "1221",
+          "answer": "1221",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.24102568626403809,
+          "llm_latency_s": 0.23724818229675293,
+          "operator_overhead_s": 0.0037775039672851562,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=1221\nFinal integer:",
+          "raw": " 1221"
+        },
+        "signed_answer": {
+          "answer_only": "1221",
+          "answer": "1221",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 527,
+          "latency_s": 0.27106618881225586,
+          "llm_latency_s": 0.2672886848449707,
+          "operator_overhead_s": 0.0037775039672851562,
+          "suffix": "\nanswer=1221\nFinal integer:",
+          "raw": " 1221"
+        },
+        "digits_msd": {
+          "answer_only": "1221",
+          "answer": "1221",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.23590946197509766,
+          "llm_latency_s": 0.2321319580078125,
+          "operator_overhead_s": 0.0037775039672851562,
+          "suffix": "\nsign=positive\ndigits_msd=1221\nFinal integer:",
+          "raw": " 1221"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "rendered_abs": "1221",
+        "overflow": false
+      },
+      "meta": {
+        "a": 68,
+        "b": 77,
+        "c": 9,
+        "d": 84,
+        "teacher_steps": [
+          " (68 + 77) = 145;",
+          " 145 * 9 = 1305;",
+          " 1305 - 84 = 1221.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "225",
+      "baseline": {
+        "answer_only": null,
+        "answer": "225",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 3.4042105674743652,
+        "raw": " Let's break down the steps. First, we start with 60. Then we add 31, which gives us 60 + 31 = 91. Next, we multiply the result by 3, so 91 * 3 = 273. Finally, "
+      },
+      "operator_vm_text": {
+        "answer_only": "225",
+        "answer": "225",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.19401240348815918,
+        "llm_latency_s": 0.19017362594604492,
+        "operator_overhead_s": 0.003838777542114258,
+        "raw": " 225"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "225",
+          "answer": "225",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.20778799057006836,
+          "llm_latency_s": 0.2039492130279541,
+          "operator_overhead_s": 0.003838777542114258,
+          "suffix": "\nfinal_abs=225\nFinal integer:",
+          "raw": " 225"
+        },
+        "sign_final_abs": {
+          "answer_only": "225",
+          "answer": "225",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.19019412994384766,
+          "llm_latency_s": 0.1863553524017334,
+          "operator_overhead_s": 0.003838777542114258,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=225\nFinal integer:",
+          "raw": " 225"
+        },
+        "signed_answer": {
+          "answer_only": "225",
+          "answer": "225",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.19883513450622559,
+          "llm_latency_s": 0.19499635696411133,
+          "operator_overhead_s": 0.003838777542114258,
+          "suffix": "\nanswer=225\nFinal integer:",
+          "raw": " 225"
+        },
+        "digits_msd": {
+          "answer_only": "483",
+          "answer": "483",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.2412574291229248,
+          "llm_latency_s": 0.23741865158081055,
+          "operator_overhead_s": 0.003838777542114258,
+          "suffix": "\nsign=positive\ndigits_msd=0225\nFinal integer:",
+          "raw": " 483\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          2,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          2,
+          5
+        ],
+        "rendered_abs": "225",
+        "overflow": false
+      },
+      "meta": {
+        "a": 60,
+        "b": 31,
+        "c": 3,
+        "d": 48,
+        "teacher_steps": [
+          " (60 + 31) = 91;",
+          " 91 * 3 = 273;",
+          " 273 - 48 = 225.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1179",
+      "baseline": {
+        "answer_only": null,
+        "answer": "1179",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 91,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 603,
+        "latency_s": 3.567394256591797,
+        "raw": " Let's break down the steps. First, we start with 83. Then we add 79 to it. 83 + 79 equals 162. Next, we multiply that result by 8. 162 multiplied by 8 equals 1"
+      },
+      "operator_vm_text": {
+        "answer_only": "1179",
+        "answer": "1179",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 560,
+        "injected_text_tokens": 48,
+        "total_kv_tokens": 565,
+        "latency_s": 0.23629093170166016,
+        "llm_latency_s": 0.23240184783935547,
+        "operator_overhead_s": 0.0038890838623046875,
+        "raw": " 1179"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "1179",
+          "answer": "1179",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 524,
+          "injected_embedding_tokens": 12,
+          "total_kv_tokens": 529,
+          "latency_s": 0.23841023445129395,
+          "llm_latency_s": 0.23452115058898926,
+          "operator_overhead_s": 0.0038890838623046875,
+          "suffix": "\nfinal_abs=1179\nFinal integer:",
+          "raw": " 1179"
+        },
+        "sign_final_abs": {
+          "answer_only": "1179",
+          "answer": "1179",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.22092533111572266,
+          "llm_latency_s": 0.21703624725341797,
+          "operator_overhead_s": 0.0038890838623046875,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=1179\nFinal integer:",
+          "raw": " 1179"
+        },
+        "signed_answer": {
+          "answer_only": "1179",
+          "answer": "1179",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 528,
+          "latency_s": 0.21943330764770508,
+          "llm_latency_s": 0.2155442237854004,
+          "operator_overhead_s": 0.0038890838623046875,
+          "suffix": "\nanswer=1179\nFinal integer:",
+          "raw": " 1179"
+        },
+        "digits_msd": {
+          "answer_only": "1179",
+          "answer": "1179",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.2169208526611328,
+          "llm_latency_s": 0.21303176879882812,
+          "operator_overhead_s": 0.0038890838623046875,
+          "suffix": "\nsign=positive\ndigits_msd=1179\nFinal integer:",
+          "raw": " 1179"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          9,
+          7,
+          1,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          1,
+          7,
+          9
+        ],
+        "rendered_abs": "1179",
+        "overflow": false
+      },
+      "meta": {
+        "a": 83,
+        "b": 79,
+        "c": 8,
+        "d": 117,
+        "teacher_steps": [
+          " (83 + 79) = 162;",
+          " 162 * 8 = 1296;",
+          " 1296 - 117 = 1179.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "370",
+      "baseline": {
+        "answer_only": null,
+        "answer": "370",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 80,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 591,
+        "latency_s": 3.291415214538574,
+        "raw": " Let's do the math step by step. First, we start with 29. Then we add 59. 29 + 59 equals 88. Next, we multiply the result by 5. 88 times 5 equals 440. Finally, "
+      },
+      "operator_vm_text": {
+        "answer_only": "370",
+        "answer": "370",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.1921229362487793,
+        "llm_latency_s": 0.18805456161499023,
+        "operator_overhead_s": 0.0040683746337890625,
+        "raw": " 370"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "370",
+          "answer": "370",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.19563031196594238,
+          "llm_latency_s": 0.19156193733215332,
+          "operator_overhead_s": 0.0040683746337890625,
+          "suffix": "\nfinal_abs=370\nFinal integer:",
+          "raw": " 370"
+        },
+        "sign_final_abs": {
+          "answer_only": "370",
+          "answer": "370",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.19476580619812012,
+          "llm_latency_s": 0.19069743156433105,
+          "operator_overhead_s": 0.0040683746337890625,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=370\nFinal integer:",
+          "raw": " 370"
+        },
+        "signed_answer": {
+          "answer_only": "370",
+          "answer": "370",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.2010936737060547,
+          "llm_latency_s": 0.19702529907226562,
+          "operator_overhead_s": 0.0040683746337890625,
+          "suffix": "\nanswer=370\nFinal integer:",
+          "raw": " 370"
+        },
+        "digits_msd": {
+          "answer_only": "1950",
+          "answer": "1950",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.26205992698669434,
+          "llm_latency_s": 0.2579915523529053,
+          "operator_overhead_s": 0.0040683746337890625,
+          "suffix": "\nsign=positive\ndigits_msd=0370\nFinal integer:",
+          "raw": " 1950\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          7,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          7,
+          0
+        ],
+        "rendered_abs": "370",
+        "overflow": false
+      },
+      "meta": {
+        "a": 29,
+        "b": 59,
+        "c": 5,
+        "d": 70,
+        "teacher_steps": [
+          " (29 + 59) = 88;",
+          " 88 * 5 = 440;",
+          " 440 - 70 = 370.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "208",
+      "baseline": {
+        "answer_only": null,
+        "answer": "208",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 65,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 576,
+        "latency_s": 2.54257869720459,
+        "raw": " Let's break down the steps. Start with 30. Add 39: 30 + 39 = 69. Multiply by 4: 69 * 4 = 276. Subtract 68: 276 - 68 = 208"
+      },
+      "operator_vm_text": {
+        "answer_only": "208",
+        "answer": "208",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.19802498817443848,
+        "llm_latency_s": 0.19406843185424805,
+        "operator_overhead_s": 0.00395655632019043,
+        "raw": " 208"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "208",
+          "answer": "208",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.20836877822875977,
+          "llm_latency_s": 0.20441222190856934,
+          "operator_overhead_s": 0.00395655632019043,
+          "suffix": "\nfinal_abs=208\nFinal integer:",
+          "raw": " 208"
+        },
+        "sign_final_abs": {
+          "answer_only": "208",
+          "answer": "208",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.19012999534606934,
+          "llm_latency_s": 0.1861734390258789,
+          "operator_overhead_s": 0.00395655632019043,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=208\nFinal integer:",
+          "raw": " 208"
+        },
+        "signed_answer": {
+          "answer_only": "208",
+          "answer": "208",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.1775667667388916,
+          "llm_latency_s": 0.17361021041870117,
+          "operator_overhead_s": 0.00395655632019043,
+          "suffix": "\nanswer=208\nFinal integer:",
+          "raw": " 208"
+        },
+        "digits_msd": {
+          "answer_only": "1000",
+          "answer": "1000",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.26018619537353516,
+          "llm_latency_s": 0.2562296390533447,
+          "operator_overhead_s": 0.00395655632019043,
+          "suffix": "\nsign=positive\ndigits_msd=0208\nFinal integer:",
+          "raw": " 1000\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          8,
+          0,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          0,
+          8
+        ],
+        "rendered_abs": "208",
+        "overflow": false
+      },
+      "meta": {
+        "a": 30,
+        "b": 39,
+        "c": 4,
+        "d": 68,
+        "teacher_steps": [
+          " (30 + 39) = 69;",
+          " 69 * 4 = 276;",
+          " 276 - 68 = 208.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "74",
+      "baseline": {
+        "answer_only": null,
+        "answer": "74",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 82,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 593,
+        "latency_s": 3.276685953140259,
+        "raw": " Let's break down the steps. First, we start with 27. Then we add 52 to it. 27 + 52 equals 79. Next, we multiply that result by 2. 79 * 2 equals 158. Finally, w"
+      },
+      "operator_vm_text": {
+        "answer_only": "74",
+        "answer": "74",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 557,
+        "injected_text_tokens": 46,
+        "total_kv_tokens": 560,
+        "latency_s": 0.15647506713867188,
+        "llm_latency_s": 0.1522810459136963,
+        "operator_overhead_s": 0.004194021224975586,
+        "raw": " 74"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "74",
+          "answer": "74",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 524,
+          "latency_s": 0.15766692161560059,
+          "llm_latency_s": 0.153472900390625,
+          "operator_overhead_s": 0.004194021224975586,
+          "suffix": "\nfinal_abs=74\nFinal integer:",
+          "raw": " 74"
+        },
+        "sign_final_abs": {
+          "answer_only": "74",
+          "answer": "74",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 526,
+          "injected_embedding_tokens": 15,
+          "total_kv_tokens": 529,
+          "latency_s": 0.16356372833251953,
+          "llm_latency_s": 0.15936970710754395,
+          "operator_overhead_s": 0.004194021224975586,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=74\nFinal integer:",
+          "raw": " 74"
+        },
+        "signed_answer": {
+          "answer_only": "74",
+          "answer": "74",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 3,
+          "prefill_tokens": 520,
+          "injected_embedding_tokens": 9,
+          "total_kv_tokens": 523,
+          "latency_s": 0.14239907264709473,
+          "llm_latency_s": 0.13820505142211914,
+          "operator_overhead_s": 0.004194021224975586,
+          "suffix": "\nanswer=74\nFinal integer:",
+          "raw": " 74"
+        },
+        "digits_msd": {
+          "answer_only": "100",
+          "answer": "100",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.2112734317779541,
+          "llm_latency_s": 0.20707941055297852,
+          "operator_overhead_s": 0.004194021224975586,
+          "suffix": "\nsign=positive\ndigits_msd=0074\nFinal integer:",
+          "raw": " 100\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          7,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          7,
+          4
+        ],
+        "rendered_abs": "74",
+        "overflow": false
+      },
+      "meta": {
+        "a": 27,
+        "b": 52,
+        "c": 2,
+        "d": 84,
+        "teacher_steps": [
+          " (27 + 52) = 79;",
+          " 79 * 2 = 158;",
+          " 158 - 84 = 74.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "341",
+      "baseline": {
+        "answer_only": null,
+        "answer": "341",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.2778940200805664,
+        "raw": " Let's break down the steps. First, we start with 24. Then we add 76 to it. 24 + 76 equals 100. Next, we multiply that result by 4. 100 * 4 equals 400. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "341",
+        "answer": "341",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.18259835243225098,
+        "llm_latency_s": 0.1791377067565918,
+        "operator_overhead_s": 0.0034606456756591797,
+        "raw": " 341"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "341",
+          "answer": "341",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.17859697341918945,
+          "llm_latency_s": 0.17513632774353027,
+          "operator_overhead_s": 0.0034606456756591797,
+          "suffix": "\nfinal_abs=341\nFinal integer:",
+          "raw": " 341"
+        },
+        "sign_final_abs": {
+          "answer_only": "341",
+          "answer": "341",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.18866729736328125,
+          "llm_latency_s": 0.18520665168762207,
+          "operator_overhead_s": 0.0034606456756591797,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=341\nFinal integer:",
+          "raw": " 341"
+        },
+        "signed_answer": {
+          "answer_only": "341",
+          "answer": "341",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.20635414123535156,
+          "llm_latency_s": 0.20289349555969238,
+          "operator_overhead_s": 0.0034606456756591797,
+          "suffix": "\nanswer=341\nFinal integer:",
+          "raw": " 341"
+        },
+        "digits_msd": {
+          "answer_only": "1234",
+          "answer": "1234",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.26752471923828125,
+          "llm_latency_s": 0.26406407356262207,
+          "operator_overhead_s": 0.0034606456756591797,
+          "suffix": "\nsign=positive\ndigits_msd=0341\nFinal integer:",
+          "raw": " 1234\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          4,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          4,
+          1
+        ],
+        "rendered_abs": "341",
+        "overflow": false
+      },
+      "meta": {
+        "a": 24,
+        "b": 76,
+        "c": 4,
+        "d": 59,
+        "teacher_steps": [
+          " (24 + 76) = 100;",
+          " 100 * 4 = 400;",
+          " 400 - 59 = 341.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "526",
+      "baseline": {
+        "answer_only": null,
+        "answer": "526",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.2437562942504883,
+        "raw": " Let's break down the steps. First, we start with 74. Then we add 71 to it. 74 + 71 equals 145. Next, we multiply that result by 4. 145 * 4 equals 580. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "526",
+        "answer": "526",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.19518470764160156,
+        "llm_latency_s": 0.19185900688171387,
+        "operator_overhead_s": 0.0033257007598876953,
+        "raw": " 526"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "526",
+          "answer": "526",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1832284927368164,
+          "llm_latency_s": 0.1799027919769287,
+          "operator_overhead_s": 0.0033257007598876953,
+          "suffix": "\nfinal_abs=526\nFinal integer:",
+          "raw": " 526"
+        },
+        "sign_final_abs": {
+          "answer_only": "526",
+          "answer": "526",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.19014620780944824,
+          "llm_latency_s": 0.18682050704956055,
+          "operator_overhead_s": 0.0033257007598876953,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=526\nFinal integer:",
+          "raw": " 526"
+        },
+        "signed_answer": {
+          "answer_only": "526",
+          "answer": "526",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.16716241836547852,
+          "llm_latency_s": 0.16383671760559082,
+          "operator_overhead_s": 0.0033257007598876953,
+          "suffix": "\nanswer=526\nFinal integer:",
+          "raw": " 526"
+        },
+        "digits_msd": {
+          "answer_only": "0526",
+          "answer": "0526",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.25520753860473633,
+          "llm_latency_s": 0.25188183784484863,
+          "operator_overhead_s": 0.0033257007598876953,
+          "suffix": "\nsign=positive\ndigits_msd=0526\nFinal integer:",
+          "raw": " 0526\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          2,
+          5,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          5,
+          2,
+          6
+        ],
+        "rendered_abs": "526",
+        "overflow": false
+      },
+      "meta": {
+        "a": 74,
+        "b": 71,
+        "c": 4,
+        "d": 54,
+        "teacher_steps": [
+          " (74 + 71) = 145;",
+          " 145 * 4 = 580;",
+          " 580 - 54 = 526.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "641",
+      "baseline": {
+        "answer_only": null,
+        "answer": "641",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.194796562194824,
+        "raw": " Let's break down the steps. First, we start with 75. Then we add 68 to it. 75 + 68 equals 143. Next, we multiply that result by 5. 143 * 5 equals 715. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "641",
+        "answer": "641",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20577645301818848,
+        "llm_latency_s": 0.20201897621154785,
+        "operator_overhead_s": 0.003757476806640625,
+        "raw": " 641"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "641",
+          "answer": "641",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1985316276550293,
+          "llm_latency_s": 0.19477415084838867,
+          "operator_overhead_s": 0.003757476806640625,
+          "suffix": "\nfinal_abs=641\nFinal integer:",
+          "raw": " 641"
+        },
+        "sign_final_abs": {
+          "answer_only": "641",
+          "answer": "641",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.1736745834350586,
+          "llm_latency_s": 0.16991710662841797,
+          "operator_overhead_s": 0.003757476806640625,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=641\nFinal integer:",
+          "raw": " 641"
+        },
+        "signed_answer": {
+          "answer_only": "641",
+          "answer": "641",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.17246365547180176,
+          "llm_latency_s": 0.16870617866516113,
+          "operator_overhead_s": 0.003757476806640625,
+          "suffix": "\nanswer=641\nFinal integer:",
+          "raw": " 641"
+        },
+        "digits_msd": {
+          "answer_only": "2343",
+          "answer": "2343",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.23820066452026367,
+          "llm_latency_s": 0.23444318771362305,
+          "operator_overhead_s": 0.003757476806640625,
+          "suffix": "\nsign=positive\ndigits_msd=0641\nFinal integer:",
+          "raw": " 2343\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          4,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          4,
+          1
+        ],
+        "rendered_abs": "641",
+        "overflow": false
+      },
+      "meta": {
+        "a": 75,
+        "b": 68,
+        "c": 5,
+        "d": 74,
+        "teacher_steps": [
+          " (75 + 68) = 143;",
+          " 143 * 5 = 715;",
+          " 715 - 74 = 641.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "601",
+      "baseline": {
+        "answer_only": null,
+        "answer": "601",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.238034248352051,
+        "raw": " Let's break down the steps. First, we start with 62. Then we add 77 to it. 62 + 77 equals 139. Next, we multiply that result by 5. 139 * 5 equals 695. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "601",
+        "answer": "601",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20520305633544922,
+        "llm_latency_s": 0.2017202377319336,
+        "operator_overhead_s": 0.003482818603515625,
+        "raw": " 601"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "601",
+          "answer": "601",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1922004222869873,
+          "llm_latency_s": 0.18871760368347168,
+          "operator_overhead_s": 0.003482818603515625,
+          "suffix": "\nfinal_abs=601\nFinal integer:",
+          "raw": " 601"
+        },
+        "sign_final_abs": {
+          "answer_only": "601",
+          "answer": "601",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.18579578399658203,
+          "llm_latency_s": 0.1823129653930664,
+          "operator_overhead_s": 0.003482818603515625,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=601\nFinal integer:",
+          "raw": " 601"
+        },
+        "signed_answer": {
+          "answer_only": "601",
+          "answer": "601",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.19408130645751953,
+          "llm_latency_s": 0.1905984878540039,
+          "operator_overhead_s": 0.003482818603515625,
+          "suffix": "\nanswer=601\nFinal integer:",
+          "raw": " 601"
+        },
+        "digits_msd": {
+          "answer_only": "1986",
+          "answer": "1986",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.2508993148803711,
+          "llm_latency_s": 0.24741649627685547,
+          "operator_overhead_s": 0.003482818603515625,
+          "suffix": "\nsign=positive\ndigits_msd=0601\nFinal integer:",
+          "raw": " 1986\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          0,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          0,
+          1
+        ],
+        "rendered_abs": "601",
+        "overflow": false
+      },
+      "meta": {
+        "a": 62,
+        "b": 77,
+        "c": 5,
+        "d": 94,
+        "teacher_steps": [
+          " (62 + 77) = 139;",
+          " 139 * 5 = 695;",
+          " 695 - 94 = 601.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "108",
+      "baseline": {
+        "answer_only": null,
+        "answer": "108",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.106489419937134,
+        "raw": " Let's break down the steps. First, we start with 65. Then we add 37 to it. 65 + 37 equals 102. Next, we multiply that result by 2. 102 * 2 equals 204. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "108",
+        "answer": "108",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.18492507934570312,
+        "llm_latency_s": 0.18001103401184082,
+        "operator_overhead_s": 0.004914045333862305,
+        "raw": " 108"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "108",
+          "answer": "108",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1934809684753418,
+          "llm_latency_s": 0.1885669231414795,
+          "operator_overhead_s": 0.004914045333862305,
+          "suffix": "\nfinal_abs=108\nFinal integer:",
+          "raw": " 108"
+        },
+        "sign_final_abs": {
+          "answer_only": "108",
+          "answer": "108",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.18750905990600586,
+          "llm_latency_s": 0.18259501457214355,
+          "operator_overhead_s": 0.004914045333862305,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=108\nFinal integer:",
+          "raw": " 108"
+        },
+        "signed_answer": {
+          "answer_only": "108",
+          "answer": "108",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.19239234924316406,
+          "llm_latency_s": 0.18747830390930176,
+          "operator_overhead_s": 0.004914045333862305,
+          "suffix": "\nanswer=108\nFinal integer:",
+          "raw": " 108"
+        },
+        "digits_msd": {
+          "answer_only": "108",
+          "answer": "108",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.17935967445373535,
+          "llm_latency_s": 0.17444562911987305,
+          "operator_overhead_s": 0.004914045333862305,
+          "suffix": "\nsign=positive\ndigits_msd=0108\nFinal integer:",
+          "raw": " 108"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          8,
+          0,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          0,
+          8
+        ],
+        "rendered_abs": "108",
+        "overflow": false
+      },
+      "meta": {
+        "a": 65,
+        "b": 37,
+        "c": 2,
+        "d": 96,
+        "teacher_steps": [
+          " (65 + 37) = 102;",
+          " 102 * 2 = 204;",
+          " 204 - 96 = 108.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "255",
+      "baseline": {
+        "answer_only": null,
+        "answer": "255",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 83,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 594,
+        "latency_s": 3.0211806297302246,
+        "raw": " Let's break down the steps. First, we start with 28. Then we add 39 to it. 28 + 39 equals 67. Next, we multiply that result by 4. 67 * 4 equals 268. Finally, w"
+      },
+      "operator_vm_text": {
+        "answer_only": "255",
+        "answer": "255",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.18221116065979004,
+        "llm_latency_s": 0.17876982688903809,
+        "operator_overhead_s": 0.003441333770751953,
+        "raw": " 255"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "255",
+          "answer": "255",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.19458842277526855,
+          "llm_latency_s": 0.1911470890045166,
+          "operator_overhead_s": 0.003441333770751953,
+          "suffix": "\nfinal_abs=255\nFinal integer:",
+          "raw": " 255"
+        },
+        "sign_final_abs": {
+          "answer_only": "255",
+          "answer": "255",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.20487189292907715,
+          "llm_latency_s": 0.2014305591583252,
+          "operator_overhead_s": 0.003441333770751953,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=255\nFinal integer:",
+          "raw": " 255"
+        },
+        "signed_answer": {
+          "answer_only": "255",
+          "answer": "255",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.19829654693603516,
+          "llm_latency_s": 0.1948552131652832,
+          "operator_overhead_s": 0.003441333770751953,
+          "suffix": "\nanswer=255\nFinal integer:",
+          "raw": " 255"
+        },
+        "digits_msd": {
+          "answer_only": "255",
+          "answer": "255",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.18490052223205566,
+          "llm_latency_s": 0.1814591884613037,
+          "operator_overhead_s": 0.003441333770751953,
+          "suffix": "\nsign=positive\ndigits_msd=0255\nFinal integer:",
+          "raw": " 255"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          5,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          5,
+          5
+        ],
+        "rendered_abs": "255",
+        "overflow": false
+      },
+      "meta": {
+        "a": 28,
+        "b": 39,
+        "c": 4,
+        "d": 13,
+        "teacher_steps": [
+          " (28 + 39) = 67;",
+          " 67 * 4 = 268;",
+          " 268 - 13 = 255.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "626",
+      "baseline": {
+        "answer_only": null,
+        "answer": "626",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 72,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 583,
+        "latency_s": 2.687638282775879,
+        "raw": " Let's break down the steps. First, we start with 68. Then we add 30, which gives us 98. Next, we multiply that result by 7. 98 times 7 is 686. Finally, we subt"
+      },
+      "operator_vm_text": {
+        "answer_only": "626",
+        "answer": "626",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17342925071716309,
+        "llm_latency_s": 0.17049813270568848,
+        "operator_overhead_s": 0.0029311180114746094,
+        "raw": " 626"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "626",
+          "answer": "626",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1732923984527588,
+          "llm_latency_s": 0.17036128044128418,
+          "operator_overhead_s": 0.0029311180114746094,
+          "suffix": "\nfinal_abs=626\nFinal integer:",
+          "raw": " 626"
+        },
+        "sign_final_abs": {
+          "answer_only": "626",
+          "answer": "626",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.1835618019104004,
+          "llm_latency_s": 0.18063068389892578,
+          "operator_overhead_s": 0.0029311180114746094,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=626\nFinal integer:",
+          "raw": " 626"
+        },
+        "signed_answer": {
+          "answer_only": "626",
+          "answer": "626",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.18921685218811035,
+          "llm_latency_s": 0.18628573417663574,
+          "operator_overhead_s": 0.0029311180114746094,
+          "suffix": "\nanswer=626\nFinal integer:",
+          "raw": " 626"
+        },
+        "digits_msd": {
+          "answer_only": "626",
+          "answer": "626",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.18450927734375,
+          "llm_latency_s": 0.1815781593322754,
+          "operator_overhead_s": 0.0029311180114746094,
+          "suffix": "\nsign=positive\ndigits_msd=0626\nFinal integer:",
+          "raw": " 626"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          2,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          2,
+          6
+        ],
+        "rendered_abs": "626",
+        "overflow": false
+      },
+      "meta": {
+        "a": 68,
+        "b": 30,
+        "c": 7,
+        "d": 60,
+        "teacher_steps": [
+          " (68 + 30) = 98;",
+          " 98 * 7 = 686;",
+          " 686 - 60 = 626.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "306",
+      "baseline": {
+        "answer_only": null,
+        "answer": "306",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 3.2504639625549316,
+        "raw": " Let's break down the steps. First, we start with 38. Then we add 19, which gives us 38 + 19 = 57. Next, we multiply the result by 6, so 57 * 6 = 342. Finally, "
+      },
+      "operator_vm_text": {
+        "answer_only": "306",
+        "answer": "306",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17216897010803223,
+        "llm_latency_s": 0.16910696029663086,
+        "operator_overhead_s": 0.003062009811401367,
+        "raw": " 306"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "306",
+          "answer": "306",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.16796231269836426,
+          "llm_latency_s": 0.1649003028869629,
+          "operator_overhead_s": 0.003062009811401367,
+          "suffix": "\nfinal_abs=306\nFinal integer:",
+          "raw": " 306"
+        },
+        "sign_final_abs": {
+          "answer_only": "306",
+          "answer": "306",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.16893601417541504,
+          "llm_latency_s": 0.16587400436401367,
+          "operator_overhead_s": 0.003062009811401367,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=306\nFinal integer:",
+          "raw": " 306"
+        },
+        "signed_answer": {
+          "answer_only": "306",
+          "answer": "306",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.16973304748535156,
+          "llm_latency_s": 0.1666710376739502,
+          "operator_overhead_s": 0.003062009811401367,
+          "suffix": "\nanswer=306\nFinal integer:",
+          "raw": " 306"
+        },
+        "digits_msd": {
+          "answer_only": "1200",
+          "answer": "1200",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.241729736328125,
+          "llm_latency_s": 0.23866772651672363,
+          "operator_overhead_s": 0.003062009811401367,
+          "suffix": "\nsign=positive\ndigits_msd=0306\nFinal integer:",
+          "raw": " 1200\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          0,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          0,
+          6
+        ],
+        "rendered_abs": "306",
+        "overflow": false
+      },
+      "meta": {
+        "a": 38,
+        "b": 19,
+        "c": 6,
+        "d": 36,
+        "teacher_steps": [
+          " (38 + 19) = 57;",
+          " 57 * 6 = 342;",
+          " 342 - 36 = 306.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "717",
+      "baseline": {
+        "answer_only": null,
+        "answer": "717",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.1809041500091553,
+        "raw": " Let's break down the steps. First, we start with 68. Then we add 47 to it. 68 + 47 equals 115. Next, we multiply that result by 7. 115 * 7 equals 805. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "717",
+        "answer": "717",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.1660158634185791,
+        "llm_latency_s": 0.16316461563110352,
+        "operator_overhead_s": 0.002851247787475586,
+        "raw": " 717"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "717",
+          "answer": "717",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.16619253158569336,
+          "llm_latency_s": 0.16334128379821777,
+          "operator_overhead_s": 0.002851247787475586,
+          "suffix": "\nfinal_abs=717\nFinal integer:",
+          "raw": " 717"
+        },
+        "sign_final_abs": {
+          "answer_only": "717",
+          "answer": "717",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.16578984260559082,
+          "llm_latency_s": 0.16293859481811523,
+          "operator_overhead_s": 0.002851247787475586,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=717\nFinal integer:",
+          "raw": " 717"
+        },
+        "signed_answer": {
+          "answer_only": "717",
+          "answer": "717",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.16554856300354004,
+          "llm_latency_s": 0.16269731521606445,
+          "operator_overhead_s": 0.002851247787475586,
+          "suffix": "\nanswer=717\nFinal integer:",
+          "raw": " 717"
+        },
+        "digits_msd": {
+          "answer_only": "3453",
+          "answer": "3453",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.23023653030395508,
+          "llm_latency_s": 0.2273852825164795,
+          "operator_overhead_s": 0.002851247787475586,
+          "suffix": "\nsign=positive\ndigits_msd=0717\nFinal integer:",
+          "raw": " 3453\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          7,
+          1,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          1,
+          7
+        ],
+        "rendered_abs": "717",
+        "overflow": false
+      },
+      "meta": {
+        "a": 68,
+        "b": 47,
+        "c": 7,
+        "d": 88,
+        "teacher_steps": [
+          " (68 + 47) = 115;",
+          " 115 * 7 = 805;",
+          " 805 - 88 = 717.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "751",
+      "baseline": {
+        "answer_only": null,
+        "answer": "751",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 597,
+        "latency_s": 3.2467947006225586,
+        "raw": " Let's break down the steps. First, we start with 74. Then we add 36 to it. 74 + 36 equals 110. Next, we multiply that result by 7. 110 multiplied by 7 is 770. "
+      },
+      "operator_vm_text": {
+        "answer_only": "751",
+        "answer": "751",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17395973205566406,
+        "llm_latency_s": 0.17095017433166504,
+        "operator_overhead_s": 0.0030095577239990234,
+        "raw": " 751"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "751",
+          "answer": "751",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.17316436767578125,
+          "llm_latency_s": 0.17015480995178223,
+          "operator_overhead_s": 0.0030095577239990234,
+          "suffix": "\nfinal_abs=751\nFinal integer:",
+          "raw": " 751"
+        },
+        "sign_final_abs": {
+          "answer_only": "751",
+          "answer": "751",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.1712329387664795,
+          "llm_latency_s": 0.16822338104248047,
+          "operator_overhead_s": 0.0030095577239990234,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=751\nFinal integer:",
+          "raw": " 751"
+        },
+        "signed_answer": {
+          "answer_only": "751",
+          "answer": "751",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.16976284980773926,
+          "llm_latency_s": 0.16675329208374023,
+          "operator_overhead_s": 0.0030095577239990234,
+          "suffix": "\nanswer=751\nFinal integer:",
+          "raw": " 751"
+        },
+        "digits_msd": {
+          "answer_only": "4255",
+          "answer": "4255",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.23725223541259766,
+          "llm_latency_s": 0.23424267768859863,
+          "operator_overhead_s": 0.0030095577239990234,
+          "suffix": "\nsign=positive\ndigits_msd=0751\nFinal integer:",
+          "raw": " 4255\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          5,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          5,
+          1
+        ],
+        "rendered_abs": "751",
+        "overflow": false
+      },
+      "meta": {
+        "a": 74,
+        "b": 36,
+        "c": 7,
+        "d": 19,
+        "teacher_steps": [
+          " (74 + 36) = 110;",
+          " 110 * 7 = 770;",
+          " 770 - 19 = 751.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "172",
+      "baseline": {
+        "answer_only": null,
+        "answer": "172",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.446488380432129,
+        "raw": " Let's break down the steps. First, we start with 56. Then we add 75 to it. 56 + 75 equals 131. Next, we multiply that result by 2. 131 * 2 equals 262. Finally,"
+      },
+      "operator_vm_text": {
+        "answer_only": "172",
+        "answer": "172",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17655634880065918,
+        "llm_latency_s": 0.17342853546142578,
+        "operator_overhead_s": 0.0031278133392333984,
+        "raw": " 172"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "172",
+          "answer": "172",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1778879165649414,
+          "llm_latency_s": 0.174760103225708,
+          "operator_overhead_s": 0.0031278133392333984,
+          "suffix": "\nfinal_abs=172\nFinal integer:",
+          "raw": " 172"
+        },
+        "sign_final_abs": {
+          "answer_only": "172",
+          "answer": "172",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.18078374862670898,
+          "llm_latency_s": 0.17765593528747559,
+          "operator_overhead_s": 0.0031278133392333984,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=172\nFinal integer:",
+          "raw": " 172"
+        },
+        "signed_answer": {
+          "answer_only": "172",
+          "answer": "172",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.17876744270324707,
+          "llm_latency_s": 0.17563962936401367,
+          "operator_overhead_s": 0.0031278133392333984,
+          "suffix": "\nanswer=172\nFinal integer:",
+          "raw": " 172"
+        },
+        "digits_msd": {
+          "answer_only": "254",
+          "answer": "254",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.24006962776184082,
+          "llm_latency_s": 0.23694181442260742,
+          "operator_overhead_s": 0.0031278133392333984,
+          "suffix": "\nsign=positive\ndigits_msd=0172\nFinal integer:",
+          "raw": " 254\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          7,
+          2
+        ],
+        "rendered_abs": "172",
+        "overflow": false
+      },
+      "meta": {
+        "a": 56,
+        "b": 75,
+        "c": 2,
+        "d": 90,
+        "teacher_steps": [
+          " (56 + 75) = 131;",
+          " 131 * 2 = 262;",
+          " 262 - 90 = 172.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "472",
+      "baseline": {
+        "answer_only": null,
+        "answer": "472",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 512,
+        "total_kv_tokens": 598,
+        "latency_s": 3.4288642406463623,
+        "raw": " Let's break down the steps. First, we start with 37. Then we add 47 to it. 37 + 47 equals 84. Next, we multiply that result by 7. 84 multiplied by 7 is 588. Fi"
+      },
+      "operator_vm_text": {
+        "answer_only": "472",
+        "answer": "472",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 559,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 563,
+        "latency_s": 0.1792294979095459,
+        "llm_latency_s": 0.17611312866210938,
+        "operator_overhead_s": 0.0031163692474365234,
+        "raw": " 472"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "472",
+          "answer": "472",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 527,
+          "latency_s": 0.1897141933441162,
+          "llm_latency_s": 0.1865978240966797,
+          "operator_overhead_s": 0.0031163692474365234,
+          "suffix": "\nfinal_abs=472\nFinal integer:",
+          "raw": " 472"
+        },
+        "sign_final_abs": {
+          "answer_only": "472",
+          "answer": "472",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 532,
+          "latency_s": 0.2022857666015625,
+          "llm_latency_s": 0.19916939735412598,
+          "operator_overhead_s": 0.0031163692474365234,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=472\nFinal integer:",
+          "raw": " 472"
+        },
+        "signed_answer": {
+          "answer_only": "472",
+          "answer": "472",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 526,
+          "latency_s": 0.19690418243408203,
+          "llm_latency_s": 0.1937878131866455,
+          "operator_overhead_s": 0.0031163692474365234,
+          "suffix": "\nanswer=472\nFinal integer:",
+          "raw": " 472"
+        },
+        "digits_msd": {
+          "answer_only": "2343",
+          "answer": "2343",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 529,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 535,
+          "latency_s": 0.28853440284729004,
+          "llm_latency_s": 0.2854180335998535,
+          "operator_overhead_s": 0.0031163692474365234,
+          "suffix": "\nsign=positive\ndigits_msd=0472\nFinal integer:",
+          "raw": " 2343\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          4,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          4,
+          7,
+          2
+        ],
+        "rendered_abs": "472",
+        "overflow": false
+      },
+      "meta": {
+        "a": 37,
+        "b": 47,
+        "c": 7,
+        "d": 116,
+        "teacher_steps": [
+          " (37 + 47) = 84;",
+          " 84 * 7 = 588;",
+          " 588 - 116 = 472.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1101",
+      "baseline": {
+        "answer_only": null,
+        "answer": "1101",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 88,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 599,
+        "latency_s": 3.6304616928100586,
+        "raw": " Let's break down the steps. First, we start with 90. Then we add 56 to it. 90 + 56 equals 146. Next, we multiply that result by 8. 146 * 8 equals 1168. Finally"
+      },
+      "operator_vm_text": {
+        "answer_only": "1101",
+        "answer": "1101",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 559,
+        "injected_text_tokens": 48,
+        "total_kv_tokens": 564,
+        "latency_s": 0.2085130214691162,
+        "llm_latency_s": 0.20549583435058594,
+        "operator_overhead_s": 0.0030171871185302734,
+        "raw": " 1101"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "1101",
+          "answer": "1101",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 523,
+          "injected_embedding_tokens": 12,
+          "total_kv_tokens": 528,
+          "latency_s": 0.20736145973205566,
+          "llm_latency_s": 0.2043442726135254,
+          "operator_overhead_s": 0.0030171871185302734,
+          "suffix": "\nfinal_abs=1101\nFinal integer:",
+          "raw": " 1101"
+        },
+        "sign_final_abs": {
+          "answer_only": "1101",
+          "answer": "1101",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.20789217948913574,
+          "llm_latency_s": 0.20487499237060547,
+          "operator_overhead_s": 0.0030171871185302734,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=1101\nFinal integer:",
+          "raw": " 1101"
+        },
+        "signed_answer": {
+          "answer_only": "1101",
+          "answer": "1101",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 527,
+          "latency_s": 0.2002706527709961,
+          "llm_latency_s": 0.19725346565246582,
+          "operator_overhead_s": 0.0030171871185302734,
+          "suffix": "\nanswer=1101\nFinal integer:",
+          "raw": " 1101"
+        },
+        "digits_msd": {
+          "answer_only": "1101",
+          "answer": "1101",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 5,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 533,
+          "latency_s": 0.20977497100830078,
+          "llm_latency_s": 0.2067577838897705,
+          "operator_overhead_s": 0.0030171871185302734,
+          "suffix": "\nsign=positive\ndigits_msd=1101\nFinal integer:",
+          "raw": " 1101"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          0,
+          1,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          1,
+          0,
+          1
+        ],
+        "rendered_abs": "1101",
+        "overflow": false
+      },
+      "meta": {
+        "a": 90,
+        "b": 56,
+        "c": 8,
+        "d": 67,
+        "teacher_steps": [
+          " (90 + 56) = 146;",
+          " 146 * 8 = 1168;",
+          " 1168 - 67 = 1101.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "304",
+      "baseline": {
+        "answer_only": null,
+        "answer": "304",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 68,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 579,
+        "latency_s": 2.6434640884399414,
+        "raw": " Let's break down the steps. First, we start with 31. Then we add 80, which gives us 111. Next, we multiply that result by 3, resulting in 333. Finally, we subt"
+      },
+      "operator_vm_text": {
+        "answer_only": "304",
+        "answer": "304",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.16623592376708984,
+        "llm_latency_s": 0.16339492797851562,
+        "operator_overhead_s": 0.0028409957885742188,
+        "raw": " 304"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "304",
+          "answer": "304",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.16579365730285645,
+          "llm_latency_s": 0.16295266151428223,
+          "operator_overhead_s": 0.0028409957885742188,
+          "suffix": "\nfinal_abs=304\nFinal integer:",
+          "raw": " 304"
+        },
+        "sign_final_abs": {
+          "answer_only": "304",
+          "answer": "304",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.16619062423706055,
+          "llm_latency_s": 0.16334962844848633,
+          "operator_overhead_s": 0.0028409957885742188,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=304\nFinal integer:",
+          "raw": " 304"
+        },
+        "signed_answer": {
+          "answer_only": "304",
+          "answer": "304",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.1658780574798584,
+          "llm_latency_s": 0.16303706169128418,
+          "operator_overhead_s": 0.0028409957885742188,
+          "suffix": "\nanswer=304\nFinal integer:",
+          "raw": " 304"
+        },
+        "digits_msd": {
+          "answer_only": "304",
+          "answer": "304",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.16608238220214844,
+          "llm_latency_s": 0.16324138641357422,
+          "operator_overhead_s": 0.0028409957885742188,
+          "suffix": "\nsign=positive\ndigits_msd=0304\nFinal integer:",
+          "raw": " 304"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          0,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          0,
+          4
+        ],
+        "rendered_abs": "304",
+        "overflow": false
+      },
+      "meta": {
+        "a": 31,
+        "b": 80,
+        "c": 3,
+        "d": 29,
+        "teacher_steps": [
+          " (31 + 80) = 111;",
+          " 111 * 3 = 333;",
+          " 333 - 29 = 304.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "629",
+      "baseline": {
+        "answer_only": null,
+        "answer": "629",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 86,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 597,
+        "latency_s": 3.2833070755004883,
+        "raw": " Let's break down the steps. First, we start with 59. Then we add 54 to it. 59 + 54 equals 113. Next, we multiply this result by 6. 113 multiplied by 6 is 678. "
+      },
+      "operator_vm_text": {
+        "answer_only": "629",
+        "answer": "629",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.1782684326171875,
+        "llm_latency_s": 0.17524051666259766,
+        "operator_overhead_s": 0.0030279159545898438,
+        "raw": " 629"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "629",
+          "answer": "629",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.18450093269348145,
+          "llm_latency_s": 0.1814730167388916,
+          "operator_overhead_s": 0.0030279159545898438,
+          "suffix": "\nfinal_abs=629\nFinal integer:",
+          "raw": " 629"
+        },
+        "sign_final_abs": {
+          "answer_only": "629",
+          "answer": "629",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.18821978569030762,
+          "llm_latency_s": 0.18519186973571777,
+          "operator_overhead_s": 0.0030279159545898438,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=629\nFinal integer:",
+          "raw": " 629"
+        },
+        "signed_answer": {
+          "answer_only": "629",
+          "answer": "629",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.19072818756103516,
+          "llm_latency_s": 0.1877002716064453,
+          "operator_overhead_s": 0.0030279159545898438,
+          "suffix": "\nanswer=629\nFinal integer:",
+          "raw": " 629"
+        },
+        "digits_msd": {
+          "answer_only": "629",
+          "answer": "629",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 532,
+          "latency_s": 0.16757750511169434,
+          "llm_latency_s": 0.1645495891571045,
+          "operator_overhead_s": 0.0030279159545898438,
+          "suffix": "\nsign=positive\ndigits_msd=0629\nFinal integer:",
+          "raw": " 629"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          9,
+          2,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          2,
+          9
+        ],
+        "rendered_abs": "629",
+        "overflow": false
+      },
+      "meta": {
+        "a": 59,
+        "b": 54,
+        "c": 6,
+        "d": 49,
+        "teacher_steps": [
+          " (59 + 54) = 113;",
+          " 113 * 6 = 678;",
+          " 678 - 49 = 629.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "772",
+      "baseline": {
+        "answer_only": null,
+        "answer": "772",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 85,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 596,
+        "latency_s": 3.2083120346069336,
+        "raw": " Let's do the math step by step. First, we start with 21. Then we add 68 to it. 21 + 68 equals 89. Next, we multiply that result by 9. 89 times 9 is 801. Finall"
+      },
+      "operator_vm_text": {
+        "answer_only": "772",
+        "answer": "772",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.17073416709899902,
+        "llm_latency_s": 0.1676771640777588,
+        "operator_overhead_s": 0.0030570030212402344,
+        "raw": " 772"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "772",
+          "answer": "772",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.16855549812316895,
+          "llm_latency_s": 0.1654984951019287,
+          "operator_overhead_s": 0.0030570030212402344,
+          "suffix": "\nfinal_abs=772\nFinal integer:",
+          "raw": " 772"
+        },
+        "sign_final_abs": {
+          "answer_only": "772",
+          "answer": "772",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.1668848991394043,
+          "llm_latency_s": 0.16382789611816406,
+          "operator_overhead_s": 0.0030570030212402344,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=772\nFinal integer:",
+          "raw": " 772"
+        },
+        "signed_answer": {
+          "answer_only": "772",
+          "answer": "772",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.16793322563171387,
+          "llm_latency_s": 0.16487622261047363,
+          "operator_overhead_s": 0.0030570030212402344,
+          "suffix": "\nanswer=772\nFinal integer:",
+          "raw": " 772"
+        },
+        "digits_msd": {
+          "answer_only": "5953",
+          "answer": "5953",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.2337641716003418,
+          "llm_latency_s": 0.23070716857910156,
+          "operator_overhead_s": 0.0030570030212402344,
+          "suffix": "\nsign=positive\ndigits_msd=0772\nFinal integer:",
+          "raw": " 5953\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          7,
+          2
+        ],
+        "rendered_abs": "772",
+        "overflow": false
+      },
+      "meta": {
+        "a": 21,
+        "b": 68,
+        "c": 9,
+        "d": 29,
+        "teacher_steps": [
+          " (21 + 68) = 89;",
+          " 89 * 9 = 801;",
+          " 801 - 29 = 772.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "550",
+      "baseline": {
+        "answer_only": null,
+        "answer": "550",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 83,
+        "prefill_tokens": 511,
+        "total_kv_tokens": 594,
+        "latency_s": 3.2456231117248535,
+        "raw": " Let's break down the steps. First, we start with 47. Then we add 24 to it. 47 + 24 equals 71. Next, we multiply that result by 9. 71 * 9 equals 639. Finally, w"
+      },
+      "operator_vm_text": {
+        "answer_only": "550",
+        "answer": "550",
+        "hit": true,
+        "contains_expected": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 558,
+        "injected_text_tokens": 47,
+        "total_kv_tokens": 562,
+        "latency_s": 0.20481538772583008,
+        "llm_latency_s": 0.20167851448059082,
+        "operator_overhead_s": 0.003136873245239258,
+        "raw": " 550"
+      },
+      "minimal_embedding_suffix": {
+        "final_abs": {
+          "answer_only": "550",
+          "answer": "550",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 522,
+          "injected_embedding_tokens": 11,
+          "total_kv_tokens": 526,
+          "latency_s": 0.1762073040008545,
+          "llm_latency_s": 0.17307043075561523,
+          "operator_overhead_s": 0.003136873245239258,
+          "suffix": "\nfinal_abs=550\nFinal integer:",
+          "raw": " 550"
+        },
+        "sign_final_abs": {
+          "answer_only": "550",
+          "answer": "550",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 527,
+          "injected_embedding_tokens": 16,
+          "total_kv_tokens": 531,
+          "latency_s": 0.1810774803161621,
+          "llm_latency_s": 0.17794060707092285,
+          "operator_overhead_s": 0.003136873245239258,
+          "suffix": "\nfinal_sign=positive\nfinal_abs=550\nFinal integer:",
+          "raw": " 550"
+        },
+        "signed_answer": {
+          "answer_only": "550",
+          "answer": "550",
+          "hit": true,
+          "contains_expected": true,
+          "generated_tokens": 4,
+          "prefill_tokens": 521,
+          "injected_embedding_tokens": 10,
+          "total_kv_tokens": 525,
+          "latency_s": 0.17811226844787598,
+          "llm_latency_s": 0.17497539520263672,
+          "operator_overhead_s": 0.003136873245239258,
+          "suffix": "\nanswer=550\nFinal integer:",
+          "raw": " 550"
+        },
+        "digits_msd": {
+          "answer_only": "1000",
+          "answer": "1000",
+          "hit": false,
+          "contains_expected": false,
+          "generated_tokens": 6,
+          "prefill_tokens": 528,
+          "injected_embedding_tokens": 17,
+          "total_kv_tokens": 534,
+          "latency_s": 0.2509615421295166,
+          "llm_latency_s": 0.24782466888427734,
+          "operator_overhead_s": 0.003136873245239258,
+          "suffix": "\nsign=positive\ndigits_msd=0550\nFinal integer:",
+          "raw": " 1000\n"
+        }
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "rendered_abs": "550",
+        "overflow": false
+      },
+      "meta": {
+        "a": 47,
+        "b": 24,
+        "c": 9,
+        "d": 89,
+        "teacher_steps": [
+          " (47 + 24) = 71;",
+          " 71 * 9 = 639;",
+          " 639 - 89 = 550.",
+          "\nFinal integer:"
+        ]
+      }
+    }
+  ]
+}

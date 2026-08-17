@@ -1,0 +1,1 @@
+/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/artifacts/qwen35_native_mtp_tp1_4k_engine/opaque-57a3a62810d43636b96295da/local-authority

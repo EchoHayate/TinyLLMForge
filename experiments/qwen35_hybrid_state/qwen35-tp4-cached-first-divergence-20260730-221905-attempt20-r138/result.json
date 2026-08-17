@@ -1,0 +1,395 @@
+{
+  "claim_boundary": "diagnostic boundary comparison only; no cached-continuation correctness, Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "cleanup": {
+    "owned_children_remaining": [],
+    "process_group_destroyed": true,
+    "rank_cleanup_receipts": [
+      {
+        "process_group_destroyed": true,
+        "rank": 0
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 1
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 2
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 3
+      }
+    ],
+    "rank_exit_codes": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "official_vs_recompute": [
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 992,
+      "first_nonzero_left": 0.015625,
+      "first_nonzero_right": 0.0157470703125,
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 5.960464477539063e-08,
+      "name": "layer0_gated_full",
+      "nonzero_count": 1,
+      "quarter_shards": [
+        {
+          "end": 512,
+          "max_abs_diff": 0.0,
+          "nonzero_count": 0,
+          "shard_index": 0,
+          "start": 0
+        },
+        {
+          "end": 1024,
+          "first_nonzero_global_index": 992,
+          "first_nonzero_left": 0.015625,
+          "first_nonzero_local_index": 480,
+          "first_nonzero_right": 0.0157470703125,
+          "max_abs_diff": 0.0001220703125,
+          "nonzero_count": 1,
+          "shard_index": 1,
+          "start": 512
+        },
+        {
+          "end": 1536,
+          "max_abs_diff": 0.0,
+          "nonzero_count": 0,
+          "shard_index": 2,
+          "start": 1024
+        },
+        {
+          "end": 2048,
+          "max_abs_diff": 0.0,
+          "nonzero_count": 0,
+          "shard_index": 3,
+          "start": 1536
+        }
+      ],
+      "shape": [
+        1,
+        2048
+      ],
+      "shape_equal": true
+    },
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 9,
+      "first_nonzero_left": -0.00408935546875,
+      "first_nonzero_right": -0.004058837890625,
+      "max_abs_diff": 0.000244140625,
+      "mean_abs_diff": 1.2159871403127909e-06,
+      "name": "layer0_out_proj_current",
+      "nonzero_count": 88,
+      "quarter_shards": [
+        {
+          "end": 512,
+          "first_nonzero_global_index": 9,
+          "first_nonzero_left": -0.00408935546875,
+          "first_nonzero_local_index": 9,
+          "first_nonzero_right": -0.004058837890625,
+          "max_abs_diff": 0.000244140625,
+          "nonzero_count": 26,
+          "shard_index": 0,
+          "start": 0
+        },
+        {
+          "end": 1024,
+          "first_nonzero_global_index": 570,
+          "first_nonzero_left": -9.119510650634766e-06,
+          "first_nonzero_local_index": 58,
+          "first_nonzero_right": -9.5367431640625e-06,
+          "max_abs_diff": 0.0001220703125,
+          "nonzero_count": 20,
+          "shard_index": 1,
+          "start": 512
+        },
+        {
+          "end": 1536,
+          "first_nonzero_global_index": 1026,
+          "first_nonzero_left": -0.0101318359375,
+          "first_nonzero_local_index": 2,
+          "first_nonzero_right": -0.01019287109375,
+          "max_abs_diff": 0.000244140625,
+          "nonzero_count": 22,
+          "shard_index": 2,
+          "start": 1024
+        },
+        {
+          "end": 2048,
+          "first_nonzero_global_index": 1570,
+          "first_nonzero_left": 0.0013427734375,
+          "first_nonzero_local_index": 34,
+          "first_nonzero_right": 0.00135040283203125,
+          "max_abs_diff": 0.0001220703125,
+          "nonzero_count": 20,
+          "shard_index": 3,
+          "start": 1536
+        }
+      ],
+      "shape": [
+        1,
+        2048
+      ],
+      "shape_equal": true
+    },
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 9,
+      "first_nonzero_left": -0.00408935546875,
+      "first_nonzero_right": -0.004058837890625,
+      "max_abs_diff": 0.000244140625,
+      "mean_abs_diff": 1.2159871403127909e-06,
+      "name": "layer0_out_proj_2d",
+      "nonzero_count": 88,
+      "quarter_shards": [
+        {
+          "end": 512,
+          "first_nonzero_global_index": 9,
+          "first_nonzero_left": -0.00408935546875,
+          "first_nonzero_local_index": 9,
+          "first_nonzero_right": -0.004058837890625,
+          "max_abs_diff": 0.000244140625,
+          "nonzero_count": 26,
+          "shard_index": 0,
+          "start": 0
+        },
+        {
+          "end": 1024,
+          "first_nonzero_global_index": 570,
+          "first_nonzero_left": -9.119510650634766e-06,
+          "first_nonzero_local_index": 58,
+          "first_nonzero_right": -9.5367431640625e-06,
+          "max_abs_diff": 0.0001220703125,
+          "nonzero_count": 20,
+          "shard_index": 1,
+          "start": 512
+        },
+        {
+          "end": 1536,
+          "first_nonzero_global_index": 1026,
+          "first_nonzero_left": -0.0101318359375,
+          "first_nonzero_local_index": 2,
+          "first_nonzero_right": -0.01019287109375,
+          "max_abs_diff": 0.000244140625,
+          "nonzero_count": 22,
+          "shard_index": 2,
+          "start": 1024
+        },
+        {
+          "end": 2048,
+          "first_nonzero_global_index": 1570,
+          "first_nonzero_left": 0.0013427734375,
+          "first_nonzero_local_index": 34,
+          "first_nonzero_right": 0.00135040283203125,
+          "max_abs_diff": 0.0001220703125,
+          "nonzero_count": 20,
+          "shard_index": 3,
+          "start": 1536
+        }
+      ],
+      "shape": [
+        1,
+        2048
+      ],
+      "shape_equal": true
+    }
+  ],
+  "official_vs_recompute_first_mismatch": "layer0_gated_full",
+  "prompt_tokens": 1088,
+  "recompute_vs_restore": [
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 128,
+      "first_nonzero_left": -0.042724609375,
+      "first_nonzero_right": -0.043701171875,
+      "max_abs_diff": 0.03125,
+      "mean_abs_diff": 0.0005832443130202591,
+      "name": "layer0_gated_full",
+      "nonzero_count": 1219,
+      "quarter_shards": [
+        {
+          "end": 512,
+          "first_nonzero_global_index": 128,
+          "first_nonzero_left": -0.042724609375,
+          "first_nonzero_local_index": 128,
+          "first_nonzero_right": -0.043701171875,
+          "max_abs_diff": 0.0081787109375,
+          "nonzero_count": 211,
+          "shard_index": 0,
+          "start": 0
+        },
+        {
+          "end": 1024,
+          "first_nonzero_global_index": 518,
+          "first_nonzero_left": -0.000873565673828125,
+          "first_nonzero_local_index": 6,
+          "first_nonzero_right": -0.0008697509765625,
+          "max_abs_diff": 0.012542724609375,
+          "nonzero_count": 333,
+          "shard_index": 1,
+          "start": 512
+        },
+        {
+          "end": 1536,
+          "first_nonzero_global_index": 1024,
+          "first_nonzero_left": 0.00439453125,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": 0.00433349609375,
+          "max_abs_diff": 0.012451171875,
+          "nonzero_count": 338,
+          "shard_index": 2,
+          "start": 1024
+        },
+        {
+          "end": 2048,
+          "first_nonzero_global_index": 1536,
+          "first_nonzero_left": 4.1484832763671875e-05,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": 0.00010824203491210938,
+          "max_abs_diff": 0.03125,
+          "nonzero_count": 337,
+          "shard_index": 3,
+          "start": 1536
+        }
+      ],
+      "shape": [
+        1,
+        2048
+      ],
+      "shape_equal": true
+    },
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 0,
+      "first_nonzero_left": 0.0220947265625,
+      "first_nonzero_right": 0.0223388671875,
+      "max_abs_diff": 0.003662109375,
+      "mean_abs_diff": 0.0005548651097342372,
+      "name": "layer0_out_proj_current",
+      "nonzero_count": 1884,
+      "quarter_shards": [
+        {
+          "end": 512,
+          "first_nonzero_global_index": 0,
+          "first_nonzero_left": 0.0220947265625,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": 0.0223388671875,
+          "max_abs_diff": 0.003662109375,
+          "nonzero_count": 479,
+          "shard_index": 0,
+          "start": 0
+        },
+        {
+          "end": 1024,
+          "first_nonzero_global_index": 512,
+          "first_nonzero_left": -0.0108642578125,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": -0.01031494140625,
+          "max_abs_diff": 0.00244140625,
+          "nonzero_count": 473,
+          "shard_index": 1,
+          "start": 512
+        },
+        {
+          "end": 1536,
+          "first_nonzero_global_index": 1025,
+          "first_nonzero_left": -0.01373291015625,
+          "first_nonzero_local_index": 1,
+          "first_nonzero_right": -0.01312255859375,
+          "max_abs_diff": 0.002685546875,
+          "nonzero_count": 462,
+          "shard_index": 2,
+          "start": 1024
+        },
+        {
+          "end": 2048,
+          "first_nonzero_global_index": 1536,
+          "first_nonzero_left": 0.026611328125,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": 0.0257568359375,
+          "max_abs_diff": 0.001953125,
+          "nonzero_count": 470,
+          "shard_index": 3,
+          "start": 1536
+        }
+      ],
+      "shape": [
+        1,
+        2048
+      ],
+      "shape_equal": true
+    },
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 0,
+      "first_nonzero_left": 0.0220947265625,
+      "first_nonzero_right": 0.0223388671875,
+      "max_abs_diff": 0.003662109375,
+      "mean_abs_diff": 0.0005548651097342372,
+      "name": "layer0_out_proj_2d",
+      "nonzero_count": 1884,
+      "quarter_shards": [
+        {
+          "end": 512,
+          "first_nonzero_global_index": 0,
+          "first_nonzero_left": 0.0220947265625,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": 0.0223388671875,
+          "max_abs_diff": 0.003662109375,
+          "nonzero_count": 479,
+          "shard_index": 0,
+          "start": 0
+        },
+        {
+          "end": 1024,
+          "first_nonzero_global_index": 512,
+          "first_nonzero_left": -0.0108642578125,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": -0.01031494140625,
+          "max_abs_diff": 0.00244140625,
+          "nonzero_count": 473,
+          "shard_index": 1,
+          "start": 512
+        },
+        {
+          "end": 1536,
+          "first_nonzero_global_index": 1025,
+          "first_nonzero_left": -0.01373291015625,
+          "first_nonzero_local_index": 1,
+          "first_nonzero_right": -0.01312255859375,
+          "max_abs_diff": 0.002685546875,
+          "nonzero_count": 462,
+          "shard_index": 2,
+          "start": 1024
+        },
+        {
+          "end": 2048,
+          "first_nonzero_global_index": 1536,
+          "first_nonzero_left": 0.026611328125,
+          "first_nonzero_local_index": 0,
+          "first_nonzero_right": 0.0257568359375,
+          "max_abs_diff": 0.001953125,
+          "nonzero_count": 470,
+          "shard_index": 3,
+          "start": 1536
+        }
+      ],
+      "shape": [
+        1,
+        2048
+      ],
+      "shape_equal": true
+    }
+  ],
+  "recompute_vs_restore_first_mismatch": "layer0_gated_full",
+  "request_index": 0,
+  "schema_version": "qwen35.tp4-cached-out-proj-probe.v1",
+  "workload": "w1_medium_reuse"
+}

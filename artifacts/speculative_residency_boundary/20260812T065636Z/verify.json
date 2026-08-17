@@ -1,0 +1,21 @@
+{
+  "artifact_sha256": "fb40e71362f3cbaa9ff17ed0bf7233296073e9736145c64107278df4ba42fd25",
+  "classification": "NOT_PROMOTABLE",
+  "schema_version": 1,
+  "status": "PASS",
+  "verified_source_files": [
+    "tinyvllm/engine/block_manager.py",
+    "tinyvllm/engine/llm_engine.py",
+    "tinyvllm/engine/model_runner.py",
+    "tinyvllm/engine/scheduler.py",
+    "tinyvllm/engine/speculative_execution.py",
+    "tinyvllm/engine/speculative_model_runner.py",
+    "tinyvllm/engine/speculative_residency.py",
+    "tinyvllm/engine/speculative_runtime.py",
+    "tinyvllm/speculative/adapter.py",
+    "tinyvllm/speculative/batch_runtime.py",
+    "tools/run_speculative_residency_boundary_gate_remote.sh",
+    "tools/speculative_residency_boundary_gate.py",
+    "tools/verify_speculative_residency_boundary_gate.py"
+  ]
+}

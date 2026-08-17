@@ -1,0 +1,51 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]:W0812 16:38:47.712000 140702222406144 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 16:38:47.839000 140702222406144 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 16:39:17.489000 140702222406144 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 16:39:17.663000 140702222406144 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/speculative/batch_runtime.py", line 338, in prepare_native_speculative_batch
+[rank0]:     run_first_targets(seqs),
+[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/llm_engine.py", line 3012, in <lambda>
+[rank0]:     run_model_runner_first_targets(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/speculative_model_runner.py", line 151, in run_model_runner_first_targets
+[rank0]:     results = model_runner.call(
+[rank0]:               ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/model_runner.py", line 1819, in call
+[rank0]:     return method(*args)            #执行函数并返回结果
+[rank0]:            ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/model_runner.py", line 4288, in run_spec_first_target_batch
+[rank0]:     self._validate_spec_first_target_batch(seqs)
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/model_runner.py", line 4229, in _validate_spec_first_target_batch
+[rank0]:     self._validate_spec_verify_compatibility(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/model_runner.py", line 3951, in _validate_spec_verify_compatibility
+[rank0]:     raise RuntimeError(f"{name} is unsupported by spec_verify")
+[rank0]: RuntimeError: kv_offload_blockwise_decode is unsupported by spec_verify
+
+[rank0]: The above exception was the direct cause of the following exception:
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py", line 433, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py", line 422, in main
+[rank0]:     result = run_policy_campaign(
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py", line 327, in run_policy_campaign
+[rank0]:     warmup_runs = [
+[rank0]:                   ^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py", line 328, in <listcomp>
+[rank0]:     run_once() for _ in range(WARMUP_RUNS)
+[rank0]:     ^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py", line 318, in run_once
+[rank0]:     return run_batch_fn(
+[rank0]:            ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_runtime_performance_worker.py", line 176, in run_request_batch
+[rank0]:     step_outputs, _ = engine.step()
+[rank0]:                       ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/llm_engine.py", line 3003, in step
+[rank0]:     prepare_native_speculative_batch(
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/speculative/batch_runtime.py", line 667, in prepare_native_speculative_batch
+[rank0]:     raise NativeSpeculativeBatchError(
+[rank0]: tinyvllm.speculative.batch_runtime.NativeSpeculativeBatchError: native speculative batch first_target_batch failed: kv_offload_blockwise_decode is unsupported by spec_verify

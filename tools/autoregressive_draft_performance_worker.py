@@ -1,0 +1,873 @@
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import json
+import math
+from pathlib import Path
+import statistics
+import sys
+import time
+
+
+TOOLS_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = TOOLS_ROOT.parent
+for search_path in (TOOLS_ROOT, REPO_ROOT):
+    if str(search_path) not in sys.path:
+        sys.path.insert(0, str(search_path))
+
+from autoregressive_draft_performance_gate import (
+    BATCH_SIZES,
+    DRAFT_EXECUTOR_TIMING_KEYS,
+    MAX_OUTPUT_TOKENS,
+    MAX_PROPOSAL_TOKENS,
+    MEASURED_RUNS,
+    POLICIES,
+    PROMPT_TOKENS,
+    PROPOSAL_FORWARD_DETAIL_KEYS,
+    PROPOSAL_FORWARD_RESIDUAL_TOLERANCE_MS,
+    PROPOSAL_KV_COUNTER_KEYS,
+    RUNTIME_STAGE_TIMING_KEYS,
+    TENSOR_PARALLEL_SIZE,
+    WARMUP_RUNS,
+    proposal_slot_capacity_for_batch,
+    write_json_atomic,
+)
+from speculative_runtime_performance_gate import build_run_metrics
+
+
+DEFAULT_PROMPT_SEEDS = (
+    "A deterministic systems trace repeats alpha beta gamma delta. ",
+    "The controlled workload cycles north east south west. ",
+    "For exact reproducibility repeat one two three four five. ",
+    "The benchmark sequence is red green blue amber violet. ",
+)
+
+
+def build_prompt_token_batches(
+    tokenizer,
+    *,
+    batch_size: int,
+    prompt_tokens: int = PROMPT_TOKENS,
+) -> list[dict]:
+    if batch_size not in BATCH_SIZES:
+        raise ValueError("unsupported batch size")
+    rows = []
+    for prompt_index, seed in enumerate(
+        DEFAULT_PROMPT_SEEDS[:batch_size]
+    ):
+        encoded = tokenizer.encode(
+            seed,
+            add_special_tokens=False,
+        )
+        if (
+            not isinstance(encoded, (list, tuple))
+            or not encoded
+            or any(
+                isinstance(token_id, bool)
+                or not isinstance(token_id, int)
+                or token_id < 0
+                for token_id in encoded
+            )
+        ):
+            raise ValueError("prompt seed produced invalid token IDs")
+        repeats = (prompt_tokens + len(encoded) - 1) // len(encoded)
+        token_ids = (list(encoded) * repeats)[:prompt_tokens]
+        rows.append({
+            "prompt_index": prompt_index,
+            "token_ids": token_ids,
+            "token_count": len(token_ids),
+            "sha256": hashlib.sha256(
+                json.dumps(
+                    token_ids,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        })
+    return rows
+
+
+def _rank_rows(rows, *, name: str) -> tuple[dict, ...]:
+    if (
+        not isinstance(rows, tuple)
+        or len(rows) != TENSOR_PARALLEL_SIZE
+        or any(not isinstance(row, dict) for row in rows)
+    ):
+        raise ValueError(f"{name} requires four rank rows")
+    normalized = tuple(dict(row) for row in rows)
+    if tuple(row.get("rank") for row in normalized) != tuple(range(4)):
+        raise ValueError(f"{name} rank inventory mismatch")
+    return normalized
+
+
+def _allocator_snapshot(rank_snapshot: dict) -> dict:
+    try:
+        allocator = rank_snapshot["executor"]["backend"][
+            "proposal_kv_cache"
+        ]["entry_allocator"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "Proposal-KV allocator snapshot is missing"
+        ) from error
+    if (
+        not isinstance(allocator, dict)
+        or allocator.get("allocator_mode") != "direct"
+    ):
+        raise ValueError(
+            "Proposal-KV allocator snapshot is not direct"
+        )
+    return allocator
+
+
+def _executor_timing_snapshot(rank_snapshot: dict) -> dict:
+    try:
+        timing_ms = rank_snapshot["executor"]["timing_ms"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "draft executor timing snapshot is missing"
+        ) from error
+    if not isinstance(timing_ms, dict):
+        raise ValueError(
+            "draft executor timing snapshot is invalid"
+        )
+    normalized = {}
+    for key in DRAFT_EXECUTOR_TIMING_KEYS:
+        value = timing_ms.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+        ):
+            raise ValueError(
+                f"draft executor timing {key} is invalid"
+            )
+        normalized[key] = float(value)
+    return normalized
+
+
+def _executor_proposal_detail_snapshot(
+    rank_snapshot: dict,
+) -> dict:
+    try:
+        detail_ms = rank_snapshot["executor"][
+            "proposal_forward_detail_ms"
+        ]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "draft executor proposal detail snapshot is missing"
+        ) from error
+    if not isinstance(detail_ms, dict):
+        raise ValueError(
+            "draft executor proposal detail snapshot is invalid"
+        )
+    normalized = {}
+    for key in PROPOSAL_FORWARD_DETAIL_KEYS:
+        value = detail_ms.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+        ):
+            raise ValueError(
+                f"draft executor proposal detail {key} is invalid"
+            )
+        normalized[key] = float(value)
+    return normalized
+
+
+def _proposal_kv_delta(
+    before_rows: tuple[dict, ...],
+    after_rows: tuple[dict, ...],
+) -> dict:
+    before_rows = _rank_rows(
+        before_rows,
+        name="before Proposal-KV authority",
+    )
+    after_rows = _rank_rows(
+        after_rows,
+        name="after Proposal-KV authority",
+    )
+    rank_rows = []
+    totals = {key: 0 for key in PROPOSAL_KV_COUNTER_KEYS}
+    source_keys = {
+        "h2d_entries": "h2d_entry_count",
+        "h2d_bytes": "h2d_bytes",
+        "d2h_entries": "d2h_entry_count",
+        "d2h_bytes": "d2h_bytes",
+    }
+    for rank, (before, after) in enumerate(
+        zip(before_rows, after_rows)
+    ):
+        before_allocator = _allocator_snapshot(before)
+        after_allocator = _allocator_snapshot(after)
+        row = {"rank": rank}
+        for output_key, source_key in source_keys.items():
+            before_value = before_allocator.get(source_key)
+            after_value = after_allocator.get(source_key)
+            if (
+                isinstance(before_value, bool)
+                or not isinstance(before_value, int)
+                or before_value < 0
+                or isinstance(after_value, bool)
+                or not isinstance(after_value, int)
+                or after_value < before_value
+            ):
+                raise ValueError(
+                    f"Proposal-KV counter {source_key} is invalid"
+                )
+            row[output_key] = after_value - before_value
+            totals[output_key] += row[output_key]
+        rank_rows.append(row)
+    return {"ranks": rank_rows, "totals": totals}
+
+
+def _draft_executor_timing_delta(
+    before_rows: tuple[dict, ...],
+    after_rows: tuple[dict, ...],
+) -> dict:
+    before_rows = _rank_rows(
+        before_rows,
+        name="before draft executor timing",
+    )
+    after_rows = _rank_rows(
+        after_rows,
+        name="after draft executor timing",
+    )
+    rank_rows = []
+    max_rank_ms = {
+        key: 0.0 for key in DRAFT_EXECUTOR_TIMING_KEYS
+    }
+    for rank, (before, after) in enumerate(
+        zip(before_rows, after_rows)
+    ):
+        before_timing = _executor_timing_snapshot(before)
+        after_timing = _executor_timing_snapshot(after)
+        row = {"rank": rank}
+        for key in DRAFT_EXECUTOR_TIMING_KEYS:
+            if after_timing[key] < before_timing[key]:
+                raise ValueError(
+                    f"draft executor timing {key} regressed"
+                )
+            row[key] = after_timing[key] - before_timing[key]
+            max_rank_ms[key] = max(
+                max_rank_ms[key],
+                row[key],
+            )
+        rank_rows.append(row)
+    return {
+        "ranks": rank_rows,
+        "max_rank_ms": max_rank_ms,
+    }
+
+
+def _draft_executor_proposal_detail_delta(
+    before_rows: tuple[dict, ...],
+    after_rows: tuple[dict, ...],
+    *,
+    draft_executor_timing: dict,
+) -> dict:
+    before_rows = _rank_rows(
+        before_rows,
+        name="before draft executor proposal detail",
+    )
+    after_rows = _rank_rows(
+        after_rows,
+        name="after draft executor proposal detail",
+    )
+    rank_rows = []
+    max_rank_ms = {
+        key: 0.0 for key in PROPOSAL_FORWARD_DETAIL_KEYS
+    }
+    for rank, (before, after) in enumerate(
+        zip(before_rows, after_rows)
+    ):
+        before_detail = _executor_proposal_detail_snapshot(before)
+        after_detail = _executor_proposal_detail_snapshot(after)
+        row = {"rank": rank}
+        for key in PROPOSAL_FORWARD_DETAIL_KEYS:
+            delta = after_detail[key] - before_detail[key]
+            if delta < -PROPOSAL_FORWARD_RESIDUAL_TOLERANCE_MS:
+                raise ValueError(
+                    f"draft executor proposal detail {key} regressed"
+                )
+            row[key] = max(0.0, delta)
+            max_rank_ms[key] = max(
+                max_rank_ms[key],
+                row[key],
+            )
+        rank_rows.append(row)
+    timing_rows = draft_executor_timing.get("ranks")
+    if (
+        not isinstance(timing_rows, list)
+        or len(timing_rows) != TENSOR_PARALLEL_SIZE
+        or any(
+            row.get("rank") != rank
+            for rank, row in enumerate(timing_rows)
+        )
+    ):
+        raise ValueError(
+            "draft executor timing rank rows are invalid"
+        )
+    critical_rank = max(
+        range(TENSOR_PARALLEL_SIZE),
+        key=lambda rank: timing_rows[rank]["proposal_forward"],
+    )
+    critical_rank_ms = {
+        key: rank_rows[critical_rank][key]
+        for key in PROPOSAL_FORWARD_DETAIL_KEYS
+    }
+    detail_sum_ms = sum(critical_rank_ms.values())
+    proposal_forward_ms = timing_rows[critical_rank][
+        "proposal_forward"
+    ]
+    residual_ms = proposal_forward_ms - detail_sum_ms
+    if residual_ms < -PROPOSAL_FORWARD_RESIDUAL_TOLERANCE_MS:
+        raise ValueError(
+            "draft executor proposal detail residual is negative"
+        )
+    return {
+        "ranks": rank_rows,
+        "max_rank_ms": max_rank_ms,
+        "critical_rank": critical_rank,
+        "critical_rank_ms": critical_rank_ms,
+        "detail_sum_ms": detail_sum_ms,
+        "residual_ms": max(0.0, residual_ms),
+    }
+
+
+def _zero_proposal_kv() -> dict:
+    rows = [
+        {
+            "rank": rank,
+            **{
+                key: 0
+                for key in PROPOSAL_KV_COUNTER_KEYS
+            },
+        }
+        for rank in range(TENSOR_PARALLEL_SIZE)
+    ]
+    return {
+        "ranks": rows,
+        "totals": {
+            key: 0 for key in PROPOSAL_KV_COUNTER_KEYS
+        },
+    }
+
+
+def _zero_draft_executor_timing() -> dict:
+    rows = [
+        {
+            "rank": rank,
+            **{
+                key: 0.0
+                for key in DRAFT_EXECUTOR_TIMING_KEYS
+            },
+        }
+        for rank in range(TENSOR_PARALLEL_SIZE)
+    ]
+    return {
+        "ranks": rows,
+        "max_rank_ms": {
+            key: 0.0 for key in DRAFT_EXECUTOR_TIMING_KEYS
+        },
+    }
+
+
+def _zero_draft_executor_proposal_detail() -> dict:
+    rows = [
+        {
+            "rank": rank,
+            **{
+                key: 0.0
+                for key in PROPOSAL_FORWARD_DETAIL_KEYS
+            },
+        }
+        for rank in range(TENSOR_PARALLEL_SIZE)
+    ]
+    return {
+        "ranks": rows,
+        "max_rank_ms": {
+            key: 0.0 for key in PROPOSAL_FORWARD_DETAIL_KEYS
+        },
+        "critical_rank": 0,
+        "critical_rank_ms": {
+            key: 0.0 for key in PROPOSAL_FORWARD_DETAIL_KEYS
+        },
+        "detail_sum_ms": 0.0,
+        "residual_ms": 0.0,
+    }
+
+
+def _memory_result(rows: tuple[dict, ...]) -> dict:
+    rows = _rank_rows(rows, name="memory snapshots")
+    result_rows = []
+    for rank, row in enumerate(rows):
+        allocated = row.get("cuda_peak_allocated_bytes")
+        reserved = row.get("cuda_peak_reserved_bytes")
+        for name, value in (
+            ("peak allocated", allocated),
+            ("peak reserved", reserved),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(f"memory {name} is invalid")
+        result_rows.append({
+            "rank": rank,
+            "peak_allocated_bytes": allocated,
+            "peak_reserved_bytes": reserved,
+        })
+    return {
+        "ranks": result_rows,
+        "peak_allocated_bytes": max(
+            row["peak_allocated_bytes"]
+            for row in result_rows
+        ),
+        "peak_reserved_bytes": max(
+            row["peak_reserved_bytes"]
+            for row in result_rows
+        ),
+    }
+
+
+def _stage_timing_result(
+    observations: list[dict],
+    *,
+    policy: str,
+) -> dict:
+    steps = []
+    totals_ms = {
+        key: 0.0 for key in RUNTIME_STAGE_TIMING_KEYS
+    }
+    for observation in observations:
+        timing_ms = observation.get(
+            "speculative_runtime_timing_ms",
+            {},
+        )
+        if not isinstance(timing_ms, dict):
+            raise ValueError(
+                "speculative runtime timing row is invalid"
+            )
+        if not timing_ms:
+            continue
+        if policy != "learned":
+            raise ValueError(
+                "target observation contains speculative timing"
+            )
+        if set(timing_ms) != set(RUNTIME_STAGE_TIMING_KEYS):
+            raise ValueError(
+                "speculative runtime timing inventory mismatch"
+            )
+        normalized = {}
+        for key in RUNTIME_STAGE_TIMING_KEYS:
+            value = timing_ms.get(key)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0.0
+            ):
+                raise ValueError(
+                    f"speculative runtime timing {key} is invalid"
+                )
+            normalized[key] = float(value)
+            totals_ms[key] += normalized[key]
+        steps.append({
+            "step_index": len(steps),
+            "timing_ms": normalized,
+        })
+    return {
+        "step_count": len(steps),
+        "steps": steps,
+        "totals_ms": totals_ms,
+    }
+
+
+def _runtime_result(
+    observations: list[dict],
+    *,
+    policy: str,
+    draft_executor_timing: dict,
+    draft_executor_proposal_detail: dict,
+) -> dict:
+    proposed_tokens = 0
+    accepted_draft_tokens = 0
+    for observation in observations:
+        proposal_rows = observation.get(
+            "speculative_proposal_token_ids_by_seq",
+            {},
+        )
+        accepted_rows = observation.get(
+            "speculative_accepted_draft_token_counts",
+            {},
+        )
+        if not isinstance(proposal_rows, dict) or not isinstance(
+            accepted_rows,
+            dict,
+        ):
+            raise ValueError("speculative runtime rows are invalid")
+        proposed_tokens += sum(
+            len(token_ids)
+            for token_ids in proposal_rows.values()
+        )
+        accepted_draft_tokens += sum(
+            int(count)
+            for count in accepted_rows.values()
+        )
+    return {
+        "proposed_tokens": proposed_tokens,
+        "accepted_draft_tokens": accepted_draft_tokens,
+        "acceptance_rate": (
+            accepted_draft_tokens / proposed_tokens
+            if proposed_tokens
+            else 0.0
+        ),
+        "stage_timing": _stage_timing_result(
+            observations,
+            policy=policy,
+        ),
+        "draft_executor_timing": draft_executor_timing,
+        "draft_executor_proposal_detail": (
+            draft_executor_proposal_detail
+        ),
+    }
+
+
+def run_request_batch(
+    *,
+    engine,
+    policy: str,
+    prompt_rows: list[dict],
+    sampling_params,
+    expected_output_tokens: int,
+    synchronize,
+    clock_ns,
+    repeat: int,
+) -> dict:
+    if policy not in POLICIES:
+        raise ValueError("unsupported policy")
+    if not engine.is_finished():
+        raise RuntimeError("engine must be idle before a run")
+    engine.clear_reusable_prefix_cache()
+    before_authority = None
+    if policy == "learned":
+        before_authority = _rank_rows(
+            engine.autoregressive_draft_authority_snapshots(
+                timeout_s=60.0
+            ),
+            name="before Proposal-KV authority",
+        )
+    _rank_rows(
+        engine.reset_peak_memory_stats(timeout_s=60.0),
+        name="peak memory reset",
+    )
+    synchronize()
+    request_start_ns = clock_ns()
+    for prompt_row in prompt_rows:
+        token_ids = prompt_row.get("token_ids")
+        if (
+            not isinstance(token_ids, list)
+            or len(token_ids) != PROMPT_TOKENS
+        ):
+            raise ValueError("worker prompt must contain 256 tokens")
+        engine.add_request(token_ids, sampling_params)
+
+    token_events = {}
+    finished_at_ns = {}
+    outputs_by_id = {}
+    observations = []
+    request_finish_ns = request_start_ns
+    while not engine.is_finished():
+        output_rows, _ = engine.step()
+        synchronize()
+        request_finish_ns = clock_ns()
+        observation = getattr(
+            engine,
+            "last_step_observation",
+            None,
+        )
+        if not isinstance(observation, dict):
+            raise RuntimeError("engine step observation is unavailable")
+        observations.append(copy.deepcopy(observation))
+        deltas = observation.get(
+            "new_completion_tokens_by_seq",
+            {},
+        )
+        if not isinstance(deltas, dict):
+            raise ValueError("completion token deltas are invalid")
+        for sequence_id, token_ids in deltas.items():
+            if token_ids:
+                token_events.setdefault(
+                    int(sequence_id),
+                    [],
+                ).append((request_finish_ns, len(token_ids)))
+        for sequence_id in observation.get("finished_seq_ids", ()):
+            finished_at_ns[int(sequence_id)] = request_finish_ns
+        for sequence_id, token_ids in output_rows:
+            sequence_id = int(sequence_id)
+            outputs_by_id[sequence_id] = list(token_ids)
+            finished_at_ns.setdefault(
+                sequence_id,
+                request_finish_ns,
+            )
+
+    if policy == "learned":
+        engine.flush_pending_hybrid_state_releases(timeout_s=60.0)
+        after_authority = _rank_rows(
+            engine.autoregressive_draft_authority_snapshots(
+                timeout_s=60.0
+            ),
+            name="after Proposal-KV authority",
+        )
+        proposal_kv = _proposal_kv_delta(
+            before_authority,
+            after_authority,
+        )
+        draft_executor_timing = _draft_executor_timing_delta(
+            before_authority,
+            after_authority,
+        )
+        draft_executor_proposal_detail = (
+            _draft_executor_proposal_detail_delta(
+                before_authority,
+                after_authority,
+                draft_executor_timing=draft_executor_timing,
+            )
+        )
+    else:
+        proposal_kv = _zero_proposal_kv()
+        draft_executor_timing = (
+            _zero_draft_executor_timing()
+        )
+        draft_executor_proposal_detail = (
+            _zero_draft_executor_proposal_detail()
+        )
+    memory = _memory_result(
+        engine.memory_snapshots(timeout_s=60.0)
+    )
+    outputs = [
+        outputs_by_id[sequence_id]
+        for sequence_id in sorted(outputs_by_id)
+    ]
+    if len(outputs) != len(prompt_rows):
+        raise RuntimeError("engine did not return one output per prompt")
+    if any(
+        len(token_ids) != expected_output_tokens
+        for token_ids in outputs
+    ):
+        raise RuntimeError("engine output token count is incorrect")
+    return {
+        "repeat": repeat,
+        "outputs": outputs,
+        "timing": build_run_metrics(
+            request_start_ns=request_start_ns,
+            request_finish_ns=request_finish_ns,
+            token_events=token_events,
+            finished_at_ns=finished_at_ns,
+            expected_output_tokens=expected_output_tokens,
+        ),
+        "runtime": _runtime_result(
+            observations,
+            policy=policy,
+            draft_executor_timing=draft_executor_timing,
+            draft_executor_proposal_detail=(
+                draft_executor_proposal_detail
+            ),
+        ),
+        "memory": memory,
+        "proposal_kv": proposal_kv,
+    }
+
+
+def run_policy_campaign(
+    *,
+    target_model: str,
+    draft_model: str,
+    policy: str,
+    batch_size: int,
+    engine_factory,
+    sampling_params_type,
+    synchronize,
+    clock_ns,
+    wall_clock_ns=time.time_ns,
+    run_batch_fn=run_request_batch,
+    warmup_runs: int = WARMUP_RUNS,
+    measured_runs: int = MEASURED_RUNS,
+) -> dict:
+    if policy not in POLICIES:
+        raise ValueError("unsupported policy")
+    if batch_size not in BATCH_SIZES:
+        raise ValueError("unsupported batch size")
+    for name, value in (
+        ("warmup runs", warmup_runs),
+        ("measured runs", measured_runs),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+        ):
+            raise ValueError(f"{name} must be positive")
+    proposal_slot_capacity = proposal_slot_capacity_for_batch(
+        batch_size
+    )
+    adapter = engine_factory(
+        policy,
+        target_model=target_model,
+        draft_model=draft_model,
+        tensor_parallel_size=TENSOR_PARALLEL_SIZE,
+        max_num_seqs=batch_size,
+        max_model_len=512,
+        max_num_batched_tokens=2048,
+        proposal_slot_capacity=proposal_slot_capacity,
+        learned_enabled=policy == "learned",
+    )
+    try:
+        engine = adapter.engine
+        prompt_rows = build_prompt_token_batches(
+            engine.tokenizer,
+            batch_size=batch_size,
+        )
+        sampling_params = sampling_params_type(
+            temperature=0.0,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            ignore_eos=True,
+        )
+
+        def run_once(repeat: int):
+            started_at_unix_ns = wall_clock_ns()
+            result = run_batch_fn(
+                engine=engine,
+                policy=policy,
+                prompt_rows=prompt_rows,
+                sampling_params=sampling_params,
+                expected_output_tokens=MAX_OUTPUT_TOKENS,
+                synchronize=synchronize,
+                clock_ns=clock_ns,
+                repeat=repeat,
+            )
+            finished_at_unix_ns = wall_clock_ns()
+            if (
+                isinstance(started_at_unix_ns, bool)
+                or not isinstance(started_at_unix_ns, int)
+                or isinstance(finished_at_unix_ns, bool)
+                or not isinstance(finished_at_unix_ns, int)
+                or started_at_unix_ns <= 0
+                or finished_at_unix_ns <= started_at_unix_ns
+            ):
+                raise ValueError("campaign interval is invalid")
+            return {
+                **result,
+                "campaign_interval": {
+                    "started_at_unix_ns": started_at_unix_ns,
+                    "finished_at_unix_ns": finished_at_unix_ns,
+                },
+            }
+
+        warmup_results = [
+            run_once(repeat)
+            for repeat in range(-warmup_runs, 0)
+        ]
+        measured_results = [
+            run_once(repeat)
+            for repeat in range(measured_runs)
+        ]
+        config = getattr(engine, "config", None)
+        return {
+            "policy": policy,
+            "batch_size": batch_size,
+            "prompt_rows": prompt_rows,
+            "warmup_runs": warmup_results,
+            "measured_runs": measured_results,
+            "target_checkpoint_identifier": Path(
+                target_model
+            ).name,
+            "draft_checkpoint_identifier": (
+                Path(draft_model).name
+                if policy == "learned"
+                else None
+            ),
+            "tokenizer_identifier": str(
+                getattr(
+                    engine.tokenizer,
+                    "name_or_path",
+                    type(engine.tokenizer).__name__,
+                )
+            ),
+            "dtype": str(getattr(config, "dtype", "unknown")),
+            "tensor_parallel_size": TENSOR_PARALLEL_SIZE,
+            "proposal_kv_allocator": "direct",
+            "proposal_slot_capacity": proposal_slot_capacity,
+        }
+    finally:
+        adapter.close()
+
+
+def _default_dependencies():
+    import torch
+
+    from autoregressive_draft_tp4_engine_gate import (
+        _TinyVLLMTP4EngineAdapter,
+    )
+    from tinyvllm import SamplingParams
+
+    return {
+        "engine_factory": _TinyVLLMTP4EngineAdapter,
+        "sampling_params_type": SamplingParams,
+        "synchronize": torch.cuda.synchronize,
+        "clock_ns": time.perf_counter_ns,
+        "wall_clock_ns": time.time_ns,
+    }
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target-model", required=True)
+    parser.add_argument("--draft-model", required=True)
+    parser.add_argument(
+        "--policy",
+        required=True,
+        choices=POLICIES,
+    )
+    parser.add_argument(
+        "--batch-size",
+        required=True,
+        type=int,
+        choices=BATCH_SIZES,
+    )
+    parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--warmup-runs",
+        type=int,
+        default=WARMUP_RUNS,
+    )
+    parser.add_argument(
+        "--measured-runs",
+        type=int,
+        default=MEASURED_RUNS,
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    result = run_policy_campaign(
+        target_model=args.target_model,
+        draft_model=args.draft_model,
+        policy=args.policy,
+        batch_size=args.batch_size,
+        warmup_runs=args.warmup_runs,
+        measured_runs=args.measured_runs,
+        **_default_dependencies(),
+    )
+    write_json_atomic(Path(args.out), result)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,243 @@
+{
+  "error": "four eligible GPUs are required",
+  "frozen_source_tag": "qwen35-tp4-source-prep-20260729-170818",
+  "frozen_source_tree_sha256": "ec19a8fa68abfba72e9594bdd1e05428b0add9169d3dbdde24190686c013411f",
+  "rows": [
+    {
+      "compute_processes": [
+        {
+          "pid": 2811316,
+          "process_name": "python3",
+          "used_bytes": 723517440
+        },
+        {
+          "pid": 2812359,
+          "process_name": "python3",
+          "used_bytes": 4221566976
+        },
+        {
+          "pid": 4039206,
+          "process_name": "python3",
+          "used_bytes": 1270874112
+        },
+        {
+          "pid": 1302036,
+          "process_name": "python3",
+          "used_bytes": 457179136
+        },
+        {
+          "pid": 1302034,
+          "process_name": "python3",
+          "used_bytes": 457179136
+        },
+        {
+          "pid": 3415279,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        },
+        {
+          "pid": 3418363,
+          "process_name": "python3",
+          "used_bytes": 3682598912
+        },
+        {
+          "pid": 2959393,
+          "process_name": "python",
+          "used_bytes": 1396703232
+        },
+        {
+          "pid": 3065106,
+          "process_name": "python",
+          "used_bytes": 1396703232
+        },
+        {
+          "pid": 2586630,
+          "process_name": "python3",
+          "used_bytes": 2776629248
+        },
+        {
+          "pid": 2586633,
+          "process_name": "python3",
+          "used_bytes": 2728394752
+        },
+        {
+          "pid": 2737418,
+          "process_name": "python3",
+          "used_bytes": 2785017856
+        },
+        {
+          "pid": 2737419,
+          "process_name": "python3",
+          "used_bytes": 2736783360
+        }
+      ],
+      "free_bytes": 59250835456,
+      "gpu_index": 0,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-57be086f-e967-c022-3832-93df4fc77bd0",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 2936972,
+          "process_name": "python3",
+          "used_bytes": 4559208448
+        },
+        {
+          "pid": 1525915,
+          "process_name": "python3",
+          "used_bytes": 5075107840
+        },
+        {
+          "pid": 2086069,
+          "process_name": "python3",
+          "used_bytes": 5433720832
+        },
+        {
+          "pid": 50059,
+          "process_name": "python3",
+          "used_bytes": 1585446912
+        }
+      ],
+      "free_bytes": 68303192064,
+      "gpu_index": 1,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-7dc22583-df04-6c76-4ba5-ea32c428c130",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 1097889,
+          "process_name": "inferencer_worker_0_0",
+          "used_bytes": 11857297408
+        },
+        {
+          "pid": 1118290,
+          "process_name": "m13p4_kvcache_d2h_0_lr0_0",
+          "used_bytes": 455081984
+        },
+        {
+          "pid": 1118204,
+          "process_name": "m13p4_kvcache_0_lr0_0",
+          "used_bytes": 455081984
+        },
+        {
+          "pid": 1118571,
+          "process_name": "m13p4_qhid_0_lr0",
+          "used_bytes": 455081984
+        },
+        {
+          "pid": 756625,
+          "process_name": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+          "used_bytes": 2722103296
+        }
+      ],
+      "free_bytes": 68789731328,
+      "gpu_index": 2,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-63c05907-407b-8240-07a0-f38872840867",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 934497,
+          "process_name": "python",
+          "used_bytes": 10263461888
+        },
+        {
+          "pid": 935127,
+          "process_name": "python",
+          "used_bytes": 9999220736
+        },
+        {
+          "pid": 3568083,
+          "process_name": "python",
+          "used_bytes": 8680112128
+        },
+        {
+          "pid": 3568682,
+          "process_name": "python",
+          "used_bytes": 8954839040
+        }
+      ],
+      "free_bytes": 47054848000,
+      "gpu_index": 3,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 2889069,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        },
+        {
+          "pid": 2890161,
+          "process_name": "python3",
+          "used_bytes": 7725907968
+        },
+        {
+          "pid": 757668,
+          "process_name": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+          "used_bytes": 5899288576
+        }
+      ],
+      "free_bytes": 70340575232,
+      "gpu_index": 4,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 2585664,
+          "process_name": "python3",
+          "used_bytes": 1610612736
+        }
+      ],
+      "free_bytes": 83348160512,
+      "gpu_index": 5,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 4038724,
+          "process_name": "python3",
+          "used_bytes": 991952896
+        }
+      ],
+      "free_bytes": 83962626048,
+      "gpu_index": 6,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31",
+      "total_bytes": 85899345920
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 2736532,
+          "process_name": "python3",
+          "used_bytes": 1610612736
+        }
+      ],
+      "free_bytes": 83348160512,
+      "gpu_index": 7,
+      "gpu_name": "NVIDIA A100 80GB PCIe",
+      "gpu_uuid": "GPU-b8ffec62-b437-85f7-3f7d-2cd05bd23e16",
+      "total_bytes": 85899345920
+    }
+  ],
+  "run_tag": "qwen35-tp4-root-logit-current-source-20260803-185400-attempt32-r242",
+  "selected": [],
+  "source_tree_sha256": "ec19a8fa68abfba72e9594bdd1e05428b0add9169d3dbdde24190686c013411f",
+  "status": "BLOCKED"
+}

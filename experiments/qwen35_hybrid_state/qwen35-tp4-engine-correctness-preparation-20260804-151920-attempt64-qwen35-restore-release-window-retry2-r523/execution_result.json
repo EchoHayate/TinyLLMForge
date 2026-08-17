@@ -1,0 +1,39 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-engine-correctness-preparation-20260804-151920-attempt64-qwen35-restore-release-window-retry2-r523/authorization.json",
+  "cached_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-151155-attempt64-qwen35-restore-release-window-retry-r520",
+  "claim_boundary": "Engine correctness authority only; no latency, throughput, cache, memory, compression, quality, or accuracy improvement claim",
+  "classification": "FAILED",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-151920-attempt64-qwen35-restore-release-window-retry2-r523/executor_configuration.json",
+  "downloaded_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-engine-correctness-preparation-20260804-151920-attempt64-qwen35-restore-release-window-retry2-r523/plan/downloaded_authority",
+  "error": "ValueError: guarded_authority command returncode mismatch",
+  "execution_performed": true,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-150812-attempt64-qwen35-restore-release-window-r518/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-engine-correctness-preparation-20260804-151920-attempt64-qwen35-restore-release-window-retry2-r523/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 59077,
+    "master_port": 19351
+  },
+  "prerequisite_evidence": {
+    "cached_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-151155-attempt64-qwen35-restore-release-window-retry-r520/plan/downloaded_cached_authority/cached_continuation_authority/cached_continuation_correctness.json",
+    "cached_receipt": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-151155-attempt64-qwen35-restore-release-window-retry-r520/runtime/execution_receipt.json",
+    "cached_verification": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-151155-attempt64-qwen35-restore-release-window-retry-r520/plan/downloaded_cached_authority/cached_continuation_independent_verification.json",
+    "root_manifest": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-150812-attempt64-qwen35-restore-release-window-r518/artifacts/source_manifest.json",
+    "root_result": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-150812-attempt64-qwen35-restore-release-window-r518/artifacts/tp4_real_root_logit_correctness.json",
+    "root_verification": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-150812-attempt64-qwen35-restore-release-window-r518/independent_verification.json"
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-engine-correctness-preparation-20260804-151920-attempt64-qwen35-restore-release-window-retry2-r523/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-150812-attempt64-qwen35-restore-release-window-r518",
+  "run_tag": "qwen35-tp4-engine-correctness-20260804-151920-attempt64-qwen35-restore-release-window-retry2-r523",
+  "schema_version": "qwen35.tp4-engine-correctness-r523-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-150812-attempt64-qwen35-restore-release-window-r518",
+  "source_tree_sha256": "5037fd9cb651f3c506de04623d5b8f06bdb2c62d20e12f1dfd90c4aae7e2d456"
+}

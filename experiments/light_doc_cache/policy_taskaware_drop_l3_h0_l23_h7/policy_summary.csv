@@ -1,0 +1,2 @@
+threshold,compressed_heads,total_heads,original_entries,compact_entries,cache_entry_saving_fraction,compressed_quality_mean,selected_heads
+0.45,15,224,344064,323328,0.0602679,0.486489,2:7;4:6;5:2;6:7;8:1;9:1;10:3;11:2;14:5;18:0;20:2;22:1;24:2;25:3;26:1

@@ -1,0 +1,95 @@
+{
+  "artifact_classification": "UNSTABLE",
+  "claim_boundary": {
+    "cuda_graph_speedup_established": false,
+    "gpu_kernel_duration_established": false,
+    "long_context_performance_established": false,
+    "offload_benefit_established": false,
+    "phase1_promotion_established": false
+  },
+  "decision": "INSTABILITY_INVESTIGATION",
+  "exact_parity": true,
+  "learned_batch4": {
+    "acceptance": {
+      "accepted_draft_tokens_per_repeat": 53,
+      "proposed_tokens_per_repeat": 72,
+      "rate": 0.7361111111111112
+    },
+    "critical_rank_by_repeat": [1, 0, 3, 0, 3, 1, 1, 1],
+    "e2e_s": {
+      "maximum": 12.4599652415,
+      "median": 8.7957868595,
+      "minimum": 6.9476484334999995,
+      "range_over_median": 0.626699679750238
+    },
+    "peak_allocated_mib": 72455.07568359375,
+    "proposal_forward_e2e_correlation": 0.9466004742785316,
+    "proposal_forward_ms": {
+      "maximum": 6791.608899831772,
+      "median": 4648.73106777668,
+      "minimum": 3770.7321159541607,
+      "range_over_median": 0.6498282520185422
+    },
+    "proposal_forward_median_buckets_ms": {
+      "authority": 140.62265120446682,
+      "metadata_and_residual": 136.15630567073822,
+      "submit_collective_readback": 4356.785297393799
+    },
+    "proposal_forward_median_bucket_shares_percent": {
+      "authority": 2.66,
+      "metadata_and_residual": 3.13,
+      "submit_collective_readback": 94.45
+    },
+    "proposal_forward_share_of_e2e_percent_median": 53.41760555285552,
+    "throughput_tps": {
+      "maximum": 8.346989054160384,
+      "median": 6.544261544346346,
+      "minimum": 4.560809863583279
+    },
+    "tpot_s": {
+      "maximum": 0.8193271968333333,
+      "median": 0.5701362909333333,
+      "minimum": 0.4432772929
+    }
+  },
+  "median_direction_vs_target_percent": {
+    "e2e": 82.04627932277742,
+    "throughput": -50.641317139393124,
+    "tpot": 93.06364642282365
+  },
+  "next_experiment": {
+    "goal": "separate host/GPU environment variance from learned-runtime variance before optimizing kernels",
+    "requirements": [
+      "retain exact greedy parity and max_proposal_tokens=4",
+      "record per-repeat out-of-band GPU clocks, power, utilization, temperature, and host load",
+      "use paired or interleaved target/learned observations where practical",
+      "retain critical-rank wall-clock detail and raw per-rank rows",
+      "do not add torch.cuda.synchronize to the measured request path"
+    ]
+  },
+  "target_batch4": {
+    "e2e_s": {
+      "maximum": 6.997602038,
+      "median": 4.831621328500001,
+      "minimum": 3.779521745,
+      "range_over_median": 0.6660456344162775
+    },
+    "throughput_tps": {
+      "maximum": 16.93335938195535,
+      "median": 13.258582208986205,
+      "minimum": 9.145990248152492
+    },
+    "tpot_s": {
+      "maximum": 0.4415264093333333,
+      "median": 0.295310019,
+      "minimum": 0.2384507099333333
+    }
+  },
+  "verification": {
+    "executor_tests": "75 passed",
+    "local_verifier": "PASS",
+    "manifest": "PASS",
+    "remote_verifier": "PASS",
+    "source_files_verified": 6
+  }
+}

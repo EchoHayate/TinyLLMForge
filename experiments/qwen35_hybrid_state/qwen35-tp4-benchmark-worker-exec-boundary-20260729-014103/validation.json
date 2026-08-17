@@ -1,0 +1,1 @@
+{"classification":"CPU_CONTRACT_PASS","contract_tests":13,"worker_tests":15,"verifier_tests":8,"runner_tests":15,"total_tests":51,"py_compile":true,"git_diff_check":true,"production_forbidden_command_audit":true,"ssh_executed":false,"gpu_workload_executed":false}

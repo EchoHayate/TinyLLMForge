@@ -1,0 +1,2 @@
+threshold,compact_layer,compressed_heads,selected_budget,budget_fraction,entry_saving_fraction,note
+0.951,heads,16,768,0.5,0.0357143,15-head safe frontier plus candidate 8:3 at 50% per-head budget.

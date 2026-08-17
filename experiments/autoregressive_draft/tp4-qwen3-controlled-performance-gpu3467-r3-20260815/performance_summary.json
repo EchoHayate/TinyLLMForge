@@ -1,0 +1,66 @@
+{
+  "artifact_status": "PASS",
+  "batch_directions": {
+    "1": "REGRESSED",
+    "4": "REGRESSED"
+  },
+  "classification": "PILOT_ONLY",
+  "direction": "NEGATIVE",
+  "exact_measured_repeat_parity": {
+    "batch_1": true,
+    "batch_4": true
+  },
+  "learned_acceptance": {
+    "batch_1": {
+      "accepted_draft_tokens_median": 15.0,
+      "acceptance_rate_median": 1.0,
+      "proposed_tokens_median": 15.0
+    },
+    "batch_4": {
+      "accepted_draft_tokens_median": 53.0,
+      "acceptance_rate_median": 0.7361111111111112,
+      "proposed_tokens_median": 72.0
+    }
+  },
+  "median_comparison": {
+    "batch_1": {
+      "e2e_learned_s": 5.615525677,
+      "e2e_target_s": 4.456102154,
+      "e2e_vs_target_percent": 26.018782400651407,
+      "throughput_learned_tps": 2.849243493896324,
+      "throughput_target_tps": 3.5905819586379257,
+      "throughput_vs_target_percent": -20.646749559863153,
+      "tpot_learned_s": 0.35377482093333334,
+      "tpot_target_s": 0.27766456193333333,
+      "tpot_vs_target_percent": 27.410865279334384,
+      "ttft_learned_s": 0.308903363,
+      "ttft_target_s": 0.291133725,
+      "ttft_vs_target_percent": 6.10359998656973
+    },
+    "batch_4": {
+      "e2e_learned_s": 12.448543459,
+      "e2e_target_s": 6.530863137,
+      "e2e_vs_target_percent": 90.61099885057963,
+      "throughput_learned_tps": 4.761981257960685,
+      "throughput_target_tps": 9.799623519502948,
+      "throughput_vs_target_percent": -51.40648772390575,
+      "tpot_learned_s": 0.7967099341333334,
+      "tpot_target_s": 0.4011877874666666,
+      "tpot_vs_target_percent": 98.5877833331428,
+      "ttft_learned_s": 0.431688169,
+      "ttft_target_s": 0.48115102,
+      "ttft_vs_target_percent": -10.280109351113909
+    }
+  },
+  "proposal_kv_movement": {
+    "d2h_bytes_median_all_cells": 0.0,
+    "h2d_bytes_median_all_cells": 0.0,
+    "offload_benefit_claimed": false
+  },
+  "source_binding": {
+    "local_verifier_sha256": "dd5958e8abec5110855c06a4a541b61f4fb6ae26a002ad9cdb54a5262f5d71f3",
+    "remote_verifier_sha256": "dd5958e8abec5110855c06a4a541b61f4fb6ae26a002ad9cdb54a5262f5d71f3",
+    "result_sha256": "73be67aacaa23f9eae3c1b568f57f23dc32af5410ca65a9172301c9173142381",
+    "source_tar_sha256": "c23ea1e28ddfdd7ce65fdb95c0e33738475b299916741a0756c1aab57033680c"
+  }
+}

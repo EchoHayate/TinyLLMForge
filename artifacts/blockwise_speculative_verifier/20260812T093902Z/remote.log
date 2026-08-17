@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/blockwise_speculative_verifier_gate.py", line 778, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/blockwise_speculative_verifier_gate.py", line 764, in main
+    run_gate(
+  File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/blockwise_speculative_verifier_gate.py", line 703, in run_gate
+    raise RuntimeError(
+RuntimeError: worker failed: baseline:16384:b1

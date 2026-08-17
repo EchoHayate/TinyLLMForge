@@ -1,0 +1,846 @@
+{
+  "classification": "ALIGNED_CAMPAIGN",
+  "classification_reasons": [],
+  "exact_parity": true,
+  "gpu_telemetry_artifact_sha256": "ec9f3d5df220c538b39fc83d7e7b7756e5d2b1742e4829a9513191f4232167e9",
+  "input_files": {
+    "gpu_telemetry_artifact": {
+      "path": "telemetry.json",
+      "sha256": "ec9f3d5df220c538b39fc83d7e7b7756e5d2b1742e4829a9513191f4232167e9"
+    },
+    "learned_host_jsonl": {
+      "path": "host-semantic/learned-host.jsonl",
+      "sha256": "1bdf50428ae3638d4f4146012295e7d356d0e43691cb36568a6384f1c4c7c74e"
+    },
+    "learned_worker": {
+      "path": "workers/learned-b4.json",
+      "sha256": "7d188396336feec60e02032b26de31301f495065a38e529e36e3979fa1ae1cc5"
+    },
+    "target_host_jsonl": {
+      "path": "host-semantic/target-host.jsonl",
+      "sha256": "ceb2faa62d29f5c3588735227b5fb34f3952dd48aaa18e26f4a02de1aa9864cc"
+    },
+    "target_worker": {
+      "path": "workers/target-b4.json",
+      "sha256": "cf39f4420dec21f649731888b94d848847448f4822cadf8fb447ec8c40efac9b"
+    },
+    "timing_artifact": {
+      "path": "result.json",
+      "sha256": "89f102fe02996ca245fb273d162869e8e3e0155de7422c51a36005026e39a4cd"
+    }
+  },
+  "limitations": [
+    "host correlation is not causal proof",
+    "system-wide pressure does not identify a responsible process",
+    "campaign does not establish stable long-context performance",
+    "campaign does not establish Proposal-KV offload benefit",
+    "campaign does not establish Phase-1 promotion"
+  ],
+  "policies": {
+    "learned": {
+      "host_jsonl_sha256": "1bdf50428ae3638d4f4146012295e7d356d0e43691cb36568a6384f1c4c7c74e",
+      "measured_runs": [
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821421930325214,
+            "started_at_unix_ns": 1786821414958678524
+          },
+          "duration_seconds": 7.200257199,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172129099877621,
+            "finished_at_unix_ns": 1786821422025398634,
+            "started_at_monotonic_ns": 23172121899620422,
+            "started_at_unix_ns": 1786821414825141035
+          },
+          "metrics": {
+            "blocked_processes_max": 1,
+            "blocked_processes_mean": 0.08108108108108109,
+            "context_switches_per_second": 6382317.565875608,
+            "cpu_busy_fraction": 0.9879095885342416,
+            "cpu_iowait_fraction": 1.0882458565039014e-05,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9543356313652707,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.38539138762229164,
+            "forks_per_second": 198.4651326342155,
+            "io_psi_full_fraction": 5.5553571066260465e-06,
+            "io_psi_some_fraction": 0.00012818986523539601,
+            "loadavg_1m_mean": 40735.01054054054,
+            "major_faults_per_second": 0.5555357106626047,
+            "memory_available_kib_min": 1588644876,
+            "memory_dirty_kib_max": 297487084,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 596,
+            "page_in_kib_per_second": 44.998392563670976,
+            "page_out_kib_per_second": 6840.866741099313,
+            "run_queue_max": 41570,
+            "run_queue_mean": 40696.62162162162,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 0,
+          "sample_count": 37,
+          "timing": {
+            "e2e_s": 6.002869829,
+            "executor_proposal_forward_ms": 3016.9371999800205,
+            "repeat": 0,
+            "tpot_s": 0.38529612546666664
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821428397309939,
+            "started_at_unix_ns": 1786821421930336056
+          },
+          "duration_seconds": 6.599959282,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172135499626157,
+            "finished_at_unix_ns": 1786821428425147681,
+            "started_at_monotonic_ns": 23172128899666875,
+            "started_at_unix_ns": 1786821421825187554
+          },
+          "metrics": {
+            "blocked_processes_max": 1,
+            "blocked_processes_mean": 0.029411764705882353,
+            "context_switches_per_second": 6199307.942942549,
+            "cpu_busy_fraction": 0.9857734921445451,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.952889060566177,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3956109204479331,
+            "forks_per_second": 230.60748331447053,
+            "io_psi_full_fraction": 2.2727412941636387e-06,
+            "io_psi_some_fraction": 0.00011227341993168375,
+            "loadavg_1m_mean": 40682.4355882353,
+            "major_faults_per_second": 10.151577780597586,
+            "memory_available_kib_min": 1588520396,
+            "memory_dirty_kib_max": 297487304,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 588,
+            "page_in_kib_per_second": 2679.4104697326525,
+            "page_out_kib_per_second": 6545.494927191279,
+            "run_queue_max": 41905,
+            "run_queue_mean": 41042.0,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 1,
+          "sample_count": 34,
+          "timing": {
+            "e2e_s": 5.864208,
+            "executor_proposal_forward_ms": 3162.061631679535,
+            "repeat": 1,
+            "tpot_s": 0.3819744579333333
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821434107236498,
+            "started_at_unix_ns": 1786821428397322480
+          },
+          "duration_seconds": 6.000033215,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172141299723163,
+            "finished_at_unix_ns": 1786821434225243701,
+            "started_at_monotonic_ns": 23172135299689948,
+            "started_at_unix_ns": 1786821428225210761
+          },
+          "metrics": {
+            "blocked_processes_max": 2,
+            "blocked_processes_mean": 0.06451612903225806,
+            "context_switches_per_second": 6026450.638573674,
+            "cpu_busy_fraction": 0.9896467086194741,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9608100144492284,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.40859597357495364,
+            "forks_per_second": 92.33282219421847,
+            "io_psi_full_fraction": 2.8333176485590508e-06,
+            "io_psi_some_fraction": 0.00014283254263618272,
+            "loadavg_1m_mean": 40709.236774193545,
+            "major_faults_per_second": 0.6666629761315412,
+            "memory_available_kib_min": 1588398360,
+            "memory_dirty_kib_max": 297486992,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 808,
+            "page_in_kib_per_second": 21.33321523620932,
+            "page_out_kib_per_second": 6145.299313980548,
+            "run_queue_max": 42380,
+            "run_queue_mean": 41301.54838709677,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 2,
+          "sample_count": 31,
+          "timing": {
+            "e2e_s": 4.6108678405,
+            "executor_proposal_forward_ms": 2843.840431421995,
+            "repeat": 2,
+            "tpot_s": 0.29804994016666664
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821441941182466,
+            "started_at_unix_ns": 1786821434107251034
+          },
+          "duration_seconds": 7.999863762,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172149099845196,
+            "finished_at_unix_ns": 1786821442025366464,
+            "started_at_monotonic_ns": 23172141099981434,
+            "started_at_unix_ns": 1786821434025502242
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 4606027.439495788,
+            "cpu_busy_fraction": 0.9918983865430827,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9639711661879674,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.5499288901966554,
+            "forks_per_second": 59.751017544891035,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 0.00011275192013701196,
+            "loadavg_1m_mean": 41157.22439024391,
+            "major_faults_per_second": 0.3750063862650065,
+            "memory_available_kib_min": 1588302468,
+            "memory_dirty_kib_max": 297487080,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 500,
+            "page_in_kib_per_second": 26.000442781040448,
+            "page_out_kib_per_second": 3103.5528527291935,
+            "run_queue_max": 51671,
+            "run_queue_mean": 47325.243902439026,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 3,
+          "sample_count": 41,
+          "timing": {
+            "e2e_s": 7.0506861585,
+            "executor_proposal_forward_ms": 3788.0235724151134,
+            "repeat": 3,
+            "tpot_s": 0.4529338924333333
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821449813032465,
+            "started_at_unix_ns": 1786821441941201693
+          },
+          "duration_seconds": 8.000120093,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172156899715284,
+            "finished_at_unix_ns": 1786821449825236375,
+            "started_at_monotonic_ns": 23172148899595191,
+            "started_at_unix_ns": 1786821441825116239
+          },
+          "metrics": {
+            "blocked_processes_max": 2,
+            "blocked_processes_mean": 0.0975609756097561,
+            "context_switches_per_second": 6128486.001466328,
+            "cpu_busy_fraction": 0.978588429687039,
+            "cpu_iowait_fraction": 9.835356138245766e-06,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9579141201524461,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3943584397191022,
+            "forks_per_second": 57.37413872094483,
+            "io_psi_full_fraction": 9.499857391703283e-06,
+            "io_psi_some_fraction": 0.00011537326805976488,
+            "loadavg_1m_mean": 41584.70390243902,
+            "major_faults_per_second": 0.1249981235750432,
+            "memory_available_kib_min": 1587961972,
+            "memory_dirty_kib_max": 297486896,
+            "memory_psi_full_fraction": 0.0016785998014892552,
+            "memory_psi_some_fraction": 0.002265715987921233,
+            "memory_writeback_kib_max": 500,
+            "page_in_kib_per_second": 14.999774829005183,
+            "page_out_kib_per_second": 771.9884111994668,
+            "run_queue_max": 44988,
+            "run_queue_mean": 42758.39024390244,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 4,
+          "sample_count": 41,
+          "timing": {
+            "e2e_s": 6.918828719,
+            "executor_proposal_forward_ms": 3390.057273209095,
+            "repeat": 4,
+            "tpot_s": 0.43866850766666665
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821459878063548,
+            "started_at_unix_ns": 1786821449813047970
+          },
+          "duration_seconds": 10.399885492,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172167099609946,
+            "finished_at_unix_ns": 1786821460025131035,
+            "started_at_monotonic_ns": 23172156699724454,
+            "started_at_unix_ns": 1786821449625246176
+          },
+          "metrics": {
+            "blocked_processes_max": 2,
+            "blocked_processes_mean": 0.07547169811320754,
+            "context_switches_per_second": 6326645.139565543,
+            "cpu_busy_fraction": 0.9757841641874443,
+            "cpu_iowait_fraction": 7.550931029795974e-06,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9438336612023921,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.38357219445157587,
+            "forks_per_second": 39.90428551537748,
+            "io_psi_full_fraction": 1.0577039534196442e-06,
+            "io_psi_some_fraction": 9.500104599805532e-05,
+            "loadavg_1m_mean": 41510.96886792453,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1587878872,
+            "memory_dirty_kib_max": 297501956,
+            "memory_psi_full_fraction": 0.00045212036263446974,
+            "memory_psi_some_fraction": 0.000577890978186551,
+            "memory_writeback_kib_max": 1028,
+            "page_in_kib_per_second": 1926.5596737014537,
+            "page_out_kib_per_second": 23984.879467363276,
+            "run_queue_max": 41862,
+            "run_queue_mean": 40543.15094339623,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 5,
+          "sample_count": 53,
+          "timing": {
+            "e2e_s": 8.576838187,
+            "executor_proposal_forward_ms": 4751.272860914469,
+            "repeat": 5,
+            "tpot_s": 0.5487767003333334
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821469679401487,
+            "started_at_unix_ns": 1786821459878079351
+          },
+          "duration_seconds": 10.000014203,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172176899689750,
+            "finished_at_unix_ns": 1786821469825210632,
+            "started_at_monotonic_ns": 23172166899675547,
+            "started_at_unix_ns": 1786821459825196584
+          },
+          "metrics": {
+            "blocked_processes_max": 1,
+            "blocked_processes_mean": 0.0196078431372549,
+            "context_switches_per_second": 6282432.777060728,
+            "cpu_busy_fraction": 0.9789037823907475,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9451770575650251,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3871882709744331,
+            "forks_per_second": 55.699920889402364,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 9.019987188912196e-05,
+            "loadavg_1m_mean": 41377.55666666667,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1588177352,
+            "memory_dirty_kib_max": 297486672,
+            "memory_psi_full_fraction": 0.00014519979377273292,
+            "memory_psi_some_fraction": 0.00018649973511442622,
+            "memory_writeback_kib_max": 92,
+            "page_in_kib_per_second": 12.799981820185822,
+            "page_out_kib_per_second": 704.7989989739818,
+            "run_queue_max": 42079,
+            "run_queue_mean": 40936.62745098039,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 6,
+          "sample_count": 51,
+          "timing": {
+            "e2e_s": 8.5400308675,
+            "executor_proposal_forward_ms": 4911.6901233792305,
+            "repeat": 6,
+            "tpot_s": 0.5507771015
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821477492229748,
+            "started_at_unix_ns": 1786821469679414475
+          },
+          "duration_seconds": 7.999946587,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23172184699568478,
+            "finished_at_unix_ns": 1786821477625088923,
+            "started_at_monotonic_ns": 23172176699621891,
+            "started_at_unix_ns": 1786821469625142707
+          },
+          "metrics": {
+            "blocked_processes_max": 1,
+            "blocked_processes_mean": 0.04878048780487805,
+            "context_switches_per_second": 6271979.500655133,
+            "cpu_busy_fraction": 0.9784275044411075,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9482663312186936,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3869603195634465,
+            "forks_per_second": 53.12535469807131,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 9.837565681736969e-05,
+            "loadavg_1m_mean": 41275.516829268294,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1588177352,
+            "memory_dirty_kib_max": 297486660,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 92,
+            "page_in_kib_per_second": 17.00011350338282,
+            "page_out_kib_per_second": 828.505531620745,
+            "run_queue_max": 43182,
+            "run_queue_mean": 41477.90243902439,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 7,
+          "sample_count": 41,
+          "timing": {
+            "e2e_s": 6.8337488615,
+            "executor_proposal_forward_ms": 3231.2491089105606,
+            "repeat": 7,
+            "tpot_s": 0.43724839223333334
+          }
+        }
+      ],
+      "sample_count": 1589,
+      "worker_sha256": "7d188396336feec60e02032b26de31301f495065a38e529e36e3979fa1ae1cc5"
+    },
+    "target": {
+      "host_jsonl_sha256": "ceb2faa62d29f5c3588735227b5fb34f3952dd48aaa18e26f4a02de1aa9864cc",
+      "measured_runs": [
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786820998562945609,
+            "started_at_unix_ns": 1786820993846967441
+          },
+          "duration_seconds": 5.000010471,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171705824249241,
+            "finished_at_unix_ns": 1786820998749770381,
+            "started_at_monotonic_ns": 23171700824238770,
+            "started_at_unix_ns": 1786820993749759827
+          },
+          "metrics": {
+            "blocked_processes_max": 1,
+            "blocked_processes_mean": 0.038461538461538464,
+            "context_switches_per_second": 6391021.615922531,
+            "cpu_busy_fraction": 0.9825385110626069,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9632725827145571,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3784526482734796,
+            "forks_per_second": 63.399867227998044,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 6.71998592700547e-05,
+            "loadavg_1m_mean": 40913.60538461538,
+            "major_faults_per_second": 0.19999958116087713,
+            "memory_available_kib_min": 1589703996,
+            "memory_dirty_kib_max": 297485688,
+            "memory_psi_full_fraction": 0.00033599929635027355,
+            "memory_psi_some_fraction": 0.0009661979765881973,
+            "memory_writeback_kib_max": 80,
+            "page_in_kib_per_second": 21.59995476537473,
+            "page_out_kib_per_second": 888.7981386789379,
+            "run_queue_max": 41747,
+            "run_queue_mean": 40365.692307692305,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 0,
+          "sample_count": 26,
+          "timing": {
+            "e2e_s": 4.70167435,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 0,
+            "tpot_s": 0.2929439140666667
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821001015457500,
+            "started_at_unix_ns": 1786820998562951532
+          },
+          "duration_seconds": 2.600041217,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171708224101651,
+            "finished_at_unix_ns": 1786821001149622991,
+            "started_at_monotonic_ns": 23171705624060434,
+            "started_at_unix_ns": 1786820998549581950
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 6274948.986702929,
+            "cpu_busy_fraction": 0.9844343891402715,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.951417994386356,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.38368024132730016,
+            "forks_per_second": 39.61475661483716,
+            "io_psi_full_fraction": 2.692265012658836e-06,
+            "io_psi_some_fraction": 0.00011730583269442072,
+            "loadavg_1m_mean": 40856.27,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1590030572,
+            "memory_dirty_kib_max": 297485608,
+            "memory_psi_full_fraction": 2.692265012658836e-06,
+            "memory_psi_some_fraction": 8.076795037976509e-06,
+            "memory_writeback_kib_max": 8,
+            "page_in_kib_per_second": 10.769060050635344,
+            "page_out_kib_per_second": 929.2160386548211,
+            "run_queue_max": 41577,
+            "run_queue_mean": 40639.42857142857,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 1,
+          "sample_count": 14,
+          "timing": {
+            "e2e_s": 2.435233656,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 1,
+            "tpot_s": 0.15183434926666667
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821005621060439,
+            "started_at_unix_ns": 1786821001015463219
+          },
+          "duration_seconds": 4.800219331,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171712824303282,
+            "finished_at_unix_ns": 1786821005749824410,
+            "started_at_monotonic_ns": 23171708024083951,
+            "started_at_unix_ns": 1786821000949605003
+          },
+          "metrics": {
+            "blocked_processes_max": 1,
+            "blocked_processes_mean": 0.04,
+            "context_switches_per_second": 6335710.912956198,
+            "cpu_busy_fraction": 0.9822813389614214,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9478077325796261,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3921501259775531,
+            "forks_per_second": 112.91150729295707,
+            "io_psi_full_fraction": 3.1248572129047156e-06,
+            "io_psi_some_fraction": 0.0001454100223071661,
+            "loadavg_1m_mean": 40794.878,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1589885008,
+            "memory_dirty_kib_max": 297485740,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 72,
+            "page_in_kib_per_second": 14.999314621942636,
+            "page_out_kib_per_second": 714.1340350558244,
+            "run_queue_max": 41580,
+            "run_queue_mean": 40735.96,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 2,
+          "sample_count": 25,
+          "timing": {
+            "e2e_s": 4.592163248,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 2,
+            "tpot_s": 0.2957999744666667
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821010498231498,
+            "started_at_unix_ns": 1786821005621066959
+          },
+          "duration_seconds": 4.999735555,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171717624181215,
+            "finished_at_unix_ns": 1786821010549702270,
+            "started_at_monotonic_ns": 23171712624445660,
+            "started_at_unix_ns": 1786821005549966845
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 6306259.531760375,
+            "cpu_busy_fraction": 0.9848513360933383,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9573748345976271,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3971427675323046,
+            "forks_per_second": 175.80929837798192,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 8.080427365722947e-05,
+            "loadavg_1m_mean": 40726.249615384615,
+            "major_faults_per_second": 0.8000423134379154,
+            "memory_available_kib_min": 1589835928,
+            "memory_dirty_kib_max": 297485612,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 4,
+            "page_in_kib_per_second": 50.402665746588674,
+            "page_out_kib_per_second": 756.0399861988301,
+            "run_queue_max": 41622,
+            "run_queue_mean": 40776.92307692308,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 3,
+          "sample_count": 26,
+          "timing": {
+            "e2e_s": 4.859572236,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 3,
+            "tpot_s": 0.2914478128666667
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821015131558719,
+            "started_at_unix_ns": 1786821010498240781
+          },
+          "duration_seconds": 4.800190544,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171722224330312,
+            "finished_at_unix_ns": 1786821015149851738,
+            "started_at_monotonic_ns": 23171717424139768,
+            "started_at_unix_ns": 1786821010349660380
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 6198990.379078585,
+            "cpu_busy_fraction": 0.9898836621143147,
+            "cpu_iowait_fraction": 3.263334801833994e-05,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9556478972973035,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.40710101652879077,
+            "forks_per_second": 75.41367299522766,
+            "io_psi_full_fraction": 2.35407321780683e-05,
+            "io_psi_some_fraction": 8.520495098079588e-05,
+            "loadavg_1m_mean": 40697.2224,
+            "major_faults_per_second": 14.999404573636442,
+            "memory_available_kib_min": 1589660992,
+            "memory_dirty_kib_max": 297485916,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 0,
+            "page_in_kib_per_second": 3674.020820286837,
+            "page_out_kib_per_second": 637.4746943795487,
+            "run_queue_max": 42182,
+            "run_queue_mean": 41213.32,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 4,
+          "sample_count": 25,
+          "timing": {
+            "e2e_s": 4.61635001,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 4,
+            "tpot_s": 0.2887175426666666
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821019347893491,
+            "started_at_unix_ns": 1786821015131571826
+          },
+          "duration_seconds": 4.400125114,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171726424260979,
+            "finished_at_unix_ns": 1786821019349781706,
+            "started_at_monotonic_ns": 23171722024135865,
+            "started_at_unix_ns": 1786821014949657358
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 6114225.914713388,
+            "cpu_busy_fraction": 0.9852136889173926,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.949533909094204,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.402882439919477,
+            "forks_per_second": 44.08965540155775,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 0.00011749665898250183,
+            "loadavg_1m_mean": 40697.92086956522,
+            "major_faults_per_second": 0.22726626495648325,
+            "memory_available_kib_min": 1589758972,
+            "memory_dirty_kib_max": 297485760,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 104,
+            "page_in_kib_per_second": 14.545040957214928,
+            "page_out_kib_per_second": 561.8022069724266,
+            "run_queue_max": 42381,
+            "run_queue_mean": 41342.86956521739,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 5,
+          "sample_count": 23,
+          "timing": {
+            "e2e_s": 4.196531505,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 5,
+            "tpot_s": 0.2623148776
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821023164777707,
+            "started_at_unix_ns": 1786821019347902230
+          },
+          "duration_seconds": 4.199991879,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171730424081857,
+            "finished_at_unix_ns": 1786821023349603276,
+            "started_at_monotonic_ns": 23171726224089978,
+            "started_at_unix_ns": 1786821019149611158
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 6204027.948312135,
+            "cpu_busy_fraction": 0.982637916549986,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9407199141872437,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.3962475497059647,
+            "forks_per_second": 43.333417121590585,
+            "io_psi_full_fraction": 9.28573224034084e-06,
+            "io_psi_some_fraction": 8.64287385447109e-05,
+            "loadavg_1m_mean": 40721.87090909091,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1589559596,
+            "memory_dirty_kib_max": 297485824,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 16,
+            "page_in_kib_per_second": 11.42859352657334,
+            "page_out_kib_per_second": 713.3347126169527,
+            "run_queue_max": 42424,
+            "run_queue_mean": 41334.72727272727,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 6,
+          "sample_count": 22,
+          "timing": {
+            "e2e_s": 3.803194157,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 6,
+            "tpot_s": 0.23345507126666667
+          }
+        },
+        {
+          "campaign_interval": {
+            "finished_at_unix_ns": 1786821027093983869,
+            "started_at_unix_ns": 1786821023164783387
+          },
+          "duration_seconds": 3.999728268,
+          "host_sample_interval": {
+            "finished_at_monotonic_ns": 23171734224055546,
+            "finished_at_unix_ns": 1786821027149576375,
+            "started_at_monotonic_ns": 23171730224327278,
+            "started_at_unix_ns": 1786821023149847962
+          },
+          "metrics": {
+            "blocked_processes_max": 0,
+            "blocked_processes_mean": 0.0,
+            "context_switches_per_second": 6289159.991505703,
+            "cpu_busy_fraction": 0.9875607271587525,
+            "cpu_iowait_fraction": 0.0,
+            "cpu_psi_full_fraction": 0.0,
+            "cpu_psi_some_fraction": 0.9495780076827959,
+            "cpu_steal_fraction": 0.0,
+            "cpu_system_fraction": 0.38465757718225985,
+            "forks_per_second": 40.50275147341584,
+            "io_psi_full_fraction": 0.0,
+            "io_psi_some_fraction": 2.6001766377995357e-05,
+            "loadavg_1m_mean": 40754.4119047619,
+            "major_faults_per_second": 0.0,
+            "memory_available_kib_min": 1589605116,
+            "memory_dirty_kib_max": 297485812,
+            "memory_psi_full_fraction": 0.0,
+            "memory_psi_some_fraction": 0.0,
+            "memory_writeback_kib_max": 0,
+            "page_in_kib_per_second": 12.000815251382472,
+            "page_out_kib_per_second": 616.0418495709669,
+            "run_queue_max": 41551,
+            "run_queue_mean": 40689.80952380953,
+            "swap_in_kib_per_second": 0.0,
+            "swap_out_kib_per_second": 0.0
+          },
+          "repeat": 7,
+          "sample_count": 21,
+          "timing": {
+            "e2e_s": 3.916015334,
+            "executor_proposal_forward_ms": 0.0,
+            "repeat": 7,
+            "tpot_s": 0.24637737786666666
+          }
+        }
+      ],
+      "sample_count": 598,
+      "worker_sha256": "cf39f4420dec21f649731888b94d848847448f4822cadf8fb447ec8c40efac9b"
+    }
+  },
+  "policy_order": "target,learned",
+  "prime_each_policy": true,
+  "schema_version": 1,
+  "source_files": {
+    "tools/autoregressive_draft_b4_timing_diagnostic.py": "d2fc63df070602403163c87e2d3a7244d373522e38ec694482f48bb0f7a87b4b",
+    "tools/autoregressive_draft_host_sampler.py": "6245dc19c9f56cf1530181a5be9a4df606f96adc71c69ff42bf7f533d4eac986",
+    "tools/autoregressive_draft_host_semantic_diagnostic.py": "e3b1a4ed9dbfc769ab4baed2356f6d63760eefd9ab7919585a3f169fb8bf49ee",
+    "tools/autoregressive_draft_instability_telemetry.py": "eda6c667c346272f6792fdf1042dd75627f7b958a322e88733d395d6ccc49e4d",
+    "tools/autoregressive_draft_performance_worker.py": "fdc81278a137218b66e4057ae08d52dfa52ed30c426c394e51b171bc2893b7c5",
+    "tools/verify_autoregressive_draft_host_semantic_diagnostic.py": "110556d81c4b119ca740deb83080d53958c7885c6bfb6a609534bd6cc8ea0a8a"
+  },
+  "status": "PASS",
+  "thresholds": {
+    "edge_allowance_seconds": 0.4,
+    "host_metric_worse_fraction": 0.1,
+    "maximum_sample_gap_seconds": 0.6,
+    "minimum_correlated_primary_metrics": 2,
+    "minimum_worse_primary_metrics": 2,
+    "position_effect_fraction": 0.1,
+    "sample_interval_seconds": 0.2,
+    "spearman_rho_minimum": 0.6
+  },
+  "timing_artifact_sha256": "89f102fe02996ca245fb273d162869e8e3e0155de7422c51a36005026e39a4cd"
+}

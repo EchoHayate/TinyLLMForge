@@ -1,0 +1,25 @@
+{
+  "candidate_results": {},
+  "classification": "NO_GO",
+  "correctness_failures": [
+    "('P2', 'burst', 0) failed exact_outputs",
+    "('P2', 'burst', 1) failed exact_outputs",
+    "('P2', 'burst', 2) failed exact_outputs",
+    "('P2', 'long_prompt_pressure', 0) failed exact_outputs",
+    "('P2', 'long_prompt_pressure', 1) failed exact_outputs",
+    "('P2', 'long_prompt_pressure', 2) failed exact_outputs",
+    "('P2', 'mixed_service_fairness', 0) failed exact_outputs",
+    "('P2', 'mixed_service_fairness', 1) failed exact_outputs",
+    "('P2', 'mixed_service_fairness', 2) failed exact_outputs",
+    "('P2', 'near_saturation', 0) failed exact_outputs",
+    "('P2', 'near_saturation', 1) failed exact_outputs",
+    "('P2', 'near_saturation', 2) failed exact_outputs",
+    "('P2', 'overload', 0) failed exact_outputs",
+    "('P2', 'overload', 1) failed exact_outputs",
+    "('P2', 'overload', 2) failed exact_outputs",
+    "('P2', 'steady_moderate', 0) failed exact_outputs",
+    "('P2', 'steady_moderate', 1) failed exact_outputs",
+    "('P2', 'steady_moderate', 2) failed exact_outputs"
+  ],
+  "structural_failures": []
+}

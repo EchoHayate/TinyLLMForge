@@ -1,0 +1,173 @@
+{
+  "schema_version": "qwen35.recurrent-int8-gate1-checklist.v1",
+  "classification": "PASS",
+  "source_tree_sha256": "e265b3ead9d9717d92d8bc0507ac051d93ec22f8403b7929c3625ee4153ccfd7",
+  "command_results_path": "command_results.json",
+  "command_results_sha256": "bbc0dc2684c15bb49f4b45bb341ca45f5a1487e19c7869c6e3b571d439dcdc69",
+  "requirements": [
+    {
+      "id": "G1-01",
+      "requirement": "The default representation remains exact_restore and recurrent_int8_per_row requires explicit selection.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_representation.py::test_default_representation_is_exact_and_int8_is_explicit",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_omitted_representation_builds_unchanged_p1_owner_and_identity",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_omitted_engine_args_preserve_p1_tuple_and_result_fields"
+      ]
+    },
+    {
+      "id": "G1-02",
+      "requirement": "KV quantization aliases and unknown values cannot select the recurrent INT8 representation.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_representation.py::test_unknown_or_kv_quantization_names_are_rejected",
+        "tools/test_qwen35_hybrid_prefix_representation.py::test_config_accepts_only_closed_representation_values"
+      ]
+    },
+    {
+      "id": "G1-03",
+      "requirement": "The codec stores per-row INT8 values in the approved range, FP32 scales, and decodes to a private finite FP32 tensor.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_recurrent_int8_codec.py::test_encode_returns_exact_per_row_int8_metadata",
+        "tools/test_qwen35_recurrent_int8_codec.py::test_decode_returns_private_finite_fp32_tensor",
+        "tools/test_qwen35_recurrent_int8_codec.py::test_decode_rejects_forbidden_negative_128",
+        "tools/test_qwen35_recurrent_int8_codec.py::test_decode_rejects_scale_and_byte_accounting_tamper"
+      ]
+    },
+    {
+      "id": "G1-04",
+      "requirement": "A P2 snapshot contains exactly 18 ordered unique layers, exact detached contiguous BF16 convolution tensors, INT8 recurrent values, and FP32 scales.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_all_18_layers_publish_atomically_and_charge_encoded_storage",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_convolution_snapshot_is_exact_detached_contiguous_owned_bf16",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_partial_layer_transaction_is_rejected_without_publication",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_duplicate_layer_identities_are_rejected_without_publication",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_unordered_layer_identities_are_rejected_without_publication"
+      ]
+    },
+    {
+      "id": "G1-05",
+      "requirement": "Publication is invisible before finalize, is atomic across all layers/ranks, and rollback preserves the previous valid entry and accounting.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_prepare_precommit_finalize_seal_controls_visibility",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_late_encode_failure_preserves_previous_entry_and_releases_intern_refs",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_finalized_replacement_rollback_restores_exact_previous_state",
+        "tools/test_qwen35_hybrid_prefix_publication_coordinator.py::test_precommit_failure_rolls_back_every_rank_before_visibility",
+        "tools/test_qwen35_hybrid_prefix_publication_coordinator.py::test_finalize_failure_rolls_back_all_ranks_and_allows_reuse"
+      ]
+    },
+    {
+      "id": "G1-06",
+      "requirement": "Encoded interning requires metadata and byte equality and cannot alias digest collisions.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_exact_byte_equality_interns_all_three_layer_tensors",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_digest_collision_requires_exact_bytes_before_aliasing",
+        "tools/test_qwen35_hybrid_prefix_cache.py::test_digest_collision_requires_exact_equality_and_restores_each_value",
+        "tools/test_qwen35_hybrid_prefix_cache.py::test_digest_collision_does_not_alias_distinct_signed_zero_bytes"
+      ]
+    },
+    {
+      "id": "G1-07",
+      "requirement": "Immutable reader leases pin detached or evicted snapshots until release and reject invalid ownership reuse.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_reader_lease_keeps_snapshot_alive_across_concurrent_eviction",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_reader_snapshot_and_take_cannot_mutate_resident_interned_tensors",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_reader_use_after_release_and_double_ownership_transfer_are_rejected"
+      ]
+    },
+    {
+      "id": "G1-08",
+      "requirement": "All recurrent layers decode into private FP32 staging before one cross-layer commit, while convolution bytes restore exactly.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_successful_restore_decodes_recurrent_state_to_fp32",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_successful_restore_preserves_exact_bf16_convolution_bytes",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_restore_commits_once_only_after_all_18_layers_decode",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_acquire_decodes_pinned_resident_without_public_snapshot_clone"
+      ]
+    },
+    {
+      "id": "G1-09",
+      "requirement": "Decode corruption quarantines the entry and becomes an accounted miss with recomputation, without silent P1 fallback or partial live-row mutation.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_late_layer_17_decode_failure_leaves_destination_unchanged_and_quarantines",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_empty_resident_layer_inventory_is_quarantined_once",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_corrupted_int8_restore_misses_then_full_prefill_without_p1_lookup"
+      ]
+    },
+    {
+      "id": "G1-10",
+      "requirement": "Commit failure rolls back every destination layer and rollback failure is explicit and accounted.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_commit_failure_rolls_back_every_destination_layer",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_rollback_failure_is_accounted_and_propagated",
+        "tools/test_qwen35_hybrid_prefix_acquisition.py::test_activation_and_restore_failures_roll_back_all_resources"
+      ]
+    },
+    {
+      "id": "G1-11",
+      "requirement": "Logical, encoded physical, codec metadata, encode workspace, decode workspace, CUDA allocated, and CUDA reserved accounting remain separate and cleanup-safe.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_encode_workspace_peak_survives_later_layer_failure",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_decode_staging_workspace_is_released_and_accounted_on_success_and_failure",
+        "tools/test_qwen35_hybrid_prefix_int8_cache.py::test_cuda_decode_workspace_lifecycle_uses_synchronized_measured_samples",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_int8_observation_snapshot_exposes_complete_task5_schema",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_int8_model_runner_snapshot_exposes_complete_task5_schema"
+      ]
+    },
+    {
+      "id": "G1-12",
+      "requirement": "Owner, ModelRunner, and Engine bind one representation/version/codec identity across ranks and reject cross-representation reconfiguration.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_explicit_int8_representation_builds_p2_owner_and_codec_identity",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_model_runner_fake_ranks_report_one_representation_identity",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_model_runner_rejects_cross_representation_reconfiguration",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_engine_requires_all_fake_ranks_to_agree_on_runtime_identity",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_engine_rejects_cross_representation_reconfiguration"
+      ]
+    },
+    {
+      "id": "G1-13",
+      "requirement": "P1 exact cache behavior and acquisition/publication/restore transactions retain their regression coverage.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_hybrid_prefix_cache.py",
+        "tools/test_qwen35_hybrid_prefix_acquisition.py",
+        "tools/test_qwen35_hybrid_prefix_publication_candidate.py",
+        "tools/test_qwen35_hybrid_prefix_publication_coordinator.py",
+        "tools/test_qwen35_hybrid_prefix_publication_ticket.py",
+        "tools/test_qwen35_hybrid_prefix_restore_ticket.py",
+        "tools/test_qwen35_hybrid_prefix_int8_runtime.py::test_p1_snapshot_retains_old_fields_and_zeros_every_p2_only_field"
+      ]
+    },
+    {
+      "id": "G1-14",
+      "requirement": "Schema-v1 remains restricted to recompute and exact_restore and explicitly rejects recurrent_int8_per_row.",
+      "classification": "PASS",
+      "evidence": [
+        "tools/test_qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py::test_schema_v1_exact_restore_branch_passes_explicit_representation",
+        "tools/test_qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py::test_schema_v1_policy_rejects_recurrent_int8_representation",
+        "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py::test_contract_freezes_identity_policies_and_thresholds"
+      ]
+    },
+    {
+      "id": "G1-15",
+      "requirement": "The complete frozen Gate-1 suite passes in isolated Python 3.12 processes, key modules compile, and the scoped diff check is clean.",
+      "classification": "PASS",
+      "evidence": [
+        "command_results.json",
+        "/tmp/qwen35_gate1_final_authority_20260805_r548.log"
+      ]
+    }
+  ],
+  "claim_boundary": "Gate 1 proves local default-off runtime integration and regression safety only. It does not prove canonical accuracy, cache reduction, memory reduction, capacity gain, latency improvement, or throughput improvement."
+}

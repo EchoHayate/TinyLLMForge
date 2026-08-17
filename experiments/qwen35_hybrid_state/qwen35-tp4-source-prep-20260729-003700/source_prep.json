@@ -1,0 +1,19 @@
+{
+  "authorized_source_delta": {
+    "tools/qwen35_tp4_real_root_logit_correctness_preflight.py": {
+      "after": "8d2e9d99d9ec2706d31dbbb90c907cebf341469f845fb90a097a5a2ff5c45a1e",
+      "before": "260544eda15ef26345f342bf9e9f75575510cce5a8222ad05db99df11f5afd81"
+    }
+  },
+  "claim_boundary": "frozen TP4 authority source with worker cleanup persistence, active-compute-process recheck, and bounded terminate/kill/reap emergency cleanup; no correctness or performance claim",
+  "source_count": 80,
+  "source_tree_sha256": "3702c043bfa0bbf09330b38d98780f4ba4f53c58760c92b9255527a119587826",
+  "supersedes": "qwen35-tp4-source-prep-20260728-235429",
+  "tag": "qwen35-tp4-source-prep-20260729-003700",
+  "test_only_files": [
+    "tools/test_qwen35_tp4_real_root_logit_correctness_contract.py",
+    "tools/test_qwen35_tp4_real_root_logit_correctness_preflight.py",
+    "tools/test_qwen35_transactional_root_causal_lm.py",
+    "tools/test_verify_qwen35_tp4_real_root_logit_correctness_gate.py"
+  ]
+}

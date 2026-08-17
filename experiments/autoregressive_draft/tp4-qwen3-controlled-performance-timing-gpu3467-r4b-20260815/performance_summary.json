@@ -1,0 +1,220 @@
+{
+  "artifact_status": "PASS",
+  "batch_directions": {
+    "1": "REGRESSED",
+    "4": "REGRESSED"
+  },
+  "classification": "PILOT_ONLY",
+  "direction": "NEGATIVE",
+  "exact_measured_repeat_parity": {
+    "batch_1": true,
+    "batch_4": true
+  },
+  "learned_acceptance": {
+    "batch_1": {
+      "accepted_draft_tokens_median": 15.0,
+      "acceptance_rate_median": 1.0,
+      "proposed_tokens_median": 15.0,
+      "speculative_step_count": [
+        4,
+        4,
+        4
+      ]
+    },
+    "batch_4": {
+      "accepted_draft_tokens_median": 53.0,
+      "acceptance_rate_median": 0.7361111111111112,
+      "proposed_tokens_median": 72.0,
+      "speculative_step_count": [
+        6,
+        6,
+        6
+      ]
+    }
+  },
+  "median_comparison": {
+    "batch_1": {
+      "e2e_learned_s": 5.886194489,
+      "e2e_target_s": 4.146950517,
+      "e2e_vs_target_percent": 41.940311678910746,
+      "throughput_learned_tps": 2.7182248275860528,
+      "throughput_target_tps": 3.8582567924091777,
+      "throughput_vs_target_percent": -29.54785091199865,
+      "tpot_learned_s": 0.37480267306666665,
+      "tpot_target_s": 0.256893624,
+      "tpot_vs_target_percent": 45.89800526410366,
+      "ttft_learned_s": 0.264154393,
+      "ttft_target_s": 0.301980697,
+      "ttft_vs_target_percent": -12.526066856518325
+    },
+    "batch_4": {
+      "e2e_learned_s": 8.2876268895,
+      "e2e_target_s": 4.489711375,
+      "e2e_vs_target_percent": 84.5915293274281,
+      "throughput_learned_tps": 6.885352281672483,
+      "throughput_target_tps": 14.254813874310575,
+      "throughput_vs_target_percent": -51.698055531395084,
+      "tpot_learned_s": 0.5352037084333333,
+      "tpot_target_s": 0.2816343216,
+      "tpot_vs_target_percent": 90.03497350492428,
+      "ttft_learned_s": 0.290366868,
+      "ttft_target_s": 0.265196551,
+      "ttft_vs_target_percent": 9.491193194288572
+    }
+  },
+  "learned_runtime_timing": {
+    "batch_1": {
+      "e2e_ms_raw": [
+        5929.506775,
+        5886.194489,
+        5744.654217
+      ],
+      "runtime_stage_totals_ms_raw": {
+        "accept_sample_ms": [
+          0.055108219385147095,
+          0.05111470818519592,
+          0.06132200360298157
+        ],
+        "commit_metadata_ms": [
+          375.3218464553356,
+          779.5542627573013,
+          390.0312967598438
+        ],
+        "first_target_batch_ms": [
+          4325.146194547415,
+          3830.6022696197033,
+          4019.263543188572
+        ],
+        "kv_materialize_ms": [
+          0.10971724987030029,
+          0.09174272418022156,
+          0.08972734212875366
+        ],
+        "reserve_blocks_ms": [
+          1.289166510105133,
+          1.2494772672653198,
+          1.3857260346412659
+        ],
+        "tail_batch_ms": [
+          902.912512421608,
+          948.0437450110912,
+          935.3120140731335
+        ]
+      },
+      "executor_max_rank_ms_raw": {
+        "prompt_bootstrap": [
+          354.49059680104256,
+          350.625965744257,
+          322.4034793674946
+        ],
+        "proposal_finalize": [
+          291.98426753282547,
+          312.35338374972343,
+          322.5501514971256
+        ],
+        "proposal_forward": [
+          2877.1143183112144,
+          2557.99588188529,
+          2693.1779384613037
+        ]
+      },
+      "median_e2e_share_percent": {
+        "commit_metadata_ms": 6.626204784919249,
+        "first_target_batch_ms": 68.28072504143364,
+        "tail_batch_ms": 15.890260169409917
+      },
+      "uninstrumented_ms_raw": [
+        324.6722295962809,
+        326.60187691227384,
+        398.510587598078
+      ]
+    },
+    "batch_4": {
+      "e2e_ms_raw": [
+        6082.035698000001,
+        9295.094482,
+        11607.905085
+      ],
+      "runtime_stage_totals_ms_raw": {
+        "accept_sample_ms": [
+          0.14613941311836243,
+          0.1367814838886261,
+          0.14687702059745789
+        ],
+        "commit_metadata_ms": [
+          243.4058114886284,
+          1072.581272572279,
+          962.0286859571934
+        ],
+        "first_target_batch_ms": [
+          4489.389333873987,
+          6402.739439159632,
+          8189.8172572255135
+        ],
+        "kv_materialize_ms": [
+          0.21719560027122498,
+          0.21498650312423706,
+          0.2210661768913269
+        ],
+        "reserve_blocks_ms": [
+          4.706159234046936,
+          4.669263958930969,
+          4.828806966543198
+        ],
+        "tail_batch_ms": [
+          960.1016715168953,
+          1288.6239923536777,
+          1565.538126975298
+        ]
+      },
+      "executor_max_rank_ms_raw": {
+        "prompt_bootstrap": [
+          230.29093444347382,
+          335.97029373049736,
+          616.4265833795071
+        ],
+        "proposal_finalize": [
+          126.28170475363731,
+          588.1653986871243,
+          529.2058177292347
+        ],
+        "proposal_forward": [
+          3194.2240446805954,
+          4411.7079973220825,
+          5433.772303164005
+        ]
+      },
+      "median_e2e_share_percent": {
+        "commit_metadata_ms": 10.347703808963552,
+        "first_target_batch_ms": 68.88302632551562,
+        "tail_batch_ms": 13.863475510550474
+      },
+      "uninstrumented_ms_raw": [
+        384.0693868730532,
+        526.1287459684681,
+        885.3242646779636
+      ]
+    },
+    "nesting_note": "Executor timing is nested inside first_target_batch_ms and must not be added to the seven runtime stage totals."
+  },
+  "diagnosis": {
+    "primary_bottleneck": "independent draft executor proposal_forward",
+    "secondary_bottlenecks": [
+      "target verify tail_batch",
+      "transactional proposal_finalize and commit_metadata"
+    ],
+    "batch_4_variance": "Learned b4 wall time rose monotonically across the three measured repeats. The increase appears on every TP rank and is concentrated in proposal_forward and first_target_batch, so this pilot establishes direction but not a stable optimization baseline.",
+    "next_measurement": "Add non-synchronizing substage evidence around draft backend decode, TP greedy selection, Proposal-KV bookkeeping, and authority convergence, then run an isolated repeated b4 diagnostic before changing algorithms."
+  },
+  "proposal_kv_movement": {
+    "d2h_bytes_median_all_cells": 0.0,
+    "h2d_bytes_median_all_cells": 0.0,
+    "offload_benefit_claimed": false
+  },
+  "source_binding": {
+    "local_verifier_sha256": "fef106380e35bb228e059e1971de88f31176cc166944fbbcdd0f040b674b38c6",
+    "remote_verifier_sha256": "fef106380e35bb228e059e1971de88f31176cc166944fbbcdd0f040b674b38c6",
+    "result_sha256": "2595462a6b2d35a76f4c92658a39b28b82b544df687905cdf60847e325d47c0b",
+    "source_tar_sha256": "cc23a873a1741ee6edbf24b005262d7b9ebfdfad69c56a610ec37aa37b30e686"
+  }
+}

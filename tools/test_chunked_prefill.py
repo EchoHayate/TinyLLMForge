@@ -39,6 +39,24 @@ sys.modules.setdefault("tinyvllm.utils", utils_pkg)
 sys.modules.setdefault("tinyvllm.layers", layers_pkg)
 
 
+def build_engine_speculative_partition(
+    record,
+    seqs,
+    *,
+    expected_schedule_generation,
+):
+    del record
+    return SimpleNamespace(
+        schedule_generation=expected_schedule_generation,
+        selected_sequence_ids=(),
+        suppressed_sequence_ids=tuple(
+            seq.seq_id for seq in seqs
+        ),
+        selected_sequences=(),
+        suppressed_sequences=seqs,
+    )
+
+
 def load_module(module_name: str, relative_path: str):
     spec = importlib.util.spec_from_file_location(module_name, os.path.join(_REPO_ROOT, relative_path))
     module = importlib.util.module_from_spec(spec)
@@ -69,7 +87,11 @@ def load_class_method(relative_path: str, class_name: str, method_name: str):
         returns=method_node.returns,
         type_comment=method_node.type_comment,
     )
-    namespace = {}
+    namespace = {
+        "build_engine_speculative_partition": (
+            build_engine_speculative_partition
+        ),
+    }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[function_node],
         type_ignores=[],
@@ -115,6 +137,13 @@ def test_explicit_kv_capacity_is_pinned_and_fails_closed():
 
 
 def test_adaptive_mixed_config_defaults_and_fail_closed_contract():
+    expected_defaults = {
+        "chunked_prefill_adaptive_mixed": False,
+        "chunked_prefill_adaptive_enter_waiting": 8,
+        "chunked_prefill_adaptive_exit_waiting": 2,
+        "chunked_prefill_adaptive_transition_steps": 2,
+        "chunked_prefill_adaptive_max_mixed_steps": 2,
+    }
     source = open(
         os.path.join(_REPO_ROOT, "tinyvllm/config.py"),
         encoding="utf-8",
@@ -130,12 +159,9 @@ def test_adaptive_mixed_config_defaults_and_fail_closed_contract():
         if isinstance(node, ast.AnnAssign)
         and isinstance(node.target, ast.Name)
         and node.value is not None
+        and node.target.id in expected_defaults
     }
-    assert defaults["chunked_prefill_adaptive_mixed"] is False
-    assert defaults["chunked_prefill_adaptive_enter_waiting"] == 8
-    assert defaults["chunked_prefill_adaptive_exit_waiting"] == 2
-    assert defaults["chunked_prefill_adaptive_transition_steps"] == 2
-    assert defaults["chunked_prefill_adaptive_max_mixed_steps"] == 2
+    assert defaults == expected_defaults
     for fragment in (
         "chunked_prefill_adaptive_enter_waiting > 0",
         "chunked_prefill_adaptive_exit_waiting >= 0",
@@ -979,6 +1005,91 @@ def test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage():
         assert torch.cuda is original_cuda
 
 
+def test_model_runner_hybrid_prefix_cache_snapshot_is_rank_local():
+    snapshot = load_class_method(
+        "tinyvllm/engine/model_runner.py",
+        "ModelRunner",
+        "qwen35_hybrid_prefix_cache_snapshot",
+    )
+
+    class FakeCache:
+        def observation_snapshot(self):
+            return {
+                "current_entries": 2,
+                "current_bytes": 100,
+                "current_logical_bytes": 150,
+                "deduplicated_bytes": 50,
+                "peak_entries": 3,
+                "peak_bytes": 200,
+                "publishes": 4,
+                "hits": 5,
+                "misses": 1,
+                "evictions": 0,
+                "validation_failures": 0,
+                "failed_restores": 0,
+                "current_interned_tensors": 4,
+            }
+
+    runner = SimpleNamespace(
+        rank=2,
+        qwen35_hybrid_prefix_restore_owner=SimpleNamespace(
+            snapshot_cache=FakeCache(),
+            representation="int8",
+            representation_version="v1",
+            codec="symmetric-per-token",
+        ),
+    )
+
+    result = snapshot(runner)
+
+    assert result["rank"] == 2
+    assert result["representation"] == "int8"
+    assert result["representation_version"] == "v1"
+    assert result["codec"] == "symmetric-per-token"
+    assert result["publishes"] == 4
+    assert result["current_entries"] == 2
+    assert result["current_bytes"] == 100
+    assert result["current_logical_bytes"] == 150
+    assert result["deduplicated_bytes"] == 50
+    assert result["peak_entries"] == 3
+    assert result["peak_bytes"] == 200
+    assert result["hits"] == 5
+    assert result["misses"] == 1
+    assert result["evictions"] == 0
+    assert result["validation_failures"] == 0
+    assert result["failed_restores"] == 0
+
+
+def test_engine_collects_all_rank_hybrid_prefix_cache_snapshots():
+    snapshot = load_class_method(
+        "tinyvllm/engine/llm_engine.py",
+        "LLMEngine",
+        "qwen35_hybrid_prefix_cache_snapshots",
+    )
+    local = {"rank": 0, "current_entries": 1}
+    worker_rows = [
+        SimpleNamespace(
+            rank=rank,
+            result={"rank": rank, "current_entries": 1},
+        )
+        for rank in (1, 2, 3)
+    ]
+    engine = SimpleNamespace(
+        call_model_runner_acknowledged=lambda *args, **kwargs: (
+            local,
+            worker_rows,
+        ),
+        model_runner=SimpleNamespace(world_size=4),
+    )
+
+    assert snapshot(engine, timeout_s=12.0) == (
+        local,
+        worker_rows[0].result,
+        worker_rows[1].result,
+        worker_rows[2].result,
+    )
+
+
 def test_llm_engine_step_records_observation_without_changing_return_value():
     step = load_class_method(
         "tinyvllm/engine/llm_engine.py",
@@ -1005,6 +1116,8 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
 
     class FakeScheduler:
         last_policy_branch = "chunked_prefill"
+        last_speculative_selection = None
+        schedule_generation = 1
 
         def __init__(self):
             self.snapshot_index = 0
@@ -1076,6 +1189,9 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
         "batch_kind": None,
         "is_prefill": True,
         "do_sample": True,
+        "speculative_schedule_generation": 1,
+        "speculative_selected_seq_ids": [],
+        "speculative_suppressed_seq_ids": [17],
         "scheduled": [{
             "seq_id": 17,
             "is_decode": False,
@@ -1100,6 +1216,15 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
         },
         "new_completion_tokens_by_seq": {17: [91]},
         "finished_seq_ids": [17],
+        "speculative_output_token_counts": {},
+        "speculative_accepted_draft_token_counts": {},
+        "speculative_proposal_token_counts": {},
+        "speculative_proposal_token_ids_by_seq": {},
+        "speculative_accepted_draft_token_ids_by_seq": {},
+        "speculative_proposal_row_count": 0,
+        "speculative_first_target_callback_count": 0,
+        "speculative_fixed_q_group_count": 0,
+        "speculative_runtime_timing_ms": {},
         "memory": {"cuda_allocated_bytes": 123},
         "decision_now_ns": 10,
         "step_end_ns": 20,
@@ -1126,6 +1251,8 @@ def test_engine_samples_one_decision_and_one_step_end_timestamp():
 
     class FakeTimedScheduler:
         last_policy_branch = "legacy_decode"
+        last_speculative_selection = None
+        schedule_generation = 1
 
         def __init__(self):
             self.schedule_calls = []
@@ -2107,6 +2234,664 @@ def test_capacity_pressure_never_returns_live_shared_block():
     assert live_block_id not in block_manager.free_block_ids
 
 
+def _block_manager_ownership_snapshot(block_manager):
+    return {
+        "free": tuple(block_manager.free_block_ids),
+        "used": frozenset(block_manager.used_block_ids),
+        "refs": tuple(
+            block.ref_count for block in block_manager.blocks
+        ),
+        "generations": tuple(
+            block.generation for block in block_manager.blocks
+        ),
+        "hashes": tuple(
+            block.hash for block in block_manager.blocks
+        ),
+        "tokens": tuple(
+            tuple(block.token_ids) for block in block_manager.blocks
+        ),
+        "hash_to_block_id": dict(
+            block_manager.hash_to_block_id
+        ),
+        "hash_to_block_ids": {
+            block_hash: frozenset(block_ids)
+            for block_hash, block_ids
+            in block_manager.hash_to_block_ids.items()
+        },
+    }
+
+
+def test_block_generation_tracks_content_lifetime_not_refcount_lifetime():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=1, block_size=4)
+    first = make_seq([1, 2, 3, 4], max_tokens=1)
+    block_manager.allocate(
+        first,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_id = first.block_table[0]
+    assert block_manager.blocks[block_id].generation == 1
+    block_manager.commit_prefill(first, 0, len(first))
+    block_manager.deallocate(first)
+    assert block_manager.blocks[block_id].generation == 1
+
+    reservation = block_manager.reserve_exact_prefix(
+        (1, 2, 3, 4),
+    )
+    assert reservation is not None
+    assert reservation.block_identities == ((
+        block_id,
+        1,
+        block_manager.blocks[block_id].hash,
+    ),)
+    assert block_manager.blocks[block_id].generation == 1
+    block_manager.release_prefix_reservation(reservation)
+
+    second = make_seq([5, 6, 7, 8], max_tokens=1)
+    block_manager.allocate(
+        second,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    assert second.block_table == [block_id]
+    assert block_manager.blocks[block_id].generation == 2
+
+
+def test_exact_prefix_reservation_holds_live_and_idle_multi_owner_refs():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    source = make_seq(list(range(1, 9)), max_tokens=1)
+    block_manager.allocate(
+        source,
+        publish_hashes=False,
+        max_cached_tokens=0,
+    )
+    block_manager.commit_prefill(source, 0, len(source))
+    block_ids = tuple(source.block_table)
+    block_manager.deallocate(source)
+
+    live = make_seq([1, 2, 3, 4, 9], max_tokens=1)
+    block_manager.allocate(
+        live,
+        publish_hashes=False,
+        max_cached_tokens=4,
+    )
+    assert live.block_table[0] == block_ids[0]
+    assert block_manager.blocks[block_ids[0]].ref_count == 1
+    assert block_manager.blocks[block_ids[1]].ref_count == 0
+
+    reservation = block_manager.reserve_exact_prefix(
+        tuple(range(1, 9)),
+        owner_count=2,
+    )
+
+    assert reservation is not None
+    assert reservation.block_ids == block_ids
+    assert reservation.token_count == 8
+    assert reservation.owner_count == 2
+    assert reservation.state == "reserved"
+    assert block_manager.blocks[block_ids[0]].ref_count == 3
+    assert block_manager.blocks[block_ids[1]].ref_count == 2
+    assert set(block_ids).issubset(block_manager.used_block_ids)
+    assert tuple(
+        identity[1] for identity in reservation.block_identities
+    ) == tuple(
+        block_manager.blocks[block_id].generation
+        for block_id in block_ids
+    )
+
+    block_manager.release_prefix_reservation(reservation)
+    assert reservation.state == "released"
+    assert block_manager.blocks[block_ids[0]].ref_count == 1
+    assert block_manager.blocks[block_ids[1]].ref_count == 0
+    assert block_ids[0] in block_manager.used_block_ids
+    assert block_ids[1] in block_manager.free_block_ids
+
+
+def test_exact_prefix_partial_miss_is_read_only():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    _publish_and_release(block_manager, [1, 2, 3, 4])
+    before = _block_manager_ownership_snapshot(block_manager)
+
+    reservation = block_manager.reserve_exact_prefix(
+        (1, 2, 3, 4, 5, 6, 7, 8),
+        owner_count=2,
+    )
+
+    assert reservation is None
+    assert _block_manager_ownership_snapshot(block_manager) == before
+
+
+def test_exact_prefix_reservation_rolls_back_partial_activation_failure():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    block_ids = tuple(_publish_and_release(
+        block_manager,
+        list(range(1, 9)),
+    ))
+    before = _block_manager_ownership_snapshot(block_manager)
+    original_activate = block_manager._activate_cached_block
+    calls = []
+
+    def failing_activate(block_id, owner_count=1):
+        calls.append(block_id)
+        if len(calls) == 2:
+            raise RuntimeError("injected block activation failure")
+        return original_activate(block_id, owner_count)
+
+    block_manager._activate_cached_block = failing_activate
+    try:
+        block_manager.reserve_exact_prefix(
+            tuple(range(1, 9)),
+            owner_count=2,
+        )
+    except RuntimeError as error:
+        assert str(error) == "injected block activation failure"
+    else:
+        raise AssertionError("partial activation failure was swallowed")
+    finally:
+        block_manager._activate_cached_block = original_activate
+
+    assert tuple(calls) == block_ids
+    assert _block_manager_ownership_snapshot(block_manager) == before
+
+
+def test_prefix_reservation_attachment_transfers_refs_to_destinations():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    block_ids = tuple(_publish_and_release(
+        block_manager,
+        list(range(1, 9)),
+    ))
+    reservation = block_manager.reserve_exact_prefix(
+        tuple(range(1, 9)),
+        owner_count=2,
+    )
+    first = make_seq(list(range(1, 10)), max_tokens=1)
+    second = make_seq(list(range(1, 11)), max_tokens=1)
+
+    block_manager.attach_prefix_reservation(
+        reservation,
+        (first, second),
+    )
+
+    assert reservation.state == "attached"
+    for sequence in (first, second):
+        assert sequence.block_table == list(block_ids)
+        assert sequence.num_cached_tokens == 8
+        assert sequence.num_computed_tokens == 8
+    assert all(
+        block_manager.blocks[block_id].ref_count == 2
+        for block_id in block_ids
+    )
+    block_manager.deallocate(first)
+    assert all(
+        block_manager.blocks[block_id].ref_count == 1
+        for block_id in block_ids
+    )
+    block_manager.deallocate(second)
+    assert all(
+        block_manager.blocks[block_id].ref_count == 0
+        for block_id in block_ids
+    )
+
+
+def test_prefix_reservation_validation_and_terminal_states_fail_closed():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    _publish_and_release(block_manager, [1, 2, 3, 4])
+    invalid_reservations = (
+        lambda: block_manager.reserve_exact_prefix([1, 2, 3, 4]),
+        lambda: block_manager.reserve_exact_prefix((1, 2, 3)),
+        lambda: block_manager.reserve_exact_prefix(
+            (1, 2, 3, 4),
+            owner_count=0,
+        ),
+    )
+    for operation in invalid_reservations:
+        try:
+            operation()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid prefix reservation was accepted")
+
+    reservation = block_manager.reserve_exact_prefix((1, 2, 3, 4))
+    destination = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    duplicate = block_manager.reserve_exact_prefix(
+        (1, 2, 3, 4),
+        owner_count=2,
+    )
+    before = _block_manager_ownership_snapshot(block_manager)
+    try:
+        block_manager.attach_prefix_reservation(
+            duplicate,
+            (destination, destination),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("duplicate destinations were accepted")
+    assert _block_manager_ownership_snapshot(block_manager) == before
+    block_manager.release_prefix_reservation(duplicate)
+
+    dirty = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    dirty.block_table.append(99)
+    before = _block_manager_ownership_snapshot(block_manager)
+    try:
+        block_manager.attach_prefix_reservation(
+            reservation,
+            (dirty,),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("dirty destination was accepted")
+    assert _block_manager_ownership_snapshot(block_manager) == before
+
+    block_manager.release_prefix_reservation(reservation)
+    for operation in (
+        lambda: block_manager.release_prefix_reservation(reservation),
+        lambda: block_manager.attach_prefix_reservation(
+            reservation,
+            (destination,),
+        ),
+    ):
+        try:
+            operation()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(
+                "terminal reservation operation was accepted"
+            )
+
+
+def test_sequence_block_reservation_cold_is_private_until_attachment():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=6, block_size=4)
+    sequence = make_seq(list(range(1, 10)), max_tokens=1)
+
+    reservation = block_manager.reserve_sequence_blocks(
+        sequence,
+        max_cached_tokens=block_manager.max_reusable_tokens(sequence),
+    )
+
+    assert sequence.block_table == []
+    assert sequence.num_cached_tokens == 0
+    assert sequence.num_computed_tokens == 0
+    assert reservation.cached_tokens == 0
+    assert reservation.prefix_block_count == 0
+    assert reservation.new_block_count == sequence.num_blocks
+    assert len(reservation.block_ids) == sequence.num_blocks
+    assert reservation.block_identities == ()
+    assert all(
+        block_manager.blocks[block_id].ref_count == 1
+        for block_id in reservation.block_ids
+    )
+
+    block_manager.attach_sequence_reservation(
+        reservation,
+        sequence,
+    )
+    assert reservation.state == "attached"
+    assert sequence.block_table == list(reservation.block_ids)
+    assert sequence.num_cached_tokens == 0
+    assert sequence.num_computed_tokens == 0
+    block_manager.deallocate(sequence)
+
+
+def test_sequence_block_reservation_matches_warm_allocate_semantics():
+    reset_sequence_state()
+    reserved_manager = BlockManager(num_blocks=8, block_size=4)
+    allocated_manager = BlockManager(num_blocks=8, block_size=4)
+    tokens = list(range(1, 10))
+    for manager in (reserved_manager, allocated_manager):
+        _publish_and_release(manager, list(range(1, 9)))
+
+    reserved_sequence = make_seq(tokens, max_tokens=1)
+    allocated_sequence = make_seq(tokens, max_tokens=1)
+    max_cached_tokens = reserved_manager.max_reusable_tokens(
+        reserved_sequence
+    )
+    reservation = reserved_manager.reserve_sequence_blocks(
+        reserved_sequence,
+        max_cached_tokens=max_cached_tokens,
+    )
+    allocated_manager.allocate(
+        allocated_sequence,
+        publish_hashes=False,
+        max_cached_tokens=max_cached_tokens,
+    )
+
+    assert reservation.cached_tokens == allocated_sequence.num_cached_tokens
+    assert reservation.prefix_block_count == 2
+    assert reservation.new_block_count == 1
+    assert reservation.block_ids[:2] == tuple(
+        allocated_sequence.block_table[:2]
+    )
+    assert len(reservation.block_ids) == len(
+        allocated_sequence.block_table
+    )
+    assert reserved_sequence.block_table == []
+    reserved_manager.attach_sequence_reservation(
+        reservation,
+        reserved_sequence,
+    )
+    assert reserved_sequence.num_cached_tokens == 8
+    assert reserved_sequence.num_computed_tokens == 8
+
+
+def test_sequence_block_reservation_keeps_sampleable_token_cap():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=4, block_size=4)
+    cached_block = _publish_and_release(
+        block_manager,
+        [1, 2, 3, 4],
+    )[0]
+    sequence = make_seq([1, 2, 3, 4], max_tokens=1)
+
+    reservation = block_manager.reserve_sequence_blocks(
+        sequence,
+        max_cached_tokens=block_manager.max_reusable_tokens(sequence),
+    )
+
+    assert reservation.cached_tokens == 0
+    assert reservation.prefix_block_count == 0
+    assert reservation.new_block_count == 1
+    assert reservation.block_ids[0] != cached_block
+    block_manager.release_sequence_reservation(reservation)
+
+    default_sequence = make_seq([1, 2, 3, 4], max_tokens=1)
+    default_reservation = block_manager.reserve_sequence_blocks(
+        default_sequence,
+    )
+    assert default_reservation.cached_tokens == 0
+    assert default_reservation.prefix_block_count == 0
+    block_manager.release_sequence_reservation(default_reservation)
+
+
+def test_sequence_block_reservation_first_miss_allocates_all_suffix_blocks():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=6, block_size=4)
+    first_block = _publish_and_release(
+        block_manager,
+        [1, 2, 3, 4],
+    )[0]
+    collision_hash = block_manager.blocks[first_block].hash
+    original_compute_hash = block_manager.compute_hash
+    block_manager.compute_hash = (
+        lambda token_ids, prefix=-1: collision_hash
+        if prefix == -1 else original_compute_hash(token_ids, prefix)
+    )
+    sequence = make_seq(
+        [9, 8, 7, 6, 1, 2, 3, 4, 5],
+        max_tokens=1,
+    )
+    try:
+        reservation = block_manager.reserve_sequence_blocks(
+            sequence,
+            max_cached_tokens=8,
+        )
+    finally:
+        block_manager.compute_hash = original_compute_hash
+
+    assert reservation.cached_tokens == 0
+    assert reservation.prefix_block_count == 0
+    assert reservation.new_block_count == sequence.num_blocks
+    assert reservation.block_identities == ()
+    if first_block in reservation.block_ids:
+        assert block_manager.blocks[first_block].generation == 2
+        assert block_manager.blocks[first_block].hash == -1
+    block_manager.release_sequence_reservation(reservation)
+
+
+def test_sequence_block_reservation_capacity_and_suffix_failure_are_atomic():
+    reset_sequence_state()
+    capacity_manager = BlockManager(num_blocks=2, block_size=4)
+    sequence = make_seq(list(range(1, 10)), max_tokens=1)
+    before = _block_manager_ownership_snapshot(capacity_manager)
+    try:
+        capacity_manager.reserve_sequence_blocks(
+            sequence,
+            max_cached_tokens=0,
+        )
+    except RuntimeError as error:
+        assert "insufficient KV blocks" in str(error)
+    else:
+        raise AssertionError("insufficient reservation capacity was accepted")
+    assert _block_manager_ownership_snapshot(capacity_manager) == before
+    assert sequence.block_table == []
+
+    block_manager = BlockManager(num_blocks=6, block_size=4)
+    _publish_and_release(block_manager, [1, 2, 3, 4])
+    sequence = make_seq(list(range(1, 13)), max_tokens=1)
+    before = _block_manager_ownership_snapshot(block_manager)
+    original_allocate = block_manager._allocate_block
+    calls = []
+
+    def failing_allocate(block_id):
+        calls.append(block_id)
+        if len(calls) == 2:
+            raise RuntimeError("injected suffix allocation failure")
+        return original_allocate(block_id)
+
+    block_manager._allocate_block = failing_allocate
+    try:
+        block_manager.reserve_sequence_blocks(
+            sequence,
+            max_cached_tokens=4,
+        )
+    except RuntimeError as error:
+        assert str(error) == "injected suffix allocation failure"
+    else:
+        raise AssertionError("suffix allocation failure was swallowed")
+    finally:
+        block_manager._allocate_block = original_allocate
+    assert len(calls) == 2
+    assert _block_manager_ownership_snapshot(block_manager) == before
+    assert sequence.block_table == []
+
+    reset_sequence_state()
+    duplicate_manager = BlockManager(num_blocks=6, block_size=4)
+    duplicate_manager.compute_hash = (
+        lambda token_ids, prefix=-1: 12345
+    )
+    first_cached = make_seq([1, 2, 3, 4], max_tokens=1)
+    second_cached = make_seq([5, 6, 7, 8], max_tokens=1)
+    for cached in (first_cached, second_cached):
+        duplicate_manager.allocate(
+            cached,
+            publish_hashes=False,
+            max_cached_tokens=0,
+        )
+        duplicate_manager.commit_prefill(cached, 0, len(cached))
+        duplicate_manager.deallocate(cached)
+    live_sequences = []
+    for base in (20, 30, 40, 50):
+        live = make_seq(
+            [base, base + 1, base + 2, base + 3],
+            max_tokens=1,
+        )
+        duplicate_manager.allocate(
+            live,
+            publish_hashes=False,
+            max_cached_tokens=0,
+        )
+        live_sequences.append(live)
+    assert len(duplicate_manager.free_block_ids) == 2
+    before = _block_manager_ownership_snapshot(duplicate_manager)
+    original_allocate = duplicate_manager._allocate_block
+    calls = []
+
+    def failing_duplicate_allocate(block_id):
+        calls.append(block_id)
+        if len(calls) == 2:
+            raise RuntimeError("injected duplicate-hash failure")
+        return original_allocate(block_id)
+
+    duplicate_manager._allocate_block = failing_duplicate_allocate
+    try:
+        duplicate_manager.reserve_sequence_blocks(
+            make_seq(list(range(100, 108)), max_tokens=1),
+            max_cached_tokens=0,
+        )
+    except RuntimeError as error:
+        assert str(error) == "injected duplicate-hash failure"
+    else:
+        raise AssertionError("duplicate-hash rollback failure was swallowed")
+    finally:
+        duplicate_manager._allocate_block = original_allocate
+    assert len(calls) == 2
+    assert _block_manager_ownership_snapshot(duplicate_manager) == before
+
+    post_mutation_manager = BlockManager(num_blocks=4, block_size=4)
+    post_mutation_sequence = make_seq(
+        list(range(200, 208)),
+        max_tokens=1,
+    )
+    before = _block_manager_ownership_snapshot(post_mutation_manager)
+    original_allocate = post_mutation_manager._allocate_block
+    calls = []
+
+    def failing_after_allocate(block_id):
+        calls.append(block_id)
+        block = original_allocate(block_id)
+        if len(calls) == 2:
+            raise RuntimeError("injected post-mutation failure")
+        return block
+
+    post_mutation_manager._allocate_block = failing_after_allocate
+    try:
+        post_mutation_manager.reserve_sequence_blocks(
+            post_mutation_sequence,
+            max_cached_tokens=0,
+        )
+    except RuntimeError as error:
+        assert str(error) == "injected post-mutation failure"
+    else:
+        raise AssertionError("post-mutation allocation failure was swallowed")
+    finally:
+        post_mutation_manager._allocate_block = original_allocate
+    assert len(calls) == 2
+    assert (
+        _block_manager_ownership_snapshot(post_mutation_manager)
+        == before
+    )
+
+
+def test_sequence_block_reservation_release_and_stale_attach_fail_closed():
+    reset_sequence_state()
+    block_manager = BlockManager(num_blocks=6, block_size=4)
+    prefix_block = _publish_and_release(
+        block_manager,
+        [1, 2, 3, 4],
+    )[0]
+    prefix_hash = block_manager.blocks[prefix_block].hash
+    sequence = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    reservation = block_manager.reserve_sequence_blocks(
+        sequence,
+        max_cached_tokens=4,
+    )
+    refs_before_attach = tuple(
+        block.ref_count for block in block_manager.blocks
+    )
+    block_manager.blocks[prefix_block].generation += 1
+    try:
+        block_manager.attach_sequence_reservation(
+            reservation,
+            sequence,
+        )
+    except RuntimeError as error:
+        assert "stale" in str(error)
+    else:
+        raise AssertionError("stale reservation identity was accepted")
+    assert sequence.block_table == []
+    assert reservation.state == "reserved"
+    block_manager.blocks[prefix_block].generation -= 1
+    assert tuple(
+        block.ref_count for block in block_manager.blocks
+    ) == refs_before_attach
+
+    block_manager.release_sequence_reservation(reservation)
+    assert reservation.state == "released"
+    assert block_manager.blocks[prefix_block].ref_count == 0
+    assert block_manager.blocks[prefix_block].hash == prefix_hash
+    assert block_manager.blocks[prefix_block].token_ids == [1, 2, 3, 4]
+    assert all(
+        block_manager.blocks[block_id].ref_count == 0
+        for block_id in reservation.block_ids
+    )
+    for operation in (
+        lambda: block_manager.release_sequence_reservation(reservation),
+        lambda: block_manager.attach_sequence_reservation(
+            reservation,
+            sequence,
+        ),
+    ):
+        try:
+            operation()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(
+                "terminal sequence reservation operation was accepted"
+            )
+
+    dirty = make_seq([1, 2, 3, 4, 5], max_tokens=1)
+    dirty.block_table.append(99)
+    try:
+        block_manager.reserve_sequence_blocks(dirty)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("dirty sequence reservation was accepted")
+
+    malformed = block_manager_mod.SequenceBlockReservation(
+        block_ids=(999,),
+        block_identities=(),
+        cached_tokens=0,
+        prefix_block_count=0,
+        new_block_count=1,
+    )
+    before = _block_manager_ownership_snapshot(block_manager)
+    try:
+        block_manager.release_sequence_reservation(malformed)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("malformed sequence reservation was released")
+    assert _block_manager_ownership_snapshot(block_manager) == before
+
+    identity_sequence = make_seq([6, 7, 8, 9, 10], max_tokens=1)
+    identity_reservation = block_manager.reserve_sequence_blocks(
+        identity_sequence,
+        max_cached_tokens=0,
+    )
+    malformed_identity = block_manager_mod.SequenceBlockReservation(
+        block_ids=identity_reservation.block_ids,
+        block_identities=((999, 1, 1),),
+        cached_tokens=4,
+        prefix_block_count=1,
+        new_block_count=len(identity_reservation.block_ids) - 1,
+    )
+    before = _block_manager_ownership_snapshot(block_manager)
+    try:
+        block_manager.attach_sequence_reservation(
+            malformed_identity,
+            identity_sequence,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("malformed prefix identity was attached")
+    assert identity_sequence.block_table == []
+    assert _block_manager_ownership_snapshot(block_manager) == before
+    block_manager.release_sequence_reservation(identity_reservation)
+
+
 def test_normal_prefill_publishes_only_after_postprocess():
     reset_sequence_state()
     scheduler = Scheduler(
@@ -2854,6 +3639,7 @@ def test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers():
     seq.prefill_chunk_start = 3
     seq.prefill_chunk_end = 4
     seq.prefill_chunk_final = True
+    seq.temperature = 0.6
 
     restored = pickle.loads(pickle.dumps(seq))
 
@@ -2863,9 +3649,10 @@ def test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers():
     assert restored.prefill_chunk_start == 3
     assert restored.prefill_chunk_end == 4
     assert restored.prefill_chunk_final is True
+    assert restored.temperature == 0.6
 
 
-def test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows():
+def test_lm_head_prefill_returns_only_requested_logits_rows():
     if torch is None:
         return
     head = ParallelLMHead(4, 2)
@@ -2918,6 +3705,8 @@ def main():
     test_decode_first_prioritizes_existing_running_sequence()
     test_scheduler_observation_snapshot_reports_queue_and_kv_state()
     test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage()
+    test_model_runner_hybrid_prefix_cache_snapshot_is_rank_local()
+    test_engine_collects_all_rank_hybrid_prefix_cache_snapshots()
     test_llm_engine_step_records_observation_without_changing_return_value()
     test_engine_samples_one_decision_and_one_step_end_timestamp()
     test_p5_decision_snapshot_is_immutable_until_postprocess_copy()
@@ -2953,6 +3742,18 @@ def main():
     test_reusing_idle_block_removes_stale_hash_mapping()
     test_reusing_indexed_duplicate_preserves_equivalent_cache_mapping()
     test_capacity_pressure_never_returns_live_shared_block()
+    test_block_generation_tracks_content_lifetime_not_refcount_lifetime()
+    test_exact_prefix_reservation_holds_live_and_idle_multi_owner_refs()
+    test_exact_prefix_partial_miss_is_read_only()
+    test_exact_prefix_reservation_rolls_back_partial_activation_failure()
+    test_prefix_reservation_attachment_transfers_refs_to_destinations()
+    test_prefix_reservation_validation_and_terminal_states_fail_closed()
+    test_sequence_block_reservation_cold_is_private_until_attachment()
+    test_sequence_block_reservation_matches_warm_allocate_semantics()
+    test_sequence_block_reservation_keeps_sampleable_token_cap()
+    test_sequence_block_reservation_first_miss_allocates_all_suffix_blocks()
+    test_sequence_block_reservation_capacity_and_suffix_failure_are_atomic()
+    test_sequence_block_reservation_release_and_stale_attach_fail_closed()
     test_normal_prefill_publishes_only_after_postprocess()
     test_normal_prefill_does_not_reuse_prefix_created_in_same_batch()
     test_normal_prefill_exact_block_warm_hit_recomputes_final_block()
@@ -2981,7 +3782,7 @@ def main():
     test_mixed_final_prefill_chunk_and_decode_consume_tokens_in_sequence_order()
     test_mixed_prefill_fallback_counts_toward_consecutive_prefill_limit()
     test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers()
-    test_lm_head_prefill_uses_logits_indices_to_skip_unneeded_rows()
+    test_lm_head_prefill_returns_only_requested_logits_rows()
     print("chunked prefill tests passed")
 
 

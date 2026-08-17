@@ -1,0 +1,23 @@
+[mcp_servers.lark-docs]
+command = "bunx"
+args = [
+    "--registry=http://bnpm.byted.org/",
+    "@byted/mcp-lark-docs-ext@latest",
+]
+
+[mcp_servers.lark-docs.env]
+NPM_CONFIG_REGISTRY = "http://bnpm.byted.org/"
+AUTH_CALLBACK_PORT = "6688"
+AUTH_CALLBACK_ENDPOINT = "/lark/callback"
+LARK_TENANT = "bytedance"
+
+[mcp_servers.tika]
+command = "bunx"
+args = [
+    "--registry=http://bnpm.byted.org/",
+    "@tiktok-mcp/tika",
+]
+
+[mcp_servers.tika.env]
+NPM_CONFIG_REGISTRY = "http://bnpm.byted.org/"
+TIKA_ENV = "office"

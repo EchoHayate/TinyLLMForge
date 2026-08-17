@@ -11,7 +11,10 @@ import json
 import os
 import sys
 import types
+from dataclasses import dataclass
 from types import SimpleNamespace
+
+import pytest
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -44,6 +47,27 @@ _EXACT_CACHE_PATH = os.path.join(
     "tinyvllm",
     "engine",
     "exact_cuda_graph_cache.py",
+)
+_SPEC_VERIFY_EXACT_CACHE_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "spec_verify_exact_cuda_graph_cache.py",
+)
+_COMMAND_ACK_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "model_runner_command_ack.py",
+)
+_PREEXISTING_COMMAND_ACK_MODULE = sys.modules.get(
+    "tinyvllm.engine.model_runner_command_ack"
+)
+_SPEC_VERIFY_TRACE_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "spec_verify_trace.py",
 )
 
 
@@ -173,6 +197,17 @@ def _load_source_module(name: str, path: str):
 
 
 def _load_model_runner_module():
+    original_torch = sys.modules.get("torch")
+    original_torch_distributed = sys.modules.get(
+        "torch.distributed"
+    )
+
+    @dataclass(frozen=True)
+    class HybridStateLease:
+        slot_id: int
+        generation: int
+        request_id: int
+
     torch_module = _install_module(
         "torch",
         Tensor=FakeTensor,
@@ -200,16 +235,24 @@ def _load_model_runner_module():
     torch_module.distributed = distributed_module
 
     tinyvllm_package = _install_module("tinyvllm")
-    tinyvllm_package.__path__ = []
-    for package_name in (
-        "tinyvllm.speculative",
-        "tinyvllm.engine",
-        "tinyvllm.models",
-        "tinyvllm.utils",
-        "tinyvllm.layers",
+    tinyvllm_package.__path__ = [
+        os.path.join(_REPO_ROOT, "tinyvllm")
+    ]
+    for package_name, package_path in (
+        ("tinyvllm.speculative", "speculative"),
+        ("tinyvllm.engine", "engine"),
+        ("tinyvllm.models", "models"),
+        ("tinyvllm.utils", "utils"),
+        ("tinyvllm.layers", "layers"),
     ):
         package = _install_module(package_name)
-        package.__path__ = []
+        package.__path__ = [
+            os.path.join(
+                _REPO_ROOT,
+                "tinyvllm",
+                package_path,
+            )
+        ]
 
     verifier_spec = importlib.util.spec_from_file_location(
         "tinyvllm.speculative.verifier",
@@ -231,12 +274,175 @@ def _load_model_runner_module():
         "tinyvllm.engine.exact_cuda_graph_cache",
         _EXACT_CACHE_PATH,
     )
+    _load_source_module(
+        "tinyvllm.engine.spec_verify_exact_cuda_graph_cache",
+        _SPEC_VERIFY_EXACT_CACHE_PATH,
+    )
+    if "tinyvllm.engine.model_runner_command_ack" not in sys.modules:
+        _load_source_module(
+            "tinyvllm.engine.model_runner_command_ack",
+            _COMMAND_ACK_PATH,
+        )
+    _load_source_module(
+        "tinyvllm.engine.spec_verify_trace",
+        _SPEC_VERIFY_TRACE_PATH,
+    )
+    _install_module(
+        "tinyvllm.engine.decode_internal_profiler",
+        DecodeInternalProfiler=type(
+            "DecodeInternalProfiler",
+            (),
+            {
+                "disabled": classmethod(
+                    lambda cls, rank: SimpleNamespace(
+                        rank=rank,
+                        finalize=lambda: {},
+                    )
+                ),
+            },
+        ),
+        run_profiled_step=(
+            lambda _profiler, **kwargs: kwargs["call"]()
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket",
+        Qwen35HybridPrefixRestoreParticipant=type(
+            "Qwen35HybridPrefixRestoreParticipant",
+            (),
+            {},
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_prefix_publication_ticket",
+        Qwen35HybridPrefixPublicationParticipant=type(
+            "Qwen35HybridPrefixPublicationParticipant",
+            (),
+            {},
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_prefix_owner",
+        Qwen35HybridPrefixRestoreOwner=type(
+            "Qwen35HybridPrefixRestoreOwner",
+            (),
+            {},
+        ),
+        build_qwen35_hybrid_prefix_restore_owner=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_model_owner",
+        Qwen35HybridModelOwner=type(
+            "Qwen35HybridModelOwner",
+            (),
+            {},
+        ),
+        build_qwen35_hybrid_model_owner=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_model_publication",
+        Qwen35HybridModelOwnerPublicationSlot=type(
+            "Qwen35HybridModelOwnerPublicationSlot",
+            (),
+            {},
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_prefix_runtime_identity",
+        bind_qwen35_hybrid_prefix_runtime_identity=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_recurrent_capture",
+        Qwen35RecurrentCaptureSession=type(
+            "Qwen35RecurrentCaptureSession",
+            (),
+            {},
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_recurrent_capture_contract",
+        CAPTURE_IDENTITY_SCHEMA_VERSION=1,
+        validate_run_identity=lambda *args, **kwargs: None,
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_speculative_state",
+        Qwen35SpeculativeStateOwner=type(
+            "Qwen35SpeculativeStateOwner",
+            (),
+            {
+                "__init__": lambda self, transaction: setattr(
+                    self,
+                    "state_transaction",
+                    transaction,
+                ),
+                "active": False,
+            },
+        ),
+    )
+    _install_module(
+        "tinyvllm.models.qwen35_checkpoint_streaming",
+        Qwen35LoadedCheckpointCandidate=type(
+            "Qwen35LoadedCheckpointCandidate",
+            (),
+            {},
+        ),
+        load_qwen35_fresh_checkpoint_candidate=(
+            lambda *args, **kwargs: None
+        ),
+        move_qwen35_loaded_checkpoint_candidate_to_device=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
+        "tinyvllm.models.qwen35_checkpoint_metadata",
+        Qwen35CheckpointShardIdentity=type(
+            "Qwen35CheckpointShardIdentity",
+            (),
+            {},
+        ),
+        read_qwen35_checkpoint_metadata=lambda *args, **kwargs: None,
+    )
+    _install_module(
+        "tinyvllm.models.qwen35_checkpoint",
+        build_qwen35_checkpoint_tensor_plan=lambda *args, **kwargs: None,
+    )
+    _install_module(
+        "tinyvllm.models.qwen35_checkpoint_candidate_factory",
+        prepare_qwen35_checkpoint_candidate_target=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.qwen35_hybrid_state",
+        build_qwen35_hybrid_state_layout=lambda *args, **kwargs: None,
+    )
+    _install_module(
+        "tinyvllm.layers.attention",
+        Attention=type("Attention", (), {}),
+    )
+    _install_module(
+        "tinyvllm.models.qwen35_checkpoint_worker",
+        validate_qwen35_checkpoint_candidate_load_request=(
+            lambda *args, **kwargs: None
+        ),
+    )
     _install_module("flash_attn", __version__="2.6.3")
 
     _install_module("tinyvllm.config", Config=type("Config", (), {}))
     _install_module(
         "tinyvllm.engine.sequence",
         Sequence=type("Sequence", (), {}),
+    )
+    _install_module(
+        "tinyvllm.engine.hybrid_state",
+        HybridStateLease=HybridStateLease,
+        HybridStateTensorPool=type("HybridStateTensorPool", (), {}),
     )
     _install_module(
         "tinyvllm.models.qwen3",
@@ -249,6 +455,7 @@ def _load_model_runner_module():
     )
     _install_module(
         "tinyvllm.layers.linear",
+        configure_linear_execution_rows=lambda *args: None,
         set_quant_config=lambda *args: None,
     )
     _install_module(
@@ -268,11 +475,50 @@ def _load_model_runner_module():
         "model_runner_spec_verify_under_test",
         _MODEL_RUNNER_PATH,
     )
+    if original_torch is None:
+        sys.modules.pop("torch", None)
+    else:
+        sys.modules["torch"] = original_torch
+    if original_torch_distributed is None:
+        sys.modules.pop("torch.distributed", None)
+    else:
+        sys.modules[
+            "torch.distributed"
+        ] = original_torch_distributed
     return model_runner, context_module
 
 
 model_runner, context = _load_model_runner_module()
 ModelRunner = model_runner.ModelRunner
+verifier = sys.modules["tinyvllm.speculative.verifier"]
+SpecVerifyTraceRecorder = sys.modules[
+    "tinyvllm.engine.spec_verify_trace"
+].SpecVerifyTraceRecorder
+from tinyvllm.engine.speculative_residency import (  # noqa: E402
+    KVBlockIdentityRow,
+    SpeculativeResidencyPrecommitRow,
+    SpeculativeResidencyPrepareRow,
+    SpeculativeResidencyResult,
+)
+from tinyvllm.engine.speculative_proposal_executor import (  # noqa: E402
+    ModelRunnerProposalExecutorRegistry,
+)
+from tinyvllm.speculative.adapter import (  # noqa: E402
+    DraftCapabilities,
+    DraftProposal,
+)
+from tinyvllm.speculative.batch_runtime import (  # noqa: E402
+    FirstTargetProposalResult,
+)
+
+
+def test_dependency_light_loader_preserves_preexisting_command_ack_module():
+    if _PREEXISTING_COMMAND_ACK_MODULE is None:
+        pytest.skip("no preexisting command-ack module")
+    assert (
+        sys.modules["tinyvllm.engine.model_runner_command_ack"]
+        is _PREEXISTING_COMMAND_ACK_MODULE
+    )
 
 
 def test_init_prepares_cuda_graph_dispatch_state_before_warmup():
@@ -339,21 +585,47 @@ def test_prefill_window_reserves_current_write_blocks_without_mutating_decode_wi
 def make_runner(**overrides):
     runner = object.__new__(ModelRunner)
     runner.block_size = 256
+    runner.rank = 0
     runner.world_size = 1
     runner.kv_offload = None
+    runner.hybrid_state_runtime_bridge = None
+    runner.qwen35_speculative_state_owner = None
+    runner._speculative_side_state_handle = None
+    runner._speculative_side_state_leases_by_sequence = {}
     runner.enforce_eager = False
     config = {
         "kv_quant_bits": 0,
         "kv_offload_mvp0": False,
         "kv_offload_blockwise_decode": False,
         "kv_offload_blockwise_prefill": False,
+        "kv_offload_blockwise_blocks": 0,
         "quest_top_k_blocks": -1,
+        "quest_min_seq_len": 0,
         "am_compact_blocks": 0,
+        "am_compact_min_seq_len": 0,
+        "am_compact_selector": "highest",
+        "am_compact_score_method": "rms",
+        "am_compact_beta_bound": 3.0,
+        "am_compact_ridge_lambda": 1e-6,
+        "am_omp_candidate_pool_size": 0,
+        "am_compact_cache_refresh_interval": 0,
+        "am_compact_num_clusters": 1,
+        "am_compact_route_top_k": 1,
+        "am_compact_num_key_spans": 1,
+        "am_compact_decode_refit": False,
+        "am_compact_decode_refit_mode": "full",
+        "am_compact_decode_refit_interval": 1,
+        "am_compact_skip_first_layers": 0,
+        "am_compact_skip_last_layers": 0,
+        "am_compact_enable_layers": None,
+        "am_compact_layer_stride": 1,
         "kv_cartridge_blocks": 0,
+        "kv_cartridge_min_seq_len": 0,
         "chunked_prefill_mixed_batch": False,
         "cpu_offload": False,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
+        "spec_verify_cuda_graphs": False,
     }
     config.update(overrides)
     runner.config = SimpleNamespace(**config)
@@ -375,6 +647,12 @@ def make_runner(**overrides):
     runner.last_cuda_graph_dispatch_event = None
     runner._cuda_graph_step_id = 0
     runner._cuda_graph_request_ids_hash = "request-hash"
+    runner.decode_internal_profiler = SimpleNamespace()
+    runner.qwen35_recurrent_capture_session = None
+    runner._spec_verify_trace = SpecVerifyTraceRecorder(
+        rank=runner.rank,
+        block_size=runner.block_size,
+    )
     runner._list_to_cuda = (
         lambda data, name, dtype: FakeTensor(list(data))
     )
@@ -384,6 +662,431 @@ def make_runner(**overrides):
         )
     )
     return runner
+
+
+def _trace_ready_runner(rank=0):
+    runner = make_runner()
+    runner.rank = rank
+    runner.block_size = 256
+    runner._spec_verify_trace = SpecVerifyTraceRecorder(
+        rank=rank,
+        block_size=256,
+    )
+    return runner
+
+
+def test_spec_verify_trace_is_default_off():
+    runner = _trace_ready_runner()
+    assert runner.drain_spec_verify_trace_rows() == ()
+
+
+def test_spec_verify_trace_lifecycle_is_explicit():
+    runner = _trace_ready_runner()
+
+    assert runner.enable_spec_verify_trace_recording(True) == {
+        "rank": 0,
+        "enabled": True,
+    }
+    assert runner.set_spec_verify_trace_context(
+        "native_mtp",
+        1,
+        4,
+    ) == {
+        "rank": 0,
+        "policy": "native_mtp",
+        "batch_size": 1,
+        "engine_step": 4,
+    }
+    assert runner.enable_spec_verify_trace_recording(False) == {
+        "rank": 0,
+        "enabled": False,
+    }
+
+
+def test_trace_block_identities_use_list_backed_generations():
+    runner = _trace_ready_runner()
+    runner.enable_spec_verify_trace_recording(True)
+    runner.kv_offload = SimpleNamespace(
+        bound_generations=[None, None, None, 7, 8, None],
+    )
+
+    assert runner._trace_block_identities((3, 4)) == (
+        (3, 7),
+        (4, 8),
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="trace block generation is missing",
+    ):
+        runner._trace_block_identities((3, 5))
+
+
+def test_bind_kv_block_identity_rows_matches_sequence_tables():
+    calls = []
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.kv_offload = SimpleNamespace(
+        bind_logical_block_identity=(
+            lambda block_id, generation:
+            calls.append((block_id, generation))
+        )
+    )
+    sequence = SimpleNamespace(
+        seq_id=7,
+        block_table=[1, 3],
+    )
+
+    runner.bind_kv_block_identity_rows(
+        (sequence,),
+        (
+            KVBlockIdentityRow(
+                sequence_id=7,
+                block_identities=((1, 4), (3, 2)),
+            ),
+        ),
+    )
+
+    assert calls == [(1, 4), (3, 2)]
+
+
+def test_bind_kv_block_identity_rows_rejects_table_mismatch():
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.kv_offload = SimpleNamespace(
+        bind_logical_block_identity=lambda *args: None
+    )
+    sequence = SimpleNamespace(
+        seq_id=7,
+        block_table=[1, 3],
+    )
+
+    with pytest.raises(ValueError, match="table mismatch"):
+        runner.bind_kv_block_identity_rows(
+            (sequence,),
+            (
+                KVBlockIdentityRow(
+                    sequence_id=7,
+                    block_identities=((1, 4), (2, 2)),
+                ),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "participant_method", "args", "operation", "status"),
+    (
+        (
+            "prepare_speculative_residency_batch",
+            "prepare_batch",
+            (
+                41,
+                (
+                    SpeculativeResidencyPrepareRow(
+                        sequence_id=7,
+                        original_block_identities=((1, 1),),
+                        reserved_block_identities=((2, 1),),
+                        proxy_block_table=(1, 2),
+                        logical_slots=(3, 4),
+                    ),
+                ),
+            ),
+            "prepare",
+            "prepared",
+        ),
+        (
+            "precommit_speculative_residency_batch",
+            "precommit_batch",
+            (
+                41,
+                (
+                    SpeculativeResidencyPrecommitRow(
+                        sequence_id=7,
+                        committed_block_identities=((2, 1),),
+                        rejected_block_identities=(),
+                        accepted_materialized_end=5,
+                    ),
+                ),
+            ),
+            "precommit",
+            "precommitted",
+        ),
+        (
+            "rollback_speculative_residency_batch",
+            "rollback_batch",
+            (41,),
+            "rollback",
+            "rolled_back",
+        ),
+        (
+            "seal_speculative_residency_batch",
+            "seal_batch",
+            (41,),
+            "seal",
+            "sealed",
+        ),
+    ),
+)
+def test_speculative_residency_rpcs_return_exact_result_dict(
+    method_name,
+    participant_method,
+    args,
+    operation,
+    status,
+):
+    calls = []
+    result = SpeculativeResidencyResult(
+        ticket_id=41,
+        participant_id=0,
+        operation=operation,
+        status=status,
+        sequence_ids=(7,),
+        committed_block_identities=((2, 1),),
+        rejected_block_identities=((3, 1),),
+        detail="",
+    )
+    participant = SimpleNamespace()
+    setattr(
+        participant,
+        participant_method,
+        lambda *received, **received_kwargs:
+        calls.append((received, received_kwargs)) or result,
+    )
+    runner = make_runner()
+    runner.speculative_residency = participant
+
+    payload = getattr(runner, method_name)(*args)
+
+    expected_kwargs = (
+        {"stage_all_original_blocks": True}
+        if method_name == "prepare_speculative_residency_batch"
+        else {}
+    )
+    assert calls == [(args, expected_kwargs)]
+    assert payload == {
+        "ticket_id": 41,
+        "participant_id": 0,
+        "operation": operation,
+        "status": status,
+        "sequence_ids": (7,),
+        "committed_block_identities": ((2, 1),),
+        "rejected_block_identities": ((3, 1),),
+        "detail": "",
+    }
+
+
+def test_speculative_residency_rpc_requires_offload_participant():
+    runner = make_runner()
+    runner.speculative_residency = None
+
+    with pytest.raises(RuntimeError, match="kv_offload_mvp0"):
+        runner.rollback_speculative_residency_batch(41)
+
+
+@pytest.mark.parametrize(
+    (
+        "blockwise_decode",
+        "expected_stage_all_original_blocks",
+    ),
+    (
+        (False, True),
+        (True, False),
+    ),
+)
+def test_speculative_residency_prepare_selects_history_staging_policy(
+    blockwise_decode,
+    expected_stage_all_original_blocks,
+):
+    calls = []
+    result = SpeculativeResidencyResult(
+        ticket_id=41,
+        participant_id=0,
+        operation="prepare",
+        status="prepared",
+        sequence_ids=(7,),
+    )
+
+    def prepare_batch(ticket_id, rows, **kwargs):
+        calls.append((ticket_id, rows, kwargs))
+        return result
+
+    runner = make_runner(
+        kv_offload_mvp0=True,
+        kv_offload_blockwise_decode=blockwise_decode,
+    )
+    runner.speculative_residency = SimpleNamespace(
+        prepare_batch=prepare_batch,
+    )
+    rows = (
+        SpeculativeResidencyPrepareRow(
+            sequence_id=7,
+            original_block_identities=((1, 1),),
+            reserved_block_identities=((2, 1),),
+            proxy_block_table=(1, 2),
+            logical_slots=(3, 4),
+        ),
+    )
+
+    payload = runner.prepare_speculative_residency_batch(
+        41,
+        rows,
+    )
+
+    assert calls == [
+        (
+            41,
+            rows,
+            {
+                "stage_all_original_blocks": (
+                    expected_stage_all_original_blocks
+                )
+            },
+        )
+    ]
+    assert payload["status"] == "prepared"
+
+
+def make_sequence(seq_id):
+    return SimpleNamespace(
+        seq_id=seq_id,
+        hybrid_state_slot_id=-1,
+        hybrid_state_generation=0,
+    )
+
+
+class PrefillSequence(list):
+    def __init__(
+        self,
+        token_ids,
+        *,
+        chunk_start,
+        chunk_end,
+        block_table,
+    ):
+        super().__init__(token_ids)
+        self.num_prompt_tokens = len(token_ids)
+        self.num_cached_tokens = chunk_start
+        self.prefill_chunk_start = chunk_start
+        self.prefill_chunk_end = chunk_end
+        self.block_table = block_table
+
+
+class DecodeSequence(list):
+    def __init__(
+        self,
+        token_ids,
+        *,
+        block_table,
+        block_size=256,
+    ):
+        super().__init__(token_ids)
+        self.step_is_decode = True
+        self.step_do_sample = True
+        self.block_table = block_table
+        self.block_size = block_size
+        self.last_block_num_tokens = (
+            (len(token_ids) - 1) % block_size
+        ) + 1
+        self.num_blocks = len(block_table)
+
+    @property
+    def last_token(self):
+        return self[-1]
+
+
+def test_prepare_decode_uses_appended_last_token_zero_based_position():
+    runner = make_runner()
+    sequence = DecodeSequence(
+        [10, 11, 12],
+        block_table=[7],
+    )
+
+    input_ids, positions = runner.prepare_decode([sequence])
+
+    assert input_ids.values == [12]
+    assert positions.values == [2]
+
+
+def test_prepare_mixed_decode_row_uses_appended_last_token_position():
+    runner = make_runner()
+    sequence = DecodeSequence(
+        [20, 21, 22, 23],
+        block_table=[8],
+    )
+
+    input_ids, positions = runner.prepare_mixed([sequence])
+
+    assert input_ids.values == [23]
+    assert positions.values == [3]
+
+
+def test_prepare_mixed_preserves_prefill_positions_and_decode_position():
+    runner = make_runner()
+    prefill = PrefillSequence(
+        [30, 31, 32, 33],
+        chunk_start=1,
+        chunk_end=3,
+        block_table=[9],
+    )
+    prefill.step_is_decode = False
+    prefill.step_do_sample = False
+    decode = DecodeSequence(
+        [40, 41, 42],
+        block_table=[10],
+    )
+
+    input_ids, positions = runner.prepare_mixed([prefill, decode])
+
+    assert input_ids.values == [31, 32, 42]
+    assert positions.values == [1, 2, 2]
+
+
+def test_prepare_prefill_installs_full_prompt_attention_reference_lengths():
+    runner = make_runner()
+    runner.config.kv_offload_blockwise_blocks = 1
+    runner.config.am_compact_selector = "highest"
+    runner.config.am_compact_score_method = "rms"
+    runner.config.am_compact_beta_bound = 3.0
+    runner.config.am_compact_ridge_lambda = 1e-6
+    runner.config.am_omp_candidate_pool_size = 0
+    runner.config.am_compact_cache_refresh_interval = 0
+    runner.config.am_prefill_cache_ref_query_stride = 8
+    runner.config.am_compact_num_clusters = 1
+    runner.config.am_compact_route_top_k = 1
+    runner.config.am_compact_num_key_spans = 1
+    runner.config.am_compact_decode_refit = False
+    runner.config.am_compact_decode_refit_mode = "full"
+    runner.config.am_compact_decode_refit_interval = 1
+    runner.config.am_compact_skip_first_layers = 0
+    runner.config.am_compact_skip_last_layers = 0
+    runner.config.am_compact_enable_layers = None
+    runner.config.am_compact_layer_stride = 1
+    runner._kv_offload_translate_slots_for_positions = (
+        lambda block_table, positions, **_kwargs: [
+            block_table[position // runner.block_size] * runner.block_size
+            + position % runner.block_size
+            for position in positions
+        ]
+    )
+    runner._kv_offload_mark_pending_dirty = lambda *_args: None
+    seqs = [
+        PrefillSequence(
+            [10, 11, 12, 13],
+            chunk_start=0,
+            chunk_end=2,
+            block_table=[3],
+        ),
+        PrefillSequence(
+            [20, 21],
+            chunk_start=0,
+            chunk_end=2,
+            block_table=[4],
+        ),
+    ]
+
+    input_ids, positions = runner.prepare_prefill(seqs)
+
+    current = context.get_context()
+    assert input_ids.values == [10, 11, 20, 21]
+    assert positions.values == [0, 1, 0, 1]
+    assert current.prefill_attention_reference_lens == (4, 2)
 
 
 def test_prepare_spec_verify_installs_reference_context():
@@ -397,7 +1100,7 @@ def test_prepare_spec_verify_installs_reference_context():
 
     current = context.get_context()
     assert input_ids.values == [10, 20, 30]
-    assert positions.values == [53, 54, 55]
+    assert positions.values == [52, 53, 54]
     assert metadata.query_len == 3
     assert metadata.logical_slots == (52, 53, 54)
     assert metadata.physical_slots == (52, 53, 54)
@@ -406,6 +1109,616 @@ def test_prepare_spec_verify_installs_reference_context():
     assert current.context_lens.values == [55]
     assert current.block_tables.values == [[0]]
     assert current.flash_attn_num_splits == 16
+
+
+def _batch_item(
+    sequence_id,
+    *,
+    input_tokens,
+    positions,
+    logical_slots,
+    context_len,
+    visible_block_count,
+    proxy_block_table,
+    original_block_identities=(),
+    reserved_block_identities=(),
+    transaction_authorization=None,
+):
+    return SimpleNamespace(
+        sequence_id=sequence_id,
+        plan=verifier.SpecVerifyPlan(
+            input_tokens=tuple(input_tokens),
+            positions=tuple(positions),
+            logical_slots=tuple(logical_slots),
+            context_len=context_len,
+            visible_block_count=visible_block_count,
+        ),
+        proxy_block_table=tuple(proxy_block_table),
+        original_block_identities=tuple(
+            original_block_identities
+        ),
+        reserved_block_identities=tuple(
+            reserved_block_identities
+        ),
+        transaction_authorization=transaction_authorization,
+    )
+
+
+def _transaction_authorization(
+    *,
+    sequence_id=7,
+    original_num_tokens=3,
+    proposed_token_count=3,
+    materialized_token_count=0,
+    state="reserved",
+    original_block_identities=((1, 3),),
+    reserved_block_identities=((2, 5),),
+    authorization_sha256=None,
+):
+    payload = (
+        sequence_id,
+        original_num_tokens,
+        proposed_token_count,
+        materialized_token_count,
+        state,
+        original_block_identities,
+        reserved_block_identities,
+    )
+    return SimpleNamespace(
+        sequence_id=sequence_id,
+        original_num_tokens=original_num_tokens,
+        proposed_token_count=proposed_token_count,
+        materialized_token_count=materialized_token_count,
+        state=state,
+        original_block_identities=original_block_identities,
+        reserved_block_identities=reserved_block_identities,
+        authorization_sha256=(
+            hashlib.sha256(
+                repr(payload).encode("utf-8")
+            ).hexdigest()
+            if authorization_sha256 is None
+            else authorization_sha256
+        ),
+    )
+
+
+def _authorized_batch_item(**authorization_overrides):
+    authorization = _transaction_authorization(
+        **authorization_overrides
+    )
+    return _batch_item(
+        7,
+        input_tokens=(10, 11),
+        positions=(3, 4),
+        logical_slots=(3, 4),
+        context_len=5,
+        visible_block_count=2,
+        proxy_block_table=(1, 2),
+        original_block_identities=((1, 3),),
+        reserved_block_identities=((2, 5),),
+        transaction_authorization=authorization,
+    )
+
+
+def test_graph_enabled_prepare_spec_verify_requires_transaction_authorization():
+    runner = make_runner(spec_verify_cuda_graphs=True)
+    runner.block_size = 4
+    item = _authorized_batch_item()
+    item.transaction_authorization = None
+
+    with pytest.raises(
+        (RuntimeError, ValueError),
+        match="authorization",
+    ):
+        runner.prepare_spec_verify_batch((item,))
+
+
+@pytest.mark.parametrize(
+    "authorization_overrides",
+    (
+        {"sequence_id": 8},
+        {"state": "materialized"},
+        {"materialized_token_count": 1},
+        {"proposed_token_count": 2},
+        {"original_block_identities": ((9, 3),)},
+        {"reserved_block_identities": ((8, 5),)},
+        {"authorization_sha256": "tampered"},
+    ),
+)
+def test_graph_enabled_prepare_spec_verify_rejects_tampered_authorization(
+    authorization_overrides,
+):
+    runner = make_runner(spec_verify_cuda_graphs=True)
+    runner.block_size = 4
+    item = _authorized_batch_item(
+        **authorization_overrides
+    )
+
+    with pytest.raises(
+        (RuntimeError, ValueError),
+        match="authorization",
+    ):
+        runner.prepare_spec_verify_batch((item,))
+
+
+def test_graph_enabled_prepare_spec_verify_accepts_exact_authorization():
+    runner = make_runner(spec_verify_cuda_graphs=True)
+    runner.block_size = 4
+
+    _, _, metadata = runner.prepare_spec_verify_batch(
+        (_authorized_batch_item(),)
+    )
+
+    assert metadata.rows[0].physical_slots == (7, 8)
+
+
+def test_prepare_spec_verify_batch_flattens_homogeneous_rows_once():
+    runner = make_runner()
+    runner.block_size = 4
+    uploads = []
+    runner._list_to_cuda = lambda data, name, dtype: (
+        uploads.append((name, list(data), dtype))
+        or FakeTensor(list(data))
+    )
+    block_uploads = []
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables": (
+            block_uploads.append(
+                (name, [list(row) for row in rows])
+            )
+            or FakeTensor([list(row) for row in rows])
+        )
+    )
+    items = (
+        _batch_item(
+            8,
+            input_tokens=(10, 11),
+            positions=(4, 5),
+            logical_slots=(4, 5),
+            context_len=6,
+            visible_block_count=2,
+            proxy_block_table=(5, 6),
+        ),
+        _batch_item(
+            4,
+            input_tokens=(20, 21),
+            positions=(8, 9),
+            logical_slots=(8, 9),
+            context_len=10,
+            visible_block_count=3,
+            proxy_block_table=(10, 11, 12),
+        ),
+    )
+
+    input_ids, positions, metadata = (
+        runner.prepare_spec_verify_batch(items)
+    )
+
+    assert input_ids.values == [10, 11, 20, 21]
+    assert positions.values == [4, 5, 8, 9]
+    assert [row.sequence_id for row in metadata.rows] == [8, 4]
+    assert [row.query_offset for row in metadata.rows] == [0, 2]
+    assert metadata.query_len == 2
+    assert metadata.total_query_tokens == 4
+    assert metadata.block_table_width == 3
+    assert metadata.rows[0].physical_slots == (24, 25)
+    assert metadata.rows[1].physical_slots == (48, 49)
+    assert uploads == [
+        ("spec_verify_input_ids", [10, 11, 20, 21], "int64"),
+        ("spec_verify_positions", [4, 5, 8, 9], "int64"),
+        (
+            "spec_verify_slot_mapping",
+            [24, 25, 48, 49],
+            "int32",
+        ),
+        ("spec_verify_context_lens", [6, 10], "int32"),
+    ]
+    assert block_uploads == [
+        (
+            "spec_verify_block_tables",
+            [[5, 6, -1], [10, 11, 12]],
+        ),
+    ]
+    current = context.get_context()
+    assert current.mode == "spec_verify"
+    assert current.context_lens.values == [6, 10]
+    assert current.block_tables.values == [
+        [5, 6, -1],
+        [10, 11, 12],
+    ]
+    assert current.spec_verify_query_lens == (2, 2)
+
+
+def test_offload_spec_verify_requires_prepared_residency_ticket():
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.block_size = 4
+    runner.kv_offload = SimpleNamespace()
+    runner.speculative_residency = SimpleNamespace(
+        is_prepared_for=lambda *args: False,
+    )
+    runner._list_to_cuda = lambda *_args, **_kwargs: (
+        _ for _ in ()
+    ).throw(AssertionError("upload must not run"))
+    item = _batch_item(
+        8,
+        input_tokens=(10, 11),
+        positions=(4, 5),
+        logical_slots=(4, 5),
+        context_len=6,
+        visible_block_count=2,
+        proxy_block_table=(5, 6),
+    )
+
+    with pytest.raises(RuntimeError, match="residency ticket"):
+        runner.prepare_spec_verify_batch((item,))
+
+
+def test_offload_spec_verify_maps_ticket_blocks_and_slots_to_physical():
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.block_size = 4
+    manager = SimpleNamespace(
+        logical_to_slot={5: 1, 6: 3},
+        map_block_rows=(
+            lambda rows:
+            [
+                [
+                    {5: 1, 6: 3}[block_id]
+                    for block_id in row
+                ]
+                for row in rows
+            ]
+        ),
+        map_slots_for_positions=(
+            lambda block_table, positions:
+            [
+                {5: 1, 6: 3}[
+                    block_table[position // 4]
+                ] * 4
+                + position % 4
+                for position in positions
+            ]
+        ),
+    )
+    prepared_checks = []
+    runner.kv_offload = manager
+    runner.speculative_residency = SimpleNamespace(
+        manager=manager,
+        is_prepared_for=(
+            lambda ticket_id, sequence_ids:
+            prepared_checks.append(
+                (ticket_id, sequence_ids)
+            )
+            or True
+        ),
+    )
+    block_uploads = []
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables":
+        block_uploads.append(
+            (name, [list(row) for row in rows])
+        )
+        or FakeTensor([list(row) for row in rows])
+    )
+    item = _batch_item(
+        8,
+        input_tokens=(10, 11),
+        positions=(4, 5),
+        logical_slots=(4, 5),
+        context_len=6,
+        visible_block_count=2,
+        proxy_block_table=(5, 6),
+    )
+
+    _, _, metadata = runner.prepare_spec_verify_batch(
+        (item,),
+        residency_ticket_id=41,
+    )
+
+    assert prepared_checks == [(41, (8,))]
+    assert metadata.rows[0].block_table == (1, 3)
+    assert metadata.rows[0].physical_slots == (12, 13)
+    assert block_uploads == [
+        ("spec_verify_block_tables", [[1, 3]]),
+    ]
+
+
+def test_blockwise_offload_spec_verify_keeps_logical_rows_and_maps_only_writes():
+    runner = make_runner(
+        kv_offload_mvp0=True,
+        kv_offload_blockwise_decode=True,
+        kv_offload_blockwise_prefill=True,
+        kv_offload_blockwise_blocks=2,
+    )
+    runner.block_size = 4
+    map_slots_calls = []
+
+    def map_slots_for_positions(block_table, positions):
+        map_slots_calls.append(
+            (list(block_table), list(positions))
+        )
+        return [
+            2 * 4 + position % 4
+            for position in positions
+        ]
+
+    manager = SimpleNamespace(
+        logical_to_slot={8: 2},
+        map_block_rows=lambda _rows: (
+            _ for _ in ()
+        ).throw(
+            AssertionError(
+                "blockwise verifier must not map full history"
+            )
+        ),
+        map_slots_for_positions=map_slots_for_positions,
+    )
+    runner.kv_offload = manager
+    runner.speculative_residency = SimpleNamespace(
+        manager=manager,
+        is_prepared_for=lambda ticket_id, sequence_ids: (
+            ticket_id == 41 and sequence_ids == (8,)
+        ),
+        ensure_materialized_for=lambda *_args: None,
+    )
+    block_uploads = []
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables":
+        block_uploads.append(
+            (name, [list(row) for row in rows])
+        )
+        or FakeTensor([list(row) for row in rows])
+    )
+    item = _batch_item(
+        8,
+        input_tokens=(10, 11),
+        positions=(14, 15),
+        logical_slots=(14, 15),
+        context_len=16,
+        visible_block_count=4,
+        proxy_block_table=(5, 6, 7, 8),
+    )
+
+    _, _, metadata = runner.prepare_spec_verify_batch(
+        (item,),
+        residency_ticket_id=41,
+    )
+
+    assert map_slots_calls == [
+        ([5, 6, 7, 8], [14, 15]),
+    ]
+    assert metadata.rows[0].block_table == (5, 6, 7, 8)
+    assert metadata.rows[0].physical_slots == (10, 11)
+    assert block_uploads == [
+        (
+            "spec_verify_block_tables",
+            [[5, 6, 7, 8]],
+        ),
+    ]
+    current = context.get_context()
+    assert current.kv_offload_manager is manager
+    assert current.kv_offload_blockwise_decode is True
+    assert current.kv_offload_blockwise_blocks == 2
+    assert current.kv_offload_logical_block_tables == [
+        [5, 6, 7, 8],
+    ]
+    assert current.kv_offload_context_lens == [16]
+    assert current.kv_offload_write_blocks == [8]
+    assert current.spec_verify_query_lens == (2,)
+
+
+def test_blockwise_offload_revalidates_ticket_residency_before_mapping():
+    runner = make_runner(
+        kv_offload_mvp0=True,
+        kv_offload_blockwise_decode=True,
+        kv_offload_blockwise_prefill=True,
+        kv_offload_blockwise_blocks=2,
+    )
+    runner.block_size = 4
+    manager = SimpleNamespace(logical_to_slot={})
+    calls = []
+
+    def ensure_materialized_for(ticket_id, sequence_ids):
+        calls.append((ticket_id, sequence_ids))
+        manager.logical_to_slot[8] = 2
+
+    def map_slots_for_positions(block_table, positions):
+        return [
+            manager.logical_to_slot[
+                block_table[position // 4]
+            ]
+            * 4
+            + position % 4
+            for position in positions
+        ]
+
+    manager.map_slots_for_positions = map_slots_for_positions
+    manager.map_block_rows = lambda _rows: (
+        _ for _ in ()
+    ).throw(
+        AssertionError(
+            "blockwise verifier must not map full history"
+        )
+    )
+    runner.kv_offload = manager
+    runner.speculative_residency = SimpleNamespace(
+        manager=manager,
+        is_prepared_for=lambda ticket_id, sequence_ids: (
+            ticket_id == 41 and sequence_ids == (8,)
+        ),
+        ensure_materialized_for=ensure_materialized_for,
+    )
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables": FakeTensor(rows)
+    )
+    item = _batch_item(
+        8,
+        input_tokens=(10, 11),
+        positions=(14, 15),
+        logical_slots=(14, 15),
+        context_len=16,
+        visible_block_count=4,
+        proxy_block_table=(5, 6, 7, 8),
+    )
+
+    _, _, metadata = runner.prepare_spec_verify_batch(
+        (item,),
+        residency_ticket_id=41,
+    )
+
+    assert calls == [(41, (8,))]
+    assert metadata.rows[0].physical_slots == (10, 11)
+
+
+def test_offload_spec_verify_marks_ticket_after_forward():
+    runner = make_runner(kv_offload_mvp0=True)
+    metadata = _batch_metadata()
+    runner.prepare_spec_verify_batch = (
+        lambda items, residency_ticket_id=None: (
+            FakeTensor([10, 11, 20, 21]),
+            FakeTensor([5, 6, 9, 10]),
+            metadata,
+        )
+    )
+    materialized = []
+    runner.speculative_residency = SimpleNamespace(
+        mark_materialized=(
+            lambda ticket_id, sequence_ids:
+            materialized.append(
+                (ticket_id, sequence_ids)
+            )
+        )
+    )
+    runner.run_model = lambda *args, **kwargs: (
+        _FakeGreedyLogits([101, 102, 201, 202])
+    )
+
+    runner.run_spec_verify_batch(
+        (
+            SimpleNamespace(sequence_id=8),
+            SimpleNamespace(sequence_id=4),
+        ),
+        residency_ticket_id=41,
+    )
+
+    assert materialized == [(41, (8, 4))]
+
+
+@pytest.mark.parametrize(
+    "items,match",
+    [
+        ((), "non-empty"),
+        (
+            (
+                _batch_item(
+                    8,
+                    input_tokens=(10,),
+                    positions=(4,),
+                    logical_slots=(4,),
+                    context_len=5,
+                    visible_block_count=2,
+                    proxy_block_table=(5, 6),
+                ),
+                _batch_item(
+                    8,
+                    input_tokens=(20,),
+                    positions=(8,),
+                    logical_slots=(8,),
+                    context_len=9,
+                    visible_block_count=3,
+                    proxy_block_table=(10, 11, 12),
+                ),
+            ),
+            "unique",
+        ),
+        (
+            (
+                _batch_item(
+                    8,
+                    input_tokens=(),
+                    positions=(),
+                    logical_slots=(),
+                    context_len=4,
+                    visible_block_count=1,
+                    proxy_block_table=(5,),
+                ),
+            ),
+            "query",
+        ),
+        (
+            (
+                _batch_item(
+                    8,
+                    input_tokens=(10,),
+                    positions=(4,),
+                    logical_slots=(4,),
+                    context_len=5,
+                    visible_block_count=2,
+                    proxy_block_table=(5, 6),
+                ),
+                _batch_item(
+                    4,
+                    input_tokens=(20, 21),
+                    positions=(8, 9),
+                    logical_slots=(8, 9),
+                    context_len=10,
+                    visible_block_count=3,
+                    proxy_block_table=(10, 11, 12),
+                ),
+            ),
+            "homogeneous",
+        ),
+        (
+            (
+                SimpleNamespace(
+                    sequence_id=8,
+                    plan=object(),
+                    proxy_block_table=(5,),
+                ),
+            ),
+            "SpecVerifyPlan",
+        ),
+        (
+            (
+                _batch_item(
+                    8,
+                    input_tokens=(10,),
+                    positions=(4,),
+                    logical_slots=(4,),
+                    context_len=5,
+                    visible_block_count=2,
+                    proxy_block_table=(5,),
+                ),
+            ),
+            "cover",
+        ),
+        (
+            (
+                _batch_item(
+                    8,
+                    input_tokens=(10,),
+                    positions=(4,),
+                    logical_slots=(4,),
+                    context_len=5,
+                    visible_block_count=2,
+                    proxy_block_table=(5, -1),
+                ),
+            ),
+            "invalid block",
+        ),
+    ],
+)
+def test_prepare_spec_verify_batch_rejects_before_upload(
+    items,
+    match,
+):
+    runner = make_runner()
+    runner.block_size = 4
+    runner._list_to_cuda = lambda *_args, **_kwargs: (
+        _ for _ in ()
+    ).throw(AssertionError("upload must not run"))
+
+    with pytest.raises((ValueError, RuntimeError), match=match):
+        runner.prepare_spec_verify_batch(items)
 
 
 def test_step_logits_recording_accessor_is_default_off_and_returns_clone():
@@ -499,8 +1812,6 @@ def test_every_unsupported_feature_fails_closed():
     unsupported = {
         "kv_quant_bits": 4,
         "kv_offload_mvp0": True,
-        "kv_offload_blockwise_decode": True,
-        "kv_offload_blockwise_prefill": True,
         "quest_top_k_blocks": 1,
         "am_compact_blocks": 1,
         "kv_cartridge_blocks": 1,
@@ -522,11 +1833,55 @@ def test_every_unsupported_feature_fails_closed():
             raise AssertionError(name)
 
 
-def test_multi_sequence_nonlinear_and_nongreedy_fail():
+def test_blockwise_spec_verify_is_allowed_with_kv_offload():
+    runner = make_runner(
+        kv_offload_mvp0=True,
+        kv_offload_blockwise_decode=True,
+        kv_offload_blockwise_prefill=True,
+    )
+    runner.speculative_residency = SimpleNamespace(
+        is_prepared_for=lambda ticket_id, sequence_ids: (
+            ticket_id == 41 and sequence_ids == (7,)
+        ),
+    )
+
+    runner._validate_spec_verify_compatibility(
+        seq_count=1,
+        linear_draft=True,
+        greedy=True,
+        mixed_batch=False,
+        residency_ticket_id=41,
+        sequence_ids=(7,),
+    )
+
+
+def test_blockwise_spec_verify_requires_kv_offload():
+    runner = make_runner(
+        kv_offload_mvp0=False,
+        kv_offload_blockwise_decode=True,
+    )
+
+    with pytest.raises(RuntimeError, match="kv_offload_mvp0"):
+        runner._validate_spec_verify_compatibility(
+            seq_count=1,
+            linear_draft=True,
+            greedy=True,
+            mixed_batch=False,
+            require_residency_ticket=False,
+        )
+
+
+def test_multi_sequence_is_allowed_but_invalid_modes_fail():
     runner = make_runner()
+    runner._validate_spec_verify_compatibility(
+        seq_count=2,
+        linear_draft=True,
+        greedy=True,
+        mixed_batch=False,
+    )
     invalid = (
         dict(
-            seq_count=2,
+            seq_count=0,
             linear_draft=True,
             greedy=True,
             mixed_batch=False,
@@ -584,6 +1939,1620 @@ def test_spec_verify_run_model_uses_eager_and_keeps_all_rows():
     assert logits.values == [[1], [2], [3]]
 
 
+def _batch_metadata():
+    return verifier.SpecVerifyBatchMetadata(
+        rows=(
+            verifier.SpecVerifyBatchRowMetadata(
+                sequence_id=8,
+                batch_index=0,
+                query_offset=0,
+                query_len=2,
+                input_tokens=(10, 11),
+                positions=(5, 6),
+                logical_slots=(4, 5),
+                physical_slots=(24, 25),
+                context_len=6,
+                block_table=(5, 6),
+            ),
+            verifier.SpecVerifyBatchRowMetadata(
+                sequence_id=4,
+                batch_index=1,
+                query_offset=2,
+                query_len=2,
+                input_tokens=(20, 21),
+                positions=(9, 10),
+                logical_slots=(8, 9),
+                physical_slots=(48, 49),
+                context_len=10,
+                block_table=(10, 11, 12),
+            ),
+        ),
+        query_len=2,
+        total_query_tokens=4,
+        block_table_width=3,
+    )
+
+
+def _profile_request_set_sha256(sequence_ids):
+    return hashlib.sha256(
+        json.dumps(
+            sorted(int(value) for value in sequence_ids),
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _capture_profile_steps():
+    steps = []
+    original = model_runner.run_profiled_step
+
+    def capture(_profiler, **kwargs):
+        steps.append({
+            name: kwargs[name]
+            for name in (
+                "batch_kind",
+                "is_decode",
+                "active_sequence_count",
+                "request_set_sha256",
+                "dispatch",
+            )
+        })
+        return kwargs["call"]()
+
+    model_runner.run_profiled_step = capture
+    return steps, original
+
+
+def _profiled_first_target_runner(rank):
+    runner = make_runner()
+    runner.rank = rank
+    runner.prepare_decode = lambda seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    runner.run_model = lambda *args, **kwargs: (
+        _FakeGreedyLogits([101, 201])
+    )
+    return runner
+
+
+def test_run_spec_first_target_batch_profiles_rank_zero_callback():
+    runner = _profiled_first_target_runner(rank=0)
+    seqs = _first_target_sequences(0, 0)
+    steps, original = _capture_profile_steps()
+    try:
+        rows = runner.run_spec_first_target_batch(seqs)
+    finally:
+        model_runner.run_profiled_step = original
+
+    assert rows is not None
+    assert steps == [{
+        "batch_kind": "spec_first_target",
+        "is_decode": True,
+        "active_sequence_count": 2,
+        "request_set_sha256": _profile_request_set_sha256(
+            (8, 4)
+        ),
+        "dispatch": "eager",
+    }]
+
+
+def test_run_spec_first_target_batch_profiles_worker_before_none_result():
+    runner = _profiled_first_target_runner(rank=1)
+    seqs = _first_target_sequences(0, 0)
+    steps, original = _capture_profile_steps()
+    try:
+        rows = runner.run_spec_first_target_batch(seqs)
+    finally:
+        model_runner.run_profiled_step = original
+
+    assert rows is None
+    assert steps == [{
+        "batch_kind": "spec_first_target",
+        "is_decode": True,
+        "active_sequence_count": 2,
+        "request_set_sha256": _profile_request_set_sha256(
+            (8, 4)
+        ),
+        "dispatch": "eager",
+    }]
+
+
+def _profiled_verify_runner(rank):
+    runner = make_runner()
+    runner.rank = rank
+    metadata = _batch_metadata()
+    runner.prepare_spec_verify_batch = lambda items: (
+        FakeTensor([10, 11, 20, 21]),
+        FakeTensor([5, 6, 9, 10]),
+        metadata,
+    )
+    runner.run_model = lambda *args, **kwargs: (
+        _FakeGreedyLogits([101, 102, 201, 202])
+    )
+    return runner
+
+
+def _profiled_tail_items():
+    return (
+        SimpleNamespace(sequence_id=8),
+        SimpleNamespace(sequence_id=4),
+    )
+
+
+def test_run_spec_verify_batch_profiles_rank_zero_callback():
+    runner = _profiled_verify_runner(rank=0)
+    items = _profiled_tail_items()
+    steps, original = _capture_profile_steps()
+    try:
+        rows = runner.run_spec_verify_batch(items)
+    finally:
+        model_runner.run_profiled_step = original
+
+    assert rows is not None
+    assert steps == [{
+        "batch_kind": "spec_verify",
+        "is_decode": True,
+        "active_sequence_count": 2,
+        "request_set_sha256": _profile_request_set_sha256(
+            (8, 4)
+        ),
+        "dispatch": "eager",
+    }]
+
+
+def test_run_spec_verify_batch_profiles_worker_before_none_result():
+    runner = _profiled_verify_runner(rank=2)
+    items = _profiled_tail_items()
+    steps, original = _capture_profile_steps()
+    try:
+        rows = runner.run_spec_verify_batch(items)
+    finally:
+        model_runner.run_profiled_step = original
+
+    assert rows is None
+    assert steps == [{
+        "batch_kind": "spec_verify",
+        "is_decode": True,
+        "active_sequence_count": 2,
+        "request_set_sha256": _profile_request_set_sha256(
+            (8, 4)
+        ),
+        "dispatch": "eager",
+    }]
+
+
+class _FakeGreedyLogits:
+    def __init__(self, token_ids):
+        self.token_ids = list(token_ids)
+        self.argmax_calls = []
+        self.index_calls = []
+
+    def argmax(self, dim):
+        self.argmax_calls.append(dim)
+        return SimpleNamespace(
+            tolist=lambda: list(self.token_ids)
+        )
+
+    def __getitem__(self, index):
+        self.index_calls.append(index)
+        return ("logits", index, self.token_ids[index])
+
+
+def _fake_tp_greedy_selector(
+    logits,
+    *,
+    rank,
+    world_size,
+    batch_size,
+    device,
+):
+    del device
+    assert rank == 0
+    assert world_size == 1
+    assert batch_size == len(logits.token_ids)
+    return SimpleNamespace(
+        tolist=lambda: logits.argmax(dim=-1).tolist()
+    )
+
+
+model_runner.select_tensor_parallel_greedy_tokens = (
+    _fake_tp_greedy_selector
+)
+
+
+def test_run_spec_verify_batch_uses_one_forward_and_splits_rows():
+    runner = make_runner()
+    calls = []
+    metadata = _batch_metadata()
+    runner.prepare_spec_verify_batch = lambda items: (
+        calls.append(("prepare", items))
+        or (
+            FakeTensor([10, 11, 20, 21]),
+            FakeTensor([5, 6, 9, 10]),
+            metadata,
+        )
+    )
+    logits = _FakeGreedyLogits([101, 102, 201, 202])
+    runner.run_model = lambda *args, **kwargs: (
+        calls.append(("run_model", args, kwargs))
+        or logits
+    )
+    reset_calls = []
+    original_reset = model_runner.reset_context
+    model_runner.reset_context = lambda: reset_calls.append("reset")
+    items = _profiled_tail_items()
+    try:
+        rows = runner.run_spec_verify_batch(items)
+    finally:
+        model_runner.reset_context = original_reset
+
+    assert rows == (
+        verifier.SpecVerifyBatchResultRow(
+            sequence_id=8,
+            target_tokens=(101, 102),
+        ),
+        verifier.SpecVerifyBatchResultRow(
+            sequence_id=4,
+            target_tokens=(201, 202),
+        ),
+    )
+    assert calls[0] == ("prepare", items)
+    assert calls[1][0] == "run_model"
+    assert calls[1][1][2] is False
+    assert calls[1][2] == {"execution_mode": "spec_verify"}
+    assert logits.argmax_calls == [-1]
+    assert reset_calls == ["reset"]
+
+
+def test_run_spec_verify_batch_records_tail_trace_without_changing_tokens():
+    runner = _trace_ready_runner()
+    runner.enable_spec_verify_trace_recording(True)
+    runner.set_spec_verify_trace_context(
+        "native_mtp",
+        2,
+        5,
+    )
+    runner.kv_offload = SimpleNamespace(
+        bound_generations=[1] * 129,
+    )
+    block_table = tuple(range(129))
+    metadata = verifier.SpecVerifyBatchMetadata(
+        rows=(
+            verifier.SpecVerifyBatchRowMetadata(
+                sequence_id=7,
+                batch_index=0,
+                query_offset=0,
+                query_len=3,
+                input_tokens=(15, 15, 2658),
+                positions=(32768, 32769, 32770),
+                logical_slots=(32768, 32769, 32770),
+                physical_slots=(32768, 32769, 32770),
+                context_len=32771,
+                block_table=block_table,
+            ),
+            verifier.SpecVerifyBatchRowMetadata(
+                sequence_id=9,
+                batch_index=1,
+                query_offset=3,
+                query_len=3,
+                input_tokens=(31, 32, 33),
+                positions=(32768, 32769, 32770),
+                logical_slots=(32768, 32769, 32770),
+                physical_slots=(32768, 32769, 32770),
+                context_len=32771,
+                block_table=block_table,
+            ),
+        ),
+        query_len=3,
+        total_query_tokens=6,
+        block_table_width=129,
+    )
+    runner.prepare_spec_verify_batch = lambda _items: (
+        _TraceTensor([15, 15, 2658, 31, 32, 33]),
+        _TraceTensor(
+            [32768, 32769, 32770, 32768, 32769, 32770]
+        ),
+        metadata,
+    )
+    logits = _TraceTensor([
+        [0.0, 9.0, 1.0, 2.0, 3.0, 4.0],
+        [0.0, 1.0, 9.0, 2.0, 3.0, 4.0],
+        [0.0, 1.0, 2.0, 9.0, 3.0, 4.0],
+        [0.0, 1.0, 2.0, 3.0, 9.0, 4.0],
+        [0.0, 1.0, 2.0, 3.0, 4.0, 9.0],
+        [9.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+    ])
+    runner.run_model = lambda *_args, **_kwargs: logits
+    items = (
+        SimpleNamespace(
+            sequence_id=7,
+            sequence=SimpleNamespace(
+                seq_id=7,
+                num_completion_tokens=0,
+            ),
+        ),
+        SimpleNamespace(
+            sequence_id=9,
+            sequence=SimpleNamespace(
+                seq_id=9,
+                num_completion_tokens=4,
+            ),
+        ),
+    )
+
+    results = runner.run_spec_verify_batch(items)
+    rows = runner.drain_spec_verify_trace_rows()
+
+    assert results == (
+        verifier.SpecVerifyBatchResultRow(
+            sequence_id=7,
+            target_tokens=(1, 2, 3),
+        ),
+        verifier.SpecVerifyBatchResultRow(
+            sequence_id=9,
+            target_tokens=(4, 5, 0),
+        ),
+    )
+    assert [row["stage"] for row in rows] == [
+        "verify_tail",
+    ] * 6
+    assert [
+        row["prediction_index"] for row in rows[:3]
+    ] == [1, 2, 3]
+    assert [row["input_token_id"] for row in rows[:3]] == [
+        15,
+        15,
+        2658,
+    ]
+    assert [row["position"] for row in rows[:3]] == [
+        32768,
+        32769,
+        32770,
+    ]
+    assert rows[0]["query_offset"] == 0
+    assert rows[3]["query_offset"] == 3
+
+
+class _CandidateStateOwner:
+    def __init__(self, prepared_handle):
+        self.active = True
+        self.prepared_handle = prepared_handle
+        self.events = []
+
+    def record_first_target(self, prepared_step):
+        self.events.append(("first", prepared_step))
+        return {"status": "recorded"}
+
+    def initial_tail_candidates(self, sequence_ids):
+        self.events.append(("initial_tail", sequence_ids))
+        return "initial-candidates"
+
+    def record_tail(self, prepared_step, sequence_ids):
+        self.events.append(
+            ("tail", prepared_step, sequence_ids)
+        )
+        return {"status": "recorded"}
+
+
+def test_candidate_state_first_target_records_without_live_commit():
+    runner = make_runner()
+    seqs = tuple(
+        SimpleNamespace(
+            seq_id=sequence_id,
+            temperature=0,
+            hybrid_state_slot_id=slot_id,
+            hybrid_state_generation=1,
+        )
+        for slot_id, sequence_id in enumerate((8, 4))
+    )
+    runner._prepare_hybrid_state_batch = lambda *_args: None
+    runner.prepare_decode = lambda _seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    prepared = SimpleNamespace(
+        logits=_FakeGreedyLogits([101, 201]),
+        normalized=("hidden-8", "hidden-4"),
+    )
+    owner = _CandidateStateOwner(prepared)
+    runner.qwen35_speculative_state_owner = owner
+    calls = []
+
+    def run_model(*args, **kwargs):
+        calls.append((args, kwargs))
+        assert kwargs["prepare_qwen35_state"] is True
+        return prepared
+
+    runner.run_model = run_model
+
+    rows = runner.run_spec_first_target_batch(
+        seqs,
+        return_hidden=True,
+    )
+
+    assert tuple(row.target_token for row in rows) == (101, 201)
+    assert tuple(row.target_hidden for row in rows) == (
+        "hidden-8",
+        "hidden-4",
+    )
+    assert owner.events == [("first", prepared)]
+    assert len(calls) == 1
+
+
+def test_fused_candidate_state_first_target_records_checkpoint():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=True,
+        requires_target_logits=False,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+            self.inputs = ()
+
+        def propose_batch(self, inputs):
+            self.inputs = inputs
+            return tuple(
+                DraftProposal(
+                    sequence_id=row.sequence_id,
+                    token_ids=(),
+                    source_type="fixture",
+                )
+                for row in inputs
+            )
+
+    executor = Executor()
+    runner = make_runner()
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        executor,
+        capabilities,
+    )
+    seqs = _proposal_sequences()
+    for slot_id, seq in enumerate(seqs):
+        seq.hybrid_state_slot_id = slot_id
+        seq.hybrid_state_generation = 1
+    runner._prepare_hybrid_state_batch = lambda *_args: None
+    runner.prepare_decode = lambda _seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    prepared = SimpleNamespace(
+        logits=_FakeGreedyLogits([101, 201]),
+        normalized=("hidden-8", "hidden-4"),
+    )
+    owner = _CandidateStateOwner(prepared)
+    runner.qwen35_speculative_state_owner = owner
+    calls = []
+
+    def run_model(*args, **kwargs):
+        calls.append((args, kwargs))
+        assert kwargs == {
+            "return_hidden": True,
+            "execution_mode": "decode",
+            "prepare_qwen35_state": True,
+        }
+        return prepared
+
+    runner.run_model = run_model
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+
+    rows = runner.run_spec_first_target_and_proposal_batch(
+        seqs,
+        descriptor,
+        (),
+    )
+
+    assert tuple(row.target_token for row in rows) == (101, 201)
+    assert owner.events == [("first", prepared)]
+    assert executor.inputs[0].target_hidden == ("hidden-8",)
+    assert executor.inputs[1].target_hidden == ("hidden-4",)
+    assert len(calls) == 1
+
+
+def test_fused_candidate_state_first_target_records_rank_zero_logits():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=True,
+        requires_target_logits=False,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+
+        def propose_batch(self, inputs):
+            return tuple(
+                DraftProposal(
+                    sequence_id=row.sequence_id,
+                    token_ids=(),
+                    source_type="fixture",
+                )
+                for row in inputs
+            )
+
+    class RecordedLogits(_FakeGreedyLogits):
+        def __init__(self, token_ids):
+            super().__init__(token_ids)
+            self.trace = []
+
+        def detach(self):
+            self.trace.append("detach")
+            return self
+
+        def float(self):
+            self.trace.append("float")
+            return self
+
+        def cpu(self):
+            self.trace.append("cpu")
+            return self
+
+        def clone(self):
+            self.trace.append("clone")
+            return SimpleNamespace(token_ids=list(self.token_ids))
+
+    executor = Executor()
+    runner = make_runner()
+    runner._record_step_logits = True
+    runner._last_step_logits_cpu = None
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        executor,
+        capabilities,
+    )
+    seqs = _proposal_sequences()
+    for slot_id, seq in enumerate(seqs):
+        seq.hybrid_state_slot_id = slot_id
+        seq.hybrid_state_generation = 1
+    runner._prepare_hybrid_state_batch = lambda *_args: None
+    runner.prepare_decode = lambda _seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    logits = RecordedLogits([101, 201])
+    prepared = SimpleNamespace(
+        logits=logits,
+        normalized=("hidden-8", "hidden-4"),
+    )
+    runner.qwen35_speculative_state_owner = (
+        _CandidateStateOwner(prepared)
+    )
+    runner.run_model = lambda *_args, **_kwargs: prepared
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+
+    rows = runner.run_spec_first_target_and_proposal_batch(
+        seqs,
+        descriptor,
+        (),
+    )
+
+    assert tuple(row.target_token for row in rows) == (101, 201)
+    recorded = runner.last_step_logits()
+    assert recorded.token_ids == [101, 201]
+    assert logits.trace == [
+        "detach",
+        "float",
+        "cpu",
+        "clone",
+    ]
+
+
+def test_candidate_state_tail_uses_first_target_state_and_records_prefixes():
+    runner = make_runner()
+    metadata = _batch_metadata()
+    items = _profiled_tail_items()
+    runner.prepare_spec_verify_batch = lambda _items: (
+        FakeTensor([10, 11, 20, 21]),
+        FakeTensor([5, 6, 9, 10]),
+        metadata,
+    )
+    prepared = SimpleNamespace(
+        logits=_FakeGreedyLogits([101, 102, 201, 202]),
+        prefix_candidates="prefix-candidates",
+    )
+    owner = _CandidateStateOwner(prepared)
+    runner.qwen35_speculative_state_owner = owner
+    runner._speculative_side_state_leases_by_sequence = {
+        8: "lease-8",
+        4: "lease-4",
+    }
+    calls = []
+
+    def run_model(*args, **kwargs):
+        calls.append((args, kwargs))
+        assert kwargs == {
+            "execution_mode": "spec_verify",
+            "prepare_qwen35_state": True,
+            "initial_qwen35_candidates": "initial-candidates",
+            "capture_qwen35_prefix_states": True,
+        }
+        return prepared
+
+    runner.run_model = run_model
+
+    rows = runner.run_spec_verify_batch(items)
+
+    assert rows == (
+        verifier.SpecVerifyBatchResultRow(
+            sequence_id=8,
+            target_tokens=(101, 102),
+        ),
+        verifier.SpecVerifyBatchResultRow(
+            sequence_id=4,
+            target_tokens=(201, 202),
+        ),
+    )
+    assert owner.events == [
+        ("initial_tail", (8, 4)),
+        ("tail", prepared, (8, 4)),
+    ]
+    assert runner._last_hybrid_state_leases == (
+        "lease-8",
+        "lease-4",
+    )
+    assert runner._last_hybrid_state_token_counts == (2, 2)
+    assert len(calls) == 1
+
+
+def test_speculative_side_state_lifecycle_delegates_tensor_free_receipts():
+    runner = make_runner()
+    calls = []
+
+    class Owner:
+        active = False
+
+        def prepare(self, sequences, leases):
+            self.active = True
+            calls.append(("prepare", sequences, leases))
+            return {
+                "operation": "prepare",
+                "status": "prepared",
+                "transaction_id": "tx-1",
+                "sequence_ids": [8, 4],
+            }
+
+        def select(self, handle, rows):
+            calls.append(("select", handle, rows))
+            return {"status": "selected"}
+
+        def apply(self, handle):
+            calls.append(("apply", handle))
+            return {"status": "applied"}
+
+        def seal(self, handle):
+            calls.append(("seal", handle))
+            self.active = False
+            return {"status": "sealed"}
+
+        def rollback(self, handle):
+            calls.append(("rollback", handle))
+            self.active = False
+            return {"status": "rolled_back"}
+
+    owner = Owner()
+    runner.qwen35_speculative_state_owner = owner
+    seqs = tuple(
+        SimpleNamespace(
+            seq_id=sequence_id,
+            hybrid_state_slot_id=slot_id,
+            hybrid_state_generation=1,
+        )
+        for slot_id, sequence_id in enumerate((8, 4))
+    )
+
+    handle = runner.prepare_speculative_side_state_batch(seqs)
+    assert runner.speculative_side_state_available()
+    assert runner.select_speculative_side_state_batch(("row",)) == {
+        "status": "selected"
+    }
+    assert runner.apply_speculative_side_state_batch() == {
+        "status": "applied"
+    }
+    assert runner.seal_speculative_side_state_batch() == {
+        "status": "sealed"
+    }
+    assert calls[0][0] == "prepare"
+    assert calls[1] == ("select", handle, ("row",))
+    assert calls[2] == ("apply", handle)
+    assert calls[3] == ("seal", handle)
+
+
+def test_run_spec_verify_batch_worker_executes_forward_without_result():
+    runner = make_runner()
+    runner.rank = 1
+    metadata = _batch_metadata()
+    runner.prepare_spec_verify_batch = lambda items: (
+        FakeTensor([10, 11, 20, 21]),
+        FakeTensor([5, 6, 9, 10]),
+        metadata,
+    )
+    logits = _FakeGreedyLogits([101, 102, 201, 202])
+    run_calls = []
+    runner.run_model = lambda *args, **kwargs: (
+        run_calls.append((args, kwargs))
+        or logits
+    )
+
+    assert runner.run_spec_verify_batch(
+        _profiled_tail_items()
+    ) is None
+    assert len(run_calls) == 1
+    assert logits.argmax_calls == []
+
+
+def test_run_spec_verify_batch_resets_context_after_forward_failure():
+    runner = make_runner()
+    runner.prepare_spec_verify_batch = lambda items: (
+        FakeTensor([10]),
+        FakeTensor([5]),
+        _batch_metadata(),
+    )
+    runner.run_model = lambda *args, **kwargs: (
+        _ for _ in ()
+    ).throw(RuntimeError("forward failed"))
+    reset_calls = []
+    original_reset = model_runner.reset_context
+    model_runner.reset_context = lambda: reset_calls.append("reset")
+    try:
+        with pytest.raises(RuntimeError, match="forward failed"):
+            runner.run_spec_verify_batch(
+                (SimpleNamespace(sequence_id=8),)
+            )
+    finally:
+        model_runner.reset_context = original_reset
+
+    assert reset_calls == ["reset"]
+
+
+def _first_target_sequences(*temperatures):
+    return tuple(
+        SimpleNamespace(
+            seq_id=sequence_id,
+            temperature=temperature,
+            block_table=[sequence_id],
+        )
+        for sequence_id, temperature in zip(
+            (8, 4),
+            temperatures,
+        )
+    )
+
+
+class _TraceTensor(FakeTensor):
+    def __init__(self, values, *, device="cuda:0"):
+        super().__init__(values, device=device)
+        self.ndim = (
+            2
+            if values
+            and isinstance(values[0], (list, tuple))
+            else 1
+        )
+        self.shape = (
+            (len(values), len(values[0]))
+            if self.ndim == 2
+            else (len(values),)
+        )
+        self.token_ids = (
+            [
+                max(
+                    range(len(row)),
+                    key=lambda index: row[index],
+                )
+                for row in values
+            ]
+            if self.ndim == 2
+            else []
+        )
+
+    def detach(self):
+        return self
+
+    def float(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def tolist(self):
+        return copy.deepcopy(self.values)
+
+    def clone(self):
+        return _TraceTensor(
+            copy.deepcopy(self.values),
+            device=self.device,
+        )
+
+    def argmax(self, dim):
+        assert dim == -1
+        return SimpleNamespace(
+            tolist=lambda: list(self.token_ids)
+        )
+
+
+def _trace_first_target_sequence():
+    return SimpleNamespace(
+        seq_id=7,
+        temperature=0,
+        block_table=list(range(128)),
+        num_tokens=32768,
+        num_completion_tokens=0,
+        max_tokens=8,
+    )
+
+
+def _enable_first_target_trace(runner):
+    runner.enable_spec_verify_trace_recording(True)
+    runner.set_spec_verify_trace_context(
+        "native_mtp",
+        1,
+        4,
+    )
+    runner.kv_offload = SimpleNamespace(
+        bound_generations=[1] * 128,
+        bind_logical_block_identity=lambda *_args: None,
+    )
+    runner._prepare_hybrid_state_batch = lambda *_args: None
+    runner.prepare_decode = lambda _seqs: (
+        _TraceTensor([11]),
+        _TraceTensor([32767]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+
+
+def test_run_spec_first_target_batch_records_trace_without_changing_token():
+    runner = _trace_ready_runner()
+    _enable_first_target_trace(runner)
+    logits = _TraceTensor([[0.0, 1.0, 2.0, 3.0, 9.0, 4.0]])
+    runner.run_model = lambda *_args, **_kwargs: logits
+    seq = _trace_first_target_sequence()
+
+    results = runner.run_spec_first_target_batch(
+        (seq,),
+        kv_block_identity_rows=_identity_rows((seq,)),
+    )
+    rows = runner.drain_spec_verify_trace_rows()
+
+    assert results[0].target_token == 4
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "first_target"
+    assert rows[0]["execution_mode"] == "decode"
+    assert rows[0]["sequence_id"] == 7
+    assert rows[0]["prediction_index"] == 0
+    assert rows[0]["input_token_id"] == 11
+    assert rows[0]["position"] == 32767
+    assert rows[0]["context_length"] == 32768
+    assert rows[0]["logical_block_identities"][-1] == (
+        127,
+        1,
+    )
+
+
+def test_fused_first_target_records_trace_without_changing_proposal():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=False,
+        requires_target_logits=False,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+        requires_full_token_history=False,
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+            self.inputs = ()
+
+        def propose_batch(self, inputs):
+            self.inputs = inputs
+            return (
+                DraftProposal(
+                    sequence_id=7,
+                    token_ids=(21, 22),
+                    source_type="fixture",
+                ),
+            )
+
+    runner = _trace_ready_runner()
+    _enable_first_target_trace(runner)
+    executor = Executor()
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        executor,
+        capabilities,
+    )
+    logits = _TraceTensor([[0.0, 1.0, 2.0, 3.0, 9.0, 4.0]])
+    runner.run_model = lambda *_args, **_kwargs: logits
+    seq = _trace_first_target_sequence()
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+
+    results = runner.run_spec_first_target_and_proposal_batch(
+        (seq,),
+        descriptor,
+        _identity_rows((seq,)),
+    )
+    rows = runner.drain_spec_verify_trace_rows()
+
+    assert results[0].target_token == 4
+    assert results[0].proposal.token_ids == (21, 22)
+    assert executor.inputs[0].first_target_token == 4
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "first_target"
+    assert rows[0]["execution_mode"] == "decode"
+    assert rows[0]["sequence_id"] == 7
+    assert rows[0]["prediction_index"] == 0
+    assert rows[0]["input_token_id"] == 11
+    assert rows[0]["position"] == 32767
+    assert rows[0]["context_length"] == 32768
+    assert rows[0]["logical_block_identities"][-1] == (
+        127,
+        1,
+    )
+
+
+def _identity_rows(seqs):
+    return tuple(
+        KVBlockIdentityRow(
+            sequence_id=seq.seq_id,
+            block_identities=tuple(
+                (block_id, sequence_index + 1)
+                for block_id in seq.block_table
+            ),
+        )
+        for sequence_index, seq in enumerate(seqs)
+    )
+
+
+def _proposal_sequences():
+    return (
+        SimpleNamespace(
+            seq_id=8,
+            temperature=0,
+            block_table=[8],
+            token_ids=[1, 2, 8],
+            num_tokens=3,
+            max_tokens=8,
+            num_completion_tokens=1,
+        ),
+        SimpleNamespace(
+            seq_id=4,
+            temperature=0,
+            block_table=[4],
+            token_ids=[1, 2, 4],
+            num_tokens=3,
+            max_tokens=7,
+            num_completion_tokens=2,
+        ),
+    )
+
+
+def test_run_offload_spec_first_target_and_proposal_keeps_hidden_local():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=True,
+        requires_target_logits=True,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+            self.calls = []
+
+        def propose_batch(self, inputs):
+            self.calls.append(inputs)
+            return (
+                DraftProposal(
+                    sequence_id=4,
+                    token_ids=(),
+                    source_type="fixture",
+                ),
+                DraftProposal(
+                    sequence_id=8,
+                    token_ids=(11, 12),
+                    source_type="fixture",
+                ),
+            )
+
+    executor = Executor()
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        executor,
+        capabilities,
+    )
+    calls = []
+    runner.kv_offload = SimpleNamespace(
+        bind_logical_block_identity=(
+            lambda block_id, generation:
+            calls.append(("bind", block_id, generation))
+        )
+    )
+    runner.prepare_decode = lambda seqs: (
+        calls.append(("prepare_decode", tuple(seqs)))
+        or (
+            FakeTensor([10, 20]),
+            FakeTensor([5, 9]),
+        )
+    )
+    runner._kv_offload_before_forward = (
+        lambda: calls.append(("before_forward",))
+    )
+    runner._kv_offload_after_forward = (
+        lambda: calls.append(("after_forward",))
+    )
+    logits = _FakeGreedyLogits([101, 201])
+    hidden_rows = ("hidden-8", "hidden-4")
+    runner.run_model = lambda *args, **kwargs: (
+        calls.append(("run_model", args, kwargs))
+        or (logits, hidden_rows)
+    )
+    seqs = _proposal_sequences()
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+
+    rows = runner.run_spec_first_target_and_proposal_batch(
+        seqs,
+        descriptor,
+        _identity_rows(seqs),
+    )
+
+    assert tuple(row.sequence_id for row in rows) == (8, 4)
+    assert all(
+        isinstance(row, FirstTargetProposalResult)
+        for row in rows
+    )
+    assert rows[0].target_token == 101
+    assert rows[0].proposal.token_ids == (11, 12)
+    assert rows[1].proposal.token_ids == ()
+    assert executor.calls[0][0].target_hidden == ("hidden-8",)
+    assert executor.calls[0][0].target_logits == (
+        "logits",
+        0,
+        101,
+    )
+    assert not hasattr(rows[0], "target_hidden")
+    assert calls[4][2] == {
+        "return_hidden": True,
+        "execution_mode": "decode",
+    }
+
+
+def test_run_spec_first_target_and_proposal_worker_executes_proposal():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=True,
+        requires_target_logits=False,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+            self.calls = []
+
+        def propose_batch(self, inputs):
+            self.calls.append(inputs)
+            return tuple(
+                DraftProposal(
+                    sequence_id=row.sequence_id,
+                    token_ids=(row.first_target_token,),
+                    source_type="fixture",
+                )
+                for row in inputs
+            )
+
+    executor = Executor()
+    runner = make_runner()
+    runner.rank = 1
+    runner.world_size = 4
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        executor,
+        capabilities,
+    )
+    runner.prepare_decode = lambda _seqs: (
+        FakeTensor([10, 20], device="cuda:1"),
+        FakeTensor([5, 9], device="cuda:1"),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    hidden_rows = ("worker-hidden-8", "worker-hidden-4")
+    runner.run_model = lambda *_args, **_kwargs: (
+        None,
+        hidden_rows,
+    )
+    selector_calls = []
+    original_selector = (
+        model_runner.select_tensor_parallel_greedy_tokens
+    )
+
+    def worker_selector(
+        logits,
+        *,
+        rank,
+        world_size,
+        batch_size,
+        device,
+    ):
+        selector_calls.append((
+            logits,
+            rank,
+            world_size,
+            batch_size,
+            device,
+        ))
+        return SimpleNamespace(tolist=lambda: [101, 201])
+
+    model_runner.select_tensor_parallel_greedy_tokens = (
+        worker_selector
+    )
+    seqs = _proposal_sequences()
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+    try:
+        rows = runner.run_spec_first_target_and_proposal_batch(
+            seqs,
+            descriptor,
+            (),
+        )
+    finally:
+        model_runner.select_tensor_parallel_greedy_tokens = (
+            original_selector
+        )
+
+    assert rows is None
+    assert len(executor.calls) == 1
+    assert tuple(
+        row.sequence_id for row in executor.calls[0]
+    ) == (8, 4)
+    assert tuple(
+        row.first_target_token for row in executor.calls[0]
+    ) == (101, 201)
+    assert executor.calls[0][0].target_hidden == (
+        "worker-hidden-8",
+    )
+    assert executor.calls[0][1].target_hidden == (
+        "worker-hidden-4",
+    )
+    assert selector_calls == [
+        (None, 1, 4, 2, "cuda:1"),
+    ]
+
+
+def test_run_spec_first_target_worker_propagates_proposal_failure():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=True,
+        requires_target_logits=False,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+
+        def propose_batch(self, _inputs):
+            raise RuntimeError("worker proposal failed")
+
+    runner = make_runner()
+    runner.rank = 2
+    runner.world_size = 4
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        Executor(),
+        capabilities,
+    )
+    runner.prepare_decode = lambda _seqs: (
+        FakeTensor([10, 20], device="cuda:2"),
+        FakeTensor([5, 9], device="cuda:2"),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    runner.run_model = lambda *_args, **_kwargs: (
+        None,
+        ("worker-hidden-8", "worker-hidden-4"),
+    )
+    original_selector = (
+        model_runner.select_tensor_parallel_greedy_tokens
+    )
+    model_runner.select_tensor_parallel_greedy_tokens = (
+        lambda *_args, **_kwargs:
+        SimpleNamespace(tolist=lambda: [101, 201])
+    )
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="worker proposal failed",
+        ):
+            runner.run_spec_first_target_and_proposal_batch(
+                _proposal_sequences(),
+                descriptor,
+                (),
+            )
+    finally:
+        model_runner.select_tensor_parallel_greedy_tokens = (
+            original_selector
+        )
+
+
+def test_fused_first_target_prepares_hybrid_state_before_forward():
+    capabilities = DraftCapabilities(
+        source_type="fixture",
+        supports_batch=True,
+        requires_target_hidden=True,
+        requires_target_logits=False,
+        max_proposal_tokens=4,
+        execution_domain="model_runner",
+    )
+
+    class Executor:
+        def __init__(self):
+            self.capabilities = capabilities
+
+        def propose_batch(self, inputs):
+            return tuple(
+                DraftProposal(
+                    sequence_id=row.sequence_id,
+                    token_ids=(),
+                    source_type="fixture",
+                )
+                for row in inputs
+            )
+
+    runner = make_runner()
+    runner.speculative_proposal_executors = (
+        ModelRunnerProposalExecutorRegistry()
+    )
+    runner.register_speculative_proposal_executor(
+        "fixture-executor",
+        Executor(),
+        capabilities,
+    )
+    seqs = _proposal_sequences()
+    for index, seq in enumerate(seqs):
+        seq.hybrid_state_slot_id = index
+        seq.hybrid_state_generation = index + 1
+    calls = []
+    runner._prepare_hybrid_state_batch = (
+        lambda prepared, released:
+        calls.append((
+            "prepare_hybrid",
+            tuple(prepared),
+            tuple(released),
+        ))
+    )
+    runner.kv_offload = None
+    runner.prepare_decode = lambda prepared: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    logits = _FakeGreedyLogits([101, 201])
+
+    def run_model(*args, **kwargs):
+        calls.append((
+            "run_model",
+            tuple(
+                (
+                    lease.request_id,
+                    lease.slot_id,
+                    lease.generation,
+                )
+                for lease in runner._last_hybrid_state_leases
+            ),
+            runner._last_hybrid_state_token_counts,
+        ))
+        return logits, ("hidden-8", "hidden-4")
+
+    runner.run_model = run_model
+    descriptor = SimpleNamespace(
+        executor_id="fixture-executor",
+        capabilities=capabilities,
+    )
+
+    runner.run_spec_first_target_and_proposal_batch(
+        seqs,
+        descriptor,
+        (),
+    )
+
+    assert calls == [
+        ("prepare_hybrid", seqs, ()),
+        (
+            "run_model",
+            ((8, 0, 1), (4, 1, 2)),
+            (1, 1),
+        ),
+    ]
+
+
+def test_run_spec_first_target_batch_uses_one_forward_and_orders_rows():
+    runner = make_runner()
+    calls = []
+    runner.kv_offload = SimpleNamespace(
+        bind_logical_block_identity=(
+            lambda block_id, generation:
+            calls.append(("bind", block_id, generation))
+        )
+    )
+    runner.prepare_decode = lambda seqs: (
+        calls.append(("prepare_decode", tuple(seqs)))
+        or (
+            FakeTensor([10, 20]),
+            FakeTensor([5, 9]),
+        )
+    )
+    runner._kv_offload_before_forward = (
+        lambda: calls.append(("before_forward",))
+    )
+    runner._kv_offload_after_forward = (
+        lambda: calls.append(("after_forward",))
+    )
+    logits = _FakeGreedyLogits([101, 201])
+    hidden_rows = ("hidden-8", "hidden-4")
+    runner.run_model = lambda *args, **kwargs: (
+        calls.append(("run_model", args, kwargs))
+        or (logits, hidden_rows)
+    )
+    reset_calls = []
+    original_reset = model_runner.reset_context
+    model_runner.reset_context = lambda: reset_calls.append("reset")
+    seqs = _first_target_sequences(0, 0)
+    identity_rows = _identity_rows(seqs)
+    try:
+        rows = runner.run_spec_first_target_batch(
+            seqs,
+            return_hidden=True,
+            return_logits=True,
+            kv_block_identity_rows=identity_rows,
+        )
+    finally:
+        model_runner.reset_context = original_reset
+
+    assert tuple(row.sequence_id for row in rows) == (8, 4)
+    assert tuple(row.target_token for row in rows) == (101, 201)
+    assert tuple(row.target_hidden for row in rows) == hidden_rows
+    assert tuple(row.target_logits for row in rows) == (
+        ("logits", 0, 101),
+        ("logits", 1, 201),
+    )
+    assert tuple(row.metadata for row in rows) == (
+        {"batch_index": 0, "execution_mode": "decode"},
+        {"batch_index": 1, "execution_mode": "decode"},
+    )
+    assert calls[:2] == [
+        ("bind", 8, 1),
+        ("bind", 4, 2),
+    ]
+    assert calls[2] == ("prepare_decode", seqs)
+    assert calls[3] == ("before_forward",)
+    assert calls[4][0] == "run_model"
+    assert calls[4][1][2] is False
+    assert calls[4][2] == {
+        "return_hidden": True,
+        "execution_mode": "decode",
+    }
+    assert calls[5] == ("after_forward",)
+    assert logits.argmax_calls == [-1]
+    assert logits.index_calls == [0, 1]
+    assert reset_calls == ["reset"]
+
+
+def test_run_offload_spec_first_target_batch_does_not_require_residency_ticket():
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.kv_offload = SimpleNamespace(
+        bind_logical_block_identity=lambda *args: None
+    )
+    runner.prepare_decode = lambda seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    runner.run_model = lambda *args, **kwargs: (
+        _FakeGreedyLogits([101, 201])
+    )
+    seqs = _first_target_sequences(0, 0)
+
+    rows = runner.run_spec_first_target_batch(
+        seqs,
+        kv_block_identity_rows=_identity_rows(seqs),
+    )
+
+    assert tuple(row.target_token for row in rows) == (101, 201)
+
+
+def test_run_spec_first_target_batch_worker_executes_forward_without_result():
+    runner = make_runner()
+    runner.rank = 1
+    runner.prepare_decode = lambda seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    logits = _FakeGreedyLogits([101, 201])
+    run_calls = []
+    runner.run_model = lambda *args, **kwargs: (
+        run_calls.append((args, kwargs))
+        or logits
+    )
+
+    result = runner.run_spec_first_target_batch(
+        _first_target_sequences(0, 0),
+    )
+
+    assert result is None
+    assert len(run_calls) == 1
+    assert logits.argmax_calls == []
+    assert logits.index_calls == []
+
+
+def test_run_spec_first_target_batch_resets_context_after_forward_failure():
+    runner = make_runner()
+    runner.prepare_decode = lambda seqs: (
+        FakeTensor([10, 20]),
+        FakeTensor([5, 9]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    runner.run_model = lambda *args, **kwargs: (
+        _ for _ in ()
+    ).throw(RuntimeError("first target forward failed"))
+    reset_calls = []
+    original_reset = model_runner.reset_context
+    model_runner.reset_context = lambda: reset_calls.append("reset")
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="first target forward failed",
+        ):
+            runner.run_spec_first_target_batch(
+                _first_target_sequences(0, 0),
+            )
+    finally:
+        model_runner.reset_context = original_reset
+
+    assert reset_calls == ["reset"]
+
+
+def test_run_spec_first_target_batch_rejects_non_greedy_before_prepare():
+    runner = make_runner()
+    prepare_calls = []
+    runner.prepare_decode = lambda seqs: prepare_calls.append(seqs)
+
+    with pytest.raises(
+        RuntimeError,
+        match="greedy temperature",
+    ):
+        runner.run_spec_first_target_batch(
+            _first_target_sequences(0, 0.7),
+        )
+
+    assert prepare_calls == []
+
+
+def test_run_offload_rejects_missing_identity_rows_before_model_step():
+    runner = make_runner(kv_offload_mvp0=True)
+    runner.kv_offload = SimpleNamespace(
+        bind_logical_block_identity=lambda *args: None
+    )
+    model_step_calls = []
+    runner._run_model_step = (
+        lambda *args, **kwargs:
+        model_step_calls.append((args, kwargs))
+    )
+    sequence = SimpleNamespace(
+        seq_id=7,
+        block_table=[1],
+    )
+
+    with pytest.raises(ValueError, match="row count mismatch"):
+        runner.run(
+            [sequence],
+            is_prefill=False,
+            kv_block_identity_rows=(),
+        )
+
+    assert model_step_calls == []
+
+
+def test_hybrid_state_spec_verify_fails_closed_before_forward():
+    runner = make_runner()
+    runner.hybrid_state_runtime_bridge = object()
+
+    with pytest.raises(
+        RuntimeError,
+        match="transactional non-KV state",
+    ):
+        runner._validate_spec_verify_compatibility(
+            seq_count=2,
+            linear_draft=True,
+            greedy=True,
+            mixed_batch=False,
+        )
+
+
+def test_hybrid_state_first_target_is_not_speculative_tail():
+    runner = make_runner()
+    runner.hybrid_state_runtime_bridge = object()
+    seqs = _proposal_sequences()
+
+    runner._validate_spec_first_target_batch(seqs)
+
+    with pytest.raises(
+        RuntimeError,
+        match="transactional non-KV state",
+    ):
+        runner._validate_spec_verify_compatibility(
+            seq_count=len(seqs),
+            linear_draft=True,
+            greedy=True,
+            mixed_batch=False,
+        )
+
+
 def test_multi_sequence_decode_uses_eager_instead_of_cuda_graph():
     calls = []
 
@@ -618,6 +3587,34 @@ def test_multi_sequence_decode_uses_eager_instead_of_cuda_graph():
     assert calls == [
         ("model", [10, 20], [53, 54]),
         ("logits", [[1], [2]]),
+    ]
+
+
+def test_single_sequence_decode_uses_eager_when_legacy_graph_state_is_absent():
+    calls = []
+
+    class FakeModel:
+        def __call__(self, input_ids, positions, input_embeds=None):
+            calls.append(("model", input_ids.values, positions.values))
+            return FakeTensor([[1]])
+
+        def compute_logits(self, hidden):
+            calls.append(("logits", hidden.values))
+            return hidden
+
+    runner = make_runner()
+    runner.model = FakeModel()
+
+    logits = runner.run_model(
+        FakeTensor([10]),
+        FakeTensor([53]),
+        is_prefill=False,
+    )
+
+    assert logits.values == [[1]]
+    assert calls == [
+        ("model", [10], [53]),
+        ("logits", [[1]]),
     ]
 
 
@@ -700,6 +3697,47 @@ def test_exact_graph_capacity_reserves_scheduler_invisible_scratch():
         assert "scratch" in str(exc)
     else:
         raise AssertionError("oversized visible plus scratch capacity accepted")
+
+
+def test_spec_verify_scratch_capacity_covers_worst_row_offset_without_padding():
+    required = (
+        model_runner.required_spec_verify_capture_scratch_blocks
+    )
+    assert required(
+        batch_allowlist=(1, 4),
+        query_len_allowlist=(),
+        block_size=256,
+    ) == 0
+    assert required(
+        batch_allowlist=(1, 4),
+        query_len_allowlist=(1, 8),
+        block_size=256,
+    ) == 8
+    assert required(
+        batch_allowlist=(1, 4),
+        query_len_allowlist=(256, 257),
+        block_size=256,
+    ) == 8
+    assert required(
+        batch_allowlist=(1, 4),
+        query_len_allowlist=(257, 258),
+        block_size=256,
+    ) == 12
+
+
+def test_decode_and_spec_verify_scratch_partitions_are_disjoint():
+    decode_ids, spec_verify_ids = (
+        model_runner.partition_exact_graph_scratch_block_ids(
+            visible_blocks=92,
+            decode_scratch_blocks=4,
+            spec_verify_scratch_blocks=4,
+        )
+    )
+
+    assert decode_ids == (92, 93, 94, 95)
+    assert spec_verify_ids == (96, 97, 98, 99)
+    assert set(decode_ids).isdisjoint(spec_verify_ids)
+    assert min(decode_ids + spec_verify_ids) >= 92
 
 
 def test_scratch_blocks_are_above_scheduler_visible_range():
@@ -1048,7 +4086,7 @@ def test_multi_sequence_graph_guards_report_exact_fallback_reasons():
             False,
             None,
             False,
-            "unsupported_mode",
+            "feature_disabled",
         ),
         (
             {
@@ -1162,7 +4200,11 @@ def test_multi_sequence_graph_guards_report_exact_fallback_reasons():
             return_hidden=return_hidden,
             execution_mode=mode,
         )
-        event = runner.cuda_graph_dispatch_observation()
+        event = (
+            runner.spec_verify_graph_dispatch_observation()
+            if mode == "spec_verify"
+            else runner.cuda_graph_dispatch_observation()
+        )
         assert event["dispatch"] == "eager"
         assert event["fallback_reason"] == expected_reason
 
@@ -1278,9 +4320,9 @@ def test_run_hashes_canonical_sorted_sequence_ids_before_dispatch():
 
     runner.run_model = run_model
     seqs = [
-        SimpleNamespace(seq_id=9),
-        SimpleNamespace(seq_id=2),
-        SimpleNamespace(seq_id=5),
+        make_sequence(9),
+        make_sequence(2),
+        make_sequence(5),
     ]
     runner.run(seqs, is_prefill=False, do_sample=False)
     expected = hashlib.sha256(
@@ -1322,7 +4364,7 @@ def test_run_records_selected_rank_zero_sampling_logits_before_sampler():
         return SampledTokens()
 
     runner.sampler = sampler
-    seqs = [SimpleNamespace(seq_id=1), SimpleNamespace(seq_id=2)]
+    seqs = [make_sequence(1), make_sequence(2)]
 
     assert runner.run(seqs, is_prefill=False) == [7, 8]
     assert sampled["logits"] is logits
@@ -1336,12 +4378,147 @@ def test_run_records_selected_rank_zero_sampling_logits_before_sampler():
     ]
 
 
+def test_run_model_step_records_ordinary_decode_without_changing_sample():
+    runner = _trace_ready_runner()
+    runner.enable_spec_verify_trace_recording(True)
+    runner.set_spec_verify_trace_context(
+        "baseline",
+        1,
+        6,
+    )
+    runner._record_step_logits = False
+    runner.kv_offload = SimpleNamespace(
+        bound_generations=[1] * 128,
+    )
+    runner.prepare_decode = lambda _seqs: (
+        _TraceTensor([11]),
+        _TraceTensor([32767]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    logits = _TraceTensor([
+        [0.0, 1.0, 2.0, 3.0, 9.0, 4.0],
+    ])
+    runner.run_model = lambda *_args, **_kwargs: logits
+    runner.prepare_sample = lambda _seqs: _TraceTensor([0.0])
+    runner.sampler = lambda selected, _temperatures: (
+        SimpleNamespace(
+            tolist=lambda: selected.argmax(dim=-1).tolist()
+        )
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        hybrid_state_slot_id=-1,
+        hybrid_state_generation=0,
+        last_token=11,
+        num_tokens=32768,
+        num_completion_tokens=0,
+        block_table=list(range(128)),
+    )
+
+    token_ids = runner._run_model_step(
+        [seq],
+        is_prefill=False,
+    )
+    rows = runner.drain_spec_verify_trace_rows()
+
+    assert token_ids == [4]
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "ordinary_decode"
+    assert rows[0]["execution_mode"] == "decode"
+    assert rows[0]["sequence_id"] == 7
+    assert rows[0]["prediction_index"] == 0
+    assert rows[0]["input_token_id"] == 11
+    assert rows[0]["position"] == 32767
+    assert rows[0]["context_length"] == 32768
+    assert rows[0]["logical_block_identities"][-1] == (
+        127,
+        1,
+    )
+
+
+def test_trace_drain_does_not_change_legacy_step_logits():
+    runner = _trace_ready_runner()
+    runner.enable_step_logits_recording(True)
+    runner.enable_spec_verify_trace_recording(True)
+    runner.set_spec_verify_trace_context(
+        "baseline",
+        1,
+        7,
+    )
+    runner.kv_offload = SimpleNamespace(
+        bound_generations=[1] * 128,
+    )
+    runner.prepare_decode = lambda _seqs: (
+        _TraceTensor([11]),
+        _TraceTensor([32767]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    logits = _TraceTensor([
+        [0.0, 1.0, 2.0, 3.0, 9.0, 4.0],
+    ])
+    runner.run_model = lambda *_args, **_kwargs: logits
+    runner.prepare_sample = lambda _seqs: _TraceTensor([0.0])
+    runner.sampler = lambda selected, _temperatures: (
+        SimpleNamespace(
+            tolist=lambda: selected.argmax(dim=-1).tolist()
+        )
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        hybrid_state_slot_id=-1,
+        hybrid_state_generation=0,
+        last_token=11,
+        num_tokens=32768,
+        num_completion_tokens=0,
+        block_table=list(range(128)),
+    )
+
+    assert runner._run_model_step(
+        [seq],
+        is_prefill=False,
+    ) == [4]
+    expected_logits = logits.tolist()
+
+    assert runner.last_step_logits().tolist() == expected_logits
+    assert runner.drain_spec_verify_trace_rows()
+    assert runner.last_step_logits().tolist() == expected_logits
+    runner.enable_spec_verify_trace_recording(False)
+    assert runner.last_step_logits().tolist() == expected_logits
+
+
+def test_first_target_forward_failure_leaves_no_partial_trace():
+    runner = _trace_ready_runner()
+    _enable_first_target_trace(runner)
+    runner.run_model = lambda *_args, **_kwargs: (
+        _ for _ in ()
+    ).throw(RuntimeError("trace forward failed"))
+    seq = _trace_first_target_sequence()
+
+    with pytest.raises(
+        RuntimeError,
+        match="trace forward failed",
+    ):
+        runner.run_spec_first_target_batch(
+            (seq,),
+            kv_block_identity_rows=_identity_rows((seq,)),
+        )
+
+    assert runner.drain_spec_verify_trace_rows() == ()
+    assert runner.enable_spec_verify_trace_recording(False) == {
+        "rank": 0,
+        "enabled": False,
+    }
+    assert runner.drain_spec_verify_trace_rows() == ()
+
+
 def test_run_clears_recorded_logits_when_sampling_is_disabled():
     runner = _make_step_logits_run_runner()
     runner.run_model = lambda *args: FakeIndexedTensor([[1.0, 2.0]])
 
     result = runner.run(
-        [SimpleNamespace(seq_id=1)],
+        [make_sequence(1)],
         is_prefill=False,
         do_sample=False,
     )
@@ -1355,7 +4532,7 @@ def test_run_clears_recorded_logits_on_nonzero_rank():
     runner.run_model = lambda *args: FakeIndexedTensor([[1.0, 2.0]])
 
     result = runner.run(
-        [SimpleNamespace(seq_id=1)],
+        [make_sequence(1)],
         is_prefill=False,
     )
 
@@ -1625,16 +4802,29 @@ def main():
         test_init_prepares_cuda_graph_dispatch_state_before_warmup,
         test_prefill_window_reserves_current_write_blocks_without_mutating_decode_window,
         test_prepare_spec_verify_installs_reference_context,
+        test_prepare_spec_verify_batch_flattens_homogeneous_rows_once,
         test_step_logits_recording_accessor_is_default_off_and_returns_clone,
         test_snapshot_kv_slots_uses_physical_block_and_offset_indices,
         test_snapshot_kv_slots_rejects_empty_or_quantized_requests,
         test_prepare_spec_verify_rejects_nonconsecutive_slots_before_upload,
         test_every_unsupported_feature_fails_closed,
-        test_multi_sequence_nonlinear_and_nongreedy_fail,
+        test_multi_sequence_is_allowed_but_invalid_modes_fail,
         test_spec_verify_run_model_uses_eager_and_keeps_all_rows,
+        test_run_spec_verify_batch_uses_one_forward_and_splits_rows,
+        test_run_spec_verify_batch_worker_executes_forward_without_result,
+        test_run_spec_verify_batch_resets_context_after_forward_failure,
+        test_run_spec_first_target_batch_uses_one_forward_and_orders_rows,
+        test_run_offload_spec_first_target_batch_does_not_require_residency_ticket,
+        test_run_spec_first_target_batch_worker_executes_forward_without_result,
+        test_run_spec_first_target_batch_resets_context_after_forward_failure,
+        test_run_spec_first_target_batch_rejects_non_greedy_before_prepare,
+        test_hybrid_state_spec_verify_fails_closed_before_forward,
         test_multi_sequence_decode_uses_eager_instead_of_cuda_graph,
+        test_single_sequence_decode_uses_eager_when_legacy_graph_state_is_absent,
         test_single_sequence_decode_still_replays_cuda_graph,
         test_exact_graph_capacity_reserves_scheduler_invisible_scratch,
+        test_spec_verify_scratch_capacity_uses_exact_q_without_padding,
+        test_decode_and_spec_verify_scratch_partitions_are_disjoint,
         test_scratch_blocks_are_above_scheduler_visible_range,
         test_feature_enabled_startup_captures_only_batch_one,
         test_feature_disabled_startup_inventory_is_unchanged,

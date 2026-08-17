@@ -1,0 +1,1 @@
+/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/artifacts/generic_speculative_tp4/tp4-opaque-48d18e4aba16756d/authority

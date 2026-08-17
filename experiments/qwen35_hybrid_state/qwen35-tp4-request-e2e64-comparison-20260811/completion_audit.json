@@ -1,0 +1,70 @@
+{
+  "classification": "COMPLETE",
+  "objective": "Compare r620 and r631 request-level E2E latency and throughput with identical prompts and 64-token outputs.",
+  "result_classification": "MIXED",
+  "checklist": [
+    {
+      "evidence": "docs/superpowers/specs/2026-08-11-qwen35-request-e2e64-comparison-design.md",
+      "requirement": "Freeze a request-level design that does not use decode-step metrics as an E2E proxy.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "experiments/qwen35_hybrid_state/qwen35-tp4-request-e2e64-comparison-20260811/dry_run.json",
+      "requirement": "Both sources use the same 12-case w2_long_reuse matrix, retain --profile, and omit 8-token-only flags.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "r620 tree a26c543e79a9d4927fd0451d4a287363a677568a1daefe65a2a234a22f5997aa; r631 tree 6f881fae7010cc5f048100b147a72fbf27ffba0f77bc34e2e2e68388a98a2837",
+      "requirement": "Execute the frozen r620 baseline source and r631 candidate source.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Both attempt roots contain 12 case directories, 12 logs, 12 guards, RUN_COMPLETE, and DOWNLOADED receipts.",
+      "requirement": "Complete warmup r0 and measured r0-r4 for recompute and exact_restore.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "All 80 measured rows have generated_tokens=64, 64 output_token_ids, and 63 decode_step_ns values.",
+      "requirement": "Use identical canonical 64-token output length with four requests per case.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "48/48 warmup-plus-measured request pairs and 40/40 measured request pairs match token-for-token.",
+      "requirement": "Preserve output-token parity as a hard gate.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "comparison.json includes case makespan, request throughput, output-token throughput, request E2E, TTFT, and decode latency for both policies.",
+      "requirement": "Report request-level latency and throughput rather than only decode-step timing.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Recompute throughput +9.6366%; exact-restore throughput -2.5490%; pooled request E2E +4.4865% and +2.5943% respectively.",
+      "requirement": "Quantify whether complete request E2E improves and by how much.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "baseline_canonical_aggregate.json and candidate_canonical_aggregate.json reproduce makespan, TTFT, and decode medians.",
+      "requirement": "Independently cross-check the new comparison aggregation.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Each attempt has 12 READY guards on GPUs 2,4,5,6; minimum free bytes exceed 25 GiB and maximum utilization is 0%.",
+      "requirement": "Respect the fixed shared/non-exclusive GPU admission policy.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Both receipts record cleanup CLEAN; three ancestry-aware exact-tag scans report zero processes for both tags.",
+      "requirement": "Clean up only exact-tag descendants and leave no tagged processes.",
+      "status": "PASS"
+    },
+    {
+      "evidence": "python3 -m pytest: 13 passed; py_compile PASS; all final JSON files parse.",
+      "requirement": "Validate the runner, comparison, and final artifacts.",
+      "status": "PASS"
+    }
+  ],
+  "missing_requirements": [],
+  "proof_boundary": "This is a shared, non-exclusive TP4 run with five measured repetitions per policy. It proves the controlled w2_long_reuse request-level result, not universal production throughput."
+}
+

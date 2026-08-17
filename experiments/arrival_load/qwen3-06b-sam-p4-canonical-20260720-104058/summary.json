@@ -1,0 +1,72 @@
+{
+  "candidate_results": {
+    "P3": {
+      "benefit_path": null,
+      "classification": "NO_GO",
+      "guard_failures": [
+        "p99_itl_ns regression exceeds 10%",
+        "maximum_decode_gap_ns regression exceeds 10%",
+        "service bucket p95 E2E regression exceeds 10%"
+      ],
+      "median_ratios": {
+        "maximum_decode_gap_ns": 1.2029581830484828,
+        "p95_itl_ns": 1.6529213032892853,
+        "p95_ttft_ns": 0.7071094072026981,
+        "p99_e2e_ns": 0.8741966627557993,
+        "p99_itl_ns": 1.2129065756924766,
+        "p99_ttft_ns": 0.8323570170587256,
+        "peak_cuda_reserved_bytes": 1.0006758659532526,
+        "peak_kv_bytes": 3.5,
+        "request_throughput_rps": 0.9997875683259381
+      },
+      "policy": "P3",
+      "worst_repetition_ratios": {
+        "maximum_decode_gap_ns": 1.7778773404032624,
+        "p95_itl_ns": 4.225335035390901,
+        "p95_ttft_ns": 0.9805873193185755,
+        "p99_e2e_ns": 1.0206555043539758,
+        "p99_itl_ns": 1.9569718677477188,
+        "p99_ttft_ns": 0.9418154078982173,
+        "peak_cuda_reserved_bytes": 1.0018304702900591,
+        "peak_kv_bytes": 7.285714285714286,
+        "request_throughput_rps": 0.9887196379717472
+      }
+    },
+    "P4": {
+      "benefit_path": null,
+      "classification": "NO_GO",
+      "guard_failures": [
+        "p99_itl_ns regression exceeds 10%",
+        "p99_e2e_ns regression exceeds 10%",
+        "maximum_decode_gap_ns regression exceeds 10%",
+        "service bucket p95 E2E regression exceeds 10%"
+      ],
+      "median_ratios": {
+        "maximum_decode_gap_ns": 1.0353426658705789,
+        "p95_itl_ns": 1.0292297292462729,
+        "p95_ttft_ns": 0.7506555370451806,
+        "p99_e2e_ns": 0.8712273590173822,
+        "p99_itl_ns": 0.9920063271599526,
+        "p99_ttft_ns": 0.839972500447894,
+        "peak_cuda_reserved_bytes": 1.000535060546325,
+        "peak_kv_bytes": 3.142857142857143,
+        "request_throughput_rps": 1.0000175807997993
+      },
+      "policy": "P4",
+      "worst_repetition_ratios": {
+        "maximum_decode_gap_ns": 1.6442555335408362,
+        "p95_itl_ns": 4.1010542758711725,
+        "p95_ttft_ns": 1.0890476172208885,
+        "p99_e2e_ns": 1.1156440666036966,
+        "p99_itl_ns": 1.4577462916221062,
+        "p99_ttft_ns": 1.0444395047080313,
+        "peak_cuda_reserved_bytes": 1.000844856233631,
+        "peak_kv_bytes": 5.142857142857143,
+        "request_throughput_rps": 0.9979551892360635
+      }
+    }
+  },
+  "classification": "NO_GO",
+  "correctness_failures": [],
+  "structural_failures": []
+}

@@ -1,0 +1,82 @@
+{
+  "name": "qwen3_8b_fixes_doc_smoke_baseline_stable",
+  "description": "Baseline-correct subset of qwen3_8b_fixes candidate after Qwen3-0.6B text_only calibration.",
+  "source": "experiments/light_doc_cache/task_quality_tasks_qwen3_8b_fixes_candidate.json",
+  "baseline_run": "experiments/light_doc_cache/task_quality_smoke_qwen8bfixes_candidate_baseline_latest",
+  "excluded_task_ids": [
+    "qwen3_8b_goal",
+    "c4_quality_boundary",
+    "weight_mem_metric",
+    "w4a8_root_cause_hypothesis",
+    "act_quant_fix",
+    "w4_group_size_fix"
+  ],
+  "tasks": [
+    {
+      "id": "qwen3_8b_model_choice",
+      "question": "Which model was chosen because Qwen3 had no 7B model on modelscope?",
+      "choices": {
+        "A": "Qwen2.5-7B",
+        "B": "Qwen3-8B",
+        "C": "Llama-7B",
+        "D": "BERT-base"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "w4a8_failure_symptom",
+      "question": "What output symptom showed W4A8 and W4A8C4 collapsed on Qwen3-8B?",
+      "choices": {
+        "A": "They generated repeated backslashes or garbage text",
+        "B": "They always answered Paris correctly",
+        "C": "They refused to allocate tokenizer merges",
+        "D": "They produced empty JSON reports"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "tp_memory_correction",
+      "question": "What was corrected about tensor parallel memory measurement?",
+      "choices": {
+        "A": "Peak memory alone was misleading because KV cache filled freed space",
+        "B": "Tensor parallel never split weights",
+        "C": "The tokenizer consumed all GPU memory",
+        "D": "The model had no KV cache"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "tp_true_weight_split",
+      "question": "After separating weight and KV cache memory, what did the document conclude about TP?",
+      "choices": {
+        "A": "TP weight splitting was working correctly",
+        "B": "TP always duplicated all weights",
+        "C": "TP disabled CUDA",
+        "D": "TP only changed tokenizer output"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "gpu_utilization_semantics",
+      "question": "What is the corrected interpretation of gpu_memory_utilization?",
+      "choices": {
+        "A": "It means each GPU may fill memory up to that utilization with weights and KV cache",
+        "B": "It must be divided by TP size automatically",
+        "C": "It controls tokenizer vocabulary size",
+        "D": "It disables KV cache on TP runs"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "smoothquant_status",
+      "question": "How did the document frame a full SmoothQuant approach at that point?",
+      "choices": {
+        "A": "As a more complete future direction rather than the lightweight fix",
+        "B": "As already replacing all model weights",
+        "C": "As tokenizer-only training",
+        "D": "As unrelated to activation outliers"
+      },
+      "answer": "A"
+    }
+  ]
+}

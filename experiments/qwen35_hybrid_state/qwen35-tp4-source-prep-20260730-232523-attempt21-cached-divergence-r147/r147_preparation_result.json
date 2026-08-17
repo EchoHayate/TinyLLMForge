@@ -1,0 +1,8 @@
+{
+  "configuration_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260730-232523-attempt21-r147",
+  "engine_source_tree_sha256": "f7d4e4dfee24edb58e89e57b4ab4d5f6d94eba0ea2540b57a0d82721e0b5d572",
+  "remote_source_root": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-root-logit-tests/qwen35-tp4-source-prep-20260730-232523-attempt21-cached-divergence-r147/source",
+  "root_source_tree_sha256": "44d8bc870f56d2cb3bed39fbb9e052a929ff160ae70ade4cc1ad051ed98e3870",
+  "source_dir": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260730-232523-attempt21-cached-divergence-r147",
+  "source_tag": "qwen35-tp4-source-prep-20260730-232523-attempt21-cached-divergence-r147"
+}

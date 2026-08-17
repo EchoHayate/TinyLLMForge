@@ -1,0 +1,167 @@
+{
+  "audit_date": "2026-08-06",
+  "checks": [
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-tp4-performance-correctness-prerequisites-20260804-attempt67-r542/correctness_prerequisites.json",
+        "AGENT_HANDOFF_STATE.md"
+      ],
+      "id": "real_model_correctness_prerequisite",
+      "requirement": "A real TP4 model correctness prerequisite is independently classified PASS.",
+      "status": "HISTORICAL_PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-recurrent-int8-gate1-audit-20260806-r550/gate1_audit.json",
+        ".superpowers/sdd/progress.md"
+      ],
+      "id": "local_default_off_integration",
+      "requirement": "The recurrent-INT8 path is default-off, locally integrated, and regression tested.",
+      "status": "CURRENT_SOURCE_PASS"
+    },
+    {
+      "evidence": [
+        "tinyvllm/engine/qwen35_recurrent_capture_contract.py",
+        "tinyvllm/engine/qwen35_recurrent_capture.py",
+        "tools/qwen35_recurrent_full_fidelity_capture_closer.py",
+        "tools/qwen35_recurrent_full_fidelity_bundle_assembler.py",
+        ".superpowers/sdd/progress.md"
+      ],
+      "id": "full_fidelity_capture_pipeline",
+      "requirement": "A default-off full-fidelity capture, rank closure, bundle assembly, calibration, and verification pipeline exists.",
+      "status": "CPU_SYNTHETIC_PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_manifest.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_audit.json",
+        "AGENT_HANDOFF_STATE.md"
+      ],
+      "id": "strict_p1_current_source",
+      "requirement": "A strict-P1 real exact-restore authority for the current benchmark-owned source is independently classified GO.",
+      "status": "MISSING"
+    },
+    {
+      "evidence": [
+        "AGENT_HANDOFF_STATE.md",
+        "tools/qwen35_recurrent_int8_calibration.py",
+        "tools/verify_qwen35_recurrent_int8_calibration.py"
+      ],
+      "id": "real_calibration",
+      "requirement": "Real full-fidelity captures produce an independently verified recurrent-INT8 calibration PASS.",
+      "status": "MISSING"
+    },
+    {
+      "evidence": [
+        "AGENT_HANDOFF_STATE.md",
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_contract.py",
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/checklist.json"
+      ],
+      "id": "accuracy_non_regression",
+      "requirement": "The current P2 candidate preserves the canonical real-model quality rules relative to P1.",
+      "status": "MISSING"
+    },
+    {
+      "evidence": [
+        "AGENT_HANDOFF_STATE.md",
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_contract.py",
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/checklist.json"
+      ],
+      "id": "end_to_end_speed",
+      "requirement": "The current P2 candidate improves canonical end-to-end latency or throughput relative to P1.",
+      "status": "MISSING"
+    },
+    {
+      "evidence": [
+        "AGENT_HANDOFF_STATE.md",
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_contract.py",
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/checklist.json"
+      ],
+      "id": "physical_cache_reduction",
+      "requirement": "The current P2 candidate reduces physical cache or CUDA-resident bytes relative to P1 under the same workload.",
+      "status": "MISSING"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/checklist.json",
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/report.md",
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "p2_authority_threshold_coverage",
+      "requirement": "The independent P2 verifier consumes every approved frozen threshold and has negative regressions for previously omitted gates.",
+      "status": "CURRENT_SOURCE_PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/checklist.json",
+        "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/report.md",
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "p2_human_readable_report_authority",
+      "requirement": "Every legitimate P2 classification emits a bounded human-readable report with all measured gates, all frozen thresholds, failed-gate status, configuration bindings, artifact hashes, and no sustained-serving overclaim.",
+      "status": "CURRENT_SOURCE_PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_manifest.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_audit.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260806-task10-r556/benchmark_preflight.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260806-task10-r556/report.md"
+      ],
+      "id": "fresh_resource_preflight",
+      "requirement": "A fresh current-source preflight reports READY before any remote directory or GPU execution is attempted.",
+      "status": "BLOCKED_RESOURCES"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_manifest.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_audit.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/report.md"
+      ],
+      "id": "strict_p1_local_readiness",
+      "requirement": "The current-source strict-P1 preflight inputs are complete, portable, locally verified, and do not authorize SSH or GPU execution.",
+      "status": "CURRENT_SOURCE_PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-recurrent-int8-gate1-audit-20260806-r550/gate1_audit.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_manifest.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_audit.json",
+        "tools/run_qwen35_tp4_hybrid_prefix_benchmark_remote.py"
+      ],
+      "id": "current_source_identity",
+      "requirement": "All real authority artifacts bind the current deterministic benchmark-owned source tree.",
+      "status": "PARTIAL"
+    }
+  ],
+  "classification": "NOT_ACHIEVED",
+  "current_benchmark_owned_file_count": 91,
+  "current_benchmark_source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c",
+  "current_gate1_audit": "experiments/qwen35_hybrid_state/qwen35-recurrent-int8-gate1-audit-20260806-r550/gate1_audit.json",
+  "current_gate1_classification": "PASS",
+  "current_gate1_test_count": 185,
+  "current_strict_p1_readiness": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_manifest.json",
+  "current_strict_p1_readiness_audit": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_audit.json",
+  "current_strict_p1_readiness_classification": "READY_FOR_RESOURCE_PREFLIGHT",
+  "current_strict_p1_readiness_evidence_file_count": 18,
+  "current_strict_p1_readiness_source_tar_sha256": "8f807c0e51010fddd0bd474670ae41c09beda604c8247f672fc047f533c53a5d",
+  "fresh_strict_p1_preflight": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260806-task10-r556/benchmark_preflight.json",
+  "fresh_strict_p1_preflight_classification": "BLOCKED_RESOURCES",
+  "fresh_strict_p1_preflight_remote_path_created": false,
+  "fresh_strict_p1_preflight_sha256": "e2afefc1540184d7724a6e9a1027d4ad95e8de4fcfc99f18e17ff3de43571578",
+  "p2_authority_coverage_audit": "experiments/qwen35_hybrid_state/qwen35-p2-authority-coverage-audit-20260806-r553/checklist.json",
+  "p2_frozen_threshold_count": 12,
+  "p2_frozen_thresholds_consumed": 12,
+  "p2_verifier_report_authority": "CURRENT_SOURCE_PASS",
+  "p2_verifier_test_result": "19 passed in 609.20s",
+  "historical_gate1_source_tree_sha256": "e265b3ead9d9717d92d8bc0507ac051d93ec22f8403b7929c3625ee4153ccfd7",
+  "historical_strict_p1_preflight_classification": "BLOCKED_RESOURCES",
+  "historical_strict_p1_preflight_source_tree_sha256": "e265b3ead9d9717d92d8bc0507ac051d93ec22f8403b7929c3625ee4153ccfd7",
+  "objective": "Preserve real-model accuracy while improving inference speed and reducing physical cache or VRAM usage.",
+  "schema_version": "tinyllmforge.performance-goal-completion-audit.v1"
+}

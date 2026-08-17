@@ -1,0 +1,18 @@
+{
+  "k1_test": {
+    "command": [
+      "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+      "tools/test_ngram_speculative.py"
+    ],
+    "returncode": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "a5d2307a7ec62dd70553c477df35ab97e3be447b8c5a1928193744949c673892"
+  },
+  "schema_version": 1,
+  "source_tree_sha256": "f876ca0298efc9731658b9fba467b715f76f7ae0ecaa939de2bb2a600ce88f9a",
+  "source_verify": {
+    "returncode": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "02a31589c73dfba328dbebe04b7c770adfee05bfc3fb5d5cfd76f6f8d1340d02"
+  }
+}

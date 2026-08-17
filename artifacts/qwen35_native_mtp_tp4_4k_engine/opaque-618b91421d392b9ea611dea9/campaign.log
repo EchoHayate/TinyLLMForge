@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 1385, in run_campaign
+    result = assemble_authority(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 1061, in assemble_authority
+    return validate_result({
+           ^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 989, in validate_result
+    raise ValueError("GPU process inventory changed")
+ValueError: GPU process inventory changed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 1496, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 1484, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 1433, in run_campaign
+    raise RuntimeError(
+RuntimeError: GPU process inventory changed; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-4k-engine-runs/opaque-618b91421d392b9ea611dea9/artifacts/authority.failed

@@ -1,0 +1,160 @@
+{
+  "1": {
+    "kv": {
+      "keys_after": {
+        "allclose_atol_0.01_rtol_0.01": false,
+        "equal": false,
+        "max_abs": 1.0,
+        "nonzero": 341938,
+        "step0_active_slot_max_abs": [
+          0.0,
+          0.5,
+          0.5,
+          0.09375
+        ]
+      },
+      "values_after": {
+        "allclose_atol_0.01_rtol_0.01": false,
+        "equal": false,
+        "max_abs": 0.640625,
+        "nonzero": 376213,
+        "step0_active_slot_max_abs": [
+          0.0,
+          0.001953125,
+          0.00390625,
+          0.009765625
+        ]
+      }
+    },
+    "layers": {
+      "allclose_atol_0.01_rtol_0.01": false,
+      "equal": false,
+      "max_abs": 4.0,
+      "nonzero": 770084,
+      "row_max_abs": [
+        0.0078125,
+        0.015625,
+        0.03125,
+        0.03125
+      ]
+    },
+    "logits": {
+      "allclose_atol_0.01_rtol_0.01": false,
+      "equal": false,
+      "max_abs": 0.26861572265625,
+      "nonzero": 2074800,
+      "row_max_abs": [
+        0.0,
+        0.0,
+        0.0,
+        0.26861572265625
+      ]
+    },
+    "raw_step0": {
+      "absolute_step": 2,
+      "active_write_slots": [
+        34,
+        322,
+        610,
+        898
+      ],
+      "batch_size": 4,
+      "case_id": "b4__ragged-context__exact_graph__r0",
+      "graph_size": 4,
+      "mode": "exact_graph",
+      "observed_argmax_token_ids": [
+        36680,
+        3170,
+        84648,
+        1019
+      ],
+      "reference_next_input_token_ids": [
+        36680,
+        3170,
+        84648,
+        1019
+      ],
+      "step_id": 0,
+      "teacher_forcing_diverged": false
+    }
+  },
+  "16": {
+    "kv": {
+      "keys_after": {
+        "allclose_atol_0.01_rtol_0.01": true,
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0,
+        "step0_active_slot_max_abs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "values_after": {
+        "allclose_atol_0.01_rtol_0.01": true,
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0,
+        "step0_active_slot_max_abs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "layers": {
+      "allclose_atol_0.01_rtol_0.01": true,
+      "equal": true,
+      "max_abs": 0.0,
+      "nonzero": 0,
+      "row_max_abs": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "logits": {
+      "allclose_atol_0.01_rtol_0.01": true,
+      "equal": true,
+      "max_abs": 0.0,
+      "nonzero": 0,
+      "row_max_abs": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "raw_step0": {
+      "absolute_step": 2,
+      "active_write_slots": [
+        34,
+        322,
+        610,
+        898
+      ],
+      "batch_size": 4,
+      "case_id": "b4__ragged-context__exact_graph__r0",
+      "graph_size": 4,
+      "mode": "exact_graph",
+      "observed_argmax_token_ids": [
+        36680,
+        3170,
+        84648,
+        1019
+      ],
+      "reference_next_input_token_ids": [
+        36680,
+        3170,
+        84648,
+        1019
+      ],
+      "step_id": 0,
+      "teacher_forcing_diverged": false
+    }
+  }
+}

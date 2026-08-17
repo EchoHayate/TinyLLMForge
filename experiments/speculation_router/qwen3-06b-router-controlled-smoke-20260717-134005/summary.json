@@ -1,0 +1,21 @@
+{
+  "classification": "NO_GO",
+  "exactness_pass": true,
+  "per_case_elapsed_ratios": {
+    "k1-route-fallback": 1.0590092783607732,
+    "k16-full-multiblock": 0.6994950113741268,
+    "k2-full-current": 1.137391516315052,
+    "k2-zero-current": 1.4321430513419786,
+    "k4-full-boundary": 0.9958077528989359,
+    "k4-partial-boundary": 1.0969006388948077
+  },
+  "performance_direction_pass": false,
+  "reasons": [
+    "required_lifecycle_regression:k1-route-fallback",
+    "required_lifecycle_regression:k2-full-current",
+    "required_lifecycle_regression:k2-zero-current",
+    "required_lifecycle_regression:k4-partial-boundary"
+  ],
+  "replay_elimination_pass": true,
+  "router_isolation_pass": true
+}

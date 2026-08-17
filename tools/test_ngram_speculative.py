@@ -8,6 +8,7 @@ import sys
 import importlib.util
 import types
 from enum import Enum
+from types import SimpleNamespace
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -656,7 +657,89 @@ class _NativeBlockManager:
         self.reserve_calls = 0
         self.release_calls = []
         self.commit_calls = []
+        self.begin_calls = []
+        self.mark_calls = []
+        self.transaction_commit_calls = []
+        self.rollback_calls = []
         self.deallocate_calls = []
+
+    def begin_speculative_kv_transaction(
+        self,
+        seq,
+        proposed_token_count,
+    ):
+        self.begin_calls.append((seq, proposed_token_count))
+        materialized_end = len(seq) + max(
+            0,
+            proposed_token_count - 1,
+        )
+        needed_blocks = (
+            materialized_end + seq.block_size - 1
+        ) // seq.block_size
+        missing_blocks = max(
+            0,
+            needed_blocks - len(seq.block_table),
+        )
+        return SimpleNamespace(
+            reserved_block_ids=tuple(
+                range(11, 11 + missing_blocks)
+            ),
+            materialized_token_count=0,
+            state="reserved",
+        )
+
+    def mark_speculative_kv_materialized(
+        self,
+        transaction,
+        materialized_token_count,
+    ):
+        self.mark_calls.append(
+            (transaction, materialized_token_count)
+        )
+        transaction.materialized_token_count = materialized_token_count
+        transaction.state = "materialized"
+
+    def commit_speculative_kv_transaction(
+        self,
+        transaction,
+        seq,
+        accepted_tokens,
+    ):
+        if self.fail_commit:
+            raise RuntimeError("commit failure")
+        self.transaction_commit_calls.append(
+            (transaction, seq, list(accepted_tokens))
+        )
+        materialized_tokens = len(seq) + max(
+            0,
+            len(accepted_tokens) - 1,
+        )
+        needed_blocks = (
+            materialized_tokens + seq.block_size - 1
+        ) // seq.block_size
+        missing = max(
+            0,
+            needed_blocks - len(seq.block_table),
+        )
+        reserved_blocks = list(transaction.reserved_block_ids)
+        seq.block_table.extend(reserved_blocks[:missing])
+        self.release_reserved_blocks(reserved_blocks[missing:])
+        for token_id in accepted_tokens:
+            seq.append_token(token_id)
+        transaction.state = "committed"
+
+    def rollback_speculative_kv_transaction(
+        self,
+        transaction,
+        seq,
+    ):
+        self.rollback_calls.append(
+            (transaction, seq, transaction.state)
+        )
+        self.release_reserved_blocks(
+            list(transaction.reserved_block_ids)
+        )
+        transaction.state = "rolled_back"
 
     def reserve_append_blocks(self, seq, num_new_tokens):
         self.reserve_calls += 1
@@ -810,7 +893,7 @@ def _native_verify_fixture(
 
 
 def test_native_verify_commits_without_decode_rematerialization():
-    llm, seq, _, runner = _native_verify_fixture(
+    llm, seq, block_manager, runner = _native_verify_fixture(
         first_target=4,
         tail_targets=[5, 6],
     )
@@ -844,6 +927,14 @@ def test_native_verify_commits_without_decode_rematerialization():
     assert runner.normal_decode_calls == 1
     assert runner.spec_verify_calls == 1
     assert runner.snapshot_calls == []
+    assert block_manager.reserve_calls == 0
+    assert block_manager.commit_calls == []
+    assert block_manager.begin_calls == [(seq, 3)]
+    assert len(block_manager.mark_calls) == 1
+    assert block_manager.mark_calls[0][1] == 2
+    assert len(block_manager.transaction_commit_calls) == 1
+    assert block_manager.transaction_commit_calls[0][2] == [4, 5, 6]
+    assert block_manager.rollback_calls == []
 
 
 def test_native_oracle_evidence_captures_tail_logits_and_final_slot_kv():
@@ -871,7 +962,7 @@ def test_native_oracle_evidence_captures_tail_logits_and_final_slot_kv():
 
 
 def test_native_k1_uses_first_target_without_tail_forward():
-    llm, seq, _, runner = _native_verify_fixture(
+    llm, seq, block_manager, runner = _native_verify_fixture(
         first_target=4,
         tail_targets=[],
     )
@@ -887,6 +978,8 @@ def test_native_k1_uses_first_target_without_tail_forward():
     assert event["query_len"] == 0
     assert runner.spec_verify_calls == 0
     assert runner.prepare_calls == []
+    assert len(block_manager.mark_calls) == 1
+    assert block_manager.mark_calls[0][1] == 0
 
 
 def test_native_unsupported_mode_fails_before_reservation():
@@ -912,6 +1005,7 @@ def test_native_unsupported_mode_fails_before_reservation():
         raise AssertionError("unsupported native mode must fail")
 
     assert block_manager.reserve_calls == 0
+    assert block_manager.begin_calls == []
 
 
 def test_native_tail_failure_releases_reservation_and_resets_context():
@@ -933,7 +1027,9 @@ def test_native_tail_failure_releases_reservation_and_resets_context():
     else:
         raise AssertionError("tail failure must propagate")
 
-    assert block_manager.release_calls == [[11]]
+    assert block_manager.release_calls == [[]]
+    assert len(block_manager.rollback_calls) == 1
+    assert block_manager.rollback_calls[0][2] == "reserved"
     assert native_test_context.get_context().mode == "decode"
 
 
@@ -946,7 +1042,7 @@ def test_native_acceptance_matrix_preserves_pending_token_lifecycle():
     )
 
     for name, first_target, tail_targets, expected, committed_blocks in cases:
-        llm, seq, _, _ = _native_verify_fixture(
+        llm, seq, block_manager, _ = _native_verify_fixture(
             first_target=first_target,
             tail_targets=tail_targets,
         )
@@ -967,6 +1063,8 @@ def test_native_acceptance_matrix_preserves_pending_token_lifecycle():
         ), name
         if expected:
             assert seq.last_token == expected[-1], name
+        assert len(block_manager.transaction_commit_calls) == 1, name
+        assert block_manager.commit_calls == [], name
 
 
 def test_native_eos_and_output_budget_truncation_flags():
@@ -1049,13 +1147,15 @@ def test_native_commit_failure_reports_phase_and_releases_reservation():
 
     assert seq.token_ids == [1, 2, 3]
     assert seq.block_table == [10]
-    assert block_manager.release_calls == [[11]]
+    assert block_manager.release_calls == [[]]
+    assert len(block_manager.rollback_calls) == 1
+    assert block_manager.rollback_calls[0][2] == "materialized"
     assert native_test_context.get_context().mode == "decode"
 
 
 def test_native_full_accept_commits_multiple_reserved_blocks():
     draft_tokens = list(range(4, 12))
-    llm, seq, _, runner = _native_verify_fixture(
+    llm, seq, block_manager, runner = _native_verify_fixture(
         first_target=4,
         tail_targets=list(range(5, 12)),
     )
@@ -1075,6 +1175,8 @@ def test_native_full_accept_commits_multiple_reserved_blocks():
     assert seq.block_table == [10, 11, 12]
     assert seq.last_token == 11
     assert runner.spec_verify_calls == 1
+    assert block_manager.begin_calls == [(seq, len(draft_tokens))]
+    assert block_manager.mark_calls[0][1] == len(draft_tokens) - 1
 
 
 def test_native_profile_args_require_supported_scope():

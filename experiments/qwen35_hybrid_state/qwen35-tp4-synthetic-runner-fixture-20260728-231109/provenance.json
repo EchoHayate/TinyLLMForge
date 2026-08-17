@@ -1,0 +1,5 @@
+{
+  "claim_boundary": "synthetic exact-five fixture for remote runner download and independent verification only; no reference model, checkpoint load, NCCL, CUDA, or correctness authority",
+  "provenance": "synthetic-runner-fixture",
+  "run_tag": "qwen35-tp4-synthetic-runner-fixture-20260728-231109"
+}

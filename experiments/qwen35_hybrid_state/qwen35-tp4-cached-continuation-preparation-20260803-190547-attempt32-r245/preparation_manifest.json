@@ -1,0 +1,44 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-190547-attempt32-r245/authorization.json",
+  "claim_boundary": "cached-continuation correctness only; no Engine, performance, cache, memory, compression, or quality claim",
+  "classification": "READY",
+  "consumed_authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-190547-attempt32-r245/runtime/consumed_authorization.json",
+  "execution_performed": false,
+  "failure_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-190547-attempt32-r245/runtime/execution_failure.json",
+  "minimum_observed_free_bytes": 68789731328,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-190547-attempt32-r245/plan/remote_execution_plan.json",
+  "receipt_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-190547-attempt32-r245/runtime/execution_receipt.json",
+  "resource_baseline_sha256": "5c324bdc87b3aaff8c29bc302283b947ca47a7b56ea930658a4a89486459f0ee",
+  "root_prerequisite": {
+    "artifact_names": [
+      "native_rank0_logits.pt",
+      "rank_evidence.json",
+      "reference_logits.pt",
+      "source_manifest.json",
+      "tp4_real_root_logit_correctness.json"
+    ],
+    "authorization_nonce": "bc2001be46b88d7cdbd831b6a9d16079acfd22a9e909911c8ac3a167f3b2f2f1",
+    "authorization_sha256": "1bb621de34363c7004f8918e2ea3bb0ba6c13ce7b331d82b01c66c5d0492a637",
+    "case_ids": [
+      "p17",
+      "p65",
+      "synthetic"
+    ],
+    "checks": 613,
+    "classification": "PASS",
+    "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+    "plan_sha256": "a699fd1d24e2d1b857a539b69caf8cad1cb874b89f63040d74e21e86706b4115",
+    "ranks": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "run_tag": "qwen35-tp4-root-logit-current-source-20260803-190353-attempt32-r244",
+    "source_tree_sha256": "3ffc5e5ff88490ec634c38c4d94be56f3a4b88a209414b86681693123b863d9e",
+    "stage_count": 4
+  },
+  "run_tag": "qwen35-tp4-cached-continuation-20260803-190547-attempt32-r245",
+  "schema_version": "qwen35.tp4-cached-attempt32-preparation.v1",
+  "source_tree_sha256": "62895edf1b50e8cdd93d56bf6752a10efe38796584608cd668ba07f7adb6a51e"
+}

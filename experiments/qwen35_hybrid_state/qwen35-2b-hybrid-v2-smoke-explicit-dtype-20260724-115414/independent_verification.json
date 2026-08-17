@@ -1,0 +1,11 @@
+{
+  "claim_boundary": "Compatibility only; no native support, compression, quality, latency, throughput, speedup, or memory-reduction claim.",
+  "classification": "INCOMPLETE",
+  "expected_case_count": 8,
+  "guards": {},
+  "observed_case_count": 8,
+  "reasons": [
+    "invalid cosine similarity: fp32_path_control__cached_vs_one_shot__p17__r0__c17"
+  ],
+  "schema_version": 2
+}

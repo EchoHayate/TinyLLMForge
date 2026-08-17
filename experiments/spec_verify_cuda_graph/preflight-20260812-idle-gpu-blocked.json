@@ -1,0 +1,102 @@
+{
+  "cuda_gate_started": false,
+  "error": "no idle GPU is available",
+  "payload": {
+    "checkpoint_candidates": [
+      {
+        "exists": true,
+        "path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0.6B"
+      },
+      {
+        "exists": true,
+        "path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B"
+      }
+    ],
+    "cuda_available": true,
+    "cuda_version": "12.1",
+    "device_count": 8,
+    "devices": [
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 0,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-57be086f-e967-c022-3832-93df4fc77bd0"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 1,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-7dc22583-df04-6c76-4ba5-ea32c428c130"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 2,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-63c05907-407b-8240-07a0-f38872840867"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 3,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 4,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 5,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 6,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31"
+      },
+      {
+        "compute_capability": [
+          8,
+          0
+        ],
+        "index": 7,
+        "name": "NVIDIA A100 80GB PCIe",
+        "uuid": "GPU-b8ffec62-b437-85f7-3f7d-2cd05bd23e16"
+      }
+    ],
+    "idle_gpu_indices": [],
+    "nvidia_smi_gpu_query_ok": true,
+    "nvidia_smi_process_query_ok": true,
+    "python_exists": true,
+    "repo_exists": true,
+    "torch_version": "2.4.1+cu121"
+  },
+  "schema_version": 1,
+  "source_upload_started": false,
+  "status": "BLOCKED"
+}

@@ -1,0 +1,13 @@
+{
+  "authority_configuration_nonce": "f5081cf83a9198f2555fbc3b10da9155",
+  "authority_configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260731-121831-attempt31-r215/executor_configuration.json",
+  "claim_boundary": "fresh source preparation only; no correctness, performance, cache, memory, compression, or quality claim",
+  "engine_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260731-121831-attempt31-r215/source_inventory.json",
+  "engine_source_tree_sha256": "25bc7851401e977e8ecdac100689bfd6886b49208e0e77810e274a2e15e920d6",
+  "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+  "root_source_tree_sha256": "190c8a5202006dc44227ff26f504e4b19479bf5a850f02b1d0d0e6f62880527f",
+  "schema_version": "qwen35.tp4-current-source-preparation.v1",
+  "source_count": 112,
+  "source_tag": "qwen35-tp4-source-prep-20260731-121831-attempt31-cached-divergence-r215",
+  "source_tar_sha256": "02b0ce8d4fc7b51abdef488785a36c38e6a026f7cf0f8d22da471057b176a0ee"
+}

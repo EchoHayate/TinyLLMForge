@@ -1,0 +1,227 @@
+{
+  "classification": "COMPLETE",
+  "cleanup": {
+    "classification": "CLEAN",
+    "matched_attempt_scoped_gpu_pids": [],
+    "remaining_attempt_scoped_pids": [],
+    "remaining_profiler_children": [],
+    "terminated_attempt_scoped_pids": []
+  },
+  "exclusive": false,
+  "nsys": {
+    "classification": "COMPLETE",
+    "effective_trace": "cuda,nvtx,osrt",
+    "nccl_evidence_boundary": "Nsight Systems 2024.7.1 on the target rejects the nccl trace argument; NCCL evidence is limited to CUDA kernel names and any supported stats reports",
+    "nccl_trace_argument_supported": false,
+    "requested_trace": "cuda,nvtx,osrt,nccl",
+    "rows": [
+      {
+        "case_id": "w2_long_reuse__nsys_replay__r0__recompute",
+        "policy": "recompute",
+        "reports": {
+          "cuda_gpu_kern_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-recompute-cuda_gpu_kern_sum.csv",
+            "returncode": 0
+          },
+          "nccl_sum": {
+            "available": false,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-recompute-nccl_sum.csv",
+            "returncode": 0
+          },
+          "nvtx_kern_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-recompute-nvtx_kern_sum.csv",
+            "returncode": 0
+          },
+          "nvtx_pushpop_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-recompute-nvtx_pushpop_sum.csv",
+            "returncode": 0
+          }
+        },
+        "returncode": 0
+      },
+      {
+        "case_id": "w2_long_reuse__nsys_replay__r0__exact_restore",
+        "policy": "exact_restore",
+        "reports": {
+          "cuda_gpu_kern_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-exact_restore-cuda_gpu_kern_sum.csv",
+            "returncode": 0
+          },
+          "nccl_sum": {
+            "available": false,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-exact_restore-nccl_sum.csv",
+            "returncode": 0
+          },
+          "nvtx_kern_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-exact_restore-nvtx_kern_sum.csv",
+            "returncode": 0
+          },
+          "nvtx_pushpop_sum": {
+            "available": true,
+            "path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/nsys_stats/r0-exact_restore-nvtx_pushpop_sum.csv",
+            "returncode": 0
+          }
+        },
+        "returncode": 0
+      }
+    ],
+    "version": "NVIDIA Nsight Systems version 2024.7.1.84-247135125610v0"
+  },
+  "overhead": {
+    "boundary": "fresh-process wall time includes model initialization; the ratio is a smoke estimate, not per-token profiler overhead",
+    "classification": "COMPLETE",
+    "decode_internal_to_baseline_ratio": 1.0566049573013976,
+    "rows": [
+      {
+        "elapsed_ns": 29859521084,
+        "label": "baseline",
+        "returncode": 0
+      },
+      {
+        "elapsed_ns": 31549718000,
+        "label": "decode_internal",
+        "returncode": 0
+      }
+    ]
+  },
+  "preserve_attempt": true,
+  "resource_policy": "shared-low-utilization",
+  "run_tag": "qwen35-tp4-decode-row-parallel-20260811-r621-attempt001",
+  "source_tree_sha256": "71d36e6ecb237603e9142d07e2c9b99440fabb3a5d4a5111bba28bf3eac2f843",
+  "structured": {
+    "by_policy": {
+      "exact_restore": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 40209744,
+        "median_cuda_imbalance_ns": 1865440,
+        "median_first_collective_cuda_ns": 36250624,
+        "median_first_cuda_ns": 72164322,
+        "median_first_non_cuda_upper_bound_ns": 712,
+        "median_first_wall_ns": 72165200,
+        "median_steady_cuda_ns": 70982304,
+        "median_steady_cuda_p90_ns": 80555929,
+        "median_steady_non_cuda_upper_bound_ns": 1110,
+        "median_steady_wall_ns": 70983182,
+        "median_steady_wall_p90_ns": 80556860,
+        "median_wall_imbalance_ns": 1865209
+      },
+      "recompute": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 39746048,
+        "median_cuda_imbalance_ns": 1884754,
+        "median_first_collective_cuda_ns": 41405584,
+        "median_first_cuda_ns": 73548431,
+        "median_first_non_cuda_upper_bound_ns": 252,
+        "median_first_wall_ns": 73548492,
+        "median_steady_cuda_ns": 71843037,
+        "median_steady_cuda_p90_ns": 74080662,
+        "median_steady_non_cuda_upper_bound_ns": 1126,
+        "median_steady_wall_ns": 71843268,
+        "median_steady_wall_p90_ns": 74081242,
+        "median_wall_imbalance_ns": 1885378
+      }
+    },
+    "classification": "no_material_decode_regression",
+    "collective": {
+      "paired_median_ratio": 1.1000792302843536,
+      "paired_ratios": [
+        1.1000792302843536,
+        1.2939322573941954,
+        0.9763814804981656,
+        0.6724332881929816,
+        1.1469940357340684
+      ],
+      "ratio_of_medians": 1.0116664680724987
+    },
+    "first_step": {
+      "paired_median_ratio": 0.9894297583350983,
+      "paired_ratios": [
+        0.9941965907336346,
+        0.9894297583350983,
+        0.9719200529453547,
+        0.9311594287776489,
+        1.1822318121551938
+      ],
+      "ratio_of_medians": 0.9811921092821319
+    },
+    "generated_tokens": 8,
+    "measured_pairs": 5,
+    "non_cuda_upper_bound": {
+      "evidence_boundary": "step wall minus CUDA interval is an upper bound that combines host orchestration, launch gaps, and possible synchronization waiting",
+      "paired_median_ratio": 0.9536082474226805,
+      "paired_ratios": [
+        0.9536082474226805,
+        1.40125786163522,
+        0.8176991150442477,
+        1.1969407265774379,
+        0.8765541740674956
+      ],
+      "ratio_of_medians": 0.9857904085257548
+    },
+    "paired_repetitions": [
+      {
+        "collective_ratio": 1.1000792302843536,
+        "first_step_ratio": 0.9941965907336346,
+        "non_cuda_ratio": 0.9536082474226805,
+        "repetition": 0,
+        "steady_state_ratio": 0.9911088637715646
+      },
+      {
+        "collective_ratio": 1.2939322573941954,
+        "first_step_ratio": 0.9894297583350983,
+        "non_cuda_ratio": 1.40125786163522,
+        "repetition": 1,
+        "steady_state_ratio": 0.9972549304398034
+      },
+      {
+        "collective_ratio": 0.9763814804981656,
+        "first_step_ratio": 0.9719200529453547,
+        "non_cuda_ratio": 0.8176991150442477,
+        "repetition": 2,
+        "steady_state_ratio": 0.978302935772316
+      },
+      {
+        "collective_ratio": 0.6724332881929816,
+        "first_step_ratio": 0.9311594287776489,
+        "non_cuda_ratio": 1.1969407265774379,
+        "repetition": 3,
+        "steady_state_ratio": 0.9566969308801487
+      },
+      {
+        "collective_ratio": 1.1469940357340684,
+        "first_step_ratio": 1.1822318121551938,
+        "non_cuda_ratio": 0.8765541740674956,
+        "repetition": 4,
+        "steady_state_ratio": 1.0445968065937097
+      }
+    ],
+    "regenerated_summary_sha256": "e4c1c37824160211e5a53c739221c14b7702686f1b6be9dd22be5fb191e87f2a",
+    "representative_repetition": 0,
+    "schema_version": "qwen35.tp4-decode-internal-summary.v1",
+    "steady_state": {
+      "paired_median_ratio": 0.9911088637715646,
+      "paired_ratios": [
+        0.9911088637715646,
+        0.9972549304398034,
+        0.978302935772316,
+        0.9566969308801487,
+        1.0445968065937097
+      ],
+      "ratio_of_medians": 0.9880283007170554
+    },
+    "summary_sha256": "e4c1c37824160211e5a53c739221c14b7702686f1b6be9dd22be5fb191e87f2a",
+    "thresholds": {
+      "collective_absolute_ns": 500000,
+      "first_step_absolute_ns": 2000000,
+      "non_cuda_absolute_ns": 1000000,
+      "relative_regression": 1.03,
+      "steady_step_absolute_ns": 1000000
+    }
+  },
+  "worker_count": 12
+}

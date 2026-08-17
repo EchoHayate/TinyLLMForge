@@ -1,0 +1,44 @@
+{
+  "settings": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "text_file": "/data00/home/sitian/light-doc-cache-work/probe/task_quality_text.md",
+    "task_file": "/data00/home/sitian/light-doc-cache-work/probe/task_quality_tasks.json",
+    "policy_dir": "/data00/home/sitian/light-doc-cache-work/probe/task_quality_policy",
+    "output_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/task_quality_smoke_qwen3_0_6b_seed18_add_l8h0_qwen8bfixes_ridge",
+    "thresholds": "0.956",
+    "max_prompt_tokens": 1536,
+    "max_doc_tokens": 1200,
+    "bank_train_tokens": 512,
+    "ridge": 1.0,
+    "bank_method": "ridge",
+    "bank_train_epochs": 100,
+    "bank_train_lr": 0.001,
+    "bank_weight_decay": 0.0001,
+    "task_limit": 0,
+    "min_baseline_accuracy": 0.8,
+    "choice_scoring": "text_only",
+    "device": "auto",
+    "dtype": "auto"
+  },
+  "elapsed_s": 9.851683285087347,
+  "summary": [
+    {
+      "threshold": 0.956,
+      "tasks": 6,
+      "compressed_heads": 19,
+      "baseline_accuracy": 1.0,
+      "min_baseline_accuracy": 0.8,
+      "baseline_gate_pass": true,
+      "compact_accuracy": 1.0,
+      "agreement": 1.0,
+      "baseline_correct_tasks": 6,
+      "compact_accuracy_on_baseline_correct": 1.0,
+      "agreement_on_baseline_correct": 1.0,
+      "mean_answer_score_delta": 0.9474032380780008,
+      "mean_baseline_margin": 3.2662402861697046,
+      "mean_compact_margin": 2.6324692975428925,
+      "mean_bank_build_s": 0.09601895200709502
+    }
+  ],
+  "note": "This is a quality-only simulation. It keeps the full KV tensor shape, but selected heads are forced to attend only to their compact bank during decode scoring."
+}

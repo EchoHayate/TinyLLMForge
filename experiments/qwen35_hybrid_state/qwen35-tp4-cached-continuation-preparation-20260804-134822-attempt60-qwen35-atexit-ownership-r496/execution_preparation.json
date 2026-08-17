@@ -1,0 +1,31 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-134822-attempt60-qwen35-atexit-ownership-r496/authorization.json",
+  "claim_boundary": "cached-continuation authority only; no Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-134822-attempt60-qwen35-atexit-ownership-r496/executor_configuration.json",
+  "execution_performed": false,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-134543-attempt60-qwen35-atexit-ownership-r495/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-134822-attempt60-qwen35-atexit-ownership-r496/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 33189,
+    "master_port": 44659
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-134822-attempt60-qwen35-atexit-ownership-r496/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-134543-attempt60-qwen35-atexit-ownership-r495",
+  "root_pass_evidence": [
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-134543-attempt60-qwen35-atexit-ownership-r495/artifacts/tp4_real_root_logit_correctness.json",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-134543-attempt60-qwen35-atexit-ownership-r495/independent_verification.json"
+  ],
+  "run_tag": "qwen35-tp4-cached-continuation-20260804-134822-attempt60-qwen35-atexit-ownership-r496",
+  "schema_version": "qwen35.tp4-cached-continuation-r496-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-134543-attempt60-qwen35-atexit-ownership-r495",
+  "source_tree_sha256": "2c89a4543da0089a7b2d00266e31f32ae13dbd19c5cac0051f0616a03c23e223"
+}

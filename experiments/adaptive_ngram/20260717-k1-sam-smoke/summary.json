@@ -1,0 +1,115 @@
+{
+  "adaptive_exercise_failures": [],
+  "adaptive_exercise_pass": true,
+  "adaptive_selected_levels": [
+    1,
+    2,
+    4
+  ],
+  "adaptive_transition_reasons": [
+    "full_accept_streak",
+    "hold",
+    "promote",
+    "weak_acceptance",
+    "zero_accept"
+  ],
+  "adaptive_vs_baseline": -0.13453421358362272,
+  "adaptive_vs_best_fixed": -0.10701347462193822,
+  "adaptive_waste_reduction_vs_k4": 0.375,
+  "adaptive_zero_cost_reduction_vs_k4": 0.16382300538903916,
+  "aggregate_throughput_by_repetition": {
+    "adaptive": [
+      29.700752641473894
+    ],
+    "baseline": [
+      34.31765080449385
+    ],
+    "fixed_k1": [
+      33.26002330091101
+    ],
+    "fixed_k2": [
+      29.639534519968517
+    ],
+    "fixed_k4": [
+      29.641574498995258
+    ]
+  },
+  "aggregate_throughput_medians": {
+    "adaptive": 29.700752641473894,
+    "baseline": 34.31765080449385,
+    "fixed_k1": 33.26002330091101,
+    "fixed_k2": 29.639534519968517,
+    "fixed_k4": 29.641574498995258
+  },
+  "best_fixed_policy": "fixed_k1",
+  "correctness_failures": [],
+  "correctness_pass": true,
+  "decision": "NO_GO",
+  "decision_reasons": [
+    "adaptive_vs_baseline_gate_failed",
+    "adaptive_vs_fixed_gate_failed",
+    "natural_or_transition_regression"
+  ],
+  "expected_rows": 20,
+  "observed_rows": 20,
+  "per_prompt_throughput_medians": {
+    "natural_prose": {
+      "adaptive": 32.81932004155184,
+      "baseline": 34.46292072024089,
+      "fixed_k1": 32.729486070685695,
+      "fixed_k2": 33.46777038975702,
+      "fixed_k4": 33.56293216218395
+    },
+    "repeated_long_context": {
+      "adaptive": 26.895001642435307,
+      "baseline": 35.690969003901444,
+      "fixed_k1": 34.45960506023296,
+      "fixed_k2": 26.52254289042394,
+      "fixed_k4": 27.067268713898688
+    },
+    "structured_mixed": {
+      "adaptive": 32.69789240113846,
+      "baseline": 32.886006616117676,
+      "fixed_k1": 33.904566533480086,
+      "fixed_k2": 33.480988965786395,
+      "fixed_k4": 33.008762006266466
+    },
+    "transition_heavy": {
+      "adaptive": 28.53676253147342,
+      "baseline": 33.968673451974695,
+      "fixed_k1": 31.91374443938044,
+      "fixed_k2": 27.90710896979379,
+      "fixed_k4": 27.474221204806145
+    }
+  },
+  "protected_prompt_ratios": {
+    "natural_prose": 0.9523081432351228,
+    "transition_heavy": 0.8400905785096091
+  },
+  "schema_version": 1,
+  "structural_failures": [],
+  "thresholds": {
+    "adaptive_near_best_fixed_min": -0.01,
+    "adaptive_vs_baseline_min": 0.05,
+    "adaptive_vs_best_fixed_min": 0.02,
+    "adaptive_waste_reduction_vs_k4_min": 0.2,
+    "adaptive_zero_cost_reduction_vs_k4_min": 0.15,
+    "natural_transition_ratio_min": 0.95
+  },
+  "trajectory_failures": [],
+  "trajectory_replay_pass": true,
+  "wasted_draft_tokens_medians": {
+    "adaptive": 15.0,
+    "baseline": 0.0,
+    "fixed_k1": 6.0,
+    "fixed_k2": 11.0,
+    "fixed_k4": 24.0
+  },
+  "zero_accept_verify_ms_medians": {
+    "adaptive": 180.92313781380653,
+    "baseline": 0.0,
+    "fixed_k1": 180.65252527594566,
+    "fixed_k2": 172.52686247229576,
+    "fixed_k4": 216.36942774057388
+  }
+}

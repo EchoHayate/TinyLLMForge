@@ -1,0 +1,678 @@
+{
+  "claim_boundary": "diagnostic rank receipts only; no cached-continuation correctness, Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "cleanup": {
+    "owned_children_remaining": [],
+    "process_group_destroyed": true,
+    "rank_cleanup_receipts": [
+      {
+        "process_group_destroyed": true,
+        "rank": 0
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 1
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 2
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 3
+      }
+    ],
+    "rank_exit_codes": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "official_vs_recompute": [
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_core_full",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        2048
+      ]
+    },
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 992,
+      "first_nonzero_left": 0.1396484375,
+      "first_nonzero_right": 0.140625,
+      "max_abs_diff": 0.0009765625,
+      "mean_abs_diff": 4.76837158203125e-07,
+      "name": "layer0_gate_full",
+      "nonzero_count": 1,
+      "shape": [
+        1,
+        2048
+      ]
+    },
+    {
+      "allclose": false,
+      "first_nonzero_flat_index": 992,
+      "first_nonzero_left": 0.015625,
+      "first_nonzero_right": 0.0157470703125,
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 5.960464477539063e-08,
+      "name": "layer0_gated_full",
+      "nonzero_count": 1,
+      "shape": [
+        1,
+        2048
+      ]
+    }
+  ],
+  "official_vs_recompute_first_mismatch": "layer0_gate_full",
+  "receipt_inventory": {
+    "0": [
+      {
+        "index": 0,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-00-core-0000-chunk-tokens-1024.pt",
+        "rank": 0,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-00-core-0001-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-00-core-0002-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-00-core-0003-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-00-gate-0000-chunk-tokens-1024.pt",
+        "rank": 0,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-00-gate-0001-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-00-gate-0002-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-00-gate-0003-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-00-gated-0000-chunk-tokens-1024.pt",
+        "rank": 0,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-00-gated-0001-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-00-gated-0002-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-00-gated-0003-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-00-weight-0000-chunk-tokens-1024.pt",
+        "rank": 0,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-00-weight-0001-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-00-weight-0002-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-00-weight-0003-chunk-tokens-64.pt",
+        "rank": 0,
+        "token_count": 64
+      }
+    ],
+    "1": [
+      {
+        "index": 0,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-01-core-0000-chunk-tokens-1024.pt",
+        "rank": 1,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-01-core-0001-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-01-core-0002-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-01-core-0003-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-01-gate-0000-chunk-tokens-1024.pt",
+        "rank": 1,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-01-gate-0001-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-01-gate-0002-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-01-gate-0003-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-01-gated-0000-chunk-tokens-1024.pt",
+        "rank": 1,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-01-gated-0001-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-01-gated-0002-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-01-gated-0003-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-01-weight-0000-chunk-tokens-1024.pt",
+        "rank": 1,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-01-weight-0001-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-01-weight-0002-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-01-weight-0003-chunk-tokens-64.pt",
+        "rank": 1,
+        "token_count": 64
+      }
+    ],
+    "2": [
+      {
+        "index": 0,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-02-core-0000-chunk-tokens-1024.pt",
+        "rank": 2,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-02-core-0001-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-02-core-0002-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-02-core-0003-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-02-gate-0000-chunk-tokens-1024.pt",
+        "rank": 2,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-02-gate-0001-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-02-gate-0002-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-02-gate-0003-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-02-gated-0000-chunk-tokens-1024.pt",
+        "rank": 2,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-02-gated-0001-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-02-gated-0002-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-02-gated-0003-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-02-weight-0000-chunk-tokens-1024.pt",
+        "rank": 2,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-02-weight-0001-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-02-weight-0002-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-02-weight-0003-chunk-tokens-64.pt",
+        "rank": 2,
+        "token_count": 64
+      }
+    ],
+    "3": [
+      {
+        "index": 0,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-03-core-0000-chunk-tokens-1024.pt",
+        "rank": 3,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-03-core-0001-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-03-core-0002-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "core",
+        "mode": "chunk",
+        "path": "rank-03-core-0003-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-03-gate-0000-chunk-tokens-1024.pt",
+        "rank": 3,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-03-gate-0001-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-03-gate-0002-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gate",
+        "mode": "chunk",
+        "path": "rank-03-gate-0003-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-03-gated-0000-chunk-tokens-1024.pt",
+        "rank": 3,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-03-gated-0001-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-03-gated-0002-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "gated",
+        "mode": "chunk",
+        "path": "rank-03-gated-0003-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 0,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-03-weight-0000-chunk-tokens-1024.pt",
+        "rank": 3,
+        "token_count": 1024
+      },
+      {
+        "index": 1,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-03-weight-0001-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 2,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-03-weight-0002-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      },
+      {
+        "index": 3,
+        "kind": "weight",
+        "mode": "chunk",
+        "path": "rank-03-weight-0003-chunk-tokens-64.pt",
+        "rank": 3,
+        "token_count": 64
+      }
+    ]
+  },
+  "recompute_vs_restore": [
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_core_full",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        2048
+      ]
+    },
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_gate_full",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        2048
+      ]
+    },
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_gated_full",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        2048
+      ]
+    }
+  ],
+  "recompute_vs_restore_first_mismatch": null,
+  "schema_version": "qwen35.tp4-cached-rank-input-receipts.v1",
+  "weight_comparisons": [
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_norm_weight_rank0",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        128
+      ]
+    },
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_norm_weight_rank1",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        128
+      ]
+    },
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_norm_weight_rank2",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        128
+      ]
+    },
+    {
+      "allclose": true,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "name": "layer0_norm_weight_rank3",
+      "nonzero_count": 0,
+      "shape": [
+        1,
+        128
+      ]
+    }
+  ]
+}

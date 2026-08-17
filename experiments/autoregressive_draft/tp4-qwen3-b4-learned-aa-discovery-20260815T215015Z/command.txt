@@ -1,0 +1,14 @@
+REMOTE_HOST=sitian@10.232.195.203
+SSH_CONTROL_PATH=/tmp/ssh-sitian-learned-aa-20260815
+REMOTE_PYTHON=/data00/home/sitian/miniconda3/envs/py311/bin/python
+REMOTE_PACKAGE_ROOT=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/run_packages
+TARGET_MODEL=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/target-qwen3-1.7b
+DRAFT_MODEL=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/draft
+GPU_INDICES=3,4,6,7
+DIST_PORT=29661
+MASTER_PORT=29761
+HARD_TIMEOUT_SECONDS=7200
+EPOCH_ORDER=learned_a,learned_b
+PRIME_EACH_EPOCH=1
+BUNDLE_ROLE=discovery
+REMOTE_RUN=/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/run/tp4-qwen3-b4-learned-aa-discovery-20260815T215015Z

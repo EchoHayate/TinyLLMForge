@@ -1,0 +1,57 @@
+{
+  "settings": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "text_file": "/data00/home/sitian/light-doc-cache-work/TinyLLMForge/docs/kv-sparse-attention.md",
+    "task_file": "/data00/home/sitian/light-doc-cache-work/probe/task_quality_tasks.json",
+    "policy_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/policy_am_qwen3_0_6b_s1536_holdout_constrained_cap24_r1.0",
+    "output_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/task_quality_smoke_qwen3_0_6b_s1536_constrained_cap24_tasks_v2",
+    "thresholds": "0.45,0.50",
+    "max_prompt_tokens": 1536,
+    "max_doc_tokens": 1200,
+    "bank_train_tokens": 512,
+    "ridge": 1.0,
+    "task_limit": 0,
+    "min_baseline_accuracy": 0.8,
+    "choice_scoring": "text_only",
+    "device": "auto",
+    "dtype": "auto"
+  },
+  "elapsed_s": 24.726274248212576,
+  "summary": [
+    {
+      "threshold": 0.45,
+      "tasks": 9,
+      "compressed_heads": 23,
+      "baseline_accuracy": 1.0,
+      "min_baseline_accuracy": 0.8,
+      "baseline_gate_pass": true,
+      "compact_accuracy": 0.7777777777777778,
+      "agreement": 0.7777777777777778,
+      "baseline_correct_tasks": 9,
+      "compact_accuracy_on_baseline_correct": 0.7777777777777778,
+      "agreement_on_baseline_correct": 0.7777777777777778,
+      "mean_answer_score_delta": -1.7737746006973287,
+      "mean_baseline_margin": 3.231625120214529,
+      "mean_compact_margin": 2.3487483285922384,
+      "mean_bank_build_s": 0.07655338653259808
+    },
+    {
+      "threshold": 0.5,
+      "tasks": 9,
+      "compressed_heads": 11,
+      "baseline_accuracy": 1.0,
+      "min_baseline_accuracy": 0.8,
+      "baseline_gate_pass": true,
+      "compact_accuracy": 1.0,
+      "agreement": 1.0,
+      "baseline_correct_tasks": 9,
+      "compact_accuracy_on_baseline_correct": 1.0,
+      "agreement_on_baseline_correct": 1.0,
+      "mean_answer_score_delta": -0.23225021664337772,
+      "mean_baseline_margin": 3.231625120214529,
+      "mean_compact_margin": 3.1627595994120585,
+      "mean_bank_build_s": 0.032070964160892695
+    }
+  ],
+  "note": "This is a quality-only simulation. It keeps the full KV tensor shape, but selected heads are forced to attend only to their compact bank during decode scoring."
+}

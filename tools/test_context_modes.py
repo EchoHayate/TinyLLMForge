@@ -105,6 +105,43 @@ def test_reset_context_returns_decode_default():
     assert context.get_context().is_prefill is False
 
 
+def test_prefill_context_preserves_attention_reference_lengths():
+    context.set_context(
+        mode="prefill",
+        prefill_attention_reference_lens=(1088, 512),
+    )
+
+    current = context.get_context()
+
+    assert current.prefill_attention_reference_lens == (1088, 512)
+
+
+def test_spec_verify_context_preserves_blockwise_logical_metadata():
+    context.set_context(
+        mode="spec_verify",
+        kv_offload_manager="manager",
+        kv_offload_blockwise_decode=True,
+        kv_offload_blockwise_blocks=8,
+        kv_offload_logical_block_tables=[[10, 11]],
+        kv_offload_context_lens=[300],
+        kv_offload_write_blocks=[11],
+        spec_verify_query_lens=(4,),
+    )
+
+    current = context.get_context()
+
+    assert current.kv_offload_manager == "manager"
+    assert current.kv_offload_blockwise_decode is True
+    assert current.kv_offload_blockwise_blocks == 8
+    assert current.kv_offload_logical_block_tables == [[10, 11]]
+    assert current.kv_offload_context_lens == [300]
+    assert current.kv_offload_write_blocks == [11]
+    assert current.spec_verify_query_lens == (4,)
+    assert current.kv_offload_spec_verify_window_plan_cache is None
+    assert current.kv_offload_spec_verify_position_template_cache is None
+    assert current.kv_offload_spec_verify_window_mask_cache is None
+
+
 def test_temporary_flash_attn_split_restores_previous_context():
     context.set_context(mode="decode", flash_attn_num_splits=0)
     original = context.get_context()
@@ -141,6 +178,8 @@ def main():
     test_legacy_boolean_callers_keep_current_behavior()
     test_conflicting_mode_and_boolean_fail()
     test_reset_context_returns_decode_default()
+    test_prefill_context_preserves_attention_reference_lengths()
+    test_spec_verify_context_preserves_blockwise_logical_metadata()
     test_temporary_flash_attn_split_restores_previous_context()
     test_temporary_flash_attn_split_restores_after_exception()
     test_temporary_flash_attn_split_supports_nested_scopes()

@@ -1,0 +1,2709 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-8B",
+    "task": "arithmetic",
+    "train_cases": 64,
+    "eval_cases": 32,
+    "context_len": 512,
+    "depth": 0.5,
+    "latent_steps": 1,
+    "max_new_tokens": 128,
+    "epochs": 80,
+    "batch_size": 8,
+    "lr": 0.0001,
+    "weight_decay": 0.0,
+    "hidden_loss_weight": 1.0,
+    "logit_loss_weight": 0.0,
+    "soft_step_epochs": 0,
+    "soft_step_lr": 1e-05,
+    "seed": 0,
+    "train_device": "cpu",
+    "max_model_len": 1024,
+    "gpu_memory_utilization": 0.7,
+    "skip_eval": false,
+    "checkpoint": "needle_sq_results/latent_projector_c23_discrete_lookup_renderer.pt",
+    "out_json": "needle_sq_results/latent_projector_c23_discrete_lookup_renderer.json",
+    "hf_teacher_forcing": false,
+    "hf_device": "cuda",
+    "hf_dtype": "bfloat16",
+    "step_hidden_loss_weight": 0.0,
+    "step_hidden_mode": "input",
+    "projector_kind": "shared",
+    "max_latent_steps": 16,
+    "latent_step_curriculum": "none",
+    "state_supervision_weight": 0.0,
+    "state_min_value": -256,
+    "state_max_value": 2048,
+    "state_embedding_loss_weight": 0.0,
+    "state_embedding_mse_weight": 0.1,
+    "arithmetic_state_machine_weight": 0.0,
+    "arithmetic_state_machine_value_weight": 1.0,
+    "arithmetic_state_machine_phase_weight": 0.2,
+    "arithmetic_state_machine_source": "output",
+    "arithmetic_state_machine_no_repeat_final": false,
+    "pure_latent_arithmetic": false,
+    "pure_hidden_size": 128,
+    "pure_numeric_representation": "id_embedding",
+    "pure_arith_a_min": 20,
+    "pure_arith_a_max": 90,
+    "pure_arith_b_min": 10,
+    "pure_arith_b_max": 80,
+    "pure_arith_c_min": 2,
+    "pure_arith_c_max": 9,
+    "pure_arith_d_min": 10,
+    "pure_arith_d_max": 120,
+    "pure_arith_value_weight": 1.0,
+    "pure_arith_phase_weight": 0.0,
+    "pure_arith_regression_weight": 0.0,
+    "pure_arith_digit_weight": 0.0,
+    "pure_digit_arithmetic": false,
+    "pure_digit_mode": "deterministic",
+    "pure_digit_num_digits": 4,
+    "pure_digit_operator_hidden_size": 64,
+    "pure_digit_operator_depth": 2,
+    "pure_digit_combo_heldout_frac": 0.2,
+    "pure_digit_combo_split_seed": 0,
+    "pure_digit_carry_loss_weight": 1.0,
+    "oracle_decode_bridge": false,
+    "decode_bridge_hidden_size": 1024,
+    "decode_bridge_depth": 2,
+    "textual_oracle_eval": false,
+    "textual_oracle_mode": "final_answer",
+    "embedding_oracle_eval": false,
+    "embedding_oracle_mode": "final_abs",
+    "digit_slot_renderer_eval": false,
+    "digit_slot_renderer_input_mode": "inputs_embeds",
+    "digit_slot_predictor": false,
+    "digit_slot_predictor_hidden_size": 256,
+    "digit_slot_predictor_depth": 2,
+    "digit_slot_digit_loss_weight": 1.0,
+    "digit_slot_decode_input_mode": "inputs_embeds",
+    "primitive_digit_renderer_eval": false,
+    "primitive_digit_renderer_input_mode": "inputs_embeds",
+    "operator_vm_benchmark": false,
+    "operator_vm_input_mode": "inputs_embeds",
+    "operator_vm_baseline_max_new_tokens": 0,
+    "operator_vm_final_max_new_tokens": 8,
+    "minimal_embedding_suffix_benchmark": false,
+    "minimal_embedding_suffix_modes": [
+      "final_abs",
+      "sign_final_abs",
+      "signed_answer"
+    ],
+    "discrete_lookup_renderer": true,
+    "compact_renderer_bridge": false,
+    "compact_renderer_hidden_size": 1024,
+    "compact_renderer_depth": 2,
+    "compact_renderer_cosine_weight": 1.0,
+    "compact_renderer_token_ce_weight": 0.0,
+    "compact_renderer_token_ce_temperature": 0.05,
+    "compact_renderer_run_variable": false,
+    "compact_renderer_fixed_ks": [
+      8,
+      4,
+      2,
+      1
+    ],
+    "compact_renderer_fixed_epochs": 0,
+    "compact_renderer_fixed_lr": 0.0,
+    "compact_renderer_include_c21_reference": false,
+    "canonical_embedding_bridge": false,
+    "canonical_embedding_mode": "final_abs",
+    "canonical_embedding_cosine_weight": 1.0,
+    "canonical_embedding_token_ce_weight": 0.0,
+    "canonical_embedding_token_ce_temperature": 0.05,
+    "canonical_embedding_target_tokens": 0,
+    "canonical_embedding_decode_mode": "continuous",
+    "bridge_supervision_weight": 1.0
+  },
+  "benchmark": "C2.3 deterministic discrete lookup renderer",
+  "eval_cases": 32,
+  "num_digits": 4,
+  "operator_vm_final_max_new_tokens": 8,
+  "renderer": "slot -> signed_answer suffix -> tokenizer IDs -> embedding lookup",
+  "text_input_mode": "inputs_embeds",
+  "elapsed_s": 6.689445495605469,
+  "discrete_lookup_renderer": {
+    "accuracy": 1.0,
+    "contains_accuracy": 1.0,
+    "avg_generated_tokens": 4.0,
+    "avg_latency_s": 0.20503485202789307,
+    "avg_prefill_tokens": 521.21875,
+    "avg_total_kv_tokens": 525.21875,
+    "avg_llm_latency_s": 0.187911756336689,
+    "operator_overhead_s": 0.0075135305523872375,
+    "avg_injected_tokens": 10.0,
+    "avg_renderer_overhead_s": 0.009609565138816833,
+    "avg_non_llm_overhead_s": 0.01712309569120407,
+    "slot_exact_accuracy": 1.0,
+    "token_identity_accuracy": 1.0
+  },
+  "c21_signed_answer_equivalence": {
+    "canonical_suffix_mode": "signed_answer",
+    "uses_tokenizer_encode_plus_embedding_lookup": true,
+    "token_identity_accuracy": 1.0,
+    "avg_injected_tokens": 10.0
+  },
+  "details": [
+    {
+      "expected": "116",
+      "discrete_lookup_renderer": {
+        "answer_only": "116",
+        "answer": "116",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 522,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 526,
+        "latency_s": 0.79457688331604,
+        "llm_latency_s": 0.3555278778076172,
+        "operator_overhead_s": 0.13962793350219727,
+        "renderer_overhead_s": 0.2994210720062256,
+        "non_llm_overhead_s": 0.43904900550842285,
+        "suffix": "\nanswer=116\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          16,
+          21,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 116"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          1,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          1,
+          6
+        ],
+        "rendered_abs": "116",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 116,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          1,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          1,
+          6
+        ],
+        "rendered_abs": "116"
+      },
+      "meta": {
+        "a": 58,
+        "b": 14,
+        "c": 3,
+        "d": 100,
+        "teacher_steps": [
+          " (58 + 14) = 72;",
+          " 72 * 3 = 216;",
+          " 216 - 100 = 116.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "85",
+      "discrete_lookup_renderer": {
+        "answer_only": "85",
+        "answer": "85",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 9,
+        "total_kv_tokens": 524,
+        "latency_s": 0.14335894584655762,
+        "llm_latency_s": 0.13991141319274902,
+        "operator_overhead_s": 0.0031731128692626953,
+        "renderer_overhead_s": 0.00027441978454589844,
+        "non_llm_overhead_s": 0.0034475326538085938,
+        "suffix": "\nanswer=85\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          23,
+          20,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 85"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          8,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          8,
+          5
+        ],
+        "rendered_abs": "85",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 85,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          8,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          8,
+          5
+        ],
+        "rendered_abs": "85"
+      },
+      "meta": {
+        "a": 23,
+        "b": 10,
+        "c": 6,
+        "d": 113,
+        "teacher_steps": [
+          " (23 + 10) = 33;",
+          " 33 * 6 = 198;",
+          " 198 - 113 = 85.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "423",
+      "discrete_lookup_renderer": {
+        "answer_only": "423",
+        "answer": "423",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 522,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 526,
+        "latency_s": 0.1908416748046875,
+        "llm_latency_s": 0.18752789497375488,
+        "operator_overhead_s": 0.003046751022338867,
+        "renderer_overhead_s": 0.00026702880859375,
+        "non_llm_overhead_s": 0.003313779830932617,
+        "suffix": "\nanswer=423\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          19,
+          17,
+          18,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 423"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          2,
+          4,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          4,
+          2,
+          3
+        ],
+        "rendered_abs": "423",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 423,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          2,
+          4,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          4,
+          2,
+          3
+        ],
+        "rendered_abs": "423"
+      },
+      "meta": {
+        "a": 84,
+        "b": 51,
+        "c": 4,
+        "d": 117,
+        "teacher_steps": [
+          " (84 + 51) = 135;",
+          " 135 * 4 = 540;",
+          " 540 - 117 = 423.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "63",
+      "discrete_lookup_renderer": {
+        "answer_only": "63",
+        "answer": "63",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 9,
+        "total_kv_tokens": 524,
+        "latency_s": 0.15228557586669922,
+        "llm_latency_s": 0.14899778366088867,
+        "operator_overhead_s": 0.003027200698852539,
+        "renderer_overhead_s": 0.0002605915069580078,
+        "non_llm_overhead_s": 0.003287792205810547,
+        "suffix": "\nanswer=63\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          21,
+          18,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 63"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          6,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          6,
+          3
+        ],
+        "rendered_abs": "63",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 63,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          6,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          6,
+          3
+        ],
+        "rendered_abs": "63"
+      },
+      "meta": {
+        "a": 33,
+        "b": 58,
+        "c": 2,
+        "d": 119,
+        "teacher_steps": [
+          " (33 + 58) = 91;",
+          " 91 * 2 = 182;",
+          " 182 - 119 = 63.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "343",
+      "discrete_lookup_renderer": {
+        "answer_only": "343",
+        "answer": "343",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.20992612838745117,
+        "llm_latency_s": 0.20609498023986816,
+        "operator_overhead_s": 0.003533601760864258,
+        "renderer_overhead_s": 0.00029754638671875,
+        "non_llm_overhead_s": 0.003831148147583008,
+        "suffix": "\nanswer=343\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          19,
+          18,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 343"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          4,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          4,
+          3
+        ],
+        "rendered_abs": "343",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 343,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          4,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          4,
+          3
+        ],
+        "rendered_abs": "343"
+      },
+      "meta": {
+        "a": 59,
+        "b": 12,
+        "c": 5,
+        "d": 12,
+        "teacher_steps": [
+          " (59 + 12) = 71;",
+          " 71 * 5 = 355;",
+          " 355 - 12 = 343.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "323",
+      "discrete_lookup_renderer": {
+        "answer_only": "323",
+        "answer": "323",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 522,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 526,
+        "latency_s": 0.2074449062347412,
+        "llm_latency_s": 0.20342636108398438,
+        "operator_overhead_s": 0.0037147998809814453,
+        "renderer_overhead_s": 0.0003037452697753906,
+        "non_llm_overhead_s": 0.004018545150756836,
+        "suffix": "\nanswer=323\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          17,
+          18,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 323"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          2,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          2,
+          3
+        ],
+        "rendered_abs": "323",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 323,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          3,
+          2,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          2,
+          3
+        ],
+        "rendered_abs": "323"
+      },
+      "meta": {
+        "a": 62,
+        "b": 44,
+        "c": 4,
+        "d": 101,
+        "teacher_steps": [
+          " (62 + 44) = 106;",
+          " 106 * 4 = 424;",
+          " 424 - 101 = 323.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "380",
+      "discrete_lookup_renderer": {
+        "answer_only": "380",
+        "answer": "380",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.19910669326782227,
+        "llm_latency_s": 0.19581031799316406,
+        "operator_overhead_s": 0.0030372142791748047,
+        "renderer_overhead_s": 0.00025916099548339844,
+        "non_llm_overhead_s": 0.003296375274658203,
+        "suffix": "\nanswer=380\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          23,
+          15,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 380"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          8,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          8,
+          0
+        ],
+        "rendered_abs": "380",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 380,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          8,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          8,
+          0
+        ],
+        "rendered_abs": "380"
+      },
+      "meta": {
+        "a": 35,
+        "b": 21,
+        "c": 7,
+        "d": 12,
+        "teacher_steps": [
+          " (35 + 21) = 56;",
+          " 56 * 7 = 392;",
+          " 392 - 12 = 380.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "145",
+      "discrete_lookup_renderer": {
+        "answer_only": "145",
+        "answer": "145",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.20632362365722656,
+        "llm_latency_s": 0.20297789573669434,
+        "operator_overhead_s": 0.0030786991119384766,
+        "renderer_overhead_s": 0.00026702880859375,
+        "non_llm_overhead_s": 0.0033457279205322266,
+        "suffix": "\nanswer=145\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          19,
+          20,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 145"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          4,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          4,
+          5
+        ],
+        "rendered_abs": "145",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 145,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          4,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          4,
+          5
+        ],
+        "rendered_abs": "145"
+      },
+      "meta": {
+        "a": 72,
+        "b": 29,
+        "c": 2,
+        "d": 57,
+        "teacher_steps": [
+          " (72 + 29) = 101;",
+          " 101 * 2 = 202;",
+          " 202 - 57 = 145.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "794",
+      "discrete_lookup_renderer": {
+        "answer_only": "794",
+        "answer": "794",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.2089688777923584,
+        "llm_latency_s": 0.204345703125,
+        "operator_overhead_s": 0.0043125152587890625,
+        "renderer_overhead_s": 0.00031065940856933594,
+        "non_llm_overhead_s": 0.0046231746673583984,
+        "suffix": "\nanswer=794\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          22,
+          24,
+          19,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 794"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          9,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          9,
+          4
+        ],
+        "rendered_abs": "794",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 794,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          9,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          9,
+          4
+        ],
+        "rendered_abs": "794"
+      },
+      "meta": {
+        "a": 79,
+        "b": 62,
+        "c": 6,
+        "d": 52,
+        "teacher_steps": [
+          " (79 + 62) = 141;",
+          " 141 * 6 = 846;",
+          " 846 - 52 = 794.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1221",
+      "discrete_lookup_renderer": {
+        "answer_only": "1221",
+        "answer": "1221",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 522,
+        "injected_embedding_tokens": 11,
+        "total_kv_tokens": 527,
+        "latency_s": 0.21495270729064941,
+        "llm_latency_s": 0.21153616905212402,
+        "operator_overhead_s": 0.0031309127807617188,
+        "renderer_overhead_s": 0.0002856254577636719,
+        "non_llm_overhead_s": 0.0034165382385253906,
+        "suffix": "\nanswer=1221\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          17,
+          17,
+          16,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 1221"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "rendered_abs": "1221",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 1221,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "rendered_abs": "1221"
+      },
+      "meta": {
+        "a": 68,
+        "b": 77,
+        "c": 9,
+        "d": 84,
+        "teacher_steps": [
+          " (68 + 77) = 145;",
+          " 145 * 9 = 1305;",
+          " 1305 - 84 = 1221.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "225",
+      "discrete_lookup_renderer": {
+        "answer_only": "225",
+        "answer": "225",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17754697799682617,
+        "llm_latency_s": 0.1740710735321045,
+        "operator_overhead_s": 0.0032126903533935547,
+        "renderer_overhead_s": 0.000263214111328125,
+        "non_llm_overhead_s": 0.0034759044647216797,
+        "suffix": "\nanswer=225\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          17,
+          17,
+          20,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 225"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          2,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          2,
+          5
+        ],
+        "rendered_abs": "225",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 225,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          2,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          2,
+          5
+        ],
+        "rendered_abs": "225"
+      },
+      "meta": {
+        "a": 60,
+        "b": 31,
+        "c": 3,
+        "d": 48,
+        "teacher_steps": [
+          " (60 + 31) = 91;",
+          " 91 * 3 = 273;",
+          " 273 - 48 = 225.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1179",
+      "discrete_lookup_renderer": {
+        "answer_only": "1179",
+        "answer": "1179",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 523,
+        "injected_embedding_tokens": 11,
+        "total_kv_tokens": 528,
+        "latency_s": 0.21103906631469727,
+        "llm_latency_s": 0.20781493186950684,
+        "operator_overhead_s": 0.00298309326171875,
+        "renderer_overhead_s": 0.0002410411834716797,
+        "non_llm_overhead_s": 0.0032241344451904297,
+        "suffix": "\nanswer=1179\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          16,
+          22,
+          24,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 1179"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          9,
+          7,
+          1,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          1,
+          7,
+          9
+        ],
+        "rendered_abs": "1179",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 1179,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          9,
+          7,
+          1,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          1,
+          7,
+          9
+        ],
+        "rendered_abs": "1179"
+      },
+      "meta": {
+        "a": 83,
+        "b": 79,
+        "c": 8,
+        "d": 117,
+        "teacher_steps": [
+          " (83 + 79) = 162;",
+          " 162 * 8 = 1296;",
+          " 1296 - 117 = 1179.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "370",
+      "discrete_lookup_renderer": {
+        "answer_only": "370",
+        "answer": "370",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17397737503051758,
+        "llm_latency_s": 0.17070984840393066,
+        "operator_overhead_s": 0.003022909164428711,
+        "renderer_overhead_s": 0.0002446174621582031,
+        "non_llm_overhead_s": 0.003267526626586914,
+        "suffix": "\nanswer=370\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          22,
+          15,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 370"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          7,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          7,
+          0
+        ],
+        "rendered_abs": "370",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 370,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          7,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          7,
+          0
+        ],
+        "rendered_abs": "370"
+      },
+      "meta": {
+        "a": 29,
+        "b": 59,
+        "c": 5,
+        "d": 70,
+        "teacher_steps": [
+          " (29 + 59) = 88;",
+          " 88 * 5 = 440;",
+          " 440 - 70 = 370.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "208",
+      "discrete_lookup_renderer": {
+        "answer_only": "208",
+        "answer": "208",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17815494537353516,
+        "llm_latency_s": 0.17480087280273438,
+        "operator_overhead_s": 0.0030670166015625,
+        "renderer_overhead_s": 0.00028705596923828125,
+        "non_llm_overhead_s": 0.0033540725708007812,
+        "suffix": "\nanswer=208\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          17,
+          15,
+          23,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 208"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          8,
+          0,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          0,
+          8
+        ],
+        "rendered_abs": "208",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 208,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          8,
+          0,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          0,
+          8
+        ],
+        "rendered_abs": "208"
+      },
+      "meta": {
+        "a": 30,
+        "b": 39,
+        "c": 4,
+        "d": 68,
+        "teacher_steps": [
+          " (30 + 39) = 69;",
+          " 69 * 4 = 276;",
+          " 276 - 68 = 208.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "74",
+      "discrete_lookup_renderer": {
+        "answer_only": "74",
+        "answer": "74",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 3,
+        "prefill_tokens": 520,
+        "injected_embedding_tokens": 9,
+        "total_kv_tokens": 523,
+        "latency_s": 0.14104557037353516,
+        "llm_latency_s": 0.13770794868469238,
+        "operator_overhead_s": 0.00308990478515625,
+        "renderer_overhead_s": 0.00024771690368652344,
+        "non_llm_overhead_s": 0.0033376216888427734,
+        "suffix": "\nanswer=74\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          22,
+          19,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 74"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          7,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          7,
+          4
+        ],
+        "rendered_abs": "74",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 74,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          7,
+          0,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          0,
+          7,
+          4
+        ],
+        "rendered_abs": "74"
+      },
+      "meta": {
+        "a": 27,
+        "b": 52,
+        "c": 2,
+        "d": 84,
+        "teacher_steps": [
+          " (27 + 52) = 79;",
+          " 79 * 2 = 158;",
+          " 158 - 84 = 74.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "341",
+      "discrete_lookup_renderer": {
+        "answer_only": "341",
+        "answer": "341",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17545533180236816,
+        "llm_latency_s": 0.17226862907409668,
+        "operator_overhead_s": 0.0029609203338623047,
+        "renderer_overhead_s": 0.0002257823944091797,
+        "non_llm_overhead_s": 0.0031867027282714844,
+        "suffix": "\nanswer=341\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          19,
+          16,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 341"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          4,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          4,
+          1
+        ],
+        "rendered_abs": "341",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 341,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          4,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          4,
+          1
+        ],
+        "rendered_abs": "341"
+      },
+      "meta": {
+        "a": 24,
+        "b": 76,
+        "c": 4,
+        "d": 59,
+        "teacher_steps": [
+          " (24 + 76) = 100;",
+          " 100 * 4 = 400;",
+          " 400 - 59 = 341.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "526",
+      "discrete_lookup_renderer": {
+        "answer_only": "526",
+        "answer": "526",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17287755012512207,
+        "llm_latency_s": 0.16970252990722656,
+        "operator_overhead_s": 0.002948760986328125,
+        "renderer_overhead_s": 0.0002262592315673828,
+        "non_llm_overhead_s": 0.003175020217895508,
+        "suffix": "\nanswer=526\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          20,
+          17,
+          21,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 526"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          2,
+          5,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          5,
+          2,
+          6
+        ],
+        "rendered_abs": "526",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 526,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          2,
+          5,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          5,
+          2,
+          6
+        ],
+        "rendered_abs": "526"
+      },
+      "meta": {
+        "a": 74,
+        "b": 71,
+        "c": 4,
+        "d": 54,
+        "teacher_steps": [
+          " (74 + 71) = 145;",
+          " 145 * 4 = 580;",
+          " 580 - 54 = 526.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "641",
+      "discrete_lookup_renderer": {
+        "answer_only": "641",
+        "answer": "641",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17744016647338867,
+        "llm_latency_s": 0.17430925369262695,
+        "operator_overhead_s": 0.0029120445251464844,
+        "renderer_overhead_s": 0.00021886825561523438,
+        "non_llm_overhead_s": 0.0031309127807617188,
+        "suffix": "\nanswer=641\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          21,
+          19,
+          16,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 641"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          4,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          4,
+          1
+        ],
+        "rendered_abs": "641",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 641,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          4,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          4,
+          1
+        ],
+        "rendered_abs": "641"
+      },
+      "meta": {
+        "a": 75,
+        "b": 68,
+        "c": 5,
+        "d": 74,
+        "teacher_steps": [
+          " (75 + 68) = 143;",
+          " 143 * 5 = 715;",
+          " 715 - 74 = 641.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "601",
+      "discrete_lookup_renderer": {
+        "answer_only": "601",
+        "answer": "601",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.1778273582458496,
+        "llm_latency_s": 0.17448067665100098,
+        "operator_overhead_s": 0.003118276596069336,
+        "renderer_overhead_s": 0.00022840499877929688,
+        "non_llm_overhead_s": 0.003346681594848633,
+        "suffix": "\nanswer=601\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          21,
+          15,
+          16,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 601"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          0,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          0,
+          1
+        ],
+        "rendered_abs": "601",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 601,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          0,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          0,
+          1
+        ],
+        "rendered_abs": "601"
+      },
+      "meta": {
+        "a": 62,
+        "b": 77,
+        "c": 5,
+        "d": 94,
+        "teacher_steps": [
+          " (62 + 77) = 139;",
+          " 139 * 5 = 695;",
+          " 695 - 94 = 601.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "108",
+      "discrete_lookup_renderer": {
+        "answer_only": "108",
+        "answer": "108",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.1723337173461914,
+        "llm_latency_s": 0.16904330253601074,
+        "operator_overhead_s": 0.0030629634857177734,
+        "renderer_overhead_s": 0.00022745132446289062,
+        "non_llm_overhead_s": 0.003290414810180664,
+        "suffix": "\nanswer=108\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          15,
+          23,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 108"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          8,
+          0,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          0,
+          8
+        ],
+        "rendered_abs": "108",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 108,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          8,
+          0,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          0,
+          8
+        ],
+        "rendered_abs": "108"
+      },
+      "meta": {
+        "a": 65,
+        "b": 37,
+        "c": 2,
+        "d": 96,
+        "teacher_steps": [
+          " (65 + 37) = 102;",
+          " 102 * 2 = 204;",
+          " 204 - 96 = 108.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "255",
+      "discrete_lookup_renderer": {
+        "answer_only": "255",
+        "answer": "255",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17341375350952148,
+        "llm_latency_s": 0.17027688026428223,
+        "operator_overhead_s": 0.002912759780883789,
+        "renderer_overhead_s": 0.00022411346435546875,
+        "non_llm_overhead_s": 0.003136873245239258,
+        "suffix": "\nanswer=255\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          17,
+          20,
+          20,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 255"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          5,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          5,
+          5
+        ],
+        "rendered_abs": "255",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 255,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          5,
+          5,
+          2,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          2,
+          5,
+          5
+        ],
+        "rendered_abs": "255"
+      },
+      "meta": {
+        "a": 28,
+        "b": 39,
+        "c": 4,
+        "d": 13,
+        "teacher_steps": [
+          " (28 + 39) = 67;",
+          " 67 * 4 = 268;",
+          " 268 - 13 = 255.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "626",
+      "discrete_lookup_renderer": {
+        "answer_only": "626",
+        "answer": "626",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17194247245788574,
+        "llm_latency_s": 0.1687464714050293,
+        "operator_overhead_s": 0.0029625892639160156,
+        "renderer_overhead_s": 0.0002334117889404297,
+        "non_llm_overhead_s": 0.0031960010528564453,
+        "suffix": "\nanswer=626\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          21,
+          17,
+          21,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 626"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          2,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          2,
+          6
+        ],
+        "rendered_abs": "626",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 626,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          2,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          2,
+          6
+        ],
+        "rendered_abs": "626"
+      },
+      "meta": {
+        "a": 68,
+        "b": 30,
+        "c": 7,
+        "d": 60,
+        "teacher_steps": [
+          " (68 + 30) = 98;",
+          " 98 * 7 = 686;",
+          " 686 - 60 = 626.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "306",
+      "discrete_lookup_renderer": {
+        "answer_only": "306",
+        "answer": "306",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17205286026000977,
+        "llm_latency_s": 0.1689133644104004,
+        "operator_overhead_s": 0.0029134750366210938,
+        "renderer_overhead_s": 0.00022602081298828125,
+        "non_llm_overhead_s": 0.003139495849609375,
+        "suffix": "\nanswer=306\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          15,
+          21,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 306"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          0,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          0,
+          6
+        ],
+        "rendered_abs": "306",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 306,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          6,
+          0,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          0,
+          6
+        ],
+        "rendered_abs": "306"
+      },
+      "meta": {
+        "a": 38,
+        "b": 19,
+        "c": 6,
+        "d": 36,
+        "teacher_steps": [
+          " (38 + 19) = 57;",
+          " 57 * 6 = 342;",
+          " 342 - 36 = 306.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "717",
+      "discrete_lookup_renderer": {
+        "answer_only": "717",
+        "answer": "717",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.18670153617858887,
+        "llm_latency_s": 0.18349695205688477,
+        "operator_overhead_s": 0.002969980239868164,
+        "renderer_overhead_s": 0.0002346038818359375,
+        "non_llm_overhead_s": 0.0032045841217041016,
+        "suffix": "\nanswer=717\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          22,
+          16,
+          22,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 717"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          7,
+          1,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          1,
+          7
+        ],
+        "rendered_abs": "717",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 717,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          7,
+          1,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          1,
+          7
+        ],
+        "rendered_abs": "717"
+      },
+      "meta": {
+        "a": 68,
+        "b": 47,
+        "c": 7,
+        "d": 88,
+        "teacher_steps": [
+          " (68 + 47) = 115;",
+          " 115 * 7 = 805;",
+          " 805 - 88 = 717.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "751",
+      "discrete_lookup_renderer": {
+        "answer_only": "751",
+        "answer": "751",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.20012760162353516,
+        "llm_latency_s": 0.19607210159301758,
+        "operator_overhead_s": 0.0037696361541748047,
+        "renderer_overhead_s": 0.00028586387634277344,
+        "non_llm_overhead_s": 0.004055500030517578,
+        "suffix": "\nanswer=751\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          22,
+          20,
+          16,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 751"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          5,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          5,
+          1
+        ],
+        "rendered_abs": "751",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 751,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          5,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          5,
+          1
+        ],
+        "rendered_abs": "751"
+      },
+      "meta": {
+        "a": 74,
+        "b": 36,
+        "c": 7,
+        "d": 19,
+        "teacher_steps": [
+          " (74 + 36) = 110;",
+          " 110 * 7 = 770;",
+          " 770 - 19 = 751.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "172",
+      "discrete_lookup_renderer": {
+        "answer_only": "172",
+        "answer": "172",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.19157695770263672,
+        "llm_latency_s": 0.18833112716674805,
+        "operator_overhead_s": 0.0029942989349365234,
+        "renderer_overhead_s": 0.00025153160095214844,
+        "non_llm_overhead_s": 0.003245830535888672,
+        "suffix": "\nanswer=172\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          22,
+          17,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 172"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          7,
+          2
+        ],
+        "rendered_abs": "172",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 172,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          1,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          1,
+          7,
+          2
+        ],
+        "rendered_abs": "172"
+      },
+      "meta": {
+        "a": 56,
+        "b": 75,
+        "c": 2,
+        "d": 90,
+        "teacher_steps": [
+          " (56 + 75) = 131;",
+          " 131 * 2 = 262;",
+          " 262 - 90 = 172.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "472",
+      "discrete_lookup_renderer": {
+        "answer_only": "472",
+        "answer": "472",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 522,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 526,
+        "latency_s": 0.20194149017333984,
+        "llm_latency_s": 0.19788289070129395,
+        "operator_overhead_s": 0.0037648677825927734,
+        "renderer_overhead_s": 0.000293731689453125,
+        "non_llm_overhead_s": 0.0040585994720458984,
+        "suffix": "\nanswer=472\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          19,
+          22,
+          17,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 472"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          4,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          4,
+          7,
+          2
+        ],
+        "rendered_abs": "472",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 472,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          4,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          4,
+          7,
+          2
+        ],
+        "rendered_abs": "472"
+      },
+      "meta": {
+        "a": 37,
+        "b": 47,
+        "c": 7,
+        "d": 116,
+        "teacher_steps": [
+          " (37 + 47) = 84;",
+          " 84 * 7 = 588;",
+          " 588 - 116 = 472.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "1101",
+      "discrete_lookup_renderer": {
+        "answer_only": "1101",
+        "answer": "1101",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 5,
+        "prefill_tokens": 522,
+        "injected_embedding_tokens": 11,
+        "total_kv_tokens": 527,
+        "latency_s": 0.2282240390777588,
+        "llm_latency_s": 0.22423458099365234,
+        "operator_overhead_s": 0.003680706024169922,
+        "renderer_overhead_s": 0.00030875205993652344,
+        "non_llm_overhead_s": 0.003989458084106445,
+        "suffix": "\nanswer=1101\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          16,
+          16,
+          15,
+          16,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 1101"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          0,
+          1,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          1,
+          0,
+          1
+        ],
+        "rendered_abs": "1101",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 1101,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          1,
+          0,
+          1,
+          1
+        ],
+        "final_digits_msd": [
+          1,
+          1,
+          0,
+          1
+        ],
+        "rendered_abs": "1101"
+      },
+      "meta": {
+        "a": 90,
+        "b": 56,
+        "c": 8,
+        "d": 67,
+        "teacher_steps": [
+          " (90 + 56) = 146;",
+          " 146 * 8 = 1168;",
+          " 1168 - 67 = 1101.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "304",
+      "discrete_lookup_renderer": {
+        "answer_only": "304",
+        "answer": "304",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.1993088722229004,
+        "llm_latency_s": 0.19525146484375,
+        "operator_overhead_s": 0.003747224807739258,
+        "renderer_overhead_s": 0.0003101825714111328,
+        "non_llm_overhead_s": 0.004057407379150391,
+        "suffix": "\nanswer=304\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          18,
+          15,
+          19,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 304"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          0,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          0,
+          4
+        ],
+        "rendered_abs": "304",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 304,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          4,
+          0,
+          3,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          3,
+          0,
+          4
+        ],
+        "rendered_abs": "304"
+      },
+      "meta": {
+        "a": 31,
+        "b": 80,
+        "c": 3,
+        "d": 29,
+        "teacher_steps": [
+          " (31 + 80) = 111;",
+          " 111 * 3 = 333;",
+          " 333 - 29 = 304.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "629",
+      "discrete_lookup_renderer": {
+        "answer_only": "629",
+        "answer": "629",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.20176458358764648,
+        "llm_latency_s": 0.1976008415222168,
+        "operator_overhead_s": 0.003915548324584961,
+        "renderer_overhead_s": 0.00024819374084472656,
+        "non_llm_overhead_s": 0.0041637420654296875,
+        "suffix": "\nanswer=629\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          21,
+          17,
+          24,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 629"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          9,
+          2,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          2,
+          9
+        ],
+        "rendered_abs": "629",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 629,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          9,
+          2,
+          6,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          6,
+          2,
+          9
+        ],
+        "rendered_abs": "629"
+      },
+      "meta": {
+        "a": 59,
+        "b": 54,
+        "c": 6,
+        "d": 49,
+        "teacher_steps": [
+          " (59 + 54) = 113;",
+          " 113 * 6 = 678;",
+          " 678 - 49 = 629.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "772",
+      "discrete_lookup_renderer": {
+        "answer_only": "772",
+        "answer": "772",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17484760284423828,
+        "llm_latency_s": 0.17080402374267578,
+        "operator_overhead_s": 0.0037550926208496094,
+        "renderer_overhead_s": 0.0002884864807128906,
+        "non_llm_overhead_s": 0.0040435791015625,
+        "suffix": "\nanswer=772\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          22,
+          22,
+          17,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 772"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          7,
+          2
+        ],
+        "rendered_abs": "772",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 772,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          2,
+          7,
+          7,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          7,
+          7,
+          2
+        ],
+        "rendered_abs": "772"
+      },
+      "meta": {
+        "a": 21,
+        "b": 68,
+        "c": 9,
+        "d": 29,
+        "teacher_steps": [
+          " (21 + 68) = 89;",
+          " 89 * 9 = 801;",
+          " 801 - 29 = 772.",
+          "\nFinal integer:"
+        ]
+      }
+    },
+    {
+      "expected": "550",
+      "discrete_lookup_renderer": {
+        "answer_only": "550",
+        "answer": "550",
+        "hit": true,
+        "contains_expected": true,
+        "slot_hit": true,
+        "token_identity_hit": true,
+        "generated_tokens": 4,
+        "prefill_tokens": 521,
+        "injected_embedding_tokens": 10,
+        "total_kv_tokens": 525,
+        "latency_s": 0.17372941970825195,
+        "llm_latency_s": 0.1705000400543213,
+        "operator_overhead_s": 0.0029854774475097656,
+        "renderer_overhead_s": 0.00024390220642089844,
+        "non_llm_overhead_s": 0.003229379653930664,
+        "suffix": "\nanswer=550\nFinal integer:",
+        "suffix_token_ids": [
+          198,
+          9217,
+          28,
+          20,
+          20,
+          15,
+          198,
+          19357,
+          7546,
+          25
+        ],
+        "raw": " 550"
+      },
+      "predicted": {
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "rendered_abs": "550",
+        "overflow": false
+      },
+      "target_slots": {
+        "final_value": 550,
+        "final_sign": "positive",
+        "final_digits_lsd": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "final_digits_msd": [
+          0,
+          5,
+          5,
+          0
+        ],
+        "rendered_abs": "550"
+      },
+      "meta": {
+        "a": 47,
+        "b": 24,
+        "c": 9,
+        "d": 89,
+        "teacher_steps": [
+          " (47 + 24) = 71;",
+          " 71 * 9 = 639;",
+          " 639 - 89 = 550.",
+          "\nFinal integer:"
+        ]
+      }
+    }
+  ]
+}

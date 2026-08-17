@@ -1,0 +1,28 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]:W0812 14:49:57.922000 140439885902336 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 14:49:58.078000 140439885902336 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 14:50:29.411000 140439885902336 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 14:50:29.560000 140439885902336 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 14:50:57.564000 140439885902336 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0812 14:50:57.619000 140439885902336 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]: [rank0]: Traceback (most recent call last):
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_residency_boundary_gate.py", line 1046, in <module>
+[rank0]: [rank0]:     raise SystemExit(main())
+[rank0]: [rank0]:                      ^^^^^^
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_residency_boundary_gate.py", line 1023, in main
+[rank0]: [rank0]:     artifact = run_live_gate(
+[rank0]: [rank0]:                ^^^^^^^^^^^^^^
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_residency_boundary_gate.py", line 939, in run_live_gate
+[rank0]: [rank0]:     accept_case = run_boundary_case(
+[rank0]: [rank0]:                   ^^^^^^^^^^^^^^^^^^
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tools/speculative_residency_boundary_gate.py", line 269, in run_boundary_case
+[rank0]: [rank0]:     engine.activate_speculative_runtime(
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/llm_engine.py", line 273, in activate_speculative_runtime
+[rank0]: [rank0]:     build_engine_speculative_selection_config(
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/speculative_runtime.py", line 94, in build_engine_speculative_selection_config
+[rank0]: [rank0]:     return SpeculativeSelectionConfig(
+[rank0]: [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: [rank0]:   File "<string>", line 5, in __init__
+[rank0]: [rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/TinyLLMForge/tinyvllm/engine/speculative_selection.py", line 36, in __post_init__
+[rank0]: [rank0]:     raise ValueError(
+[rank0]: [rank0]: ValueError: enabled selection requires max_proposal_tokens >= 2

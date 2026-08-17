@@ -1,0 +1,22 @@
+{
+  "branch": "feat/adaptive-ngram-speculation",
+  "commit": "3217895019a26154270db40c432495c7657abcb1",
+  "local_file_sha256": {
+    "tools/qwen35_real_checkpoint_load_contract.py": "670b9431d1417ab474b612829a4f3997e2072d8dfca90fd67eeddcdbe0e7067d",
+    "tools/qwen35_real_checkpoint_load_worker.py": "0a682e2a7e9386f95127baebeff5cbc166d3c1388e7ed02a5232ef344f76569e",
+    "tools/run_qwen35_real_checkpoint_load_gate_remote.py": "1b1ce7ae41930b773c4994ea93de93411d26711fbea42ba03207c74e49169455",
+    "tools/test_qwen35_real_checkpoint_load_safety_gate.py": "b3a47fe86f16a412341e66c65439cdf39a55587c508b37cb7ce2bc3cc46d83cb",
+    "tools/verify_qwen35_real_checkpoint_load_gate.py": "93b3eaaae6e0f2925a5aa78271444d73c96109d2da1115d92021147f72d5d959"
+  },
+  "remote_file_sha256": {
+    "tools/qwen35_real_checkpoint_load_contract.py": "670b9431d1417ab474b612829a4f3997e2072d8dfca90fd67eeddcdbe0e7067d",
+    "tools/qwen35_real_checkpoint_load_worker.py": "0a682e2a7e9386f95127baebeff5cbc166d3c1388e7ed02a5232ef344f76569e",
+    "tools/run_qwen35_real_checkpoint_load_gate_remote.py": "1b1ce7ae41930b773c4994ea93de93411d26711fbea42ba03207c74e49169455",
+    "tools/test_qwen35_real_checkpoint_load_safety_gate.py": "b3a47fe86f16a412341e66c65439cdf39a55587c508b37cb7ce2bc3cc46d83cb",
+    "tools/verify_qwen35_real_checkpoint_load_gate.py": "93b3eaaae6e0f2925a5aa78271444d73c96109d2da1115d92021147f72d5d959"
+  },
+  "remote_source_dir": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-real-checkpoint-load-runs/qwen35-real-load-read-only-preflight-final-20260727-224203/source",
+  "remote_target": "sitian@10.232.195.203",
+  "schema_version": "qwen35.real-checkpoint-load-safety.v1",
+  "source_tree_sha256": "4d9d6f724f3ba1dc967533563f8efd7d7a88626a9a91000f627deca7d6eae50d"
+}

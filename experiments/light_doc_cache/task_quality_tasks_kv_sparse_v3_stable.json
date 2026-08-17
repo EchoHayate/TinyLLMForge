@@ -1,0 +1,160 @@
+{
+  "name": "kv_sparse_attention_doc_smoke_v3_baseline_stable",
+  "description": "Baseline-correct subset of v3_candidate after Qwen3-0.6B text_only calibration; excludes baseline-missed questions.",
+  "source": "experiments/light_doc_cache/task_quality_tasks_kv_sparse_v3_candidate.json",
+  "baseline_run": "experiments/light_doc_cache/task_quality_smoke_v3_candidate_baseline_latest",
+  "excluded_task_ids": [
+    "paged_cache_shape",
+    "summary_storage",
+    "cuda_graph_initial_decision",
+    "quest_slowdown_root",
+    "needle_fix",
+    "topk4_quality",
+    "phase3_snapkv_hard_part"
+  ],
+  "tasks": [
+    {
+      "id": "route_phase1",
+      "question": "Which method is listed as Phase 1 in the route?",
+      "choices": {
+        "A": "Quest dynamic page top-k",
+        "B": "SnapKV prompt compression",
+        "C": "Speculative decoding",
+        "D": "CPU offload"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "route_phase2",
+      "question": "Which item is listed as Phase 2 in the route?",
+      "choices": {
+        "A": "Needle evaluation",
+        "B": "W4A8C4 quantization",
+        "C": "Beam search tuning",
+        "D": "Tokenizer retraining"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "route_phase3",
+      "question": "Which method is listed as Phase 3 in the route?",
+      "choices": {
+        "A": "SnapKV prompt-stage KV compression",
+        "B": "Quest dynamic page top-k",
+        "C": "CPU weight offload",
+        "D": "Tensor parallel smoke"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "long_context_bottleneck",
+      "question": "What bottleneck is highlighted for long-context decode?",
+      "choices": {
+        "A": "KV cache load bandwidth",
+        "B": "Disk IO throughput",
+        "C": "Vocabulary sorting",
+        "D": "Tokenizer merge latency"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_decode_selection",
+      "question": "During decode, what does Quest select?",
+      "choices": {
+        "A": "Top-k KV pages or blocks",
+        "B": "Vocabulary shards",
+        "C": "Optimizer checkpoints",
+        "D": "Tokenizer merge rules"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_summary_form",
+      "question": "What summary form does the Quest design choose for each KV block?",
+      "choices": {
+        "A": "Per-channel min and max key",
+        "B": "Mean value vector only",
+        "C": "A learned tokenizer state",
+        "D": "Decoder layer weights"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_dtype",
+      "question": "What dtype choice is listed for Quest summaries?",
+      "choices": {
+        "A": "Same dtype as KV",
+        "B": "Always float64",
+        "C": "Always int8",
+        "D": "Always CPU bfloat32"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_default_enable",
+      "question": "What is the default behavior of the Quest top-k blocks configuration?",
+      "choices": {
+        "A": "Disabled by default with -1",
+        "B": "Always enabled with top-k 1",
+        "C": "Enabled only for tokenizer training",
+        "D": "Enabled only during CPU offload"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_min_seq_len",
+      "question": "Why is Quest gated by a minimum sequence length?",
+      "choices": {
+        "A": "Short sequences are not worth sparsifying",
+        "B": "Short sequences cannot be tokenized",
+        "C": "Short sequences require disk IO",
+        "D": "Short sequences disable all attention"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "phase2_magic_number",
+      "question": "What phrase does the minimal needle-in-haystack evaluation insert?",
+      "choices": {
+        "A": "The optimizer state is frozen",
+        "B": "The magic number is 12345",
+        "C": "The tokenizer seed is 99999",
+        "D": "The cache block is empty"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "prefix_cache_bug",
+      "question": "What bug affected the first needle evaluation results?",
+      "choices": {
+        "A": "All settings reused prompts and hit prefix cache from earlier settings",
+        "B": "The model weights were loaded from disk for every token",
+        "C": "The magic number was never inserted",
+        "D": "The tokenizer was trained during evaluation"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "topk8_quality",
+      "question": "What starting point does the document describe as accurate enough in the needle evaluation?",
+      "choices": {
+        "A": "top-k=1",
+        "B": "top-k=8",
+        "C": "CPU offload only",
+        "D": "Tokenizer retraining"
+      },
+      "answer": "B"
+    },
+    {
+      "id": "sweet_spot",
+      "question": "What serving pattern is described as Quest's sweet spot?",
+      "choices": {
+        "A": "Single-token prompts with no KV cache",
+        "B": "Many concurrent sequences with long context",
+        "C": "Offline tokenizer training",
+        "D": "CPU-only optimizer checkpoint loading"
+      },
+      "answer": "B"
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "schema_version": "qwen35.tp4-decode-internal-corrected-audit.v1",
+  "run_tag": "qwen35-tp4-decode-internal-profile-20260811-r615-attempt001",
+  "classification": "COMPLETE_WITH_CORRECTED_NSYS_REPORT_AVAILABILITY",
+  "authority": "derived_local_audit",
+  "original_artifacts_preserved": true,
+  "resource_policy": "shared-low-utilization",
+  "exclusive": false,
+  "structured_result": {
+    "classification": "no_material_decode_regression",
+    "authority_unchanged": true,
+    "decode_summary_sha256": "afb92f1d49ebcd5d6ca51beb51ccee5a4e30093de3a11d7ed2e963c9e8839936"
+  },
+  "source_artifacts": {
+    "attempt_receipt.json": "c2af64aba1fefc42a4ea50e9c3f92cebe6f830908d1c39abb5c7b5ad41a4dc35",
+    "nsys_receipt.json": "6a4ccea1aa3258395c9f98e0809bf9577fc0fab433f3350099132188fbb10060",
+    "overhead.json": "08fb3e2295c33fbec2c27109667af1437414856645b177bbe25f799d9554ac3f"
+  },
+  "correction": {
+    "reason": "Nsight Systems stats returned exit code 0 while emitting an ERROR line that says the nccl_sum report could not be found.",
+    "raw_receipt_error": "Both nccl_sum rows were marked available because the runner checked only the subprocess return code.",
+    "corrected_rule": "A stats report is available only when the return code is zero and combined stdout/stderr contains neither ERROR: nor could not be found.",
+    "structured_and_overhead_results_affected": false
+  },
+  "nsys": {
+    "version": "NVIDIA Nsight Systems version 2024.7.1.84-247135125610v0",
+    "requested_trace": "cuda,nvtx,osrt,nccl",
+    "effective_trace": "cuda,nvtx,osrt",
+    "nccl_trace_argument_supported": false,
+    "rows": [
+      {
+        "policy": "recompute",
+        "trace_sha256": "7105dfc92b9b38b645a18c68d7be7234e3339944d888f916b612fada21e7d8d9",
+        "reports": {
+          "cuda_gpu_kern_sum": {
+            "available": true,
+            "sha256": "b6ed5813c1518e5e1fa40266f00ad8beac39d0a34df185cba9cd3ed49566de70",
+            "observed_nccl_kernels": [
+              "ncclDevKernel_AllGather_RING_LL",
+              "ncclDevKernel_AllReduce_Sum_bf16_RING_LL",
+              "ncclDevKernel_SendRecv",
+              "ncclDevKernel_AllReduce_Sum_u8_RING_LL"
+            ]
+          },
+          "nccl_sum": {
+            "available": false,
+            "subprocess_returncode": 0,
+            "sha256": "9915733762ea195707573ec74618febd7906e61d13d4efb0cd86b4f132a916dc",
+            "error": "ERROR: Report 'nccl_sum' could not be found."
+          }
+        }
+      },
+      {
+        "policy": "exact_restore",
+        "trace_sha256": "5c43e81d24e33d0da94b9800db794d1356351b6cf928331cfa6799155e214dcf",
+        "reports": {
+          "cuda_gpu_kern_sum": {
+            "available": true,
+            "sha256": "f348ca4112ac5836cdd6767a9304de682f8430fe1d856c4ec41f9cb20fc8d6a5",
+            "observed_nccl_kernels": [
+              "ncclDevKernel_AllGather_RING_LL",
+              "ncclDevKernel_AllReduce_Sum_bf16_RING_LL",
+              "ncclDevKernel_SendRecv",
+              "ncclDevKernel_AllReduce_Sum_u8_RING_LL"
+            ]
+          },
+          "nccl_sum": {
+            "available": false,
+            "subprocess_returncode": 0,
+            "sha256": "575bf4d5d1fae231bb414799bfa75c3be9dfecfa09b26d05b37502118d00546e",
+            "error": "ERROR: Report 'nccl_sum' could not be found."
+          }
+        }
+      }
+    ],
+    "evidence_boundary": "NCCL activity is evidenced by CUDA kernel names in cuda_gpu_kern_sum. No dedicated nccl_sum report is available, so this audit does not claim NCCL API-level timing attribution."
+  },
+  "cleanup": {
+    "classification": "CLEAN",
+    "remaining_attempt_scoped_pids": [],
+    "matched_attempt_scoped_gpu_pids": [],
+    "remaining_profiler_children": []
+  },
+  "limitations": [
+    "The run was shared and non-exclusive.",
+    "The overhead ratio is a fresh-process wall-time smoke estimate that includes model initialization.",
+    "step_wall_ns minus step_cuda_ns is only an upper bound on host orchestration, launch gaps, and possible synchronization waiting."
+  ]
+}

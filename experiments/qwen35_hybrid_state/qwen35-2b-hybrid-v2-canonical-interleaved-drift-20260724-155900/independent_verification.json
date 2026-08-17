@@ -1,0 +1,13 @@
+{
+  "claim_boundary": "Compatibility only; no native support, compression, quality, latency, throughput, speedup, or memory-reduction claim.",
+  "classification": "NO_GO",
+  "expected_case_count": 35,
+  "guards": {
+    "correctness_pass": false
+  },
+  "observed_case_count": 35,
+  "reasons": [
+    "winner margin boundary crossed: same_path_repeatability__cached_repeatability__p65__r0__c65"
+  ],
+  "schema_version": 2
+}

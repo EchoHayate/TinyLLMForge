@@ -1,0 +1,109 @@
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+
+Loading weights:   0%|          | 0/320 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 320/320 [00:00<00:00, 8211.80it/s]
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 166, in <module>
+[rank0]:     raise SystemExit(main())
+[rank0]:                      ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 149, in main
+[rank0]:     result = run_authority(
+[rank0]:              ^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 114, in run_authority
+[rank0]:     result = producer.produce_configured_authority(**kwargs)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 103, in produce_configured_authority
+[rank0]:     return produce_authority(
+[rank0]:            ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 180, in produce_authority
+[rank0]:     rows.append(executor.run_continuation(
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/qwen35_tp4_cached_continuation_correctness_executor.py", line 129, in run_continuation
+[rank0]:     row = session.run()
+[rank0]:           ^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 493, in run
+[rank0]:     self.engine = self.engine_factory(self.configuration)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 13, in _default_engine_factory
+[rank0]:     return backend._default_engine_factory(configuration)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tools/qwen35_tp4_engine_backend_session.py", line 25, in _default_engine_factory
+[rank0]:     return module.LLMEngine(
+[rank0]:            ^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/engine/llm_engine.py", line 109, in __init__
+[rank0]:     self.model_runner = ModelRunner(config, 0, self.events)     # 生成主进程
+[rank0]:                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/engine/model_runner.py", line 801, in __init__
+[rank0]:     self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
+[rank0]:                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 219, in __init__
+[rank0]:     self.model = Qwen3Model(config) 
+[rank0]:                  ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 186, in __init__
+[rank0]:     self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
+[rank0]:                                                ^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 434, in __getattribute__
+[rank0]:     return super().__getattribute__(key)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: AttributeError: 'Qwen3_5Config' object has no attribute 'vocab_size'
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Process SpawnProcess-2:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/engine/model_runner.py", line 801, in __init__
+    self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 219, in __init__
+    self.model = Qwen3Model(config)
+                ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 186, in __init__
+    self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
+                                               ^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 434, in __getattribute__
+    return super().__getattribute__(key)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Qwen3_5Config' object has no attribute 'vocab_size'
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Process SpawnProcess-4:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/engine/model_runner.py", line 801, in __init__
+    self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 219, in __init__
+    self.model = Qwen3Model(config)
+                ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 186, in __init__
+    self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
+                                               ^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 434, in __getattribute__
+    return super().__getattribute__(key)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Qwen3_5Config' object has no attribute 'vocab_size'
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Process SpawnProcess-3:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/engine/model_runner.py", line 801, in __init__
+    self.model = Qwen3ForCausalLM(hf_config)        #这里会自动触发Module中的__call__
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 219, in __init__
+    self.model = Qwen3Model(config)
+                ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-authority-runs/qwen35-tp4-cached-continuation-controlled-shared-20260729-181536-attempt9/source/tinyvllm/models/qwen3.py", line 186, in __init__
+    self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
+                                               ^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/transformers/configuration_utils.py", line 434, in __getattribute__
+    return super().__getattribute__(key)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Qwen3_5Config' object has no attribute 'vocab_size'

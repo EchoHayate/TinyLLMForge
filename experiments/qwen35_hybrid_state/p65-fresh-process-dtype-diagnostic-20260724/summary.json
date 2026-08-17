@@ -1,0 +1,117 @@
+{
+  "claim_boundary": "Targeted diagnostic only. Does not change the completed canonical NO_GO result and does not establish native support, compression, quality, latency, throughput, speedup, or memory reduction.",
+  "model_repository": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "prompt_length": 65,
+  "prompt_sha256": "2391c5bbc31e842e8c362e591458d05541b1566409f03672d192fe6a9702a264",
+  "remote_identity": "sitian@10.232.195.203",
+  "schema_version": 2,
+  "source_commit": "3217895019a26154270db40c432495c7657abcb1",
+  "target_sequence_length": 70,
+  "target_step_index": 5,
+  "bfloat16": {
+    "fresh_process_count": 3,
+    "all_processes_identical": true,
+    "decoded_token_ids": [
+      62,
+      198,
+      248044,
+      2,
+      16,
+      15,
+      15,
+      15
+    ],
+    "step_hashes": [
+      "37e7813fafd741fdca13e402b9ccd7b1204712d575536e065ddc822eaa872718",
+      "77768b0fbd7664be4b9b5d195941f27fb624663c6512b999cd95045af6df901b",
+      "2b1c9f50776e1ef28657483f811062f78e550d54cb882f1b1d1d2848d86abb74",
+      "383f24a6fd433bd0ce9408e86174bec34fb324eed6687978bbc358f0f8e2a987",
+      "cac2ad14e64748b474bb665f17f73b8733b4c8d38537d00ff32b82b717b82715",
+      "035f7b2c05ba3a6f7434324cdebc9d4cdb2b410fd49eff369a08b9ef76e690d9",
+      "8ca93ade6894ddb4a8f149cee9ed612d19fc4eda8b36303f4d9105c142cd95ff",
+      "4bc74f0c808de88452fada8ce274d258f34ffe25016b38f440f33e165e3d5fee"
+    ],
+    "step_5": {
+      "actual_full_logit_sha256": "035f7b2c05ba3a6f7434324cdebc9d4cdb2b410fd49eff369a08b9ef76e690d9",
+      "actual_top_2_logits": [
+        13.8125,
+        13.8125
+      ],
+      "actual_top_2_token_ids": [
+        15,
+        17
+      ],
+      "actual_winner_margin": 0.0,
+      "max_abs_diff": 0.203125,
+      "mean_abs_diff": 0.032258834689855576,
+      "oracle_full_logit_sha256": "eb5d3319fcdfeee1c8b0f7f578010ec49a39b33088f985aa38a293a25cd88246",
+      "oracle_top_2_logits": [
+        13.75,
+        13.75
+      ],
+      "oracle_top_2_token_ids": [
+        15,
+        17
+      ],
+      "oracle_winner_margin": 0.0
+    }
+  },
+  "float32": {
+    "fresh_process_count": 2,
+    "all_processes_identical": true,
+    "decoded_token_ids": [
+      62,
+      198,
+      248044,
+      271,
+      2,
+      220,
+      17,
+      15
+    ],
+    "step_hashes": [
+      "20968b54fc58d3bda797462004c43f7292684fd58f672f0ca1c78d230b527602",
+      "01477b1509b14d8536b23704325621cf35861299238f8fe0c5ac8f18015a0e31",
+      "cc292772da00c49738581568318ba5087663890631ce80c23ca54f10786b1f43",
+      "31ab9cba2e34e39232fb60f271f0f1cb8dca5926ea19faaf17d3549d9a7114e0",
+      "cc7261c6500cf8bc8e4775e4f1beeaa5364ddbdf0e172c04e275df69aaf08e64",
+      "d6f5f762de62b180d48d8ea40a2b07a5ad8c625e91b7a6ea734ce2148c68439a",
+      "4137e6264ca3989505e9c1915b089fd96b994e016bd3994ca19cd4e4ef421cf8",
+      "1863c00b2dc0e44ffdc700a5c2dfe6ce8ad0ced251cab63f477a68f54242ea91"
+    ],
+    "step_5": {
+      "actual_full_logit_sha256": "d6f5f762de62b180d48d8ea40a2b07a5ad8c625e91b7a6ea734ce2148c68439a",
+      "actual_top_2_logits": [
+        11.031373977661133,
+        9.340147972106934
+      ],
+      "actual_top_2_token_ids": [
+        220,
+        2972
+      ],
+      "actual_winner_margin": 1.6912260055541992,
+      "allclose_violation_count": 0,
+      "max_abs_diff": 2.193450927734375e-05,
+      "max_allclose_scaled_error": 0.4578429162502289,
+      "mean_abs_diff": 2.0694712929980597e-06,
+      "oracle_full_logit_sha256": "7fb88935245be85108e17de3d44c0880a933869a85c108546c30b2ccb01072b6",
+      "oracle_top_2_logits": [
+        11.0313720703125,
+        9.340149879455566
+      ],
+      "oracle_top_2_token_ids": [
+        220,
+        2972
+      ],
+      "oracle_winner_margin": 1.6912221908569336
+    }
+  },
+  "conclusion": {
+    "bf16_tie_is_fresh_process_repeatable": true,
+    "fp32_has_positive_margin": true,
+    "fp32_cached_oracle_allclose_pass": true,
+    "interpretation": "The p65 canonical rejection is a stable BF16 execution decision boundary, not transient process noise and not a universal FP32 model-semantic tie.",
+    "canonical_status_remains": "NO_GO"
+  }
+}

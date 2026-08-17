@@ -1,0 +1,76 @@
+{
+  "decision": "RECOVERY_WEAK",
+  "heads": 16,
+  "sampled_tokens": 512,
+  "mean_budget_fraction": 0.125,
+  "mean_direct_val_r2": -0.4507921040058136,
+  "mean_fitv_val_r2": 0.09318467229604721,
+  "mean_recovery_val_r2": 0.09318467229604721,
+  "p50_recovery_val_r2": 0.09431284666061401,
+  "p90_recovery_val_r2": 0.3287190794944763,
+  "recovery_val_ge_accept": 0.0,
+  "mean_recovery_gain_vs_direct": 0.5439767763018608,
+  "mean_recovery_gain_vs_fitv": 0.0,
+  "metadata": {
+    "documents": [
+      {
+        "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+        "text_file": "/data00/home/sitian/light-doc-cache-work/probe/recovery_text_0.md",
+        "device": "cuda",
+        "dtype": "torch.bfloat16",
+        "seq_len": 1536,
+        "sampled_tokens": 512,
+        "sample_start": 128,
+        "sample_end": 1535,
+        "num_layers": 28,
+        "num_query_heads": 16,
+        "num_kv_heads": 8,
+        "head_dim": 128,
+        "forward_s": 0.697218369692564,
+        "doc_index": 0
+      },
+      {
+        "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+        "text_file": "/data00/home/sitian/light-doc-cache-work/probe/recovery_text_1.md",
+        "device": "cuda",
+        "dtype": "torch.bfloat16",
+        "seq_len": 1536,
+        "sampled_tokens": 512,
+        "sample_start": 128,
+        "sample_end": 1535,
+        "num_layers": 28,
+        "num_query_heads": 16,
+        "num_kv_heads": 8,
+        "head_dim": 128,
+        "forward_s": 0.026642292737960815,
+        "doc_index": 1
+      }
+    ]
+  },
+  "settings": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "text_file": [
+      "/data00/home/sitian/light-doc-cache-work/probe/recovery_text_0.md",
+      "/data00/home/sitian/light-doc-cache-work/probe/recovery_text_1.md"
+    ],
+    "output_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/recovery_probe_qwen3_0_6b_s1536_b64_2docs_l20_smoke",
+    "max_tokens": 1536,
+    "max_sample_tokens": 512,
+    "skip_prefix_tokens": 128,
+    "budgets": "64",
+    "selector": "highest",
+    "train_frac": 0.6,
+    "ridge": 1.0,
+    "hidden_dim": 128,
+    "epochs": 100,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "max_heads": 8,
+    "start_layer": 20,
+    "end_layer": 0,
+    "accept_r2": 0.5,
+    "device": "auto",
+    "dtype": "auto"
+  },
+  "train_seconds": 10.485301617532969
+}

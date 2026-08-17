@@ -1,0 +1,132 @@
+{
+  "canonical_policy_by_name": {
+    "P0": "P0",
+    "P4": "P4",
+    "P5": "P5"
+  },
+  "common_engine_config": {
+    "enforce_eager": false,
+    "max_num_batched_tokens": 16384,
+    "max_num_prefill_tokens_per_step": 128,
+    "max_num_seqs": 512
+  },
+  "drain_timeout_ns": 120000000000,
+  "environment_sha256": "3f835381ea0a41633a5f626f41875e45963000859230d1c4768cd38de4c2d120",
+  "expected_case_ids": [
+    "lifecycle_smoke__P0__r0",
+    "lifecycle_smoke__P5__r0"
+  ],
+  "measured_repetitions": 1,
+  "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "policy_identity_by_name": {
+    "P0": "5a198bcfae109b6133a1f73dce4a5169af3001c6b6ee4c10c624504b893163c9",
+    "P4": "2d057678cadc8508d6b6ee6ba2e8d491d9d99d6e8a2939d45b9762aa91337497",
+    "P5": "ff0b86af817b4baa8d006f123bd20aa173d19c7afd2ba5a0d1b9d57dcda1518b"
+  },
+  "process_port_pairs": [
+    {
+      "case_id": "lifecycle_smoke__P0__r0",
+      "master_port": 57797,
+      "tinyvllm_dist_port": 43959
+    },
+    {
+      "case_id": "lifecycle_smoke__P5__r0",
+      "master_port": 57377,
+      "tinyvllm_dist_port": 24759
+    }
+  ],
+  "prompt_bank_sha256": "8099ccbc0ddcd8072b9b5c3b5b2c68c36bb7e1ca97f59a404d763d6680d9fa01",
+  "provisional_cost_calibration": {
+    "artifact_sha256": "94c3714310bde8dbc0b27de76f0462a7df7688bb5175b44a428ae55e5c251c65",
+    "purpose": "provisional_smoke",
+    "status": "PASS"
+  },
+  "required_scenarios": [
+    "lifecycle_smoke"
+  ],
+  "resolved_policy_config_by_name": {
+    "P0": {
+      "chunked_prefill_adaptive_enter_waiting": 8,
+      "chunked_prefill_adaptive_exit_waiting": 2,
+      "chunked_prefill_adaptive_max_mixed_steps": 2,
+      "chunked_prefill_adaptive_mixed": false,
+      "chunked_prefill_adaptive_transition_steps": 2,
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "chunked_prefill_slo_cost_intercept_ns": 0,
+      "chunked_prefill_slo_cost_per_prefill_token_ns": 0,
+      "chunked_prefill_slo_min_chunk_tokens": 16,
+      "chunked_prefill_slo_mixed": false,
+      "chunked_prefill_slo_reserve_ns": 0,
+      "chunked_prefill_slo_target_gap_ns": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P4": {
+      "chunked_prefill_adaptive_enter_waiting": 8,
+      "chunked_prefill_adaptive_exit_waiting": 2,
+      "chunked_prefill_adaptive_max_mixed_steps": 2,
+      "chunked_prefill_adaptive_mixed": true,
+      "chunked_prefill_adaptive_transition_steps": 2,
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "chunked_prefill_slo_cost_intercept_ns": 0,
+      "chunked_prefill_slo_cost_per_prefill_token_ns": 0,
+      "chunked_prefill_slo_min_chunk_tokens": 16,
+      "chunked_prefill_slo_mixed": false,
+      "chunked_prefill_slo_reserve_ns": 0,
+      "chunked_prefill_slo_target_gap_ns": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P5": {
+      "chunked_prefill_adaptive_enter_waiting": 8,
+      "chunked_prefill_adaptive_exit_waiting": 2,
+      "chunked_prefill_adaptive_max_mixed_steps": 2,
+      "chunked_prefill_adaptive_mixed": false,
+      "chunked_prefill_adaptive_transition_steps": 2,
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "chunked_prefill_slo_cost_intercept_ns": 56735555,
+      "chunked_prefill_slo_cost_per_prefill_token_ns": 800835,
+      "chunked_prefill_slo_min_chunk_tokens": 16,
+      "chunked_prefill_slo_mixed": true,
+      "chunked_prefill_slo_reserve_ns": 8000000,
+      "chunked_prefill_slo_target_gap_ns": 64000000,
+      "chunked_prefill_slo_token_ladder": [
+        128,
+        112,
+        96,
+        80,
+        64,
+        48,
+        32,
+        16
+      ],
+      "cost_calibration_artifact_sha256": "94c3714310bde8dbc0b27de76f0462a7df7688bb5175b44a428ae55e5c251c65",
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    }
+  },
+  "run_tag": "qwen3-06b-p5-smoke-20260720-220134",
+  "run_type": "smoke",
+  "schema_version": 1,
+  "smoke_policies": [
+    "P0",
+    "P5"
+  ],
+  "source_tree_sha256": "f7a47cc65f8cc4351178e1c67b373a65436efcd8e91ea15bb432c3f69a0ea9e3",
+  "workload_sha256": "e63ad0dd0cf2656e1e6d78db139b4a1669bf702af2bace3ad79d4fa34baee527"
+}

@@ -1,0 +1,108 @@
+{
+  "audit_date": "2026-08-06",
+  "checks": [
+    {
+      "evidence": [
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "frozen_threshold_consumption",
+      "requirement": "The independent verifier consumes all 12 frozen schema-v2 cache, capacity, latency, throughput, decode, and CUDA-memory thresholds.",
+      "status": "PASS"
+    },
+    {
+      "evidence": [
+        "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "negative_threshold_regressions",
+      "requirement": "A legitimate artifact that violates only W1 recompute-relative TTFT, W2 exact-relative median TTFT, or W2 exact-relative per-repetition TTFT is classified NO_GO_PERFORMANCE.",
+      "status": "PASS"
+    },
+    {
+      "evidence": [
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_contract.py"
+      ],
+      "id": "quality_non_regression_gate",
+      "requirement": "P2 output token IDs equal recompute and exact-restore final logits match within atol=2e-5, rtol=0.0 before performance can classify GO.",
+      "status": "IMPLEMENTED_NOT_RUN_REAL"
+    },
+    {
+      "evidence": [
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_worker.py",
+        "tinyvllm/engine/qwen35_hybrid_prefix_int8_cache.py"
+      ],
+      "id": "physical_cache_gate",
+      "requirement": "P2 cache reduction uses unique resident tensor-storage bytes and same-budget capacity, not logical snapshot bytes or copy simulation.",
+      "status": "IMPLEMENTED_NOT_RUN_REAL"
+    },
+    {
+      "evidence": [
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tinyvllm/engine/qwen35_hybrid_prefix_int8_cache.py"
+      ],
+      "id": "cuda_memory_gate",
+      "requirement": "P2 records CUDA allocated/reserved peak observations and gates peak reserved bytes relative to exact restore.",
+      "status": "IMPLEMENTED_NOT_RUN_REAL"
+    },
+    {
+      "evidence": [
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_contract.py",
+        "tools/qwen35_tp4_hybrid_prefix_benchmark_v2_worker.py",
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "canonical_concurrency",
+      "requirement": "W3 measured cases use eight concurrent continuations while correctness cases remain serial.",
+      "status": "PASS"
+    },
+    {
+      "evidence": [
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "serving_throughput_boundary",
+      "requirement": "Canonical W3 throughput evidence is not overclaimed as sustained online serving requests-per-second or tokens-per-second.",
+      "status": "PASS"
+    },
+    {
+      "evidence": [
+        "tools/verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+        "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py"
+      ],
+      "id": "human_readable_report_authority",
+      "requirement": "The verifier report binds the source, model, workload, configuration, all artifact hashes, every measured ratio, all 12 frozen thresholds, per-gate PASS or FAIL status, and the W3 proxy claim boundary.",
+      "status": "PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_audit.json",
+        "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/readiness_manifest.json"
+      ],
+      "id": "strict_p1_identity_unchanged",
+      "requirement": "The verifier-only repair does not alter the 91-file schema-v1 strict-P1 benchmark source bundle.",
+      "status": "PASS"
+    },
+    {
+      "evidence": [
+        "experiments/qwen35_hybrid_state/qwen35-performance-goal-completion-audit-20260806/checklist.json"
+      ],
+      "id": "real_goal_authority",
+      "requirement": "Real current-source P1, calibration, and P2 artifacts jointly prove accuracy non-regression, end-to-end speed improvement, and physical cache or VRAM reduction.",
+      "status": "MISSING"
+    }
+  ],
+  "classification": "LOCAL_AUTHORITY_HARDENED_REAL_RESULT_MISSING",
+  "frozen_threshold_count": 12,
+  "frozen_thresholds_consumed": 12,
+  "new_negative_regression_count": 3,
+  "report_contract_regression_count": 2,
+  "objective": "Harden the P2 independent authority so it cannot classify GO while omitting approved accuracy, speed, cache, capacity, or CUDA-memory gates.",
+  "schema_version": "tinyllmforge.qwen35-p2-authority-coverage-audit.v1",
+  "strict_p1_owned_source_file_count": 91,
+  "strict_p1_source_tar_sha256": "8f807c0e51010fddd0bd474670ae41c09beda604c8247f672fc047f533c53a5d",
+  "strict_p1_source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c",
+  "test_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/tmp/tinyllmforge-pytest312-shim:/Users/bytedance/dev/TinyLLMForge-adaptive-ngram /opt/homebrew/bin/python3.12 -m pytest -q tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark_v2.py",
+  "test_result": "19 passed in 609.20s",
+  "verifier_sha256": "2ee9365c7fd0da731366a4ffba582d7702bb1ab67639d4786f6ef578c5953b0f",
+  "verifier_test_sha256": "d4cae19b34b1b37eaf183735cad6667cf31afeab1bb7b6dd38b7810e6c7c4711"
+}

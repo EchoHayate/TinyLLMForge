@@ -1,0 +1,187 @@
+{
+  "all_equal": true,
+  "comparison": "fixed-split16 CUDA Graph replay vs fixed-split16 eager",
+  "rows": [
+    {
+      "batch_size": 4,
+      "case_id": "b4__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      }
+    },
+    {
+      "batch_size": 5,
+      "case_id": "b5__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      }
+    },
+    {
+      "batch_size": 8,
+      "case_id": "b8__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      }
+    },
+    {
+      "batch_size": 9,
+      "case_id": "b9__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      }
+    },
+    {
+      "batch_size": 16,
+      "case_id": "b16__ragged-context__exact_graph__r0",
+      "kv": {
+        "keys_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "keys_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_after": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        },
+        "values_before": {
+          "equal": true,
+          "max_abs": 0.0,
+          "nonzero": 0
+        }
+      },
+      "layers": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      },
+      "logits": {
+        "equal": true,
+        "max_abs": 0.0,
+        "nonzero": 0
+      }
+    }
+  ],
+  "schema_version": 1
+}

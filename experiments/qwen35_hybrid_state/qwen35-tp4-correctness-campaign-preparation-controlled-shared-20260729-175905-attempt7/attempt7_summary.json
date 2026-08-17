@@ -1,0 +1,13 @@
+{
+  "attempt": "attempt7",
+  "campaign_tag": "qwen35-tp4-correctness-campaign-controlled-shared-20260729-175905-attempt7",
+  "classification": "READY",
+  "configuration": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260729-175905-attempt7",
+  "dist_port": 59008,
+  "master_port": 59009,
+  "preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-correctness-campaign-preparation-controlled-shared-20260729-175905-attempt7",
+  "resource_baseline": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-resource-baseline-controlled-shared-20260729-175905-attempt7.json",
+  "resource_baseline_sha256": "7027f27d8cf4ecc2386f24416c29dcd9e0b93b37d1b0a894363b7d2a5b1cdc07",
+  "source_tree_sha256": "04a86ba55aa7650377bb3f9aac0c78e6ce52ba9063e7775b19708ba3695246d4",
+  "suffix": "20260729-175905-attempt7"
+}

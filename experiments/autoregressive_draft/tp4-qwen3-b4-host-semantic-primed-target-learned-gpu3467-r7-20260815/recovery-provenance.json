@@ -1,0 +1,10 @@
+{
+  "canonical_postprocessing_exit_code": 0,
+  "initial_campaign_exit_code": 1,
+  "raw_inputs_modified": false,
+  "raw_workload_rerun": false,
+  "reason": "GPU telemetry repeat coverage required a nearby edge sample and host JSONL gap validation was narrowed to aligned repeat windows",
+  "recovery_kind": "postprocessing_only",
+  "schema_version": 1,
+  "status": "PASS"
+}

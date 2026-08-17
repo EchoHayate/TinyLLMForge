@@ -1,0 +1,33 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-130252-attempt58-qwen35-cached-admission-r490/authorization.json",
+  "claim_boundary": "cached-continuation authority only; no Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "classification": "PASS",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-130252-attempt58-qwen35-cached-admission-r490/executor_configuration.json",
+  "downloaded_cached_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-130252-attempt58-qwen35-cached-admission-r490/plan/downloaded_cached_authority",
+  "execution_performed": true,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-130127-attempt58-qwen35-cached-admission-r489/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-130252-attempt58-qwen35-cached-admission-r490/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 38703,
+    "master_port": 49919
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-130252-attempt58-qwen35-cached-admission-r490/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-130127-attempt58-qwen35-cached-admission-r489",
+  "root_pass_evidence": [
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-130127-attempt58-qwen35-cached-admission-r489/artifacts/tp4_real_root_logit_correctness.json",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-130127-attempt58-qwen35-cached-admission-r489/independent_verification.json"
+  ],
+  "run_tag": "qwen35-tp4-cached-continuation-20260804-130252-attempt58-qwen35-cached-admission-r490",
+  "schema_version": "qwen35.tp4-cached-continuation-r490-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-130127-attempt58-qwen35-cached-admission-r489",
+  "source_tree_sha256": "777a73576ef89f1ba3d9fbd7b6f1755cb697683af7db6b9e0ae220064d2e8d72"
+}

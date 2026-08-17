@@ -1,0 +1,26 @@
+{
+  "branch": "feat/adaptive-ngram-speculation",
+  "commit": "3217895019a26154270db40c432495c7657abcb1",
+  "local_file_sha256": {
+    "tools/qwen35_real_checkpoint_load_authorization.py": "09ed41a1db8cedf1266ed1c0ee86f8373744c896defe10abce3fefe7883944b8",
+    "tools/qwen35_real_checkpoint_load_contract.py": "f7044eb5c25f652574ab0ddeba0696396076d3c943a0edce19ab6c6b56e3b53d",
+    "tools/qwen35_real_checkpoint_load_worker.py": "0a682e2a7e9386f95127baebeff5cbc166d3c1388e7ed02a5232ef344f76569e",
+    "tools/run_qwen35_real_checkpoint_load_gate_remote.py": "380bf53fdad8765df0bc782376a811f75d7da57ec0e9a7955c864329dac19a29",
+    "tools/test_qwen35_real_checkpoint_load_authorization.py": "7aee5e90daa3b69042f052ea98cb4909988431d79a59aa744a4ec8c1e67ee407",
+    "tools/test_qwen35_real_checkpoint_load_safety_gate.py": "8620063262471ecd61bb4a45ca2884840420bc149cfed3ce7efccfcd4f3dc4ef",
+    "tools/verify_qwen35_real_checkpoint_load_gate.py": "c85a62e44bbd6bc07c31c80e991309e2028d8c5bd95e979a490ae49e4eaf25c5"
+  },
+  "remote_file_sha256": {
+    "tools/qwen35_real_checkpoint_load_authorization.py": "09ed41a1db8cedf1266ed1c0ee86f8373744c896defe10abce3fefe7883944b8",
+    "tools/qwen35_real_checkpoint_load_contract.py": "f7044eb5c25f652574ab0ddeba0696396076d3c943a0edce19ab6c6b56e3b53d",
+    "tools/qwen35_real_checkpoint_load_worker.py": "0a682e2a7e9386f95127baebeff5cbc166d3c1388e7ed02a5232ef344f76569e",
+    "tools/run_qwen35_real_checkpoint_load_gate_remote.py": "380bf53fdad8765df0bc782376a811f75d7da57ec0e9a7955c864329dac19a29",
+    "tools/test_qwen35_real_checkpoint_load_authorization.py": "7aee5e90daa3b69042f052ea98cb4909988431d79a59aa744a4ec8c1e67ee407",
+    "tools/test_qwen35_real_checkpoint_load_safety_gate.py": "8620063262471ecd61bb4a45ca2884840420bc149cfed3ce7efccfcd4f3dc4ef",
+    "tools/verify_qwen35_real_checkpoint_load_gate.py": "c85a62e44bbd6bc07c31c80e991309e2028d8c5bd95e979a490ae49e4eaf25c5"
+  },
+  "remote_source_dir": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-real-checkpoint-load-runs/qwen35-real-load-authorization-current-source-preflight-20260727-234417/source",
+  "remote_target": "sitian@10.232.195.203",
+  "schema_version": "qwen35.real-checkpoint-load-safety.v1",
+  "source_tree_sha256": "9330b31dc6e117b28a3845688ec53803b599603c1d1f3a318e57e0253d14f23b"
+}

@@ -1,0 +1,3387 @@
+{
+  "artifact_sha256": {
+    "attempt_receipt.json": "7fe69e66ffee3fb6e72eb20ae7975e1dd29aae438cfb5ac9a6a3766eb847d337",
+    "decode_summary.json": "095690c90bf489de3e30406b2d6491ed3ba050dbf071780efbf894caa880080b",
+    "decode_summary.regenerated.json": "095690c90bf489de3e30406b2d6491ed3ba050dbf071780efbf894caa880080b",
+    "nsys_receipt.json": "b2d99d583d32fb8fd7c09b7150e550de67d4e313bbb787775a166883348508fa",
+    "overhead.json": "ba1b099e3a403db89ff5c4015bdeab9f960910e0bbbc71b07f0f81d2cdf35efe",
+    "stage_receipt.json": "622c4295b658ca588283b1cffde50f21e285494d9e00d72a73d68ac4afb6d8ec",
+    "worker_results.json": "8278e946ac5a338953d21700b9bbb47ae912bc1198addfc105417178de75bd51"
+  },
+  "checks": {
+    "attempt_complete": true,
+    "cleanup_clean": true,
+    "guards_all_ready_fixed_gpus_thresholds": true,
+    "nsys_nccl_sum_unavailable": true,
+    "nsys_required_reports_available": true,
+    "nvtx_expected_inventory": true,
+    "output_parity_all_24_requests": true,
+    "profiles_12_valid_shape": true,
+    "shared_nonexclusive": true,
+    "summary_reproducible": true,
+    "workers_12_all_zero": true
+  },
+  "classification": "PASS",
+  "evidence_boundaries": [
+    "shared/non-exclusive GPU measurements can vary across repetitions",
+    "step_wall_ns - step_cuda_ns is only an upper bound combining host orchestration, launch gaps, and possible synchronization waiting",
+    "nccl_sum is unavailable on target Nsight Systems 2024.7.1; NCCL evidence comes from NVTX-associated CUDA kernels",
+    "fresh-process overhead ratio includes model initialization and is not per-token profiler overhead"
+  ],
+  "guards": [
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "entry",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 7
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "nsys-r4-exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "nsys-r4-recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "overhead-baseline",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "overhead-decode_internal",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r0__exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r0__recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r1__exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r1__recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r2__exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r2__recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r3__exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r3__recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r4__exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__measured__r4__recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__warmup__r0__exact_restore",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    },
+    {
+      "final_classification": "READY",
+      "gpu_query_error_count": 0,
+      "label": "worker-w2_long_reuse__warmup__r0__recompute",
+      "ready_max_utilization_percent": 0,
+      "ready_min_free_bytes": 56869519360,
+      "ready_selected_gpus": [
+        2,
+        4,
+        5,
+        6
+      ],
+      "sample_count": 1
+    }
+  ],
+  "nsys_decode_kernel_summary": {
+    "exact_restore": {
+      "decode_first": {
+        "all": {
+          "instances": 37100,
+          "total_time_ns": 2842031947
+        },
+        "gemm_gemv": {
+          "instances": 3748,
+          "total_time_ns": 50284820
+        },
+        "nccl_all_gather": {
+          "instances": 384,
+          "total_time_ns": 2552976728
+        },
+        "nccl_all_reduce": {
+          "instances": 16,
+          "total_time_ns": 132923070
+        },
+        "other": {
+          "instances": 32952,
+          "total_time_ns": 105847329
+        }
+      },
+      "decode_steady": {
+        "all": {
+          "instances": 222600,
+          "total_time_ns": 14120915579
+        },
+        "gemm_gemv": {
+          "instances": 22488,
+          "total_time_ns": 301516513
+        },
+        "nccl_all_gather": {
+          "instances": 2304,
+          "total_time_ns": 12683029810
+        },
+        "nccl_all_reduce": {
+          "instances": 96,
+          "total_time_ns": 501697810
+        },
+        "other": {
+          "instances": 197712,
+          "total_time_ns": 634671446
+        }
+      },
+      "top": {
+        "decode_first": [
+          {
+            "instances": 384,
+            "kernel": "ncclDevKernel_AllGather_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 2552976728
+          },
+          {
+            "instances": 16,
+            "kernel": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 132923070
+          },
+          {
+            "instances": 1056,
+            "kernel": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x6_tn",
+            "total_time_ns": 22284614
+          },
+          {
+            "instances": 1248,
+            "kernel": "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)",
+            "total_time_ns": 18946387
+          },
+          {
+            "instances": 4836,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 7)]::operator ()() const::[lambda(float) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 17249325
+          },
+          {
+            "instances": 2608,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 10204129
+          },
+          {
+            "instances": 1344,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 9032565
+          },
+          {
+            "instances": 2896,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float>>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 8749607
+          },
+          {
+            "instances": 1264,
+            "kernel": "void at::native::reduce_kernel<(int)512, (int)1, at::native::ReduceOp<float, at::native::MeanOps<float, float, float, float>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 5329032
+          },
+          {
+            "instances": 576,
+            "kernel": "void at::native::reduce_kernel<(int)128, (int)4, at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator ()(at::TensorIterator &)::[lambda(float, float) (instance 1)]>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 4266402
+          }
+        ],
+        "decode_steady": [
+          {
+            "instances": 2304,
+            "kernel": "ncclDevKernel_AllGather_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 12683029810
+          },
+          {
+            "instances": 96,
+            "kernel": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 501697810
+          },
+          {
+            "instances": 6336,
+            "kernel": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x6_tn",
+            "total_time_ns": 133507226
+          },
+          {
+            "instances": 7488,
+            "kernel": "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)",
+            "total_time_ns": 113698049
+          },
+          {
+            "instances": 29016,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 7)]::operator ()() const::[lambda(float) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 103455653
+          },
+          {
+            "instances": 15648,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 61158587
+          },
+          {
+            "instances": 8064,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 54194775
+          },
+          {
+            "instances": 17376,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float>>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 52480131
+          },
+          {
+            "instances": 7584,
+            "kernel": "void at::native::reduce_kernel<(int)512, (int)1, at::native::ReduceOp<float, at::native::MeanOps<float, float, float, float>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 31995496
+          },
+          {
+            "instances": 3456,
+            "kernel": "void at::native::reduce_kernel<(int)128, (int)4, at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator ()(at::TensorIterator &)::[lambda(float, float) (instance 1)]>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 25604790
+          }
+        ]
+      }
+    },
+    "recompute": {
+      "decode_first": {
+        "all": {
+          "instances": 37100,
+          "total_time_ns": 686311719
+        },
+        "gemm_gemv": {
+          "instances": 3748,
+          "total_time_ns": 50410098
+        },
+        "nccl_all_gather": {
+          "instances": 384,
+          "total_time_ns": 527873757
+        },
+        "nccl_all_reduce": {
+          "instances": 16,
+          "total_time_ns": 1773166
+        },
+        "other": {
+          "instances": 32952,
+          "total_time_ns": 106254698
+        }
+      },
+      "decode_steady": {
+        "all": {
+          "instances": 222600,
+          "total_time_ns": 4087059508
+        },
+        "gemm_gemv": {
+          "instances": 22488,
+          "total_time_ns": 301930808
+        },
+        "nccl_all_gather": {
+          "instances": 2304,
+          "total_time_ns": 3123115438
+        },
+        "nccl_all_reduce": {
+          "instances": 96,
+          "total_time_ns": 26436832
+        },
+        "other": {
+          "instances": 197712,
+          "total_time_ns": 635576430
+        }
+      },
+      "top": {
+        "decode_first": [
+          {
+            "instances": 384,
+            "kernel": "ncclDevKernel_AllGather_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 527873757
+          },
+          {
+            "instances": 1056,
+            "kernel": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x6_tn",
+            "total_time_ns": 22301245
+          },
+          {
+            "instances": 1248,
+            "kernel": "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)",
+            "total_time_ns": 19064807
+          },
+          {
+            "instances": 4836,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 7)]::operator ()() const::[lambda(float) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 17322722
+          },
+          {
+            "instances": 2608,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 10230255
+          },
+          {
+            "instances": 1344,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 9025543
+          },
+          {
+            "instances": 2896,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float>>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 8811742
+          },
+          {
+            "instances": 1264,
+            "kernel": "void at::native::reduce_kernel<(int)512, (int)1, at::native::ReduceOp<float, at::native::MeanOps<float, float, float, float>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 5354316
+          },
+          {
+            "instances": 576,
+            "kernel": "void at::native::reduce_kernel<(int)128, (int)4, at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator ()(at::TensorIterator &)::[lambda(float, float) (instance 1)]>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 4302983
+          },
+          {
+            "instances": 2244,
+            "kernel": "void at::native::vectorized_elementwise_kernel<(int)4, at::native::CUDAFunctorOnSelf_add<float>, at::detail::Array<char *, (int)2>>(int, T2, T3)",
+            "total_time_ns": 4212007
+          }
+        ],
+        "decode_steady": [
+          {
+            "instances": 2304,
+            "kernel": "ncclDevKernel_AllGather_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 3123115438
+          },
+          {
+            "instances": 6336,
+            "kernel": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x6_tn",
+            "total_time_ns": 133476490
+          },
+          {
+            "instances": 7488,
+            "kernel": "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)",
+            "total_time_ns": 114161416
+          },
+          {
+            "instances": 29016,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 7)]::operator ()() const::[lambda(float) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 103707376
+          },
+          {
+            "instances": 15648,
+            "kernel": "void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)], at::detail::Array<char *, (int)2>, TrivialOffsetCalculator<(int)1, unsigned int>, TrivialOffsetCalculator<(int)1, unsigned int>, at::native::memory::LoadWithCast<(int)1>, at::native::memory::StoreWithCast<(int)1>>(int, T1, T2, T3, T4, T5, T6)",
+            "total_time_ns": 61223383
+          },
+          {
+            "instances": 8064,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 12)]::operator ()() const::[lambda(c10::BFloat16) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 54053492
+          },
+          {
+            "instances": 17376,
+            "kernel": "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float>>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+            "total_time_ns": 52652907
+          },
+          {
+            "instances": 7584,
+            "kernel": "void at::native::reduce_kernel<(int)512, (int)1, at::native::ReduceOp<float, at::native::MeanOps<float, float, float, float>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 32034527
+          },
+          {
+            "instances": 96,
+            "kernel": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL(ncclDevComm *, unsigned long, ncclWork *)",
+            "total_time_ns": 26436832
+          },
+          {
+            "instances": 3456,
+            "kernel": "void at::native::reduce_kernel<(int)128, (int)4, at::native::ReduceOp<float, at::native::func_wrapper_t<float, at::native::sum_functor<float, float, float>::operator ()(at::TensorIterator &)::[lambda(float, float) (instance 1)]>, unsigned int, float, (int)4>>(T3)",
+            "total_time_ns": 25705863
+          }
+        ]
+      }
+    }
+  },
+  "nsys_exact_to_recompute_ratios": {
+    "decode_first": {
+      "all": {
+        "delta_ns": 2155720228,
+        "exact_ns": 2842031947,
+        "ratio": 4.141022028796218,
+        "recompute_ns": 686311719
+      },
+      "gemm_gemv": {
+        "delta_ns": -125278,
+        "exact_ns": 50284820,
+        "ratio": 0.9975148233197245,
+        "recompute_ns": 50410098
+      },
+      "nccl_all_gather": {
+        "delta_ns": 2025102971,
+        "exact_ns": 2552976728,
+        "ratio": 4.836339549268406,
+        "recompute_ns": 527873757
+      },
+      "nccl_all_reduce": {
+        "delta_ns": 131149904,
+        "exact_ns": 132923070,
+        "ratio": 74.96369206267208,
+        "recompute_ns": 1773166
+      },
+      "other": {
+        "delta_ns": -407369,
+        "exact_ns": 105847329,
+        "ratio": 0.996166108344687,
+        "recompute_ns": 106254698
+      }
+    },
+    "decode_steady": {
+      "all": {
+        "delta_ns": 10033856071,
+        "exact_ns": 14120915579,
+        "ratio": 3.4550305791632727,
+        "recompute_ns": 4087059508
+      },
+      "gemm_gemv": {
+        "delta_ns": -414295,
+        "exact_ns": 301516513,
+        "ratio": 0.9986278478743381,
+        "recompute_ns": 301930808
+      },
+      "nccl_all_gather": {
+        "delta_ns": 9559914372,
+        "exact_ns": 12683029810,
+        "ratio": 4.061018576412929,
+        "recompute_ns": 3123115438
+      },
+      "nccl_all_reduce": {
+        "delta_ns": 475260978,
+        "exact_ns": 501697810,
+        "ratio": 18.97722881470821,
+        "recompute_ns": 26436832
+      },
+      "other": {
+        "delta_ns": -904984,
+        "exact_ns": 634671446,
+        "ratio": 0.998576120892337,
+        "recompute_ns": 635576430
+      }
+    }
+  },
+  "nvtx_ranges": {
+    "exact_restore": {
+      "collective/replicated_weight_row_parallel_all_gather": {
+        "avg_ns": 626916.1,
+        "instances": 2688,
+        "total_time_ns": 1685150387
+      },
+      "collective/vocab_parallel_embedding_all_reduce": {
+        "avg_ns": 481388.0,
+        "instances": 112,
+        "total_time_ns": 53915460
+      },
+      "decode_first": {
+        "avg_ns": 344408915.7,
+        "instances": 16,
+        "total_time_ns": 5510542651
+      },
+      "decode_steady": {
+        "avg_ns": 257068923.9,
+        "instances": 96,
+        "total_time_ns": 24678616696
+      },
+      "prefill": {
+        "avg_ns": 2610157441.9,
+        "instances": 16,
+        "total_time_ns": 41762519070
+      }
+    },
+    "recompute": {
+      "collective/replicated_weight_row_parallel_all_gather": {
+        "avg_ns": 279259.0,
+        "instances": 2688,
+        "total_time_ns": 750648209
+      },
+      "collective/vocab_parallel_embedding_all_reduce": {
+        "avg_ns": 210190.5,
+        "instances": 112,
+        "total_time_ns": 23541338
+      },
+      "decode_first": {
+        "avg_ns": 132782312.7,
+        "instances": 16,
+        "total_time_ns": 2124517003
+      },
+      "decode_steady": {
+        "avg_ns": 115818086.9,
+        "instances": 96,
+        "total_time_ns": 11118536339
+      },
+      "prefill": {
+        "avg_ns": 1138927011.4,
+        "instances": 16,
+        "total_time_ns": 18222832182
+      }
+    }
+  },
+  "output_parity": [
+    {
+      "all_equal": true,
+      "phase": "warmup",
+      "repetition": 0,
+      "requests": [
+        {
+          "request_id": "request-0",
+          "sha256": "2c9a369f03a38dc8b0a4bef6416bcb1f6bcf4774a7f340e2a1c2d020dbd2f6f2",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-1",
+          "sha256": "5fcd86aef6beb8acd272499a77ea8012138a234c38d0e71ed72667ca15c5755b",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-2",
+          "sha256": "4ce419c7f04515be0345d9abda65d96ba6d46d02810c0be478c313dd42b161e6",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-3",
+          "sha256": "4f105f169756989e164e962df6176762fccfdb5f742db2534bad37eb91be1b6e",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        }
+      ]
+    },
+    {
+      "all_equal": true,
+      "phase": "measured",
+      "repetition": 0,
+      "requests": [
+        {
+          "request_id": "request-0",
+          "sha256": "2c9a369f03a38dc8b0a4bef6416bcb1f6bcf4774a7f340e2a1c2d020dbd2f6f2",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-1",
+          "sha256": "5fcd86aef6beb8acd272499a77ea8012138a234c38d0e71ed72667ca15c5755b",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-2",
+          "sha256": "4ce419c7f04515be0345d9abda65d96ba6d46d02810c0be478c313dd42b161e6",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-3",
+          "sha256": "4f105f169756989e164e962df6176762fccfdb5f742db2534bad37eb91be1b6e",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        }
+      ]
+    },
+    {
+      "all_equal": true,
+      "phase": "measured",
+      "repetition": 1,
+      "requests": [
+        {
+          "request_id": "request-0",
+          "sha256": "2c9a369f03a38dc8b0a4bef6416bcb1f6bcf4774a7f340e2a1c2d020dbd2f6f2",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-1",
+          "sha256": "5fcd86aef6beb8acd272499a77ea8012138a234c38d0e71ed72667ca15c5755b",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-2",
+          "sha256": "4ce419c7f04515be0345d9abda65d96ba6d46d02810c0be478c313dd42b161e6",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-3",
+          "sha256": "4f105f169756989e164e962df6176762fccfdb5f742db2534bad37eb91be1b6e",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        }
+      ]
+    },
+    {
+      "all_equal": true,
+      "phase": "measured",
+      "repetition": 2,
+      "requests": [
+        {
+          "request_id": "request-0",
+          "sha256": "2c9a369f03a38dc8b0a4bef6416bcb1f6bcf4774a7f340e2a1c2d020dbd2f6f2",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-1",
+          "sha256": "5fcd86aef6beb8acd272499a77ea8012138a234c38d0e71ed72667ca15c5755b",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-2",
+          "sha256": "4ce419c7f04515be0345d9abda65d96ba6d46d02810c0be478c313dd42b161e6",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-3",
+          "sha256": "4f105f169756989e164e962df6176762fccfdb5f742db2534bad37eb91be1b6e",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        }
+      ]
+    },
+    {
+      "all_equal": true,
+      "phase": "measured",
+      "repetition": 3,
+      "requests": [
+        {
+          "request_id": "request-0",
+          "sha256": "2c9a369f03a38dc8b0a4bef6416bcb1f6bcf4774a7f340e2a1c2d020dbd2f6f2",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-1",
+          "sha256": "5fcd86aef6beb8acd272499a77ea8012138a234c38d0e71ed72667ca15c5755b",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-2",
+          "sha256": "4ce419c7f04515be0345d9abda65d96ba6d46d02810c0be478c313dd42b161e6",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-3",
+          "sha256": "4f105f169756989e164e962df6176762fccfdb5f742db2534bad37eb91be1b6e",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        }
+      ]
+    },
+    {
+      "all_equal": true,
+      "phase": "measured",
+      "repetition": 4,
+      "requests": [
+        {
+          "request_id": "request-0",
+          "sha256": "2c9a369f03a38dc8b0a4bef6416bcb1f6bcf4774a7f340e2a1c2d020dbd2f6f2",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-1",
+          "sha256": "5fcd86aef6beb8acd272499a77ea8012138a234c38d0e71ed72667ca15c5755b",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-2",
+          "sha256": "4ce419c7f04515be0345d9abda65d96ba6d46d02810c0be478c313dd42b161e6",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        },
+        {
+          "request_id": "request-3",
+          "sha256": "4f105f169756989e164e962df6176762fccfdb5f742db2534bad37eb91be1b6e",
+          "sha256_equal": true,
+          "token_ids_equal": true
+        }
+      ]
+    }
+  ],
+  "profile_checks": [
+    {
+      "case_id": "w2_long_reuse__measured__r0__exact_restore",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "exact_restore",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 0,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r0__recompute",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "recompute",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 0,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r1__exact_restore",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "exact_restore",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 1,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r1__recompute",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "recompute",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 1,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r2__exact_restore",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "exact_restore",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 2,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r2__recompute",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "recompute",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 2,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r3__exact_restore",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "exact_restore",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 3,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r3__recompute",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "recompute",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 3,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r4__exact_restore",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "exact_restore",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 4,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__measured__r4__recompute",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "measured",
+      "policy": "recompute",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 4,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__warmup__r0__exact_restore",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "warmup",
+      "policy": "exact_restore",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 0,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    },
+    {
+      "case_id": "w2_long_reuse__warmup__r0__recompute",
+      "exclusive": false,
+      "finalization_status": "complete",
+      "generated_tokens": 8,
+      "phase": "warmup",
+      "policy": "recompute",
+      "rank_details": [
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 0,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 1,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 2,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        },
+        {
+          "collective_count": 700,
+          "decode_count": 28,
+          "decode_ordinals": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "operation_counts": {
+            "replicated_weight_row_parallel_all_gather": 672,
+            "vocab_parallel_embedding_all_reduce": 28
+          },
+          "prefill_count": 4,
+          "rank": 3,
+          "request_set_sha256_inventory": [
+            "038966de9f6b9a901b20b4c6ca8b2a46009feebe031babc842d43690c0bc222b",
+            "06d033ece6645de592db973644cf7357255f24536ff7b03c3b2ace10736f7636",
+            "080a9ed428559ef602668b4c00f114f1a11c3f6b02a435f0bdc154578e4d7f22",
+            "46b1884167c4edd308bcf0c04163dd02d05c9742b35e86b57b5f7ed1b82f3850"
+          ],
+          "step_count": 32
+        }
+      ],
+      "rank_inventory": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "repetition": 0,
+      "resource_policy": "shared-low-utilization",
+      "schema_version": "qwen35.tp4-decode-internal-case.v1",
+      "units": "nanoseconds"
+    }
+  ],
+  "run_tag": "qwen35-tp4-decode-internal-profile-20260811-r620-attempt001",
+  "schema_version": "qwen35.tp4-decode-internal-completion-audit.v1"
+}

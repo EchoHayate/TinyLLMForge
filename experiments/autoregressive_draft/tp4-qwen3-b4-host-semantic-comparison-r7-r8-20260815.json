@@ -1,0 +1,257 @@
+{
+  "campaign_artifacts": {
+    "learned_first": {
+      "path": "tp4-qwen3-b4-host-semantic-primed-learned-target-gpu3467-r8-20260815/host-semantic.json",
+      "policy_order": "learned,target",
+      "role": "learned_first",
+      "sha256": "e80b5668e7e87b3db4ea8a084b9aff0b74a506225cfaebb0f0a2072467b30b66"
+    },
+    "learned_second": {
+      "path": "tp4-qwen3-b4-host-semantic-primed-target-learned-gpu3467-r7-20260815/host-semantic.json",
+      "policy_order": "target,learned",
+      "role": "learned_second",
+      "sha256": "ae5590a943284358f5b732a0f9def96a99e1c0208cc72a1aad56339c068808d7"
+    }
+  },
+  "classification": "HOST_ALIGNMENT_INCONCLUSIVE",
+  "classification_reasons": [
+    "learned E2E position effect is below 10%"
+  ],
+  "correlations": {
+    "context_switches_per_second": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": 0.20588235294117646,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": 0.1588235294117647,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "cpu_iowait_fraction": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": -0.13202363927456381,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": -0.13202363927456381,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "cpu_system_fraction": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": -0.18529411764705883,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": -0.18235294117647058,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "io_psi_some_fraction": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": 0.35294117647058826,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": 0.3029411764705882,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "major_faults_per_second": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": -0.17666541912507236,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": -0.15854588895839827,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "memory_dirty_kib_max": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": 0.12950702549515725,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": 0.08830024465578903,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "memory_psi_some_fraction": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": 0.1892604863572257,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": 0.2940296841621185,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "memory_writeback_kib_max": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": 0.3589400086792861,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": 0.30428659171988864,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    },
+    "run_queue_mean": {
+      "e2e_s": {
+        "host_rank_variance": true,
+        "rho": -0.55,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      },
+      "executor_proposal_forward_ms": {
+        "host_rank_variance": true,
+        "rho": -0.5205882352941177,
+        "sample_count": 16,
+        "timing_rank_variance": true
+      }
+    }
+  },
+  "learned_position_effect": {
+    "e2e_s": {
+      "learned_first_median": 6.1944397425,
+      "learned_second_median": 9.07202871925,
+      "relative_delta": -0.3171935479705905
+    },
+    "executor_proposal_forward_ms": {
+      "learned_first_median": 3468.1439884006977,
+      "learned_second_median": 5174.646642059088,
+      "relative_delta": -0.3297814849400695
+    },
+    "tpot_s": {
+      "learned_first_median": 0.3971080518333333,
+      "learned_second_median": 0.5817995087500001,
+      "relative_delta": -0.3174486298784912
+    }
+  },
+  "limitations": [
+    "host correlation is not causal proof",
+    "system-wide pressure does not identify a responsible process",
+    "campaign does not establish stable long-context performance",
+    "campaign does not establish Proposal-KV offload benefit",
+    "campaign does not establish Phase-1 promotion"
+  ],
+  "primary_metric_comparison": {
+    "context_switches_per_second": {
+      "absolute_difference": -12014.299390128814,
+      "learned_first_median": 6189290.617425797,
+      "learned_second_median": 6201304.916815925,
+      "relative_increase": -0.0019373824624475302,
+      "worse_in_learned_first": false
+    },
+    "cpu_iowait_fraction": {
+      "absolute_difference": 2.987507515317414e-05,
+      "learned_first_median": 3.357680460117225e-05,
+      "learned_second_median": 3.701729447998105e-06,
+      "relative_increase": 8.070572302179075,
+      "worse_in_learned_first": true
+    },
+    "cpu_system_fraction": {
+      "absolute_difference": 0.008044208114756146,
+      "learned_first_median": 0.398614217405612,
+      "learned_second_median": 0.39057000929085584,
+      "relative_increase": 0.020596072210873874,
+      "worse_in_learned_first": false
+    },
+    "io_psi_some_fraction": {
+      "absolute_difference": -5.6166272811415674e-05,
+      "learned_first_median": 0.01584323675068766,
+      "learned_second_median": 0.015899403023499077,
+      "relative_increase": -0.003532602622148943,
+      "worse_in_learned_first": false
+    },
+    "major_faults_per_second": {
+      "absolute_difference": 0.02268069696656158,
+      "learned_first_median": 0.18750922758815117,
+      "learned_second_median": 0.1648285306215896,
+      "relative_increase": 0.13760176639948046,
+      "worse_in_learned_first": true
+    },
+    "memory_dirty_kib_max": {
+      "absolute_difference": 178.0,
+      "learned_first_median": 297487060.0,
+      "learned_second_median": 297486882.0,
+      "relative_increase": 5.983457112572783e-07,
+      "worse_in_learned_first": false
+    },
+    "memory_psi_some_fraction": {
+      "absolute_difference": -6.410573064622279e-08,
+      "learned_first_median": 0.0,
+      "learned_second_median": 6.410573064622279e-08,
+      "relative_increase": -1.0,
+      "worse_in_learned_first": false
+    },
+    "memory_writeback_kib_max": {
+      "absolute_difference": -22.0,
+      "learned_first_median": 60.0,
+      "learned_second_median": 82.0,
+      "relative_increase": -0.2682926829268293,
+      "worse_in_learned_first": false
+    },
+    "run_queue_mean": {
+      "absolute_difference": 1107.3622933648003,
+      "learned_first_median": 42448.45439377085,
+      "learned_second_median": 41341.09210040605,
+      "relative_increase": 0.026785995170986877,
+      "worse_in_learned_first": false
+    }
+  },
+  "schema_version": 1,
+  "source_identity": {
+    "tools/autoregressive_draft_b4_timing_diagnostic.py": "d2fc63df070602403163c87e2d3a7244d373522e38ec694482f48bb0f7a87b4b",
+    "tools/autoregressive_draft_host_sampler.py": "6245dc19c9f56cf1530181a5be9a4df606f96adc71c69ff42bf7f533d4eac986",
+    "tools/autoregressive_draft_host_semantic_diagnostic.py": "e3b1a4ed9dbfc769ab4baed2356f6d63760eefd9ab7919585a3f169fb8bf49ee",
+    "tools/autoregressive_draft_instability_telemetry.py": "b74acc04ddbb5557c65d9e983e73b96764cb272bd9a384ed6d71babe405c79fa",
+    "tools/autoregressive_draft_performance_worker.py": "fdc81278a137218b66e4057ae08d52dfa52ed30c426c394e51b171bc2893b7c5",
+    "tools/verify_autoregressive_draft_host_semantic_diagnostic.py": "110556d81c4b119ca740deb83080d53958c7885c6bfb6a609534bd6cc8ea0a8a"
+  },
+  "status": "PASS",
+  "thresholds": {
+    "edge_allowance_seconds": 0.4,
+    "host_metric_worse_fraction": 0.1,
+    "maximum_sample_gap_seconds": 0.6,
+    "minimum_correlated_primary_metrics": 2,
+    "minimum_worse_primary_metrics": 2,
+    "position_effect_fraction": 0.1,
+    "sample_interval_seconds": 0.2,
+    "spearman_rho_minimum": 0.6
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "kind": "layer_recovery_task_policy",
+  "settings": {
+    "output_dir": "experiments/light_doc_cache/policy_recovery_all_b050",
+    "threshold": 0.88,
+    "compact_layer": "all",
+    "budget_fraction": 0.5,
+    "seq_len": 1536,
+    "num_layers": 28,
+    "num_kv_heads": 8,
+    "note": "all_layer_2x_recovery_task_policy"
+  },
+  "summary": [
+    {
+      "threshold": 0.88,
+      "compact_layer": "all",
+      "compressed_heads": 224,
+      "selected_budget": 768,
+      "budget_fraction": 0.5,
+      "entry_saving_fraction": 0.5,
+      "note": "all_layer_2x_recovery_task_policy"
+    }
+  ]
+}

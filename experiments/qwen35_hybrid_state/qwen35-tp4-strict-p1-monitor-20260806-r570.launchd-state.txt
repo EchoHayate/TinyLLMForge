@@ -1,0 +1,36 @@
+{
+	"StandardOutPath" = "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-monitor-20260806-r570.launchd.stdout.log";
+	"LimitLoadToSessionType" = "Aqua";
+	"StandardErrorPath" = "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-monitor-20260806-r570.launchd.stderr.log";
+	"Label" = "com.bytedance.tinyllmforge.qwen35.strictp1.r570";
+	"OnDemand" = false;
+	"LastExitStatus" = 0;
+	"PID" = 32011;
+	"Program" = "/usr/bin/env";
+	"ProgramArguments" = (
+		"/usr/bin/env";
+		"PYTHONPATH=/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/tools:/Users/bytedance/dev/TinyLLMForge-adaptive-ngram";
+		"/opt/homebrew/bin/python3.12";
+		"/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/tools/run_qwen35_tp4_strict_p1_monitor.py";
+		"--monitor-tag";
+		"qwen35-tp4-strict-p1-monitor-20260806-r570";
+		"--run-tag";
+		"qwen35-tp4-strict-p1-canonical-20260806-r571";
+		"--control-path";
+		"/tmp/ssh-dynamic-token-ppo-a66cd65";
+		"--prerequisites";
+		"/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/correctness_prerequisites.json";
+		"--local-model-manifest";
+		"/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-2b-hybrid-acquire-20260723-222004/model_manifest.json";
+		"--remote-model-dir";
+		"/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-2b-hybrid-acquire-20260723-222004/model";
+		"--remote-model-manifest";
+		"/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-2b-hybrid-acquire-20260723-222004/model_manifest.json";
+		"--interval-s";
+		"60";
+		"--required-ready-samples";
+		"2";
+		"--max-samples";
+		"1440";
+	);
+};

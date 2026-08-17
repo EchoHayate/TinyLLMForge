@@ -2,6 +2,29 @@ import os
 from dataclasses import dataclass
 from transformers import AutoConfig
 
+
+def _normalize_positive_int_tuple(
+    value,
+    *,
+    name,
+    allow_empty,
+):
+    if not isinstance(value, (tuple, list)):
+        raise ValueError(f"{name} must be a tuple or list")
+    if not value and not allow_empty:
+        raise ValueError(f"{name} must be non-empty")
+    if any(
+        isinstance(item, bool)
+        or not isinstance(item, int)
+        or item <= 0
+        for item in value
+    ):
+        raise ValueError(
+            f"{name} must contain positive non-boolean integers"
+        )
+    return tuple(sorted(set(value)))
+
+
 @dataclass   #自动配置__init__方法
 class Config:
     model: str                                          # sequence includes multi-tokens   batch includes multi-sequences
@@ -19,6 +42,40 @@ class Config:
     multi_sequence_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
     multi_sequence_cuda_graph_max_total_capture_ns: int = 5_000_000_000
     multi_sequence_cuda_graph_max_single_capture_ns: int = 2_000_000_000
+    spec_verify_cuda_graphs: bool = False
+    spec_verify_cuda_graph_batch_allowlist: tuple = (1, 4)
+    spec_verify_cuda_graph_query_len_allowlist: tuple = ()
+    spec_verify_cuda_graph_min_observations: int = 2
+    spec_verify_cuda_graph_max_entries: int = 8
+    spec_verify_cuda_graph_max_static_bytes: int = 64 * 1024 * 1024
+    spec_verify_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
+    spec_verify_cuda_graph_max_total_capture_ns: int = 5_000_000_000
+    spec_verify_cuda_graph_max_single_capture_ns: int = 2_000_000_000
+    qwen35_mtp_cuda_graphs: bool = False
+    qwen35_mtp_cuda_graph_q_allowlist: tuple = (2, 3, 4)
+    qwen35_mtp_cuda_graph_batch_allowlist: tuple = (1, 2, 4)
+    qwen35_mtp_cuda_graph_min_observations: int = 2
+    qwen35_mtp_cuda_graph_max_entries: int = 8
+    qwen35_mtp_cuda_graph_max_static_bytes: int = 64 * 1024 * 1024
+    qwen35_mtp_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
+    qwen35_mtp_cuda_graph_max_total_capture_ns: int = 5_000_000_000
+    qwen35_mtp_cuda_graph_max_single_capture_ns: int = 2_000_000_000
+    qwen35_mtp_enabled: bool = False
+    qwen35_mtp_max_proposal_tokens: int = 4
+    proposal_kv_offload_enabled: bool = False
+    proposal_kv_logical_entry_capacity: int = 0
+    proposal_kv_gpu_slot_capacity: int = 0
+    proposal_kv_cpu_backing_capacity: int = 0
+    proposal_kv_async_copy: bool = True
+    proposal_kv_batch_copy: bool = True
+    autoregressive_draft_enabled: bool = False
+    autoregressive_draft_model: str | None = None
+    autoregressive_draft_backend: str = "qwen3"
+    autoregressive_draft_max_proposal_tokens: int = 4
+    autoregressive_draft_gpu_slot_capacity: int = 0
+    autoregressive_draft_proposal_kv_offload_enabled: bool = False
+    autoregressive_draft_logical_entry_capacity: int = 0
+    autoregressive_draft_cpu_backing_capacity: int = 0
     hf_config: AutoConfig | None = None                 # hugging face config, 加载模型的层数，隐藏层数，注意力头数
     eos: int  = -1                                      # end of sentence, 使用模型默认的句子结束符
     kvcache_block_size: int = 256                       
@@ -29,6 +86,7 @@ class Config:
     quant_group_size: int = 128                         # 分组量化的组大小（更小的组 -> 更高精度但额外开销大）
     cpu_offload: bool = False                           # 是否启用 cpu-offload (decoder layer 粒度)
     cpu_offload_num_layers: int = -1                    # 卸载到 cpu 的 decoder 层数，-1 表示除最后 2 层外全部卸载
+    qwen35_hybrid_prefix_representation: str = "exact_restore"
 
     # 动态稀疏 attention（Quest，page-level top-k）相关配置
     quest_top_k_blocks: int = -1                        # decode 时每个 query 选择的 block 数，-1 表示关闭 Quest
@@ -133,7 +191,276 @@ class Config:
         ):
             assert isinstance(value, int) and not isinstance(value, bool)
             assert value > 0
+        if not isinstance(self.spec_verify_cuda_graphs, bool):
+            raise ValueError(
+                "spec_verify_cuda_graphs must be a bool"
+            )
+        self.spec_verify_cuda_graph_batch_allowlist = (
+            _normalize_positive_int_tuple(
+                self.spec_verify_cuda_graph_batch_allowlist,
+                name=(
+                    "spec_verify_cuda_graph_batch_allowlist"
+                ),
+                allow_empty=False,
+            )
+        )
+        self.spec_verify_cuda_graph_query_len_allowlist = (
+            _normalize_positive_int_tuple(
+                self.spec_verify_cuda_graph_query_len_allowlist,
+                name=(
+                    "spec_verify_cuda_graph_query_len_allowlist"
+                ),
+                allow_empty=True,
+            )
+        )
+        for name in (
+            "spec_verify_cuda_graph_min_observations",
+            "spec_verify_cuda_graph_max_entries",
+            "spec_verify_cuda_graph_max_static_bytes",
+            "spec_verify_cuda_graph_max_reserved_bytes",
+            "spec_verify_cuda_graph_max_total_capture_ns",
+            "spec_verify_cuda_graph_max_single_capture_ns",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+            ):
+                raise ValueError(
+                    f"{name} must be a positive integer"
+                )
+        if not isinstance(self.qwen35_mtp_cuda_graphs, bool):
+            raise ValueError(
+                "qwen35_mtp_cuda_graphs must be a bool"
+            )
+        if not isinstance(self.qwen35_mtp_enabled, bool):
+            raise ValueError("qwen35_mtp_enabled must be a bool")
+        for name in (
+            "proposal_kv_offload_enabled",
+            "proposal_kv_async_copy",
+            "proposal_kv_batch_copy",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a bool")
+        for name in (
+            "proposal_kv_logical_entry_capacity",
+            "proposal_kv_gpu_slot_capacity",
+            "proposal_kv_cpu_backing_capacity",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"{name} must be a nonnegative integer"
+                )
+        if self.proposal_kv_offload_enabled:
+            if not self.qwen35_mtp_enabled:
+                raise ValueError(
+                    "proposal KV offload requires Qwen3.5 MTP"
+                )
+            if (
+                self.proposal_kv_logical_entry_capacity
+                != self.proposal_kv_cpu_backing_capacity
+                or self.proposal_kv_logical_entry_capacity
+                <= self.proposal_kv_gpu_slot_capacity
+                or self.proposal_kv_gpu_slot_capacity <= 0
+            ):
+                raise ValueError(
+                    "proposal KV offload requires "
+                    "logical == cpu > gpu > 0"
+                )
+            if self.qwen35_mtp_cuda_graphs:
+                raise ValueError(
+                    "proposal KV offload is incompatible with "
+                    "Qwen3.5 MTP CUDA graphs"
+                )
+        if (
+            isinstance(self.qwen35_mtp_max_proposal_tokens, bool)
+            or not isinstance(
+                self.qwen35_mtp_max_proposal_tokens,
+                int,
+            )
+            or self.qwen35_mtp_max_proposal_tokens <= 0
+        ):
+            raise ValueError(
+                "qwen35_mtp_max_proposal_tokens must be a "
+                "positive integer"
+            )
+        if not isinstance(
+            self.autoregressive_draft_enabled,
+            bool,
+        ):
+            raise ValueError(
+                "autoregressive_draft_enabled must be a bool"
+            )
+        if (
+            self.autoregressive_draft_model is not None
+            and not isinstance(
+                self.autoregressive_draft_model,
+                str,
+            )
+        ):
+            raise ValueError(
+                "autoregressive_draft_model must be a string or None"
+            )
+        if (
+            self.autoregressive_draft_enabled
+            and (
+                not isinstance(
+                    self.autoregressive_draft_model,
+                    str,
+                )
+                or not self.autoregressive_draft_model.strip()
+            )
+        ):
+            raise ValueError(
+                "autoregressive_draft_model is required when enabled"
+            )
+        if (
+            self.autoregressive_draft_enabled
+            and self.tensor_parallel_size not in (1, 4)
+        ):
+            raise ValueError(
+                "autoregressive draft requires "
+                "tensor_parallel_size 1 or 4"
+            )
+        if self.autoregressive_draft_backend != "qwen3":
+            raise ValueError(
+                "autoregressive_draft_backend must equal qwen3"
+            )
+        if (
+            isinstance(
+                self.autoregressive_draft_max_proposal_tokens,
+                bool,
+            )
+            or not isinstance(
+                self.autoregressive_draft_max_proposal_tokens,
+                int,
+            )
+            or not (
+                1
+                <= self.autoregressive_draft_max_proposal_tokens
+                <= 4
+            )
+        ):
+            raise ValueError(
+                "autoregressive_draft_max_proposal_tokens "
+                "must be in 1..4"
+            )
+        if (
+            isinstance(
+                self.autoregressive_draft_gpu_slot_capacity,
+                bool,
+            )
+            or not isinstance(
+                self.autoregressive_draft_gpu_slot_capacity,
+                int,
+            )
+            or self.autoregressive_draft_gpu_slot_capacity < 0
+            or (
+                self.autoregressive_draft_enabled
+                and self.autoregressive_draft_gpu_slot_capacity <= 0
+            )
+        ):
+            raise ValueError(
+                "autoregressive_draft_gpu_slot_capacity must be "
+                "positive when enabled and nonnegative otherwise"
+            )
+        if not isinstance(
+            self.autoregressive_draft_proposal_kv_offload_enabled,
+            bool,
+        ):
+            raise ValueError(
+                "autoregressive_draft_proposal_kv_offload_enabled "
+                "must be a bool"
+            )
+        for name in (
+            "autoregressive_draft_logical_entry_capacity",
+            "autoregressive_draft_cpu_backing_capacity",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"{name} must be a nonnegative integer"
+                )
+        if self.autoregressive_draft_proposal_kv_offload_enabled:
+            if not self.autoregressive_draft_enabled:
+                raise ValueError(
+                    "autoregressive draft proposal KV offload "
+                    "requires autoregressive draft"
+                )
+            if (
+                self.autoregressive_draft_logical_entry_capacity
+                != self.autoregressive_draft_cpu_backing_capacity
+            ):
+                raise ValueError(
+                    "autoregressive draft proposal KV offload "
+                    "requires logical == cpu"
+                )
+            if (
+                self.autoregressive_draft_logical_entry_capacity
+                <= self.autoregressive_draft_gpu_slot_capacity
+                or self.autoregressive_draft_gpu_slot_capacity <= 0
+            ):
+                raise ValueError(
+                    "autoregressive draft proposal KV offload "
+                    "requires logical == cpu > gpu > 0"
+                )
+        self.qwen35_mtp_cuda_graph_q_allowlist = (
+            _normalize_positive_int_tuple(
+                self.qwen35_mtp_cuda_graph_q_allowlist,
+                name="qwen35_mtp_cuda_graph_q_allowlist",
+                allow_empty=False,
+            )
+        )
+        if self.qwen35_mtp_cuda_graph_q_allowlist[0] < 2:
+            raise ValueError(
+                "qwen35_mtp_cuda_graph_q_allowlist must contain "
+                "only values at least two"
+            )
+        self.qwen35_mtp_cuda_graph_batch_allowlist = (
+            _normalize_positive_int_tuple(
+                self.qwen35_mtp_cuda_graph_batch_allowlist,
+                name=(
+                    "qwen35_mtp_cuda_graph_batch_allowlist"
+                ),
+                allow_empty=False,
+            )
+        )
+        for name in (
+            "qwen35_mtp_cuda_graph_min_observations",
+            "qwen35_mtp_cuda_graph_max_entries",
+            "qwen35_mtp_cuda_graph_max_static_bytes",
+            "qwen35_mtp_cuda_graph_max_reserved_bytes",
+            "qwen35_mtp_cuda_graph_max_total_capture_ns",
+            "qwen35_mtp_cuda_graph_max_single_capture_ns",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+            ):
+                raise ValueError(
+                    f"{name} must be a positive integer"
+                )
         assert self.quantization in (None, "int8", "int8_bnb", "int4", "int2")
+        if self.qwen35_hybrid_prefix_representation not in (
+            "exact_restore",
+            "recurrent_int8_per_row",
+        ):
+            raise ValueError(
+                "unsupported Qwen3.5 hybrid prefix representation: "
+                f"{self.qwen35_hybrid_prefix_representation}"
+            )
         assert self.kv_quant_bits in (0, 4, 8), "kv_quant_bits 仅支持 0/4/8"
         assert self.kv_offload_gpu_blocks >= 0
         assert self.kv_offload_logical_blocks >= 0
@@ -261,5 +588,14 @@ class Config:
         if self.am_compact_blocks > 0 and self.am_compact_enable_layers is None:
             assert self.am_compact_skip_first_layers + self.am_compact_skip_last_layers < self.hf_config.num_hidden_layers, \
                 "am_compact_skip_first_layers + am_compact_skip_last_layers 覆盖了全部层"
-        self.max_model_len = min(self.max_model_len, self.hf_config.max_position_embeddings)
+        max_position_embeddings = getattr(
+            self.hf_config,
+            "max_position_embeddings",
+            None,
+        )
+        if max_position_embeddings is not None:
+            self.max_model_len = min(
+                self.max_model_len,
+                max_position_embeddings,
+            )
         assert self.max_num_batched_tokens >= self.max_model_len

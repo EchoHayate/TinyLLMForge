@@ -1,0 +1,33 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-143444-attempt62-qwen35-release-contract-r509/authorization.json",
+  "claim_boundary": "cached-continuation authority only; no Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "classification": "PASS",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-143444-attempt62-qwen35-release-contract-r509/executor_configuration.json",
+  "downloaded_cached_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-143444-attempt62-qwen35-release-contract-r509/plan/downloaded_cached_authority",
+  "execution_performed": true,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-143216-attempt62-qwen35-release-contract-retry-r508/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-143444-attempt62-qwen35-release-contract-r509/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 35675,
+    "master_port": 54657
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-143444-attempt62-qwen35-release-contract-r509/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-143216-attempt62-qwen35-release-contract-retry-r508",
+  "root_pass_evidence": [
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-143216-attempt62-qwen35-release-contract-retry-r508/artifacts/tp4_real_root_logit_correctness.json",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-143216-attempt62-qwen35-release-contract-retry-r508/independent_verification.json"
+  ],
+  "run_tag": "qwen35-tp4-cached-continuation-20260804-143444-attempt62-qwen35-release-contract-r509",
+  "schema_version": "qwen35.tp4-cached-continuation-r509-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-143216-attempt62-qwen35-release-contract-retry-r508",
+  "source_tree_sha256": "72f0eef34dcc1ed42ec41fed6c19c849bac4012e3416f129f3b74892800b670f"
+}

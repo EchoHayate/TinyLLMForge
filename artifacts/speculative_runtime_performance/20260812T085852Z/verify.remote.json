@@ -1,0 +1,12 @@
+{
+  "artifact_path": "/tmp/tinyllmforge-speculative-runtime-performance-20260812T085852Z/result.json",
+  "artifact_sha256": "d987b288176beec3ab841a7f640bb1d68cabf86445cadad50aec6337bcc4fb9f",
+  "batch_directions": {
+    "1": "IMPROVED",
+    "4": "IMPROVED"
+  },
+  "classification": "NOT_PROMOTABLE",
+  "direction": "POSITIVE",
+  "schema_version": 1,
+  "status": "PASS"
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": "qwen35.recurrent-int8-task10-completion-audit.v1",
+  "classification": "BLOCKED_RESOURCES",
+  "run_tag": "qwen35-recurrent-int8-task10-resource-audit-20260805-r549",
+  "timestamp": "2026-08-05T22:52:20+08:00",
+  "source_tree_sha256": "e265b3ead9d9717d92d8bc0507ac051d93ec22f8403b7929c3625ee4153ccfd7",
+  "prerequisites": {
+    "correctness_prerequisites": {
+      "path": "experiments/qwen35_hybrid_state/qwen35-tp4-performance-correctness-prerequisites-20260804-attempt67-r542/correctness_prerequisites.json",
+      "sha256": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8",
+      "classification": "PASS",
+      "authorized": true
+    },
+    "gate1_audit": {
+      "path": "experiments/qwen35_hybrid_state/qwen35-recurrent-int8-gate1-audit-20260805-r548/gate1_audit.json",
+      "sha256": "ce0ad854a7589c53dd3235a4d1f418840f1538ad164ae6e5b691654cf6a1834e",
+      "gate1_audit_sha256": "07e928c85d4af9aff95fdae2545463959a98044858c8821ef98f1e8de51d51df",
+      "classification": "PASS",
+      "checks": 15
+    },
+    "p1_authority": {
+      "classification": "MISSING",
+      "required_classification": "GO"
+    },
+    "calibration": {
+      "classification": "MISSING",
+      "required_classification": "PASS"
+    }
+  },
+  "strict_p1_preflight": {
+    "path": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260805-225220-task10-r549/benchmark_preflight.json",
+    "sha256": "1a67b5d5b5d568dacd398fc8505ef63db6c2a5de048b7a1b25499dec4935cf02",
+    "source_bundle_path": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260805-225220-task10-r549/benchmark_source.tar",
+    "source_bundle_sha256": "63f6a5f89c726cf0a60327f3cee3121f3d448216325a71c3d7b8c0404539f0f0",
+    "classification": "BLOCKED_RESOURCES",
+    "authorized": false,
+    "reasons": [
+      "eligible GPUs 2,4,5,6 are required"
+    ],
+    "required_gpu_observations": {
+      "2": {
+        "free_bytes": 68789731328,
+        "compute_process_count": 5
+      },
+      "4": {
+        "free_bytes": 50963939328,
+        "compute_process_count": 5
+      },
+      "5": {
+        "free_bytes": 84979744768,
+        "compute_process_count": 0
+      },
+      "6": {
+        "free_bytes": 63191384064,
+        "compute_process_count": 3
+      }
+    },
+    "remote_query_executed": true,
+    "remote_path_created": false
+  },
+  "side_effects": {
+    "gpu_query": true,
+    "ssh": true,
+    "remote_directory_created": false,
+    "source_staged": false,
+    "worker_launched": false,
+    "execution_plan_created": false,
+    "authorization_created": false,
+    "authorization_consumed": false,
+    "canonical_authority_executed": false
+  },
+  "next_action": "Wait for all fixed GPUs 2,4,5,6 to become eligible, then rerun a fresh current-source strict-P1 preflight. Execute strict-P1 smoke only after READY.",
+  "claim_boundary": "Gate 1 proves local integration only. No canonical accuracy, cache, capacity, memory, latency, throughput, decode, compression, or speed benefit is established."
+}

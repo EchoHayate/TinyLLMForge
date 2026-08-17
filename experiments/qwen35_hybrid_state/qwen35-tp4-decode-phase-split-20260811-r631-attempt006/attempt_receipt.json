@@ -1,0 +1,12 @@
+{
+  "classification": "DOWNLOADED",
+  "cleanup": {
+    "classification": "CLEAN",
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "CLEAN\n"
+  },
+  "run_tag": "qwen35-tp4-decode-phase-split-20260811-r631-attempt006",
+  "source_tar_sha256": "f791f27e807e602f889345d301b72035dcd4a93d55a32adf51fd5eb3eaefb79c",
+  "source_tree_sha256": "6f881fae7010cc5f048100b147a72fbf27ffba0f77bc34e2e2e68388a98a2837"
+}

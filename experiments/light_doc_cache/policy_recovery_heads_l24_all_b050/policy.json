@@ -1,0 +1,26 @@
+{
+  "kind": "layer_recovery_task_policy",
+  "settings": {
+    "output_dir": "experiments/light_doc_cache/policy_recovery_heads_l24_all_b050",
+    "threshold": 0.79,
+    "compact_layer": null,
+    "compact_layer_range": null,
+    "compact_heads": "24:0,24:1,24:2,24:3,24:4,24:5,24:6,24:7",
+    "budget_fraction": 0.5,
+    "seq_len": 1536,
+    "num_layers": 28,
+    "num_kv_heads": 8,
+    "note": "head_list_layer24_all"
+  },
+  "summary": [
+    {
+      "threshold": 0.79,
+      "compact_layer": "heads",
+      "compressed_heads": 8,
+      "selected_budget": 768,
+      "budget_fraction": 0.5,
+      "entry_saving_fraction": 0.017857142857142905,
+      "note": "head_list_layer24_all"
+    }
+  ]
+}

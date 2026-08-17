@@ -2,6 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## 2026-08-15 Evidence Reconciliation
+
+This plan is reconciled against the current implementation, focused tests,
+recorded commits, and retained remote smoke artifacts. A checked historical
+step means its durable deliverable or execution record is present; it does not
+claim that an old RED observation was re-run during this reconciliation.
+
+- Checked: 73 of 90 steps.
+- Historical missing-module/interface RED observations remain unchecked where
+  no retained execution record proves the observation.
+- The retained valid SAM authority is the 25-row, one-repetition
+  `qwen3-06b-sam-remat-smoke-20260715-162323` smoke with decision `NO_GO`.
+- No dedicated remote block-boundary smoke record was found.
+- The canonical 175-row run, independent canonical verification/audit, and
+  canonical evidence commit remain unexecuted.
+- README and smoke handoff documentation exist, but canonical-dependent final
+  handoff/audit steps remain unchecked.
+
 **Goal:** Build and run a reproducible profiler-only Qwen3-0.6B gate that compares a prompt+dynamic token suffix automaton with normal greedy, fixed n-gram `K=4`, adaptive n-gram, and fixed SAM `K=16`, then classifies the match-aware SAM as `GO`, `NO_GO`, or `INCOMPLETE`.
 
 **Architecture:** Add a dependency-light `tinyvllm/speculative/sam.py` that owns token indexing, longest usable suffix lookup, continuation metadata, and match-aware `K in {0,4,8,16}` selection. Integrate one SAM index per candidate into `tools/profile_ngram_commit.py` without changing `verify_and_commit_block()`, then add a separate canonical gate/verifier and isolated remote runner that preregister five prompts, five policies, seven repetitions, paired statistics, strict evidence checks, and five canonical artifacts.
@@ -64,7 +82,7 @@
 - Produces: `SuffixAutomatonDraftIndex.propose(max_draft_tokens: int) -> SAMDraft`
 - Produces: `select_match_aware_k(match_length: int) -> int`
 
-- [ ] **Step 1: Write failing construction, lookup, and invariant tests**
+- [x] **Step 1: Write failing construction, lookup, and invariant tests**
 
 Create `tools/test_sam_speculative.py` with direct import loading matching existing dependency-light tests:
 
@@ -169,7 +187,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_speculative.py
 
 Expected: failure loading `tinyvllm/speculative/sam.py`.
 
-- [ ] **Step 3: Implement standard online SAM construction**
+- [x] **Step 3: Implement standard online SAM construction**
 
 Create `tinyvllm/speculative/sam.py` with these concrete types and constructor:
 
@@ -260,7 +278,7 @@ class SuffixAutomatonDraftIndex:
             raise ValueError("SAM indexed stream does not match target-verified history")
 ```
 
-- [ ] **Step 4: Implement suffix-link query and bounded proposal**
+- [x] **Step 4: Implement suffix-link query and bounded proposal**
 
 Add:
 
@@ -332,7 +350,7 @@ Add:
         )
 ```
 
-- [ ] **Step 5: Run the pure SAM tests**
+- [x] **Step 5: Run the pure SAM tests**
 
 Run:
 
@@ -342,7 +360,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_speculative.py
 
 Expected final line after adding a test runner: `sam speculative tests passed`.
 
-- [ ] **Step 6: Commit the pure index**
+- [x] **Step 6: Commit the pure index**
 
 ```bash
 git add tinyvllm/speculative/sam.py tools/test_sam_speculative.py
@@ -363,7 +381,7 @@ git commit -m "Add token suffix automaton draft index"
 - Produces: `SuffixAutomatonDraftIndex.propose_match_aware() -> SAMDraft`
 - Proposal metadata must distinguish prompt/generated start and exact copied-span boundary crossing.
 
-- [ ] **Step 1: Add failing cap-boundary and metadata tests**
+- [x] **Step 1: Add failing cap-boundary and metadata tests**
 
 Add:
 
@@ -412,7 +430,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_speculative.py
 
 Expected: failure for undefined `select_match_aware_k` or `propose_match_aware`.
 
-- [ ] **Step 3: Implement fixed policy mapping**
+- [x] **Step 3: Implement fixed policy mapping**
 
 Add:
 
@@ -462,7 +480,7 @@ Add:
         return draft
 ```
 
-- [ ] **Step 4: Run pure tests and syntax validation**
+- [x] **Step 4: Run pure tests and syntax validation**
 
 Run:
 
@@ -473,7 +491,7 @@ python3 -m py_compile tinyvllm/speculative/sam.py tools/test_sam_speculative.py
 
 Expected: both commands exit 0.
 
-- [ ] **Step 5: Commit policy semantics**
+- [x] **Step 5: Commit policy semantics**
 
 ```bash
 git add tinyvllm/speculative/sam.py tools/test_sam_speculative.py
@@ -495,7 +513,7 @@ git commit -m "Add match-aware SAM draft policy"
 - Produces `propose_draft(history, args, max_draft_tokens=None, sam_index=None) -> DraftProposal`.
 - Produces `validate_profile_args(args)` rules for profiler-only SAM execution.
 
-- [ ] **Step 1: Add failing import, dispatch, and validation tests**
+- [x] **Step 1: Add failing import, dispatch, and validation tests**
 
 Load the SAM module in `tools/test_ngram_speculative.py` and add:
 
@@ -577,7 +595,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_ngram_speculative.py
 
 Expected: failure for missing SAM import, unsupported choice, or unsupported draft source.
 
-- [ ] **Step 3: Import SAM and extend CLI choices**
+- [x] **Step 3: Import SAM and extend CLI choices**
 
 Load `tinyvllm/speculative/sam.py` beside the n-gram module:
 
@@ -608,7 +626,7 @@ p.add_argument(
 )
 ```
 
-- [ ] **Step 4: Extend pure proposal dispatch**
+- [x] **Step 4: Extend pure proposal dispatch**
 
 Change the signature:
 
@@ -639,7 +657,7 @@ Insert before toy sources:
         )
 ```
 
-- [ ] **Step 5: Add explicit SAM argument validation**
+- [x] **Step 5: Add explicit SAM argument validation**
 
 Extend `validate_profile_args()`:
 
@@ -658,7 +676,7 @@ Extend `validate_profile_args()`:
         raise ValueError("--draft-source sam requires a SAM draft policy")
 ```
 
-- [ ] **Step 6: Run dependency-light profiler tests**
+- [x] **Step 6: Run dependency-light profiler tests**
 
 Run:
 
@@ -670,7 +688,7 @@ python3 -m py_compile tools/profile_ngram_commit.py
 
 Expected: all commands exit 0.
 
-- [ ] **Step 7: Commit profiler dispatch**
+- [x] **Step 7: Commit profiler dispatch**
 
 ```bash
 git add tools/profile_ngram_commit.py tools/test_ngram_speculative.py
@@ -691,7 +709,7 @@ git commit -m "Add SAM draft source to profiler"
 - Produces `sam_events` containing `proposal`, `bypass`, `verify`, and `index_integrity` records.
 - Produces process/per-prompt summary fields: `sam_build_ms`, `sam_extension_ms`, `sam_lookup_ms`, `sam_state_count`, `sam_indexed_tokens`, `sam_bypass_count`, `sam_bypass_reasons`, `sam_match_length_counts`, `sam_continuation_region_counts`, `selected_k_counts` for `0/4/8/16`, `runtime_mutation=false`, and `profiler_owned=true`.
 
-- [ ] **Step 1: Extract a dependency-light synchronization helper and write failing tests**
+- [x] **Step 1: Extract a dependency-light synchronization helper and write failing tests**
 
 Add tests for a new helper:
 
@@ -727,7 +745,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_ngram_speculative.py
 
 Expected: failure importing `sync_sam_index`.
 
-- [ ] **Step 3: Implement synchronization without draft-token input**
+- [x] **Step 3: Implement synchronization without draft-token input**
 
 Add:
 
@@ -757,7 +775,7 @@ def sync_sam_index(
     }
 ```
 
-- [ ] **Step 4: Initialize SAM indexes from real candidate histories**
+- [x] **Step 4: Initialize SAM indexes from real candidate histories**
 
 In `run_candidate_only_profile()`, after `candidate_id` is known, read the scheduler sequence and build:
 
@@ -785,7 +803,7 @@ Store:
 "sam_bypass_count": 0,
 ```
 
-- [ ] **Step 5: Synchronize before each proposal and record lookup/bypass**
+- [x] **Step 5: Synchronize before each proposal and record lookup/bypass**
 
 Immediately before proposing:
 
@@ -854,7 +872,7 @@ stats["sam_bypass_count"] += 1
 Then continue to the existing normal decode path without calling
 `verify_and_commit_block()`.
 
-- [ ] **Step 6: Tag verify events and synchronize committed history**
+- [x] **Step 6: Tag verify events and synchronize committed history**
 
 For every non-empty SAM verify event, set:
 
@@ -870,7 +888,7 @@ At the next loop iteration, `sync_sam_index()` extends from actual
 `candidate.token_ids`; do not extend from `draft.tokens` or `accepted_count`
 inside the verify helper.
 
-- [ ] **Step 7: Add per-prompt and process SAM summaries**
+- [x] **Step 7: Add per-prompt and process SAM summaries**
 
 Populate exact JSON-friendly fields:
 
@@ -909,7 +927,7 @@ Add process summary totals and expose top-level:
 ],
 ```
 
-- [ ] **Step 8: Add source-scan and bypass regression assertions**
+- [x] **Step 8: Add source-scan and bypass regression assertions**
 
 Add tests that:
 
@@ -930,7 +948,7 @@ def should_verify_draft(draft: DraftProposal) -> bool:
 
 and testing `should_verify_draft(empty_draft) is False`.
 
-- [ ] **Step 9: Run profiler regression suites**
+- [x] **Step 9: Run profiler regression suites**
 
 Run:
 
@@ -942,7 +960,7 @@ python3 -m py_compile tools/profile_ngram_commit.py
 
 Expected: all commands exit 0.
 
-- [ ] **Step 10: Commit candidate lifecycle**
+- [x] **Step 10: Commit candidate lifecycle**
 
 ```bash
 git add tools/profile_ngram_commit.py tools/test_ngram_speculative.py
@@ -961,7 +979,7 @@ git commit -m "Track SAM lifecycle in speculative profiler"
 - Consumes unchanged `verify_and_commit_block()` and SAM event contract.
 - Proves SAM draft source changes no target verification, accepted-prefix, EOS, output-budget, or block/hash lifecycle behavior.
 
-- [ ] **Step 1: Add failing verify-event contract test**
+- [x] **Step 1: Add failing verify-event contract test**
 
 Use the existing profiler helper test pattern to construct a SAM
 `DraftProposal`, pass its tokens/source/metadata into the event attachment path,
@@ -977,7 +995,7 @@ assert event["wasted_draft_tokens"] == (
 )
 ```
 
-- [ ] **Step 2: Add a SAM-originated accepted-token block regression**
+- [x] **Step 2: Add a SAM-originated accepted-token block regression**
 
 In `tools/test_chunked_prefill.py`, reuse the existing speculative
 block-boundary fixture but obtain draft tokens from:
@@ -1011,7 +1029,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_chunked_prefill.py
 
 Expected: at least one new assertion/import fails before the test plumbing is completed.
 
-- [ ] **Step 4: Make only test-facing event plumbing changes**
+- [x] **Step 4: Make only test-facing event plumbing changes**
 
 If necessary, update `attach_draft_policy_event()` so SAM events retain:
 
@@ -1022,7 +1040,7 @@ event["profiler_owned"] = True
 
 Do not edit `verify_and_commit_block()` acceptance or KV logic.
 
-- [ ] **Step 5: Run both complete regression suites**
+- [x] **Step 5: Run both complete regression suites**
 
 Run:
 
@@ -1038,7 +1056,7 @@ ngram speculative tests passed
 chunked prefill tests passed
 ```
 
-- [ ] **Step 6: Commit correctness coverage**
+- [x] **Step 6: Commit correctness coverage**
 
 ```bash
 git add tools/test_ngram_speculative.py tools/test_chunked_prefill.py tools/profile_ngram_commit.py
@@ -1063,7 +1081,7 @@ git commit -m "Test SAM speculative commit boundaries"
 - `out_dir` contains only the five canonical evidence files. Process JSON and
   stdout/stderr live in a sibling `<out-dir-name>.runs/` directory.
 
-- [ ] **Step 1: Write failing prompt/policy/matrix tests**
+- [x] **Step 1: Write failing prompt/policy/matrix tests**
 
 Create `tools/test_sam_drafter_gate.py` using the import style from
 `tools/test_adaptive_ngram_gate.py`. Add:
@@ -1121,7 +1139,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_drafter_gate.py
 
 Expected: failure loading `tools/sam_drafter_gate.py`.
 
-- [ ] **Step 3: Define exact policies and thresholds**
+- [x] **Step 3: Define exact policies and thresholds**
 
 Create:
 
@@ -1169,7 +1187,7 @@ THRESHOLDS = {
 }
 ```
 
-- [ ] **Step 4: Commit five concrete prompts**
+- [x] **Step 4: Commit five concrete prompts**
 
 Define literal prompts and fixed output lengths:
 
@@ -1230,7 +1248,7 @@ PROMPT_BANK_BASE = (
 
 Hash every prompt with `sha256_text`.
 
-- [ ] **Step 5: Implement deterministic run specs and manifest**
+- [x] **Step 5: Implement deterministic run specs and manifest**
 
 Copy the atomic JSON/text writers, dynamic distinct-port allocation, narrow
 port-collision classifier, and model identifier helper from
@@ -1255,7 +1273,7 @@ The manifest claim scope must be:
 }
 ```
 
-- [ ] **Step 6: Implement policy-specific profiler commands**
+- [x] **Step 6: Implement policy-specific profiler commands**
 
 Every command includes:
 
@@ -1275,7 +1293,7 @@ For candidates append exact `--draft-source`, `--draft-policy`,
 `--max-draft-tokens`, and `--allow-zero-accept`. For n-gram candidates also
 append `--ngram-size 5`.
 
-- [ ] **Step 7: Normalize all profiler evidence**
+- [x] **Step 7: Normalize all profiler evidence**
 
 Each row must include:
 
@@ -1317,7 +1335,7 @@ both profiler lists by assigning a stable event key:
 
 and retaining one row per key.
 
-- [ ] **Step 8: Implement atomic run/resume**
+- [x] **Step 8: Implement atomic run/resume**
 
 Reuse the adaptive driver structure but validate every resumable row against:
 
@@ -1346,7 +1364,7 @@ process_dir = run_data_dir / "process_json"
 Store paths relative to `run_data_dir.parent`; never create `logs/` or
 `process_json/` beneath `out_dir`.
 
-- [ ] **Step 9: Run manifest/matrix tests**
+- [x] **Step 9: Run manifest/matrix tests**
 
 Run:
 
@@ -1357,7 +1375,7 @@ python3 -m py_compile tools/sam_drafter_gate.py
 
 Expected: prompt, policy, matrix, command, and upload-path tests pass.
 
-- [ ] **Step 10: Commit gate orchestration**
+- [x] **Step 10: Commit gate orchestration**
 
 ```bash
 git add tools/sam_drafter_gate.py tools/test_sam_drafter_gate.py
@@ -1378,7 +1396,7 @@ git commit -m "Add SAM drafter gate matrix"
 - Produces paired speedups/reductions exactly as preregistered.
 - Produces strict `GO`, `NO_GO`, or `INCOMPLETE`.
 
-- [ ] **Step 1: Build a synthetic complete 175-row fixture**
+- [x] **Step 1: Build a synthetic complete 175-row fixture**
 
 Add `_synthetic_complete_gate_rows()` that:
 
@@ -1393,7 +1411,7 @@ Add `_synthetic_complete_gate_rows()` that:
 - includes one integrity event per SAM run;
 - reconciles every process total.
 
-- [ ] **Step 2: Add failing classification tests**
+- [x] **Step 2: Add failing classification tests**
 
 Add:
 
@@ -1433,7 +1451,7 @@ def test_performance_failure_is_no_go_only_after_evidence_passes():
     assert summary["correctness_pass"] is True
 ```
 
-- [ ] **Step 3: Add paired-statistic tests**
+- [x] **Step 3: Add paired-statistic tests**
 
 Construct asymmetric rows proving the implementation uses per-pair ratios:
 
@@ -1464,7 +1482,7 @@ def test_speedup_is_median_of_paired_ratios():
     assert 0.0 in natural_pairs
 ```
 
-- [ ] **Step 4: Add reduction-reference and policy-exercise tests**
+- [x] **Step 4: Add reduction-reference and policy-exercise tests**
 
 Test all required `INCOMPLETE` branches:
 
@@ -1494,7 +1512,7 @@ def test_missing_each_required_policy_branch_is_incomplete():
 
 Add a separate assertion for a fully accepted multi-token proposal.
 
-- [ ] **Step 5: Implement structural validation**
+- [x] **Step 5: Implement structural validation**
 
 Reject as `INCOMPLETE`:
 
@@ -1509,7 +1527,7 @@ Reject as `INCOMPLETE`:
 - profiler gate failure;
 - `runtime_mutation != false` or `profiler_owned != true` for SAM rows/events.
 
-- [ ] **Step 6: Implement trace reconciliation**
+- [x] **Step 6: Implement trace reconciliation**
 
 For each run:
 
@@ -1538,7 +1556,7 @@ all integrity history_match == true
 
 Return field-specific failures; any failure is `INCOMPLETE`.
 
-- [ ] **Step 7: Implement paired metrics**
+- [x] **Step 7: Implement paired metrics**
 
 For each of 35 `(repetition, prompt_name)` pairs:
 
@@ -1555,7 +1573,7 @@ reduction = 1.0 - candidate_value / reference_value
 Only include pairs with positive reference values. If none exist for a required
 metric, append a structural failure.
 
-- [ ] **Step 8: Implement exact classification order**
+- [x] **Step 8: Implement exact classification order**
 
 Classification order:
 
@@ -1575,7 +1593,7 @@ efficient_near_tie = (
 )
 ```
 
-- [ ] **Step 9: Run classifier tests**
+- [x] **Step 9: Run classifier tests**
 
 Run:
 
@@ -1585,7 +1603,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_drafter_gate.py
 
 Expected final line: `sam drafter gate tests passed`.
 
-- [ ] **Step 10: Commit strict decision logic**
+- [x] **Step 10: Commit strict decision logic**
 
 ```bash
 git add tools/sam_drafter_gate.py tools/test_sam_drafter_gate.py
@@ -1606,7 +1624,7 @@ git commit -m "Verify SAM gate evidence and thresholds"
 - Produces a canonical artifact SHA-256 manifest embedded in `summary.json` without adding a sixth canonical file.
 - Produces strict resume-row validation.
 
-- [ ] **Step 1: Add failing independent-regeneration tests**
+- [x] **Step 1: Add failing independent-regeneration tests**
 
 Add a temporary-directory test that writes the five files, verifies them, then
 mutates each derived file:
@@ -1626,13 +1644,13 @@ def test_verify_artifacts_recomputes_summary_report_and_hashes(tmp_path):
         raise AssertionError("tampered report accepted")
 ```
 
-- [ ] **Step 2: Add resume compatibility tests**
+- [x] **Step 2: Add resume compatibility tests**
 
 Test that `_row_is_resumable(manifest, spec, row)` returns `False` for every
 one-field mismatch in source commit, dirty bit, model identifier, prompt hash,
 policy, repetition, return code, profiler gate, or non-finite timing.
 
-- [ ] **Step 3: Implement deterministic report rendering**
+- [x] **Step 3: Implement deterministic report rendering**
 
 Report sections:
 
@@ -1654,7 +1672,7 @@ Next direction by GO/NO_GO/INCOMPLETE
 Render values from `summary.json`; do not recompute hidden values inside the
 Markdown renderer.
 
-- [ ] **Step 4: Embed hashes without recursive self-hashing**
+- [x] **Step 4: Embed hashes without recursive self-hashing**
 
 Use this rule:
 
@@ -1675,7 +1693,7 @@ summary["input_artifact_sha256"] = {
 }
 ```
 
-- [ ] **Step 5: Implement verifier**
+- [x] **Step 5: Implement verifier**
 
 `verify_artifacts()` must:
 
@@ -1687,7 +1705,7 @@ summary["input_artifact_sha256"] = {
 5. regenerate and require exact report text equality;
 6. return the verified summary.
 
-- [ ] **Step 6: Run artifact and resume tests**
+- [x] **Step 6: Run artifact and resume tests**
 
 Run:
 
@@ -1698,7 +1716,7 @@ python3 -m py_compile tools/sam_drafter_gate.py
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit artifact verifier**
+- [x] **Step 7: Commit artifact verifier**
 
 ```bash
 git add tools/sam_drafter_gate.py tools/test_sam_drafter_gate.py
@@ -1722,7 +1740,7 @@ git commit -m "Harden SAM gate artifacts and resume"
 - Uploads only `REQUIRED_UPLOAD_PATHS`.
 - Downloads and verifies exactly five canonical artifacts.
 
-- [ ] **Step 1: Add runner contract tests**
+- [x] **Step 1: Add runner contract tests**
 
 Read the shell source and assert exact strings:
 
@@ -1751,7 +1769,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_drafter_gate.py
 
 Expected: missing shell file failure.
 
-- [ ] **Step 3: Create runner from the proven adaptive pattern**
+- [x] **Step 3: Create runner from the proven adaptive pattern**
 
 Start with:
 
@@ -1776,7 +1794,7 @@ BASE_SEED="${BASE_SEED:-20260715}"
 Validate exact model directory and `config.json`; do not discover alternative
 spellings.
 
-- [ ] **Step 4: Upload isolated committed source**
+- [x] **Step 4: Upload isolated committed source**
 
 Before upload:
 
@@ -1799,7 +1817,7 @@ tools/sam_drafter_gate.py
 
 Run remote `py_compile` and both `--help` commands.
 
-- [ ] **Step 5: Run gate and download only canonical evidence**
+- [x] **Step 5: Run gate and download only canonical evidence**
 
 Modes:
 
@@ -1831,7 +1849,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/sam_drafter_gate.py verify \
   --out-dir "${LOCAL_OUT}"
 ```
 
-- [ ] **Step 6: Validate shell and runner tests**
+- [x] **Step 6: Validate shell and runner tests**
 
 Run:
 
@@ -1843,7 +1861,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_drafter_gate.py
 
 Expected: all commands exit 0.
 
-- [ ] **Step 7: Commit remote runner**
+- [x] **Step 7: Commit remote runner**
 
 ```bash
 git add tools/run_sam_drafter_gate_remote.sh tools/test_sam_drafter_gate.py
@@ -1864,7 +1882,7 @@ git commit -m "Add isolated SAM drafter remote gate"
 **Interfaces:**
 - Produces a clean source commit suitable for isolated remote upload.
 
-- [ ] **Step 1: Run all focused dependency-light tests**
+- [x] **Step 1: Run all focused dependency-light tests**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_speculative.py
@@ -1875,7 +1893,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/test_sam_drafter_gate.py
 
 Expected: four passing final lines and exit 0.
 
-- [ ] **Step 2: Run syntax and shell validation**
+- [x] **Step 2: Run syntax and shell validation**
 
 ```bash
 python3 -m py_compile \
@@ -1890,7 +1908,7 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 3: Verify write-scope and runtime boundaries**
+- [x] **Step 3: Verify write-scope and runtime boundaries**
 
 Run:
 
@@ -1908,7 +1926,7 @@ git diff 48ef363 -- \
 
 Expected: no production runtime diff in the final command.
 
-- [ ] **Step 4: Commit any validation-only fix**
+- [x] **Step 4: Commit any validation-only fix**
 
 If fixes were required:
 
@@ -1932,7 +1950,7 @@ If no fixes were required, do not create an empty commit.
 - Produces a one-repetition smoke with 25 process rows.
 - Must cover `K=0`, non-empty SAM verify, prompt/generated continuation, zero accept, full multi-token accept, block boundary, exact output, and `runtime_mutation=false`.
 
-- [ ] **Step 1: Confirm clean source and remote connectivity**
+- [x] **Step 1: Confirm clean source and remote connectivity**
 
 ```bash
 git status --short --branch
@@ -1943,7 +1961,7 @@ ssh -S /tmp/ssh-sitian-10.232.195.203 -o BatchMode=yes \
 Expected: clean branch and SSH exit 0. If the control socket is absent, use the
 current Kerberos/API-cache route established for this host; do not switch user.
 
-- [ ] **Step 2: Run exact remote preflight**
+- [x] **Step 2: Run exact remote preflight**
 
 ```bash
 tools/run_sam_drafter_gate_remote.sh preflight
@@ -1952,7 +1970,7 @@ tools/run_sam_drafter_gate_remote.sh preflight
 Expected: model config validation, remote compilation, and CLI help pass in a
 unique isolated directory.
 
-- [ ] **Step 3: Run one-repetition smoke**
+- [x] **Step 3: Run one-repetition smoke**
 
 ```bash
 RUN_TAG="qwen3-06b-sam-smoke-$(date +%Y%m%d-%H%M%S)" \
@@ -1962,7 +1980,7 @@ tools/run_sam_drafter_gate_remote.sh smoke
 Expected: 25 unique process rows and five locally verified artifacts. The
 decision may be `GO` or `NO_GO`; it must not be `INCOMPLETE`.
 
-- [ ] **Step 4: Audit required smoke branches**
+- [x] **Step 4: Audit required smoke branches**
 
 Run:
 
@@ -2002,7 +2020,7 @@ repeated prompt, `--draft-source sam`, `--draft-policy sam-fixed`,
 speculative append across a KV block boundary. Assert exact token equality and
 record the command/output in `AGENT_HANDOFF_STATE.md` later.
 
-- [ ] **Step 6: Fix only evidence or plumbing defects and repeat**
+- [x] **Step 6: Fix only evidence or plumbing defects and repeat**
 
 If the smoke is `INCOMPLETE` or lacks required branches:
 
@@ -2034,7 +2052,7 @@ Do not change performance thresholds.
 **Interfaces:**
 - Produces manifest-bound, resume-safe canonical evidence from one clean source commit.
 
-- [ ] **Step 1: Commit all smoke-proven source before measuring**
+- [x] **Step 1: Commit all smoke-proven source before measuring**
 
 ```bash
 git status --short
@@ -2126,7 +2144,7 @@ Expected: exactly the five canonical evidence files plus no transient logs.
 - Consumes canonical manifest, summary, report, source SHA, remote path, and audit output.
 - Produces durable commands, result interpretation, limits, and next direction.
 
-- [ ] **Step 1: Add README command and result section**
+- [x] **Step 1: Add README command and result section**
 
 Document:
 
@@ -2202,7 +2220,7 @@ claim boundaries -> report, README, handoff
 
 Treat any missing mapping as unfinished work.
 
-- [ ] **Step 5: Commit documentation and any canonical audit fixes**
+- [x] **Step 5: Commit documentation and any canonical audit fixes**
 
 ```bash
 git add README.md AGENT_HANDOFF_STATE.md

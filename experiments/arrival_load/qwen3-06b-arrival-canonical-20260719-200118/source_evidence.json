@@ -1,0 +1,214 @@
+{
+  "base_commit": "c48405ac45a37d12b29e6b8b13c00acf9c643fcd",
+  "dirty": false,
+  "files": [
+    {
+      "path": "tinyvllm/__init__.py",
+      "sha256": "2e240e69afb6561ce1abb5d6d6f11872c2a36abe1eb365f0bbd69f6b22d497b3",
+      "size_bytes": 81
+    },
+    {
+      "path": "tinyvllm/config.py",
+      "sha256": "a9209163d15b6f6aecb4fb7256686595cdde95f304f750f19fda4e1ee26d1ae4",
+      "size_bytes": 14311
+    },
+    {
+      "path": "tinyvllm/engine/attention_matching.py",
+      "sha256": "f87017ecfba905011f37a68944a6e37b7018c3110667f841c66e1f0dc8043b6b",
+      "size_bytes": 46567
+    },
+    {
+      "path": "tinyvllm/engine/block_manager.py",
+      "sha256": "f3cd65eee63ea4f0ef28e87384756bbc93bcc37404affdfb40a4c8f64130b39c",
+      "size_bytes": 18427
+    },
+    {
+      "path": "tinyvllm/engine/kv_cartridge.py",
+      "sha256": "00bcbe84b229d73691348de1b670dd9acfbaa09f0979a22d1f974116c2848471",
+      "size_bytes": 3605
+    },
+    {
+      "path": "tinyvllm/engine/llm_engine.py",
+      "sha256": "20353959f01d4fdf13921a79cbd651cf6537c8e6a1237036401b40ba541d9d38",
+      "size_bytes": 7527
+    },
+    {
+      "path": "tinyvllm/engine/model_runner.py",
+      "sha256": "2d39fff6255da284d4a4d8ea36a5fad8ef519f3b00aa16125754d177a2a4ae08",
+      "size_bytes": 76947
+    },
+    {
+      "path": "tinyvllm/engine/scheduler.py",
+      "sha256": "c62194df0863fa50dded974128770df439d76b9ec4212795e5cc9e2e0104aeda",
+      "size_bytes": 20082
+    },
+    {
+      "path": "tinyvllm/engine/sequence.py",
+      "sha256": "ddfe2464815e4af39382bcdf35cef4e119ddfd6e07c5373bb7f3e5840687d77b",
+      "size_bytes": 6838
+    },
+    {
+      "path": "tinyvllm/layers/activation.py",
+      "sha256": "cdd56cad2201d57a749c699acf928eb05249274c8a1c897de13d9e1f7329b988",
+      "size_bytes": 662
+    },
+    {
+      "path": "tinyvllm/layers/attention.py",
+      "sha256": "c6c6f79fb68dfa0e0c59afffcab4f009ff7d61fd26593f9bd69bb372cc41d6da",
+      "size_bytes": 64815
+    },
+    {
+      "path": "tinyvllm/layers/embed_head.py",
+      "sha256": "56feff0d94253fb3ebbb7bc173deb4971194cd1b57dcd34bcb61e7e78617fa61",
+      "size_bytes": 5024
+    },
+    {
+      "path": "tinyvllm/layers/layernorm.py",
+      "sha256": "e0d610cfae9fd388689a4d4a165c3f1de8341c9215509c0faa4eb05d1a215e3b",
+      "size_bytes": 2440
+    },
+    {
+      "path": "tinyvllm/layers/linear.py",
+      "sha256": "2bf6cad9150640b632a09d419297b1401cec963229e1fd10ff969c5611684e9d",
+      "size_bytes": 14793
+    },
+    {
+      "path": "tinyvllm/layers/quantization.py",
+      "sha256": "731dcc39c962a2afddce9eb4b62efec5f8f8fedd08d7b552c29b0b1c16c70e4a",
+      "size_bytes": 12379
+    },
+    {
+      "path": "tinyvllm/layers/rotary_embedding.py",
+      "sha256": "3b22cdc67227ce3d2a9d1e9e688956d6dc384dfc67c5323a2aa19c5dd75cea85",
+      "size_bytes": 3848
+    },
+    {
+      "path": "tinyvllm/layers/sampler.py",
+      "sha256": "538eff63051641b4fbfb91515adae07a224d46ed4ac63b41ff8b568ecc06d51d",
+      "size_bytes": 1743
+    },
+    {
+      "path": "tinyvllm/llm.py",
+      "sha256": "283d4fb01c1b59fe7d20bc11c7de5ddf9251ec1de4ec90a338c9c8a90e459bd6",
+      "size_bytes": 81
+    },
+    {
+      "path": "tinyvllm/models/qwen3.py",
+      "sha256": "452ffe4a8e5ac6f2b2e7e72a115913ac98ff4fa40ca72e7ff6bf4cc517438d58",
+      "size_bytes": 10370
+    },
+    {
+      "path": "tinyvllm/sampling_params.py",
+      "sha256": "fc6b30007f6e2c67bd96b518c45f6a2daea8eb8252cabd50c641fd128099cf2c",
+      "size_bytes": 505
+    },
+    {
+      "path": "tinyvllm/speculative/__init__.py",
+      "sha256": "9436033638629bd19f53d657e4bb7b6a5fcd3c8cddb8a6d334e4994df98e27e4",
+      "size_bytes": 266
+    },
+    {
+      "path": "tinyvllm/speculative/ngram.py",
+      "sha256": "3e6a3acc2a0e5163a8091a313318fb3f8c31e9d7f50a33570e6d999fd6f0b840",
+      "size_bytes": 12783
+    },
+    {
+      "path": "tinyvllm/speculative/router.py",
+      "sha256": "fa2cb365bcaba0972f8e4c87bd526d73ce128f232c17e0ced593e5a3ee478934",
+      "size_bytes": 1852
+    },
+    {
+      "path": "tinyvllm/speculative/sam.py",
+      "sha256": "d81424437d85107514bc63061d7fa3e6542c886c4fc6eff1cf9acd4551251d0f",
+      "size_bytes": 7076
+    },
+    {
+      "path": "tinyvllm/speculative/verifier.py",
+      "sha256": "74f00d7f54be9e7b07ae7cafbbf4527e9ed5f78ea25febb36f8788a74788af46",
+      "size_bytes": 3025
+    },
+    {
+      "path": "tinyvllm/utils/context.py",
+      "sha256": "c4bea35ba3c877f01c488361dd64d1810e2d54a0ba3b4114b16860cd2b638b06",
+      "size_bytes": 9544
+    },
+    {
+      "path": "tinyvllm/utils/cpu_offload.py",
+      "sha256": "0112483f8e316f18af5c8b1a43b03240577ac3e46d70e579da8bcdfd7fd5205b",
+      "size_bytes": 7445
+    },
+    {
+      "path": "tinyvllm/utils/loader.py",
+      "sha256": "9afe153aec1d9df87be2b71587e65667523365d0b917c60b233d0cce99c89881",
+      "size_bytes": 8615
+    },
+    {
+      "path": "tools/arrival_load_driver.py",
+      "sha256": "2f7eb2c2ddb3f577c09ae0bc5582df04932a5d6a3c3b638ab6d54019fc43199e",
+      "size_bytes": 22849
+    },
+    {
+      "path": "tools/arrival_load_gate.py",
+      "sha256": "737139d9cb40ea163d1ba272ca8c148e2c0d3c66c9bd503b0331b1a1c6856ab2",
+      "size_bytes": 99136
+    },
+    {
+      "path": "tools/arrival_load_verify.py",
+      "sha256": "55cd38dc562e4a8f73f528bf524dd7696ac21da27e2c15abb5daee76a54c4f99",
+      "size_bytes": 28693
+    },
+    {
+      "path": "tools/run_arrival_load_gate_remote.sh",
+      "sha256": "dc9529a055d03bb6f3c2c3a25c8d93447238fd1934599e331d8fc14e8799c8b0",
+      "size_bytes": 13818
+    },
+    {
+      "path": "tools/source_audit.py",
+      "sha256": "90dfa25a43efbbf293b70d2ee330c498426907b8175b72b117a671a55bc713ca",
+      "size_bytes": 13633
+    },
+    {
+      "path": "tools/test_arrival_load_driver.py",
+      "sha256": "44f34ea875337640839bc2365d1df036f2707a05dc44bd63feba3b3f77cf6162",
+      "size_bytes": 15416
+    },
+    {
+      "path": "tools/test_arrival_load_gate.py",
+      "sha256": "2678f315b68a4f2c40ba782b7f306ec09ce08cbf4c095fe6b5437c4c3420cfb1",
+      "size_bytes": 59694
+    },
+    {
+      "path": "tools/test_arrival_load_verify.py",
+      "sha256": "0f3b8aa1168234effc39f7af76353f73527ceb0c4dbda4ed9cb14608ec923aab",
+      "size_bytes": 19415
+    },
+    {
+      "path": "tools/test_chunked_prefill.py",
+      "sha256": "9ddc0ab789761a212353549410d04cb81271bf2e0550dbfee46ec4cafb009c86",
+      "size_bytes": 65134
+    },
+    {
+      "path": "tools/test_run_arrival_load_gate_remote.py",
+      "sha256": "5ad640efbe5240842e0c450cf1930620cb11f9fb769f222c69fbaac7bef0a7b0",
+      "size_bytes": 7369
+    }
+  ],
+  "owned_roots": [
+    "tinyvllm",
+    "tools/source_audit.py",
+    "tools/arrival_load_gate.py",
+    "tools/arrival_load_driver.py",
+    "tools/arrival_load_verify.py",
+    "tools/test_arrival_load_gate.py",
+    "tools/test_arrival_load_driver.py",
+    "tools/test_arrival_load_verify.py",
+    "tools/test_chunked_prefill.py",
+    "tools/run_arrival_load_gate_remote.sh",
+    "tools/test_run_arrival_load_gate_remote.py"
+  ],
+  "patch_path": "source.patch",
+  "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "patch_size_bytes": 0,
+  "schema_version": 1,
+  "tree_sha256": "af9028ca88c89b8fbef8beea20786c6497db3bd538267eea8dd87e53977d0b67"
+}

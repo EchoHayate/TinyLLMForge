@@ -1,0 +1,21 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-045135-attempt49-qwen35-exact-lm-head-r372/authorization.json",
+  "engine_source_tree_sha256": "1de327e4d237445cb9542cd627c93c42fc60c18e31902921328f1625cadb96fd",
+  "execution_performed": false,
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-045135-attempt49-qwen35-exact-lm-head-r372/plan/remote_execution_plan.json",
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-preparation-20260804-045135-attempt49-qwen35-exact-lm-head-r372/resource_baseline.json",
+  "resource_baseline_sha256": "f2318d640f1ffff63c948a1238cb2642ad5a254f70e8e9a216b60252aa5649d8",
+  "root_source_tree_sha256": "4586831d3a9de2876156ee8894f2adebc622d53c9b5aa4734fc7a8e7c7999f81",
+  "run_tag": "qwen35-tp4-root-logit-current-source-20260804-045135-attempt49-qwen35-exact-lm-head-r372",
+  "schema_version": "qwen35.tp4-current-source-root-execution.v1",
+  "source_tag": "qwen35-tp4-source-prep-20260804-045135-attempt49-qwen35-exact-lm-head-r372"
+}

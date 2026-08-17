@@ -1,0 +1,75 @@
+{
+  "canonical_case_count": 70,
+  "claim_boundary": "local immutable readiness inputs only; no SSH, remote query, remote path, GPU, CUDA, correctness, performance, cache, memory, compression, or quality claim",
+  "classification": "READY_FOR_RESOURCE_PREFLIGHT",
+  "correctness_prerequisites": {
+    "authorized": true,
+    "classification": "PASS",
+    "evidence_inventory": {
+      "file_count": 18,
+      "path": "prerequisites",
+      "sha256": "4fd3253b38b43609455f3794e037322ad2c98a4fc58bb2fd984b4cf69222c2b1",
+      "total_bytes": 198222
+    },
+    "path": "correctness_prerequisites.json",
+    "reasons": [],
+    "sha256": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8"
+  },
+  "execution_authorized": false,
+  "future_command": [
+    "PYTHONPATH=/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/tools:/Users/bytedance/dev/TinyLLMForge-adaptive-ngram",
+    "/opt/homebrew/bin/python3.12",
+    "tools/run_qwen35_tp4_hybrid_prefix_benchmark_remote.py",
+    "preflight",
+    "--run-tag",
+    "qwen35-tp4-strict-p1-preflight-20260806-task10-r552",
+    "--prerequisites",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-readiness-20260806-r551/correctness_prerequisites.json"
+  ],
+  "future_run_tag": "qwen35-tp4-strict-p1-preflight-20260806-task10-r552",
+  "gate1_audit": {
+    "classification": "PASS",
+    "path": "../qwen35-recurrent-int8-gate1-audit-20260806-r550/gate1_audit.json",
+    "sha256": "9c1cd090753a064ebc81b68069f1faffc8b821d65bfad7732d11a24e0731573f",
+    "source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c"
+  },
+  "gpu_authorized": false,
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "model_manifest": {
+    "path": "model_manifest.json",
+    "sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0"
+  },
+  "next_gate": "fresh read-only SSH resource preflight",
+  "owned_source_file_count": 91,
+  "remote_path_creation_authorized": false,
+  "readiness_audit": {
+    "classification": "PASS",
+    "path": "readiness_audit.json",
+    "sha256": "6c0c06a3b3e0e8dc4d3f9b6d9eae0bc2af35cc231b1aa2d63ddf1085900c59fa"
+  },
+  "requires_no_active_compute_processes": true,
+  "schema_version": "qwen35.tp4-strict-p1-readiness.v1",
+  "source_tar": {
+    "path": "benchmark_source.tar",
+    "sha256": "8f807c0e51010fddd0bd474670ae41c09beda604c8247f672fc047f533c53a5d"
+  },
+  "source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c",
+  "ssh_authorized": false,
+  "stop_conditions": [
+    "BLOCKED_CORRECTNESS",
+    "BLOCKED_RESOURCES",
+    "SSH failure",
+    "source identity drift"
+  ],
+  "workload_manifest": {
+    "path": "workload_manifest.json",
+    "sha256": "71909b825d1a8d162604f6cc3d34ad413b2af6c191425ec007859715a4d084e3"
+  },
+  "world_size": 4
+}

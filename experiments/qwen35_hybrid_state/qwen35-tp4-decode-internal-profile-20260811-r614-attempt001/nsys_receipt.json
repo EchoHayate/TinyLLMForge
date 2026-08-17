@@ -1,0 +1,11 @@
+{
+  "classification": "FAILED_NSYS_REPLAY",
+  "rows": [
+    {
+      "case_id": "w2_long_reuse__nsys_replay__r1__recompute",
+      "policy": "recompute",
+      "reports": {},
+      "returncode": 1
+    }
+  ]
+}

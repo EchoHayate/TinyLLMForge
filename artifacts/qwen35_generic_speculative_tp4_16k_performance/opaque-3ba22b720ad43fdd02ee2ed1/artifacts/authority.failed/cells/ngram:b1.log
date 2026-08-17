@@ -1,0 +1,142 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+Process SpawnProcess-1:
+Process SpawnProcess-2:
+Process SpawnProcess-3:
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 1961, in __init__
+    self.loop()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 2280, in loop
+    execute_acknowledged_command(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner_command_ack.py", line 149, in execute_acknowledged_command
+    return method(*envelope.args)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 5385, in prepare_speculative_side_state_batch
+    handle = owner.prepare(seqs, leases)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/qwen35_speculative_state.py", line 280, in prepare
+    raise RuntimeError(
+RuntimeError: a speculative side-state batch is already active
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 1961, in __init__
+    self.loop()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 2280, in loop
+    execute_acknowledged_command(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner_command_ack.py", line 149, in execute_acknowledged_command
+    return method(*envelope.args)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 5385, in prepare_speculative_side_state_batch
+    handle = owner.prepare(seqs, leases)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/qwen35_speculative_state.py", line 280, in prepare
+    raise RuntimeError(
+RuntimeError: a speculative side-state batch is already active
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 1961, in __init__
+    self.loop()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 2280, in loop
+    execute_acknowledged_command(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner_command_ack.py", line 149, in execute_acknowledged_command
+    return method(*envelope.args)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/model_runner.py", line 5385, in prepare_speculative_side_state_batch
+    handle = owner.prepare(seqs, leases)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-16k-performance-runs/opaque-3ba22b720ad43fdd02ee2ed1/source/tinyvllm/engine/qwen35_speculative_state.py", line 280, in prepare
+    raise RuntimeError(
+RuntimeError: a speculative side-state batch is already active
+[rank0]:[E813 18:14:28.702916954 ProcessGroupNCCL.cpp:607] [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=453, OpType=ALLREDUCE, NumelIn=2048, NumelOut=2048, Timeout(ms)=600000) ran for 600070 milliseconds before timing out.
+[rank0]:[E813 18:14:28.703153072 ProcessGroupNCCL.cpp:1664] [PG 0 (default_pg) Rank 0] Exception (either an error or timeout) detected by watchdog at work: 453, last enqueued NCCL work: 459, last completed NCCL work: 452.
+[rank0]:[E813 18:14:28.703170811 ProcessGroupNCCL.cpp:1709] [PG 0 (default_pg) Rank 0] Timeout at NCCL work: 453, last enqueued NCCL work: 459, last completed NCCL work: 452.
+[rank0]:[E813 18:14:28.703175951 ProcessGroupNCCL.cpp:621] [Rank 0] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank0]:[E813 18:14:28.703179918 ProcessGroupNCCL.cpp:627] [Rank 0] To avoid data inconsistency, we are taking the entire process down.
+[rank0]:[E813 18:14:28.706972496 ProcessGroupNCCL.cpp:1515] [PG 0 (default_pg) Rank 0] Process group watchdog thread terminated with exception: [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=453, OpType=ALLREDUCE, NumelIn=2048, NumelOut=2048, Timeout(ms)=600000) ran for 600070 milliseconds before timing out.
+Exception raised from checkTimeout at ../torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:609 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f02a89ddf86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x1d2 (0x7f02a9cda8f2 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0x233 (0x7f02a9ce1333 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x10c (0x7f02a9ce371c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xbbb2f (0x7f02f7439b2f in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x7fa3 (0x7f02f9a9efa3 in /usr/lib/x86_64-linux-gnu/libpthread.so.0)
+frame #6: clone + 0x3f (0x7f02f984306f in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG 0 (default_pg) Rank 0] Process group watchdog thread terminated with exception: [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=453, OpType=ALLREDUCE, NumelIn=2048, NumelOut=2048, Timeout(ms)=600000) ran for 600070 milliseconds before timing out.
+Exception raised from checkTimeout at ../torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:609 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f02a89ddf86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x1d2 (0x7f02a9cda8f2 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0x233 (0x7f02a9ce1333 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x10c (0x7f02a9ce371c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xbbb2f (0x7f02f7439b2f in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x7fa3 (0x7f02f9a9efa3 in /usr/lib/x86_64-linux-gnu/libpthread.so.0)
+frame #6: clone + 0x3f (0x7f02f984306f in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at ../torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1521 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f02a89ddf86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xe5aa84 (0x7f02a996ca84 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xbbb2f (0x7f02f7439b2f in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #3: <unknown function> + 0x7fa3 (0x7f02f9a9efa3 in /usr/lib/x86_64-linux-gnu/libpthread.so.0)
+frame #4: clone + 0x3f (0x7f02f984306f in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 15 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

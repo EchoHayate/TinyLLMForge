@@ -1,0 +1,10 @@
+{
+  "batch_directions": {
+    "1": "REGRESSED",
+    "4": "REGRESSED"
+  },
+  "classification": "PILOT_ONLY",
+  "direction": "NEGATIVE",
+  "source_files_verified": 14,
+  "status": "PASS"
+}

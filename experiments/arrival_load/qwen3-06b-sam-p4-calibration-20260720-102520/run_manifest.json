@@ -1,0 +1,95 @@
+{
+  "calibration": {
+    "lambda_ref_rps": 0.5625,
+    "maximum_stable_throughput_rps": 0.6452388378146043,
+    "stable_rate_rps": 0.5625,
+    "status": "PASS",
+    "unstable_rate_rps": 0.625
+  },
+  "canonical_policy_by_name": {
+    "P0": "P0",
+    "P3": "P3",
+    "P4": "P4"
+  },
+  "common_engine_config": {
+    "enforce_eager": false,
+    "max_num_batched_tokens": 16384,
+    "max_num_prefill_tokens_per_step": 128,
+    "max_num_seqs": 512
+  },
+  "drain_timeout_ns": 120000000000,
+  "environment_sha256": "cf037ff0368c9b6d67695368ca382d84aa75e2303e297c747339656335de9678",
+  "measured_repetitions": 3,
+  "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "policy_identity_by_name": {
+    "P0": "d65fe3d76cba742619df39bcb149ab465bf77b13305a2a92b2a587993294ddd2",
+    "P3": "f618f87e29773aa75e0fa269cae134a5ea8c83a641cda071ca7cb980b4441bb3",
+    "P4": "4e0a436cb356c870b5712e9ed8a2ee3ccf2b8e0ffc1ebd25e24bf8ca3731b8fd"
+  },
+  "prompt_bank_sha256": "8099ccbc0ddcd8072b9b5c3b5b2c68c36bb7e1ca97f59a404d763d6680d9fa01",
+  "required_scenarios": [
+    "steady_moderate",
+    "near_saturation",
+    "overload",
+    "burst",
+    "long_prompt_pressure",
+    "mixed_service_fairness"
+  ],
+  "resolved_policy_config_by_name": {
+    "P0": {
+      "chunked_prefill_adaptive_enter_waiting": 8,
+      "chunked_prefill_adaptive_exit_waiting": 2,
+      "chunked_prefill_adaptive_max_mixed_steps": 2,
+      "chunked_prefill_adaptive_mixed": false,
+      "chunked_prefill_adaptive_transition_steps": 2,
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P3": {
+      "chunked_prefill_adaptive_enter_waiting": 8,
+      "chunked_prefill_adaptive_exit_waiting": 2,
+      "chunked_prefill_adaptive_max_mixed_steps": 2,
+      "chunked_prefill_adaptive_mixed": false,
+      "chunked_prefill_adaptive_transition_steps": 2,
+      "chunked_prefill_decode_first": false,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": true,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P4": {
+      "chunked_prefill_adaptive_enter_waiting": 8,
+      "chunked_prefill_adaptive_exit_waiting": 2,
+      "chunked_prefill_adaptive_max_mixed_steps": 2,
+      "chunked_prefill_adaptive_mixed": true,
+      "chunked_prefill_adaptive_transition_steps": 2,
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    }
+  },
+  "run_tag": "qwen3-06b-sam-p4-calibration-20260720-102520",
+  "schema_version": 1,
+  "smoke_verification": {
+    "environment_sha256": "cf037ff0368c9b6d67695368ca382d84aa75e2303e297c747339656335de9678",
+    "run_tag": "qwen3-06b-sam-p4-smoke-20260720-102055",
+    "source_tree_sha256": "6639371c1088ba1e2bd7b291a6f2449e6e9ac9f7f49d9c87c120c6c17ed9d952",
+    "status": "PASS"
+  },
+  "source_tree_sha256": "6639371c1088ba1e2bd7b291a6f2449e6e9ac9f7f49d9c87c120c6c17ed9d952",
+  "workload_sha256": "09e7a5a9839ec7397ca50259020e654e3a914b2ef55ae7d5783a91a0fd1094db"
+}

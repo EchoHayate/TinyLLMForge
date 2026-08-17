@@ -1,0 +1,7 @@
+{
+  "dist_port": 60641,
+  "master_port": 60642,
+  "remote_root": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-43a35771c766",
+  "returncode": 1,
+  "tag": "qwen35-tp4-cached-continuation-diagnostic-43a35771c766"
+}

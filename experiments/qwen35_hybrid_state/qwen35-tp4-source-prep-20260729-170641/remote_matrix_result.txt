@@ -1,0 +1,3 @@
+returncode=1
+reason=test_only_closure_missing_tools/test_qwen35_real_component_binding.py
+production_source_verified=true

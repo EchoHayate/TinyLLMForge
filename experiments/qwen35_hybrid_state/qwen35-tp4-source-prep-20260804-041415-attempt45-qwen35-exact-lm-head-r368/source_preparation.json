@@ -1,0 +1,11 @@
+{
+  "claim_boundary": "fresh source preparation only; no correctness, performance, cache, memory, compression, or quality claim",
+  "engine_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260803-211832-attempt37-r281/source_inventory.json",
+  "engine_source_tree_sha256": "1de327e4d237445cb9542cd627c93c42fc60c18e31902921328f1625cadb96fd",
+  "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+  "root_source_tree_sha256": "f7ee454552923ef71cd41494a38878a765251892d2c75041952a69949e0b091f",
+  "schema_version": "qwen35.tp4-current-source-preparation.v1",
+  "source_count": 112,
+  "source_tag": "qwen35-tp4-source-prep-20260804-041415-attempt45-qwen35-exact-lm-head-r368",
+  "source_tar_sha256": "2aafa909f83340159eacc71d5871379d422e5490f11bcd02fd92d830d5f06547"
+}

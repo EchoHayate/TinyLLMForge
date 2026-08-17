@@ -1,0 +1,107 @@
+{
+  "schema_version": "qwen35.recurrent-int8-gate1-command-results.v1",
+  "classification": "PASS",
+  "source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c",
+  "owned_source_file_count": 91,
+  "python": "/opt/homebrew/bin/python3.12",
+  "pytest_pythonpath": "/tmp/tinyllmforge-pytest312-shim:/Users/bytedance/dev/TinyLLMForge-adaptive-ngram",
+  "entrypoint_count": 12,
+  "test_count": 185,
+  "entrypoints": [
+    {
+      "path": "tools/test_qwen35_recurrent_int8_codec.py",
+      "tests": 13,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_representation.py",
+      "tests": 3,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_int8_cache.py",
+      "tests": 48,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_int8_runtime.py",
+      "tests": 13,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_cache.py",
+      "tests": 26,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_acquisition.py",
+      "tests": 9,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_publication_candidate.py",
+      "tests": 6,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_publication_coordinator.py",
+      "tests": 6,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_publication_ticket.py",
+      "tests": 7,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_restore_ticket.py",
+      "tests": 18,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+      "tests": 17,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "tests": 19,
+      "classification": "PASS"
+    }
+  ],
+  "py_compile": {
+    "classification": "PASS",
+    "files": [
+      "tinyvllm/config.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_representation.py",
+      "tinyvllm/engine/qwen35_recurrent_int8_codec.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_int8_cache.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_owner.py",
+      "tinyvllm/engine/model_runner.py",
+      "tinyvllm/engine/llm_engine.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py"
+    ]
+  },
+  "scoped_diff_check": {
+    "classification": "PASS",
+    "exit_code": 0,
+    "includes_test_maintenance": "tools/test_qwen35_hybrid_prefix_publication_candidate.py"
+  },
+  "execution_log": {
+    "path": "/tmp/qwen35_gate1_current_20260806_r550.log",
+    "sha256": "232a048bb33e4040eae07938e6766318769767487a46c77d581d70aa17780374"
+  },
+  "test_maintenance": {
+    "classification": "PASS",
+    "reason": "The old runtime-wiring assertion used the broad substring capture_qwen35 and falsely matched the independent default-off recurrent capture hook. It now forbids only capture_qwen35_hybrid_prefix_publication_candidate.",
+    "file": "tools/test_qwen35_hybrid_prefix_publication_candidate.py",
+    "production_files_modified": false
+  },
+  "environment_notes": [
+    "Every test file ran in an isolated Python 3.12 process because dependency-light tests install module stubs.",
+    "The existing pure-Python pytest shim supplied pytest only; production dependencies and behavior were not replaced.",
+    "The deterministic source bundle was generated locally in a temporary directory and deleted after hashing.",
+    "No SSH, remote query, remote directory, CUDA import, GPU operation, process mutation, authorization, or execution receipt occurred."
+  ]
+}

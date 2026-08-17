@@ -1,0 +1,91 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+AUTHORITY_TARGET_LOGITS [{"sequence_id":0,"top1_margin":0.125,"top_logits":[18.875,18.75,18.0,17.0,17.0],"top_tokens":[220,15,8381,1970,2658]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":1,"top1_margin":0.75,"top_logits":[19.875,19.125,17.75,17.75,17.625],"top_tokens":[220,16,4088,8381,8240]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":2,"top1_margin":0.0,"top_logits":[17.625,17.625,16.5,16.375,16.375],"top_tokens":[220,8381,4088,17,48086]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":3,"top1_margin":0.25,"top_logits":[18.0,17.75,17.5,17.0,16.625],"top_tokens":[220,8381,18,4088,4055]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":0,"top1_margin":0.125,"top_logits":[18.375,18.25,17.625,17.375,16.875],"top_tokens":[15,8381,7210,5979,1970]},{"sequence_id":1,"top1_margin":0.5,"top_logits":[18.5,18.0,17.25,17.0,17.0],"top_tokens":[16,8381,220,5979,9197]},{"sequence_id":2,"top1_margin":0.375,"top_logits":[18.0,17.625,16.5,16.125,16.125],"top_tokens":[17,8381,4088,4055,18169]},{"sequence_id":3,"top1_margin":0.75,"top_logits":[17.25,16.5,16.25,15.6875,15.6875],"top_tokens":[18,8381,220,4088,5979]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":0,"top1_margin":1.125,"top_logits":[19.25,18.125,17.5,17.0,17.0],"top_tokens":[220,8381,5979,15,1970]},{"sequence_id":1,"top1_margin":1.625,"top_logits":[19.5,17.875,17.875,16.75,16.75],"top_tokens":[16,220,8381,4088,5979]},{"sequence_id":2,"top1_margin":1.5,"top_logits":[19.375,17.875,17.375,16.375,16.25],"top_tokens":[17,8381,220,18169,1970]},{"sequence_id":3,"top1_margin":1.25,"top_logits":[17.875,16.625,16.125,15.375,15.375],"top_tokens":[18,220,8381,7210,8240]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":0,"top1_margin":1.25,"top_logits":[19.5,18.25,17.625,17.25,17.125],"top_tokens":[220,8381,15,5979,1970]},{"sequence_id":2,"top1_margin":1.125,"top_logits":[19.125,18.0,17.625,16.5,16.25],"top_tokens":[17,8381,220,1970,8240]}]
+AUTHORITY_TARGET_LOGITS [{"sequence_id":2,"top1_margin":1.875,"top_logits":[19.625,17.75,17.25,15.9375,15.875],"top_tokens":[17,8381,220,1970,8240]}]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 241, in normalize_rank_snapshots
+[rank0]:     return _frozen_worker.normalize_rank_snapshots(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_4k_engine_worker.py", line 298, in normalize_rank_snapshots
+[rank0]:     return gate._validate_rank_snapshots(
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_gate.py", line 278, in _validate_rank_snapshots
+[rank0]:     normalized = _rank_gate._validate_rank_snapshots(
+[rank0]:                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 739, in _validate_rank_snapshots
+[rank0]:     rows = [
+[rank0]:            ^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 743, in <listcomp>
+[rank0]:     else _validate_native_rank(
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_4k_engine_gate.py", line 619, in _validate_native_rank
+[rank0]:     raise ValueError("release row inventory mismatch")
+[rank0]: ValueError: release row inventory mismatch
+
+[rank0]: The above exception was the direct cause of the following exception:
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 817, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 803, in main
+[rank0]:     result = run_policy_cell(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 670, in run_policy_cell
+[rank0]:     rank_snapshots = normalize_rank_snapshots(
+[rank0]:                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-b4-target-logits-20260814-6/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 256, in normalize_rank_snapshots
+[rank0]:     raise ValueError(
+[rank0]: ValueError: release row inventory mismatch; runtime counters: proposal_rows=10, proposed_tokens=36, accepted_draft_tokens=19, rejected_draft_tokens=17, first_target_callbacks=3, verify_callbacks=3, first_target_target_forwards=3, verify_target_forwards=5, accepted_prefix_target_replays=0

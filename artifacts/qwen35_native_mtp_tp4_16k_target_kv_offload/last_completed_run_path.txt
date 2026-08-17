@@ -1,0 +1,1 @@
+/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/artifacts/qwen35_native_mtp_tp4_16k_target_kv_offload/lifecycle-release-fix-20260814-2/artifacts/authority

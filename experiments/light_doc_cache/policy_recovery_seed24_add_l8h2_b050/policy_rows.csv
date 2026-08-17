@@ -1,0 +1,225 @@
+threshold,layer,kv_head,action,selected_budget,budget_fraction,quality,direct_val_r2,fitv_val_r2,reason
+0.964,0,0,full,1536,1,1,,,not_target_layer
+0.964,0,1,full,1536,1,1,,,not_target_layer
+0.964,0,2,full,1536,1,1,,,not_target_layer
+0.964,0,3,full,1536,1,1,,,not_target_layer
+0.964,0,4,full,1536,1,1,,,not_target_layer
+0.964,0,5,full,1536,1,1,,,not_target_layer
+0.964,0,6,full,1536,1,1,,,not_target_layer
+0.964,0,7,full,1536,1,1,,,not_target_layer
+0.964,1,0,full,1536,1,1,,,not_target_layer
+0.964,1,1,full,1536,1,1,,,not_target_layer
+0.964,1,2,full,1536,1,1,,,not_target_layer
+0.964,1,3,full,1536,1,1,,,not_target_layer
+0.964,1,4,full,1536,1,1,,,not_target_layer
+0.964,1,5,full,1536,1,1,,,not_target_layer
+0.964,1,6,full,1536,1,1,,,not_target_layer
+0.964,1,7,full,1536,1,1,,,not_target_layer
+0.964,2,0,full,1536,1,1,,,not_target_layer
+0.964,2,1,full,1536,1,1,,,not_target_layer
+0.964,2,2,full,1536,1,1,,,not_target_layer
+0.964,2,3,full,1536,1,1,,,not_target_layer
+0.964,2,4,full,1536,1,1,,,not_target_layer
+0.964,2,5,full,1536,1,1,,,not_target_layer
+0.964,2,6,full,1536,1,1,,,not_target_layer
+0.964,2,7,full,1536,1,1,,,not_target_layer
+0.964,3,0,full,1536,1,1,,,not_target_layer
+0.964,3,1,full,1536,1,1,,,not_target_layer
+0.964,3,2,full,1536,1,1,,,not_target_layer
+0.964,3,3,full,1536,1,1,,,not_target_layer
+0.964,3,4,full,1536,1,1,,,not_target_layer
+0.964,3,5,full,1536,1,1,,,not_target_layer
+0.964,3,6,full,1536,1,1,,,not_target_layer
+0.964,3,7,full,1536,1,1,,,not_target_layer
+0.964,4,0,full,1536,1,1,,,not_target_layer
+0.964,4,1,full,1536,1,1,,,not_target_layer
+0.964,4,2,full,1536,1,1,,,not_target_layer
+0.964,4,3,full,1536,1,1,,,not_target_layer
+0.964,4,4,full,1536,1,1,,,not_target_layer
+0.964,4,5,full,1536,1,1,,,not_target_layer
+0.964,4,6,full,1536,1,1,,,not_target_layer
+0.964,4,7,full,1536,1,1,,,not_target_layer
+0.964,5,0,full,1536,1,1,,,not_target_layer
+0.964,5,1,full,1536,1,1,,,not_target_layer
+0.964,5,2,full,1536,1,1,,,not_target_layer
+0.964,5,3,full,1536,1,1,,,not_target_layer
+0.964,5,4,full,1536,1,1,,,not_target_layer
+0.964,5,5,full,1536,1,1,,,not_target_layer
+0.964,5,6,full,1536,1,1,,,not_target_layer
+0.964,5,7,full,1536,1,1,,,not_target_layer
+0.964,6,0,full,1536,1,1,,,not_target_layer
+0.964,6,1,full,1536,1,1,,,not_target_layer
+0.964,6,2,full,1536,1,1,,,not_target_layer
+0.964,6,3,full,1536,1,1,,,not_target_layer
+0.964,6,4,full,1536,1,1,,,not_target_layer
+0.964,6,5,full,1536,1,1,,,not_target_layer
+0.964,6,6,full,1536,1,1,,,not_target_layer
+0.964,6,7,full,1536,1,1,,,not_target_layer
+0.964,7,0,full,1536,1,1,,,not_target_layer
+0.964,7,1,full,1536,1,1,,,not_target_layer
+0.964,7,2,full,1536,1,1,,,not_target_layer
+0.964,7,3,full,1536,1,1,,,not_target_layer
+0.964,7,4,full,1536,1,1,,,not_target_layer
+0.964,7,5,full,1536,1,1,,,not_target_layer
+0.964,7,6,full,1536,1,1,,,not_target_layer
+0.964,7,7,full,1536,1,1,,,not_target_layer
+0.964,8,0,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,8,1,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,8,2,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,8,3,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,8,4,full,1536,1,1,,,not_target_layer
+0.964,8,5,full,1536,1,1,,,not_target_layer
+0.964,8,6,full,1536,1,1,,,not_target_layer
+0.964,8,7,full,1536,1,1,,,not_target_layer
+0.964,9,0,full,1536,1,1,,,not_target_layer
+0.964,9,1,full,1536,1,1,,,not_target_layer
+0.964,9,2,full,1536,1,1,,,not_target_layer
+0.964,9,3,full,1536,1,1,,,not_target_layer
+0.964,9,4,full,1536,1,1,,,not_target_layer
+0.964,9,5,full,1536,1,1,,,not_target_layer
+0.964,9,6,full,1536,1,1,,,not_target_layer
+0.964,9,7,full,1536,1,1,,,not_target_layer
+0.964,10,0,full,1536,1,1,,,not_target_layer
+0.964,10,1,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,10,2,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,10,3,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,10,4,full,1536,1,1,,,not_target_layer
+0.964,10,5,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,10,6,full,1536,1,1,,,not_target_layer
+0.964,10,7,full,1536,1,1,,,not_target_layer
+0.964,11,0,full,1536,1,1,,,not_target_layer
+0.964,11,1,full,1536,1,1,,,not_target_layer
+0.964,11,2,full,1536,1,1,,,not_target_layer
+0.964,11,3,full,1536,1,1,,,not_target_layer
+0.964,11,4,full,1536,1,1,,,not_target_layer
+0.964,11,5,full,1536,1,1,,,not_target_layer
+0.964,11,6,full,1536,1,1,,,not_target_layer
+0.964,11,7,full,1536,1,1,,,not_target_layer
+0.964,12,0,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,12,1,full,1536,1,1,,,not_target_layer
+0.964,12,2,full,1536,1,1,,,not_target_layer
+0.964,12,3,full,1536,1,1,,,not_target_layer
+0.964,12,4,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,12,5,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,12,6,full,1536,1,1,,,not_target_layer
+0.964,12,7,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,13,0,full,1536,1,1,,,not_target_layer
+0.964,13,1,full,1536,1,1,,,not_target_layer
+0.964,13,2,full,1536,1,1,,,not_target_layer
+0.964,13,3,full,1536,1,1,,,not_target_layer
+0.964,13,4,full,1536,1,1,,,not_target_layer
+0.964,13,5,full,1536,1,1,,,not_target_layer
+0.964,13,6,full,1536,1,1,,,not_target_layer
+0.964,13,7,full,1536,1,1,,,not_target_layer
+0.964,14,0,full,1536,1,1,,,not_target_layer
+0.964,14,1,full,1536,1,1,,,not_target_layer
+0.964,14,2,full,1536,1,1,,,not_target_layer
+0.964,14,3,full,1536,1,1,,,not_target_layer
+0.964,14,4,full,1536,1,1,,,not_target_layer
+0.964,14,5,full,1536,1,1,,,not_target_layer
+0.964,14,6,full,1536,1,1,,,not_target_layer
+0.964,14,7,full,1536,1,1,,,not_target_layer
+0.964,15,0,full,1536,1,1,,,not_target_layer
+0.964,15,1,full,1536,1,1,,,not_target_layer
+0.964,15,2,full,1536,1,1,,,not_target_layer
+0.964,15,3,full,1536,1,1,,,not_target_layer
+0.964,15,4,full,1536,1,1,,,not_target_layer
+0.964,15,5,full,1536,1,1,,,not_target_layer
+0.964,15,6,full,1536,1,1,,,not_target_layer
+0.964,15,7,full,1536,1,1,,,not_target_layer
+0.964,16,0,full,1536,1,1,,,not_target_layer
+0.964,16,1,full,1536,1,1,,,not_target_layer
+0.964,16,2,full,1536,1,1,,,not_target_layer
+0.964,16,3,full,1536,1,1,,,not_target_layer
+0.964,16,4,full,1536,1,1,,,not_target_layer
+0.964,16,5,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,16,6,full,1536,1,1,,,not_target_layer
+0.964,16,7,full,1536,1,1,,,not_target_layer
+0.964,17,0,full,1536,1,1,,,not_target_layer
+0.964,17,1,full,1536,1,1,,,not_target_layer
+0.964,17,2,full,1536,1,1,,,not_target_layer
+0.964,17,3,full,1536,1,1,,,not_target_layer
+0.964,17,4,full,1536,1,1,,,not_target_layer
+0.964,17,5,full,1536,1,1,,,not_target_layer
+0.964,17,6,full,1536,1,1,,,not_target_layer
+0.964,17,7,full,1536,1,1,,,not_target_layer
+0.964,18,0,full,1536,1,1,,,not_target_layer
+0.964,18,1,full,1536,1,1,,,not_target_layer
+0.964,18,2,full,1536,1,1,,,not_target_layer
+0.964,18,3,full,1536,1,1,,,not_target_layer
+0.964,18,4,full,1536,1,1,,,not_target_layer
+0.964,18,5,full,1536,1,1,,,not_target_layer
+0.964,18,6,full,1536,1,1,,,not_target_layer
+0.964,18,7,full,1536,1,1,,,not_target_layer
+0.964,19,0,full,1536,1,1,,,not_target_layer
+0.964,19,1,full,1536,1,1,,,not_target_layer
+0.964,19,2,full,1536,1,1,,,not_target_layer
+0.964,19,3,full,1536,1,1,,,not_target_layer
+0.964,19,4,full,1536,1,1,,,not_target_layer
+0.964,19,5,full,1536,1,1,,,not_target_layer
+0.964,19,6,full,1536,1,1,,,not_target_layer
+0.964,19,7,full,1536,1,1,,,not_target_layer
+0.964,20,0,full,1536,1,1,,,not_target_layer
+0.964,20,1,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,20,2,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,20,3,full,1536,1,1,,,not_target_layer
+0.964,20,4,full,1536,1,1,,,not_target_layer
+0.964,20,5,full,1536,1,1,,,not_target_layer
+0.964,20,6,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,20,7,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,21,0,full,1536,1,1,,,not_target_layer
+0.964,21,1,full,1536,1,1,,,not_target_layer
+0.964,21,2,full,1536,1,1,,,not_target_layer
+0.964,21,3,full,1536,1,1,,,not_target_layer
+0.964,21,4,full,1536,1,1,,,not_target_layer
+0.964,21,5,full,1536,1,1,,,not_target_layer
+0.964,21,6,full,1536,1,1,,,not_target_layer
+0.964,21,7,full,1536,1,1,,,not_target_layer
+0.964,22,0,full,1536,1,1,,,not_target_layer
+0.964,22,1,full,1536,1,1,,,not_target_layer
+0.964,22,2,full,1536,1,1,,,not_target_layer
+0.964,22,3,full,1536,1,1,,,not_target_layer
+0.964,22,4,full,1536,1,1,,,not_target_layer
+0.964,22,5,full,1536,1,1,,,not_target_layer
+0.964,22,6,full,1536,1,1,,,not_target_layer
+0.964,22,7,full,1536,1,1,,,not_target_layer
+0.964,23,0,full,1536,1,1,,,not_target_layer
+0.964,23,1,full,1536,1,1,,,not_target_layer
+0.964,23,2,full,1536,1,1,,,not_target_layer
+0.964,23,3,full,1536,1,1,,,not_target_layer
+0.964,23,4,full,1536,1,1,,,not_target_layer
+0.964,23,5,full,1536,1,1,,,not_target_layer
+0.964,23,6,full,1536,1,1,,,not_target_layer
+0.964,23,7,full,1536,1,1,,,not_target_layer
+0.964,24,0,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,1,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,2,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,3,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,4,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,5,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,6,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,24,7,compact,768,0.5,0,,,24-head safe frontier plus candidate 8:2 at 50% per-head budget.
+0.964,25,0,full,1536,1,1,,,not_target_layer
+0.964,25,1,full,1536,1,1,,,not_target_layer
+0.964,25,2,full,1536,1,1,,,not_target_layer
+0.964,25,3,full,1536,1,1,,,not_target_layer
+0.964,25,4,full,1536,1,1,,,not_target_layer
+0.964,25,5,full,1536,1,1,,,not_target_layer
+0.964,25,6,full,1536,1,1,,,not_target_layer
+0.964,25,7,full,1536,1,1,,,not_target_layer
+0.964,26,0,full,1536,1,1,,,not_target_layer
+0.964,26,1,full,1536,1,1,,,not_target_layer
+0.964,26,2,full,1536,1,1,,,not_target_layer
+0.964,26,3,full,1536,1,1,,,not_target_layer
+0.964,26,4,full,1536,1,1,,,not_target_layer
+0.964,26,5,full,1536,1,1,,,not_target_layer
+0.964,26,6,full,1536,1,1,,,not_target_layer
+0.964,26,7,full,1536,1,1,,,not_target_layer
+0.964,27,0,full,1536,1,1,,,not_target_layer
+0.964,27,1,full,1536,1,1,,,not_target_layer
+0.964,27,2,full,1536,1,1,,,not_target_layer
+0.964,27,3,full,1536,1,1,,,not_target_layer
+0.964,27,4,full,1536,1,1,,,not_target_layer
+0.964,27,5,full,1536,1,1,,,not_target_layer
+0.964,27,6,full,1536,1,1,,,not_target_layer
+0.964,27,7,full,1536,1,1,,,not_target_layer

@@ -1,0 +1,7 @@
+{
+  "schema_version": "qwen35.tp4-hybrid-prefix-gate1-audit.v1",
+  "classification": "PASS",
+  "source_tree_sha256": "88ebda203decaf26a721f6299a5c9ed08b648841feb0b972f1395d6cc609eb9c",
+  "gate1_audit_sha256": "ce7184845bb3754b94226b85c3e27cb890a93e884a67361bafc89fabb13d9e75",
+  "checks": 15
+}

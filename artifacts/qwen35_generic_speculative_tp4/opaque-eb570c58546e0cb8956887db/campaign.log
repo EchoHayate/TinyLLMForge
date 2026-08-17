@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1732, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 worker failed: ngram:b1; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/artifacts/.authority.1xquwgyk/cells/ngram:b1.log
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1893, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1882, in main
+    run_campaign(
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/source/tools/qwen35_generic_speculative_tp4_gate.py", line 1829, in run_campaign
+    raise RuntimeError(
+RuntimeError: TP4 worker failed: ngram:b1; log=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/artifacts/.authority.1xquwgyk/cells/ngram:b1.log; failed_artifacts=/data00/home/sitian/sitian-workspace01/tllm/qwen35-generic-speculative-tp4-runs/opaque-eb570c58546e0cb8956887db/artifacts/authority.failed

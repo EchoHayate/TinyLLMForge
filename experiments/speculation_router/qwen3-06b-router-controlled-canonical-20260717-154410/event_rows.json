@@ -1,0 +1,527 @@
+[
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k1-route-fallback",
+    "draft_len": 1,
+    "policy": "always_native",
+    "target_forward_count": 1,
+    "verifier_commit_ms": 34.714825451374054
+  },
+  {
+    "accepted_count": 16,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-full-multiblock",
+    "draft_len": 16,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 193.69002059102058
+  },
+  {
+    "accepted_count": 16,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-full-multiblock",
+    "draft_len": 16,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 200.68572461605072
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-one-multiblock",
+    "draft_len": 16,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 207.81085640192032
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-one-multiblock",
+    "draft_len": 16,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 211.47675067186356
+  },
+  {
+    "accepted_count": 8,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-partial-multiblock",
+    "draft_len": 16,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 188.47795948386192
+  },
+  {
+    "accepted_count": 8,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-partial-multiblock",
+    "draft_len": 16,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 214.69927951693535
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-zero-multiblock",
+    "draft_len": 16,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 197.50533625483513
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k16-zero-multiblock",
+    "draft_len": 16,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 219.0699465572834
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-full-current",
+    "draft_len": 2,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 78.71200889348984
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-full-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 76.4828771352768
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-one-current",
+    "draft_len": 2,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 79.02560383081436
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-one-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 76.93496346473694
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-zero-current",
+    "draft_len": 2,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 75.06585493683815
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k2-zero-current",
+    "draft_len": 2,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 89.85637500882149
+  },
+  {
+    "accepted_count": 4,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-full-boundary",
+    "draft_len": 4,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 105.68327829241753
+  },
+  {
+    "accepted_count": 4,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-full-boundary",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 112.15236037969589
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-one-current",
+    "draft_len": 4,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 114.02400955557823
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-one-current",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 126.55104696750641
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-partial-boundary",
+    "draft_len": 4,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 115.59225618839264
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-partial-boundary",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 177.63929069042206
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-zero-current",
+    "draft_len": 4,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 110.06564646959305
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k4-zero-current",
+    "draft_len": 4,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 125.78460201621056
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-budget-boundary",
+    "draft_len": 8,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 132.188331335783
+  },
+  {
+    "accepted_count": 2,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-budget-boundary",
+    "draft_len": 8,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 140.2546688914299
+  },
+  {
+    "accepted_count": 8,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-eos-boundary",
+    "draft_len": 8,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 144.38143745064735
+  },
+  {
+    "accepted_count": 8,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-eos-boundary",
+    "draft_len": 8,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 125.9583942592144
+  },
+  {
+    "accepted_count": 8,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-full-boundary",
+    "draft_len": 8,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 147.57898077368736
+  },
+  {
+    "accepted_count": 8,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-full-boundary",
+    "draft_len": 8,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 185.73492020368576
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-one-current",
+    "draft_len": 8,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 853.0617505311966
+  },
+  {
+    "accepted_count": 1,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-one-current",
+    "draft_len": 8,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 137.56094872951508
+  },
+  {
+    "accepted_count": 4,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-partial-boundary",
+    "draft_len": 8,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 149.9784141778946
+  },
+  {
+    "accepted_count": 4,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-partial-boundary",
+    "draft_len": 8,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 128.98358330130577
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-zero-current",
+    "draft_len": 8,
+    "policy": "always_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 161.5695133805275
+  },
+  {
+    "accepted_count": 0,
+    "accepted_kv_copy_calls": 0,
+    "accepted_kv_rematerialization": {
+      "decode_calls": 0,
+      "elapsed_ms": 0.0,
+      "rematerialized_tokens": []
+    },
+    "accepted_kv_replay_calls": 0,
+    "case_id": "k8-zero-current",
+    "draft_len": 8,
+    "policy": "routed_native",
+    "target_forward_count": 2,
+    "verifier_commit_ms": 142.5573043525219
+  }
+]

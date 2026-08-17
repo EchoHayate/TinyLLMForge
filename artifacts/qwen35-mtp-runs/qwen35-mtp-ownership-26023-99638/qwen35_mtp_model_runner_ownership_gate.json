@@ -1,0 +1,509 @@
+{
+  "backend_failures": [],
+  "batch_sizes": [
+    1,
+    4
+  ],
+  "cases": [
+    {
+      "batch_size": 1,
+      "capture_count": 0,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82
+      ],
+      "eager_proposal_tokens": [
+        [
+          82
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82
+      ],
+      "graph_proposal_tokens": [
+        [
+          82
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 1,
+      "replay_count": 0,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 1,
+      "capture_count": 1,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82
+      ],
+      "eager_proposal_tokens": [
+        [
+          82,
+          29656
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82
+      ],
+      "graph_proposal_tokens": [
+        [
+          82,
+          29656
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 2,
+      "replay_count": 1,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 1,
+      "capture_count": 1,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82
+      ],
+      "eager_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82
+      ],
+      "graph_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 3,
+      "replay_count": 1,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 1,
+      "capture_count": 1,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82
+      ],
+      "eager_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505,
+          198
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82
+      ],
+      "graph_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505,
+          198
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 4,
+      "replay_count": 1,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 4,
+      "capture_count": 0,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "eager_proposal_tokens": [
+        [
+          82
+        ],
+        [
+          74
+        ],
+        [
+          198
+        ],
+        [
+          77
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "graph_proposal_tokens": [
+        [
+          82
+        ],
+        [
+          74
+        ],
+        [
+          198
+        ],
+        [
+          77
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 1,
+      "replay_count": 0,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 4,
+      "capture_count": 1,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "eager_proposal_tokens": [
+        [
+          82,
+          29656
+        ],
+        [
+          74,
+          92795
+        ],
+        [
+          198,
+          9
+        ],
+        [
+          77,
+          131
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "graph_proposal_tokens": [
+        [
+          82,
+          29656
+        ],
+        [
+          74,
+          92795
+        ],
+        [
+          198,
+          9
+        ],
+        [
+          77,
+          131
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 2,
+      "replay_count": 1,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 4,
+      "capture_count": 1,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "eager_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505
+        ],
+        [
+          74,
+          92795,
+          318
+        ],
+        [
+          198,
+          9,
+          256
+        ],
+        [
+          77,
+          131,
+          236
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "graph_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505
+        ],
+        [
+          74,
+          92795,
+          318
+        ],
+        [
+          198,
+          9,
+          256
+        ],
+        [
+          77,
+          131,
+          236
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 3,
+      "replay_count": 1,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    },
+    {
+      "batch_size": 4,
+      "capture_count": 1,
+      "cleanup_errors": [],
+      "cleanup_passed": true,
+      "eager_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "eager_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505,
+          198
+        ],
+        [
+          74,
+          92795,
+          318,
+          33
+        ],
+        [
+          198,
+          9,
+          256,
+          348
+        ],
+        [
+          77,
+          131,
+          236,
+          198
+        ]
+      ],
+      "executor_identity_preserved": true,
+      "first_target_tokens_equal": true,
+      "graph_first_target_tokens": [
+        82,
+        74,
+        198,
+        77
+      ],
+      "graph_proposal_tokens": [
+        [
+          82,
+          29656,
+          7505,
+          198
+        ],
+        [
+          74,
+          92795,
+          318,
+          33
+        ],
+        [
+          198,
+          9,
+          256,
+          348
+        ],
+        [
+          77,
+          131,
+          236,
+          198
+        ]
+      ],
+      "model_identity_preserved": true,
+      "observer_restored": true,
+      "proposal_tokens_equal": true,
+      "public_result_pickle_roundtrip": true,
+      "public_result_tensor_count": 0,
+      "public_result_tensor_free": true,
+      "q": 4,
+      "replay_count": 1,
+      "sequence_order_preserved": true,
+      "target_hidden_consumed_by_real_executor": true,
+      "target_hidden_cuda": true,
+      "target_logits_cuda": true,
+      "target_logits_not_passed_to_mtp_executor": true
+    }
+  ],
+  "checkpoint_manifest_sha256": "9a975bdcf0383774183cae560594dd60b522b83fe9c4cd595c47c12e2403702b",
+  "checkpoint_path": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-2b-hybrid-acquire-20260723-222004/model",
+  "cleanup_passed": true,
+  "coverage": {
+    "kv_offload": false,
+    "long_context": false,
+    "performance": false,
+    "second_model": false,
+    "tp1": true,
+    "tp4": false
+  },
+  "cuda_version": "12.1",
+  "device_name": "NVIDIA A100 80GB PCIe",
+  "executor_identity_preserved": true,
+  "fused_model_runner_path_exercised": true,
+  "graph_capture_count": 6,
+  "graph_eager_first_target_tokens_equal": true,
+  "graph_eager_proposal_tokens_equal": true,
+  "graph_replay_count": 6,
+  "limitations": [
+    "TP1 only",
+    "KV offload disabled",
+    "single Qwen3.5 architecture",
+    "Q values limited to 1 through 4",
+    "batch sizes limited to 1 and 4",
+    "no long-context coverage",
+    "no performance claim"
+  ],
+  "loader_passed": true,
+  "promotion_classification": "NOT_PROMOTABLE",
+  "public_result_pickle_roundtrip": true,
+  "public_result_tensor_count": 0,
+  "public_result_tensor_free": true,
+  "q_values": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "schema_version": 1,
+  "sequence_order_preserved": true,
+  "status": "PASS",
+  "target_forward_real": true,
+  "target_hidden_consumed_by_real_executor": true,
+  "target_hidden_cuda": true,
+  "target_logits_cuda": true,
+  "target_logits_not_passed_to_mtp_executor": true,
+  "torch_version": "2.4.1+cu121"
+}

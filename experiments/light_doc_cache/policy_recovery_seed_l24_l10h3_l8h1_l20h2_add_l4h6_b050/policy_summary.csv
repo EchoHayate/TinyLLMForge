@@ -1,0 +1,2 @@
+threshold,compact_layer,compressed_heads,selected_budget,budget_fraction,entry_saving_fraction,note
+0.941,heads,12,768,0.5,0.0267857,seed_l24_l10h3_l8h1_l20h2_add_l4h6

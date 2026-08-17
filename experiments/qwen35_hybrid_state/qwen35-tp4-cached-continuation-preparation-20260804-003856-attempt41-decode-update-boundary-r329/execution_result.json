@@ -1,0 +1,33 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-003856-attempt41-decode-update-boundary-r329/authorization.json",
+  "claim_boundary": "cached-continuation authority only; no Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "classification": "FAILED",
+  "configuration_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-remote-authority-config-controlled-shared-20260804-003856-attempt41-decode-update-boundary-r329/executor_configuration.json",
+  "error": "ValueError: guarded_authority command returncode mismatch",
+  "execution_performed": true,
+  "frozen_source_inventory_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-003706-attempt41-decode-update-boundary-r328/engine_source_inventory.json",
+  "gpu_indices": [
+    2,
+    4,
+    5,
+    6
+  ],
+  "minimum_free_bytes_per_gpu": 25769803776,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-003856-attempt41-decode-update-boundary-r329/plan/remote_execution_plan.json",
+  "ports": {
+    "dist_port": 48631,
+    "master_port": 62267
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "resource_baseline_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260804-003856-attempt41-decode-update-boundary-r329/resource_baseline.json",
+  "root_authority": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-003706-attempt41-decode-update-boundary-r328",
+  "root_pass_evidence": [
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-003706-attempt41-decode-update-boundary-r328/artifacts/tp4_real_root_logit_correctness.json",
+    "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-root-logit-current-source-20260804-003706-attempt41-decode-update-boundary-r328/independent_verification.json"
+  ],
+  "run_tag": "qwen35-tp4-cached-continuation-20260804-003856-attempt41-decode-update-boundary-r329",
+  "schema_version": "qwen35.tp4-cached-continuation-r329-preparation.v1",
+  "source_preparation": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-source-prep-20260804-003706-attempt41-decode-update-boundary-r328",
+  "source_tree_sha256": "cfbb395cfea8494c4d8651091a8297201b56e1bd93826e3a402cf3bdf8fbbacb"
+}

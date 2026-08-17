@@ -1,0 +1,44 @@
+{
+  "authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-234359-attempt39-snapshot-boundary-r315/authorization.json",
+  "claim_boundary": "cached-continuation correctness only; no Engine, performance, cache, memory, compression, or quality claim",
+  "classification": "READY",
+  "consumed_authorization_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-234359-attempt39-snapshot-boundary-r315/runtime/consumed_authorization.json",
+  "execution_performed": false,
+  "failure_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-234359-attempt39-snapshot-boundary-r315/runtime/execution_failure.json",
+  "minimum_observed_free_bytes": 68789731328,
+  "plan_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-234359-attempt39-snapshot-boundary-r315/plan/remote_execution_plan.json",
+  "receipt_path": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-cached-continuation-preparation-20260803-234359-attempt39-snapshot-boundary-r315/runtime/execution_receipt.json",
+  "resource_baseline_sha256": "a6dd5f0e7434423297eccd48d84e2360b9f4d1e84d4aa4afbddd445dd14c46ac",
+  "root_prerequisite": {
+    "artifact_names": [
+      "native_rank0_logits.pt",
+      "rank_evidence.json",
+      "reference_logits.pt",
+      "source_manifest.json",
+      "tp4_real_root_logit_correctness.json"
+    ],
+    "authorization_nonce": "qwen35-tp4-root-logit-current-source-20260803-233652-attempt39-snapshot-boundary-r313-authorization",
+    "authorization_sha256": "23ad91eea203d536eaea276fcf90068e86c021f52d466d31c8111c1a5efc979c",
+    "case_ids": [
+      "p17",
+      "p65",
+      "synthetic"
+    ],
+    "checks": 613,
+    "classification": "PASS",
+    "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+    "plan_sha256": "a5feb9ff1e635110f92f9ac9aca729dee8d197feecfb96ad42d6053e59e65912",
+    "ranks": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "run_tag": "qwen35-tp4-root-logit-current-source-20260803-233652-attempt39-snapshot-boundary-r313",
+    "source_tree_sha256": "9aba8913512a918277f7a7bc87429723639ca2bde3272abc7a6ae9804d6c49cb",
+    "stage_count": 4
+  },
+  "run_tag": "qwen35-tp4-cached-continuation-20260803-234359-attempt39-snapshot-boundary-r315",
+  "schema_version": "qwen35.tp4-cached-attempt39-preparation.v1",
+  "source_tree_sha256": "c91fba3098d3d423259c24ce0b793cdc640bcb6c26f80f4948d9094a917a34f1"
+}

@@ -1,0 +1,9 @@
+{
+  "prerequisites_tar_sha256": "966b3df6d48dd23612d6eee5ff48865d4fe2a747a71bf9f53be4e5662cb61799",
+  "remote_cases": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-hybrid-prefix-benchmark-runs/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/output/cases",
+  "remote_prerequisites": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-hybrid-prefix-benchmark-runs/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/prerequisites/correctness_prerequisites.json",
+  "remote_run": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-hybrid-prefix-benchmark-runs/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001",
+  "remote_source": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-hybrid-prefix-benchmark-runs/qwen35-tp4-decode-row-parallel-20260811-r621-attempt001/source",
+  "source_tar_sha256": "dc6bc37896a53d4f05bdddaac19d77843eea469c7857b7eaa02c1972057d5f2f",
+  "source_tree_sha256": "71d36e6ecb237603e9142d07e2c9b99440fabb3a5d4a5111bba28bf3eac2f843"
+}

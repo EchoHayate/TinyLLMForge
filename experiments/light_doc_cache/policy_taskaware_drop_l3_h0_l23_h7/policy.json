@@ -1,0 +1,108 @@
+{
+  "source_policy_rows": "experiments/light_doc_cache/policy_ablation_constrained_cap18_l1_pair_drop/policy_rows.csv",
+  "source_threshold": 0.478,
+  "target_threshold": 0.45,
+  "note": "Task-aware candidate from pair-drop fail-only screening: drop_l3_h0__l23_h7.",
+  "summary": {
+    "threshold": 0.45,
+    "compressed_heads": 15,
+    "total_heads": 224,
+    "original_entries": 344064,
+    "compact_entries": 323328,
+    "cache_entry_saving_fraction": 0.060267857142857095,
+    "compressed_quality_mean": 0.4864889333333335,
+    "selected_heads": "2:7;4:6;5:2;6:7;8:1;9:1;10:3;11:2;14:5;18:0;20:2;22:1;24:2;25:3;26:1"
+  },
+  "compact_heads": [
+    {
+      "layer": 2,
+      "kv_head": 7,
+      "budget": 128,
+      "quality": 0.517556
+    },
+    {
+      "layer": 4,
+      "kv_head": 6,
+      "budget": 256,
+      "quality": 0.472774
+    },
+    {
+      "layer": 5,
+      "kv_head": 2,
+      "budget": 128,
+      "quality": 0.478574
+    },
+    {
+      "layer": 6,
+      "kv_head": 7,
+      "budget": 64,
+      "quality": 0.586239
+    },
+    {
+      "layer": 8,
+      "kv_head": 1,
+      "budget": 128,
+      "quality": 0.472067
+    },
+    {
+      "layer": 9,
+      "kv_head": 1,
+      "budget": 128,
+      "quality": 0.485147
+    },
+    {
+      "layer": 10,
+      "kv_head": 3,
+      "budget": 128,
+      "quality": 0.456578
+    },
+    {
+      "layer": 11,
+      "kv_head": 2,
+      "budget": 128,
+      "quality": 0.47891
+    },
+    {
+      "layer": 14,
+      "kv_head": 5,
+      "budget": 256,
+      "quality": 0.453655
+    },
+    {
+      "layer": 18,
+      "kv_head": 0,
+      "budget": 128,
+      "quality": 0.534773
+    },
+    {
+      "layer": 20,
+      "kv_head": 2,
+      "budget": 256,
+      "quality": 0.452199
+    },
+    {
+      "layer": 22,
+      "kv_head": 1,
+      "budget": 64,
+      "quality": 0.454562
+    },
+    {
+      "layer": 24,
+      "kv_head": 2,
+      "budget": 256,
+      "quality": 0.47761
+    },
+    {
+      "layer": 25,
+      "kv_head": 3,
+      "budget": 128,
+      "quality": 0.481239
+    },
+    {
+      "layer": 26,
+      "kv_head": 1,
+      "budget": 128,
+      "quality": 0.495451
+    }
+  ]
+}

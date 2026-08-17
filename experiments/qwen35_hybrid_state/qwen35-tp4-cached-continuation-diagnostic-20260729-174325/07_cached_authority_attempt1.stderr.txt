@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 166, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 149, in main
+    result = run_authority(
+             ^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/run_qwen35_tp4_cached_continuation_authority.py", line 114, in run_authority
+    result = producer.produce_configured_authority(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 103, in produce_configured_authority
+    return produce_authority(
+           ^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_cached_continuation_correctness_producer.py", line 180, in produce_authority
+    rows.append(executor.run_continuation(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_cached_continuation_correctness_executor.py", line 122, in run_continuation
+    session = self.session_factory(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 215, in __call__
+    self._ensure_reference_corpus()
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_cached_continuation_backend_session.py", line 151, in _ensure_reference_corpus
+    .generate_reference_with_step_logits(
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_engine_official_reference_executor.py", line 665, in generate_reference_with_step_logits
+    result = self._backend().generate_greedy_with_step_logits(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-cached-continuation-diagnostics/qwen35-tp4-cached-continuation-diagnostic-20260729-174325/source/tools/qwen35_tp4_engine_official_reference_executor.py", line 475, in generate_greedy_with_step_logits
+    raise RuntimeError(
+RuntimeError: official reference worker failed: ValueError: infer_schema(func): Parameter input has unsupported type torch.Tensor. The valid types are: dict_keys([<class 'torch.Tensor'>, typing.Optional[torch.Tensor], typing.Sequence[torch.Tensor], typing.List[torch.Tensor], typing.Sequence[typing.Optional[torch.Tensor]], typing.List[typing.Optional[torch.Tensor]], <class 'int'>, typing.Optional[int], typing.Sequence[int], typing.List[int], typing.Optional[typing.Sequence[int]], typing.Optional[typing.List[int]], <class 'float'>, typing.Optional[float], typing.Sequence[float], typing.List[float], typing.Optional[typing.Sequence[float]], typing.Optional[typing.List[float]], <class 'bool'>, typing.Optional[bool], typing.Sequence[bool], typing.List[bool], typing.Optional[typing.Sequence[bool]], typing.Optional[typing.List[bool]], <class 'str'>, typing.Optional[str], typing.Union[int, float, bool], typing.Union[int, float, bool, NoneType], typing.Sequence[typing.Union[int, float, bool]], typing.List[typing.Union[int, float, bool]], <class 'torch.dtype'>, typing.Optional[torch.dtype], <class 'torch.device'>, typing.Optional[torch.device]]). Got func with signature (input: 'torch.Tensor', weight: 'torch.Tensor', offs: 'torch.Tensor') -> 'torch.Tensor')

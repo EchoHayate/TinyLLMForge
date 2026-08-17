@@ -1,0 +1,37 @@
+{
+  "cached_continuation": {
+    "artifact_path": "prerequisites/cached_continuation/artifact.json",
+    "artifact_sha256": "2827b7a53f568bc7ce63c000ed47f2691cd3d7a7a675ec24fa38fcf9bf18ee92",
+    "classification": "PASS",
+    "independent_verification_path": "prerequisites/cached_continuation/independent_verification.json",
+    "independent_verification_sha256": "3fd2863cbc4944a99976de24658cb4057f3bcbd14f23211ef067971cad27bbe6",
+    "provenance_path": "prerequisites/cached_continuation/provenance.json",
+    "provenance_sha256": "4fe1f10f5e60c35ad307feb6cc9cf5586914bce37a84d59f37be153099b31249",
+    "run_tag": "qwen35-tp4-cached-continuation-20260804-161205-attempt67-qwen35-dual-receipt-schema-r538",
+    "source_tree_sha256": "76d99b2bb06f54f05559298396019337bf312300bc52ea3da15d0b1595bec8b5"
+  },
+  "engine_correctness": {
+    "artifact_path": "prerequisites/engine_correctness/artifact.json",
+    "artifact_sha256": "b8e4417dcc0b59e37b21f26461c6e61ed8cdc223cfb2aca0e806f514f016ef67",
+    "classification": "PASS",
+    "independent_verification_path": "prerequisites/engine_correctness/independent_verification.json",
+    "independent_verification_sha256": "fb7c9818abbb289b1872b56c15d1957dfe735fd3aea2e7a87452970b93b96108",
+    "provenance_path": "prerequisites/engine_correctness/provenance.json",
+    "provenance_sha256": "5ae396ea8deafcdffe58f201d535722ff2851cbb298a1dc9cc86f5c1291dba44",
+    "run_tag": "qwen35-tp4-engine-correctness-20260804-161810-attempt67-qwen35-dual-receipt-schema-r539",
+    "source_tree_sha256": "76d99b2bb06f54f05559298396019337bf312300bc52ea3da15d0b1595bec8b5"
+  },
+  "model_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+  "schema_version": "qwen35.tp4-performance-prerequisites.v2",
+  "tp4_root_logit": {
+    "artifact_path": "prerequisites/tp4_root_logit/artifact.json",
+    "artifact_sha256": "c57a44740d4e8e89e63b682837c55fc7c1a6a9b389d50fe96fcd0ee04eacf989",
+    "classification": "PASS",
+    "independent_verification_path": "prerequisites/tp4_root_logit/independent_verification.json",
+    "independent_verification_sha256": "fe6cc76b53287fa3bda4273d901e28fa183e1dc1262b65d4b6d34adaa3204e14",
+    "provenance_path": "prerequisites/tp4_root_logit/provenance.json",
+    "provenance_sha256": "9bb6fb12dbefd3296fc024e5d551e6a604f3c880a1f9a41050b87cd158aa02db",
+    "run_tag": "qwen35-tp4-root-logit-current-source-20260804-160931-attempt67-qwen35-dual-receipt-schema-retry2-r537",
+    "source_tree_sha256": "37135279047a569df8e0d26c6e39647202b27aca758ac8ac135bdab25612f20a"
+  }
+}

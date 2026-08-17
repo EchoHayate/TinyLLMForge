@@ -1,0 +1,322 @@
+{
+  "baseline_sha256": "83abf19c4fb67cacb721477c92e87c740a71135dfa3b27354625a328d3ef57b4",
+  "benchmark_execution_authorized": false,
+  "frozen_source_tag": "qwen35-tp4-source-prep-20260729-170818",
+  "frozen_source_tree_sha256": "ec19a8fa68abfba72e9594bdd1e05428b0add9169d3dbdde24190686c013411f",
+  "resource_policy": "controlled_shared",
+  "rows": [
+    {
+      "compute_processes": [
+        {
+          "pid": 330291,
+          "process_name": "python3",
+          "start_time_ticks": 2028137827,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330292,
+          "process_name": "python3",
+          "start_time_ticks": 2028137827,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 756625,
+          "process_name": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+          "start_time_ticks": 2167198879,
+          "used_memory_mib": 2596
+        },
+        {
+          "pid": 1097889,
+          "process_name": "inferencer_worker_0_0",
+          "start_time_ticks": 2070909440,
+          "used_memory_mib": 11308
+        },
+        {
+          "pid": 1118204,
+          "process_name": "m13p4_kvcache_0_lr0_0",
+          "start_time_ticks": 2070922027,
+          "used_memory_mib": 434
+        },
+        {
+          "pid": 1118290,
+          "process_name": "m13p4_kvcache_d2h_0_lr0_0",
+          "start_time_ticks": 2070922028,
+          "used_memory_mib": 434
+        },
+        {
+          "pid": 1118571,
+          "process_name": "m13p4_qhid_0_lr0",
+          "start_time_ticks": 2070922175,
+          "used_memory_mib": 434
+        }
+      ],
+      "free_bytes": 67865935872,
+      "gpu_index": 2,
+      "gpu_uuid": "GPU-63c05907-407b-8240-07a0-f38872840867",
+      "minimum_free_bytes": 25769803776,
+      "rank": 0,
+      "world_size": 4
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 330295,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330296,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 757668,
+          "process_name": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+          "start_time_ticks": 2167199323,
+          "used_memory_mib": 5626
+        },
+        {
+          "pid": 1420954,
+          "process_name": "python3",
+          "start_time_ticks": 2168836868,
+          "used_memory_mib": 946
+        },
+        {
+          "pid": 1421860,
+          "process_name": "python3",
+          "start_time_ticks": 2168837145,
+          "used_memory_mib": 7676
+        },
+        {
+          "pid": 2889069,
+          "process_name": "python3",
+          "start_time_ticks": 2146512800,
+          "used_memory_mib": 946
+        },
+        {
+          "pid": 2890161,
+          "process_name": "python3",
+          "start_time_ticks": 2146513076,
+          "used_memory_mib": 7368
+        }
+      ],
+      "free_bytes": 60345548800,
+      "gpu_index": 4,
+      "gpu_uuid": "GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1",
+      "minimum_free_bytes": 25769803776,
+      "rank": 1,
+      "world_size": 4
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 330297,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330298,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        }
+      ],
+      "free_bytes": 84053852160,
+      "gpu_index": 5,
+      "gpu_uuid": "GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8",
+      "minimum_free_bytes": 25769803776,
+      "rank": 2,
+      "world_size": 4
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 330299,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330300,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 4038724,
+          "process_name": "python3",
+          "start_time_ticks": 2060395461,
+          "used_memory_mib": 946
+        }
+      ],
+      "free_bytes": 83036733440,
+      "gpu_index": 6,
+      "gpu_uuid": "GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31",
+      "minimum_free_bytes": 25769803776,
+      "rank": 3,
+      "world_size": 4
+    }
+  ],
+  "run_tag": "qwen35-tp4-root-logit-controlled-shared-20260730-072016-attempt19-r6",
+  "selected": [
+    {
+      "compute_processes": [
+        {
+          "pid": 330291,
+          "process_name": "python3",
+          "start_time_ticks": 2028137827,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330292,
+          "process_name": "python3",
+          "start_time_ticks": 2028137827,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 756625,
+          "process_name": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+          "start_time_ticks": 2167198879,
+          "used_memory_mib": 2596
+        },
+        {
+          "pid": 1097889,
+          "process_name": "inferencer_worker_0_0",
+          "start_time_ticks": 2070909440,
+          "used_memory_mib": 11308
+        },
+        {
+          "pid": 1118204,
+          "process_name": "m13p4_kvcache_0_lr0_0",
+          "start_time_ticks": 2070922027,
+          "used_memory_mib": 434
+        },
+        {
+          "pid": 1118290,
+          "process_name": "m13p4_kvcache_d2h_0_lr0_0",
+          "start_time_ticks": 2070922028,
+          "used_memory_mib": 434
+        },
+        {
+          "pid": 1118571,
+          "process_name": "m13p4_qhid_0_lr0",
+          "start_time_ticks": 2070922175,
+          "used_memory_mib": 434
+        }
+      ],
+      "free_bytes": 67865935872,
+      "gpu_index": 2,
+      "gpu_uuid": "GPU-63c05907-407b-8240-07a0-f38872840867",
+      "minimum_free_bytes": 25769803776,
+      "rank": 0,
+      "world_size": 4
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 330295,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330296,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 757668,
+          "process_name": "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python",
+          "start_time_ticks": 2167199323,
+          "used_memory_mib": 5626
+        },
+        {
+          "pid": 1420954,
+          "process_name": "python3",
+          "start_time_ticks": 2168836868,
+          "used_memory_mib": 946
+        },
+        {
+          "pid": 1421860,
+          "process_name": "python3",
+          "start_time_ticks": 2168837145,
+          "used_memory_mib": 7676
+        },
+        {
+          "pid": 2889069,
+          "process_name": "python3",
+          "start_time_ticks": 2146512800,
+          "used_memory_mib": 946
+        },
+        {
+          "pid": 2890161,
+          "process_name": "python3",
+          "start_time_ticks": 2146513076,
+          "used_memory_mib": 7368
+        }
+      ],
+      "free_bytes": 60345548800,
+      "gpu_index": 4,
+      "gpu_uuid": "GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1",
+      "minimum_free_bytes": 25769803776,
+      "rank": 1,
+      "world_size": 4
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 330297,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330298,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        }
+      ],
+      "free_bytes": 84053852160,
+      "gpu_index": 5,
+      "gpu_uuid": "GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8",
+      "minimum_free_bytes": 25769803776,
+      "rank": 2,
+      "world_size": 4
+    },
+    {
+      "compute_processes": [
+        {
+          "pid": 330299,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 330300,
+          "process_name": "python3",
+          "start_time_ticks": 2028137828,
+          "used_memory_mib": 436
+        },
+        {
+          "pid": 4038724,
+          "process_name": "python3",
+          "start_time_ticks": 2060395461,
+          "used_memory_mib": 946
+        }
+      ],
+      "free_bytes": 83036733440,
+      "gpu_index": 6,
+      "gpu_uuid": "GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31",
+      "minimum_free_bytes": 25769803776,
+      "rank": 3,
+      "world_size": 4
+    }
+  ],
+  "source_tree_sha256": "ec19a8fa68abfba72e9594bdd1e05428b0add9169d3dbdde24190686c013411f",
+  "status": "READY"
+}

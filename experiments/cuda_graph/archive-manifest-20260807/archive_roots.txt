@@ -1,0 +1,4 @@
+qwen3-06b-heuristic-exact-width-canonical-20260722-055943
+qwen3-06b-fixed-split-canonical-20260721-174406
+qwen3-06b-cuda-graph-canonical-20260721-r3
+qwen3-06b-cuda-graph-canonical-20260721-r1

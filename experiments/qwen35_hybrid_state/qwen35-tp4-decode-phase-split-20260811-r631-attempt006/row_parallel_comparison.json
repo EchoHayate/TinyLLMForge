@@ -1,0 +1,43 @@
+{
+  "baseline_root": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-internal-profile-20260811-r620-attempt001",
+  "candidate_root": "/Users/bytedance/dev/TinyLLMForge-adaptive-ngram/experiments/qwen35_hybrid_state/qwen35-tp4-decode-phase-split-20260811-r631-attempt006",
+  "classification": "PERFORMANCE_PASS",
+  "collective_cuda_speedup_percent": 28.595923469963164,
+  "legacy_all_gather_rows": {
+    "baseline": 26880,
+    "candidate": 0
+  },
+  "maximum_tail_regression_percent": -31.34639559893128,
+  "output_key_sets_match": true,
+  "output_parity": true,
+  "per_policy": {
+    "exact_restore": {
+      "collective_cuda_speedup_percent": 33.70671963164826,
+      "steady_cuda_p90_regression_percent": -31.86868638327511,
+      "steady_cuda_speedup_percent": 6.733830466375078,
+      "steady_wall_p90_regression_percent": -31.86759853106088,
+      "steady_wall_speedup_percent": 6.734088985191659
+    },
+    "recompute": {
+      "collective_cuda_speedup_percent": 28.595923469963164,
+      "steady_cuda_p90_regression_percent": -31.346421933694586,
+      "steady_cuda_speedup_percent": 13.66796804400871,
+      "steady_wall_p90_regression_percent": -31.34639559893128,
+      "steady_wall_speedup_percent": 13.668366798100328
+    }
+  },
+  "reasons": [
+    "both policies meet the steady decode speedup and tail gates"
+  ],
+  "row_parallel_all_reduce_rows": {
+    "baseline": 0,
+    "candidate": 26880
+  },
+  "schema_version": "qwen35.decode-row-parallel-comparison.v1",
+  "steady_decode_cuda_speedup_percent": 6.733830466375078,
+  "steady_decode_wall_speedup_percent": 6.734088985191659,
+  "thresholds": {
+    "maximum_tail_regression_percent": 2.0,
+    "minimum_speedup_percent": 5.0
+  }
+}

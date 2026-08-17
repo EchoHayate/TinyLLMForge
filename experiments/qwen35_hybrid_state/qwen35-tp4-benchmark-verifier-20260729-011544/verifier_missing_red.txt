@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "tools/test_verify_qwen35_tp4_hybrid_prefix_benchmark.py", line 28, in <module>
+    verifier = _load(...)
+FileNotFoundError:
+  tools/verify_qwen35_tp4_hybrid_prefix_benchmark.py
+
+EXIT_CODE=1
+
+Expected RED:
+  the independent verifier did not exist yet.

@@ -1,0 +1,13 @@
+AssertionError:
+  tampered fixture accepted: nested artifact inventory mismatch
+
+EXIT_CODE=1
+
+Expected RED:
+  a signed extra file under logs/ was initially accepted because the artifact
+  manifest alone defined its own domain.
+
+Resolution:
+  the verifier now reconstructs the only allowed nested files from
+  correctness_prerequisites.json, logits_manifest.json, and
+  worker_logs_manifest.json.

@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "tools/test_qwen35_tp4_hybrid_prefix_benchmark_worker.py", line 33, in <module>
+    worker = _load(...)
+FileNotFoundError:
+  tools/qwen35_tp4_hybrid_prefix_benchmark_worker.py
+
+EXIT_CODE=1
+
+Expected RED:
+  the CPU-testable benchmark worker boundary did not exist yet.

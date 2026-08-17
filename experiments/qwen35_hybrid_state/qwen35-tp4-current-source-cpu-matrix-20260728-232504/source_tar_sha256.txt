@@ -1,0 +1,1 @@
+37c227887c257784b6a5575791b7ab60a3c0186aba721a0835e57cdbbf282fb2  experiments/qwen35_hybrid_state/qwen35-tp4-current-source-cpu-matrix-20260728-232348/source.tar.gz

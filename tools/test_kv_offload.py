@@ -19,10 +19,30 @@ import torch
 from tinyvllm.engine.model_runner import KVOffloadMVP0
 
 
+def _assert_raises(
+    error_type,
+    message: str,
+    callback,
+):
+    try:
+        callback()
+    except error_type as error:
+        assert message in str(error)
+        return
+    raise AssertionError(
+        f"expected {error_type.__name__}: {message}"
+    )
+
+
 class _NoopKVOffload(KVOffloadMVP0):
     def __init__(self):
         self.gpu_blocks = 2
         self.logical_blocks = 4
+        self.block_nbytes = 1
+        self.async_copy = False
+        self.batch_copy = False
+        self.writeback_on_evict = False
+        self.evict_policy = "lru"
         self.logical_to_slot = {}
         self.slot_to_logical = [None, None]
         self.slot_last_used = [0, 0]
@@ -47,6 +67,23 @@ class _NoopKVOffload(KVOffloadMVP0):
 
     def wait_for_blocks(self, logical_blocks, clear_pending: bool = False):
         self.wait_for_blocks_calls += 1
+
+
+def _identity_manager():
+    manager = _NoopKVOffload()
+    manager.bound_generations = [None] * manager.logical_blocks
+    manager.h2d_done = {}
+    manager.d2h_done = {}
+    manager.stats.update({
+        "speculative_residency_prepares": 0,
+        "speculative_residency_precommits": 0,
+        "speculative_residency_seals": 0,
+        "speculative_residency_rollbacks": 0,
+        "speculative_residency_committed_blocks": 0,
+        "speculative_residency_rejected_blocks": 0,
+        "speculative_residency_rejected_d2h_copies": 0,
+    })
+    return manager
 
 
 class _RecordingKVOffload(_NoopKVOffload):
@@ -205,6 +242,35 @@ def test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks():
     assert manager.wait_for_blocks_calls == 0
 
 
+def test_summary_tracks_peak_resident_blocks_without_exceeding_capacity():
+    manager = _NoopKVOffload()
+    manager.stats["peak_resident_blocks"] = 0
+
+    manager.logical_to_slot = {0: 0}
+    manager._record_peak_resident_blocks()
+    manager.logical_to_slot = {0: 0, 1: 1}
+    manager._record_peak_resident_blocks()
+    manager.logical_to_slot = {1: 1}
+    manager._record_peak_resident_blocks()
+
+    summary = manager.summary()
+    assert summary["resident_blocks"] == 1
+    assert summary["peak_resident_blocks"] == 2
+    assert summary["gpu_blocks"] == 2
+
+
+def test_peak_resident_blocks_rejects_mapping_over_capacity():
+    manager = _NoopKVOffload()
+    manager.stats["peak_resident_blocks"] = 0
+    manager.logical_to_slot = {0: 0, 1: 1, 2: 2}
+
+    _assert_raises(
+        RuntimeError,
+        "KV offload resident block count exceeds GPU capacity",
+        manager._record_peak_resident_blocks,
+    )
+
+
 def test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks():
     manager = _NoopKVOffload()
     manager.gpu_blocks = 1
@@ -230,6 +296,218 @@ def test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks():
     assert manager.enqueue_d2h_calls == 0
     assert manager.enqueue_h2d_calls == 0
     assert manager.wait_for_blocks_calls == 0
+
+
+def test_bind_logical_block_identity_is_same_generation_idempotent():
+    manager = _identity_manager()
+
+    manager.bind_logical_block_identity(1, 3)
+    manager.bind_logical_block_identity(1, 3)
+
+    assert manager.bound_generations[1] == 3
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+
+
+def test_bind_logical_block_identity_newer_generation_clears_stale_owner():
+    manager = _identity_manager()
+    manager.bound_generations[1] = 3
+    manager.logical_to_slot[1] = 0
+    manager.slot_to_logical[0] = 1
+    manager.cpu_valid[1] = True
+    manager.dirty_logical_blocks.add(1)
+    manager.pending_wait_blocks.add(1)
+    manager.h2d_done[1] = object()
+    manager.d2h_done[1] = object()
+
+    manager.bind_logical_block_identity(1, 4)
+
+    assert manager.bound_generations[1] == 4
+    assert 1 not in manager.logical_to_slot
+    assert manager.slot_to_logical[0] is None
+    assert manager.cpu_valid[1] is False
+    assert 1 not in manager.dirty_logical_blocks
+    assert 1 not in manager.pending_wait_blocks
+    assert 1 not in manager.h2d_done
+    assert 1 not in manager.d2h_done
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+
+
+def test_bind_logical_block_identity_rejects_older_generation():
+    manager = _identity_manager()
+    manager.bound_generations[1] = 4
+
+    _assert_raises(
+        RuntimeError,
+        "moved backwards",
+        lambda: manager.bind_logical_block_identity(1, 3),
+    )
+
+    assert manager.bound_generations[1] == 4
+
+
+def test_bind_logical_block_identity_rejects_unbound_existing_state():
+    manager = _identity_manager()
+    manager.logical_to_slot[1] = 0
+    manager.slot_to_logical[0] = 1
+
+    _assert_raises(
+        RuntimeError,
+        "existing state",
+        lambda: manager.bind_logical_block_identity(1, 1),
+    )
+
+    assert manager.bound_generations[1] is None
+    assert manager.logical_to_slot == {1: 0}
+
+
+def test_discard_resident_blocks_rejects_generation_mismatch_atomically():
+    manager = _identity_manager()
+    manager.bound_generations[1] = 7
+    manager.logical_to_slot[1] = 0
+    manager.slot_to_logical[0] = 1
+
+    _assert_raises(
+        RuntimeError,
+        "generation mismatch",
+        lambda: manager.discard_resident_blocks(
+            ((1, 6),),
+            allow_dirty=False,
+        ),
+    )
+
+    assert manager.logical_to_slot == {1: 0}
+    assert manager.slot_to_logical == [1, None]
+
+
+def test_discard_resident_blocks_rejects_dirty_without_copy():
+    manager = _identity_manager()
+    manager.bound_generations[1] = 7
+    manager.logical_to_slot[1] = 0
+    manager.slot_to_logical[0] = 1
+    manager.dirty_logical_blocks.add(1)
+
+    _assert_raises(
+        RuntimeError,
+        "dirty",
+        lambda: manager.discard_resident_blocks(
+            ((1, 7),),
+            allow_dirty=False,
+        ),
+    )
+
+    assert manager.logical_to_slot == {1: 0}
+    assert manager.dirty_logical_blocks == {1}
+    assert manager.enqueue_d2h_calls == 0
+
+
+def test_discard_resident_blocks_clears_metadata_without_copy():
+    manager = _identity_manager()
+    manager.bound_generations[1] = 7
+    manager.logical_to_slot[1] = 0
+    manager.slot_to_logical[0] = 1
+    manager.pending_wait_blocks.add(1)
+    manager.h2d_done[1] = object()
+    manager.d2h_done[1] = object()
+
+    discarded = manager.discard_resident_blocks(
+        ((1, 7),),
+        allow_dirty=False,
+    )
+
+    assert discarded == ((1, 7),)
+    assert 1 not in manager.logical_to_slot
+    assert manager.slot_to_logical[0] is None
+    assert 1 not in manager.pending_wait_blocks
+    assert 1 not in manager.h2d_done
+    assert 1 not in manager.d2h_done
+    assert manager.bound_generations[1] == 7
+    assert manager.enqueue_d2h_calls == 0
+    assert manager.enqueue_h2d_calls == 0
+
+
+def test_discard_resident_blocks_restores_snapshot_after_mutation_failure():
+    manager = _identity_manager()
+    for block_id, slot in ((1, 0), (2, 1)):
+        manager.bound_generations[block_id] = 7
+        manager.logical_to_slot[block_id] = slot
+        manager.slot_to_logical[slot] = block_id
+    original_discard = manager._discard_validated_resident_block
+    calls = 0
+
+    def fail_second(block_id):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("injected discard failure")
+        return original_discard(block_id)
+
+    manager._discard_validated_resident_block = fail_second
+
+    _assert_raises(
+        RuntimeError,
+        "injected discard failure",
+        lambda: manager.discard_resident_blocks(
+            ((1, 7), (2, 7)),
+            allow_dirty=False,
+        ),
+    )
+
+    assert manager.logical_to_slot == {1: 0, 2: 1}
+    assert manager.slot_to_logical == [1, 2]
+
+
+def _clean_resident_identity_manager():
+    manager = _identity_manager()
+    manager.stats.update({
+        "evictions": 0,
+        "evict_clean": 0,
+    })
+    for block_id, slot in ((1, 0), (2, 1)):
+        manager.bound_generations[block_id] = 7
+        manager.logical_to_slot[block_id] = slot
+        manager.slot_to_logical[slot] = block_id
+        manager.cpu_valid[block_id] = True
+        manager.d2h_done[block_id] = object()
+    return manager
+
+
+def test_evict_clean_resident_blocks_preserves_cpu_generation():
+    manager = _clean_resident_identity_manager()
+
+    evicted = manager.evict_clean_resident_blocks(
+        ((2, 7), (1, 7)),
+    )
+
+    assert evicted == ((2, 7), (1, 7))
+    assert manager.logical_to_slot == {}
+    assert manager.slot_to_logical == [None, None]
+    assert manager.cpu_valid[1] is True
+    assert manager.cpu_valid[2] is True
+    assert manager.bound_generations[1] == 7
+    assert manager.bound_generations[2] == 7
+    assert manager.d2h_done == {}
+    assert manager.stats["evictions"] == 2
+    assert manager.stats["evict_clean"] == 2
+
+
+def test_evict_clean_resident_blocks_rejects_dirty_batch_atomically():
+    manager = _clean_resident_identity_manager()
+    manager.dirty_logical_blocks.add(2)
+
+    _assert_raises(
+        RuntimeError,
+        "clean",
+        lambda: manager.evict_clean_resident_blocks(
+            ((1, 7), (2, 7)),
+        ),
+    )
+
+    assert manager.logical_to_slot == {1: 0, 2: 1}
+    assert manager.slot_to_logical == [1, 2]
+    assert manager.stats["evictions"] == 0
+    assert manager.stats["evict_clean"] == 0
 
 
 def test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_for_coalesced_h2d():
@@ -483,7 +761,19 @@ def main():
     test_wait_for_blocks_clear_pending_clears_all_blocks_sharing_waited_event_without_cuda()
     test_ensure_resident_empty_blocks_is_noop_without_copy_hooks()
     test_ensure_resident_already_resident_blocks_skips_empty_copy_hooks()
+    test_summary_tracks_peak_resident_blocks_without_exceeding_capacity()
+    test_peak_resident_blocks_rejects_mapping_over_capacity()
     test_ensure_resident_clean_fresh_eviction_skips_empty_copy_hooks()
+    test_bind_logical_block_identity_is_same_generation_idempotent()
+    test_bind_logical_block_identity_newer_generation_clears_stale_owner()
+    test_bind_logical_block_identity_rejects_older_generation()
+    test_bind_logical_block_identity_rejects_unbound_existing_state()
+    test_discard_resident_blocks_rejects_generation_mismatch_atomically()
+    test_discard_resident_blocks_rejects_dirty_without_copy()
+    test_discard_resident_blocks_clears_metadata_without_copy()
+    test_discard_resident_blocks_restores_snapshot_after_mutation_failure()
+    test_evict_clean_resident_blocks_preserves_cpu_generation()
+    test_evict_clean_resident_blocks_rejects_dirty_batch_atomically()
     test_ensure_resident_assigns_contiguous_missing_blocks_to_contiguous_slots_for_coalesced_h2d()
     test_future_only_block_biases_victim_score_without_becoming_protected()
     test_future_only_missing_blocks_are_not_loaded_pending_or_waited()

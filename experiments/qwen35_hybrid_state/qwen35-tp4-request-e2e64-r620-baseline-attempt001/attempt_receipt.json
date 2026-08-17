@@ -1,0 +1,12 @@
+{
+  "classification": "DOWNLOADED",
+  "cleanup": {
+    "classification": "CLEAN",
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "CLEAN\n"
+  },
+  "run_tag": "qwen35-tp4-request-e2e64-r620-baseline-attempt001",
+  "source_tar_sha256": "5c39d91203d6c75a487936161bb1bb62e5487b67d4648ea2d464f84be85cd50e",
+  "source_tree_sha256": "a26c543e79a9d4927fd0451d4a287363a677568a1daefe65a2a234a22f5997aa"
+}

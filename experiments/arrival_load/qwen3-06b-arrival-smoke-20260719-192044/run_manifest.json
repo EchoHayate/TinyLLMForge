@@ -1,0 +1,95 @@
+{
+  "canonical_policy_by_name": {
+    "P0": "P0",
+    "P1": "P0",
+    "P2": "P2",
+    "P3": "P3"
+  },
+  "common_engine_config": {
+    "enforce_eager": false,
+    "max_num_batched_tokens": 16384,
+    "max_num_prefill_tokens_per_step": 128,
+    "max_num_seqs": 512
+  },
+  "drain_timeout_ns": 120000000000,
+  "environment_sha256": "d5ed9b8518a9499f20e441026a011538cf71caf53db52260edb7cde6a4c120df",
+  "expected_case_ids": [
+    "lifecycle_smoke__P0__r0",
+    "lifecycle_smoke__P2__r0"
+  ],
+  "measured_repetitions": 1,
+  "model_path": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+  "policy_identity_by_name": {
+    "P0": "9a310b586915704813266d28e2163e9ddbb6ec6e3638894c3aa4fa2b23eabce5",
+    "P1": "9a310b586915704813266d28e2163e9ddbb6ec6e3638894c3aa4fa2b23eabce5",
+    "P2": "824f0319883203be14e32424d5616c3c7efa27591eb012c9d9f98c2f489d8fb1",
+    "P3": "e0b85b5fa03a1100ffb17eee33b8e06e4936f53046cc64bd3a72ef0c1e9af491"
+  },
+  "process_port_pairs": [
+    {
+      "case_id": "lifecycle_smoke__P0__r0",
+      "master_port": 16283,
+      "tinyvllm_dist_port": 26179
+    },
+    {
+      "case_id": "lifecycle_smoke__P2__r0",
+      "master_port": 64707,
+      "tinyvllm_dist_port": 44113
+    }
+  ],
+  "prompt_bank_sha256": "8099ccbc0ddcd8072b9b5c3b5b2c68c36bb7e1ca97f59a404d763d6680d9fa01",
+  "required_scenarios": [
+    "lifecycle_smoke"
+  ],
+  "resolved_policy_config_by_name": {
+    "P0": {
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P1": {
+      "chunked_prefill_decode_first": true,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P2": {
+      "chunked_prefill_decode_first": false,
+      "chunked_prefill_max_consecutive_chunks": 2,
+      "chunked_prefill_mixed_batch": false,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    },
+    "P3": {
+      "chunked_prefill_decode_first": false,
+      "chunked_prefill_max_consecutive_chunks": 0,
+      "chunked_prefill_mixed_batch": true,
+      "chunked_prefill_mixed_min_prompt_tokens": 0,
+      "enforce_eager": false,
+      "max_num_batched_tokens": 16384,
+      "max_num_prefill_tokens_per_step": 128,
+      "max_num_seqs": 512
+    }
+  },
+  "run_tag": "qwen3-06b-arrival-smoke-20260719-192044",
+  "run_type": "smoke",
+  "schema_version": 1,
+  "smoke_policies": [
+    "P0",
+    "P2"
+  ],
+  "source_tree_sha256": "0f000c7315cfdd6a50a8eddb2f5b609a7b1f44f9d6a6918f2983f12ffb1628bb",
+  "workload_sha256": "0fc24550be4a36e8a624ee9fa12a4e2c8f4bf78bf952d0b5813ab1d6f2d2e332"
+}

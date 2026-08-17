@@ -1,0 +1,15 @@
+{
+  "classification": "NO_GO",
+  "exactness_pass": false,
+  "performance_direction_pass": false,
+  "reasons": [
+    "k8-eos-boundary/always_native continuation mismatch",
+    "k8-eos-boundary/always_native output token mismatch",
+    "k8-eos-boundary/oracle continuation mismatch",
+    "k8-eos-boundary/oracle output token mismatch",
+    "k8-eos-boundary/routed_native continuation mismatch",
+    "k8-eos-boundary/routed_native output token mismatch"
+  ],
+  "replay_elimination_pass": false,
+  "router_isolation_pass": false
+}

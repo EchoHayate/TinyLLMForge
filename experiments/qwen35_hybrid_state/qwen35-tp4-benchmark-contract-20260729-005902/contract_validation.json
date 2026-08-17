@@ -1,0 +1,46 @@
+{
+  "classification": "CPU_CONTRACT_PASS",
+  "claim_boundary": {
+    "cache_benefit_measured": false,
+    "correctness_authority_complete": false,
+    "gpu_workload_launched": false,
+    "memory_benefit_measured": false,
+    "performance_benefit_measured": false,
+    "quality_benefit_measured": false
+  },
+  "commands": [
+    "python3 tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+    "python3 -m py_compile tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+    "git diff --check -- tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py docs/superpowers/specs/2026-07-29-qwen35-tp4-hybrid-prefix-performance-cache-authority-design.md docs/superpowers/plans/2026-07-29-qwen35-tp4-hybrid-prefix-performance-cache-authority.md AGENT_HANDOFF_STATE.md"
+  ],
+  "files": {
+    "contract": {
+      "path": "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "b92ebe04976b683c7417d1c7a2a7e38d9c568780dc3b1b6c1ae04be520b7a0e5"
+    },
+    "design": {
+      "path": "docs/superpowers/specs/2026-07-29-qwen35-tp4-hybrid-prefix-performance-cache-authority-design.md",
+      "sha256": "a21afd0e3cc75506901d2f4b0fb08f0601130794786900ed5504a39576f0d1c4"
+    },
+    "implementation_plan": {
+      "path": "docs/superpowers/plans/2026-07-29-qwen35-tp4-hybrid-prefix-performance-cache-authority.md",
+      "sha256": "06691ffd56aa553bc935912670ba0147b156b9f6a6595c0d38c6d8a1b2a6ee42"
+    },
+    "tests": {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "sha256": "6c86878b867bd3bc24930ec0d64250cc98c1b0e298a5ea5eb248b534ae74ed86"
+    }
+  },
+  "green": {
+    "diff_check": "PASS",
+    "py_compile": "PASS",
+    "test_count": 13,
+    "test_output": "qwen35 TP4 hybrid-prefix benchmark contract tests passed (13 tests)"
+  },
+  "red_evidence": [
+    "contract_missing_red.txt",
+    "measured_matrix_red.txt"
+  ],
+  "run_tag": "qwen35-tp4-benchmark-contract-20260729-005902",
+  "schema_version": "qwen35.tp4-hybrid-prefix-benchmark-contract-validation.v1"
+}

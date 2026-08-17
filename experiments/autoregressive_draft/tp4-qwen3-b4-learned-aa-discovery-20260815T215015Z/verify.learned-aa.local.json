@@ -1,0 +1,22 @@
+{
+  "candidate_process_boundary_effect": false,
+  "classification": "LEARNED_AA_INCONCLUSIVE",
+  "coverage": {
+    "learned_a": "PASS",
+    "learned_b": "PASS"
+  },
+  "epoch_order": [
+    "learned_a",
+    "learned_b"
+  ],
+  "exact_parity": true,
+  "input_files_verified": 10,
+  "measured_runs_per_epoch": {
+    "learned_a": 8,
+    "learned_b": 8
+  },
+  "process_boundary_effect_established": false,
+  "schema_version": 1,
+  "source_files_verified": 8,
+  "status": "PASS"
+}

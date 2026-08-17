@@ -1,0 +1,78 @@
+{
+  "schema_version": "qwen35.tp4-layer3-attention-internal-probe.corrected.v2",
+  "source_probe": "qwen35-tp4-layer-probe-20260730-201500-attempt20-layer3-attention-r94",
+  "prompt_tokens": 1088,
+  "capture_validity": {
+    "trusted_direct_layer3": [
+      "attention_input",
+      "q_projection",
+      "query_projection",
+      "k_projection",
+      "v_projection",
+      "q_norm",
+      "k_norm",
+      "output_projection_input",
+      "mixer_output"
+    ],
+    "invalid_global_wrapper_captures": [
+      "rotated_query",
+      "rotated_key",
+      "attention_query",
+      "attention_key",
+      "attention_value",
+      "attention_output",
+      "query_gate",
+      "gated_output"
+    ],
+    "reason": "Global function monkeypatch captures were overwritten by later full-attention layers. Native query_gate also fails algebraic reconstruction from its exact q_projection, proving that capture is not layer3 data."
+  },
+  "exact_direct_components_all_ranks": [
+    "attention_input",
+    "q_projection",
+    "query_projection",
+    "k_projection",
+    "v_projection",
+    "q_norm",
+    "k_norm"
+  ],
+  "root_cause": {
+    "component": "rotary_embedding_arithmetic_dtype",
+    "evidence": "The official path casts cos and sin to BF16 and performs BF16 multiply/add. The r94 native path promoted the rotary prefix and arithmetic to FP32 before casting the result back to BF16.",
+    "production_fix": "Remove proactive FP32 promotion and cast cos and sin to the input tensor dtype before rotary multiply/add."
+  },
+  "reconstructed_official_vs_r94_native_pre_fix": [
+    {
+      "rank": 0,
+      "rotated_query_max_abs_diff": 0.0625,
+      "rotated_query_nonzero_count": 33293,
+      "rotated_key_max_abs_diff": 0.03125,
+      "rotated_key_nonzero_count": 16086
+    },
+    {
+      "rank": 1,
+      "rotated_query_max_abs_diff": 0.0625,
+      "rotated_query_nonzero_count": 33464,
+      "rotated_key_max_abs_diff": 0.03125,
+      "rotated_key_nonzero_count": 16086
+    },
+    {
+      "rank": 2,
+      "rotated_query_max_abs_diff": 0.0625,
+      "rotated_query_nonzero_count": 32231,
+      "rotated_key_max_abs_diff": 0.03125,
+      "rotated_key_nonzero_count": 15761
+    },
+    {
+      "rank": 3,
+      "rotated_query_max_abs_diff": 0.0625,
+      "rotated_query_nonzero_count": 32461,
+      "rotated_key_max_abs_diff": 0.03125,
+      "rotated_key_nonzero_count": 15761
+    }
+  ],
+  "post_fix_evidence": {
+    "targeted_test": "tools/test_qwen35_partial_interleaved_mrope.py",
+    "result": "PASS",
+    "oracle": "Official reference-dtype arithmetic, rtol=0, atol=0"
+  }
+}

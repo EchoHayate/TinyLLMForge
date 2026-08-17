@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "purpose": "Non-canonical layer-localization controls for deterministic one-shot versus cached divergence.",
+  "model_repository": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "source_commit": "7e03075",
+  "host": "sitian@10.232.195.203",
+  "gpu": "NVIDIA A100 80GB PCIe",
+  "cuda_visible_devices": "0",
+  "runs": {
+    "bfloat16": {
+      "remote_path": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-layer-diff-20260723-231757",
+      "script_sha256": "6d9830b445bbd915d0bf4f2b191dc5c0c3982033fc765a0525352d278f0e85c1",
+      "result": "bfloat16_layer_diff.json"
+    },
+    "float32_control": {
+      "remote_path": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-layer-diff-fp32-20260723-231849",
+      "script_sha256": "117114c0edcb93b016a3e07432c00c94daf8fa887657999ab2caf9478200a0d9",
+      "result": "float32_layer_diff.json"
+    }
+  },
+  "claim_boundary": "Diagnostic only; no compatibility GO, compression, quality, latency, throughput, speedup, or memory-reduction claim."
+}

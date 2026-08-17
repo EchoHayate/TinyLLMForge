@@ -1,0 +1,99 @@
+{
+  "schema_version": "qwen35.recurrent-int8-gate1-command-results.v1",
+  "classification": "PASS",
+  "source_tree_sha256": "e265b3ead9d9717d92d8bc0507ac051d93ec22f8403b7929c3625ee4153ccfd7",
+  "owned_source_file_count": 89,
+  "python": "/opt/homebrew/bin/python3.12",
+  "pytest_pythonpath": "/tmp/tinyllmforge-pytest312-shim",
+  "entrypoint_count": 12,
+  "test_count": 180,
+  "entrypoints": [
+    {
+      "path": "tools/test_qwen35_recurrent_int8_codec.py",
+      "tests": 13,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_representation.py",
+      "tests": 3,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_int8_cache.py",
+      "tests": 48,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_int8_runtime.py",
+      "tests": 13,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_cache.py",
+      "tests": 26,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_acquisition.py",
+      "tests": 9,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_publication_candidate.py",
+      "tests": 6,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_publication_coordinator.py",
+      "tests": 6,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_publication_ticket.py",
+      "tests": 7,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_hybrid_prefix_restore_ticket.py",
+      "tests": 18,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+      "tests": 12,
+      "classification": "PASS"
+    },
+    {
+      "path": "tools/test_qwen35_tp4_hybrid_prefix_benchmark_contract.py",
+      "tests": 19,
+      "classification": "PASS"
+    }
+  ],
+  "py_compile": {
+    "classification": "PASS",
+    "files": [
+      "tinyvllm/config.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_representation.py",
+      "tinyvllm/engine/qwen35_recurrent_int8_codec.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_int8_cache.py",
+      "tinyvllm/engine/qwen35_hybrid_prefix_owner.py",
+      "tinyvllm/engine/model_runner.py",
+      "tinyvllm/engine/llm_engine.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_engine_adapter.py",
+      "tools/qwen35_tp4_hybrid_prefix_benchmark_contract.py"
+    ]
+  },
+  "scoped_diff_check": {
+    "classification": "PASS",
+    "exit_code": 0
+  },
+  "execution_log": {
+    "path": "/tmp/qwen35_gate1_final_authority_20260805_r548.log",
+    "sha256": "cd3042358a28df4c20c75c7684514da1072b66871295288423e4f1868c889616"
+  },
+  "environment_notes": [
+    "The default python3 lacks Torch, so all Gate-1 runtime tests used /opt/homebrew/bin/python3.12.",
+    "Python 3.12 lacks pytest, so the schema-v1 contract and isolated pytest verification used the existing pure-Python /tmp/tinyllmforge-pytest312-shim.",
+    "Each test file ran in an isolated process because several files intentionally install module stubs; combining all files in one pytest process causes cross-file collection pollution."
+  ]
+}

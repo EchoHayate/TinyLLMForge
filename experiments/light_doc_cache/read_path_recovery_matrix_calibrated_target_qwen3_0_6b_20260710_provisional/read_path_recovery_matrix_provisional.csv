@@ -1,0 +1,4 @@
+mode,role,source,prompt_tokens,logical_byte_saving_fraction,missing_tokens,missing_mse,missing_mae,missing_max_abs,max_abs_logit_diff,mean_abs_logit_diff,argmax_match,original_argmax,restored_argmax,artifact_status
+repeat_last_target,baseline,prior_remote_stdout,,,,,,,4.0625,0.5983291268348694,true,785,785,pending_summary_json_pull
+correlated_same_layer_target,baseline,prior_remote_stdout,,,,,,,3.59375,0.5074678063392639,true,785,785,pending_summary_json_pull
+calibrated_multi_correlated_target,trained,local_summary_json,14,0.17633928571428573,553,13.519333995939883,1.5443621381012482,219.0,3.890625,0.6842344403266907,true,785,785,local_summary_json_available

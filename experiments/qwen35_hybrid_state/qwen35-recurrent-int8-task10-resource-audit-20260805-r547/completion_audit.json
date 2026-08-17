@@ -1,0 +1,94 @@
+{
+  "schema_version": "qwen35.recurrent-int8-task10-completion-audit.v1",
+  "classification": "BLOCKED_RESOURCES",
+  "run_tag": "qwen35-recurrent-int8-task10-resource-audit-20260805-r547",
+  "timestamp": "2026-08-05T22:40:25+08:00",
+  "supersedes": {
+    "path": "experiments/qwen35_hybrid_state/qwen35-recurrent-int8-task10-completion-audit-20260805-r546/completion_audit.json",
+    "scope": "The r546 claim that r542 correctness prerequisites are invalid is superseded by the current-contract compatibility fix and fresh validation. The missing calibration, strict-P1 GO, and Gate-1 authority findings remain unresolved."
+  },
+  "local_gate": {
+    "task_5_9_test_entrypoints": "PASS",
+    "schema_v2_contract_tests_passed": 581,
+    "schema_v1_verifier_tests_passed": 11,
+    "py_compile": "PASS",
+    "scoped_diff_check": "FAIL_PREEXISTING_UNRELATED",
+    "scoped_diff_check_reasons": [
+      "tinyvllm/engine/model_runner.py:1132 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1134 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1294 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1320 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1345 trailing whitespace",
+      "tinyvllm/engine/model_runner.py:1382 trailing whitespace"
+    ]
+  },
+  "prerequisites": {
+    "correctness_prerequisites": {
+      "path": "experiments/qwen35_hybrid_state/qwen35-tp4-performance-correctness-prerequisites-20260804-attempt67-r542/correctness_prerequisites.json",
+      "sha256": "35b4bf092d5c4c84746b88ecd88b32bf14357a21d2923336d62653186cf352f8",
+      "classification": "PASS",
+      "authorized": true,
+      "reasons": []
+    },
+    "calibration": {
+      "candidate_count": 0,
+      "required_classification": "PASS",
+      "authorized": false
+    },
+    "p1_authority": {
+      "candidate_count": 0,
+      "required_classification": "GO",
+      "authorized": false
+    },
+    "gate1_audit": {
+      "candidate_count": 0,
+      "required_classification": "PASS",
+      "authorized": false
+    }
+  },
+  "strict_p1_preflight": {
+    "path": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260805-224025-task10-r547/benchmark_preflight.json",
+    "sha256": "3532919a71e82bff48620bf11457e4b134af4b55388e1434462bfadb460e0c14",
+    "source_bundle_path": "experiments/qwen35_hybrid_state/qwen35-tp4-strict-p1-preflight-20260805-224025-task10-r547/benchmark_source.tar",
+    "source_bundle_sha256": "043c5639535722dca5cd7e69426e77f7efb0d17bd8dd402021fdb9eeef18e138",
+    "source_tree_sha256": "74eab06baa781abb997f8e3421768527ad9a0392f7070704c9977d3dac1e54a0",
+    "classification": "BLOCKED_RESOURCES",
+    "authorized": false,
+    "reasons": [
+      "eligible GPUs 2,4,5,6 are required"
+    ],
+    "required_gpu_observations": {
+      "2": {
+        "free_bytes": 68789731328,
+        "compute_process_count": 5
+      },
+      "4": {
+        "free_bytes": 50963939328,
+        "compute_process_count": 5
+      },
+      "5": {
+        "free_bytes": 84979744768,
+        "compute_process_count": 0
+      },
+      "6": {
+        "free_bytes": 63191384064,
+        "compute_process_count": 3
+      }
+    },
+    "remote_query_executed": true,
+    "remote_path_created": false
+  },
+  "side_effects": {
+    "gpu_query": true,
+    "ssh": true,
+    "remote_directory_created": false,
+    "source_staged": false,
+    "worker_launched": false,
+    "execution_plan_created": false,
+    "authorization_created": false,
+    "authorization_consumed": false,
+    "canonical_authority_executed": false
+  },
+  "next_action": "Wait for all fixed GPUs 2,4,5,6 to satisfy the strict resource policy, then rerun a fresh strict-P1 read-only preflight with a new tag. Do not run smoke, calibration, v2 preflight, or canonical authority while resources are blocked.",
+  "claim_boundary": "No correctness, accuracy, cache, capacity, memory, compression, latency, throughput, or speed benefit is established."
+}

@@ -1,0 +1,15 @@
+{
+  "calibration_manifest.jsonl": "180b0de8b43bf08becc8c9ac65a10bade4289ce1289e91993fd227a2c24ab877",
+  "calibration_rows.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "case_rows.jsonl": "2670e5477bc535fad433df2afaa65828490b51f2d3d93632c233f541888bd9f5",
+  "memory_trace.jsonl": "adb8ee0f3c3a72fea32b4e633fad95970603bd2ee5c43160a3c81902b589c8d8",
+  "report.md": "9fe7e3f5f57ab66cdb51ec255fe00a6589470f206ea11f8a0e6fc698209662fe",
+  "request_timeline.jsonl": "387d0ddbd470f8a45c3887e499f52ff81d64d3a966b729f7d5dda84f7b64de13",
+  "run_manifest.json": "e3ed7354fec0d9aa951dfe1e8ed89ad601913b3af4e4409db7aebf1056ce8a37",
+  "scheduler_trace.jsonl": "3f97218db5a033cf05f0fa6f84275f98dc9c4c532b066b054fdcfca5d48536e0",
+  "source.patch": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source_evidence.json": "0ff9b0b2fa456f8a957c40288adc94183deb2bc522f202e72340f86cbfb92635",
+  "source_snapshot.tar.gz": "028d4e4389259ec3b167e5a0a163afea9c5343f9f878422c78bcec4e052ba58b",
+  "summary.json": "2aa693e930178b82dc72b31e1cd8f14c6fcf5f94eea70184ccdb5d82178a6301",
+  "workload_manifest.jsonl": "95c5a26286f43a2c1606381b9cf185fa917b6d2c385a9ae2ff987036dc1d42d9"
+}

@@ -1,0 +1,138 @@
+{
+  "name": "kv_sparse_attention_doc_smoke_v1",
+  "description": "Multiple-choice questions grounded in the first ~1200 tokens of docs/kv-sparse-attention.md.",
+  "tasks": [
+    {
+      "id": "route_phase1",
+      "question": "Which method is listed as Phase 1 in the route?",
+      "choices": {
+        "A": "Quest dynamic page top-k",
+        "B": "SnapKV prompt compression",
+        "C": "Speculative decoding",
+        "D": "CPU offload"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "route_phase2",
+      "question": "Which item is listed as Phase 2 in the route?",
+      "choices": {
+        "A": "Needle evaluation",
+        "B": "W4A8C4 quantization",
+        "C": "Beam search tuning",
+        "D": "Tokenizer retraining"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "route_phase3",
+      "question": "Which method is listed as Phase 3 in the route?",
+      "choices": {
+        "A": "SnapKV prompt-stage KV compression",
+        "B": "Quest dynamic page top-k",
+        "C": "CPU weight offload",
+        "D": "Tensor parallel smoke"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "long_context_bottleneck",
+      "question": "What bottleneck is highlighted for long-context decode?",
+      "choices": {
+        "A": "KV cache load bandwidth",
+        "B": "Disk IO throughput",
+        "C": "Vocabulary sorting",
+        "D": "Tokenizer merge latency"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "paged_kv_hook",
+      "question": "What existing structure makes block-granularity query-aware top-k selection natural?",
+      "choices": {
+        "A": "Paged KV cache split into blocks",
+        "B": "Optimizer state sharding",
+        "C": "Embedding table quantization",
+        "D": "Tokenizer BPE merges"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_decode_selection",
+      "question": "During decode, what does Quest select?",
+      "choices": {
+        "A": "Top-k KV pages or blocks",
+        "B": "Vocabulary shards",
+        "C": "Optimizer checkpoints",
+        "D": "Tokenizer merge rules"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_summary_form",
+      "question": "What summary form does the Quest design choose for each KV block?",
+      "choices": {
+        "A": "Per-channel min and max key",
+        "B": "Mean value vector only",
+        "C": "A learned tokenizer state",
+        "D": "Decoder layer weights"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_summary_storage",
+      "question": "How does the design store Quest summary tensors?",
+      "choices": {
+        "A": "As separate tensors from KV cache",
+        "B": "Inside tokenizer vocabulary files",
+        "C": "Only in optimizer states",
+        "D": "Inside model weight checkpoints"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_dtype",
+      "question": "What dtype choice is listed for Quest summaries?",
+      "choices": {
+        "A": "Same dtype as KV",
+        "B": "Always float64",
+        "C": "Always int8",
+        "D": "Always CPU bfloat32"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_default_enable",
+      "question": "What is the default behavior of the Quest top-k blocks configuration?",
+      "choices": {
+        "A": "Disabled by default with -1",
+        "B": "Always enabled with top-k 1",
+        "C": "Enabled only for tokenizer training",
+        "D": "Enabled only during CPU offload"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "quest_min_seq_len",
+      "question": "Why is Quest gated by a minimum sequence length?",
+      "choices": {
+        "A": "Short sequences are not worth sparsifying",
+        "B": "Short sequences cannot be tokenized",
+        "C": "Short sequences require disk IO",
+        "D": "Short sequences disable all attention"
+      },
+      "answer": "A"
+    },
+    {
+      "id": "phase3_difficulty",
+      "question": "Why is SnapKV deferred compared with Quest in the plan?",
+      "choices": {
+        "A": "It needs separate attention-score handling and KV slot changes",
+        "B": "It only changes tokenizer merge rules",
+        "C": "It only changes optimizer learning rate",
+        "D": "It only changes file download logic"
+      },
+      "answer": "A"
+    }
+  ]
+}

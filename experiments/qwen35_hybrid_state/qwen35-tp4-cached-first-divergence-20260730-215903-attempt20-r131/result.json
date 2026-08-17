@@ -1,0 +1,77 @@
+{
+  "claim_boundary": "diagnostic comparison only; no cached-continuation correctness, Engine correctness, performance, cache, memory, compression, quality, or accuracy claim",
+  "classification": "ENGINE_WIDE_DIVERGENCE",
+  "cleanup": {
+    "owned_children_remaining": [],
+    "process_group_destroyed": true,
+    "rank_cleanup_receipts": [
+      {
+        "process_group_destroyed": true,
+        "rank": 0
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 1
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 2
+      },
+      {
+        "process_group_destroyed": true,
+        "rank": 3
+      }
+    ],
+    "rank_exit_codes": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "generated_tokens": 1,
+  "official_output_token_ids": [
+    197
+  ],
+  "recompute": {
+    "comparison": {
+      "allclose": false,
+      "first_mismatch_engine_argmax": 197,
+      "first_mismatch_reference_argmax": 197,
+      "first_mismatch_step": 0,
+      "max_abs_diff": 0.09375,
+      "per_step_max_abs_diff": [
+        0.09375
+      ]
+    },
+    "executed_prefill_tokens": 1088,
+    "output_token_ids": [
+      197
+    ],
+    "restore_hits": 0,
+    "restore_misses": 0
+  },
+  "registered_logits_atol": 2e-05,
+  "registered_logits_rtol": 0.0,
+  "request_index": 0,
+  "restore": {
+    "comparison": {
+      "allclose": false,
+      "first_mismatch_engine_argmax": 197,
+      "first_mismatch_reference_argmax": 197,
+      "first_mismatch_step": 0,
+      "max_abs_diff": 0.40625,
+      "per_step_max_abs_diff": [
+        0.40625
+      ]
+    },
+    "executed_prefill_tokens": 64,
+    "output_token_ids": [
+      197
+    ],
+    "restore_hits": 1,
+    "restore_misses": 0
+  },
+  "schema_version": "qwen35.tp4-cached-first-divergence-probe.v1",
+  "workload": "w1_medium_reuse"
+}

@@ -1,0 +1,157 @@
+{
+  "by_run": {
+    "r620": {
+      "exact_restore": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 53263872,
+        "median_cuda_imbalance_ns": 1789726,
+        "median_first_collective_cuda_ns": 51393072,
+        "median_first_cuda_ns": 91351761,
+        "median_first_non_cuda_upper_bound_ns": 1281,
+        "median_first_wall_ns": 91351780,
+        "median_steady_cuda_ns": 77073265,
+        "median_steady_cuda_p90_ns": 107479303,
+        "median_steady_non_cuda_upper_bound_ns": 1279,
+        "median_steady_wall_ns": 77073588,
+        "median_steady_wall_p90_ns": 107480016,
+        "median_wall_imbalance_ns": 1790462
+      },
+      "recompute": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 50221536,
+        "median_cuda_imbalance_ns": 2919982,
+        "median_first_collective_cuda_ns": 47385008,
+        "median_first_cuda_ns": 96752560,
+        "median_first_non_cuda_upper_bound_ns": 266,
+        "median_first_wall_ns": 96752904,
+        "median_steady_cuda_ns": 83515106,
+        "median_steady_cuda_p90_ns": 108716641,
+        "median_steady_non_cuda_upper_bound_ns": 1196,
+        "median_steady_wall_ns": 83515896,
+        "median_steady_wall_p90_ns": 108717230,
+        "median_wall_imbalance_ns": 2920769
+      }
+    },
+    "r630": {
+      "exact_restore": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 42990192,
+        "median_cuda_imbalance_ns": 1618191,
+        "median_first_collective_cuda_ns": 41250704,
+        "median_first_cuda_ns": 73269474,
+        "median_first_non_cuda_upper_bound_ns": 958,
+        "median_first_wall_ns": 73270706,
+        "median_steady_cuda_ns": 72225792,
+        "median_steady_cuda_p90_ns": 73766716,
+        "median_steady_non_cuda_upper_bound_ns": 1304,
+        "median_steady_wall_ns": 72226914,
+        "median_steady_wall_p90_ns": 73767236,
+        "median_wall_imbalance_ns": 1618100
+      },
+      "recompute": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 42740864,
+        "median_cuda_imbalance_ns": 1756867,
+        "median_first_collective_cuda_ns": 44481024,
+        "median_first_cuda_ns": 79065086,
+        "median_first_non_cuda_upper_bound_ns": 732,
+        "median_first_wall_ns": 79065518,
+        "median_steady_cuda_ns": 73895904,
+        "median_steady_cuda_p90_ns": 78707637,
+        "median_steady_non_cuda_upper_bound_ns": 1236,
+        "median_steady_wall_ns": 73896042,
+        "median_steady_wall_p90_ns": 78708835,
+        "median_wall_imbalance_ns": 1756333
+      }
+    },
+    "r631": {
+      "exact_restore": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 35310368,
+        "median_cuda_imbalance_ns": 2083069,
+        "median_first_collective_cuda_ns": 35671040,
+        "median_first_cuda_ns": 72553920,
+        "median_first_non_cuda_upper_bound_ns": 834,
+        "median_first_wall_ns": 72553650,
+        "median_steady_cuda_ns": 71883282,
+        "median_steady_cuda_p90_ns": 73227061,
+        "median_steady_non_cuda_upper_bound_ns": 990,
+        "median_steady_wall_ns": 71883384,
+        "median_steady_wall_p90_ns": 73228716,
+        "median_wall_imbalance_ns": 2083974
+      },
+      "recompute": {
+        "median_collective_count": 25,
+        "median_collective_cuda_ns": 35860224,
+        "median_cuda_imbalance_ns": 2073772,
+        "median_first_collective_cuda_ns": 40062976,
+        "median_first_cuda_ns": 74041394,
+        "median_first_non_cuda_upper_bound_ns": 160,
+        "median_first_wall_ns": 74041330,
+        "median_steady_cuda_ns": 72100288,
+        "median_steady_cuda_p90_ns": 74637864,
+        "median_steady_non_cuda_upper_bound_ns": 896,
+        "median_steady_wall_ns": 72100637,
+        "median_steady_wall_p90_ns": 74638297,
+        "median_wall_imbalance_ns": 2073861
+      }
+    }
+  },
+  "comparisons": {
+    "r620_to_r630": {
+      "exact_restore": {
+        "median_collective_cuda_ns": 19.288271044207978,
+        "median_steady_cuda_ns": 6.289435123839635,
+        "median_steady_cuda_p90_ns": 31.366585062428253,
+        "median_steady_wall_ns": 6.288372094471585,
+        "median_steady_wall_p90_ns": 31.366556551312758
+      },
+      "recompute": {
+        "median_collective_cuda_ns": 14.895346888633593,
+        "median_steady_cuda_ns": 11.517918686470924,
+        "median_steady_cuda_p90_ns": 27.602953626942906,
+        "median_steady_wall_ns": 11.518590424989274,
+        "median_steady_wall_p90_ns": 27.602243912947376
+      }
+    },
+    "r620_to_r631": {
+      "exact_restore": {
+        "median_collective_cuda_ns": 33.70671963164826,
+        "median_steady_cuda_ns": 6.733830466375078,
+        "median_steady_cuda_p90_ns": 31.86868638327511,
+        "median_steady_wall_ns": 6.734088985191659,
+        "median_steady_wall_p90_ns": 31.86759853106088
+      },
+      "recompute": {
+        "median_collective_cuda_ns": 28.595923469963164,
+        "median_steady_cuda_ns": 13.66796804400871,
+        "median_steady_cuda_p90_ns": 31.346421933694586,
+        "median_steady_wall_ns": 13.668366798100328,
+        "median_steady_wall_p90_ns": 31.34639559893128
+      }
+    },
+    "r630_to_r631": {
+      "exact_restore": {
+        "median_collective_cuda_ns": 17.864130497486496,
+        "median_steady_cuda_ns": 0.4742211757262558,
+        "median_steady_cuda_p90_ns": 0.731569777350533,
+        "median_steady_wall_ns": 0.47562602494687783,
+        "median_steady_wall_p90_ns": 0.7300259969073533
+      },
+      "recompute": {
+        "median_collective_cuda_ns": 16.09850470032613,
+        "median_steady_cuda_ns": 2.4299262919904194,
+        "median_steady_cuda_p90_ns": 5.170747280851539,
+        "median_steady_wall_ns": 2.4296362178640094,
+        "median_steady_wall_p90_ns": 5.171640515324614
+      }
+    }
+  },
+  "schema_version": "qwen35.decode-three-way-metrics.v1",
+  "status": {
+    "r620": "baseline_pass",
+    "r630": "NO_GO_parity_6_of_24_mismatch",
+    "r631": "PERFORMANCE_PASS"
+  },
+  "units": "nanoseconds; deltas are percent lower/faster when positive"
+}

@@ -1,0 +1,71 @@
+{
+  "candidate_results": {
+    "P2": {
+      "benefit_path": null,
+      "classification": "NO_GO",
+      "guard_failures": [
+        "p99_itl_ns regression exceeds 10%",
+        "maximum_decode_gap_ns regression exceeds 10%",
+        "service bucket p95 E2E regression exceeds 10%"
+      ],
+      "median_ratios": {
+        "maximum_decode_gap_ns": 2.6740836381987663,
+        "p95_itl_ns": 4.313703665743588,
+        "p95_ttft_ns": 0.6725781335445321,
+        "p99_e2e_ns": 0.9016907146599549,
+        "p99_itl_ns": 2.8876703296751534,
+        "p99_ttft_ns": 0.8505425952425161,
+        "peak_cuda_reserved_bytes": 1.000535060546325,
+        "peak_kv_bytes": 3.928571428571429,
+        "request_throughput_rps": 1.0000016422016407
+      },
+      "policy": "P2",
+      "worst_repetition_ratios": {
+        "maximum_decode_gap_ns": 4.072240980170602,
+        "p95_itl_ns": 4.979654960189282,
+        "p95_ttft_ns": 0.9300143603286594,
+        "p99_e2e_ns": 1.0510790661943876,
+        "p99_itl_ns": 3.330962897563766,
+        "p99_ttft_ns": 0.9796746266011783,
+        "peak_cuda_reserved_bytes": 1.008420163334272,
+        "peak_kv_bytes": 11.142857142857142,
+        "request_throughput_rps": 0.9887964239420671
+      }
+    },
+    "P3": {
+      "benefit_path": null,
+      "classification": "NO_GO",
+      "guard_failures": [
+        "p99_itl_ns regression exceeds 10%",
+        "maximum_decode_gap_ns regression exceeds 10%",
+        "service bucket p95 E2E regression exceeds 10%"
+      ],
+      "median_ratios": {
+        "maximum_decode_gap_ns": 1.1645503686381629,
+        "p95_itl_ns": 4.212797896500033,
+        "p95_ttft_ns": 0.6201384345307426,
+        "p99_e2e_ns": 0.8765093536785851,
+        "p99_itl_ns": 1.0754627950373146,
+        "p99_ttft_ns": 0.8343647000234563,
+        "peak_cuda_reserved_bytes": 1.0006758659532526,
+        "peak_kv_bytes": 3.5,
+        "request_throughput_rps": 0.9999939976278173
+      },
+      "policy": "P3",
+      "worst_repetition_ratios": {
+        "maximum_decode_gap_ns": 2.041415675833066,
+        "p95_itl_ns": 5.230948673614627,
+        "p95_ttft_ns": 0.8525167215207855,
+        "p99_e2e_ns": 1.0261208179153039,
+        "p99_itl_ns": 1.4341652795506334,
+        "p99_ttft_ns": 0.9952734766939965,
+        "peak_cuda_reserved_bytes": 1.0018304702900591,
+        "peak_kv_bytes": 7.285714285714286,
+        "request_throughput_rps": 0.9892267465520914
+      }
+    }
+  },
+  "classification": "NO_GO",
+  "correctness_failures": [],
+  "structural_failures": []
+}

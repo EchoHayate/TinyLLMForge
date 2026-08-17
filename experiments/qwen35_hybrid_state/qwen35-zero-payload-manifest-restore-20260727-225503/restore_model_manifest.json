@@ -1,0 +1,64 @@
+{
+  "approved_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+  "approved_model_dir": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-2b-hybrid-acquire-20260723-222004/model",
+  "approved_model_manifest_path": "/data00/home/sitian/sitian-workspace01/tllm/qwen35-hybrid-state-runs/qwen35-2b-hybrid-acquire-20260723-222004/model_manifest.json",
+  "checks": {
+    "config_identity": true,
+    "index_identity": true,
+    "model_directory": true,
+    "non_payload_files": true,
+    "payload_zero": true,
+    "shard_inventory": true,
+    "target_state": true
+  },
+  "config_model_type": "qwen3_5",
+  "failure_reasons": [],
+  "index_shard_names": [
+    "model.safetensors-00001-of-00001.safetensors"
+  ],
+  "non_payload_files": {
+    "config.json": {
+      "sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+      "size": 2908
+    },
+    "merges.txt": {
+      "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+      "size": 3353259
+    },
+    "model.safetensors.index.json": {
+      "sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+      "size": 64460
+    },
+    "tokenizer.json": {
+      "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+      "size": 12807982
+    },
+    "tokenizer_config.json": {
+      "sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+      "size": 16709
+    },
+    "vocab.json": {
+      "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+      "size": 6722759
+    }
+  },
+  "observed_manifest_sha256": "3e650a908234771c3cf1ac4e20c4d38fe69982efedaf4a3e631ad0b14aad7dd0",
+  "observed_shard_names": [
+    "model.safetensors-00001-of-00001.safetensors"
+  ],
+  "payload_bytes_read": 0,
+  "payload_hashes_recomputed": false,
+  "payload_open_count": 0,
+  "remote_target": "sitian@10.232.195.203",
+  "schema_version": "qwen35.real-checkpoint-load-safety.v1",
+  "shard": {
+    "device": 24128256,
+    "expected_size": 4548221488,
+    "inode": 21369086,
+    "mode": 33188,
+    "name": "model.safetensors-00001-of-00001.safetensors",
+    "observed_size": 4548221488
+  },
+  "status": "RESTORED",
+  "write_performed": true
+}

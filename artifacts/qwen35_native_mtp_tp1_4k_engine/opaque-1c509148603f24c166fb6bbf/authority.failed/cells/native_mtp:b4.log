@@ -1,0 +1,20 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_worker.py", line 1085, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_worker.py", line 1073, in main
+[rank0]:     result = run_policy_cell(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_worker.py", line 1026, in run_policy_cell
+[rank0]:     return gate.validate_cell_result(cell)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 628, in validate_cell_result
+[rank0]:     runtime = _validate_runtime(
+[rank0]:               ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 482, in _validate_runtime
+[rank0]:     lifecycle = _validate_lifecycle_events(
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-engine-runs/opaque-jfJYBx56dpYP/source/tools/qwen35_native_mtp_tp1_4k_engine_gate.py", line 374, in _validate_lifecycle_events
+[rank0]:     raise ValueError(
+[rank0]: ValueError: proposal lifecycle ordering is incomplete

@@ -1,0 +1,11 @@
+{
+  "classification": "ALIGNED_CAMPAIGN",
+  "input_files_verified": 6,
+  "policy_repeat_coverage": {
+    "learned": 8,
+    "target": 8
+  },
+  "schema_version": 1,
+  "source_files_verified": 6,
+  "status": "PASS"
+}

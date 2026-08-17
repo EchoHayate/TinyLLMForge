@@ -1,0 +1,201 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 583, in <module>
+[rank0]:     sys.exit(main())
+[rank0]:              ^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 569, in main
+[rank0]:     result = run_policy_cell(
+[rank0]:              ^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tools/qwen35_native_mtp_tp4_16k_target_kv_offload_worker.py", line 328, in run_policy_cell
+[rank0]:     engine = engine_factory(model_path, **config)
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tinyvllm/engine/llm_engine.py", line 406, in __init__
+[rank0]:     self.model_runner = ModelRunner(config, 0, self.events)     # 生成主进程
+[rank0]:                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tinyvllm/engine/model_runner.py", line 1934, in __init__
+[rank0]:     self.allocate_kv_cache()                        #预分配空间（没有具体值）
+[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tinyvllm/engine/model_runner.py", line 3803, in allocate_kv_cache
+[rank0]:     assert auto_num_blocks > 0
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]: AssertionError
+[rank1]:[W814 16:48:04.800282467 socket.cpp:428] [c10d] While waitForInput, poolFD failed with (errno: 0 - Success).
+Process SpawnProcess-1:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tinyvllm/engine/model_runner.py", line 1974, in __init__
+    dist.barrier()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/distributed/c10d_logger.py", line 79, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py", line 3936, in barrier
+    work = default_pg.barrier(opts=opts)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.distributed.DistBackendError: [1] is setting up NCCL communicator and retrieving ncclUniqueId from [0] via c10d key-value store by key '0', but store->get('0') got error: Socket Timeout
+Exception raised from doWait at ../torch/csrc/distributed/c10d/TCPStore.cpp:570 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f651f649f86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x164b9c5 (0x7f6555fe89c5 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #2: c10d::TCPStore::doGet(std::string const&) + 0x32 (0x7f655a698d92 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #3: c10d::TCPStore::get(std::string const&) + 0xa1 (0x7f655a699f81 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #4: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f655a64e9d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #5: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f655a64e9d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #6: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f655a64e9d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #7: c10d::ProcessGroupNCCL::broadcastUniqueNCCLID(ncclUniqueId*, bool, std::string const&, int) + 0xaf (0x7f652094591f in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #8: c10d::ProcessGroupNCCL::getNCCLComm(std::string const&, c10::Device&, c10d::OpType, int, bool) + 0x114c (0x7f65209516fc in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #9: <unknown function> + 0x11dbb5f (0x7f6520959b5f in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #10: c10d::ProcessGroupNCCL::allreduce_impl(at::Tensor&, c10d::AllreduceOptions const&) + 0x10 (0x7f652095af90 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #11: c10d::ProcessGroupNCCL::barrier(c10d::BarrierOptions const&) + 0x69c (0x7f652096809c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #12: <unknown function> + 0x5ca4202 (0x7f655a641202 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #13: <unknown function> + 0x5caea05 (0x7f655a64ba05 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #14: <unknown function> + 0x52d0c1b (0x7f6559c6dc1b in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #15: <unknown function> + 0x52ce494 (0x7f6559c6b494 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #16: <unknown function> + 0x1ace5a8 (0x7f655646b5a8 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #17: <unknown function> + 0x5cb8974 (0x7f655a655974 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #18: <unknown function> + 0x5cb9705 (0x7f655a656705 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #19: <unknown function> + 0xdbc1a8 (0x7f656d97d1a8 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_python.so)
+frame #20: <unknown function> + 0x4b2534 (0x7f656d073534 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_python.so)
+frame #21: <unknown function> + 0x1fd0a6 (0x562fb941e0a6 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #22: _PyObject_MakeTpCall + 0x24b (0x562fb93fa3fb in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #23: _PyEval_EvalFrameDefault + 0x665 (0x562fb9408755 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #24: _PyFunction_Vectorcall + 0x165 (0x562fb942e3d5 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #25: _PyEval_EvalFrameDefault + 0x467b (0x562fb940c76b in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #26: _PyFunction_Vectorcall + 0x165 (0x562fb942e3d5 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #27: <unknown function> + 0x214d9c (0x562fb9435d9c in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #28: <unknown function> + 0x1d9713 (0x562fb93fa713 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #29: PyObject_Call + 0xbe (0x562fb94386ae in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #30: _PyEval_EvalFrameDefault + 0x467b (0x562fb940c76b in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #31: <unknown function> + 0x2a3d55 (0x562fb94c4d55 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #32: PyEval_EvalCode + 0x9d (0x562fb94c449d in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #33: <unknown function> + 0x2c0f4a (0x562fb94e1f4a in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #34: <unknown function> + 0x2bcc43 (0x562fb94ddc43 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #35: PyRun_StringFlags + 0x62 (0x562fb94d34b2 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #36: PyRun_SimpleStringFlags + 0x3c (0x562fb94d326c in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #37: Py_RunMain + 0x30f (0x562fb94ed03f in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #38: Py_BytesMain + 0x37 (0x562fb94b4367 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #39: __libc_start_main + 0xeb (0x7f661414809b in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #40: <unknown function> + 0x2931f9 (0x562fb94b41f9 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+. This may indicate a possible application crash on rank 0 or a network set up issue.
+[rank2]:[W814 16:48:07.966044009 socket.cpp:428] [c10d] While waitForInput, poolFD failed with (errno: 0 - Success).
+Process SpawnProcess-2:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tinyvllm/engine/model_runner.py", line 1974, in __init__
+    dist.barrier()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/distributed/c10d_logger.py", line 79, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py", line 3936, in barrier
+    work = default_pg.barrier(opts=opts)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.distributed.DistBackendError: [2] is setting up NCCL communicator and retrieving ncclUniqueId from [0] via c10d key-value store by key '0', but store->get('0') got error: Socket Timeout
+Exception raised from doWait at ../torch/csrc/distributed/c10d/TCPStore.cpp:570 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f1f6d01bf86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x164b9c5 (0x7f1fa39ba9c5 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #2: c10d::TCPStore::doGet(std::string const&) + 0x32 (0x7f1fa806ad92 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #3: c10d::TCPStore::get(std::string const&) + 0xa1 (0x7f1fa806bf81 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #4: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f1fa80209d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #5: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f1fa80209d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #6: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f1fa80209d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #7: c10d::ProcessGroupNCCL::broadcastUniqueNCCLID(ncclUniqueId*, bool, std::string const&, int) + 0xaf (0x7f1f6e31791f in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #8: c10d::ProcessGroupNCCL::getNCCLComm(std::string const&, c10::Device&, c10d::OpType, int, bool) + 0x114c (0x7f1f6e3236fc in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #9: <unknown function> + 0x11dbb5f (0x7f1f6e32bb5f in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #10: c10d::ProcessGroupNCCL::allreduce_impl(at::Tensor&, c10d::AllreduceOptions const&) + 0x10 (0x7f1f6e32cf90 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #11: c10d::ProcessGroupNCCL::barrier(c10d::BarrierOptions const&) + 0x69c (0x7f1f6e33a09c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #12: <unknown function> + 0x5ca4202 (0x7f1fa8013202 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #13: <unknown function> + 0x5caea05 (0x7f1fa801da05 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #14: <unknown function> + 0x52d0c1b (0x7f1fa763fc1b in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #15: <unknown function> + 0x52ce494 (0x7f1fa763d494 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #16: <unknown function> + 0x1ace5a8 (0x7f1fa3e3d5a8 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #17: <unknown function> + 0x5cb8974 (0x7f1fa8027974 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #18: <unknown function> + 0x5cb9705 (0x7f1fa8028705 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #19: <unknown function> + 0xdbc1a8 (0x7f1fbb34f1a8 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_python.so)
+frame #20: <unknown function> + 0x4b2534 (0x7f1fbaa45534 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_python.so)
+frame #21: <unknown function> + 0x1fd0a6 (0x564b7b9f80a6 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #22: _PyObject_MakeTpCall + 0x24b (0x564b7b9d43fb in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #23: _PyEval_EvalFrameDefault + 0x665 (0x564b7b9e2755 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #24: _PyFunction_Vectorcall + 0x165 (0x564b7ba083d5 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #25: _PyEval_EvalFrameDefault + 0x467b (0x564b7b9e676b in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #26: _PyFunction_Vectorcall + 0x165 (0x564b7ba083d5 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #27: <unknown function> + 0x214d9c (0x564b7ba0fd9c in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #28: <unknown function> + 0x1d9713 (0x564b7b9d4713 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #29: PyObject_Call + 0xbe (0x564b7ba126ae in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #30: _PyEval_EvalFrameDefault + 0x467b (0x564b7b9e676b in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #31: <unknown function> + 0x2a3d55 (0x564b7ba9ed55 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #32: PyEval_EvalCode + 0x9d (0x564b7ba9e49d in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #33: <unknown function> + 0x2c0f4a (0x564b7babbf4a in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #34: <unknown function> + 0x2bcc43 (0x564b7bab7c43 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #35: PyRun_StringFlags + 0x62 (0x564b7baad4b2 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #36: PyRun_SimpleStringFlags + 0x3c (0x564b7baad26c in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #37: Py_RunMain + 0x30f (0x564b7bac703f in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #38: Py_BytesMain + 0x37 (0x564b7ba8e367 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #39: __libc_start_main + 0xeb (0x7f2061b1a09b in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #40: <unknown function> + 0x2931f9 (0x564b7ba8e1f9 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+. This may indicate a possible application crash on rank 0 or a network set up issue.
+[rank3]:[W814 16:48:08.186802150 socket.cpp:428] [c10d] While waitForInput, poolFD failed with (errno: 0 - Success).
+Process SpawnProcess-3:
+Traceback (most recent call last):
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data00/home/sitian/sitian-workspace01/tllm/qwen35-native-mtp-tp4-16k-target-kv-offload-runs/opaque-cd9293d4cb81347d3a39e6ed/source/tinyvllm/engine/model_runner.py", line 1974, in __init__
+    dist.barrier()
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/distributed/c10d_logger.py", line 79, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py", line 3936, in barrier
+    work = default_pg.barrier(opts=opts)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.distributed.DistBackendError: [3] is setting up NCCL communicator and retrieving ncclUniqueId from [0] via c10d key-value store by key '0', but store->get('0') got error: Socket Timeout
+Exception raised from doWait at ../torch/csrc/distributed/c10d/TCPStore.cpp:570 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x96 (0x7f7730191f86 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x164b9c5 (0x7f7766b309c5 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #2: c10d::TCPStore::doGet(std::string const&) + 0x32 (0x7f776b1e0d92 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #3: c10d::TCPStore::get(std::string const&) + 0xa1 (0x7f776b1e1f81 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #4: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f776b1969d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #5: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f776b1969d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #6: c10d::PrefixStore::get(std::string const&) + 0x31 (0x7f776b1969d1 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #7: c10d::ProcessGroupNCCL::broadcastUniqueNCCLID(ncclUniqueId*, bool, std::string const&, int) + 0xaf (0x7f773148d91f in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #8: c10d::ProcessGroupNCCL::getNCCLComm(std::string const&, c10::Device&, c10d::OpType, int, bool) + 0x114c (0x7f77314996fc in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #9: <unknown function> + 0x11dbb5f (0x7f77314a1b5f in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #10: c10d::ProcessGroupNCCL::allreduce_impl(at::Tensor&, c10d::AllreduceOptions const&) + 0x10 (0x7f77314a2f90 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #11: c10d::ProcessGroupNCCL::barrier(c10d::BarrierOptions const&) + 0x69c (0x7f77314b009c in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so)
+frame #12: <unknown function> + 0x5ca4202 (0x7f776b189202 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #13: <unknown function> + 0x5caea05 (0x7f776b193a05 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #14: <unknown function> + 0x52d0c1b (0x7f776a7b5c1b in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #15: <unknown function> + 0x52ce494 (0x7f776a7b3494 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #16: <unknown function> + 0x1ace5a8 (0x7f7766fb35a8 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #17: <unknown function> + 0x5cb8974 (0x7f776b19d974 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #18: <unknown function> + 0x5cb9705 (0x7f776b19e705 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so)
+frame #19: <unknown function> + 0xdbc1a8 (0x7f777e4c51a8 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_python.so)
+frame #20: <unknown function> + 0x4b2534 (0x7f777dbbb534 in /data00/home/sitian/sitian-workspace01/tllm/env/lib/python3.11/site-packages/torch/lib/libtorch_python.so)
+frame #21: <unknown function> + 0x1fd0a6 (0x55d51385c0a6 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #22: _PyObject_MakeTpCall + 0x24b (0x55d5138383fb in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #23: _PyEval_EvalFrameDefault + 0x665 (0x55d513846755 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #24: _PyFunction_Vectorcall + 0x165 (0x55d51386c3d5 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #25: _PyEval_EvalFrameDefault + 0x467b (0x55d51384a76b in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #26: _PyFunction_Vectorcall + 0x165 (0x55d51386c3d5 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #27: <unknown function> + 0x214d9c (0x55d513873d9c in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #28: <unknown function> + 0x1d9713 (0x55d513838713 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #29: PyObject_Call + 0xbe (0x55d5138766ae in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #30: _PyEval_EvalFrameDefault + 0x467b (0x55d51384a76b in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #31: <unknown function> + 0x2a3d55 (0x55d513902d55 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #32: PyEval_EvalCode + 0x9d (0x55d51390249d in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #33: <unknown function> + 0x2c0f4a (0x55d51391ff4a in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #34: <unknown function> + 0x2bcc43 (0x55d51391bc43 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #35: PyRun_StringFlags + 0x62 (0x55d5139114b2 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #36: PyRun_SimpleStringFlags + 0x3c (0x55d51391126c in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #37: Py_RunMain + 0x30f (0x55d51392b03f in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #38: Py_BytesMain + 0x37 (0x55d5138f2367 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+frame #39: __libc_start_main + 0xeb (0x7f7824c9009b in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #40: <unknown function> + 0x2931f9 (0x55d5138f21f9 in /data00/home/sitian/sitian-workspace01/tllm/env/bin/python)
+. This may indicate a possible application crash on rank 0 or a network set up issue.

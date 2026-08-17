@@ -1,0 +1,17 @@
+{
+  "boundary": "fresh-process wall time includes model initialization; the ratio is a smoke estimate, not per-token profiler overhead",
+  "classification": "COMPLETE",
+  "decode_internal_to_baseline_ratio": 0.9396058569003085,
+  "rows": [
+    {
+      "elapsed_ns": 35679664292,
+      "label": "baseline",
+      "returncode": 0
+    },
+    {
+      "elapsed_ns": 33524821541,
+      "label": "decode_internal",
+      "returncode": 0
+    }
+  ]
+}

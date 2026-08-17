@@ -1,0 +1,13 @@
+{
+  "classification": "FAILED",
+  "cleanup": {
+    "classification": "CLEAN",
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "CLEAN\n"
+  },
+  "error": "RuntimeError(\"['ssh', '-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ConnectTimeout=20', 'sitian@10.232.195.203', 'test -e /data00/home/sitian/sitian-workspace01/tllm/qwen35-tp4-hybrid-prefix-benchmark-runs/qwen35-tp4-decode-phase-split-20260811-r631-attempt004']\")",
+  "run_tag": "qwen35-tp4-decode-phase-split-20260811-r631-attempt004",
+  "source_tar_sha256": "f791f27e807e602f889345d301b72035dcd4a93d55a32adf51fd5eb3eaefb79c",
+  "source_tree_sha256": "6f881fae7010cc5f048100b147a72fbf27ffba0f77bc34e2e2e68388a98a2837"
+}

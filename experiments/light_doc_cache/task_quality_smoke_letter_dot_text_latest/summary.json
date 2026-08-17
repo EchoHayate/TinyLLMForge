@@ -1,0 +1,56 @@
+{
+  "settings": {
+    "model": "/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B",
+    "text_file": "/data00/home/sitian/light-doc-cache-work/TinyLLMForge/docs/kv-sparse-attention.md",
+    "policy_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/policy_am_qwen3_0_6b_s1536_holdout_all_r1.0",
+    "output_dir": "/data00/home/sitian/light-doc-cache-work/probe/runs/task_quality_smoke_qwen3_0_6b_s1536_policy035_050_letter_dot_text",
+    "thresholds": "0.35,0.50",
+    "max_prompt_tokens": 1536,
+    "max_doc_tokens": 1200,
+    "bank_train_tokens": 512,
+    "ridge": 1.0,
+    "task_limit": 0,
+    "min_baseline_accuracy": 0.8,
+    "choice_scoring": "letter_dot_text",
+    "device": "auto",
+    "dtype": "auto"
+  },
+  "elapsed_s": 14.87525549158454,
+  "summary": [
+    {
+      "threshold": 0.35,
+      "tasks": 5,
+      "compressed_heads": 63,
+      "baseline_accuracy": 0.8,
+      "min_baseline_accuracy": 0.8,
+      "baseline_gate_pass": true,
+      "compact_accuracy": 0.6,
+      "agreement": 0.8,
+      "baseline_correct_tasks": 4,
+      "compact_accuracy_on_baseline_correct": 0.75,
+      "agreement_on_baseline_correct": 0.75,
+      "mean_answer_score_delta": -4.436580212389527,
+      "mean_baseline_margin": 1.7712348220318745,
+      "mean_compact_margin": 2.0982726412941703,
+      "mean_bank_build_s": 0.11800325438380241
+    },
+    {
+      "threshold": 0.5,
+      "tasks": 5,
+      "compressed_heads": 11,
+      "baseline_accuracy": 0.8,
+      "min_baseline_accuracy": 0.8,
+      "baseline_gate_pass": true,
+      "compact_accuracy": 0.8,
+      "agreement": 1.0,
+      "baseline_correct_tasks": 4,
+      "compact_accuracy_on_baseline_correct": 1.0,
+      "agreement_on_baseline_correct": 1.0,
+      "mean_answer_score_delta": 0.3969834046714823,
+      "mean_baseline_margin": 1.7712348220318745,
+      "mean_compact_margin": 1.7391192967043025,
+      "mean_bank_build_s": 0.02182483747601509
+    }
+  ],
+  "note": "This is a quality-only simulation. It keeps the full KV tensor shape, but selected heads are forced to attend only to their compact bank during decode scoring."
+}

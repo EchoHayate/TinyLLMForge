@@ -1,0 +1,9 @@
+{
+  "exact_parity": true,
+  "host_files_verified": 6,
+  "schema_version": 1,
+  "source_files_verified": 5,
+  "status": "PASS",
+  "telemetry_classification": "RUNTIME_VARIANCE_SUSPECTED",
+  "timing_classification": "UNSTABLE"
+}

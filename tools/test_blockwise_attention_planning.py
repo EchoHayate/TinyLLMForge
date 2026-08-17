@@ -68,6 +68,9 @@ class _PlanOnlyManager:
     def mark_dirty(self, blocks):
         pass
 
+    def record_h2d_slot_read_window(self, **kwargs):
+        pass
+
     def ensure_resident(
         self,
         logical_blocks,
@@ -132,6 +135,9 @@ class _SimulatedResidencyManager:
     def mark_dirty(self, blocks):
         return None
 
+    def record_h2d_slot_read_window(self, **kwargs):
+        return None
+
     def _touch(self, slot):
         self.clock += 1
         self.slot_last_used[int(slot)] = self.clock
@@ -189,6 +195,53 @@ class _SimulatedResidencyManager:
         return None
 
 
+class _BackingResidencyManager(_SimulatedResidencyManager):
+    def __init__(
+        self,
+        gpu_blocks,
+        k_cache,
+        v_cache,
+        logical_k_blocks,
+        logical_v_blocks,
+    ):
+        super().__init__(gpu_blocks)
+        self.k_cache = k_cache
+        self.v_cache = v_cache
+        self.logical_k_blocks = logical_k_blocks
+        self.logical_v_blocks = logical_v_blocks
+
+    def install_resident(self, logical_block, slot):
+        logical_block = int(logical_block)
+        slot = int(slot)
+        self.logical_to_slot[logical_block] = slot
+        self.slot_to_logical[slot] = logical_block
+        self.k_cache[slot].copy_(self.logical_k_blocks[logical_block])
+        self.v_cache[slot].copy_(self.logical_v_blocks[logical_block])
+        self._touch(slot)
+
+    def ensure_resident(
+        self,
+        logical_blocks,
+        require_valid,
+        future_logical_blocks=None,
+        protected_logical_blocks=None,
+    ):
+        mapping = super().ensure_resident(
+            logical_blocks,
+            require_valid,
+            future_logical_blocks=future_logical_blocks,
+            protected_logical_blocks=protected_logical_blocks,
+        )
+        for logical_block, slot in mapping.items():
+            self.k_cache[slot].copy_(
+                self.logical_k_blocks[int(logical_block)]
+            )
+            self.v_cache[slot].copy_(
+                self.logical_v_blocks[int(logical_block)]
+            )
+        return mapping
+
+
 def _decode_fixture(
     *,
     block_rows,
@@ -223,6 +276,201 @@ def _decode_fixture(
     )
     v_cache = torch.zeros_like(k_cache)
     return manager, context, q, k_cache, v_cache
+
+
+def _repeat_kv_heads(kv, num_heads):
+    if kv.shape[1] == num_heads:
+        return kv
+    return kv.repeat_interleave(
+        num_heads // kv.shape[1],
+        dim=1,
+    )
+
+
+def _dense_spec_verify_reference(
+    q,
+    logical_k,
+    logical_v,
+    context_lens,
+    query_len,
+    scale,
+):
+    outputs = []
+    for row_index, context_len in enumerate(context_lens):
+        row_q = q[
+            row_index * query_len:
+            (row_index + 1) * query_len
+        ].float()
+        row_k = logical_k[row_index][:context_len].float()
+        row_v = logical_v[row_index][:context_len].float()
+        repeated_k = _repeat_kv_heads(row_k, row_q.size(1))
+        repeated_v = _repeat_kv_heads(row_v, row_q.size(1))
+        scores = torch.einsum(
+            "qhd,khd->qhk",
+            row_q,
+            repeated_k,
+        ) * scale
+        query_start = context_len - query_len
+        mask = (
+            torch.arange(context_len).view(1, 1, -1)
+            <= torch.arange(
+                query_start,
+                context_len,
+            ).view(query_len, 1, 1)
+        )
+        probs = torch.softmax(
+            scores.masked_fill(~mask, float("-inf")),
+            dim=-1,
+        )
+        outputs.append(torch.einsum(
+            "qhk,khd->qhd",
+            probs,
+            repeated_v,
+        ))
+    return torch.cat(outputs).to(q.dtype)
+
+
+def _blockwise_spec_verify_fixture(context_lens, query_len):
+    torch.manual_seed(20260812 + len(context_lens) * 10 + query_len)
+    block_size = 4
+    gpu_blocks = 12
+    num_heads = 4
+    num_kv_heads = 2
+    head_dim = 8
+    logical_k = [
+        torch.randn(length, num_kv_heads, head_dim)
+        for length in context_lens
+    ]
+    logical_v = [
+        torch.randn(length, num_kv_heads, head_dim)
+        for length in context_lens
+    ]
+    block_rows = []
+    logical_k_blocks = {}
+    logical_v_blocks = {}
+    next_block = 0
+    for row_k, row_v in zip(logical_k, logical_v):
+        row_blocks = []
+        for start in range(0, row_k.shape[0], block_size):
+            logical_block = next_block
+            next_block += 1
+            row_blocks.append(logical_block)
+            k_block = torch.zeros(
+                block_size,
+                num_kv_heads,
+                head_dim,
+            )
+            v_block = torch.zeros_like(k_block)
+            take = min(block_size, row_k.shape[0] - start)
+            k_block[:take] = row_k[start:start + take]
+            v_block[:take] = row_v[start:start + take]
+            logical_k_blocks[logical_block] = k_block
+            logical_v_blocks[logical_block] = v_block
+        block_rows.append(row_blocks)
+
+    k_cache = torch.zeros(
+        gpu_blocks,
+        block_size,
+        num_kv_heads,
+        head_dim,
+    )
+    v_cache = torch.zeros_like(k_cache)
+    manager = _BackingResidencyManager(
+        gpu_blocks,
+        k_cache,
+        v_cache,
+        logical_k_blocks,
+        logical_v_blocks,
+    )
+    write_blocks = [row[-1] for row in block_rows]
+    for slot, logical_block in enumerate(write_blocks):
+        manager.install_resident(logical_block, slot)
+    context = SimpleNamespace(
+        kv_offload_manager=manager,
+        kv_offload_logical_block_tables=block_rows,
+        kv_offload_context_lens=list(context_lens),
+        kv_offload_blockwise_blocks=2,
+        kv_offload_write_blocks=write_blocks,
+        spec_verify_query_lens=tuple(
+            query_len for _ in context_lens
+        ),
+        kv_offload_spec_verify_window_plan_cache=None,
+        kv_offload_spec_verify_position_template_cache=None,
+        kv_offload_spec_verify_window_mask_cache=None,
+    )
+    q = torch.randn(
+        len(context_lens) * query_len,
+        num_heads,
+        head_dim,
+    )
+    return (
+        manager,
+        context,
+        q,
+        k_cache,
+        v_cache,
+        logical_k,
+        logical_v,
+        write_blocks,
+    )
+
+
+def test_blockwise_spec_verify_matches_dense_causal_reference():
+    cases = (
+        ((11,), 2),
+        ((19,), 4),
+        ((9, 13, 17, 21), 2),
+        ((12, 16, 20, 24), 4),
+    )
+    for context_lens, query_len in cases:
+        expected = None
+        for layer_idx in (0, 1):
+            (
+                manager,
+                context,
+                q,
+                k_cache,
+                v_cache,
+                logical_k,
+                logical_v,
+                write_blocks,
+            ) = _blockwise_spec_verify_fixture(
+                context_lens,
+                query_len,
+            )
+            if expected is None:
+                expected = _dense_spec_verify_reference(
+                    q,
+                    logical_k,
+                    logical_v,
+                    context_lens,
+                    query_len,
+                    scale=0.125,
+                )
+            actual = attention_mod._blockwise_online_spec_verify_attention(
+                q,
+                k_cache,
+                v_cache,
+                context,
+                num_heads=4,
+                head_dim=8,
+                scale=0.125,
+                layer_idx=layer_idx,
+            )
+
+            torch.testing.assert_close(
+                actual.float(),
+                expected.float(),
+                rtol=2e-4,
+                atol=2e-4,
+            )
+            assert manager.stats["h2d_copies"] > 0
+            assert sum(len(row) for row in (
+                context.kv_offload_logical_block_tables
+            )) > len(write_blocks)
+            assert set(write_blocks).issubset(
+                manager.logical_to_slot
+            )
 
 
 def _plan_without_cross_layer_hints(plan):
