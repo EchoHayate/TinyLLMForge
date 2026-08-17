@@ -300,7 +300,12 @@ class AutoregressiveDraftExactGraphRunner:
             (
                 "capture_backend",
                 capture_backend,
-                ("estimate_static_bytes", "capture", "replay"),
+                (
+                    "estimate_static_bytes",
+                    "capture",
+                    "replay",
+                    "release",
+                ),
             ),
             (
                 "scratch_owner",
@@ -321,6 +326,7 @@ class AutoregressiveDraftExactGraphRunner:
             AutoregressiveDraftGraphEntry,
         ] = {}
         self.quarantined: dict[str, str] = {}
+        self.quarantine_details: dict[str, dict[str, str]] = {}
         self.static_bytes = 0
         self.reserved_bytes = 0
         self.total_capture_ns = 0
@@ -370,10 +376,11 @@ class AutoregressiveDraftExactGraphRunner:
         authority_rows = {
             "exact_q": identity.exact_q,
             "sequence_ids": self._sequence_ids(rows),
-            "transaction_ids": self._transaction_ids(
-                prepared
-            ),
         }
+        if prepared is not None:
+            authority_rows["transaction_ids"] = (
+                self._transaction_ids(prepared)
+            )
         if result is not None:
             authority_rows["token_rows"] = tuple(
                 getattr(result, "token_rows", result)
@@ -515,6 +522,8 @@ class AutoregressiveDraftExactGraphRunner:
         self,
         identity: AutoregressiveDraftGraphIdentity,
         reason: str,
+        *,
+        error: BaseException | None = None,
     ) -> None:
         identity_sha256 = identity.sha256
         existing = self.quarantined.get(identity_sha256)
@@ -524,9 +533,21 @@ class AutoregressiveDraftExactGraphRunner:
             )
         if existing is None:
             self.quarantined[identity_sha256] = reason
-            self.ready_entries.pop(identity_sha256, None)
+            if error is not None:
+                self.quarantine_details[identity_sha256] = {
+                    "error_type": type(error).__name__,
+                    "message": str(error)[:2048],
+                }
             self.counters["quarantines"] += 1
             self.counters[f"fallback_{reason}"] += 1
+            entry = self.ready_entries.get(identity_sha256)
+            if entry is not None:
+                self.capture_backend.release(entry)
+                self.ready_entries.pop(identity_sha256, None)
+                self.static_bytes -= entry.static_bytes
+                self.reserved_bytes -= (
+                    entry.reserved_delta_bytes
+                )
 
     def _pre_capture_reason(
         self,
@@ -596,6 +617,8 @@ class AutoregressiveDraftExactGraphRunner:
             raise ValueError("eager must be callable")
         identity = self._identity(exact_q, len(rows))
         identity_sha256 = identity.sha256
+        if identity_sha256 in self.quarantined:
+            return eager(exact_q, rows)
         entry = self.ready_entries.get(identity_sha256)
         if entry is not None:
             prepared_methods = (
@@ -670,17 +693,62 @@ class AutoregressiveDraftExactGraphRunner:
             self._quarantine(identity, reason)
             return result
         self.counters["capture_attempts"] += 1
+        scratch_lease = None
+        scratch_error = None
         try:
             scratch_lease = self.scratch_owner.acquire(
                 identity,
                 rows,
             )
-        except BaseException:
+        except BaseException as error:
+            scratch_error = error
+        pre_capture_error = None
+        if self._converge is not None:
+            try:
+                self._converge(
+                    stage="graph_pre_capture",
+                    rows=self._convergence_rows(
+                        identity=identity,
+                        rows=rows,
+                        prepared=None,
+                    ),
+                    local_error=scratch_error,
+                )
+            except BaseException as error:
+                pre_capture_error = error
+        if (
+            scratch_error is not None
+            or pre_capture_error is not None
+        ):
+            if scratch_lease is not None:
+                try:
+                    self.scratch_owner.rollback(
+                        scratch_lease
+                    )
+                except BaseException as rollback_error:
+                    self._quarantine(
+                        identity,
+                        "capture_rollback_failed",
+                        error=rollback_error,
+                    )
+                    raise
+            error = (
+                pre_capture_error
+                if pre_capture_error is not None
+                else scratch_error
+            )
             self._quarantine(
                 identity,
-                "scratch_unavailable",
+                (
+                    "capture_failed"
+                    if pre_capture_error is not None
+                    else "scratch_unavailable"
+                ),
+                error=error,
             )
             return result
+        entry = None
+        capture_error = None
         try:
             entry = self.capture_backend.capture(
                 identity,
@@ -688,30 +756,64 @@ class AutoregressiveDraftExactGraphRunner:
                 eager,
                 scratch_lease,
             )
-        except BaseException:
+        except BaseException as error:
+            capture_error = error
+        completion_error = None
+        if self._converge is not None:
+            try:
+                self._converge(
+                    stage="graph_capture_complete",
+                    rows=self._convergence_rows(
+                        identity=identity,
+                        rows=rows,
+                        prepared=None,
+                    ),
+                    local_error=capture_error,
+                )
+            except BaseException as error:
+                completion_error = error
+        if (
+            capture_error is not None
+            or completion_error is not None
+        ):
+            if entry is not None:
+                self.capture_backend.release(entry)
             try:
                 self.scratch_owner.rollback(scratch_lease)
-            except BaseException:
+            except BaseException as rollback_error:
                 self._quarantine(
                     identity,
                     "capture_rollback_failed",
+                    error=rollback_error,
                 )
                 raise
-            self._quarantine(identity, "capture_failed")
+            self._quarantine(
+                identity,
+                "capture_failed",
+                error=(
+                    capture_error
+                    if capture_error is not None
+                    else completion_error
+                ),
+            )
             return result
         try:
             self.scratch_owner.rollback(scratch_lease)
-        except BaseException:
+        except BaseException as rollback_error:
+            self.capture_backend.release(entry)
             self._quarantine(
                 identity,
                 "capture_rollback_failed",
+                error=rollback_error,
             )
             raise
         if entry.identity != identity:
+            self.capture_backend.release(entry)
             self._quarantine(identity, "identity_drift")
             return result
         reason = self._post_capture_reason(entry)
         if reason is not None:
+            self.capture_backend.release(entry)
             self._quarantine(identity, reason)
             return result
         self.ready_entries[identity_sha256] = entry
@@ -720,6 +822,29 @@ class AutoregressiveDraftExactGraphRunner:
         self.total_capture_ns += entry.capture_duration_ns
         self.counters["captures"] += 1
         return result
+
+    def close(self) -> None:
+        first_error = None
+        released = []
+        for identity_sha256, entry in tuple(
+            self.ready_entries.items()
+        ):
+            try:
+                self.capture_backend.release(entry)
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+                continue
+            released.append(identity_sha256)
+            self.static_bytes -= entry.static_bytes
+            self.reserved_bytes -= entry.reserved_delta_bytes
+        for identity_sha256 in released:
+            self.ready_entries.pop(identity_sha256, None)
+        if not self.ready_entries:
+            self.static_bytes = 0
+            self.reserved_bytes = 0
+        if first_error is not None:
+            raise first_error
 
     def summary(self) -> dict:
         return {
@@ -732,6 +857,14 @@ class AutoregressiveDraftExactGraphRunner:
                 ]
                 for identity_sha256 in sorted(
                     self.quarantined
+                )
+            },
+            "quarantine_details": {
+                identity_sha256: dict(
+                    self.quarantine_details[identity_sha256]
+                )
+                for identity_sha256 in sorted(
+                    self.quarantine_details
                 )
             },
             "observation_counts": {

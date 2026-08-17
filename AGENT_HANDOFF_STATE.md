@@ -48317,3 +48317,215 @@ Next action:
    rerun the source-bound paired gate; and
 6. classify that real result as `GO`, `NO_GO_CORRECTNESS`, or
    `NO_GO_PERFORMANCE`.
+
+## 2026-08-17 exact-shape CUDA Graph real-runtime reconciliation
+
+Authoritative checkout:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+```
+
+Branch:
+
+```text
+feat/kv-sparse-attention
+```
+
+Remote:
+
+```text
+sitian@10.232.195.203
+Python: /data00/home/sitian/tllm/env/bin/python
+package root: /data00/home/sitian/tllm/env/lib/python3.11/site-packages
+target: /data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+draft: /data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B
+selected GPUs: 0,1,2,3
+```
+
+### Runtime changes
+
+- `autoregressive_draft_cuda_graph_max_single_capture_ns` is now
+  `4_000_000_000`; total/static/reserved budgets remain unchanged.
+- capture has TP-wide pre-capture and capture-complete convergence.
+- capture failure, rollback failure, identity drift, budget failure,
+  quarantine, replay failure, and close release graph resources.
+- the Qwen3 graph backend releases with
+  `CUDAGraph.reset() -> torch.cuda.synchronize()`.
+- draft executor and graph runner close idempotently.
+- `ModelRunner.exit()` closes graph resources before barrier and process-group
+  destruction.
+- logical committed Proposal-KV identities may be sparse while readable
+  physical source slots are dense.
+- performance workers export quarantine reasons and retained graph resources.
+- graph budget overrides exist only for diagnostics; production-default gates
+  do not pass overrides.
+
+### Real lifecycle evidence
+
+Pure TP4 collective diagnostic:
+
+```text
+artifacts/autoregressive_draft_cuda_graph/
+  20260817-tp4-collective-lifecycle-green/result/summary.json
+```
+
+Result:
+
+```text
+all-reduce=10.0 on all ranks
+broadcast=7.0 on all ranks
+graph reset before process-group destroy
+all ranks exit 0
+```
+
+High-budget real graph diagnostic:
+
+```text
+artifacts/autoregressive_draft_cuda_graph/
+  20260817-lifecycle-green-v5-budget-diagnostic-tp4-b4-q4/
+    diagnostics/high-budget-graph/result.json
+```
+
+Result:
+
+```text
+captures=1 and replays=1 on every rank
+quarantines=0
+capture approximately 2.741-2.750 s
+reserved bytes per rank=8520704
+static bytes per rank=53408
+```
+
+This established that the old two-second single-capture budget was the
+quarantine cause.
+
+Production-default graph:
+
+```text
+artifacts/autoregressive_draft_cuda_graph/
+  20260817-lifecycle-green-v6-production-default-tp4-b4-q4/
+    diagnostics/production-default-graph/result.json
+```
+
+Result:
+
+```text
+budget_overrides={}
+captures=1 and replays=1 on every rank
+quarantines=0
+fallback_pre_replay=0
+capture approximately 3.094-3.098 s
+transaction digest=d102ac0a8da78766a7e53285bb32c59d1f4026c97555a761628ff2afc4942989
+active transactions=0
+accepted/proposed=51/70
+acceptance rate=0.7285714285714285
+```
+
+Same-source eager control:
+
+```text
+artifacts/autoregressive_draft_cuda_graph/
+  20260817-lifecycle-green-v6-production-default-tp4-b4-q4/
+    diagnostics/production-default-eager/result.json
+```
+
+Exact parity:
+
+```text
+target outputs=true
+proposal rows=true
+accepted-prefix counts=true
+transaction digest=true
+acceptance=true
+active transactions=0 in both modes
+```
+
+The single-pair pilot showed graph throughput approximately `+2.76%`, but it
+is not a controlled performance claim.
+
+### Partial source-bound paired gate
+
+Evidence:
+
+```text
+artifacts/autoregressive_draft_cuda_graph/
+  20260817-production-default-paired-gate-tp4-b4-q4/
+```
+
+Bound source:
+
+```text
+source commit=8e370881a769bbac3c70e2cd714d815e51c46fc8
+source patch SHA256=0773c6a723967c4af6ecb7e4ab7a45f1c2b48d0e891b4eae8bef31c13d066c56
+source tree SHA256=c0992a8c69fe7e25646288f0e27da2723cba33bf814fb272180652118c414c88
+```
+
+Completed:
+
+```text
+warmup pairs=2 of 2
+measured pairs=4 of 8
+order eager_graph=2
+order graph_eager=2
+all completed pairs exact=true
+all completed graph workers capture/replay on ranks 0..3=true
+```
+
+Partial diagnostic aggregate:
+
+```text
+median eager throughput=0.989071982502008 tok/s
+median graph throughput=0.9749348881219722 tok/s
+mean paired delta=-0.002993426456363135 tok/s
+median eager TPOT=1.9743923907000003 s
+median graph TPOT=2.0375849077333337 s
+capture range=1.758702684-3.101219179 s
+```
+
+Interruption:
+
+```text
+during pair-4-eager, an unrelated root-owned VLLM::EngineCore appeared on GPU3
+external GPU3 use approximately 73.3 GiB
+gate rank3 exited; remaining ranks stopped progressing
+only own remote PGID 3537615 was terminated
+external PID was not signaled or modified
+GPU0-2 returned to 3 MiB; GPU3 remained externally occupied
+```
+
+Classification:
+
+```text
+REAL_TP4_CAPTURE_REPLAY=ESTABLISHED
+REAL_EAGER_GRAPH_CORRECTNESS_PARITY=ESTABLISHED
+PRODUCTION_DEFAULT_CAPTURE_BUDGET=ESTABLISHED
+CONTROLLED_GRAPH_PERFORMANCE=INCONCLUSIVE_ENVIRONMENT_PARTIAL_4_OF_8
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+### Local verification
+
+Fresh expanded suite:
+
+```text
+780 passed in 27.87s
+```
+
+Coverage includes exact graph/runtime, executor/registration, ModelRunner
+teardown, TP1/TP4 contracts, Proposal-KV, Qwen3 draft backend/storage,
+snapshot transport, performance tooling, speculative runtime, and verifier
+behavior.
+
+### Immediate next actions
+
+1. validate JSON summaries and focused source compilation;
+2. run final fresh pytest and `git diff --check`;
+3. stage only focused source, tests, docs, and selected evidence files;
+4. commit with exactly one final
+   `Co-authored-by: TRAE CLI <noreply@bytedance.com>` trailer;
+5. push `feat/kv-sparse-attention` to
+   `https://github.com/EchoHayate/TinyLLMForge.git`; and
+6. after physical GPU 3 becomes clean, rerun the full two-warmup/eight-pair
+   source-bound gate with a new run tag.

@@ -153,6 +153,7 @@ class _CaptureBackend:
     def __init__(self):
         self.capture_calls = []
         self.replay_calls = []
+        self.released = []
         self.fail_capture = False
         self.fail_pre_replay = False
         self.fail_replay = False
@@ -219,6 +220,9 @@ class _CaptureBackend:
 
     def abort_replay_result(self, result):
         self.aborted_results.append(result)
+
+    def release(self, entry):
+        self.released.append(entry)
 
 
 def _runner(
@@ -361,6 +365,123 @@ def test_capture_failure_rolls_back_and_quarantines_exact_identity():
     assert tuple(runner.summary()["quarantined"].values()) == (
         "capture_failed",
     )
+    assert tuple(
+        runner.summary()["quarantine_details"].values()
+    ) == ({
+        "error_type": "RuntimeError",
+        "message": "capture failed",
+    },)
+
+
+def test_capture_phase_converges_before_and_after_backend_capture():
+    backend = _CaptureBackend()
+    runner = _runner(backend=backend, min_observations=1)
+    stages = []
+
+    def converge(*, stage, rows, local_error):
+        stages.append((stage, rows, local_error))
+
+    runner.bind_convergence(converge)
+    rows = _rows()
+
+    runner.run(
+        exact_q=4,
+        rows=rows,
+        eager=_eager_recorder([]),
+    )
+
+    assert [stage for stage, _, _ in stages] == [
+        "graph_pre_capture",
+        "graph_capture_complete",
+    ]
+    assert all(error is None for _, _, error in stages)
+    assert stages[0][1] == {
+        "exact_q": 4,
+        "sequence_ids": (1, 2, 3, 4),
+    }
+
+
+def test_pre_capture_local_failure_uses_converged_quarantine_reason():
+    backend = _CaptureBackend()
+    scratch = _ScratchOwner()
+    scratch.fail_acquire = True
+    runner = _runner(
+        backend=backend,
+        scratch=scratch,
+        min_observations=1,
+    )
+
+    def converge(*, stage, rows, local_error):
+        assert stage == "graph_pre_capture"
+        assert isinstance(local_error, RuntimeError)
+        raise RuntimeError("graph_pre_capture failed on rank 2")
+
+    runner.bind_convergence(converge)
+
+    runner.run(
+        exact_q=4,
+        rows=_rows(),
+        eager=_eager_recorder([]),
+    )
+
+    assert backend.capture_calls == []
+    assert tuple(runner.summary()["quarantined"].values()) == (
+        "capture_failed",
+    )
+    assert tuple(
+        runner.summary()["quarantine_details"].values()
+    ) == ({
+        "error_type": "RuntimeError",
+        "message": "graph_pre_capture failed on rank 2",
+    },)
+
+
+def test_capture_peer_failure_releases_local_graph_and_rolls_back():
+    backend = _CaptureBackend()
+    scratch = _ScratchOwner()
+    runner = _runner(
+        backend=backend,
+        scratch=scratch,
+        min_observations=1,
+    )
+
+    def converge(*, stage, rows, local_error):
+        if stage == "graph_capture_complete":
+            raise RuntimeError("peer capture failed")
+
+    runner.bind_convergence(converge)
+
+    runner.run(
+        exact_q=4,
+        rows=_rows(),
+        eager=_eager_recorder([]),
+    )
+
+    assert len(backend.released) == 1
+    assert len(scratch.rolled_back) == 1
+    assert runner.summary()["captures"] == 0
+    assert tuple(runner.summary()["quarantined"].values()) == (
+        "capture_failed",
+    )
+
+
+def test_close_releases_ready_entries_once_and_clears_cache():
+    backend = _CaptureBackend()
+    runner = _runner(backend=backend, min_observations=1)
+    runner.run(
+        exact_q=4,
+        rows=_rows(),
+        eager=_eager_recorder([]),
+    )
+    entry = next(iter(runner.ready_entries.values()))
+
+    runner.close()
+    runner.close()
+
+    assert backend.released == [entry]
+    assert runner.ready_entries == {}
+    assert runner.summary()["static_bytes"] == 0
+    assert runner.summary()["reserved_bytes"] == 0
 
 
 def test_pre_replay_failure_falls_back_to_one_eager_attempt():
@@ -390,6 +511,7 @@ def test_replay_started_failure_quarantines_without_eager_retry():
     rows = _rows()
 
     runner.run(exact_q=4, rows=rows, eager=eager)
+    entry = next(iter(runner.ready_entries.values()))
     backend.fail_replay = True
     with pytest.raises(
         AutoregressiveDraftGraphReplayError
@@ -402,6 +524,10 @@ def test_replay_started_failure_quarantines_without_eager_retry():
     assert tuple(runner.summary()["quarantined"].values()) == (
         "replay_failed",
     )
+    assert backend.released == [entry]
+    assert runner.summary()["ready_entries"] == ()
+    assert runner.summary()["static_bytes"] == 0
+    assert runner.summary()["reserved_bytes"] == 0
 
 
 def test_pre_replay_convergence_failure_falls_back_on_every_rank():
@@ -426,8 +552,12 @@ def test_pre_replay_convergence_failure_falls_back_on_every_rank():
     )
     assert len(eager_calls) == 3
     assert backend.replay_calls == []
-    assert stages[0][0] == "graph_pre_replay"
-    assert stages[0][1] == {
+    assert [stage for stage, _, _ in stages] == [
+        "graph_pre_capture",
+        "graph_capture_complete",
+        "graph_pre_replay",
+    ]
+    assert stages[2][1] == {
         "exact_q": 4,
         "sequence_ids": (1, 2, 3, 4),
         "transaction_ids": (
@@ -456,15 +586,18 @@ def test_replay_complete_convergence_failure_quarantines_without_retry():
 
     runner.bind_convergence(converge)
     runner.run(exact_q=4, rows=rows, eager=eager)
+    entry = next(iter(runner.ready_entries.values()))
     with pytest.raises(AutoregressiveDraftGraphReplayError):
         runner.run(exact_q=4, rows=rows, eager=eager)
 
     assert len(eager_calls) == 2
     assert [stage for stage, _, _ in stages] == [
+        "graph_pre_capture",
+        "graph_capture_complete",
         "graph_pre_replay",
         "graph_replay_complete",
     ]
-    assert stages[1][1] == {
+    assert stages[3][1] == {
         "exact_q": 4,
         "sequence_ids": (1, 2, 3, 4),
         "transaction_ids": (
@@ -481,12 +614,15 @@ def test_replay_complete_convergence_failure_quarantines_without_retry():
         ),
     }
     assert runner.summary()["quarantines"] == 1
+    assert backend.released == [entry]
 
 
 def test_scratch_rollback_failure_is_hard_and_quarantined():
+    backend = _CaptureBackend()
     scratch = _ScratchOwner()
     scratch.fail_rollback = True
     runner = _runner(
+        backend=backend,
         scratch=scratch,
         min_observations=1,
     )
@@ -504,3 +640,4 @@ def test_scratch_rollback_failure_is_hard_and_quarantined():
     assert tuple(runner.summary()["quarantined"].values()) == (
         "capture_rollback_failed",
     )
+    assert len(backend.released) == 1

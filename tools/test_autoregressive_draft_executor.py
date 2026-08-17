@@ -429,6 +429,7 @@ class _RecordingGraphRunner:
         self.calls = []
         self.eager_result_types = []
         self.convergence = None
+        self.close_calls = 0
 
     def bind_convergence(self, convergence):
         self.convergence = convergence
@@ -445,6 +446,9 @@ class _RecordingGraphRunner:
             "replays": len(self.calls),
             "ready_entries": (),
         }
+
+    def close(self):
+        self.close_calls += 1
 
 
 class _CudaGraphRecordingRunner(_RecordingGraphRunner):
@@ -763,6 +767,19 @@ def test_executor_binds_graph_convergence_to_tp_coordinator():
     assert executor.authority_snapshot()[
         "logical_authority_rows"
     ][-1]["stage"] == "graph_pre_replay"
+
+
+def test_executor_close_releases_graph_runner_once():
+    graph_runner = _RecordingGraphRunner()
+    executor, _, _ = _ready_executor(
+        {1: (2, 3)},
+        graph_runner=graph_runner,
+    )
+
+    executor.close()
+    executor.close()
+
+    assert graph_runner.close_calls == 1
 
 
 @pytest.mark.parametrize("rank", (0, 1, 2, 3))

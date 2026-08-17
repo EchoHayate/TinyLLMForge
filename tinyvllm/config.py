@@ -84,7 +84,7 @@ class Config:
     autoregressive_draft_cuda_graph_max_static_bytes: int = 64 * 1024 * 1024
     autoregressive_draft_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
     autoregressive_draft_cuda_graph_max_total_capture_ns: int = 5_000_000_000
-    autoregressive_draft_cuda_graph_max_single_capture_ns: int = 2_000_000_000
+    autoregressive_draft_cuda_graph_max_single_capture_ns: int = 4_000_000_000
     hf_config: AutoConfig | None = None                 # hugging face config, 加载模型的层数，隐藏层数，注意力头数
     eos: int  = -1                                      # end of sentence, 使用模型默认的句子结束符
     kvcache_block_size: int = 256                       

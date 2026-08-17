@@ -146,6 +146,9 @@ class _TinyVLLMTP4EngineAdapter:
         proposal_slot_capacity,
         learned_enabled,
         cuda_graph_enabled=False,
+        cuda_graph_max_reserved_bytes=None,
+        cuda_graph_max_total_capture_ns=None,
+        cuda_graph_max_single_capture_ns=None,
         llm_type=None,
         sampling_params_type=None,
         runtime_type=None,
@@ -162,6 +165,30 @@ class _TinyVLLMTP4EngineAdapter:
             raise ValueError(
                 "draft CUDA graph requires learned mode"
             )
+        graph_budget_overrides = {
+            "autoregressive_draft_cuda_graph_max_reserved_bytes": (
+                cuda_graph_max_reserved_bytes
+            ),
+            "autoregressive_draft_cuda_graph_max_total_capture_ns": (
+                cuda_graph_max_total_capture_ns
+            ),
+            "autoregressive_draft_cuda_graph_max_single_capture_ns": (
+                cuda_graph_max_single_capture_ns
+            ),
+        }
+        for name, value in graph_budget_overrides.items():
+            if value is None:
+                continue
+            if (
+                not cuda_graph_enabled
+                or isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+            ):
+                raise ValueError(
+                    f"{name} override requires enabled CUDA graphs "
+                    "and a positive integer"
+                )
         if (
             llm_type is None
             or sampling_params_type is None
@@ -185,33 +212,38 @@ class _TinyVLLMTP4EngineAdapter:
             )
         self.mode = mode
         self._sampling_params_type = sampling_params_type
-        self.engine = llm_type(
-            target_model,
-            tensor_parallel_size=4,
-            enforce_eager=True,
-            max_num_seqs=max_num_seqs,
-            max_model_len=max_model_len,
-            max_num_batched_tokens=max_num_batched_tokens,
-            autoregressive_draft_enabled=learned_enabled,
-            autoregressive_draft_model=(
+        engine_kwargs = {
+            "tensor_parallel_size": 4,
+            "enforce_eager": True,
+            "max_num_seqs": max_num_seqs,
+            "max_model_len": max_model_len,
+            "max_num_batched_tokens": max_num_batched_tokens,
+            "autoregressive_draft_enabled": learned_enabled,
+            "autoregressive_draft_model": (
                 draft_model if learned_enabled else None
             ),
-            autoregressive_draft_backend="qwen3",
-            autoregressive_draft_max_proposal_tokens=(
+            "autoregressive_draft_backend": "qwen3",
+            "autoregressive_draft_max_proposal_tokens": (
                 MAX_PROPOSAL_TOKENS
             ),
-            autoregressive_draft_gpu_slot_capacity=(
+            "autoregressive_draft_gpu_slot_capacity": (
                 proposal_slot_capacity if learned_enabled else 0
             ),
-            autoregressive_draft_proposal_kv_offload_enabled=False,
-            autoregressive_draft_cuda_graphs=(
+            "autoregressive_draft_proposal_kv_offload_enabled": False,
+            "autoregressive_draft_cuda_graphs": (
                 cuda_graph_enabled
             ),
-            autoregressive_draft_logical_entry_capacity=0,
-            autoregressive_draft_cpu_backing_capacity=0,
-            proposal_kv_async_copy=True,
-            proposal_kv_batch_copy=True,
-        )
+            "autoregressive_draft_logical_entry_capacity": 0,
+            "autoregressive_draft_cpu_backing_capacity": 0,
+            "proposal_kv_async_copy": True,
+            "proposal_kv_batch_copy": True,
+        }
+        engine_kwargs.update({
+            name: value
+            for name, value in graph_budget_overrides.items()
+            if value is not None
+        })
+        self.engine = llm_type(target_model, **engine_kwargs)
         if learned_enabled:
             descriptor = getattr(
                 self.engine.model_runner,

@@ -2545,3 +2545,117 @@ CURRENT_HEAD_TORCH_DEPENDENT_LOCAL_REGRESSION=ENVIRONMENT_BLOCKED
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-17 Exact-Shape Draft CUDA Graph Runtime Reconciliation
+
+This EOF reconciliation supersedes the earlier same-day statement that real
+TP4 capture/replay and eager/graph correctness parity were not established.
+The historical entry remains above as an audit trail of the earlier
+preflight-only state.
+
+### Executive matrix update
+
+| Dimension | Current evidence | Classification |
+| --- | --- | --- |
+| Exact graph scope | TP4/B4/Q4, greedy, dense direct Proposal-KV, no offload | `ESTABLISHED` |
+| Default policy | disabled unless explicitly enabled | `ESTABLISHED` |
+| Real all-rank capture/replay | v5 diagnostic, v6 production-default worker, four measured graph workers | `ESTABLISHED` |
+| Production-default capture budget | four-second single-capture ceiling; observed real maximum approximately 3.101 s | `ESTABLISHED` |
+| Eager/graph target-token parity | production-default pilot plus four measured pairs | `ESTABLISHED` |
+| Proposal/accepted-prefix parity | production-default pilot plus four measured pairs | `ESTABLISHED` |
+| Transaction digest and zero-leak parity | digest `d102ac0a...4942989`; zero active transactions | `ESTABLISHED` |
+| Graph/process-group teardown | reset, CUDA synchronize, then process-group destruction | `ESTABLISHED` |
+| Two-warmup/eight-measured performance gate | external root process took GPU 3 after four measured pairs | `INCONCLUSIVE_ENVIRONMENT_PARTIAL_4_OF_8` |
+| Positive paired bootstrap | eight-pair payload absent | `NOT_ESTABLISHED` |
+| Broad graph generalization | only exact TP4/B4/Q4 recorded | `NOT_ESTABLISHED` |
+
+### Real execution evidence
+
+The pure TP4 collective diagnostic captured and replayed all-reduce and
+broadcast on all ranks, reset its graph, synchronized CUDA, and exited all
+process groups cleanly.
+
+The high-budget real-checkpoint diagnostic measured capture times of
+approximately `2.741-2.750 s`, retained `8,520,704 bytes` reserved and
+`53,408 bytes` static per rank, and identified the original two-second
+single-capture ceiling as the quarantine cause.
+
+The production-default worker used no budget override and recorded:
+
+```text
+capture_attempts=1 per rank
+captures=1 per rank
+replays=1 per rank
+quarantines=0 per rank
+fallback_pre_replay=0 per rank
+capture time approximately 3.094-3.098 s
+accepted/proposed=51/70
+acceptance rate=0.7285714285714285
+active transactions=0
+```
+
+Its same-source eager control had exact target outputs, proposal rows,
+accepted-prefix counts, transaction digest, and acceptance values.
+
+### Partial controlled performance evidence
+
+The source-bound paired gate completed both warmup pairs and four measured
+pairs with balanced order counts:
+
+```text
+eager_graph=2
+graph_eager=2
+```
+
+All four measured pairs had exact correctness and all-rank capture/replay.
+The diagnostic aggregate was:
+
+```text
+median eager throughput:       0.989071982502008 tok/s
+median graph throughput:       0.9749348881219722 tok/s
+mean paired throughput delta: -0.002993426456363135 tok/s
+median eager TPOT:             1.9743923907000003 s
+median graph TPOT:             2.0375849077333337 s
+```
+
+During pair 4, an unrelated root-owned `VLLM::EngineCore` appeared on
+physical GPU 3 and consumed approximately `73.3 GiB`. Rank 3 exited and the
+remaining ranks stopped progressing. Only the gate's own process group was
+terminated. The external process was not modified.
+
+Four measured pairs are insufficient for the required eight-pair bootstrap,
+so the numbers above are diagnostic and cannot be promoted to
+`NO_GO_PERFORMANCE` or `GO`.
+
+Current source-bound partial evidence:
+
+```text
+artifacts/autoregressive_draft_cuda_graph/
+  20260817-production-default-paired-gate-tp4-b4-q4/
+```
+
+### Reconciled final classification
+
+```text
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_SCOPE=TP4_B4_Q4_GREEDY_DENSE_DIRECT
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_DEFAULT=OFF
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_LOCAL_CONTRACT=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_REAL_CAPTURE_REPLAY=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_REAL_CORRECTNESS_PARITY=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_TRANSACTION_PARITY=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_TEARDOWN_LIFECYCLE=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_PRODUCTION_DEFAULT_BUDGET=ESTABLISHED
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_CONTROLLED_PERFORMANCE=INCONCLUSIVE_ENVIRONMENT_PARTIAL_4_OF_8
+INDEPENDENT_QWEN3_DRAFT_EXACT_GRAPH_CLASSIFICATION=RUNTIME_CORRECTNESS_ESTABLISHED_PERFORMANCE_INCONCLUSIVE
+CURRENT_EXACT_FAMILY_GRAPH_PASS_ARTIFACT=REAL_TP4_RUNTIME_AND_CORRECTNESS_PASS
+CURRENT_EXACT_FAMILY_GRAPH_COMPLETE_PERFORMANCE_ARTIFACT=ABSENT_EXTERNAL_GPU_INTERFERENCE
+
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+This materially advances the exact graph line from local-contract-only to
+real runtime and correctness authority. It does not close the broader Phase 1
+promotion gaps: the full learned 4K/16K/32K matrix, second learned structure,
+native-MTP controlled performance, broad transactional-KV symmetry, and
+complete eight-pair graph performance authority remain absent.

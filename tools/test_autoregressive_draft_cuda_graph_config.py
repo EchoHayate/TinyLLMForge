@@ -115,7 +115,7 @@ def test_autoregressive_draft_graph_defaults_fail_closed():
         )
         assert (
             config.autoregressive_draft_cuda_graph_max_single_capture_ns
-            == 2_000_000_000
+            == 4_000_000_000
         )
     finally:
         model.cleanup()

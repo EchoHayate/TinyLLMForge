@@ -1373,3 +1373,36 @@ def test_generic_runtime_files_have_no_qwen3_draft_branch():
     for path in generic_paths:
         source = path.read_text()
         assert not any(token in source for token in forbidden), path
+
+
+def test_model_runner_exit_closes_draft_graph_before_destroying_process_group():
+    tree = ast.parse(MODEL_RUNNER_PATH.read_text())
+    model_runner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    exit_method = next(
+        node
+        for node in model_runner.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "exit"
+    )
+    close_lines = [
+        node.lineno
+        for node in ast.walk(exit_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "close"
+    ]
+    destroy_line = next(
+        node.lineno
+        for node in ast.walk(exit_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "destroy_process_group"
+    )
+
+    assert close_lines
+    assert max(close_lines) < destroy_line

@@ -558,7 +558,7 @@ class _FakeProductionLLM:
         self.exit_called = True
 
 
-def _production_adapter(mode):
+def _production_adapter(mode, **overrides):
     return _TinyVLLMTP4EngineAdapter(
         mode,
         target_model="/models/target",
@@ -572,6 +572,7 @@ def _production_adapter(mode):
         llm_type=_FakeProductionLLM,
         sampling_params_type=_FakeSamplingParams,
         runtime_type=_FakeRuntime,
+        **overrides,
     )
 
 
@@ -614,6 +615,30 @@ def test_production_adapter_passes_direct_tp4_engine_kwargs():
         learned.engine.activated_runtime.model_runner_executor
         == _FakeProductionLLM.descriptor
     )
+
+
+def test_production_adapter_passes_explicit_graph_budget_overrides():
+    _FakeProductionLLM.calls.clear()
+
+    adapter = _production_adapter(
+        "learned",
+        cuda_graph_enabled=True,
+        cuda_graph_max_reserved_bytes=4 * 1024 * 1024 * 1024,
+        cuda_graph_max_total_capture_ns=120_000_000_000,
+        cuda_graph_max_single_capture_ns=60_000_000_000,
+    )
+
+    _, kwargs = _FakeProductionLLM.calls[0]
+    assert kwargs[
+        "autoregressive_draft_cuda_graph_max_reserved_bytes"
+    ] == 4 * 1024 * 1024 * 1024
+    assert kwargs[
+        "autoregressive_draft_cuda_graph_max_total_capture_ns"
+    ] == 120_000_000_000
+    assert kwargs[
+        "autoregressive_draft_cuda_graph_max_single_capture_ns"
+    ] == 60_000_000_000
+    adapter.close()
 
 
 def test_production_adapter_fails_closed_on_registration_error():

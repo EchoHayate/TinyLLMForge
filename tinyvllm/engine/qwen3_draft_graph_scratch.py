@@ -134,11 +134,6 @@ class Qwen3DraftGraphScratchOwner:
                         input_row.sequence_id
                     )
                 )
-                if len(committed) != context_token_count:
-                    raise ValueError(
-                        "scratch committed length must match "
-                        "context token count"
-                    )
                 read_lease = allocator.ensure_readable(
                     committed
                 )

@@ -1,0 +1,103 @@
+{
+  "classification": "INCONCLUSIVE_ENVIRONMENT_PARTIAL_4_OF_8",
+  "interruption": {
+    "external_gpu_index": 3,
+    "external_process_name": "VLLM::EngineCore",
+    "observed_external_owner": "root",
+    "own_remote_pgid_terminated": 3537615,
+    "external_process_terminated": false
+  },
+  "measured": {
+    "all_exact_parity": true,
+    "all_rank_replayed": true,
+    "max_capture_ns": 3101219179,
+    "mean_paired_throughput_delta_tokens_per_second": -0.002993426456363135,
+    "median_eager_throughput_tokens_per_second": 0.989071982502008,
+    "median_eager_tpot_seconds": 1.9743923907000003,
+    "median_graph_throughput_tokens_per_second": 0.9749348881219722,
+    "median_graph_tpot_seconds": 2.0375849077333337,
+    "min_capture_ns": 1758702684,
+    "order_counts": {
+      "eager_graph": 2,
+      "graph_eager": 2
+    },
+    "pair_count": 4,
+    "peak_eager_reserved_bytes": 76004982784,
+    "peak_graph_reserved_bytes": 76013371392
+  },
+  "pairs": [
+    {
+      "all_rank_replayed": true,
+      "eager_e2e_seconds": 63.757992043,
+      "eager_throughput_tokens_per_second": 1.0037957273942502,
+      "eager_tpot_seconds": 1.914500314466667,
+      "eager_ttft_seconds": 34.886069242,
+      "exact_parity": true,
+      "graph_e2e_seconds": 65.746165188,
+      "graph_throughput_tokens_per_second": 0.9734408055130382,
+      "graph_tpot_seconds": 2.0413332176,
+      "graph_ttft_seconds": 34.969769743,
+      "index": 0,
+      "order": "eager_graph",
+      "throughput_delta_tokens_per_second": -0.030354921881211916
+    },
+    {
+      "all_rank_replayed": true,
+      "eager_e2e_seconds": 62.44102416,
+      "eager_throughput_tokens_per_second": 1.0249671727998126,
+      "eager_tpot_seconds": 1.8313191660333334,
+      "eager_ttft_seconds": 34.818998521,
+      "exact_parity": true,
+      "graph_e2e_seconds": 66.271833548,
+      "graph_throughput_tokens_per_second": 0.965719470454148,
+      "graph_tpot_seconds": 2.073801889366667,
+      "graph_ttft_seconds": 35.010211477,
+      "index": 1,
+      "order": "graph_eager",
+      "throughput_delta_tokens_per_second": -0.05924770234566468
+    },
+    {
+      "all_rank_replayed": true,
+      "eager_e2e_seconds": 65.684934328,
+      "eager_throughput_tokens_per_second": 0.9743482376097657,
+      "eager_tpot_seconds": 2.0342844669333333,
+      "eager_ttft_seconds": 35.017388315,
+      "exact_parity": true,
+      "graph_e2e_seconds": 65.544962223,
+      "graph_throughput_tokens_per_second": 0.976428970730906,
+      "graph_tpot_seconds": 2.033836597866667,
+      "graph_ttft_seconds": 34.887047616,
+      "index": 2,
+      "order": "eager_graph",
+      "throughput_delta_tokens_per_second": 0.0020807331211402103
+    },
+    {
+      "all_rank_replayed": true,
+      "eager_e2e_seconds": 70.4630509,
+      "eager_throughput_tokens_per_second": 0.9082774472940115,
+      "eager_tpot_seconds": 2.0646374469666666,
+      "eager_ttft_seconds": 39.335467624,
+      "exact_parity": true,
+      "graph_e2e_seconds": 65.052177826,
+      "graph_throughput_tokens_per_second": 0.9838256325742953,
+      "graph_tpot_seconds": 2.015415986666667,
+      "graph_ttft_seconds": 34.663252774,
+      "index": 3,
+      "order": "graph_eager",
+      "throughput_delta_tokens_per_second": 0.07554818528028384
+    }
+  ],
+  "provenance": {
+    "cuda_version": "12.1",
+    "draft_model_fingerprint": "f0f36088b9a833762a704f27998eb199ecba8dba1e81f34562feea2a5e13ad6e",
+    "nccl_version": "(2, 20, 5)",
+    "python_version": "3.11.15",
+    "source_commit": "8e370881a769bbac3c70e2cd714d815e51c46fc8",
+    "source_patch_sha256": "0773c6a723967c4af6ecb7e4ab7a45f1c2b48d0e891b4eae8bef31c13d066c56",
+    "source_tree_sha256": "c0992a8c69fe7e25646288f0e27da2723cba33bf814fb272180652118c414c88",
+    "target_model_fingerprint": "3c35f724f7046d02814381df890003817d8332050dc8d3ddb849df6999d1f3a0",
+    "tokenizer_fingerprint": "e5d9359c3484afd3a8a9170f0a6b008cb54d35c9317f41d8ec549ae6b2fedf7f",
+    "torch_version": "2.4.1+cu121"
+  },
+  "warmup_pair_count": 2
+}

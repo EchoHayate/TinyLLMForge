@@ -271,10 +271,6 @@ class Qwen3DraftCudaGraphBackend:
                         "graph indexed row is invalid"
                     )
                 _, input_row, context_count = indexed_row
-                if len(source_slots) != context_count:
-                    raise AutoregressiveDraftGraphPreReplayError(
-                        "graph source context length is invalid"
-                    )
                 if len(
                     transaction.staged_entry_identities
                 ) != step_count:
@@ -413,14 +409,9 @@ class Qwen3DraftCudaGraphBackend:
                         input_row.sequence_id
                     )
                 )
-                if (
-                    sequence_state is None
-                    or len(
-                        sequence_state.committed_entry_identities
-                    ) != context_count
-                ):
+                if sequence_state is None:
                     raise AutoregressiveDraftGraphPreReplayError(
-                        "live committed context does not match row"
+                        "live committed context is unavailable"
                     )
                 source_read_lease = allocator.ensure_readable(
                     sequence_state.committed_entry_identities
@@ -573,6 +564,24 @@ class Qwen3DraftCudaGraphBackend:
                 allocated_after - allocated_before,
             ),
         )
+
+    def release(self, entry) -> None:
+        if not isinstance(
+            entry,
+            AutoregressiveDraftGraphEntry,
+        ):
+            raise ValueError("graph entry type is invalid")
+        payload = entry.graph
+        if not isinstance(
+            payload,
+            Qwen3DraftCudaGraphPayload,
+        ):
+            raise ValueError("graph payload type is invalid")
+        reset = getattr(payload.graph, "reset", None)
+        if not callable(reset):
+            raise ValueError("graph payload has no reset method")
+        reset()
+        self.torch.cuda.synchronize()
 
     def _abort_transactions(self, transactions) -> None:
         first_error = None

@@ -51,11 +51,15 @@ class _FakeGraph:
     def __init__(self, replay_callback=None):
         self.replay_callback = replay_callback
         self.replay_calls = 0
+        self.reset_calls = 0
 
     def replay(self):
         self.replay_calls += 1
         if self.replay_callback is not None:
             self.replay_callback()
+
+    def reset(self):
+        self.reset_calls += 1
 
 
 class _GraphContext:
@@ -248,9 +252,13 @@ def _commit_prompt(cache, sequence_id, token_count):
 def _indexed_rows(live_cache):
     rows = []
     for index, (sequence_id, context_count, first_token) in enumerate(
-        ((7, 2, 31), (9, 1, 32), (11, 3, 33), (13, 1, 34))
+        ((7, 4, 31), (9, 3, 32), (11, 5, 33), (13, 2, 34))
     ):
-        _commit_prompt(live_cache, sequence_id, context_count)
+        _commit_prompt(
+            live_cache,
+            sequence_id,
+            context_count - 2,
+        )
         rows.append((
             index,
             SimpleNamespace(
@@ -351,6 +359,8 @@ def test_capture_runs_three_gpu_chained_forward_argmax_broadcast_steps():
     assert captured_calls[0]["input_ids"].tolist() == [31, 32, 33, 34]
     assert captured_calls[1]["input_ids"].tolist() == [5, 5, 5, 5]
     assert captured_calls[2]["input_ids"].tolist() == [6, 6, 6, 6]
+    assert captured_calls[0]["positions"].tolist() == [4, 3, 5, 2]
+    assert captured_calls[0]["context_lens"].tolist() == [3, 2, 4, 1]
     assert all(src == 0 for _, src in broadcast.calls)
     owner.rollback(scratch_lease)
 
@@ -436,6 +446,27 @@ def test_pre_replay_validation_happens_before_graph_entry():
     assert live_cache.authority_snapshot()[
         "active_transaction_count"
     ] == 0
+
+
+def test_release_resets_graph_and_synchronizes_before_process_group_exit():
+    live_cache, _ = _caches()
+    backend = _backend(live_cache=live_cache)
+    graph = _FakeGraph()
+    entry = AutoregressiveDraftGraphEntry(
+        identity=_identity(),
+        graph=Qwen3DraftCudaGraphPayload(
+            graph=graph,
+            tensors=backend._allocate_tensors(_identity()),
+        ),
+        static_bytes=1,
+        capture_duration_ns=1,
+        reserved_delta_bytes=1,
+    )
+
+    backend.release(entry)
+
+    assert graph.reset_calls == 1
+    assert backend.torch.cuda.synchronize_calls == 1
 
 
 def test_replay_failure_aborts_every_live_transaction():

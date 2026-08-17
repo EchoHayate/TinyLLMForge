@@ -39,6 +39,11 @@ RUNNER_PATH = (
 GATE_PATH = (
     ROOT / "tools" / "autoregressive_draft_cuda_graph_gate.py"
 )
+COLLECTIVE_DIAGNOSTIC_PATH = (
+    ROOT
+    / "tools"
+    / "diagnose_autoregressive_draft_tp4_cuda_graph_collective.py"
+)
 
 
 def _load_path(path, module_name):
@@ -476,6 +481,95 @@ def test_remote_preflight_requires_four_clean_gpus():
     assert blocked["gpu_indices"] == []
 
 
+def test_collective_diagnostic_is_source_bound_and_uses_exact_tp4():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_collective_command_test",
+    )
+
+    command = runner.build_remote_collective_diagnostic_command(
+        source_root="/remote/source",
+        output_root="/remote/output",
+        gpu_indices=(0, 1, 2, 3),
+        pythonpath_extra="/remote/site-packages",
+    )
+
+    assert (
+        "tools/"
+        "diagnose_autoregressive_draft_tp4_cuda_graph_collective.py"
+        in runner.SOURCE_PATHS
+    )
+    assert command[:3] == [
+        "env",
+        "CUDA_VISIBLE_DEVICES=0,1,2,3",
+        "PYTHONPATH=/remote/site-packages:/remote/source",
+    ]
+    assert command[3:9] == [
+        runner.REMOTE_PYTHON,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nproc-per-node",
+        "4",
+    ]
+    assert command[9:] == [
+        "/remote/source/tools/"
+        "diagnose_autoregressive_draft_tp4_cuda_graph_collective.py",
+        "--out-root",
+        "/remote/output",
+    ]
+
+
+def test_collective_diagnostic_summary_requires_all_rank_replay_parity():
+    diagnostic = _load_path(
+        COLLECTIVE_DIAGNOSTIC_PATH,
+        "autoregressive_draft_collective_diagnostic_contract_test",
+    )
+    rows = [
+        {
+            "rank": rank,
+            "world_size": 4,
+            "device_index": rank,
+            "capture_completed": True,
+            "replay_completed": True,
+            "all_reduce_value": 10.0,
+            "broadcast_value": 7.0,
+        }
+        for rank in range(4)
+    ]
+
+    summary = diagnostic.summarize_rank_rows(rows)
+
+    assert summary["classification"] == "PASS"
+    assert summary["rank_count"] == 4
+    assert summary["capture_completed"] is True
+    assert summary["replay_completed"] is True
+
+    rows[2]["broadcast_value"] = 0.0
+    with pytest.raises(ValueError, match="broadcast replay parity"):
+        diagnostic.summarize_rank_rows(rows)
+
+
+def test_collective_diagnostic_resets_graph_before_final_synchronize():
+    diagnostic = _load_path(
+        COLLECTIVE_DIAGNOSTIC_PATH,
+        "autoregressive_draft_collective_diagnostic_cleanup_test",
+    )
+    calls = []
+
+    class Graph:
+
+        def reset(self):
+            calls.append("reset")
+
+    diagnostic.release_captured_graph(
+        Graph(),
+        synchronize=lambda: calls.append("synchronize"),
+    )
+
+    assert calls == ["reset", "synchronize"]
+
+
 def test_remote_gpu_query_parser_does_not_require_python():
     runner = _load_path(
         RUNNER_PATH,
@@ -507,6 +601,82 @@ def test_remote_gpu_query_parser_does_not_require_python():
             "compute_process_count": 2,
         },
     ]
+
+
+def test_remote_preflight_reports_missing_prerequisites_without_python():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_shell_preflight_test",
+    )
+    gpu_output = "\n".join([
+        *(
+            f"{index}, GPU-{index}, 0, 0"
+            for index in range(8)
+        ),
+        runner.GPU_PROCESS_MARKER,
+    ])
+    commands = []
+
+    def command_runner(command, **_kwargs):
+        commands.append(command)
+        if len(commands) == 1:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=gpu_output,
+                stderr="",
+            )
+        if "bash -c" not in command[-1]:
+            return types.SimpleNamespace(
+                returncode=127,
+                stdout="",
+                stderr="remote python does not exist",
+            )
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout="\n".join((
+                "n232-195-203",
+                "false",
+                "false",
+                "false",
+                "false",
+            )) + "\n",
+            stderr="",
+        )
+
+    result = runner._remote_preflight(
+        target_model="/missing/target",
+        draft_model="/missing/draft",
+        command_runner=command_runner,
+    )
+
+    assert result["status"] == "INCONCLUSIVE_ENVIRONMENT"
+    assert result["gpu_indices"] == []
+    assert result["python_executable"] is False
+    assert result["target_exists"] is False
+    assert result["draft_exists"] is False
+    assert result["package_root_exists"] is False
+    assert len(commands) == 2
+    assert commands[1][-1].startswith("bash -c ")
+
+
+def test_remote_runner_defaults_bind_current_qwen3_environment():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_defaults_test",
+    )
+
+    assert runner.REMOTE_PYTHON == (
+        "/data00/home/sitian/tllm/env/bin/python"
+    )
+    assert runner.REMOTE_PACKAGE_ROOT == (
+        "/data00/home/sitian/tllm/env/lib/python3.11/site-packages"
+    )
+    assert runner.DEFAULT_TARGET_MODEL == (
+        "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B"
+    )
+    assert runner.DEFAULT_DRAFT_MODEL == (
+        "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B"
+    )
 
 
 def test_remote_command_binds_exact_tp4_b4_q4_gate():
@@ -573,6 +743,22 @@ def test_source_archive_contains_only_allowlisted_runtime_files(
             for name in names
         )
         for relative in runner.SOURCE_PATHS
+    )
+
+
+def test_source_archive_allowlist_includes_tp4_transitive_gate_modules():
+    runner = _load_path(
+        RUNNER_PATH,
+        "autoregressive_draft_cuda_graph_runner_dependencies_test",
+    )
+
+    assert (
+        "tools/autoregressive_draft_tp1_engine_gate.py"
+        in runner.SOURCE_PATHS
+    )
+    assert (
+        "tools/autoregressive_draft_tp4_local_gate.py"
+        in runner.SOURCE_PATHS
     )
 
 

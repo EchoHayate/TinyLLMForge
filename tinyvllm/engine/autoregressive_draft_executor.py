@@ -286,6 +286,14 @@ class AutoregressiveDraftProposalExecutor:
             "token_readback": 0.0,
             "materialize_register": 0.0,
         }
+        self._closed = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        if self.graph_runner is not None:
+            self.graph_runner.close()
+        self._closed = True
 
     def _record_timing(
         self,

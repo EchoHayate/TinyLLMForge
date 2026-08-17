@@ -691,6 +691,12 @@ def _authority_rank(rank: int, *, offset: int) -> dict:
                 "replays": 4,
                 "quarantines": 0,
                 "fallback_pre_replay": 0,
+                "quarantined": {},
+                "quarantine_details": {},
+                "ready_entries": ("b" * 64,),
+                "static_bytes": 55_000,
+                "reserved_bytes": 700_000_000,
+                "total_capture_ns": 1_500_000_000,
             },
             "timing_ms": {
                 "prompt_bootstrap": offset + rank * 0.1,
@@ -1001,6 +1007,30 @@ def test_worker_records_step_end_timing_memory_and_proposal_kv_delta():
             }
             for rank in range(4)
         ],
+        "rank_graph_quarantine_details": [
+            {
+                "rank": rank,
+                "quarantine_details": {},
+            }
+            for rank in range(4)
+        ],
+        "rank_graph_quarantined": [
+            {
+                "rank": rank,
+                "quarantined": {},
+            }
+            for rank in range(4)
+        ],
+        "rank_graph_resources": [
+            {
+                "rank": rank,
+                "ready_entry_count": 1,
+                "static_bytes": 55_000,
+                "reserved_bytes": 700_000_000,
+                "total_capture_ns": 1_500_000_000,
+            }
+            for rank in range(4)
+        ],
     }
     assert engine.events.index("reset") < engine.events.index("step-0")
     assert engine.events.index("memory") > engine.events.index("step-1")
@@ -1115,6 +1145,48 @@ def test_policy_campaign_runs_one_warmup_three_measured_and_closes():
     assert engine_factory_calls[0][1]["proposal_slot_capacity"] == (
         4 * (256 + 16 + 4)
     )
+
+
+def test_policy_campaign_forwards_explicit_graph_budget_overrides():
+    adapter = _FakeWorkerAdapter()
+    engine_factory_calls = []
+
+    def engine_factory(*args, **kwargs):
+        engine_factory_calls.append((args, kwargs))
+        return adapter
+
+    _worker_module().run_policy_campaign(
+        target_model="/models/target",
+        draft_model="/models/draft",
+        policy="learned",
+        batch_size=4,
+        engine_factory=engine_factory,
+        sampling_params_type=_FakeSamplingParams,
+        synchronize=lambda: None,
+        clock_ns=lambda: 0,
+        run_batch_fn=lambda **kwargs: _run(
+            policy=kwargs["policy"],
+            batch_size=len(kwargs["prompt_rows"]),
+            repeat=kwargs["repeat"],
+        ),
+        warmup_runs=0,
+        measured_runs=1,
+        cuda_graph_mode="graph",
+        cuda_graph_max_reserved_bytes=4 * 1024 * 1024 * 1024,
+        cuda_graph_max_total_capture_ns=120_000_000_000,
+        cuda_graph_max_single_capture_ns=60_000_000_000,
+    )
+
+    kwargs = engine_factory_calls[0][1]
+    assert kwargs[
+        "cuda_graph_max_reserved_bytes"
+    ] == 4 * 1024 * 1024 * 1024
+    assert kwargs[
+        "cuda_graph_max_total_capture_ns"
+    ] == 120_000_000_000
+    assert kwargs[
+        "cuda_graph_max_single_capture_ns"
+    ] == 60_000_000_000
 
 
 def test_policy_campaign_supports_two_warmups_and_eight_measured():

@@ -288,11 +288,17 @@ autoregressive_draft_cuda_graph_max_entries = 4
 autoregressive_draft_cuda_graph_max_static_bytes = 64 MiB
 autoregressive_draft_cuda_graph_max_reserved_bytes = 512 MiB
 autoregressive_draft_cuda_graph_max_total_capture_ns = 5 s
-autoregressive_draft_cuda_graph_max_single_capture_ns = 2 s
+autoregressive_draft_cuda_graph_max_single_capture_ns = 4 s
 ```
 
 Enabling the feature with TP other than four or with Proposal-KV offload is a
 configuration error rather than a silent behavior change.
+
+The single-capture ceiling is calibrated above the observed TP4/B4/Q4
+real-checkpoint capture range of 2.741-2.750 seconds while remaining below the
+five-second cumulative ceiling. The same diagnostic measured only 8,520,704
+retained reserved bytes and 53,408 static bytes per rank, so the existing
+memory ceilings remain unchanged.
 
 ## Validation Gates
 

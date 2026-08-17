@@ -585,6 +585,9 @@ def _correctness_result(
     digests = []
     active_transaction_counts = []
     rank_graph_counters = []
+    rank_graph_quarantined = []
+    rank_graph_quarantine_details = []
+    rank_graph_resources = []
     counter_names = (
         "capture_attempts",
         "captures",
@@ -648,6 +651,59 @@ def _correctness_result(
                 )
             graph_row[name] = value
         rank_graph_counters.append(graph_row)
+        quarantined = graph.get("quarantined", {})
+        if (
+            not isinstance(quarantined, dict)
+            or any(
+                not isinstance(identity_sha256, str)
+                or not isinstance(reason, str)
+                for identity_sha256, reason in quarantined.items()
+            )
+        ):
+            raise ValueError(
+                "correctness graph quarantined inventory is invalid"
+            )
+        rank_graph_quarantined.append({
+            "rank": rank,
+            "quarantined": dict(quarantined),
+        })
+        quarantine_details = graph.get(
+            "quarantine_details",
+            {},
+        )
+        if not isinstance(quarantine_details, dict):
+            raise ValueError(
+                "correctness graph quarantine details are invalid"
+            )
+        rank_graph_quarantine_details.append({
+            "rank": rank,
+            "quarantine_details": quarantine_details,
+        })
+        ready_entries = graph.get("ready_entries", ())
+        if not isinstance(ready_entries, (list, tuple)):
+            raise ValueError(
+                "correctness graph ready entries are invalid"
+            )
+        resource_row = {
+            "rank": rank,
+            "ready_entry_count": len(ready_entries),
+        }
+        for name in (
+            "static_bytes",
+            "reserved_bytes",
+            "total_capture_ns",
+        ):
+            value = graph.get(name, 0)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"correctness graph resource {name} is invalid"
+                )
+            resource_row[name] = value
+        rank_graph_resources.append(resource_row)
     if len(set(digests)) != 1:
         raise ValueError(
             "correctness transaction digests differ across ranks"
@@ -660,6 +716,11 @@ def _correctness_result(
             active_transaction_counts
         ),
         "rank_graph_counters": rank_graph_counters,
+        "rank_graph_quarantined": rank_graph_quarantined,
+        "rank_graph_resources": rank_graph_resources,
+        "rank_graph_quarantine_details": (
+            rank_graph_quarantine_details
+        ),
     }
 
 
@@ -830,6 +891,9 @@ def run_policy_campaign(
     warmup_runs: int = WARMUP_RUNS,
     measured_runs: int = MEASURED_RUNS,
     cuda_graph_mode: str = "eager",
+    cuda_graph_max_reserved_bytes: int | None = None,
+    cuda_graph_max_total_capture_ns: int | None = None,
+    cuda_graph_max_single_capture_ns: int | None = None,
 ) -> dict:
     if policy not in POLICIES:
         raise ValueError("unsupported policy")
@@ -841,6 +905,29 @@ def run_policy_campaign(
         raise ValueError(
             "target policy cannot enable draft CUDA graphs"
         )
+    graph_budget_overrides = {
+        "cuda_graph_max_reserved_bytes": (
+            cuda_graph_max_reserved_bytes
+        ),
+        "cuda_graph_max_total_capture_ns": (
+            cuda_graph_max_total_capture_ns
+        ),
+        "cuda_graph_max_single_capture_ns": (
+            cuda_graph_max_single_capture_ns
+        ),
+    }
+    for name, value in graph_budget_overrides.items():
+        if value is None:
+            continue
+        if (
+            cuda_graph_mode != "graph"
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+        ):
+            raise ValueError(
+                f"{name} requires graph mode and a positive integer"
+            )
     for name, value, minimum in (
         ("warmup runs", warmup_runs, 0),
         ("measured runs", measured_runs, 1),
@@ -867,6 +954,7 @@ def run_policy_campaign(
         proposal_slot_capacity=proposal_slot_capacity,
         learned_enabled=policy == "learned",
         cuda_graph_enabled=cuda_graph_mode == "graph",
+        **graph_budget_overrides,
     )
     try:
         engine = adapter.engine
@@ -945,6 +1033,11 @@ def run_policy_campaign(
             "proposal_kv_allocator": "direct",
             "proposal_slot_capacity": proposal_slot_capacity,
             "cuda_graph_mode": cuda_graph_mode,
+            "cuda_graph_budget_overrides": {
+                name: value
+                for name, value in graph_budget_overrides.items()
+                if value is not None
+            },
         }
     finally:
         adapter.close()
@@ -998,6 +1091,18 @@ def parse_args(argv=None):
         choices=("eager", "graph"),
         default="eager",
     )
+    parser.add_argument(
+        "--cuda-graph-max-reserved-bytes",
+        type=int,
+    )
+    parser.add_argument(
+        "--cuda-graph-max-total-capture-ns",
+        type=int,
+    )
+    parser.add_argument(
+        "--cuda-graph-max-single-capture-ns",
+        type=int,
+    )
     return parser.parse_args(argv)
 
 
@@ -1011,6 +1116,15 @@ def main(argv=None):
         warmup_runs=args.warmup_runs,
         measured_runs=args.measured_runs,
         cuda_graph_mode=args.cuda_graph_mode,
+        cuda_graph_max_reserved_bytes=(
+            args.cuda_graph_max_reserved_bytes
+        ),
+        cuda_graph_max_total_capture_ns=(
+            args.cuda_graph_max_total_capture_ns
+        ),
+        cuda_graph_max_single_capture_ns=(
+            args.cuda_graph_max_single_capture_ns
+        ),
         **_default_dependencies(),
     )
     write_json_atomic(Path(args.out), result)

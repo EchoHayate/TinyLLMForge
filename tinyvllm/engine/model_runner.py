@@ -3414,6 +3414,13 @@ class ModelRunner:
         return self._last_step_logits_cpu.clone()
 
     def exit(self):
+        draft_executor = getattr(
+            self,
+            "autoregressive_draft_executor",
+            None,
+        )
+        if draft_executor is not None:
+            draft_executor.close()
         if self.world_size > 1:
             self.shm.close()                   # 关闭所有rank和共享内存的连接
             dist.barrier()

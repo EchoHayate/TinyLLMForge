@@ -27,25 +27,20 @@ from verify_autoregressive_draft_cuda_graph_gate import (
 
 
 REMOTE_TARGET = "sitian@10.232.195.203"
-REMOTE_PYTHON = (
-    "/data00/home/sitian/sitian-workspace01/tllm/env/bin/python"
-)
+REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
 SSH_CONTROL_PATH = "/tmp/ssh-sitian-10.232.195.203"
 REMOTE_RUN_ROOT = (
     "/data00/home/sitian/sitian-workspace01/tllm/"
     "autoregressive-draft-cuda-graph-runs"
 )
 REMOTE_PACKAGE_ROOT = (
-    "/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/"
-    "run_packages"
+    "/data00/home/sitian/tllm/env/lib/python3.11/site-packages"
 )
 DEFAULT_TARGET_MODEL = (
-    "/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/"
-    "target-qwen3-1.7b"
+    "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B"
 )
 DEFAULT_DRAFT_MODEL = (
-    "/dev/shm/sitian/tllm-qwen35-target-qwen3-draft-20260815/"
-    "draft"
+    "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B"
 )
 SOURCE_PATHS = (
     "tinyvllm/",
@@ -53,7 +48,10 @@ SOURCE_PATHS = (
     "tools/autoregressive_draft_cuda_graph_gate.py",
     "tools/autoregressive_draft_performance_gate.py",
     "tools/autoregressive_draft_performance_worker.py",
+    "tools/diagnose_autoregressive_draft_tp4_cuda_graph_collective.py",
+    "tools/autoregressive_draft_tp1_engine_gate.py",
     "tools/autoregressive_draft_tp4_engine_gate.py",
+    "tools/autoregressive_draft_tp4_local_gate.py",
     "tools/speculative_runtime_performance_gate.py",
     "tools/verify_autoregressive_draft_cuda_graph_gate.py",
     "tools/run_autoregressive_draft_cuda_graph_gate_remote.py",
@@ -197,6 +195,48 @@ def build_remote_gate_command(
     if environment_path is not None:
         command.extend(["--environment", environment_path])
     return command
+
+
+def build_remote_collective_diagnostic_command(
+    *,
+    source_root: str,
+    output_root: str,
+    gpu_indices,
+    pythonpath_extra: str | None = None,
+) -> list[str]:
+    indices = tuple(gpu_indices)
+    if (
+        len(indices) != 4
+        or len(set(indices)) != 4
+        or any(
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            for index in indices
+        )
+    ):
+        raise ValueError(
+            "collective diagnostic requires four GPU indices"
+        )
+    pythonpath = source_root
+    if pythonpath_extra:
+        pythonpath = f"{pythonpath_extra}:{pythonpath}"
+    return [
+        "env",
+        "CUDA_VISIBLE_DEVICES="
+        + ",".join(str(index) for index in indices),
+        f"PYTHONPATH={pythonpath}",
+        REMOTE_PYTHON,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nproc-per-node",
+        "4",
+        f"{source_root}/tools/"
+        "diagnose_autoregressive_draft_tp4_cuda_graph_collective.py",
+        "--out-root",
+        output_root,
+    ]
 
 
 def source_file_hashes(repo_root: Path) -> dict[str, str]:
@@ -414,6 +454,82 @@ def _remote_preflight(
             "gpu_rows": gpu_rows,
             "reason": gpu_classification["reason"],
         }
+    prerequisite_paths = {
+        "python_executable": REMOTE_PYTHON,
+        "target_exists": target_model,
+        "draft_exists": draft_model,
+        "package_root_exists": REMOTE_PACKAGE_ROOT,
+    }
+    prerequisite_commands = []
+    for name, path in prerequisite_paths.items():
+        operator = "-x" if name == "python_executable" else "-d"
+        prerequisite_commands.append(
+            f"if test {operator} {shlex.quote(path)}; "
+            f"then {name}=true; else {name}=false; fi"
+        )
+    prerequisite_script = "; ".join((
+        *prerequisite_commands,
+        "hostname",
+        "printf '%s\\n' "
+        '"$python_executable" "$target_exists" '
+        '"$draft_exists" "$package_root_exists"',
+    ))
+    prerequisite_result = command_runner(
+        build_ssh_command([
+            "bash",
+            "-c",
+            prerequisite_script,
+        ]),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if prerequisite_result.returncode != 0:
+        detail = (
+            prerequisite_result.stderr
+            or prerequisite_result.stdout
+            or ""
+        ).strip()
+        raise RuntimeError(
+            f"remote prerequisite preflight failed: {detail}"
+        )
+    prerequisite_lines = (
+        prerequisite_result.stdout.splitlines()
+    )
+    if (
+        len(prerequisite_lines) != 5
+        or any(
+            value not in ("true", "false")
+            for value in prerequisite_lines[1:]
+        )
+    ):
+        raise RuntimeError(
+            "remote prerequisite preflight returned invalid output"
+        )
+    prerequisites = {
+        "host": prerequisite_lines[0],
+        **{
+            name: prerequisite_lines[index] == "true"
+            for index, name in enumerate(
+                prerequisite_paths,
+                start=1,
+            )
+        },
+    }
+    if not all(
+        prerequisites[name]
+        for name in prerequisite_paths
+    ):
+        return {
+            **prerequisites,
+            "status": "INCONCLUSIVE_ENVIRONMENT",
+            "gpu_indices": [],
+            "gpu_rows": gpu_rows,
+            "reason": (
+                "remote Python, model, or package prerequisite "
+                "is missing"
+            ),
+        }
     script = (
         "import hashlib,json,pathlib,platform,subprocess,torch\n"
         "def digest_tree(root, tokenizer_only=False):\n"
@@ -479,6 +595,7 @@ def _remote_preflight(
             "reason": "remote model or package prerequisite is missing",
         }
     return {
+        **prerequisites,
         **payload,
         **gpu_classification,
         "gpu_rows": gpu_rows,
