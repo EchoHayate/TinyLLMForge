@@ -8,7 +8,7 @@ import random
 import statistics
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 GATE_NAME = "autoregressive_draft_exact_cuda_graph"
 EXACT_CONFIGURATION = {
     "tensor_parallel_size": 4,
@@ -19,6 +19,7 @@ EXACT_CONFIGURATION = {
     "temperature": 0.0,
     "allocator_mode": "direct",
     "proposal_kv_offload": False,
+    "in_process_warmup_runs": 1,
     "warmup_pairs": 2,
     "measured_pairs": 8,
 }
@@ -186,6 +187,112 @@ def _rank_graph_counters(value, *, graph: bool):
     return normalized
 
 
+def _rank_graph_resources(value, *, graph: bool):
+    if (
+        not isinstance(value, list)
+        or len(value) != 4
+        or [row.get("rank") for row in value]
+        != [0, 1, 2, 3]
+    ):
+        raise ValueError(
+            "rank graph resources must contain ranks 0..3"
+        )
+    normalized = []
+    for row in value:
+        normalized_row = {"rank": row["rank"]}
+        for name in (
+            "ready_entry_count",
+            "static_bytes",
+            "reserved_bytes",
+            "total_capture_ns",
+        ):
+            normalized_row[name] = _nonnegative_integer(
+                row.get(name),
+                f"graph resource {name}",
+            )
+        if not graph and any(
+            normalized_row[name] != 0
+            for name in (
+                "ready_entry_count",
+                "static_bytes",
+                "reserved_bytes",
+                "total_capture_ns",
+            )
+        ):
+            raise ValueError(
+                "eager row must not report graph resources"
+            )
+        normalized.append(normalized_row)
+    return normalized
+
+
+def _validate_steady_state_graph(
+    *,
+    graph: bool,
+    warmup_counters,
+    measured_counters,
+    warmup_resources,
+    measured_resources,
+) -> None:
+    if not graph:
+        return
+    for rank, (
+        warmup_counter,
+        measured_counter,
+        warmup_resource,
+        measured_resource,
+    ) in enumerate(zip(
+        warmup_counters,
+        measured_counters,
+        warmup_resources,
+        measured_resources,
+    )):
+        if (
+            warmup_counter["capture_attempts"] != 1
+            or warmup_counter["captures"] != 1
+            or measured_counter["capture_attempts"]
+            != warmup_counter["capture_attempts"]
+            or measured_counter["captures"]
+            != warmup_counter["captures"]
+        ):
+            raise ValueError(
+                "graph capture changed during measured replay "
+                f"on rank {rank}"
+            )
+        if (
+            warmup_counter["replays"] < 1
+            or measured_counter["replays"]
+            <= warmup_counter["replays"]
+        ):
+            raise ValueError(
+                "graph replay did not increase during measured "
+                f"run on rank {rank}"
+            )
+        for name in (
+            "quarantines",
+            "fallback_pre_replay",
+        ):
+            if (
+                warmup_counter[name] != 0
+                or measured_counter[name] != 0
+            ):
+                raise ValueError(
+                    "graph steady-state failure counter "
+                    f"{name} is nonzero on rank {rank}"
+                )
+        if (
+            warmup_resource["ready_entry_count"] != 1
+            or warmup_resource["static_bytes"] <= 0
+            or warmup_resource["reserved_bytes"] <= 0
+            or warmup_resource["total_capture_ns"] <= 0
+            or measured_resource != warmup_resource
+        ):
+            raise ValueError(
+                "graph capture resource changed during measured "
+                f"replay on rank {rank}"
+            )
+
+
 def _rank_memory_rows(value):
     if (
         not isinstance(value, list)
@@ -314,6 +421,30 @@ def _mode_row(value, expected_mode: str):
         raise ValueError(
             f"{expected_mode} row mode mismatch"
         )
+    graph = expected_mode == "graph"
+    warmup_counters = _rank_graph_counters(
+        value.get("warmup_rank_graph_counters"),
+        graph=graph,
+    )
+    measured_counters = _rank_graph_counters(
+        value.get("rank_graph_counters"),
+        graph=graph,
+    )
+    warmup_resources = _rank_graph_resources(
+        value.get("warmup_rank_graph_resources"),
+        graph=graph,
+    )
+    measured_resources = _rank_graph_resources(
+        value.get("rank_graph_resources"),
+        graph=graph,
+    )
+    _validate_steady_state_graph(
+        graph=graph,
+        warmup_counters=warmup_counters,
+        measured_counters=measured_counters,
+        warmup_resources=warmup_resources,
+        measured_resources=measured_resources,
+    )
     return {
         "mode": expected_mode,
         "target_token_rows": _target_token_rows(
@@ -340,10 +471,10 @@ def _mode_row(value, expected_mode: str):
             value.get("active_transaction_count"),
             "active transaction count",
         ),
-        "rank_graph_counters": _rank_graph_counters(
-            value.get("rank_graph_counters"),
-            graph=expected_mode == "graph",
-        ),
+        "warmup_rank_graph_counters": warmup_counters,
+        "rank_graph_counters": measured_counters,
+        "warmup_rank_graph_resources": warmup_resources,
+        "rank_graph_resources": measured_resources,
         "rank_memory_rows": _rank_memory_rows(
             value.get("rank_memory_rows")
         ),

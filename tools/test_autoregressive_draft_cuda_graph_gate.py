@@ -59,15 +59,32 @@ def _load_path(path, module_name):
     return module
 
 
-def _rank_graph_counters(*, graph):
+def _rank_graph_counters(*, graph, replays=None):
+    if replays is None:
+        replays = 4 if graph else 0
     return [
         {
             "rank": rank,
             "capture_attempts": 1 if graph else 0,
             "captures": 1 if graph else 0,
-            "replays": 4 if graph else 0,
+            "replays": replays,
             "quarantines": 0,
             "fallback_pre_replay": 0,
+        }
+        for rank in range(4)
+    ]
+
+
+def _rank_graph_resources(*, graph):
+    return [
+        {
+            "rank": rank,
+            "ready_entry_count": 1 if graph else 0,
+            "static_bytes": 53_408 if graph else 0,
+            "reserved_bytes": 8_520_704 if graph else 0,
+            "total_capture_ns": (
+                1_500_000_000 if graph else 0
+            ),
         }
         for rank in range(4)
     ]
@@ -101,7 +118,17 @@ def _mode_row(mode, pair_index):
         "accepted_prefix_counts": [4, 3, 2, 1],
         "transaction_digest": "a" * 64,
         "active_transaction_count": 0,
+        "warmup_rank_graph_counters": _rank_graph_counters(
+            graph=graph,
+            replays=3 if graph else 0,
+        ),
         "rank_graph_counters": _rank_graph_counters(
+            graph=graph
+        ),
+        "warmup_rank_graph_resources": _rank_graph_resources(
+            graph=graph
+        ),
+        "rank_graph_resources": _rank_graph_resources(
             graph=graph
         ),
         "rank_memory_rows": [
@@ -152,7 +179,7 @@ def _mode_row(mode, pair_index):
     }
 
 
-def _payload():
+def _gate_rows():
     warmups = []
     for warmup_index in range(2):
         warmups.append({
@@ -172,6 +199,11 @@ def _payload():
             "eager": _mode_row("eager", pair_index),
             "graph": _mode_row("graph", pair_index),
         })
+    return warmups, pairs
+
+
+def _payload():
+    warmups, pairs = _gate_rows()
     return build_gate_payload(
         provenance={
             "source_commit": "b" * 40,
@@ -204,6 +236,10 @@ def test_valid_payload_recomputes_go_classification():
 
     result = validate_gate_payload(payload)
 
+    assert payload["schema_version"] == 2
+    assert payload["configuration"][
+        "in_process_warmup_runs"
+    ] == 1
     assert result["classification"] == "GO"
     assert result["correctness_passed"] is True
     assert result["every_rank_replayed"] is True
@@ -415,6 +451,7 @@ def test_source_bound_verifier_recomputes_payload_and_source_hashes(
     )
 
     assert receipt["classification"] == "GO"
+    assert receipt["schema_version"] == 2
     assert receipt["source_files_verified"] == 1
     assert receipt["payload_sha256"] == canonical_json_sha256(
         json.loads(payload_path.read_text())
@@ -802,7 +839,7 @@ def test_gate_pair_schedule_is_position_balanced():
     ]
 
 
-def test_gate_worker_command_binds_graph_mode_and_single_run():
+def test_gate_worker_command_binds_same_engine_warmup_and_single_run():
     gate = _load_path(
         GATE_PATH,
         "autoregressive_draft_cuda_graph_gate_command_test",
@@ -823,7 +860,7 @@ def test_gate_worker_command_binds_graph_mode_and_single_run():
     assert command[
         command.index("--cuda-graph-mode") + 1
     ] == "graph"
-    assert command[command.index("--warmup-runs") + 1] == "0"
+    assert command[command.index("--warmup-runs") + 1] == "1"
     assert command[command.index("--measured-runs") + 1] == "1"
 
 
@@ -876,12 +913,20 @@ def test_gate_converts_worker_evidence_without_synthetic_rows():
             "rank_graph_counters": _rank_graph_counters(
                 graph=True
             ),
+            "rank_graph_resources": _rank_graph_resources(
+                graph=True
+            ),
         },
     }
+    warmup = copy.deepcopy(run)
+    warmup["correctness"]["rank_graph_counters"] = (
+        _rank_graph_counters(graph=True, replays=3)
+    )
     worker = {
         "policy": "learned",
         "batch_size": 4,
         "cuda_graph_mode": "graph",
+        "warmup_runs": [warmup],
         "measured_runs": [run],
     }
 
@@ -893,8 +938,71 @@ def test_gate_converts_worker_evidence_without_synthetic_rows():
         row["proposal_token_rows"]
         == run["correctness"]["proposal_token_rows"]
     )
+    assert row["warmup_rank_graph_counters"] == warmup[
+        "correctness"
+    ]["rank_graph_counters"]
+    assert row["warmup_rank_graph_resources"] == warmup[
+        "correctness"
+    ]["rank_graph_resources"]
+    assert row["rank_graph_resources"] == run[
+        "correctness"
+    ]["rank_graph_resources"]
     assert row["timing"]["e2e_ns"] == 100_000_000
     assert row["timing"]["proposal_forward_ns"] == 5_000_000
     assert row["rank_memory_rows"][3][
         "peak_reserved_bytes"
     ] == 203
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    (
+        (
+            lambda row: row["rank_graph_counters"][0].__setitem__(
+                "captures",
+                2,
+            ),
+            "capture",
+        ),
+        (
+            lambda row: row["rank_graph_counters"][0].__setitem__(
+                "replays",
+                row["warmup_rank_graph_counters"][0]["replays"],
+            ),
+            "replay",
+        ),
+        (
+            lambda row: row["rank_graph_resources"][0].__setitem__(
+                "total_capture_ns",
+                row["warmup_rank_graph_resources"][0][
+                    "total_capture_ns"
+                ] + 1,
+            ),
+            "capture resource",
+        ),
+        (
+            lambda row: row["rank_graph_resources"][0].__setitem__(
+                "reserved_bytes",
+                row["warmup_rank_graph_resources"][0][
+                    "reserved_bytes"
+                ] + 1,
+            ),
+            "capture resource",
+        ),
+    ),
+)
+def test_contract_rejects_non_steady_state_graph_measurement(
+    tamper,
+    message,
+):
+    payload = _payload()
+    raw_warmups, raw_pairs = _gate_rows()
+    tamper(raw_pairs[0]["graph"])
+
+    with pytest.raises(ValueError, match=message):
+        build_gate_payload(
+            provenance=payload["provenance"],
+            environment=payload["environment"],
+            warmups=raw_warmups,
+            pairs=raw_pairs,
+        )

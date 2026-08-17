@@ -328,3 +328,99 @@ AUTOREGRESSIVE_DRAFT_EXACT_CUDA_GRAPH_PERFORMANCE=INCONCLUSIVE_ENVIRONMENT_PARTI
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-17 Steady-State Measurement Reconciliation
+
+The earlier four-pair partial campaign remains valid evidence for real TP4
+capture/replay, eager/graph token parity, transaction parity, and graph
+lifecycle cleanup. It is not valid steady-state performance evidence.
+
+Root cause:
+
+```text
+each eager or graph pair member ran in a fresh worker process
+worker warmup_runs=0
+the measured graph batch therefore included:
+  first successful eager observations
+  first CUDA Graph capture
+  subsequent replay
+```
+
+Across the four retained measured pairs, graph `backend_submit`, setup, and
+selection-collective detail were lower than eager, while the graph
+proposal-forward residual increased by approximately 1.91-3.25 seconds. The
+retained per-rank capture range was approximately 1.76-3.10 seconds. The
+alignment shows that the old measured result charged capture startup to graph
+throughput; it does not establish a steady-state replay regression.
+
+The corrected source contract is schema version 2:
+
+```text
+configuration.in_process_warmup_runs=1
+worker --warmup-runs 1 --measured-runs 1
+```
+
+Every fresh eager and graph worker now runs one unmeasured batch and one
+measured batch on the same engine. For each graph rank, canonical validation
+requires:
+
+```text
+warmup capture_attempts=1
+warmup captures=1
+warmup replays>=1
+measured capture_attempts == warmup capture_attempts
+measured captures == warmup captures
+measured replays > warmup replays
+warmup and measured quarantines=0
+warmup and measured fallback_pre_replay=0
+ready_entry_count=1
+static_bytes unchanged
+reserved_bytes unchanged
+total_capture_ns unchanged
+```
+
+Only the measured batch contributes E2E, throughput, TTFT, TPOT, and
+proposal-forward timings. Pair-level warmups remain excluded from the
+aggregate and do not substitute for the same-engine in-process warmup.
+
+Fresh local verification:
+
+```text
+focused steady-state gate/runtime suite:
+  103 passed in 2.60s
+
+focused Python compileall:
+  PASS
+
+git diff --check:
+  PASS
+```
+
+### Reconciled Prompt-to-Artifact Checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Same-engine eager and graph warmup | worker command contract and gate tests | `ACHIEVED_LOCAL` |
+| Capture excluded from measured graph timing | schema-v2 cumulative counter/resource transition checks | `ACHIEVED_LOCAL` |
+| Measured graph replay occurs on every rank | measured replay count must increase from warmup | `ACHIEVED_LOCAL` |
+| No measured recapture | capture attempts, captures, and capture duration must remain unchanged | `ACHIEVED_LOCAL` |
+| No measured quarantine or fallback | warmup/measured failure counters must remain zero | `ACHIEVED_LOCAL` |
+| Retained graph identity/resources remain stable | entry count and retained bytes must remain unchanged | `ACHIEVED_LOCAL` |
+| Exact TP4/B4/Q4 and correctness semantics unchanged | production runtime files are untouched by this correction | `ACHIEVED_LOCAL` |
+| Real steady-state two-warmup/eight-pair A/B | fresh schema-v2 remote payload absent | `NOT_ESTABLISHED` |
+| Favorable or unfavorable controlled performance classification | fresh schema-v2 remote payload absent | `NOT_ESTABLISHED` |
+
+The authoritative performance boundary is therefore:
+
+```text
+SCHEMA_V1_PARTIAL_CORRECTNESS_AND_LIFECYCLE=ESTABLISHED
+SCHEMA_V1_PARTIAL_STEADY_STATE_PERFORMANCE=INVALID_COLD_CAPTURE_CONTAMINATED
+SCHEMA_V2_STEADY_STATE_GATE_LOCAL_CONTRACT=ESTABLISHED
+SCHEMA_V2_REAL_STEADY_STATE_PERFORMANCE=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+The next valid performance result must use a new source-bound schema-v2 run
+tag and four clean GPUs. The interrupted schema-v1 tag must not be resumed or
+reclassified.

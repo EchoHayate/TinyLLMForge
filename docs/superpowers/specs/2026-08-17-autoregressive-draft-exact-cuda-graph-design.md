@@ -350,6 +350,29 @@ The gate requires:
 
 Use process-position-balanced paired repeats so eager and graph alternate
 first/second position. Require at least two warmups and eight measured pairs.
+Each fresh eager or graph worker must also execute exactly one unmeasured
+in-process warmup batch before its measured batch. The eager warmup establishes
+the same model, allocator, and kernel-warmth lifecycle as graph mode. The graph
+warmup must complete the successful eager observation, capture, and at least
+one replay before measurement begins.
+
+The measured graph batch is valid steady-state evidence only when, on every
+rank:
+
+- cumulative capture attempts and successful captures are unchanged from the
+  end of the in-process warmup;
+- cumulative replay count increases;
+- cumulative quarantine and pre-replay fallback counts do not increase;
+- retained graph entry count remains one; and
+- cumulative capture duration and retained graph bytes are unchanged.
+
+The gate payload and verifier must retain both the warmup-end and measured-end
+counter/resource snapshots. Pair-level warmups remain excluded from the
+performance aggregate; they are not a substitute for the same-engine
+in-process warmup because every pair member runs in a fresh worker process.
+This state transition is canonical gate schema version 2; schema version 1
+evidence cannot support a steady-state performance classification.
+
 Record:
 
 - E2E latency and throughput;

@@ -48529,3 +48529,112 @@ behavior.
    `https://github.com/EchoHayate/TinyLLMForge.git`; and
 6. after physical GPU 3 becomes clean, rerun the full two-warmup/eight-pair
    source-bound gate with a new run tag.
+
+## 2026-08-17 steady-state CUDA Graph gate reconciliation
+
+Authoritative checkout:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+```
+
+Branch and pushed runtime baseline:
+
+```text
+branch=feat/kv-sparse-attention
+runtime lifecycle commit=7b9c917002db4121f1eb35642c4ee31fde5ddf07
+origin runtime lifecycle commit=7b9c917002db4121f1eb35642c4ee31fde5ddf07
+```
+
+The prior source-bound partial campaign used one fresh process per eager or
+graph member and `warmup_runs=0`. Its measured graph batch included first
+capture. The retained four-pair values are still real correctness and
+lifecycle evidence, but they are not steady-state performance evidence.
+
+Observed diagnosis:
+
+```text
+graph backend_submit delta versus eager:
+  approximately -118 to -147 ms
+
+graph proposal-forward residual delta versus eager:
+  approximately +1.91 to +3.25 s
+
+retained graph capture range:
+  approximately 1.76 to 3.10 s
+```
+
+The gate correction does not change production runtime behavior. It changes
+only source-bound measurement and canonical verification:
+
+```text
+gate schema version=2
+configuration.in_process_warmup_runs=1
+worker warmup_runs=1
+worker measured_runs=1
+```
+
+Canonical graph rows now retain both warmup-end and measured-end rank
+counters/resources. Every rank must prove:
+
+```text
+capture attempts unchanged
+successful captures unchanged at exactly one
+replays increased
+quarantines remained zero
+pre-replay fallbacks remained zero
+ready graph entries remained one
+static bytes unchanged
+reserved bytes unchanged
+total capture duration unchanged
+```
+
+This makes measured E2E/throughput/TTFT/TPOT replay-only with respect to graph
+capture. Eager mode receives the same one-batch in-process warmup so model and
+kernel warmth are symmetric.
+
+Fresh local verification:
+
+```text
+uv Python 3.11
+pytest 8.4.2
+PyTorch 2.7.1
+Transformers 4.57.6
+
+focused gate/runtime suite:
+  103 passed in 2.60s
+
+focused compileall:
+  PASS
+
+git diff --check:
+  PASS
+```
+
+Current boundary:
+
+```text
+REAL_TP4_CAPTURE_REPLAY=ESTABLISHED
+REAL_EAGER_GRAPH_CORRECTNESS_PARITY=ESTABLISHED
+SCHEMA_V1_PARTIAL_PERFORMANCE=INVALID_COLD_CAPTURE_CONTAMINATED
+SCHEMA_V2_STEADY_STATE_GATE_LOCAL_CONTRACT=ESTABLISHED
+SCHEMA_V2_REAL_STEADY_STATE_PERFORMANCE=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Next actions:
+
+1. run final expanded local verification;
+2. stage only the gate, contract, tests, spec, plan, audit, and this EOF
+   handoff reconciliation;
+3. commit with exactly one final
+   `Co-authored-by: TRAE CLI <noreply@bytedance.com>` trailer;
+4. push `feat/kv-sparse-attention` to
+   `https://github.com/EchoHayate/TinyLLMForge.git`;
+5. when four clean GPUs are available, run a new schema-v2 source-bound tag
+   from the foreground; and
+6. require two pair-level warmups, eight measured balanced pairs, exact
+   parity, unchanged capture/resources during measured runs, all-rank replay,
+   dual verifier receipts, and a final checksum manifest before classifying
+   performance.

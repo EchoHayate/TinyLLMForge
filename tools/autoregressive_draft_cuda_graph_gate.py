@@ -82,7 +82,7 @@ def build_worker_command(
         "--cuda-graph-mode",
         mode,
         "--warmup-runs",
-        "0",
+        "1",
         "--measured-runs",
         "1",
         "--out",
@@ -183,15 +183,24 @@ def mode_row_from_worker(worker: dict, *, mode: str) -> dict:
         or worker.get("cuda_graph_mode") != mode
     ):
         raise ValueError("worker identity mismatch")
+    warmups = worker.get("warmup_runs")
     measured = worker.get("measured_runs")
+    if not isinstance(warmups, list) or len(warmups) != 1:
+        raise ValueError(
+            "worker must contain one in-process warmup run"
+        )
     if not isinstance(measured, list) or len(measured) != 1:
         raise ValueError("worker must contain one measured run")
+    warmup = warmups[0]
     run = measured[0]
+    warmup_correctness = warmup.get("correctness")
     correctness = run.get("correctness")
     runtime = run.get("runtime")
     memory = run.get("memory")
     outputs = run.get("outputs")
     if (
+        not isinstance(warmup_correctness, dict)
+        or
         not isinstance(correctness, dict)
         or not isinstance(runtime, dict)
         or not isinstance(memory, dict)
@@ -232,8 +241,17 @@ def mode_row_from_worker(worker: dict, *, mode: str) -> dict:
         "active_transaction_count": correctness[
             "active_transaction_count"
         ],
+        "warmup_rank_graph_counters": warmup_correctness[
+            "rank_graph_counters"
+        ],
         "rank_graph_counters": correctness[
             "rank_graph_counters"
+        ],
+        "warmup_rank_graph_resources": warmup_correctness[
+            "rank_graph_resources"
+        ],
+        "rank_graph_resources": correctness[
+            "rank_graph_resources"
         ],
         "rank_memory_rows": memory_rows,
         "timing": _timing_row(run),

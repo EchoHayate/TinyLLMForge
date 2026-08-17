@@ -12,6 +12,7 @@ if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
 
 from autoregressive_draft_cuda_graph_contract import (
+    SCHEMA_VERSION,
     canonical_json_bytes,
     canonical_json_sha256,
     validate_gate_payload,
@@ -116,7 +117,7 @@ def verify_gate_bundle(
     ):
         raise ValueError("source tree hash mismatch")
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "classification": summary["classification"],
         "correctness_passed": summary[
             "correctness_passed"
