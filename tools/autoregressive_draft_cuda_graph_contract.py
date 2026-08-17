@@ -132,16 +132,18 @@ def _proposal_token_rows(value):
     calls = _token_rows(value, "proposal token rows")
     if any(
         not isinstance(call, list)
-        or len(call) != EXACT_CONFIGURATION["batch_size"]
+        or len(call) > EXACT_CONFIGURATION["batch_size"]
         or any(
             not isinstance(row, list)
-            or len(row) != EXACT_CONFIGURATION["exact_q"]
+            or len(row) > EXACT_CONFIGURATION["exact_q"]
+            or any(not isinstance(token, int) for token in row)
             for row in call
         )
         for call in calls
     ):
         raise ValueError(
-            "proposal token shape must be calls x B4 x Q4"
+            "proposal token shape must contain at most B4 rows "
+            "and at most Q4 tokens per row"
         )
     return calls
 

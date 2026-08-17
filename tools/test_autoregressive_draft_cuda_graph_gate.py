@@ -181,6 +181,33 @@ def _mode_row(mode, pair_index):
     }
 
 
+def _ragged_logical_proposal_token_rows():
+    return [
+        [
+            [10 + row * 10 + token for token in range(4)]
+            for row in range(4)
+        ],
+        [
+            [20 + row * 10 + token for token in range(4)]
+            for row in range(4)
+        ],
+        [
+            [30 + row * 10 + token for token in range(4)]
+            for row in range(4)
+        ],
+        [
+            [40, 41, 42],
+            [50, 51, 52, 53],
+            [60, 61, 62, 63],
+            [70, 71, 72],
+        ],
+        [
+            [80, 81, 82, 83],
+            [90, 91, 92, 93],
+        ],
+    ]
+
+
 def _gate_rows():
     warmups = []
     for warmup_index in range(2):
@@ -355,6 +382,62 @@ def test_environment_interference_is_inconclusive():
     )
 
 
+def test_contract_accepts_ragged_logical_proposal_rows_within_b4_q4():
+    payload = _payload()
+    proposal_rows = _ragged_logical_proposal_token_rows()
+    for mode in ("eager", "graph"):
+        payload["pairs"][0][mode]["proposal_token_rows"] = (
+            copy.deepcopy(proposal_rows)
+        )
+    payload["summary"] = None
+
+    rebuilt = build_gate_payload(
+        provenance=payload["provenance"],
+        environment=payload["environment"],
+        warmups=payload["warmups"],
+        pairs=payload["pairs"],
+    )
+
+    assert rebuilt["pairs"][0]["eager"][
+        "proposal_token_rows"
+    ] == proposal_rows
+    assert rebuilt["pairs"][0]["graph"][
+        "proposal_token_rows"
+    ] == proposal_rows
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda rows: rows.append([]),
+        lambda rows: rows[0].append([]),
+        lambda rows: rows[0].append([1, 2, 3, 4]),
+        lambda rows: rows[0][0].append(5),
+    ),
+    ids=(
+        "empty-call",
+        "empty-row",
+        "more-than-b4-rows",
+        "more-than-q4-tokens",
+    ),
+)
+def test_contract_rejects_invalid_logical_proposal_row_bounds(
+    mutate,
+):
+    payload = _payload()
+    for mode in ("eager", "graph"):
+        mutate(payload["pairs"][0][mode]["proposal_token_rows"])
+    payload["summary"] = None
+
+    with pytest.raises(ValueError, match="proposal token"):
+        build_gate_payload(
+            provenance=payload["provenance"],
+            environment=payload["environment"],
+            warmups=payload["warmups"],
+            pairs=payload["pairs"],
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "mutate", "message"),
     (
@@ -365,7 +448,7 @@ def test_environment_interference_is_inconclusive():
         ),
         (
             "proposal_token_rows",
-            lambda rows: rows[0][0].pop(),
+            lambda rows: rows[0].append([1, 2, 3, 4]),
             "proposal token shape",
         ),
     ),
