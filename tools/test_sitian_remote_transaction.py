@@ -407,57 +407,27 @@ class TransactionPrimitiveTests(unittest.TestCase):
             b"validated\n",
         )
 
-    def test_first_source_postcheck_rolls_back_post_identity_swap(self):
+    def test_first_source_after_exchange_failure_remains_committed(self):
         root = self.make_root()
-        nonce_root = root / ".transactions/n1"
-        generation = nonce_root / "generation"
-        self.write_file(generation, "tools/a.py", b"validated\n")
+        generation = root / ".transactions/n1/generation"
+        self.write_file(generation, "tools/a.py", b"new\n")
         receipt = self.make_receipt(generation)
-        real_rename = os.rename
-        raced = []
 
-        def race_after_identity_check(src, dst, *args, **kwargs):
-            if src == "generation" and dst == "source" and not raced:
-                raced.append(True)
-                real_rename(
-                    "generation",
-                    "validated-generation",
-                    src_dir_fd=kwargs["src_dir_fd"],
-                    dst_dir_fd=kwargs["src_dir_fd"],
-                )
-                replacement = nonce_root / "generation"
-                self.write_file(replacement, "tools/a.py", b"unexpected\n")
-                alternate = self.replace_receipt_fields(
-                    self.make_receipt(replacement),
-                    created_at_unix_ns=receipt.created_at_unix_ns + 1,
-                )
-                replacement_fd = transaction.open_directory_no_follow(
-                    replacement
-                )
-                try:
-                    transaction.write_embedded_receipt(
-                        replacement_fd, alternate
-                    )
-                finally:
-                    os.close(replacement_fd)
-            return real_rename(src, dst, *args, **kwargs)
+        def fail_after_exchange(point):
+            if point == "after_exchange":
+                raise RuntimeError("simulated response loss")
 
-        with mock.patch.object(
-            transaction.os, "rename", side_effect=race_after_identity_check
-        ):
-            with self.assertRaises(transaction.TransactionError):
-                transaction.promote_generation(
-                    root, ".transactions/n1/generation", receipt
-                )
-
-        self.assertFalse((root / "source").exists())
+        with self.assertRaisesRegex(RuntimeError, "response loss"):
+            transaction.promote_generation(
+                root,
+                ".transactions/n1/generation",
+                receipt,
+                fault_injector=fail_after_exchange,
+            )
+        committed = self.read_committed(root)
+        self.assertEqual(committed.created_at_unix_ns, receipt.created_at_unix_ns)
+        self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
         self.assertFalse(generation.exists())
-        self.assertEqual(
-            (
-                nonce_root / "validated-generation/tools/a.py"
-            ).read_bytes(),
-            b"validated\n",
-        )
 
     def test_existing_source_promotion_exchanges_directories(self):
         root = self.make_root()
@@ -533,99 +503,101 @@ class TransactionPrimitiveTests(unittest.TestCase):
             (root / ".transactions/n1-held/generation").exists()
         )
 
-    def test_existing_source_postcheck_exchanges_back_post_identity_swap(self):
+    def test_existing_source_after_exchange_failure_remains_committed(self):
         root = self.make_root()
         self.write_file(root / "source", "old.txt", b"old\n")
-        nonce_root = root / ".transactions/n1"
-        generation = nonce_root / "generation"
-        self.write_file(generation, "tools/a.py", b"validated\n")
+        generation = root / ".transactions/n1/generation"
+        self.write_file(generation, "tools/a.py", b"new\n")
         receipt = self.make_receipt(generation)
-        real_public_exchange = transaction.rename_exchange
-        raced = []
 
-        def race_exchange(*args):
-            if not raced:
-                raced.append(True)
-                generation.rename(nonce_root / "validated-generation")
-                self.write_file(generation, "tools/a.py", b"unexpected\n")
-                alternate = self.replace_receipt_fields(
-                    self.make_receipt(generation),
-                    created_at_unix_ns=receipt.created_at_unix_ns + 1,
-                )
-                replacement_fd = transaction.open_directory_no_follow(
-                    generation
-                )
-                try:
-                    transaction.write_embedded_receipt(
-                        replacement_fd, alternate
-                    )
-                finally:
-                    os.close(replacement_fd)
-            if len(args) == 3:
-                return real_public_exchange(*args)
-            return self.raw_rename_exchange(*args)
+        def fail_after_exchange(point):
+            if point == "after_exchange":
+                raise RuntimeError("simulated response loss")
 
-        with mock.patch.object(
-            transaction,
-            "_rename_exchange_at",
-            side_effect=race_exchange,
-            create=True,
-        ), mock.patch.object(
-            transaction, "rename_exchange", side_effect=race_exchange
-        ):
-            with self.assertRaises(transaction.TransactionError):
-                transaction.promote_generation(
-                    root, ".transactions/n1/generation", receipt
-                )
-
-        self.assertEqual((root / "source/old.txt").read_bytes(), b"old\n")
-        self.assertFalse((root / "source/tools/a.py").exists())
+        with self.assertRaisesRegex(RuntimeError, "response loss"):
+            transaction.promote_generation(
+                root,
+                ".transactions/n1/generation",
+                receipt,
+                fault_injector=fail_after_exchange,
+            )
+        committed = self.read_committed(root)
+        self.assertEqual(committed.created_at_unix_ns, receipt.created_at_unix_ns)
+        self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
+        self.assertFalse((root / "source/old.txt").exists())
         self.assertFalse(generation.exists())
-        self.assertEqual(
-            (
-                nonce_root / "validated-generation/tools/a.py"
-            ).read_bytes(),
-            b"validated\n",
-        )
 
-    def test_postcheck_requires_exact_supplied_receipt_and_rolls_back(self):
+    def test_exact_receipt_comparison_rejects_every_changed_field(self):
         changed_fields = (
             ("explicit_path_sha256", {"tools/a.py": "0" * 64}),
             ("source_manifest_sha256", "0" * 64),
             ("source_file_count", 999),
             ("created_at_unix_ns", 987654321),
         )
-        for index, (field, value) in enumerate(changed_fields):
+        root = self.make_root()
+        generation = root / ".transactions/n1/generation"
+        self.write_file(generation, "tools/a.py", b"validated\n")
+        receipt = self.make_receipt(generation)
+        for field, value in changed_fields:
             with self.subTest(field=field):
-                root = self.make_root("receipt-{}".format(index))
-                generation = root / ".transactions/n1/generation"
-                self.write_file(generation, "tools/a.py", b"validated\n")
-                receipt = self.make_receipt(generation)
                 alternate = self.replace_receipt_fields(
                     receipt, **{field: value}
                 )
-                real_read = transaction._read_generation_fd
-                read_calls = []
+                with self.assertRaises(transaction.TransactionError):
+                    transaction._require_exact_receipt(alternate, receipt)
 
-                def return_alternate_after_promotion(*args, **kwargs):
-                    read_calls.append(True)
-                    if len(read_calls) == 2:
-                        return alternate
-                    return real_read(*args, **kwargs)
+    def test_post_exchange_confirmation_error_leaves_committed_source(self):
+        root = self.make_root()
+        generation = root / ".transactions/n1/generation"
+        self.write_file(generation, "tools/a.py", b"new\n")
+        receipt = self.make_receipt(generation)
+        real_read = transaction._read_generation_fd
+        read_calls = []
 
-                with mock.patch.object(
-                    transaction,
-                    "_read_generation_fd",
-                    side_effect=return_alternate_after_promotion,
-                ):
-                    with self.assertRaises(transaction.TransactionError):
-                        transaction.promote_generation(
-                            root,
-                            ".transactions/n1/generation",
-                            receipt,
-                        )
-                self.assertFalse((root / "source").exists())
-                self.assertFalse(generation.exists())
+        def fail_first_post_exchange_read(*args, **kwargs):
+            read_calls.append(True)
+            if len(read_calls) == 2:
+                raise transaction.TransactionError(
+                    "simulated confirmation failure"
+                )
+            return real_read(*args, **kwargs)
+
+        with mock.patch.object(
+            transaction,
+            "_read_generation_fd",
+            side_effect=fail_first_post_exchange_read,
+        ):
+            with self.assertRaisesRegex(
+                transaction.TransactionError,
+                "confirmation failure",
+            ):
+                transaction.promote_generation(
+                    root, ".transactions/n1/generation", receipt
+                )
+        committed = self.read_committed(root)
+        self.assertEqual(committed.created_at_unix_ns, receipt.created_at_unix_ns)
+        self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
+        self.assertFalse(generation.exists())
+
+    def test_post_commit_cleanup_failure_preserves_result_and_closes_fds(self):
+        root = self.make_root()
+        self.write_file(root / "source", "old.txt", b"old\n")
+        generation = root / ".transactions/n1/generation"
+        self.write_file(generation, "tools/a.py", b"new\n")
+        receipt = self.make_receipt(generation)
+        before = len(os.listdir("/proc/self/fd"))
+        with mock.patch.object(
+            transaction,
+            "_remove_tree_at",
+            side_effect=OSError(errno.EIO, "forced cleanup failure"),
+        ):
+            result = transaction.promote_generation(
+                root, ".transactions/n1/generation", receipt
+            )
+        self.assertEqual(result.created_at_unix_ns, receipt.created_at_unix_ns)
+        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+        self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
+        self.assertEqual(generation.joinpath("old.txt").read_bytes(), b"old\n")
 
     def test_promotion_closes_all_open_file_descriptors(self):
         root = self.make_root()

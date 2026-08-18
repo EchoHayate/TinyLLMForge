@@ -705,34 +705,6 @@ def _remove_tree_contents(directory_fd):
             os.unlink(name, dir_fd=directory_fd)
 
 
-def _remove_relative_tree(root_fd, relative_path):
-    parts = _split_relative_path(relative_path)
-    parent_fd = os.dup(root_fd)
-    try:
-        for part in parts[:-1]:
-            next_fd = os.open(part, _DIRECTORY_FLAGS, dir_fd=parent_fd)
-            os.close(parent_fd)
-            parent_fd = next_fd
-        name = parts[-1]
-        try:
-            info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            return
-        if stat.S_ISDIR(info.st_mode):
-            directory_fd = os.open(
-                name, _DIRECTORY_FLAGS, dir_fd=parent_fd
-            )
-            try:
-                _remove_tree_contents(directory_fd)
-            finally:
-                os.close(directory_fd)
-            os.rmdir(name, dir_fd=parent_fd)
-        else:
-            os.unlink(name, dir_fd=parent_fd)
-    finally:
-        os.close(parent_fd)
-
-
 def _remove_tree_at(parent_fd, name):
     try:
         info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
@@ -868,68 +840,6 @@ def _open_source_for_confirmation(root_fd, generation_info):
     return source_fd
 
 
-def _rollback_first_source(
-    root_fd, generation_parent_fd, generation_basename
-):
-    try:
-        os.stat(
-            generation_basename,
-            dir_fd=generation_parent_fd,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        pass
-    else:
-        raise TransactionError(
-            "cannot roll back first-source promotion: generation is occupied"
-        )
-    try:
-        os.rename(
-            "source",
-            generation_basename,
-            src_dir_fd=root_fd,
-            dst_dir_fd=generation_parent_fd,
-        )
-    except OSError as exc:
-        raise TransactionError(
-            "cannot roll back first-source promotion: {}".format(exc)
-        )
-
-
-def _rollback_existing_source(
-    root_fd,
-    generation_parent_fd,
-    generation_basename,
-    prior_source_info,
-):
-    try:
-        _rename_exchange_at(
-            root_fd,
-            "source",
-            generation_parent_fd,
-            generation_basename,
-        )
-    except OSError as exc:
-        raise TransactionError(
-            "cannot roll back source exchange: {}".format(exc)
-        )
-    try:
-        restored_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
-    except OSError as exc:
-        raise TransactionError(
-            "cannot open restored prior source: {}".format(exc)
-        )
-    try:
-        if not _same_file_identity(
-            os.fstat(restored_fd), prior_source_info
-        ):
-            raise TransactionError(
-                "source exchange rollback did not restore prior source"
-            )
-    finally:
-        os.close(restored_fd)
-
-
 def promote_generation(
     remote_root, generation_name, receipt, fault_injector=None
 ):
@@ -950,8 +860,6 @@ def promote_generation(
             _inject(fault_injector, "after_lock")
             generation_parent_fd = None
             generation_fd = None
-            prior_source_fd = None
-            cleanup_generation = True
             generation_parent_info = None
             try:
                 try:
@@ -1001,13 +909,15 @@ def promote_generation(
                     prior_source_fd = os.open(
                         "source", _DIRECTORY_FLAGS, dir_fd=root_fd
                     )
-                    prior_source_info = os.fstat(prior_source_fd)
-                    if not _same_file_identity(
-                        source_info, prior_source_info
-                    ):
-                        raise TransactionError(
-                            "source entry changed before promotion"
-                        )
+                    try:
+                        if not _same_file_identity(
+                            source_info, os.fstat(prior_source_fd)
+                        ):
+                            raise TransactionError(
+                                "source entry changed before promotion"
+                            )
+                    finally:
+                        os.close(prior_source_fd)
 
                 generation_info = os.fstat(generation_fd)
                 try:
@@ -1047,57 +957,44 @@ def promote_generation(
                     )
                 _inject(fault_injector, "after_exchange")
 
+                committed_fd = _open_source_for_confirmation(
+                    root_fd, generation_info
+                )
                 try:
-                    committed_fd = _open_source_for_confirmation(
-                        root_fd, generation_info
+                    committed_receipt = _read_generation_fd(
+                        committed_fd,
+                        expected_nonce=receipt.nonce,
+                        expected_operation=receipt.operation,
+                        expected_head=receipt.source_head,
+                        expected_paths=receipt.explicit_paths,
                     )
-                    try:
-                        committed_receipt = _read_generation_fd(
-                            committed_fd,
-                            expected_nonce=receipt.nonce,
-                            expected_operation=receipt.operation,
-                            expected_head=receipt.source_head,
-                            expected_paths=receipt.explicit_paths,
-                        )
-                        _require_exact_receipt(
-                            committed_receipt, receipt
-                        )
-                    finally:
-                        os.close(committed_fd)
-                except TransactionError:
-                    try:
-                        if source_exists:
-                            _rollback_existing_source(
-                                root_fd,
-                                generation_parent_fd,
-                                generation_parts[-1],
-                                prior_source_info,
-                            )
-                        else:
-                            _rollback_first_source(
-                                root_fd,
-                                generation_parent_fd,
-                                generation_parts[-1],
-                            )
-                    except TransactionError:
-                        cleanup_generation = False
-                        raise
-                    raise
+                    _require_exact_receipt(committed_receipt, receipt)
+                finally:
+                    os.close(committed_fd)
                 return committed_receipt
             finally:
                 if generation_parent_fd is not None:
-                    if cleanup_generation:
+                    try:
                         _remove_tree_at(
                             generation_parent_fd,
                             generation_parts[-1],
                         )
-                    if prior_source_fd is not None:
-                        os.close(prior_source_fd)
+                    except (OSError, TransactionError):
+                        pass
                     if generation_fd is not None:
-                        os.close(generation_fd)
-                    os.close(generation_parent_fd)
-                _remove_empty_nonce_directory(
-                    root_fd,
-                    generation_name,
-                    expected_parent_info=generation_parent_info,
-                )
+                        try:
+                            os.close(generation_fd)
+                        except OSError:
+                            pass
+                    try:
+                        os.close(generation_parent_fd)
+                    except OSError:
+                        pass
+                try:
+                    _remove_empty_nonce_directory(
+                        root_fd,
+                        generation_name,
+                        expected_parent_info=generation_parent_info,
+                    )
+                except (OSError, TransactionError):
+                    pass
