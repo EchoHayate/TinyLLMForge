@@ -142,6 +142,34 @@ class TransactionPrimitiveTests(unittest.TestCase):
             created_at_unix_ns=123456789,
         )
 
+    def replace_receipt_fields(self, receipt, **overrides):
+        fields = {
+            "operation": receipt.operation,
+            "nonce": receipt.nonce,
+            "source_head": receipt.source_head,
+            "explicit_paths": receipt.explicit_paths,
+            "explicit_path_sha256": receipt.explicit_path_sha256,
+            "source_manifest_sha256": receipt.source_manifest_sha256,
+            "source_file_count": receipt.source_file_count,
+            "created_at_unix_ns": receipt.created_at_unix_ns,
+        }
+        fields.update(overrides)
+        return transaction.CommitReceipt(**fields)
+
+    def raw_rename_exchange(
+        self, left_parent_fd, left_name, right_parent_fd, right_name
+    ):
+        result = transaction._RENAMEAT2(
+            left_parent_fd,
+            os.fsencode(left_name),
+            right_parent_fd,
+            os.fsencode(right_name),
+            transaction.RENAME_EXCHANGE,
+        )
+        if result != 0:
+            error_number = ctypes.get_errno()
+            raise OSError(error_number, os.strerror(error_number))
+
     def write_generation(self, path, marker):
         path.mkdir(parents=True)
         self.write_file(path, "marker.txt", marker.encode("utf-8"))
@@ -333,7 +361,9 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual(len(os.listdir("/proc/self/fd")), before)
 
     def test_exchange_implementation_contains_no_rename_fallback(self):
-        source = inspect.getsource(transaction.rename_exchange)
+        source = inspect.getsource(
+            transaction._rename_exchange_at
+        ) + inspect.getsource(transaction.rename_exchange)
         self.assertIn("_RENAMEAT2", source)
         self.assertNotIn("os.rename", source)
         self.assertNotIn("os.replace", source)
@@ -377,6 +407,58 @@ class TransactionPrimitiveTests(unittest.TestCase):
             b"validated\n",
         )
 
+    def test_first_source_postcheck_rolls_back_post_identity_swap(self):
+        root = self.make_root()
+        nonce_root = root / ".transactions/n1"
+        generation = nonce_root / "generation"
+        self.write_file(generation, "tools/a.py", b"validated\n")
+        receipt = self.make_receipt(generation)
+        real_rename = os.rename
+        raced = []
+
+        def race_after_identity_check(src, dst, *args, **kwargs):
+            if src == "generation" and dst == "source" and not raced:
+                raced.append(True)
+                real_rename(
+                    "generation",
+                    "validated-generation",
+                    src_dir_fd=kwargs["src_dir_fd"],
+                    dst_dir_fd=kwargs["src_dir_fd"],
+                )
+                replacement = nonce_root / "generation"
+                self.write_file(replacement, "tools/a.py", b"unexpected\n")
+                alternate = self.replace_receipt_fields(
+                    self.make_receipt(replacement),
+                    created_at_unix_ns=receipt.created_at_unix_ns + 1,
+                )
+                replacement_fd = transaction.open_directory_no_follow(
+                    replacement
+                )
+                try:
+                    transaction.write_embedded_receipt(
+                        replacement_fd, alternate
+                    )
+                finally:
+                    os.close(replacement_fd)
+            return real_rename(src, dst, *args, **kwargs)
+
+        with mock.patch.object(
+            transaction.os, "rename", side_effect=race_after_identity_check
+        ):
+            with self.assertRaises(transaction.TransactionError):
+                transaction.promote_generation(
+                    root, ".transactions/n1/generation", receipt
+                )
+
+        self.assertFalse((root / "source").exists())
+        self.assertFalse(generation.exists())
+        self.assertEqual(
+            (
+                nonce_root / "validated-generation/tools/a.py"
+            ).read_bytes(),
+            b"validated\n",
+        )
+
     def test_existing_source_promotion_exchanges_directories(self):
         root = self.make_root()
         self.write_file(root / "source", "old.txt", b"old\n")
@@ -389,6 +471,161 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
         self.assertFalse((root / "source/old.txt").exists())
         self.read_committed(root)
+
+    def test_existing_source_uses_held_parent_after_nonce_replacement(self):
+        root = self.make_root()
+        self.write_file(root / "source", "old.txt", b"old\n")
+        nonce_root = root / ".transactions/n1"
+        generation = nonce_root / "generation"
+        self.write_file(generation, "tools/a.py", b"validated\n")
+        receipt = self.make_receipt(generation)
+        real_public_exchange = transaction.rename_exchange
+        raced = []
+
+        def race_exchange(*args):
+            if not raced:
+                raced.append(True)
+                held_nonce_root = root / ".transactions/n1-held"
+                nonce_root.rename(held_nonce_root)
+                replacement = root / ".transactions/n1/generation"
+                self.write_file(replacement, "tools/a.py", b"unexpected\n")
+                alternate = self.replace_receipt_fields(
+                    self.make_receipt(replacement),
+                    created_at_unix_ns=receipt.created_at_unix_ns + 1,
+                )
+                replacement_fd = transaction.open_directory_no_follow(
+                    replacement
+                )
+                try:
+                    transaction.write_embedded_receipt(
+                        replacement_fd, alternate
+                    )
+                finally:
+                    os.close(replacement_fd)
+            if len(args) == 3:
+                return real_public_exchange(*args)
+            return self.raw_rename_exchange(*args)
+
+        with mock.patch.object(
+            transaction,
+            "_rename_exchange_at",
+            side_effect=race_exchange,
+            create=True,
+        ), mock.patch.object(
+            transaction, "rename_exchange", side_effect=race_exchange
+        ):
+            result = transaction.promote_generation(
+                root, ".transactions/n1/generation", receipt
+            )
+
+        self.assertEqual(result.created_at_unix_ns, receipt.created_at_unix_ns)
+        self.assertEqual(
+            (root / "source/tools/a.py").read_bytes(), b"validated\n"
+        )
+        self.assertFalse((root / "source/old.txt").exists())
+        self.assertEqual(
+            (
+                root / ".transactions/n1/generation/tools/a.py"
+            ).read_bytes(),
+            b"unexpected\n",
+        )
+        self.assertFalse(
+            (root / ".transactions/n1-held/generation").exists()
+        )
+
+    def test_existing_source_postcheck_exchanges_back_post_identity_swap(self):
+        root = self.make_root()
+        self.write_file(root / "source", "old.txt", b"old\n")
+        nonce_root = root / ".transactions/n1"
+        generation = nonce_root / "generation"
+        self.write_file(generation, "tools/a.py", b"validated\n")
+        receipt = self.make_receipt(generation)
+        real_public_exchange = transaction.rename_exchange
+        raced = []
+
+        def race_exchange(*args):
+            if not raced:
+                raced.append(True)
+                generation.rename(nonce_root / "validated-generation")
+                self.write_file(generation, "tools/a.py", b"unexpected\n")
+                alternate = self.replace_receipt_fields(
+                    self.make_receipt(generation),
+                    created_at_unix_ns=receipt.created_at_unix_ns + 1,
+                )
+                replacement_fd = transaction.open_directory_no_follow(
+                    generation
+                )
+                try:
+                    transaction.write_embedded_receipt(
+                        replacement_fd, alternate
+                    )
+                finally:
+                    os.close(replacement_fd)
+            if len(args) == 3:
+                return real_public_exchange(*args)
+            return self.raw_rename_exchange(*args)
+
+        with mock.patch.object(
+            transaction,
+            "_rename_exchange_at",
+            side_effect=race_exchange,
+            create=True,
+        ), mock.patch.object(
+            transaction, "rename_exchange", side_effect=race_exchange
+        ):
+            with self.assertRaises(transaction.TransactionError):
+                transaction.promote_generation(
+                    root, ".transactions/n1/generation", receipt
+                )
+
+        self.assertEqual((root / "source/old.txt").read_bytes(), b"old\n")
+        self.assertFalse((root / "source/tools/a.py").exists())
+        self.assertFalse(generation.exists())
+        self.assertEqual(
+            (
+                nonce_root / "validated-generation/tools/a.py"
+            ).read_bytes(),
+            b"validated\n",
+        )
+
+    def test_postcheck_requires_exact_supplied_receipt_and_rolls_back(self):
+        changed_fields = (
+            ("explicit_path_sha256", {"tools/a.py": "0" * 64}),
+            ("source_manifest_sha256", "0" * 64),
+            ("source_file_count", 999),
+            ("created_at_unix_ns", 987654321),
+        )
+        for index, (field, value) in enumerate(changed_fields):
+            with self.subTest(field=field):
+                root = self.make_root("receipt-{}".format(index))
+                generation = root / ".transactions/n1/generation"
+                self.write_file(generation, "tools/a.py", b"validated\n")
+                receipt = self.make_receipt(generation)
+                alternate = self.replace_receipt_fields(
+                    receipt, **{field: value}
+                )
+                real_read = transaction._read_generation_fd
+                read_calls = []
+
+                def return_alternate_after_promotion(*args, **kwargs):
+                    read_calls.append(True)
+                    if len(read_calls) == 2:
+                        return alternate
+                    return real_read(*args, **kwargs)
+
+                with mock.patch.object(
+                    transaction,
+                    "_read_generation_fd",
+                    side_effect=return_alternate_after_promotion,
+                ):
+                    with self.assertRaises(transaction.TransactionError):
+                        transaction.promote_generation(
+                            root,
+                            ".transactions/n1/generation",
+                            receipt,
+                        )
+                self.assertFalse((root / "source").exists())
+                self.assertFalse(generation.exists())
 
     def test_promotion_closes_all_open_file_descriptors(self):
         root = self.make_root()
@@ -644,6 +881,7 @@ class TransactionPrimitiveTests(unittest.TestCase):
         }
         install_attempts = []
         restored = []
+        mask_calls = []
 
         def install_or_restore(signum, handler):
             if handler is transaction._raise_transaction_interrupted:
@@ -659,6 +897,12 @@ class TransactionPrimitiveTests(unittest.TestCase):
             side_effect=lambda signum: previous[signum],
         ), mock.patch.object(
             transaction.signal,
+            "pthread_sigmask",
+            side_effect=lambda how, mask: (
+                mask_calls.append((how, set(mask))) or {"caller-mask"}
+            ),
+        ), mock.patch.object(
+            transaction.signal,
             "signal",
             side_effect=install_or_restore,
         ):
@@ -669,6 +913,151 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual(
             restored,
             [(signal.SIGHUP, previous[signal.SIGHUP])],
+        )
+        self.assertEqual(
+            mask_calls,
+            [
+                (
+                    signal.SIG_BLOCK,
+                    {signal.SIGHUP, signal.SIGINT, signal.SIGTERM},
+                ),
+                (signal.SIG_SETMASK, {"caller-mask"}),
+            ],
+        )
+
+    def test_signal_handler_immediate_delivery_restores_installed_handler(self):
+        previous = {
+            signal.SIGHUP: object(),
+            signal.SIGINT: object(),
+            signal.SIGTERM: object(),
+        }
+        current = dict(previous)
+        restored = []
+        mask_calls = []
+
+        def install_then_deliver(signum, handler):
+            current[signum] = handler
+            if handler is transaction._raise_transaction_interrupted:
+                handler(signum, None)
+            restored.append((signum, handler))
+
+        with mock.patch.object(
+            transaction.signal,
+            "getsignal",
+            side_effect=lambda signum: current[signum],
+        ), mock.patch.object(
+            transaction.signal,
+            "pthread_sigmask",
+            side_effect=lambda how, mask: (
+                mask_calls.append((how, set(mask))) or {"caller-mask"}
+            ),
+        ), mock.patch.object(
+            transaction.signal,
+            "signal",
+            side_effect=install_then_deliver,
+        ):
+            with self.assertRaises(transaction.TransactionInterrupted):
+                with transaction._transaction_signal_handlers():
+                    self.fail("handler context should not be entered")
+
+        self.assertEqual(restored, [(signal.SIGHUP, previous[signal.SIGHUP])])
+        self.assertEqual(current[signal.SIGHUP], previous[signal.SIGHUP])
+        self.assertEqual(
+            mask_calls[-1], (signal.SIG_SETMASK, {"caller-mask"})
+        )
+
+    def test_signal_handler_blocks_delivery_between_restoration_steps(self):
+        managed = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        deliveries = []
+
+        def make_previous(signum):
+            def previous_handler(delivered_signum, frame):
+                del frame
+                deliveries.append((signum, delivered_signum))
+
+            return previous_handler
+
+        previous = {signum: make_previous(signum) for signum in managed}
+        current = dict(previous)
+        blocked = set()
+        pending = []
+        restoring = []
+
+        def change_mask(how, mask):
+            old_mask = set(blocked)
+            if how == signal.SIG_BLOCK:
+                blocked.update(mask)
+            elif how == signal.SIG_SETMASK:
+                blocked.clear()
+                blocked.update(mask)
+                queued = list(pending)
+                pending[:] = []
+                for signum in queued:
+                    current[signum](signum, None)
+            return old_mask
+
+        def install_or_restore(signum, handler):
+            current[signum] = handler
+            if handler is previous[signum]:
+                restoring.append(signum)
+                if len(restoring) == 1:
+                    delivered = signal.SIGHUP
+                    if delivered in blocked:
+                        pending.append(delivered)
+                    else:
+                        current[delivered](delivered, None)
+
+        with mock.patch.object(
+            transaction.signal,
+            "getsignal",
+            side_effect=lambda signum: current[signum],
+        ), mock.patch.object(
+            transaction.signal,
+            "pthread_sigmask",
+            side_effect=change_mask,
+        ), mock.patch.object(
+            transaction.signal,
+            "signal",
+            side_effect=install_or_restore,
+        ):
+            with transaction._transaction_signal_handlers():
+                pass
+
+        self.assertEqual(restoring, list(reversed(managed)))
+        self.assertEqual(
+            deliveries, [(signal.SIGHUP, signal.SIGHUP)]
+        )
+        self.assertEqual(blocked, set())
+        self.assertEqual(current, previous)
+
+    def test_signal_handler_restores_mask_after_transaction_interrupted(self):
+        managed = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+        caller_mask = {signal.SIGUSR1}
+        mask_calls = []
+
+        def change_mask(how, mask):
+            mask_calls.append((how, set(mask)))
+            return set(caller_mask)
+
+        with mock.patch.object(
+            transaction.signal,
+            "pthread_sigmask",
+            side_effect=change_mask,
+        ):
+            with self.assertRaises(transaction.TransactionInterrupted):
+                with transaction._transaction_signal_handlers():
+                    transaction._raise_transaction_interrupted(
+                        signal.SIGTERM, None
+                    )
+
+        self.assertEqual(
+            mask_calls,
+            [
+                (signal.SIG_BLOCK, managed),
+                (signal.SIG_SETMASK, caller_mask),
+                (signal.SIG_BLOCK, managed),
+                (signal.SIG_SETMASK, caller_mask),
+            ],
         )
 
 

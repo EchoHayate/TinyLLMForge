@@ -635,9 +635,28 @@ def locked_remote_root(remote_root):
         os.close(root_fd)
 
 
-def rename_exchange(parent_fd, left, right):
+def _rename_exchange_at(
+    left_parent_fd, left_name, right_parent_fd, right_name
+):
     if _RENAMEAT2 is None:
         raise OSError(errno.ENOSYS, "renameat2 is unavailable")
+    result = _RENAMEAT2(
+        left_parent_fd,
+        os.fsencode(left_name),
+        right_parent_fd,
+        os.fsencode(right_name),
+        RENAME_EXCHANGE,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+            "{} <-> {}".format(left_name, right_name),
+        )
+
+
+def rename_exchange(parent_fd, left, right):
     left_parts = _split_relative_path(left)
     right_parts = _split_relative_path(right)
     left_parent_fd = None
@@ -657,20 +676,12 @@ def rename_exchange(parent_fd, left, right):
             )
             os.close(right_parent_fd)
             right_parent_fd = next_fd
-        result = _RENAMEAT2(
+        _rename_exchange_at(
             left_parent_fd,
-            os.fsencode(left_parts[-1]),
+            left_parts[-1],
             right_parent_fd,
-            os.fsencode(right_parts[-1]),
-            RENAME_EXCHANGE,
+            right_parts[-1],
         )
-        if result != 0:
-            error_number = ctypes.get_errno()
-            raise OSError(
-                error_number,
-                os.strerror(error_number),
-                "{} <-> {}".format(left, right),
-            )
     finally:
         if right_parent_fd is not None:
             os.close(right_parent_fd)
@@ -722,7 +733,25 @@ def _remove_relative_tree(root_fd, relative_path):
         os.close(parent_fd)
 
 
-def _remove_empty_nonce_directory(root_fd, generation_name):
+def _remove_tree_at(parent_fd, name):
+    try:
+        info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(info.st_mode):
+        directory_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+        try:
+            _remove_tree_contents(directory_fd)
+        finally:
+            os.close(directory_fd)
+        os.rmdir(name, dir_fd=parent_fd)
+    else:
+        os.unlink(name, dir_fd=parent_fd)
+
+
+def _remove_empty_nonce_directory(
+    root_fd, generation_name, expected_parent_info=None
+):
     parts = _split_relative_path(generation_name)
     if len(parts) < 2:
         return
@@ -736,6 +765,20 @@ def _remove_empty_nonce_directory(root_fd, generation_name):
             os.close(grandparent_fd)
             grandparent_fd = next_fd
         try:
+            if expected_parent_info is not None:
+                actual_parent_info = os.stat(
+                    parent_name,
+                    dir_fd=grandparent_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISDIR(actual_parent_info.st_mode)
+                    or actual_parent_info.st_dev
+                    != expected_parent_info.st_dev
+                    or actual_parent_info.st_ino
+                    != expected_parent_info.st_ino
+                ):
+                    return
             os.rmdir(parent_name, dir_fd=grandparent_fd)
         except OSError as exc:
             if exc.errno not in (errno.ENOENT, errno.ENOTEMPTY):
@@ -748,20 +791,143 @@ def _remove_empty_nonce_directory(root_fd, generation_name):
 def _transaction_signal_handlers():
     installed = []
     signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
+    body_mask_restore_attempted = False
     try:
         for signum in signals:
             previous = signal.getsignal(signum)
-            signal.signal(signum, _raise_transaction_interrupted)
             installed.append((signum, previous))
+            try:
+                signal.signal(signum, _raise_transaction_interrupted)
+            except BaseException:
+                if (
+                    signal.getsignal(signum)
+                    is not _raise_transaction_interrupted
+                ):
+                    installed.pop()
+                raise
+        body_mask_restore_attempted = True
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         yield
     finally:
+        cleanup_error = None
+        if body_mask_restore_attempted:
+            try:
+                signal.pthread_sigmask(signal.SIG_BLOCK, signals)
+            except BaseException as exc:
+                cleanup_error = exc
         for signum, previous in reversed(installed):
-            signal.signal(signum, previous)
+            try:
+                signal.signal(signum, previous)
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 def _inject(fault_injector, point):
     if fault_injector is not None:
         fault_injector(point)
+
+
+def _same_file_identity(left_info, right_info):
+    return (
+        left_info.st_dev == right_info.st_dev
+        and left_info.st_ino == right_info.st_ino
+    )
+
+
+def _require_exact_receipt(actual, expected):
+    if _receipt_payload(actual) != _receipt_payload(expected):
+        raise TransactionError(
+            "committed receipt does not exactly match supplied receipt"
+        )
+
+
+def _open_source_for_confirmation(root_fd, generation_info):
+    try:
+        source_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
+    except OSError as exc:
+        raise TransactionError(
+            "cannot open promoted source without following symlinks: {}".format(
+                exc
+            )
+        )
+    source_info = os.fstat(source_fd)
+    if not _same_file_identity(source_info, generation_info):
+        os.close(source_fd)
+        raise TransactionError(
+            "promoted source does not match validated generation"
+        )
+    return source_fd
+
+
+def _rollback_first_source(
+    root_fd, generation_parent_fd, generation_basename
+):
+    try:
+        os.stat(
+            generation_basename,
+            dir_fd=generation_parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        pass
+    else:
+        raise TransactionError(
+            "cannot roll back first-source promotion: generation is occupied"
+        )
+    try:
+        os.rename(
+            "source",
+            generation_basename,
+            src_dir_fd=root_fd,
+            dst_dir_fd=generation_parent_fd,
+        )
+    except OSError as exc:
+        raise TransactionError(
+            "cannot roll back first-source promotion: {}".format(exc)
+        )
+
+
+def _rollback_existing_source(
+    root_fd,
+    generation_parent_fd,
+    generation_basename,
+    prior_source_info,
+):
+    try:
+        _rename_exchange_at(
+            root_fd,
+            "source",
+            generation_parent_fd,
+            generation_basename,
+        )
+    except OSError as exc:
+        raise TransactionError(
+            "cannot roll back source exchange: {}".format(exc)
+        )
+    try:
+        restored_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
+    except OSError as exc:
+        raise TransactionError(
+            "cannot open restored prior source: {}".format(exc)
+        )
+    try:
+        if not _same_file_identity(
+            os.fstat(restored_fd), prior_source_info
+        ):
+            raise TransactionError(
+                "source exchange rollback did not restore prior source"
+            )
+    finally:
+        os.close(restored_fd)
 
 
 def promote_generation(
@@ -781,10 +947,13 @@ def promote_generation(
 
     with _transaction_signal_handlers():
         with locked_remote_root(remote_root) as root_fd:
+            _inject(fault_injector, "after_lock")
+            generation_parent_fd = None
+            generation_fd = None
+            prior_source_fd = None
+            cleanup_generation = True
+            generation_parent_info = None
             try:
-                _inject(fault_injector, "after_lock")
-                generation_parent_fd = None
-                generation_fd = None
                 try:
                     generation_parent_fd = _open_directory_at(
                         root_fd,
@@ -798,86 +967,137 @@ def promote_generation(
                 except OSError as exc:
                     if generation_parent_fd is not None:
                         os.close(generation_parent_fd)
+                        generation_parent_fd = None
                     raise TransactionError(
                         "cannot open generation without following symlinks: "
                         "{}".format(exc)
                     )
+                generation_parent_info = os.fstat(generation_parent_fd)
+                _inject(fault_injector, "after_generation_ready")
+                write_embedded_receipt(generation_fd, receipt)
+                _inject(fault_injector, "after_embedded_receipt")
+                _read_generation_fd(
+                    generation_fd,
+                    expected_nonce=receipt.nonce,
+                    expected_operation=receipt.operation,
+                    expected_head=receipt.source_head,
+                    expected_paths=receipt.explicit_paths,
+                )
+
+                _inject(fault_injector, "before_exchange")
+                source_exists = True
                 try:
-                    _inject(fault_injector, "after_generation_ready")
-                    write_embedded_receipt(generation_fd, receipt)
-                    _inject(fault_injector, "after_embedded_receipt")
-                    _read_generation_fd(
-                        generation_fd,
-                        expected_nonce=receipt.nonce,
-                        expected_operation=receipt.operation,
-                        expected_head=receipt.source_head,
-                        expected_paths=receipt.explicit_paths,
+                    source_info = os.stat(
+                        "source", dir_fd=root_fd, follow_symlinks=False
                     )
-
-                    _inject(fault_injector, "before_exchange")
-                    source_exists = True
-                    try:
-                        source_info = os.stat(
-                            "source", dir_fd=root_fd, follow_symlinks=False
-                        )
-                    except FileNotFoundError:
-                        source_exists = False
-                    else:
-                        if not stat.S_ISDIR(source_info.st_mode):
-                            raise TransactionError(
-                                "source is not a real directory"
-                            )
-                        source_fd = os.open(
-                            "source", _DIRECTORY_FLAGS, dir_fd=root_fd
-                        )
-                        os.close(source_fd)
-
-                    opened_info = os.fstat(generation_fd)
-                    try:
-                        named_info = os.stat(
-                            generation_parts[-1],
-                            dir_fd=generation_parent_fd,
-                            follow_symlinks=False,
-                        )
-                    except OSError as exc:
+                except FileNotFoundError:
+                    source_exists = False
+                    prior_source_info = None
+                else:
+                    if not stat.S_ISDIR(source_info.st_mode):
                         raise TransactionError(
-                            "generation entry changed before promotion: "
-                            "{}".format(exc)
+                            "source is not a real directory"
                         )
-                    if (
-                        not stat.S_ISDIR(named_info.st_mode)
-                        or named_info.st_dev != opened_info.st_dev
-                        or named_info.st_ino != opened_info.st_ino
+                    prior_source_fd = os.open(
+                        "source", _DIRECTORY_FLAGS, dir_fd=root_fd
+                    )
+                    prior_source_info = os.fstat(prior_source_fd)
+                    if not _same_file_identity(
+                        source_info, prior_source_info
                     ):
                         raise TransactionError(
-                            "generation entry changed before promotion"
+                            "source entry changed before promotion"
                         )
-                    if not source_exists:
-                        os.rename(
-                            generation_parts[-1],
-                            "source",
-                            src_dir_fd=generation_parent_fd,
-                            dst_dir_fd=root_fd,
-                        )
-                    else:
-                        rename_exchange(root_fd, "source", generation_name)
-                finally:
-                    os.close(generation_fd)
-                    os.close(generation_parent_fd)
-                _inject(fault_injector, "after_exchange")
-                committed_fd = os.open(
-                    "source", _DIRECTORY_FLAGS, dir_fd=root_fd
-                )
+
+                generation_info = os.fstat(generation_fd)
                 try:
-                    return _read_generation_fd(
-                        committed_fd,
-                        expected_nonce=receipt.nonce,
-                        expected_operation=receipt.operation,
-                        expected_head=receipt.source_head,
-                        expected_paths=receipt.explicit_paths,
+                    named_info = os.stat(
+                        generation_parts[-1],
+                        dir_fd=generation_parent_fd,
+                        follow_symlinks=False,
                     )
-                finally:
-                    os.close(committed_fd)
+                except OSError as exc:
+                    raise TransactionError(
+                        "generation entry changed before promotion: "
+                        "{}".format(exc)
+                    )
+                if (
+                    not stat.S_ISDIR(named_info.st_mode)
+                    or not _same_file_identity(
+                        named_info, generation_info
+                    )
+                ):
+                    raise TransactionError(
+                        "generation entry changed before promotion"
+                    )
+
+                if not source_exists:
+                    os.rename(
+                        generation_parts[-1],
+                        "source",
+                        src_dir_fd=generation_parent_fd,
+                        dst_dir_fd=root_fd,
+                    )
+                else:
+                    _rename_exchange_at(
+                        root_fd,
+                        "source",
+                        generation_parent_fd,
+                        generation_parts[-1],
+                    )
+                _inject(fault_injector, "after_exchange")
+
+                try:
+                    committed_fd = _open_source_for_confirmation(
+                        root_fd, generation_info
+                    )
+                    try:
+                        committed_receipt = _read_generation_fd(
+                            committed_fd,
+                            expected_nonce=receipt.nonce,
+                            expected_operation=receipt.operation,
+                            expected_head=receipt.source_head,
+                            expected_paths=receipt.explicit_paths,
+                        )
+                        _require_exact_receipt(
+                            committed_receipt, receipt
+                        )
+                    finally:
+                        os.close(committed_fd)
+                except TransactionError:
+                    try:
+                        if source_exists:
+                            _rollback_existing_source(
+                                root_fd,
+                                generation_parent_fd,
+                                generation_parts[-1],
+                                prior_source_info,
+                            )
+                        else:
+                            _rollback_first_source(
+                                root_fd,
+                                generation_parent_fd,
+                                generation_parts[-1],
+                            )
+                    except TransactionError:
+                        cleanup_generation = False
+                        raise
+                    raise
+                return committed_receipt
             finally:
-                _remove_relative_tree(root_fd, generation_name)
-                _remove_empty_nonce_directory(root_fd, generation_name)
+                if generation_parent_fd is not None:
+                    if cleanup_generation:
+                        _remove_tree_at(
+                            generation_parent_fd,
+                            generation_parts[-1],
+                        )
+                    if prior_source_fd is not None:
+                        os.close(prior_source_fd)
+                    if generation_fd is not None:
+                        os.close(generation_fd)
+                    os.close(generation_parent_fd)
+                _remove_empty_nonce_directory(
+                    root_fd,
+                    generation_name,
+                    expected_parent_info=generation_parent_info,
+                )
