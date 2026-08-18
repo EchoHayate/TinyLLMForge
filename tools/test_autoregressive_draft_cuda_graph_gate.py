@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 from pathlib import Path
 import sys
 import tarfile
 import types
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -37,6 +36,11 @@ RUNNER_PATH = (
     ROOT
     / "tools"
     / "run_autoregressive_draft_cuda_graph_gate_remote.py"
+)
+COMMAND_TIMELINE_RUNNER_PATH = (
+    ROOT
+    / "tools"
+    / "run_autoregressive_draft_command_timeline_remote.py"
 )
 GATE_PATH = (
     ROOT / "tools" / "autoregressive_draft_cuda_graph_gate.py"
@@ -629,7 +633,7 @@ def _kerberos_now():
         17,
         20,
         0,
-        tzinfo=ZoneInfo("Asia/Shanghai"),
+        tzinfo=timezone(timedelta(hours=8)),
     )
 
 
@@ -1287,6 +1291,489 @@ def test_gate_worker_command_binds_same_engine_warmup_and_single_run():
     ] == "graph"
     assert command[command.index("--warmup-runs") + 1] == "1"
     assert command[command.index("--measured-runs") + 1] == "1"
+
+
+def test_gate_worker_command_supports_command_timeline_five_repeat_epoch():
+    gate = _load_path(
+        GATE_PATH,
+        "autoregressive_draft_cuda_graph_gate_timeline_command_test",
+    )
+
+    command = gate.build_worker_command(
+        python="/python",
+        worker_script="/source/tools/worker.py",
+        target_model="/models/target",
+        draft_model="/models/draft",
+        mode="eager",
+        output_path="/run/eager.json",
+        warmup_runs=1,
+        measured_runs=5,
+        command_timeline=True,
+    )
+
+    assert command[command.index("--warmup-runs") + 1] == "1"
+    assert command[command.index("--measured-runs") + 1] == "5"
+    assert "--command-timeline" in command
+
+
+def _load_command_timeline_runner(name):
+    return _load_path(COMMAND_TIMELINE_RUNNER_PATH, name)
+
+
+def test_command_timeline_runner_schedule_and_worker_commands_are_exact():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_schedule_test"
+    )
+
+    schedule = runner.build_epoch_schedule()
+
+    assert schedule == [
+        ("block-0", "eager", "first"),
+        ("block-0", "graph", "second"),
+        ("block-1", "graph", "first"),
+        ("block-1", "eager", "second"),
+        ("block-2", "graph", "first"),
+        ("block-2", "eager", "second"),
+        ("block-3", "eager", "first"),
+        ("block-3", "graph", "second"),
+    ]
+    for epoch_index, (_block, mode, _position) in enumerate(schedule):
+        command = runner.build_epoch_worker_command(
+            source_root="/remote/run/source",
+            output_path=f"/remote/run/workers/{epoch_index}.json",
+            target_model="/models/target",
+            draft_model="/models/draft",
+            mode=mode,
+            gpu_indices=(1, 3, 5, 7),
+        )
+        assert command[command.index("--policy") + 1] == "learned"
+        assert command[command.index("--batch-size") + 1] == "4"
+        assert command[command.index("--warmup-runs") + 1] == "1"
+        assert command[command.index("--measured-runs") + 1] == "5"
+        assert command[command.index("--cuda-graph-mode") + 1] == mode
+        assert "--command-timeline" in command
+
+
+def test_command_timeline_runner_uses_sitian_only_paths_and_safe_ssh():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_paths_test"
+    )
+
+    assert runner.REMOTE_TASK_ROOT == (
+        "/data00/home/sitian/tinyllmforge-workspaces/"
+        "command-timeline-20260818"
+    )
+    assert runner.REMOTE_PYTHON == (
+        "/data00/home/sitian/tllm/env/bin/python"
+    )
+    assert runner.primary_run_path("tag_1") == (
+        f"{runner.REMOTE_TASK_ROOT}/runs/tag_1"
+    )
+    assert runner.controller_run_path("tag_1") == (
+        f"{runner.REMOTE_TASK_ROOT}/controller-verification/tag_1"
+    )
+    command = runner.build_ssh_command(["true"])
+    assert "ControlMaster=no" in command
+    assert "ControlPath=none" in command
+    assert all("/tmp" not in argument for argument in command)
+
+
+def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_archive_test"
+    )
+    repo_root = tmp_path / "repo"
+    for relative in runner.SOURCE_PATHS:
+        path = repo_root / relative.rstrip("/")
+        if relative.endswith("/"):
+            path.mkdir(parents=True)
+            (path / "kept.py").write_text("VALUE = 1\n")
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"# {relative}\n", encoding="utf-8")
+    archive_path = tmp_path / "source.tar"
+
+    runner.build_source_archive(repo_root, archive_path)
+
+    with tarfile.open(archive_path, "r:") as archive:
+        members = archive.getmembers()
+    assert members
+    assert all(
+        member.name == "source"
+        or member.name.startswith("source/")
+        for member in members
+    )
+    assert all(not member.issym() and not member.islnk() for member in members)
+    assert len({member.name for member in members}) == len(members)
+    assert set(runner.SOURCE_PATHS) == {
+        "tinyvllm/",
+        "tools/autoregressive_draft_performance_worker.py",
+        "tools/autoregressive_draft_performance_gate.py",
+        "tools/autoregressive_draft_cuda_graph_contract.py",
+        "tools/autoregressive_draft_cuda_graph_gate.py",
+        "tools/autoregressive_draft_command_timeline_diagnostic.py",
+        "tools/verify_autoregressive_draft_command_timeline_diagnostic.py",
+        "tools/autoregressive_draft_paired_stability_diagnostic.py",
+        "tools/autoregressive_draft_instability_telemetry.py",
+        "tools/autoregressive_draft_host_semantic_diagnostic.py",
+        "tools/autoregressive_draft_host_sampler.py",
+        "tools/run_autoregressive_draft_command_timeline_remote.py",
+    }
+
+
+def test_command_timeline_source_archive_rejects_symlink_component(tmp_path):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_archive_symlink_test"
+    )
+    repo_root = tmp_path / "repo"
+    real_tools = tmp_path / "real-tools"
+    real_tools.mkdir()
+    (repo_root / "tinyvllm").mkdir(parents=True)
+    (repo_root / "tinyvllm" / "kept.py").write_text("VALUE = 1\n")
+    (repo_root / "tools").symlink_to(real_tools, target_is_directory=True)
+    for relative in runner.SOURCE_PATHS:
+        if relative.startswith("tools/"):
+            path = real_tools / Path(relative).name
+            path.write_text("# unsafe through symlink\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="symlink"):
+        runner.build_source_archive(repo_root, tmp_path / "source.tar")
+
+
+def test_command_timeline_epoch_samplers_capture_stderr_without_pipes(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_sampler_stderr_test"
+    )
+    popen_calls = []
+
+    class FakeProcess:
+        def __init__(self, command, **kwargs):
+            self.pid = 1000 + len(popen_calls)
+            popen_calls.append((command, kwargs))
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakeProcess)
+    gpu_path = tmp_path / "gpu.jsonl"
+    host_path = tmp_path / "host.jsonl"
+
+    _processes, handles = runner._start_epoch_samplers(
+        gpu_indices=[0, 1, 2, 3],
+        gpu_path=gpu_path,
+        host_path=host_path,
+    )
+
+    try:
+        assert len(popen_calls) == 2
+        assert len(handles) == 4
+        assert all(
+            kwargs["stderr"] is not runner.subprocess.PIPE
+            for _command, kwargs in popen_calls
+        )
+        assert all(
+            getattr(kwargs["stderr"], "name", "").endswith(".stderr")
+            for _command, kwargs in popen_calls
+        )
+    finally:
+        for handle in handles:
+            handle.close()
+
+
+@pytest.mark.parametrize("tag", ["", "../escape", "space tag", "tag.dot"])
+def test_command_timeline_run_tag_fails_before_commands_or_writes(
+    tmp_path,
+    tag,
+):
+    runner = _load_command_timeline_runner(
+        f"command_timeline_runner_tag_test_{len(tag)}"
+    )
+    commands = []
+
+    def command_runner(command, **_kwargs):
+        commands.append(command)
+        raise AssertionError("invalid tags must fail before commands")
+
+    with pytest.raises(ValueError, match=r"\[A-Za-z0-9_-\]"):
+        runner.run_bundle(run_tag=tag, command_runner=command_runner)
+    assert commands == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_command_timeline_gpu_preflight_requires_exactly_four_idle_devices():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_gpu_test"
+    )
+    rows = [
+        {
+            "index": index,
+            "uuid": f"GPU-{index}",
+            "memory_used_mib": 0,
+            "utilization_percent": 0,
+            "compute_processes": [],
+        }
+        for index in range(4)
+    ]
+
+    assert runner.classify_gpu_preflight(rows) == {
+        "status": "READY",
+        "gpu_indices": [0, 1, 2, 3],
+        "gpu_uuids": ["GPU-0", "GPU-1", "GPU-2", "GPU-3"],
+    }
+    with pytest.raises(ValueError, match="exactly four"):
+        runner.classify_gpu_preflight(rows + [{
+            **rows[-1],
+            "index": 4,
+            "uuid": "GPU-4",
+        }])
+    with pytest.raises(ValueError, match="unrelated"):
+        runner.classify_gpu_preflight([
+            *rows[:3],
+            {**rows[3], "compute_processes": [{"pid": 99}]},
+        ])
+
+
+def _command_timeline_ready_gpu_payload():
+    return {
+        "primary_exists": False,
+        "controller_exists": False,
+        "gpu_rows": [
+            {
+                "index": index,
+                "uuid": f"GPU-{index}",
+                "memory_used_mib": 0,
+                "utilization_percent": 0,
+                "compute_processes": [],
+            }
+            for index in range(4)
+        ],
+    }
+
+
+def test_command_timeline_preflight_is_read_only_and_orders_fail_fast_gates():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_preflight_test"
+    )
+    commands = []
+
+    def command_runner(command, **_kwargs):
+        commands.append(command)
+        if command == ["klist", "--json"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    _kerberos_payload(expires="20260817220001")
+                ),
+                stderr="",
+            )
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="8cf39121ffbe357812941e2e05628ed8ab1153ac\n",
+                stderr="",
+            )
+        if command[:2] == ["git", "rev-parse"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="8cf39121ffbe357812941e2e05628ed8ab1153ac\n",
+                stderr="",
+            )
+        assert command[0] == "ssh"
+        assert "TASK7_ACTION=preflight" in command[-1]
+        assert "mkdir" not in command[-1]
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(_command_timeline_ready_gpu_payload()),
+            stderr="",
+        )
+
+    result = runner.run_preflight(
+        run_tag="task7_ready",
+        command_runner=command_runner,
+        now=_kerberos_now(),
+    )
+
+    assert result["status"] == "READY"
+    assert result["source_commit"] == (
+        "8cf39121ffbe357812941e2e05628ed8ab1153ac"
+    )
+    assert result["gpu_indices"] == [0, 1, 2, 3]
+    assert commands[0] == ["klist", "--json"]
+    assert commands[1][:3] == ["git", "rev-parse", "HEAD"]
+    assert commands[2][:2] == ["git", "rev-parse"]
+    assert commands[3][0] == "ssh"
+
+
+def test_command_timeline_bundle_stops_after_first_worker_failure_and_copies_partial():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_partial_failure_test"
+    )
+    actions = []
+    prepare_inputs = []
+
+    def command_runner(command, **_kwargs):
+        if command == ["klist", "--json"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    _kerberos_payload(expires="20260817220001")
+                ),
+                stderr="",
+            )
+        if command[:2] == ["git", "rev-parse"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="8cf39121ffbe357812941e2e05628ed8ab1153ac\n",
+                stderr="",
+            )
+        if command[:2] == ["git", "diff"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=b"diff --git a/source b/source\n",
+                stderr=b"",
+            )
+        remote = command[-1]
+        marker = next(
+            (
+                name
+                for name in (
+                    "preflight",
+                    "prepare",
+                    "inventory-before",
+                    "epoch",
+                    "inventory-after",
+                    "partial-copy",
+                )
+                if f"TASK7_ACTION={name}" in remote
+            ),
+            None,
+        )
+        assert marker is not None
+        actions.append(marker)
+        if marker == "prepare":
+            prepare_inputs.append(_kwargs.get("input"))
+        if marker == "preflight":
+            stdout = json.dumps(_command_timeline_ready_gpu_payload())
+            returncode = 0
+        elif marker.startswith("inventory"):
+            stdout = json.dumps(
+                _command_timeline_ready_gpu_payload()["gpu_rows"]
+            )
+            returncode = 0
+        elif marker == "epoch":
+            stdout = "worker failed"
+            returncode = 9
+        else:
+            stdout = ""
+            returncode = 0
+        return types.SimpleNamespace(
+            returncode=returncode,
+            stdout=stdout,
+            stderr="worker stderr" if returncode else "",
+        )
+
+    result = runner.run_bundle(
+        run_tag="task7_partial",
+        command_runner=command_runner,
+        now=_kerberos_now(),
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["failed_epoch"] == "block-0:eager:first"
+    assert actions == [
+        "preflight",
+        "prepare",
+        "inventory-before",
+        "epoch",
+        "partial-copy",
+    ]
+    assert prepare_inputs == [b"diff --git a/source b/source\n"]
+
+
+def test_command_timeline_bundle_copies_partial_when_inventory_query_fails():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_inventory_failure_test"
+    )
+    actions = []
+
+    def command_runner(command, **_kwargs):
+        if command == ["klist", "--json"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    _kerberos_payload(expires="20260817220001")
+                ),
+                stderr="",
+            )
+        if command[:2] == ["git", "rev-parse"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="8cf39121ffbe357812941e2e05628ed8ab1153ac\n",
+                stderr="",
+            )
+        if command[:2] == ["git", "diff"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=b"",
+                stderr=b"",
+            )
+        remote = command[-1]
+        marker = next(
+            name
+            for name in (
+                "preflight",
+                "prepare",
+                "inventory-before",
+                "partial-copy",
+            )
+            if f"TASK7_ACTION={name}" in remote
+        )
+        actions.append(marker)
+        if marker == "preflight":
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(_command_timeline_ready_gpu_payload()),
+                stderr="",
+            )
+        if marker == "inventory-before":
+            return types.SimpleNamespace(
+                returncode=7,
+                stdout="",
+                stderr="inventory failed",
+            )
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = runner.run_bundle(
+        run_tag="task7_inventory_failure",
+        command_runner=command_runner,
+        now=_kerberos_now(),
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["failed_epoch"] == "block-0:eager:first"
+    assert actions == [
+        "preflight",
+        "prepare",
+        "inventory-before",
+        "partial-copy",
+    ]
+
+
+def test_command_timeline_runner_source_forbids_broad_process_or_tree_actions():
+    source = COMMAND_TIMELINE_RUNNER_PATH.read_text(encoding="utf-8")
+
+    for forbidden in (
+        "pkill",
+        "killall",
+        "fuser -k",
+        "git clean",
+        "git reset",
+        "rm -rf",
+        "sudo",
+        '"/tmp',
+        "'/tmp",
+    ):
+        assert forbidden not in source
 
 
 def test_gate_converts_worker_evidence_without_synthetic_rows():

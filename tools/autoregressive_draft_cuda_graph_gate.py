@@ -65,10 +65,25 @@ def build_worker_command(
     draft_model: str,
     mode: str,
     output_path: str,
+    warmup_runs: int = 1,
+    measured_runs: int = 1,
+    command_timeline: bool = False,
 ) -> list[str]:
     if mode not in ("eager", "graph"):
         raise ValueError("worker mode is invalid")
-    return [
+    for name, value in (
+        ("warmup runs", warmup_runs),
+        ("measured runs", measured_runs),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+        ):
+            raise ValueError(f"{name} must be a positive integer")
+    if not isinstance(command_timeline, bool):
+        raise ValueError("command timeline must be a bool")
+    command = [
         python,
         worker_script,
         "--target-model",
@@ -82,12 +97,15 @@ def build_worker_command(
         "--cuda-graph-mode",
         mode,
         "--warmup-runs",
-        "1",
+        str(warmup_runs),
         "--measured-runs",
-        "1",
+        str(measured_runs),
         "--out",
         output_path,
     ]
+    if command_timeline:
+        command.append("--command-timeline")
+    return command
 
 
 def _seconds_to_ns(value, name: str) -> int:

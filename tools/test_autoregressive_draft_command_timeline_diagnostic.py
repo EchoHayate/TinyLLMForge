@@ -21,6 +21,11 @@ VERIFIER_PATH = (
     / "tools"
     / "verify_autoregressive_draft_command_timeline_diagnostic.py"
 )
+RUNNER_PATH = (
+    ROOT
+    / "tools"
+    / "run_autoregressive_draft_command_timeline_remote.py"
+)
 assert MODULE_PATH.exists(), f"missing module: {MODULE_PATH}"
 SPEC = importlib.util.spec_from_file_location(
     "autoregressive_draft_command_timeline_diagnostic_test_module",
@@ -2457,3 +2462,72 @@ def test_remote_and_local_receipts_are_canonically_equivalent(
     assert diagnostic.canonical_json_bytes(remote) == (
         diagnostic.canonical_json_bytes(local)
     )
+
+
+def test_runner_augments_raw_worker_into_exact_task5_identity_schema():
+    runner = load_module(RUNNER_PATH, "command_timeline_runner_augment")
+    raw = _worker("graph")
+    for field in (
+        "source_commit",
+        "source_tree_sha256",
+        "target_checkpoint_identifier",
+        "draft_checkpoint_identifier",
+        "tokenizer_identifier",
+        "gpu_uuids",
+    ):
+        raw.pop(field)
+
+    augmented = runner.augment_worker_payload(
+        raw,
+        source_commit="a" * 40,
+        source_tree_sha256="b" * 64,
+        target_checkpoint_identifier="Qwen3-8B",
+        draft_checkpoint_identifier="Qwen3-0.6B",
+        tokenizer_identifier="Qwen3-8B",
+        gpu_uuids=["GPU-0", "GPU-1", "GPU-2", "GPU-3"],
+    )
+
+    assert augmented["source_commit"] == "a" * 40
+    assert augmented["source_tree_sha256"] == "b" * 64
+    assert augmented["target_checkpoint_identifier"] == "Qwen3-8B"
+    assert augmented["draft_checkpoint_identifier"] == "Qwen3-0.6B"
+    assert augmented["tokenizer_identifier"] == "Qwen3-8B"
+    assert augmented["gpu_uuids"] == [
+        "GPU-0",
+        "GPU-1",
+        "GPU-2",
+        "GPU-3",
+    ]
+    identity = diagnostic.expected_epoch_identities()[1]
+    assert diagnostic.validate_epoch_worker(augmented, identity)
+
+
+def test_runner_derives_exact_task6_telemetry_projection():
+    runner = load_module(RUNNER_PATH, "command_timeline_runner_sidecar")
+    worker = _worker("eager")
+    identity = diagnostic.expected_epoch_identities()[0]
+
+    sidecar = runner.derive_telemetry_sidecar(identity.key, worker)
+
+    assert sidecar == _telemetry_sidecar(identity, worker)
+
+
+def test_runner_receipt_normalization_removes_only_location_fields():
+    runner = load_module(
+        RUNNER_PATH,
+        "command_timeline_runner_receipt_normalization",
+    )
+    receipt = {
+        "verified": True,
+        "verified_at_utc": "2026-08-18T00:00:00Z",
+        "verification_location": "primary",
+        "artifact_path": "/remote/primary/command-timeline.json",
+        "classification": "BOUNDARY_LOCALIZED",
+        "nested": {"artifact_path": "must-remain"},
+    }
+
+    assert runner.normalize_verification_receipt(receipt) == {
+        "verified": True,
+        "classification": "BOUNDARY_LOCALIZED",
+        "nested": {"artifact_path": "must-remain"},
+    }
