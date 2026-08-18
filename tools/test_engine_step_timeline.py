@@ -330,6 +330,91 @@ def test_phase_failure_and_scope_nesting_reset_context_safely():
     assert module.active_engine_step_trace() is None
 
 
+def test_phase_exit_clock_failure_preserves_operation_exception_and_finalizes():
+    module = load_module()
+    step = load_llm_engine_method("step")
+    expected = RuntimeError("scheduler operation failed")
+    clock_failure = OSError("phase exit clock failed")
+    clock_values = iter((10, 20, clock_failure, 40))
+
+    def timeline_clock():
+        value = next(clock_values)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    class Scheduler:
+        def observation_snapshot(self):
+            return {"running": [7]}
+
+        def schedule(self, decision_now_ns):
+            assert decision_now_ns == 100
+            raise expected
+
+    recorder = module.EngineStepTimelineRecorder(
+        enabled=True,
+        clock_ns=timeline_clock,
+    )
+    engine = types.SimpleNamespace(
+        _clock_ns=lambda: 100,
+        scheduler=Scheduler(),
+        engine_step_timeline=recorder,
+        _command_timeline_repeat_index=2,
+        _command_timeline_request_set_sha256="a" * 64,
+        model_runner=types.SimpleNamespace(
+            command_timeline=types.SimpleNamespace(
+                snapshot=lambda: {"rows": []}
+            )
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        step(engine)
+
+    assert raised.value is expected
+    assert recorder.active is False
+    assert module.active_engine_step_trace() is None
+    row = recorder.snapshot()["steps"][0]
+    assert row["status"] == "error"
+    assert row["error_type"] == "RuntimeError"
+    assert row["detail"] == "scheduler operation failed"
+    assert row["phases"]["scheduler_schedule"]["executed"] is True
+    assert row["conservation_status"] == "invalid"
+
+
+def test_phase_exit_clock_only_failure_surfaces_and_allows_step_cleanup():
+    module = load_module()
+    clock_failure = OSError("phase exit clock failed")
+    clock_values = iter((10, 20, clock_failure, 40))
+
+    def timeline_clock():
+        value = next(clock_values)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    recorder = module.EngineStepTimelineRecorder(
+        enabled=True,
+        clock_ns=timeline_clock,
+    )
+    identity = begin(recorder)
+
+    with pytest.raises(OSError) as raised:
+        with recorder.phase("scheduler_schedule"):
+            pass
+
+    assert raised.value is clock_failure
+    assert recorder._active_phase is None
+    recorder.finish_step(identity, error=clock_failure, command_rows=[])
+    assert recorder.active is False
+    assert module.active_engine_step_trace() is None
+    row = recorder.snapshot()["steps"][0]
+    assert row["status"] == "error"
+    assert row["error_type"] == "OSError"
+    assert row["phases"]["scheduler_schedule"]["executed"] is True
+    assert row["conservation_status"] == "invalid"
+
+
 def test_disabled_recorder_is_a_clock_free_noop():
     module = load_module()
     recorder = module.EngineStepTimelineRecorder(
@@ -356,6 +441,44 @@ def test_disabled_recorder_is_a_clock_free_noop():
         "steps": [],
     }
     assert module.active_engine_step_trace() is None
+
+
+def test_disabled_engine_step_does_not_request_phase_contexts():
+    step = load_llm_engine_method("step")
+    expected = RuntimeError("scheduler stopped")
+
+    class DisabledTimeline:
+        enabled = False
+
+        def __init__(self):
+            self.phase_requests = 0
+
+        def phase(self, name):
+            self.phase_requests += 1
+            raise AssertionError(
+                f"disabled timeline requested phase {name}"
+            )
+
+    class Scheduler:
+        def observation_snapshot(self):
+            return {"running": []}
+
+        def schedule(self, decision_now_ns):
+            assert decision_now_ns == 100
+            raise expected
+
+    timeline = DisabledTimeline()
+    engine = types.SimpleNamespace(
+        _clock_ns=lambda: 100,
+        scheduler=Scheduler(),
+        engine_step_timeline=timeline,
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        step(engine)
+
+    assert raised.value is expected
+    assert timeline.phase_requests == 0
 
 
 def test_step_conservation_uses_larger_absolute_or_relative_tolerance():
@@ -505,6 +628,41 @@ def test_command_row_conservation_rejects_missing_required_command_data():
     assert result["status"] == "invalid"
     assert result["passed"] is False
     assert "matching rank-zero command rows" in result["detail"]
+
+
+@pytest.mark.parametrize(
+    "started,finished",
+    [
+        (90, 110),
+        (190, 210),
+    ],
+)
+def test_command_row_conservation_rejects_phase_outside_step_envelope(
+    started,
+    finished,
+):
+    module = load_module()
+    result = module.compute_step_conservation(
+        {
+            "engine_step_id": 7,
+            "started_monotonic_ns": 100,
+            "finished_monotonic_ns": 200,
+            "step_wall_ns": 100,
+            "phases": phase_inventory(
+                scheduler_schedule={
+                    "executed": True,
+                    "started_monotonic_ns": started,
+                    "finished_monotonic_ns": finished,
+                    "duration_ns": finished - started,
+                },
+            ),
+        },
+        [],
+    )
+
+    assert result["status"] == "invalid"
+    assert result["passed"] is False
+    assert "outside the engine step" in result["detail"]
 
 
 def test_task2_dispatch_receives_live_step_and_repeat_identity():
@@ -718,3 +876,61 @@ def test_engine_step_failure_finalizes_telemetry_and_preserves_exception():
     assert row["error_type"] == "RuntimeError"
     assert row["detail"] == "scheduler failed"
     assert row["phases"]["scheduler_schedule"]["executed"] is True
+
+
+def test_failed_step_replaces_prior_success_observation_without_stale_payload():
+    module = load_module()
+    step = load_llm_engine_method("step")
+    expected = RuntimeError("second scheduler failed")
+
+    class Scheduler:
+        def observation_snapshot(self):
+            return {"running": [9]}
+
+        def schedule(self, decision_now_ns):
+            assert decision_now_ns == 100
+            raise expected
+
+    recorder = module.EngineStepTimelineRecorder(
+        enabled=True,
+        clock_ns=count(10).__next__,
+    )
+    first_identity = begin(recorder)
+    first_row = recorder.finish_step(first_identity, command_rows=[])
+    prior_observation = {
+        "successful_payload": "first step only",
+        "command_timeline_step": {
+            "identity": {
+                "engine_step_id": first_row["engine_step_id"],
+            },
+            "status": first_row["status"],
+        },
+    }
+    engine = types.SimpleNamespace(
+        _clock_ns=lambda: 100,
+        scheduler=Scheduler(),
+        engine_step_timeline=recorder,
+        _command_timeline_repeat_index=3,
+        _command_timeline_request_set_sha256="b" * 64,
+        model_runner=types.SimpleNamespace(
+            command_timeline=types.SimpleNamespace(
+                snapshot=lambda: {"rows": []}
+            )
+        ),
+        last_step_observation=prior_observation,
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        step(engine)
+
+    assert raised.value is expected
+    assert engine.last_step_observation is not prior_observation
+    assert "successful_payload" not in engine.last_step_observation
+    assert tuple(engine.last_step_observation) == (
+        "command_timeline_step",
+    )
+    failed = engine.last_step_observation["command_timeline_step"]
+    assert failed["identity"]["engine_step_id"] == 1
+    assert failed["identity"]["repeat_index"] == 3
+    assert failed["status"] == "error"
+    assert failed["detail"] == "second scheduler failed"

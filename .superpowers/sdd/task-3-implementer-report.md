@@ -212,3 +212,95 @@ Output: exit code `0`, no diagnostics.
   `status="invalid"` and `passed=false`.
 - No completion fence, `torch.cuda.synchronize()`, or new request-path wait was
   introduced.
+
+## Review 1 Fixes
+
+Review authority:
+
+```text
+.superpowers/sdd/task-3-review-1.md
+```
+
+The review classified Task 3 as Needs fixes with three Important findings and
+one Minor finding. All four were addressed without moving business operations
+or changing rollback, poison, commit, seal, or residency boundaries:
+
+- phase exit now clears active-phase state before propagating telemetry
+  failures; if the wrapped operation and exit clock both fail, the original
+  operation exception object is re-raised and the incomplete executed phase
+  makes conservation fail closed;
+- a clock-only phase-exit failure remains visible to the caller, after which
+  the step can be finalized without leaked phase, step, or ContextVar state;
+- a failed step publishes a fresh telemetry-only
+  `last_step_observation` instead of attaching its telemetry to a prior
+  successful step payload;
+- executed phase intervals are validated against the enclosing engine-step
+  start and finish before conservation arithmetic; and
+- disabled `LLMEngine.step()` selects a reusable non-generator no-op context
+  once and never requests `EngineStepTimelineRecorder.phase()`.
+
+### Review-fix RED evidence
+
+Dual operation/clock failure and clock-only phase-exit cleanup:
+
+```text
+2 failed, 19 deselected in 0.11s
+```
+
+Failed-step observation ownership:
+
+```text
+1 failed, 21 deselected in 0.08s
+```
+
+Out-of-envelope phase intervals:
+
+```text
+2 failed, 22 deselected in 0.07s
+```
+
+Disabled hot-path phase request:
+
+```text
+1 failed, 24 deselected in 0.10s
+```
+
+Each failure was observed before its corresponding production edit.
+
+### Review-fix GREEN evidence
+
+Combined mandatory review cases:
+
+```text
+6 passed, 19 deselected in 0.08s
+```
+
+Focused Task 3:
+
+```text
+27 passed, 27 deselected in 0.22s
+```
+
+Planned four-file regression:
+
+```text
+214 passed in 2.15s
+```
+
+Task 1 and Task 2 regression:
+
+```text
+56 passed in 1.30s
+```
+
+Exact inherited-fingerprint regression:
+
+```text
+57 passed, 6 failed in 1.48s
+```
+
+The inherited failure shape is unchanged: five tests stop at
+`ValueError: LLMEngine source hash is invalid`, and one reports the existing
+prerequisite source-closure mismatch. Frozen fingerprints were not rewritten.
+
+Syntax compilation completed with exit code `0` and no diagnostics.

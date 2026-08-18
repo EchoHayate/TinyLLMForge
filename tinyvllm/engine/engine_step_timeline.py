@@ -238,6 +238,14 @@ def _command_components(
     if step_finish < step_start:
         raise ValueError("step timestamps are malformed")
     containing = (step_start, step_finish)
+    phase_intervals = [
+        _validate_interval(
+            interval,
+            f"step phase {index}",
+            containing,
+        )
+        for index, interval in enumerate(phase_intervals)
+    ]
 
     command_intervals = []
     ack_intervals = []
@@ -596,21 +604,38 @@ class EngineStepTimelineRecorder:
             )
         started_ns = self._clock_ns()
         self._active_phase = phase_name
+        operation_error = None
         try:
             yield
+        except BaseException as error:
+            operation_error = error
+            raise
         finally:
-            finished_ns = self._clock_ns()
+            finished_ns = None
+            exit_error = None
+            try:
+                finished_ns = self._clock_ns()
+                if finished_ns < started_ns:
+                    raise ValueError(
+                        f"engine step phase {phase_name} duration is negative"
+                    )
+            except BaseException as error:
+                exit_error = error
             self._active_phase = None
-            if finished_ns < started_ns:
-                raise ValueError(
-                    f"engine step phase {phase_name} duration is negative"
-                )
             phase.update({
                 "executed": True,
                 "started_monotonic_ns": started_ns,
-                "finished_monotonic_ns": finished_ns,
-                "duration_ns": finished_ns - started_ns,
+                "finished_monotonic_ns": (
+                    None if exit_error is not None else finished_ns
+                ),
+                "duration_ns": (
+                    0
+                    if exit_error is not None
+                    else finished_ns - started_ns
+                ),
             })
+            if exit_error is not None and operation_error is None:
+                raise exit_error
 
     def finish_step(
         self,

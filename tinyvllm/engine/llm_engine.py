@@ -3434,10 +3434,18 @@ class LLMEngine:
                 speculative_selected_sequence_ids_sha256=None,
             )
 
-        def step_phase(name):
-            if step_timeline is None:
-                return __import__("contextlib").nullcontext()
-            return step_timeline.phase(name)
+        if (
+            step_timeline is None
+            or not step_timeline.enabled
+        ):
+            disabled_step_phase = (
+                __import__("contextlib").nullcontext()
+            )
+
+            def step_phase(name):
+                return disabled_step_phase
+        else:
+            step_phase = step_timeline.phase
 
         step_error = None
         try:
@@ -4334,20 +4342,8 @@ class LLMEngine:
                 except BaseException as error:
                     if telemetry_error is None:
                         telemetry_error = error
-                if (
-                    finalized_step is not None
-                    and isinstance(
-                        getattr(
-                            self,
-                            "last_step_observation",
-                            None,
-                        ),
-                        dict,
-                    )
-                ):
-                    self.last_step_observation[
-                        "command_timeline_step"
-                    ] = {
+                if finalized_step is not None:
+                    timeline_observation = {
                         "identity": {
                             key: finalized_step[key]
                             for key in (
@@ -4368,6 +4364,23 @@ class LLMEngine:
                             "conservation_detail"
                         ],
                     }
+                    if step_error is not None:
+                        self.last_step_observation = {
+                            "command_timeline_step": (
+                                timeline_observation
+                            ),
+                        }
+                    elif isinstance(
+                        getattr(
+                            self,
+                            "last_step_observation",
+                            None,
+                        ),
+                        dict,
+                    ):
+                        self.last_step_observation[
+                            "command_timeline_step"
+                        ] = timeline_observation
                 if step_error is None and telemetry_error is not None:
                     raise telemetry_error
 

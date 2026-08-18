@@ -96,7 +96,7 @@
 
 ## Task 3: Engine Step Envelope and Conservation
 
-- Status: completed
+- Status: completed; review fixes applied
 - Base SHA: `7de6f15f357c919185b1dfe5f810089da4b80cce`
 - Brief: `.superpowers/sdd/task-3-brief.md`
 - Required invariants:
@@ -129,7 +129,33 @@
   - frozen source fingerprints were not rewritten.
 - Syntax verification: PASS
 - Implementer commit: `SELF/HEAD`
-- Task review: pending
+- Task review: `.superpowers/sdd/task-3-review-1.md` — Needs fixes
+- Review-fix RED cycles:
+  - operation exception plus phase-exit clock failure, and clock-only
+    phase-exit failure:
+    `2 failed, 19 deselected in 0.11s`;
+  - failed-step observation ownership:
+    `1 failed, 21 deselected in 0.08s`;
+  - phase interval outside step envelope:
+    `2 failed, 22 deselected in 0.07s`;
+  - disabled hot path requests a phase context:
+    `1 failed, 24 deselected in 0.10s`.
+- Review-fix combined mandatory GREEN:
+  `6 passed, 19 deselected in 0.08s`
+- Review-fix focused GREEN:
+  `27 passed, 27 deselected in 0.22s`
+- Review-fix planned four-file regression:
+  `214 passed in 2.15s`
+- Review-fix Task 1 + Task 2 regression:
+  `56 passed in 1.30s`
+- Review-fix exact inherited-fingerprint regression:
+  `57 passed, 6 failed in 1.48s`
+  - five failures stop at
+    `ValueError: LLMEngine source hash is invalid`;
+  - one failure reports the inherited prerequisite source-closure mismatch;
+  - frozen source fingerprints were not rewritten.
+- Review-fix syntax verification: PASS
+- Review-fix commit: `SELF/HEAD`
 
 - Task 4: pending
 - Task 5: pending
