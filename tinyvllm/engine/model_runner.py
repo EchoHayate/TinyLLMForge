@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import torch
 import pickle
 import os
@@ -3542,6 +3542,20 @@ class ModelRunner:
             raise ValueError(
                 "envelope must be a ModelRunnerCommandEnvelope"
             )
+        if (
+            envelope.trace_identity is not None
+            and hasattr(self, "_command_timeline_clock_ns")
+        ):
+            trace_identity = replace(
+                envelope.trace_identity,
+                dispatch_published_monotonic_ns=(
+                    self._command_timeline_clock_ns()
+                ),
+            )
+            envelope = replace(
+                envelope,
+                trace_identity=trace_identity,
+            )
         data = pickle.dumps(envelope)
         n = len(data)
         if n + 4 > len(self.shm.buf):
@@ -3552,6 +3566,7 @@ class ModelRunner:
         self.shm.buf[4:n+4] = data
         for event in self.event:
             event.set()
+        return envelope
 
     def dispatch_command(
         self,
@@ -3581,9 +3596,6 @@ class ModelRunner:
             dispatch_started_monotonic_ns = (
                 self._command_timeline_clock_ns()
             )
-            dispatch_published_monotonic_ns = (
-                self._command_timeline_clock_ns()
-            )
             trace_identity = CommandTraceIdentity(
                 command_id=command_id,
                 method_name=method_name,
@@ -3609,7 +3621,7 @@ class ModelRunner:
                     dispatch_started_monotonic_ns
                 ),
                 dispatch_published_monotonic_ns=(
-                    dispatch_published_monotonic_ns
+                    dispatch_started_monotonic_ns
                 ),
             )
         envelope = ModelRunnerCommandEnvelope(
@@ -3620,7 +3632,21 @@ class ModelRunner:
             trace_identity=trace_identity,
         )
         if self.world_size > 1:
-            self.write_shm(envelope)
+            published_envelope = self.write_shm(envelope)
+            if published_envelope is not None:
+                envelope = published_envelope
+        elif trace_identity is not None:
+            trace_identity = replace(
+                trace_identity,
+                dispatch_published_monotonic_ns=(
+                    self._command_timeline_clock_ns()
+                ),
+            )
+            envelope = replace(
+                envelope,
+                trace_identity=trace_identity,
+            )
+        trace_identity = envelope.trace_identity
         if trace_identity is not None:
             self.command_timeline.record_dispatch(trace_identity)
         return envelope

@@ -419,3 +419,166 @@ Output: exit code 0 with no diagnostics.
 ### Review-fix commit
 
 `SELF/HEAD`
+
+## Second-review fix
+
+### Files
+
+- `tinyvllm/engine/llm_engine.py`
+  - resolves and validates the TP>1 acknowledgement collector before
+    dispatching a command.
+- `tinyvllm/engine/model_runner.py`
+  - constructs a valid provisional traced envelope at dispatch start;
+  - captures the final published timestamp inside `write_shm` immediately
+    before final-envelope serialization;
+  - serializes, writes, and signals workers in that order; and
+  - returns the exact published envelope for rank-zero timeline/local
+    execution identity parity.
+- `tools/test_model_runner_live_ack_wiring.py`
+  - adds missing-collector fail-before-dispatch coverage; and
+  - adds explicit identity/envelope construction, clock, serialization,
+    shared-memory write, and `Event.set()` ordering coverage.
+- `.superpowers/sdd/task-2-review-2.md`
+  - records the second Task 2 review findings.
+- `.superpowers/sdd/progress.md`
+  - records second-review fix status and verification evidence.
+- `.superpowers/sdd/task-2-implementer-report.md`
+  - records this fix cycle.
+
+### Second-review RED evidence
+
+The two mandatory tests were added before production edits and run with:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_live_ack_wiring.py \
+  -k 'missing_collector_fails_before_dispatch or publish_clock_is_final_serialization_boundary'
+```
+
+Output:
+
+```text
+2 failed, 24 deselected in 0.24s
+```
+
+The intended failures were:
+
+- TP>1 missing-collector failure occurred only after shared-memory bytes had
+  been published, a worker event had been signalled, and a timeline row had
+  begun; and
+- the `400` publish-clock sample occurred before traced identity/envelope
+  construction instead of at the final serialization boundary.
+
+### Second-review GREEN and regression evidence
+
+Focused mandatory GREEN:
+
+```text
+2 passed, 24 deselected in 0.17s
+```
+
+Complete live-wiring GREEN, including final-envelope equality and worker
+wake/read coverage:
+
+```text
+26 passed in 0.75s
+```
+
+Complete Task 1 core plus Task 2 transport regression:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_command_timeline.py \
+  tools/test_model_runner_command_ack.py \
+  tools/test_model_runner_live_ack_wiring.py
+```
+
+Output:
+
+```text
+56 passed in 1.27s
+```
+
+Exact planned regression:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_command_timeline.py \
+  tools/test_model_runner_command_ack.py \
+  tools/test_model_runner_live_ack_wiring.py \
+  tools/test_qwen35_real_binding_engine_ack_transport_preflight.py
+```
+
+Output:
+
+```text
+57 passed, 6 failed in 1.49s
+```
+
+The six failures remain the inherited frozen source-fingerprint boundary:
+
+- five fail with
+  `ValueError: LLMEngine source hash is invalid`; and
+- one reports the pre-existing prerequisite source-closure mismatch.
+
+This fix intentionally changes live `LLMEngine` and `ModelRunner` source
+owned by Task 2. It does not own the immutable historical preflight
+fingerprint contract, which was already red at the supplied Task 2 base.
+No frozen hash expectation was changed.
+
+Syntax verification:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m py_compile \
+  tinyvllm/engine/model_runner_command_timeline.py \
+  tinyvllm/engine/model_runner_command_ack.py \
+  tinyvllm/engine/model_runner.py \
+  tinyvllm/engine/llm_engine.py \
+  tools/test_model_runner_command_timeline.py \
+  tools/test_model_runner_command_ack.py \
+  tools/test_model_runner_live_ack_wiring.py
+```
+
+Output: exit code 0 with no diagnostics.
+
+### Second-review invariant checks
+
+- TP>1 collector resolution and validation occur before command allocation,
+  trace creation, shared-memory writes, worker `Event.set()`, local
+  execution, or timeline mutation.
+- A missing TP>1 collector leaves shared memory byte-for-byte unchanged,
+  signals no worker event, performs no local call, and leaves no timeline
+  row or unfinished state.
+- TP1 remains collector-free, local-only, and records no worker ack wait.
+- For traced TP>1 dispatch, identity and envelope construction preparation
+  precede the final publish-clock sample; the sampled value is installed in
+  the exact envelope serialized next.
+- Shared-memory length/payload writes and worker `Event.set()` occur only
+  after serialization of the boundary timestamp.
+- `write_shm` returns the exact serialized envelope, preserving rank-zero
+  and worker command ID/trace identity equality.
+- Existing worker wake/read timestamps, management isolation, terminal
+  failure rows, poisoning/error propagation, ordinary
+  `requires_ack=False`, and acknowledged all-rank management semantics remain
+  covered by the complete regression.
+- No completion fence, `torch.cuda.synchronize()`, CUDA Event, or additional
+  synchronization was added to a measured request path.
+
+### Second-review residual concerns
+
+- The publish timestamp is installed by immutable dataclass replacement
+  immediately before `pickle.dumps`; this is the minimum object work needed
+  to serialize the sampled value and introduces no wait or synchronization.
+- Task 3's engine-step context module remains intentionally absent and
+  Task 3-owned.
+- No GPU, CUDA, NCCL, checkpoint, SSH, remote write, or remote workload was
+  run.
+- The six frozen fingerprint failures remain intentionally visible.
+
+### Second-review fix commit
+
+`SELF/HEAD`

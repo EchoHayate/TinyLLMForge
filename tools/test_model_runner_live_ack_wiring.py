@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+from dataclasses import replace
 from itertools import count
 import os
 import pickle
@@ -55,7 +56,7 @@ def _load_class_method(relative_path, class_name, method_name, namespace):
     return namespace[method_name]
 
 
-def _model_runner_method(name):
+def _model_runner_method(name, namespace_overrides=None):
     namespace = {
         "CommandTraceIdentity": CommandTraceIdentity,
         "read_command_clock_identity": lambda: CommandClockIdentity(
@@ -71,9 +72,12 @@ def _model_runner_method(name):
         ),
         "count": count,
         "pickle": pickle,
+        "replace": replace,
         "ModelRunnerCommandEnvelope": ModelRunnerCommandEnvelope,
         "execute_acknowledged_command": execute_acknowledged_command,
     }
+    if namespace_overrides is not None:
+        namespace.update(namespace_overrides)
     return _load_class_method(
         "tinyvllm/engine/model_runner.py",
         "ModelRunner",
@@ -296,14 +300,25 @@ def test_model_runner_dispatch_traces_only_enabled_active_repeat():
     ).trace_identity is None
 
     timeline = _Timeline(enabled=True)
+    traced_clock = iter((300, 400)).__next__
+
+    def publish_traced(envelope):
+        identity = replace(
+            envelope.trace_identity,
+            dispatch_published_monotonic_ns=traced_clock(),
+        )
+        published = replace(envelope, trace_identity=identity)
+        written.append(published)
+        return published
+
     traced = types.SimpleNamespace(
         rank=0,
         world_size=2,
         _command_ids=count(20),
         command_timeline=timeline,
-        _command_timeline_clock_ns=iter((300, 400)).__next__,
+        _command_timeline_clock_ns=traced_clock,
         _active_command_timeline_trace=_step_trace,
-        write_shm=written.append,
+        write_shm=publish_traced,
     )
     envelope = dispatch(
         traced,
@@ -532,6 +547,102 @@ def test_model_runner_write_serializes_final_publish_before_event_set():
     assert seen[0].trace_identity.dispatch_published_monotonic_ns == 400
 
 
+def test_model_runner_publish_clock_is_final_serialization_boundary():
+    events = []
+
+    def traced_identity(**kwargs):
+        events.append(
+            ("identity", kwargs["dispatch_published_monotonic_ns"])
+        )
+        return CommandTraceIdentity(**kwargs)
+
+    def traced_envelope(**kwargs):
+        events.append(
+            (
+                "envelope",
+                kwargs["trace_identity"].dispatch_published_monotonic_ns,
+            )
+        )
+        return ModelRunnerCommandEnvelope(**kwargs)
+
+    dispatch = _model_runner_method(
+        "dispatch_command",
+        {
+            "CommandTraceIdentity": traced_identity,
+            "ModelRunnerCommandEnvelope": traced_envelope,
+        },
+    )
+    write_shm = _model_runner_method("write_shm")
+
+    class LoggingBuffer:
+        def __init__(self, size=4096):
+            self.data = bytearray(size)
+
+        def __len__(self):
+            return len(self.data)
+
+        def __setitem__(self, key, value):
+            events.append(("write", key))
+            self.data[key] = value
+
+    shared = types.SimpleNamespace(buf=LoggingBuffer())
+    event = _Event(on_set=lambda: events.append(("event_set", None)))
+    clock_values = iter((300, 400))
+
+    def clock_ns():
+        value = next(clock_values)
+        events.append(("clock", value))
+        return value
+
+    original_dumps = pickle.dumps
+
+    def traced_dumps(envelope):
+        events.append(
+            (
+                "serialize",
+                envelope.trace_identity.dispatch_published_monotonic_ns,
+            )
+        )
+        return original_dumps(envelope)
+
+    runner = types.SimpleNamespace(
+        rank=0,
+        world_size=2,
+        _command_ids=count(23),
+        command_timeline=_Timeline(enabled=True),
+        _command_timeline_clock_ns=clock_ns,
+        _active_command_timeline_trace=_step_trace,
+        shm=shared,
+        event=[event],
+    )
+    runner.write_shm = types.MethodType(write_shm, runner)
+
+    pickle.dumps = traced_dumps
+    try:
+        envelope = dispatch(
+            runner,
+            "prepare",
+            requires_ack=True,
+        )
+    finally:
+        pickle.dumps = original_dumps
+
+    assert events[:5] == [
+        ("clock", 300),
+        ("identity", 300),
+        ("envelope", 300),
+        ("clock", 400),
+        ("serialize", 400),
+    ]
+    assert events[5][0] == "write"
+    assert events[6][0] == "write"
+    assert events[7] == ("event_set", None)
+    assert envelope.trace_identity.dispatch_published_monotonic_ns == 400
+    assert runner.command_timeline.dispatches == [
+        envelope.trace_identity
+    ]
+
+
 def test_model_runner_read_records_wake_and_read_before_return():
     read_shm = _model_runner_method("read_shm")
     timeline = _Timeline(enabled=True)
@@ -726,6 +837,60 @@ def test_engine_tp1_acknowledged_call_is_local_only():
     ) == (10, ())
     assert dispatched[0].requires_ack is False
     assert engine.model_runner.command_timeline.ack_waits == []
+
+
+def test_engine_tp_missing_collector_fails_before_dispatch():
+    dispatch = _model_runner_method("dispatch_command")
+    write_shm = _model_runner_method("write_shm")
+    call_ack = _engine_method("call_model_runner_acknowledged")
+    timeline = ModelRunnerCommandTimelineRecorder(
+        rank=0,
+        max_rows=8,
+        clock_identity=CommandClockIdentity(
+            boot_id="boot",
+            implementation="clock_gettime(CLOCK_MONOTONIC)",
+            resolution_s=1e-9,
+            monotonic=True,
+            adjustable=False,
+            captured_at_unix_ns=1,
+        ),
+    )
+    shared = _Buffer()
+    original_shared = bytes(shared.buf)
+    event = _Event()
+    local_calls = []
+    runner = types.SimpleNamespace(
+        rank=0,
+        world_size=2,
+        _command_ids=count(),
+        command_timeline=timeline,
+        _command_timeline_clock_ns=iter((10, 20)).__next__,
+        _active_command_timeline_trace=_step_trace,
+        shm=shared,
+        event=[event],
+        prepare=lambda: local_calls.append("prepare"),
+    )
+    runner.write_shm = types.MethodType(write_shm, runner)
+    runner.dispatch_command = types.MethodType(dispatch, runner)
+    engine = types.SimpleNamespace(
+        model_runner=runner,
+        model_runner_ack_collector=None,
+        ps=[_Process()],
+    )
+
+    try:
+        call_ack(engine, "prepare", timeout_s=1.0)
+    except RuntimeError as error:
+        assert str(error) == (
+            "ModelRunner acknowledgement collector is not installed"
+        )
+    else:
+        raise AssertionError("missing collector was accepted")
+
+    assert bytes(shared.buf) == original_shared
+    assert event.set_calls == 0
+    assert local_calls == []
+    assert timeline.snapshot()["rows"] == []
 
 
 def test_engine_tp1_traced_local_call_finishes_without_ack_wait():

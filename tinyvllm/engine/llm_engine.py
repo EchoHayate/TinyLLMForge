@@ -669,16 +669,16 @@ class LLMEngine:
         *args,
         timeout_s,
     ):
-        envelope = self.model_runner.dispatch_command(
-            method_name,
-            *args,
-            requires_ack=(self.model_runner.world_size > 1),
-        )
         collector = self.model_runner_ack_collector
         if self.model_runner.world_size > 1 and collector is None:
             raise RuntimeError(
                 "ModelRunner acknowledgement collector is not installed"
             )
+        envelope = self.model_runner.dispatch_command(
+            method_name,
+            *args,
+            requires_ack=(self.model_runner.world_size > 1),
+        )
 
         def record_terminal_error(error):
             if envelope.trace_identity is None:
