@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-18
 
-**Status:** Approved approach A; written specification pending user review
+**Status:** Approved for implementation
 
 ## Goal
 
