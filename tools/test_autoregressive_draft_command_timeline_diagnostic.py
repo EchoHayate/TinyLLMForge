@@ -1103,15 +1103,32 @@ def _classification_effects(
     same_sign_blocks: int = 3,
     unexplained_ns: int = 10,
 ) -> dict:
+    return diagnostic.summarize_boundary_effects(
+        _classification_blocks(
+            explained_ns=explained_ns,
+            qualifying_blocks=qualifying_blocks,
+            same_sign_blocks=same_sign_blocks,
+            unexplained_ns=unexplained_ns,
+        )
+    )
+
+
+def _classification_blocks(
+    *,
+    explained_ns: int = 60,
+    qualifying_blocks: int = 3,
+    same_sign_blocks: int = 3,
+    unexplained_ns: int = 10,
+) -> list[dict]:
     blocks = []
     for block_index in range(4):
         queue = (
             explained_ns
             if block_index < same_sign_blocks
-            else -explained_ns
+            else 0
         )
-        if block_index >= qualifying_blocks:
-            queue = 50 if queue >= 0 else -50
+        if block_index >= qualifying_blocks and queue != 0:
+            queue = 50 if queue > 0 else -50
         other = 100 - queue - unexplained_ns
         blocks.append({
             "block_index": block_index,
@@ -1130,7 +1147,7 @@ def _classification_effects(
             "absolute_unexplained_ns": unexplained_ns,
             "median_e2e_ns": 100,
         })
-    return diagnostic.summarize_boundary_effects(blocks)
+    return blocks
 
 
 def _admission(**overrides) -> dict:
@@ -1158,6 +1175,169 @@ def test_classification_localizes_exact_inclusive_boundaries():
         "phase_1_complete": False,
         "promotion_ready": False,
     }
+
+
+def test_classification_rejects_mixed_signs_within_one_order_group():
+    blocks = _classification_blocks(same_sign_blocks=4)
+    blocks[3]["component_deltas_ns"].update({
+        "worker_queue_debt": -60,
+        "worker_cuda_execution": 150,
+    })
+    result = diagnostic.classify_boundary(
+        _admission(),
+        diagnostic.summarize_boundary_effects(blocks),
+    )
+    assert result["classification"] == "PAIRED_PROTOCOL_UNSTABLE"
+    assert result["localized_boundary"] is None
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
+
+
+def test_classification_rejects_order_reversal_sequence_interaction():
+    blocks = _classification_blocks(same_sign_blocks=4)
+    for block_index in (1, 2, 3):
+        blocks[block_index].update({
+            "e2e_delta_ns": -100,
+            "component_deltas_ns": {
+                "worker_queue_debt": -60,
+                "worker_cuda_execution": -50,
+                "ack_wait": 0,
+                "scheduler_postprocess": 0,
+            },
+        })
+    result = diagnostic.classify_boundary(
+        _admission(),
+        diagnostic.summarize_boundary_effects(blocks),
+    )
+    assert result["classification"] == "PAIRED_PROTOCOL_UNSTABLE"
+    assert result["localized_boundary"] is None
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
+
+
+def test_classification_rejects_multiple_localized_boundaries():
+    blocks = _classification_blocks(same_sign_blocks=4)
+    for block in blocks:
+        block["component_deltas_ns"] = {
+            "worker_queue_debt": 60,
+            "worker_cuda_execution": 60,
+            "ack_wait": -30,
+            "scheduler_postprocess": 0,
+        }
+    effects = diagnostic.summarize_boundary_effects(blocks)
+    assert effects["boundaries"]["worker_queue_debt"]["localized"] is True
+    assert effects["boundaries"]["worker_cuda_execution"]["localized"] is True
+    result = diagnostic.classify_boundary(_admission(), effects)
+    assert result["classification"] == "PAIRED_PROTOCOL_UNSTABLE"
+    assert result["localized_boundary"] is None
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
+
+
+def _large_integer_effects(
+    *,
+    third_explained_ns: int = 600_000_000_000_000_000,
+    unexplained_ns: int = 100_000_000_000_000_000,
+) -> dict:
+    e2e_ns = 1_000_000_000_000_000_000
+    blocks = []
+    for block_index, queue_ns in enumerate((
+        600_000_000_000_000_000,
+        600_000_000_000_000_000,
+        third_explained_ns,
+        0,
+    )):
+        blocks.append({
+            "block_index": block_index,
+            "order": (
+                "eager_graph"
+                if block_index in (0, 3)
+                else "graph_eager"
+            ),
+            "e2e_delta_ns": e2e_ns,
+            "component_deltas_ns": {
+                "worker_queue_debt": queue_ns,
+                "worker_cuda_execution": (
+                    e2e_ns - queue_ns - unexplained_ns
+                ),
+                "ack_wait": 0,
+                "scheduler_postprocess": 0,
+            },
+            "absolute_unexplained_ns": unexplained_ns,
+            "median_e2e_ns": e2e_ns,
+        })
+    return diagnostic.summarize_boundary_effects(blocks)
+
+
+def test_integer_threshold_accepts_exact_sixty_percent_at_1e18():
+    effects = _large_integer_effects()
+    queue = effects["boundaries"]["worker_queue_debt"]
+    assert queue["qualifying_block_count"] == 3
+    assert isinstance(effects["blocks"][0]["e2e_delta_ns"], int)
+    assert isinstance(
+        effects["blocks"][0]["component_deltas_ns"][
+            "worker_queue_debt"
+        ],
+        int,
+    )
+    assert diagnostic.classify_boundary(
+        _admission(),
+        effects,
+    )["runtime_optimization_authorized"] is True
+
+
+def test_integer_threshold_rejects_one_ns_below_sixty_percent_at_1e18():
+    effects = _large_integer_effects(
+        third_explained_ns=599_999_999_999_999_999,
+    )
+    assert effects["boundaries"]["worker_queue_debt"][
+        "qualifying_block_count"
+    ] == 2
+    result = diagnostic.classify_boundary(_admission(), effects)
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
+
+
+def test_integer_residual_accepts_exact_ten_percent_at_1e18():
+    result = diagnostic.classify_boundary(
+        _admission(),
+        _large_integer_effects(),
+    )
+    assert result["runtime_optimization_authorized"] is True
+
+
+def test_integer_residual_rejects_one_ns_above_ten_percent_at_1e18():
+    result = diagnostic.classify_boundary(
+        _admission(),
+        _large_integer_effects(
+            unexplained_ns=100_000_000_000_000_001,
+        ),
+    )
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
+
+
+def test_zero_e2e_delta_with_nonzero_component_is_finite_and_unlocalized():
+    blocks = _classification_blocks(same_sign_blocks=4)
+    blocks[3].update({
+        "e2e_delta_ns": 0,
+        "component_deltas_ns": {
+            "worker_queue_debt": 60,
+            "worker_cuda_execution": -50,
+            "ack_wait": 0,
+            "scheduler_postprocess": 0,
+        },
+    })
+    effects = diagnostic.summarize_boundary_effects(blocks)
+    zero_block = effects["blocks"][3]
+    assert zero_block["explanation_ratios"]["worker_queue_debt"] is None
+    assert zero_block["explanation_ratio_defined"][
+        "worker_queue_debt"
+    ] is False
+    diagnostic.canonical_json_bytes(effects)
+    result = diagnostic.classify_boundary(_admission(), effects)
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
 
 
 @pytest.mark.parametrize(
@@ -1219,6 +1399,29 @@ def test_classification_rejects_inconsistent_admission_summary():
             _admission(passed=False),
             _classification_effects(),
         )
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "value"),
+    [
+        ("timeline", True),
+        ("timeline", "1"),
+        ("rank", True),
+        ("rank", "1"),
+    ],
+)
+def test_timeline_schema_versions_require_strict_integers(
+    snapshot,
+    value,
+):
+    worker = _worker("graph")
+    timeline = worker["measured_runs"][0]["runtime"]["command_timeline"]
+    if snapshot == "timeline":
+        timeline["schema_version"] = value
+    else:
+        timeline["rank_snapshots"][0]["schema_version"] = value
+    with pytest.raises(ValueError, match="schema version|integer"):
+        diagnostic.join_repeat_timeline(worker, 0)
 
 
 def test_artifact_has_exact_keys_and_recomputes_all_derived_fields():

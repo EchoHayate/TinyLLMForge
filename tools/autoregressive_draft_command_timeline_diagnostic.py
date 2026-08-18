@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -30,6 +31,10 @@ RELATIVE_CONSERVATION_LIMIT = 0.01
 BOUNDARY_EXPLANATION_THRESHOLD = 0.60
 BOUNDARY_BLOCK_COUNT = 3
 UNEXPLAINED_E2E_LIMIT = 0.10
+BOUNDARY_EXPLANATION_RATIO = Fraction(
+    str(BOUNDARY_EXPLANATION_THRESHOLD)
+)
+UNEXPLAINED_E2E_RATIO = Fraction(str(UNEXPLAINED_E2E_LIMIT))
 MAX_COLLECTION_ITEMS = 100_000
 MAX_STRING_BYTES = 16_384
 MAX_NESTING_DEPTH = 24
@@ -277,10 +282,13 @@ def _duration(start: object, finish: object, name: str) -> int:
     return normalized_finish - normalized_start
 
 
-def _median(values: list[int | float], name: str) -> float:
+def _median(values: list[int], name: str) -> int:
     if not values:
         raise ValueError(f"{name} must not be empty")
-    return float(statistics.median(values))
+    normalized = [
+        _integer(value, name, minimum=0) for value in values
+    ]
+    return statistics.median_low(normalized)
 
 
 def _sign(value: int | float) -> int:
@@ -1439,7 +1447,11 @@ def _normalize_command_snapshots(
     command_inventory = None
     flat_rows = []
     for rank, snapshot in enumerate(snapshots):
-        if snapshot.get("schema_version") != SCHEMA_VERSION:
+        if _integer(
+            snapshot.get("schema_version"),
+            "command rank snapshot schema version",
+            minimum=0,
+        ) != SCHEMA_VERSION:
             raise ValueError("command timeline schema version mismatch")
         if _strict_bool(
             snapshot.get("enabled"),
@@ -2175,7 +2187,11 @@ def join_repeat_timeline(
         ),
         "command timeline",
     )
-    if timeline.get("schema_version") != SCHEMA_VERSION:
+    if _integer(
+        timeline.get("schema_version"),
+        "command timeline schema version",
+        minimum=0,
+    ) != SCHEMA_VERSION:
         raise ValueError("command timeline schema version mismatch")
     (
         command_rows,
@@ -2431,46 +2447,36 @@ def build_epoch_admission(
             for repeat in repeats
         ],
         "proposal_forward": [
-            float(
-                repeat["timing"].get(
-                    "proposal_forward_ns",
-                    repeat["components_ns"][
-                        "worker_cuda_execution"
-                    ],
-                )
+            repeat["timing"].get(
+                "proposal_forward_ns",
+                repeat["components_ns"][
+                    "worker_cuda_execution"
+                ],
             )
             for repeat in repeats
         ],
         "worker_queue_debt": [
-            float(
-                repeat["components_ns"]["worker_queue_debt"]
-            )
+            repeat["components_ns"]["worker_queue_debt"]
             for repeat in repeats
         ],
         "queued_behind_prior_command": [
-            float(
-                repeat["components_ns"]["worker_queue_debt"]
-            )
+            repeat["components_ns"]["worker_queue_debt"]
             for repeat in repeats
         ],
         "worker_cuda_execution": [
-            float(
-                repeat["components_ns"]["worker_cuda_execution"]
-            )
+            repeat["components_ns"]["worker_cuda_execution"]
             for repeat in repeats
         ],
         "ack_wait": [
-            float(repeat["components_ns"]["ack_wait"])
+            repeat["components_ns"]["ack_wait"]
             for repeat in repeats
         ],
         "scheduler_postprocess": [
-            float(
-                repeat["components_ns"]["scheduler_postprocess"]
-            )
+            repeat["components_ns"]["scheduler_postprocess"]
             for repeat in repeats
         ],
         "conservation_residual": [
-            float(repeat["conservation"]["residual_ns"])
+            repeat["conservation"]["residual_ns"]
             for repeat in repeats
         ],
     }
@@ -2595,6 +2601,7 @@ def summarize_boundary_effects(blocks: object) -> dict:
     if len(raw_blocks) != len(BLOCK_SCHEDULE):
         raise ValueError("boundary effects require four blocks")
     normalized_blocks = []
+    median_e2e_fractions = []
     for block_index, raw in enumerate(raw_blocks):
         row = _mapping(raw, "boundary effect block")
         if _integer(
@@ -2606,7 +2613,7 @@ def summarize_boundary_effects(blocks: object) -> dict:
         expected_order = "_".join(BLOCK_SCHEDULE[block_index])
         if row.get("order") != expected_order:
             raise ValueError("boundary effect block order mismatch")
-        e2e_delta = _number(
+        e2e_delta = _integer(
             row.get("e2e_delta_ns"),
             "E2E paired delta",
         )
@@ -2617,60 +2624,88 @@ def summarize_boundary_effects(blocks: object) -> dict:
         if tuple(components) != BOUNDARY_NAMES:
             raise ValueError("boundary component inventory is invalid")
         normalized_components = {
-            name: _number(
+            name: _integer(
                 components[name],
                 f"{name} paired delta",
             )
             for name in BOUNDARY_NAMES
         }
-        unexplained = _number(
+        unexplained = _integer(
             row.get("absolute_unexplained_ns"),
             "absolute unexplained E2E",
-            minimum=0.0,
+            minimum=0,
         )
-        median_e2e = _number(
-            row.get("median_e2e_ns"),
-            "median E2E",
-            positive=True,
-        )
-        explanation = {
-            name: (
-                math.inf
-                if e2e_delta == 0.0
-                and normalized_components[name] != 0.0
-                else 0.0
-                if e2e_delta == 0.0
-                else (
-                    abs(normalized_components[name])
-                    / abs(e2e_delta)
-                )
+        median_pair = row.get("median_e2e_pair_ns")
+        if median_pair is None:
+            median_e2e_integer = _integer(
+                row.get("median_e2e_ns"),
+                "median E2E",
+                minimum=1,
             )
-            for name in BOUNDARY_NAMES
-        }
+            median_e2e_fraction = Fraction(median_e2e_integer, 1)
+        else:
+            pair = _list(median_pair, "median E2E pair")
+            if len(pair) != 2:
+                raise ValueError("median E2E pair must have two values")
+            first = _integer(pair[0], "first median E2E", minimum=1)
+            second = _integer(pair[1], "second median E2E", minimum=1)
+            median_e2e_fraction = Fraction(first + second, 2)
+        median_e2e_fractions.append(median_e2e_fraction)
+        median_e2e = (
+            median_e2e_fraction.numerator
+            if median_e2e_fraction.denominator == 1
+            else float(median_e2e_fraction)
+        )
+        explanation = {}
+        explanation_defined = {}
+        for name in BOUNDARY_NAMES:
+            component = normalized_components[name]
+            if e2e_delta == 0 and component != 0:
+                explanation[name] = None
+                explanation_defined[name] = False
+            elif e2e_delta == 0:
+                explanation[name] = 0.0
+                explanation_defined[name] = True
+            else:
+                explanation[name] = (
+                    abs(component) / abs(e2e_delta)
+                )
+                explanation_defined[name] = True
         normalized_blocks.append({
             "block_index": block_index,
             "order": expected_order,
             "e2e_delta_ns": e2e_delta,
             "component_deltas_ns": normalized_components,
             "explanation_ratios": explanation,
+            "explanation_ratio_defined": explanation_defined,
             "absolute_unexplained_ns": unexplained,
             "median_e2e_ns": median_e2e,
         })
     median_unexplained = statistics.median(
-        row["absolute_unexplained_ns"] for row in normalized_blocks
+        Fraction(row["absolute_unexplained_ns"], 1)
+        for row in normalized_blocks
     )
-    median_e2e = statistics.median(
-        row["median_e2e_ns"] for row in normalized_blocks
-    )
+    median_e2e = statistics.median(median_e2e_fractions)
     unexplained_ratio = median_unexplained / median_e2e
+    unexplained_ratio_passed = (
+        median_unexplained.numerator
+        * median_e2e.denominator
+        * UNEXPLAINED_E2E_RATIO.denominator
+        <= median_e2e.numerator
+        * median_unexplained.denominator
+        * UNEXPLAINED_E2E_RATIO.numerator
+    )
     boundaries = {}
     for name in BOUNDARY_NAMES:
         qualifying = [
             row["block_index"]
             for row in normalized_blocks
             if (
-                row["explanation_ratios"][name]
-                >= BOUNDARY_EXPLANATION_THRESHOLD
+                row["explanation_ratio_defined"][name]
+                and abs(row["component_deltas_ns"][name])
+                * BOUNDARY_EXPLANATION_RATIO.denominator
+                >= abs(row["e2e_delta_ns"])
+                * BOUNDARY_EXPLANATION_RATIO.numerator
             )
         ]
         same_sign = [
@@ -2682,41 +2717,85 @@ def summarize_boundary_effects(blocks: object) -> dict:
                 != 0
             )
         ]
-        ab_signs = {
+        component_signs = {
             _sign(row["component_deltas_ns"][name])
             for row in normalized_blocks
-            if row["order"] == "eager_graph"
-            and row["component_deltas_ns"][name] != 0
+            if row["component_deltas_ns"][name] != 0
         }
-        ba_signs = {
-            _sign(row["component_deltas_ns"][name])
-            for row in normalized_blocks
-            if row["order"] == "graph_eager"
-            and row["component_deltas_ns"][name] != 0
-        }
-        order_consistent = not (
-            len(ab_signs) == 1
-            and len(ba_signs) == 1
-            and ab_signs != ba_signs
+        common_sign = (
+            next(iter(component_signs))
+            if len(component_signs) == 1
+            else 0
         )
+        order_group_checks = {}
+        for order in ("eager_graph", "graph_eager"):
+            group_rows = [
+                row for row in normalized_blocks
+                if row["order"] == order
+            ]
+            group_signs = {
+                _sign(row["component_deltas_ns"][name])
+                for row in group_rows
+                if row["component_deltas_ns"][name] != 0
+            }
+            direction_matches = (
+                common_sign != 0
+                and group_signs == {common_sign}
+            )
+            has_qualifying_block = any(
+                row["block_index"] in qualifying
+                and _sign(row["component_deltas_ns"][name])
+                == common_sign
+                for row in group_rows
+            )
+            order_group_checks[order] = {
+                "direction_matches": direction_matches,
+                "has_qualifying_block": has_qualifying_block,
+                "passed": (
+                    direction_matches and has_qualifying_block
+                ),
+            }
+        order_consistent = all(
+            check["passed"] for check in order_group_checks.values()
+        )
+        undefined = [
+            row["block_index"]
+            for row in normalized_blocks
+            if not row["explanation_ratio_defined"][name]
+        ]
         boundaries[name] = {
             "qualifying_block_indices": qualifying,
             "qualifying_block_count": len(qualifying),
             "same_sign_block_indices": same_sign,
             "same_sign_block_count": len(same_sign),
+            "undefined_explanation_block_indices": undefined,
+            "order_group_checks": order_group_checks,
+            "sequence_interaction_consistent": order_consistent,
             "position_balance_consistent": order_consistent,
             "localized": (
                 len(qualifying) >= BOUNDARY_BLOCK_COUNT
                 and len(same_sign) >= BOUNDARY_BLOCK_COUNT
-                and unexplained_ratio <= UNEXPLAINED_E2E_LIMIT
+                and unexplained_ratio_passed
+                and not undefined
                 and order_consistent
             ),
         }
+    median_unexplained_value = (
+        median_unexplained.numerator
+        if median_unexplained.denominator == 1
+        else float(median_unexplained)
+    )
+    median_e2e_value = (
+        median_e2e.numerator
+        if median_e2e.denominator == 1
+        else float(median_e2e)
+    )
     return {
         "blocks": normalized_blocks,
-        "median_absolute_unexplained_ns": float(median_unexplained),
-        "median_e2e_ns": float(median_e2e),
+        "median_absolute_unexplained_ns": median_unexplained_value,
+        "median_e2e_ns": median_e2e_value,
         "median_unexplained_ratio": float(unexplained_ratio),
+        "median_unexplained_ratio_passed": unexplained_ratio_passed,
         "boundaries": boundaries,
     }
 
@@ -2755,9 +2834,8 @@ def compute_paired_boundary_effects(
             "e2e_delta_ns": e2e_delta,
             "component_deltas_ns": component_deltas,
             "absolute_unexplained_ns": unexplained,
-            "median_e2e_ns": statistics.median(
-                [eager_e2e, graph_e2e]
-            ),
+            "median_e2e_ns": min(eager_e2e, graph_e2e),
+            "median_e2e_pair_ns": [eager_e2e, graph_e2e],
         })
     return summarize_boundary_effects(blocks)
 
@@ -2813,15 +2891,8 @@ def classify_boundary(
                 and boundaries[name].get("localized") is True
             )
         ]
-        if candidates:
-            localized_boundary = max(
-                candidates,
-                key=lambda name: (
-                    boundaries[name]["qualifying_block_count"],
-                    boundaries[name]["same_sign_block_count"],
-                    -BOUNDARY_NAMES.index(name),
-                ),
-            )
+        if len(candidates) == 1:
+            localized_boundary = candidates[0]
             classification = "BOUNDARY_LOCALIZED"
             authorized = True
         else:

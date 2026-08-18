@@ -262,7 +262,7 @@
 
 ## Task 5: Canonical Exact-Identity Diagnostic
 
-- Status: implemented
+- Status: review-1 fixes implemented; re-review pending
 - Base SHA: `ebded1867081a1c6fac96331c2fe5cf8c21bb751`
 - Brief: `.superpowers/sdd/task-5-brief.md`
 - Required invariants:
@@ -288,8 +288,23 @@
 - Python syntax verification: PASS
 - `git diff --check`: PASS
 - Implementer self-review: no remaining P0-P2 findings
-- Implementer commit: `SELF/HEAD`
-- Task review: pending
+- Implementer commit: `b295e104528ca34095e3b571d46f3c4b4e8daedf`
+- Task review: `.superpowers/sdd/task-5-review-1.md` — Needs fixes
+- Review-1 fix RED: `9 failed, 3 passed, 90 deselected in 0.17s`
+  - mixed signs within a balanced order group and an order reversal could
+    still authorize a boundary;
+  - two independently localized boundaries were resolved by tie-break;
+  - one-nanosecond threshold drift at `1e18` was lost to float conversion;
+  - zero E2E with a nonzero component emitted infinity; and
+  - boolean nested schema versions were accepted as integer version one.
+- Review-1 fix focused GREEN: `12 passed, 90 deselected in 0.08s`
+- Review-1 fix artifact-focused regression:
+  `32 passed, 70 deselected in 5.26s`
+- Review-1 fix complete Task 5 regression: `102 passed in 5.38s`
+- Review-1 fix reused-helper regression: `217 passed in 6.95s`
+- Review-1 fix Python syntax verification: PASS
+- Review-1 fix `git diff --check`: PASS
+- Review-1 fix commit: `SELF/HEAD`
 
 - Task 6: pending
 - Task 7: pending

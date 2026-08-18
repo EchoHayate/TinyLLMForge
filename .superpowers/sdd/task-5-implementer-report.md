@@ -207,4 +207,94 @@ was identified.
 
 ## Commit
 
+`b295e104528ca34095e3b571d46f3c4b4e8daedf`
+
+## Review 1 Fix
+
+Review source:
+`.superpowers/sdd/task-5-review-1.md` (`Needs fixes`).
+
+The review identified five fail-closed gaps in the initial localization and
+nested-schema validation. All fixes remain inside Task 5:
+
+- balanced `eager_graph` and `graph_eager` order groups must each contain a
+  qualifying block and support one common nonzero boundary direction;
+  mixed-sign groups or order reversal/sequence interaction remain stable but
+  unlocalized and cannot authorize runtime optimization;
+- localization requires exactly one candidate boundary; zero or multiple
+  candidates produce `localized_boundary=None`,
+  `stable_but_unlocalized=true`, and no authorization;
+- nanosecond deltas and component values remain signed 64-bit integers, and
+  the 60% explanation and 10% residual gates use exact integer/rational cross
+  multiplication rather than float comparisons;
+- zero E2E delta with a nonzero component emits
+  `explanation_ratio=None` with a false defined flag, remains
+  non-qualifying, and cannot localize; and
+- nested command-timeline and command-rank snapshot schema versions pass
+  through the strict non-boolean integer validator before comparison.
+
+Per-request timing aggregation now uses the discrete lower median, preserving
+integer nanoseconds and making even-cardinality aggregation conservative.
+Exact paired epoch midpoint values are retained internally as rational values
+for the residual threshold while canonical output remains finite.
+
+### Review-1 RED Evidence
+
+Focused review command:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-task5-review1-red-pycache \
+python3 -m pytest -q \
+  tools/test_autoregressive_draft_command_timeline_diagnostic.py \
+  -k 'mixed_signs or order_reversal or multiple_localized or integer_threshold or integer_residual or zero_e2e or timeline_schema_versions'
+```
+
+Output:
+
+```text
+9 failed, 3 passed, 90 deselected in 0.17s
+```
+
+The nine failures were the accepted mixed-sign and reversal cases, arbitrary
+multi-candidate selection, integer-type loss, one-nanosecond explanation and
+residual threshold rounding, infinite zero-denominator output, and boolean
+timeline/rank schema aliases. The three controls already passing were exact
+threshold admission and malformed non-integer schema strings.
+
+### Review-1 GREEN Evidence
+
+Focused review GREEN:
+
+```text
+12 passed, 90 deselected in 0.08s
+```
+
+Artifact-focused integration regression after preserving integer timing
+medians:
+
+```text
+32 passed, 70 deselected in 5.26s
+```
+
+Complete Task 5 regression:
+
+```text
+102 passed in 5.38s
+```
+
+Reused-helper regression:
+
+```text
+217 passed in 6.95s
+```
+
+Python syntax compilation completed with exit code `0` and no diagnostics.
+`git diff --check` passed.
+
+No Task 6 work, runtime optimization, GPU/remote execution, schema-v2 payload
+mutation, historical artifact/review-package modification, retired-checkout
+change, or push was performed.
+
+### Review-1 Fix Commit
+
 `SELF/HEAD`
