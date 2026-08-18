@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = (
     ROOT / "tinyvllm/engine/decode_internal_profiler.py"
 )
+COMMAND_TIMELINE_MODULE_PATH = (
+    ROOT / "tinyvllm/engine/model_runner_command_timeline.py"
+)
 
 
 def _load():
@@ -28,6 +31,17 @@ profiler_module = _load()
 DecodeInternalProfiler = profiler_module.DecodeInternalProfiler
 profile_collective = profiler_module.profile_collective
 run_profiled_step = profiler_module.run_profiled_step
+
+
+def _load_command_timeline():
+    spec = importlib.util.spec_from_file_location(
+        "decode_internal_profiler_command_timeline_test_module",
+        COMMAND_TIMELINE_MODULE_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 class FakeClock:
@@ -92,8 +106,18 @@ class FakeNvtxRanges:
         return FakeNvtxRange(label, self.events)
 
 
-def _profiler(elapsed_values=None, *, nvtx_ranges=None):
+def _profiler(
+    elapsed_values=None,
+    *,
+    nvtx_ranges=None,
+    active_command_trace=None,
+):
     synchronizations = []
+    profiler_kwargs = {}
+    if active_command_trace is not None:
+        profiler_kwargs["active_command_trace"] = (
+            active_command_trace
+        )
     return (
         DecodeInternalProfiler(
             rank=2,
@@ -105,8 +129,24 @@ def _profiler(elapsed_values=None, *, nvtx_ranges=None):
             synchronize=lambda: synchronizations.append(True),
             nvtx_range_factory=nvtx_ranges,
             profile_label="policy=exact_restore/case=test-case",
+            **profiler_kwargs,
         ),
         synchronizations,
+    )
+
+
+def _command_identity(module):
+    return module.CommandTraceIdentity(
+        command_id=9,
+        method_name="run",
+        requires_ack=False,
+        engine_step_id=4,
+        repeat_index=2,
+        request_set_sha256="a" * 64,
+        batch_kind="decode",
+        speculative_selected_sequence_ids_sha256="b" * 64,
+        dispatch_started_monotonic_ns=100,
+        dispatch_published_monotonic_ns=110,
     )
 
 
@@ -215,6 +255,9 @@ def test_records_step_and_collective_and_synchronizes_once():
         "decode_ordinal": 0,
         "active_sequence_count": 4,
         "request_set_sha256": "a" * 64,
+        "command_id": None,
+        "engine_step_id": None,
+        "repeat_index": None,
         "wall_ns": 300,
         "cuda_ns": 1_000_000,
         "non_cuda_upper_bound_ns": 0,
@@ -224,12 +267,105 @@ def test_records_step_and_collective_and_synchronizes_once():
         "rank": 2,
         "step_index": 0,
         "decode_ordinal": 0,
+        "command_id": None,
+        "engine_step_id": None,
+        "repeat_index": None,
         "operation": "row_parallel_all_reduce",
         "tensor_shape": [4, 2048],
         "tensor_dtype": "torch.bfloat16",
         "wall_ns": 100,
         "cuda_ns": 500_000,
     }]
+
+
+def test_finalize_already_synchronized_reuses_existing_fence():
+    profiler, synchronizations = _profiler([0.0, 1.0])
+    profiler.begin_step(
+        batch_kind="decode",
+        is_decode=True,
+        active_sequence_count=4,
+        request_set_sha256="a" * 64,
+        dispatch="graph",
+    )
+    profiler.end_step()
+
+    snapshot = profiler.finalize(already_synchronized=True)
+
+    assert synchronizations == []
+    assert snapshot["steps"][0]["cuda_ns"] == 1_000_000
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "yes"))
+def test_finalize_rejects_non_boolean_already_synchronized(value):
+    profiler, _ = _profiler([0.0, 1.0])
+    profiler.begin_step(
+        batch_kind="decode",
+        is_decode=True,
+        active_sequence_count=4,
+        request_set_sha256="a" * 64,
+        dispatch="graph",
+    )
+    profiler.end_step()
+
+    with pytest.raises(
+        ValueError,
+        match="already_synchronized must be a bool",
+    ):
+        profiler.finalize(already_synchronized=value)
+
+
+def test_profile_rows_bind_only_the_active_command_identity():
+    command_module = _load_command_timeline()
+    profiler, _ = _profiler(
+        [0.0, 0.25, 0.75, 1.0, 1.0, 2.0],
+        active_command_trace=(
+            command_module.active_model_runner_command_trace
+        ),
+    )
+    identity = _command_identity(command_module)
+
+    with command_module.command_trace_scope(identity):
+        profiler.begin_step(
+            batch_kind="decode",
+            is_decode=True,
+            active_sequence_count=4,
+            request_set_sha256="a" * 64,
+            dispatch="graph",
+        )
+        with profiler.collective(
+            "row_parallel_all_reduce",
+            FakeTensor(),
+        ):
+            pass
+        profiler.end_step()
+
+    profiler.begin_step(
+        batch_kind="decode",
+        is_decode=True,
+        active_sequence_count=4,
+        request_set_sha256="a" * 64,
+        dispatch="graph",
+    )
+    profiler.end_step()
+
+    snapshot = profiler.finalize()
+    identity_fields = (
+        "command_id",
+        "engine_step_id",
+        "repeat_index",
+    )
+    assert tuple(
+        snapshot["steps"][0][name]
+        for name in identity_fields
+    ) == (9, 4, 2)
+    assert tuple(
+        snapshot["collectives"][0][name]
+        for name in identity_fields
+    ) == (9, 4, 2)
+    assert tuple(
+        snapshot["steps"][1][name]
+        for name in identity_fields
+    ) == (None, None, None)
 
 
 def test_prefill_has_no_decode_ordinal_and_decode_ordinals_increment():

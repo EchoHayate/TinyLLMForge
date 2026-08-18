@@ -43,6 +43,7 @@ DEFAULT_PROMPT_SEEDS = (
     "For exact reproducibility repeat one two three four five. ",
     "The benchmark sequence is red green blue amber violet. ",
 )
+COMMAND_TIMELINE_MAX_ROWS = 8192
 
 
 def build_prompt_token_batches(
@@ -99,6 +100,158 @@ def _rank_rows(rows, *, name: str) -> tuple[dict, ...]:
     if tuple(row.get("rank") for row in normalized) != tuple(range(4)):
         raise ValueError(f"{name} rank inventory mismatch")
     return normalized
+
+
+def _canonical_sha256(value) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _request_set_sha256(prompt_rows: list[dict]) -> str:
+    return _canonical_sha256([
+        row["token_ids"]
+        for row in prompt_rows
+    ])
+
+
+def _validate_command_timeline_run(run: dict) -> None:
+    try:
+        repeat = run["repeat"]
+        timeline = run["runtime"]["command_timeline"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "command timeline evidence is missing"
+        ) from error
+    if timeline.get("schema_version") != 1:
+        raise ValueError("command timeline schema is invalid")
+    for name in ("rank_snapshots", "cuda_rank_snapshots"):
+        rows = timeline.get(name)
+        if (
+            not isinstance(rows, list)
+            or len(rows) != TENSOR_PARALLEL_SIZE
+            or [row.get("rank") for row in rows]
+            != list(range(TENSOR_PARALLEL_SIZE))
+        ):
+            raise ValueError(
+                f"command timeline {name} rank inventory is invalid"
+            )
+    cuda_rows = timeline["cuda_rank_snapshots"]
+    if any(
+        not isinstance(row.get("steps"), list)
+        or not row["steps"]
+        for row in cuda_rows
+    ):
+        raise ValueError("command timeline CUDA step evidence is missing")
+    engine_steps = timeline.get("engine_steps")
+    if not isinstance(engine_steps, list) or not engine_steps:
+        raise ValueError("command timeline engine step evidence is missing")
+    if not isinstance(repeat, int) or isinstance(repeat, bool):
+        raise ValueError("command timeline repeat is invalid")
+
+
+def _validate_command_timeline_graph_lifecycle(
+    *,
+    warmup_results: list[dict],
+    measured_results: list[dict],
+    cuda_graph_mode: str,
+) -> None:
+    for run in warmup_results + measured_results:
+        _validate_command_timeline_run(run)
+    runs = warmup_results + measured_results
+    if len(warmup_results) != 1 or len(measured_results) != 5:
+        raise ValueError(
+            "command timeline requires one warmup and five measured runs"
+        )
+    for rank in range(TENSOR_PARALLEL_SIZE):
+        counter_rows = [
+            run["correctness"]["rank_graph_counters"][rank]
+            for run in runs
+        ]
+        resource_rows = [
+            run["correctness"]["rank_graph_resources"][rank]
+            for run in runs
+        ]
+        if cuda_graph_mode == "eager":
+            if any(
+                any(
+                    row.get(name) != 0
+                    for name in (
+                        "capture_attempts",
+                        "captures",
+                        "replays",
+                        "quarantines",
+                        "fallback_pre_replay",
+                    )
+                )
+                for row in counter_rows
+            ) or any(
+                any(
+                    row.get(name) != 0
+                    for name in (
+                        "ready_entry_count",
+                        "static_bytes",
+                        "reserved_bytes",
+                        "total_capture_ns",
+                    )
+                )
+                for row in resource_rows
+            ):
+                raise ValueError(
+                    "eager command timeline has CUDA graph activity"
+                )
+            continue
+        warmup_counter = counter_rows[0]
+        if (
+            warmup_counter.get("capture_attempts") != 1
+            or warmup_counter.get("captures") != 1
+            or warmup_counter.get("replays") != 4
+        ):
+            raise ValueError(
+                "graph warmup counters are invalid"
+            )
+        if (
+            warmup_counter.get("quarantines") != 0
+            or warmup_counter.get("fallback_pre_replay") != 0
+        ):
+            raise ValueError(
+                "graph warmup contains quarantine or fallback"
+            )
+        warmup_resource = resource_rows[0]
+        if warmup_resource.get("ready_entry_count") != 1:
+            raise ValueError("graph warmup ready entry count is invalid")
+        previous_replays = 4
+        for counter, resources in zip(
+            counter_rows[1:],
+            resource_rows[1:],
+        ):
+            if (
+                counter.get("capture_attempts") != 1
+                or counter.get("captures") != 1
+            ):
+                raise ValueError(
+                    "graph capture counters changed"
+                )
+            if counter.get("replays") != previous_replays + 4:
+                raise ValueError(
+                    "graph replay counters did not grow by four"
+                )
+            if (
+                counter.get("quarantines") != 0
+                or counter.get("fallback_pre_replay") != 0
+            ):
+                raise ValueError(
+                    "graph measured run contains quarantine or fallback"
+                )
+            if resources != warmup_resource:
+                raise ValueError(
+                    "graph retained resources changed"
+                )
+            previous_replays = counter["replays"]
 
 
 def _allocator_snapshot(rank_snapshot: dict) -> dict:
@@ -734,6 +887,8 @@ def run_request_batch(
     synchronize,
     clock_ns,
     repeat: int,
+    command_timeline: bool = False,
+    command_timeline_repeat_index: int | None = None,
 ) -> dict:
     if policy not in POLICIES:
         raise ValueError("unsupported policy")
@@ -753,6 +908,25 @@ def run_request_batch(
         name="peak memory reset",
     )
     synchronize()
+    timeline_evidence = None
+    if command_timeline:
+        if command_timeline_repeat_index is None:
+            command_timeline_repeat_index = repeat
+        if (
+            isinstance(command_timeline_repeat_index, bool)
+            or not isinstance(command_timeline_repeat_index, int)
+            or command_timeline_repeat_index < 0
+        ):
+            raise ValueError(
+                "command timeline repeat index must be "
+                "a non-negative integer"
+            )
+        engine.reset_command_timeline(60.0)
+        engine.begin_command_timeline_repeat(
+            command_timeline_repeat_index,
+            request_set_sha256=_request_set_sha256(prompt_rows),
+        )
+        engine.reset_decode_internal_profile(timeout_s=60.0)
     request_start_ns = clock_ns()
     for prompt_row in prompt_rows:
         token_ids = prompt_row.get("token_ids")
@@ -801,6 +975,23 @@ def run_request_batch(
                 sequence_id,
                 request_finish_ns,
             )
+
+    if command_timeline:
+        engine.end_command_timeline_repeat()
+        command_rows = engine.command_timeline_snapshots(
+            timeout_s=60.0
+        )
+        cuda_result = engine.finalize_decode_internal_profile(
+            already_synchronized=True,
+            timeout_s=60.0,
+        )
+        step_rows = engine.engine_step_timeline_snapshot()
+        timeline_evidence = {
+            "schema_version": 1,
+            "rank_snapshots": list(command_rows),
+            "cuda_rank_snapshots": list(cuda_result["ranks"]),
+            "engine_steps": list(step_rows["steps"]),
+        }
 
     if policy == "learned":
         engine.flush_pending_hybrid_state_releases(timeout_s=60.0)
@@ -852,6 +1043,16 @@ def run_request_batch(
         for token_ids in outputs
     ):
         raise RuntimeError("engine output token count is incorrect")
+    runtime = _runtime_result(
+        observations,
+        policy=policy,
+        draft_executor_timing=draft_executor_timing,
+        draft_executor_proposal_detail=(
+            draft_executor_proposal_detail
+        ),
+    )
+    if timeline_evidence is not None:
+        runtime["command_timeline"] = timeline_evidence
     return {
         "repeat": repeat,
         "outputs": outputs,
@@ -862,14 +1063,7 @@ def run_request_batch(
             finished_at_ns=finished_at_ns,
             expected_output_tokens=expected_output_tokens,
         ),
-        "runtime": _runtime_result(
-            observations,
-            policy=policy,
-            draft_executor_timing=draft_executor_timing,
-            draft_executor_proposal_detail=(
-                draft_executor_proposal_detail
-            ),
-        ),
+        "runtime": runtime,
         "memory": memory,
         "proposal_kv": proposal_kv,
         "correctness": correctness,
@@ -891,6 +1085,7 @@ def run_policy_campaign(
     warmup_runs: int = WARMUP_RUNS,
     measured_runs: int = MEASURED_RUNS,
     cuda_graph_mode: str = "eager",
+    command_timeline: bool = False,
     cuda_graph_max_reserved_bytes: int | None = None,
     cuda_graph_max_total_capture_ns: int | None = None,
     cuda_graph_max_single_capture_ns: int | None = None,
@@ -905,6 +1100,8 @@ def run_policy_campaign(
         raise ValueError(
             "target policy cannot enable draft CUDA graphs"
         )
+    if not isinstance(command_timeline, bool):
+        raise ValueError("command_timeline must be a bool")
     graph_budget_overrides = {
         "cuda_graph_max_reserved_bytes": (
             cuda_graph_max_reserved_bytes
@@ -940,6 +1137,22 @@ def run_policy_campaign(
             raise ValueError(
                 f"{name} must be an integer >= {minimum}"
             )
+    diagnostic_counts = warmup_runs == 1 and measured_runs == 5
+    if diagnostic_counts and not command_timeline:
+        raise ValueError(
+            "one warmup and five measured runs require command timeline"
+        )
+    if command_timeline and (
+        policy != "learned"
+        or batch_size != 4
+        or not diagnostic_counts
+        or TENSOR_PARALLEL_SIZE != 4
+        or MAX_PROPOSAL_TOKENS != 4
+    ):
+        raise ValueError(
+            "command timeline requires learned TP4/B4/Q4 with "
+            "one warmup and five measured runs"
+        )
     proposal_slot_capacity = proposal_slot_capacity_for_batch(
         batch_size
     )
@@ -967,18 +1180,45 @@ def run_policy_campaign(
             max_tokens=MAX_OUTPUT_TOKENS,
             ignore_eos=True,
         )
+        if command_timeline:
+            engine.configure_command_timeline(
+                True,
+                COMMAND_TIMELINE_MAX_ROWS,
+                60.0,
+            )
+            engine.configure_decode_internal_profile(
+                True,
+                (
+                    "autoregressive-draft-command-timeline/"
+                    f"{cuda_graph_mode}"
+                ),
+                timeout_s=60.0,
+            )
 
-        def run_once(repeat: int):
+        def run_once(
+            repeat: int,
+            command_timeline_repeat_index: int,
+        ):
             started_at_unix_ns = wall_clock_ns()
+            run_batch_kwargs = {
+                "engine": engine,
+                "policy": policy,
+                "prompt_rows": prompt_rows,
+                "sampling_params": sampling_params,
+                "expected_output_tokens": MAX_OUTPUT_TOKENS,
+                "synchronize": synchronize,
+                "clock_ns": clock_ns,
+                "repeat": repeat,
+            }
+            if command_timeline:
+                run_batch_kwargs.update({
+                    "command_timeline": True,
+                    "command_timeline_repeat_index": (
+                        command_timeline_repeat_index
+                    ),
+                })
             result = run_batch_fn(
-                engine=engine,
-                policy=policy,
-                prompt_rows=prompt_rows,
-                sampling_params=sampling_params,
-                expected_output_tokens=MAX_OUTPUT_TOKENS,
-                synchronize=synchronize,
-                clock_ns=clock_ns,
-                repeat=repeat,
+                **run_batch_kwargs,
             )
             finished_at_unix_ns = wall_clock_ns()
             if (
@@ -999,13 +1239,19 @@ def run_policy_campaign(
             }
 
         warmup_results = [
-            run_once(repeat)
+            run_once(repeat, repeat + warmup_runs)
             for repeat in range(-warmup_runs, 0)
         ]
         measured_results = [
-            run_once(repeat)
+            run_once(repeat, warmup_runs + repeat)
             for repeat in range(measured_runs)
         ]
+        if command_timeline:
+            _validate_command_timeline_graph_lifecycle(
+                warmup_results=warmup_results,
+                measured_results=measured_results,
+                cuda_graph_mode=cuda_graph_mode,
+            )
         config = getattr(engine, "config", None)
         return {
             "policy": policy,
@@ -1092,6 +1338,10 @@ def parse_args(argv=None):
         default="eager",
     )
     parser.add_argument(
+        "--command-timeline",
+        action="store_true",
+    )
+    parser.add_argument(
         "--cuda-graph-max-reserved-bytes",
         type=int,
     )
@@ -1116,6 +1366,7 @@ def main(argv=None):
         warmup_runs=args.warmup_runs,
         measured_runs=args.measured_runs,
         cuda_graph_mode=args.cuda_graph_mode,
+        command_timeline=args.command_timeline,
         cuda_graph_max_reserved_bytes=(
             args.cuda_graph_max_reserved_bytes
         ),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 import copy
+import sys
 import time
 
 
@@ -14,6 +15,15 @@ _ACTIVE_PROFILER = ContextVar(
 
 def active_decode_internal_profiler():
     return _ACTIVE_PROFILER.get()
+
+
+def _active_model_runner_command_trace():
+    module = sys.modules.get(
+        "tinyvllm.engine.model_runner_command_timeline"
+    )
+    if module is None:
+        return None
+    return module.active_model_runner_command_trace()
 
 
 def profile_collective(operation, tensor, call):
@@ -58,6 +68,7 @@ class DecodeInternalProfiler:
         synchronize=None,
         nvtx_range_factory=None,
         profile_label=None,
+        active_command_trace=None,
         enabled=True,
     ):
         self.rank = int(rank)
@@ -74,6 +85,11 @@ class DecodeInternalProfiler:
             str(profile_label).strip("/")
             if profile_label
             else f"rank={self.rank}"
+        )
+        self._active_command_trace = (
+            active_command_trace
+            if callable(active_command_trace)
+            else _active_model_runner_command_trace
         )
         self._active_step = None
         self._active_token = None
@@ -140,6 +156,7 @@ class DecodeInternalProfiler:
         nvtx_context.__enter__()
         start_event = self._event_factory()
         start_event.record()
+        command_trace = self._active_command_trace()
         self._active_step = {
             "rank": self.rank,
             "step_index": len(self._pending_steps),
@@ -149,6 +166,21 @@ class DecodeInternalProfiler:
             "active_sequence_count": int(active_sequence_count),
             "request_set_sha256": request_set_sha256,
             "dispatch": dispatch,
+            "command_id": (
+                None
+                if command_trace is None
+                else command_trace.command_id
+            ),
+            "engine_step_id": (
+                None
+                if command_trace is None
+                else command_trace.engine_step_id
+            ),
+            "repeat_index": (
+                None
+                if command_trace is None
+                else command_trace.repeat_index
+            ),
             "_wall_start_ns": self._clock_ns(),
             "_cuda_start": start_event,
             "_nvtx_context": nvtx_context,
@@ -201,6 +233,9 @@ class DecodeInternalProfiler:
                 "rank": self.rank,
                 "step_index": self._active_step["step_index"],
                 "decode_ordinal": self._active_step["decode_ordinal"],
+                "command_id": self._active_step["command_id"],
+                "engine_step_id": self._active_step["engine_step_id"],
+                "repeat_index": self._active_step["repeat_index"],
                 "operation": str(operation),
                 "tensor_shape": [
                     int(value) for value in tensor.shape
@@ -222,7 +257,11 @@ class DecodeInternalProfiler:
             * 1_000_000
         )
 
-    def finalize(self):
+    def finalize(self, *, already_synchronized=False):
+        if not isinstance(already_synchronized, bool):
+            raise ValueError(
+                "already_synchronized must be a bool"
+            )
         if self._finalized is not None:
             return copy.deepcopy(self._finalized)
         if not self.enabled:
@@ -238,7 +277,8 @@ class DecodeInternalProfiler:
             raise RuntimeError(
                 "cannot finalize with an active profiler step"
             )
-        self._synchronize()
+        if not already_synchronized:
+            self._synchronize()
         steps = []
         for pending in self._pending_steps:
             wall_ns = (
@@ -257,6 +297,9 @@ class DecodeInternalProfiler:
                     "active_sequence_count",
                     "request_set_sha256",
                     "dispatch",
+                    "command_id",
+                    "engine_step_id",
+                    "repeat_index",
                 )
             } | {
                 "wall_ns": wall_ns,
@@ -274,6 +317,9 @@ class DecodeInternalProfiler:
                     "rank",
                     "step_index",
                     "decode_ordinal",
+                    "command_id",
+                    "engine_step_id",
+                    "repeat_index",
                     "operation",
                     "tensor_shape",
                     "tensor_dtype",

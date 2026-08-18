@@ -171,7 +171,44 @@
 - Review-2 Minor syntax verification: PASS
 - Review-2 Minor commit: `SELF/HEAD`
 
-- Task 4: pending
+## Task 4: Deferred CUDA Identity and Worker Export
+
+- Status: completed
+- Base SHA: `8da831bb9d4622adc8bb0ed556ebd3f8830a5933`
+- Brief: `.superpowers/sdd/task-4-brief.md`
+- Required invariants:
+  - CUDA rows bind exact command, engine-step, and repeat identity;
+  - deferred profiler may reuse an existing synchronization and never adds a new measured-path fence;
+  - timeline disabled preserves the current worker schema and defaults;
+  - timeline enabled configures all ranks once, resets immediately before timing, and snapshots only after the existing final synchronization;
+  - each measured repeat exports four rank command snapshots, four CUDA rank snapshots, and one engine-step snapshot;
+  - canonical JSON is used for request and selection digests;
+  - schema-v2 default warmup/measured counts remain unchanged outside the new diagnostic mode.
+- Implementer: Codex
+- Implementer report: `.superpowers/sdd/task-4-implementer-report.md`
+- RED: `12 failed, 1 passed, 51 deselected in 0.25s`
+- Review-fix RED cycles:
+  - non-negative warmup timeline identity:
+    `1 failed in 0.16s`;
+  - disabled callback keyword compatibility:
+    `1 failed in 0.11s`.
+- Review-fix targeted GREEN: `2 passed in 0.05s`
+- Focused GREEN: `13 passed, 51 deselected in 0.20s`
+- Complete Task 4 regression: `117 passed in 2.87s`
+- Task 1 + Task 2 regression: `56 passed in 1.46s`
+- Task 3 four-file regression: `215 passed in 7.62s`
+- Exact inherited-fingerprint regression:
+  `57 passed, 6 failed in 1.92s`
+  - five failures stop at
+    `ValueError: LLMEngine source hash is invalid`;
+  - one failure reports the inherited prerequisite source-closure mismatch;
+  - frozen source fingerprints were not rewritten.
+- Syntax verification: PASS
+- Static no-new-sync/wait/fence check: PASS
+- Implementer self-review: no remaining P0-P2 findings
+- Implementer commit: `SELF/HEAD`
+- Task review: pending
+
 - Task 5: pending
 - Task 6: pending
 - Task 7: pending

@@ -2196,6 +2196,8 @@ class ModelRunner:
         self.decode_internal_profiler = (
             DecodeInternalProfiler.disabled(rank=rank)
         )
+        self._decode_internal_profile_enabled = False
+        self._decode_internal_profile_label = "disabled"
         self.hybrid_state_runtime_bridge = None
         self._last_hybrid_state_slot_ids = None
         self.qwen35_hybrid_model_owner = None
@@ -3585,6 +3587,9 @@ class ModelRunner:
             "configure_command_timeline",
             "reset_command_timeline",
             "command_timeline_snapshot",
+            "configure_decode_internal_profile",
+            "reset_decode_internal_profile",
+            "finalize_decode_internal_profile",
         )
         if self.command_timeline.enabled and not management_method:
             trace_context = self._active_command_timeline_trace()
@@ -9323,6 +9328,8 @@ class ModelRunner:
             raise ValueError(
                 "decode internal profile label must be non-empty"
             )
+        self._decode_internal_profile_enabled = enabled
+        self._decode_internal_profile_label = profile_label
         self.decode_internal_profiler = (
             DecodeInternalProfiler(
                 rank=self.rank,
@@ -9342,8 +9349,19 @@ class ModelRunner:
             "profile_label": profile_label,
         }
 
-    def finalize_decode_internal_profile(self):
-        return self.decode_internal_profiler.finalize()
+    def reset_decode_internal_profile(self):
+        return self.configure_decode_internal_profile(
+            self._decode_internal_profile_enabled,
+            self._decode_internal_profile_label,
+        )
+
+    def finalize_decode_internal_profile(
+        self,
+        already_synchronized=False,
+    ):
+        return self.decode_internal_profiler.finalize(
+            already_synchronized=already_synchronized,
+        )
 
     def run(self, seqs:list[Sequence], is_prefill: bool, do_sample: bool = True,
             batch_kind: str | None = None,

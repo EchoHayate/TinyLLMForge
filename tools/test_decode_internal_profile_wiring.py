@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import copy
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +43,27 @@ def _called_names(node):
     return names
 
 
+def _string_constants(node):
+    return {
+        child.value
+        for child in ast.walk(node)
+        if isinstance(child, ast.Constant)
+        and isinstance(child.value, str)
+    }
+
+
+def _compile_method(path, class_name, method_name):
+    node = copy.deepcopy(
+        _class_method(path, class_name, method_name)
+    )
+    node.decorator_list = []
+    module = ast.Module(body=[node], type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace = {}
+    exec(compile(module, str(path), "exec"), namespace)
+    return namespace[method_name]
+
+
 def test_model_runner_exposes_profile_lifecycle_and_wraps_run():
     configure = _class_method(
         MODEL_RUNNER,
@@ -51,10 +75,21 @@ def test_model_runner_exposes_profile_lifecycle_and_wraps_run():
         "ModelRunner",
         "finalize_decode_internal_profile",
     )
+    reset = _class_method(
+        MODEL_RUNNER,
+        "ModelRunner",
+        "reset_decode_internal_profile",
+    )
     run = _class_method(MODEL_RUNNER, "ModelRunner", "run")
 
     assert "DecodeInternalProfiler" in _called_names(configure)
+    assert "configure_decode_internal_profile" in _called_names(reset)
     assert "finalize" in _called_names(finalize)
+    assert "already_synchronized" in {
+        argument.arg
+        for argument in finalize.args.args
+        + finalize.args.kwonlyargs
+    }
     assert "run_profiled_step" in _called_names(run)
     assert "_run_model_step" in _called_names(run)
 
@@ -70,9 +105,67 @@ def test_llm_engine_exposes_acknowledged_profile_lifecycle():
         "LLMEngine",
         "finalize_decode_internal_profile",
     )
+    reset = _class_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "reset_decode_internal_profile",
+    )
 
     assert "call_model_runner_acknowledged" in _called_names(configure)
+    assert "call_model_runner_acknowledged" in _called_names(reset)
     assert "call_model_runner_acknowledged" in _called_names(finalize)
+    assert "configure_decode_internal_profile" in _string_constants(
+        configure
+    )
+    assert "reset_decode_internal_profile" in _string_constants(reset)
+    assert "finalize_decode_internal_profile" in _string_constants(
+        finalize
+    )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args", "kwargs"),
+    (
+        (
+            "configure_decode_internal_profile",
+            (True, "diagnostic"),
+            {"timeout_s": 60.0},
+        ),
+        (
+            "reset_decode_internal_profile",
+            (),
+            {"timeout_s": 60.0},
+        ),
+        (
+            "finalize_decode_internal_profile",
+            (),
+            {
+                "already_synchronized": True,
+                "timeout_s": 60.0,
+            },
+        ),
+    ),
+)
+def test_command_timeline_profile_helpers_propagate_all_rank_failure(
+    method_name,
+    args,
+    kwargs,
+):
+    sentinel = RuntimeError("rank 3 failed")
+
+    class FakeEngine:
+        def call_model_runner_acknowledged(self, *call_args, **call_kwargs):
+            raise sentinel
+
+    method = _compile_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        method_name,
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        method(FakeEngine(), *args, **kwargs)
+
+    assert exc_info.value is sentinel
 
 
 def test_collective_call_sites_use_profile_helper():

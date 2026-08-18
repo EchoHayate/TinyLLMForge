@@ -740,6 +740,9 @@ class _FakeWorkerEngine:
         self.next_sequence_id = 0
         self.last_step_observation = None
         self.authority_offset = 0
+        self.command_timeline_configurations = 0
+        self.decode_profile_configurations = 0
+        self.command_timeline_repeat = None
 
     def is_finished(self):
         return not self.pending
@@ -761,6 +764,144 @@ class _FakeWorkerEngine:
             }
             for rank in range(4)
         )
+
+    def configure_command_timeline(
+        self,
+        enabled,
+        max_rows,
+        timeout_s,
+    ):
+        assert enabled is True
+        assert max_rows > 0
+        assert timeout_s == 60.0
+        self.command_timeline_configurations += 1
+        self.events.append("configure-command-timeline")
+        return {
+            "enabled": True,
+            "max_rows": max_rows,
+            "rank_inventory": [0, 1, 2, 3],
+        }
+
+    def configure_decode_internal_profile(
+        self,
+        enabled,
+        profile_label,
+        *,
+        timeout_s,
+    ):
+        assert enabled is True
+        assert profile_label
+        assert timeout_s == 60.0
+        self.decode_profile_configurations += 1
+        self.events.append("configure-decode-profile")
+        return {
+            "enabled": True,
+            "rank_inventory": [0, 1, 2, 3],
+        }
+
+    def reset_command_timeline(self, timeout_s):
+        assert timeout_s == 60.0
+        self.events.append("reset-command-timeline")
+        return tuple(
+            {"rank": rank, "enabled": True, "max_rows": 8192}
+            for rank in range(4)
+        )
+
+    def reset_decode_internal_profile(self, *, timeout_s):
+        assert timeout_s == 60.0
+        self.events.append("reset-decode-profile")
+        return tuple(
+            {
+                "rank": rank,
+                "enabled": True,
+                "profile_label": "command-timeline",
+            }
+            for rank in range(4)
+        )
+
+    def begin_command_timeline_repeat(
+        self,
+        repeat_index,
+        *,
+        request_set_sha256,
+    ):
+        assert repeat_index >= 0
+        assert self.command_timeline_repeat is None
+        self.command_timeline_repeat = repeat_index
+        self.events.append(
+            ("begin-repeat", repeat_index, request_set_sha256)
+        )
+        return {
+            "repeat_index": repeat_index,
+            "request_set_sha256": request_set_sha256,
+        }
+
+    def end_command_timeline_repeat(self):
+        assert self.command_timeline_repeat is not None
+        repeat_index = self.command_timeline_repeat
+        self.command_timeline_repeat = None
+        self.events.append(("end-repeat", repeat_index))
+        return {"repeat_index": repeat_index}
+
+    def command_timeline_snapshots(self, timeout_s):
+        assert timeout_s == 60.0
+        self.events.append("command-snapshot")
+        return tuple(
+            {
+                "schema_version": 1,
+                "rank": rank,
+                "enabled": True,
+                "clock": {"boot_id": "boot"},
+                "rows": [{"command_id": 10 + rank}],
+                "dropped_rows": 0,
+            }
+            for rank in range(4)
+        )
+
+    def finalize_decode_internal_profile(
+        self,
+        *,
+        already_synchronized,
+        timeout_s,
+    ):
+        assert already_synchronized is True
+        assert timeout_s == 60.0
+        self.events.append("cuda-snapshot")
+        repeat_index = (
+            self.step_index
+            if self.command_timeline_repeat is None
+            else self.command_timeline_repeat
+        )
+        return {
+            "enabled": True,
+            "rank_inventory": [0, 1, 2, 3],
+            "ranks": [
+                {
+                    "rank": rank,
+                    "enabled": True,
+                    "finalization_status": "complete",
+                    "steps": [{
+                        "command_id": 10 + rank,
+                        "engine_step_id": 0,
+                        "repeat_index": repeat_index,
+                    }],
+                    "collectives": [],
+                }
+                for rank in range(4)
+            ],
+        }
+
+    def engine_step_timeline_snapshot(self):
+        self.events.append("step-snapshot")
+        return {
+            "schema_version": 1,
+            "enabled": True,
+            "steps": [
+                {"engine_step_id": index}
+                for index in range(self.step_index)
+            ],
+            "dropped_steps": 0,
+        }
 
     def memory_snapshots(self, *, timeout_s):
         assert timeout_s == 60.0
@@ -1035,6 +1176,94 @@ def test_worker_records_step_end_timing_memory_and_proposal_kv_delta():
     assert engine.events.index("reset") < engine.events.index("step-0")
     assert engine.events.index("memory") > engine.events.index("step-1")
     assert len(synchronize_calls) == 3
+    assert "command_timeline" not in run["runtime"]
+    assert not any(
+        (
+            isinstance(event, str)
+            and (
+                "timeline" in event
+                or "decode-profile" in event
+                or event.endswith("-snapshot")
+            )
+        )
+        for event in engine.events
+    )
+
+
+def test_worker_command_timeline_reset_snapshot_order_and_cardinality():
+    engine = _FakeWorkerEngine()
+    clock_values = iter(
+        (1_000_000_000, 1_200_000_000, 1_500_000_000)
+    )
+
+    def synchronize():
+        engine.events.append("synchronize")
+
+    def clock_ns():
+        engine.events.append("request-clock")
+        return next(clock_values)
+
+    run = _worker_module().run_request_batch(
+        engine=engine,
+        policy="learned",
+        prompt_rows=_worker_prompt_rows(batch_size=4),
+        sampling_params=_FakeSamplingParams(),
+        expected_output_tokens=16,
+        synchronize=synchronize,
+        clock_ns=clock_ns,
+        repeat=3,
+        command_timeline=True,
+    )
+
+    timeline = run["runtime"]["command_timeline"]
+    assert timeline["schema_version"] == 1
+    assert len(timeline["rank_snapshots"]) == 4
+    assert len(timeline["cuda_rank_snapshots"]) == 4
+    assert len(timeline["engine_steps"]) == 2
+    assert all(
+        row["steps"]
+        for row in timeline["cuda_rank_snapshots"]
+    )
+    first_request_clock = engine.events.index("request-clock")
+    assert engine.events.index("authority") < engine.events.index(
+        "reset-command-timeline"
+    )
+    assert engine.events.index("reset") < engine.events.index(
+        "reset-command-timeline"
+    )
+    assert engine.events.index("reset-decode-profile") + 1 == (
+        first_request_clock
+    )
+    final_step = engine.events.index("step-1")
+    final_synchronize = engine.events.index(
+        "synchronize",
+        final_step,
+    )
+    for event in (
+        "command-snapshot",
+        "cuda-snapshot",
+        "step-snapshot",
+    ):
+        assert engine.events.index(event) > final_synchronize
+    begin_event = next(
+        event
+        for event in engine.events
+        if isinstance(event, tuple)
+        and event[0] == "begin-repeat"
+    )
+    assert begin_event == (
+        "begin-repeat",
+        3,
+        hashlib.sha256(
+            json.dumps(
+                [
+                    row["token_ids"]
+                    for row in _worker_prompt_rows(batch_size=4)
+                ],
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+    )
 
 
 def test_worker_proposal_detail_uses_parent_critical_rank():
@@ -1111,12 +1340,22 @@ def test_policy_campaign_runs_one_warmup_three_measured_and_closes():
     repeats = []
     engine_factory_calls = []
 
-    def run_batch_fn(**kwargs):
-        repeats.append(kwargs["repeat"])
+    def run_batch_fn(
+        *,
+        engine,
+        policy,
+        prompt_rows,
+        sampling_params,
+        expected_output_tokens,
+        synchronize,
+        clock_ns,
+        repeat,
+    ):
+        repeats.append(repeat)
         return _run(
-            policy=kwargs["policy"],
-            batch_size=len(kwargs["prompt_rows"]),
-            repeat=kwargs["repeat"],
+            policy=policy,
+            batch_size=len(prompt_rows),
+            repeat=repeat,
         )
 
     def engine_factory(*args, **kwargs):
@@ -1145,6 +1384,219 @@ def test_policy_campaign_runs_one_warmup_three_measured_and_closes():
     assert engine_factory_calls[0][1]["proposal_slot_capacity"] == (
         4 * (256 + 16 + 4)
     )
+    assert set(result) == {
+        "policy",
+        "batch_size",
+        "prompt_rows",
+        "warmup_runs",
+        "measured_runs",
+        "target_checkpoint_identifier",
+        "draft_checkpoint_identifier",
+        "tokenizer_identifier",
+        "dtype",
+        "tensor_parallel_size",
+        "proposal_kv_allocator",
+        "proposal_slot_capacity",
+        "cuda_graph_mode",
+        "cuda_graph_budget_overrides",
+    }
+
+
+def _command_timeline_graph_run(*, repeat, replays, mode="graph"):
+    run = _run(policy="learned", batch_size=4, repeat=repeat)
+    graph = mode == "graph"
+    run["correctness"] = {
+        "rank_graph_counters": [
+            {
+                "rank": rank,
+                "capture_attempts": 1 if graph else 0,
+                "captures": 1 if graph else 0,
+                "replays": replays if graph else 0,
+                "quarantines": 0,
+                "fallback_pre_replay": 0,
+            }
+            for rank in range(4)
+        ],
+        "rank_graph_resources": [
+            {
+                "rank": rank,
+                "ready_entry_count": 1 if graph else 0,
+                "static_bytes": 55_000 if graph else 0,
+                "reserved_bytes": 700_000_000 if graph else 0,
+                "total_capture_ns": 1_500_000_000 if graph else 0,
+            }
+            for rank in range(4)
+        ],
+    }
+    run["runtime"]["command_timeline"] = {
+        "schema_version": 1,
+        "rank_snapshots": [{"rank": rank} for rank in range(4)],
+        "cuda_rank_snapshots": [
+            {
+                "rank": rank,
+                "steps": [{
+                    "command_id": rank + 1,
+                    "engine_step_id": 0,
+                    "repeat_index": repeat,
+                }],
+            }
+            for rank in range(4)
+        ],
+        "engine_steps": [{"engine_step_id": 0}],
+    }
+    return run
+
+
+def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
+    adapter = _FakeWorkerAdapter()
+    timeline_repeat_indices = []
+
+    def run_batch_fn(**kwargs):
+        repeat = kwargs["repeat"]
+        timeline_repeat_index = kwargs[
+            "command_timeline_repeat_index"
+        ]
+        timeline_repeat_indices.append(timeline_repeat_index)
+        run = _command_timeline_graph_run(
+            repeat=repeat,
+            replays=4 * (repeat + 2),
+        )
+        for rank_row in run["runtime"]["command_timeline"][
+            "cuda_rank_snapshots"
+        ]:
+            rank_row["steps"][0]["repeat_index"] = (
+                timeline_repeat_index
+            )
+        return run
+
+    result = _worker_module().run_policy_campaign(
+        target_model="/models/target",
+        draft_model="/models/draft",
+        policy="learned",
+        batch_size=4,
+        engine_factory=lambda *args, **kwargs: adapter,
+        sampling_params_type=_FakeSamplingParams,
+        synchronize=lambda: None,
+        clock_ns=lambda: 0,
+        run_batch_fn=run_batch_fn,
+        warmup_runs=1,
+        measured_runs=5,
+        cuda_graph_mode="graph",
+        command_timeline=True,
+    )
+
+    assert adapter.engine.command_timeline_configurations == 1
+    assert adapter.engine.decode_profile_configurations == 1
+    assert len(result["warmup_runs"]) == 1
+    assert len(result["measured_runs"]) == 5
+    assert timeline_repeat_indices == [0, 1, 2, 3, 4, 5]
+    assert [run["repeat"] for run in result["warmup_runs"]] == [-1]
+    assert [run["repeat"] for run in result["measured_runs"]] == [
+        0,
+        1,
+        2,
+        3,
+        4,
+    ]
+    assert [
+        run["correctness"]["rank_graph_counters"][0]["replays"]
+        for run in result["warmup_runs"] + result["measured_runs"]
+    ] == [4, 8, 12, 16, 20, 24]
+    assert all(
+        len(run["runtime"]["command_timeline"]["rank_snapshots"])
+        == 4
+        and len(
+            run["runtime"]["command_timeline"][
+                "cuda_rank_snapshots"
+            ]
+        )
+        == 4
+        and run["runtime"]["command_timeline"]["engine_steps"]
+        for run in result["measured_runs"]
+    )
+
+
+def test_policy_campaign_rejects_diagnostic_counts_without_timeline():
+    adapter = _FakeWorkerAdapter()
+
+    with pytest.raises(
+        ValueError,
+        match="one warmup and five measured runs require command timeline",
+    ):
+        _worker_module().run_policy_campaign(
+            target_model="/models/target",
+            draft_model="/models/draft",
+            policy="learned",
+            batch_size=4,
+            engine_factory=lambda *args, **kwargs: adapter,
+            sampling_params_type=_FakeSamplingParams,
+            synchronize=lambda: None,
+            clock_ns=lambda: 0,
+            run_batch_fn=lambda **kwargs: _run(
+                policy=kwargs["policy"],
+                batch_size=len(kwargs["prompt_rows"]),
+                repeat=kwargs["repeat"],
+            ),
+            warmup_runs=1,
+            measured_runs=5,
+        )
+
+
+def test_policy_campaign_command_timeline_rejects_graph_counter_drift():
+    adapter = _FakeWorkerAdapter()
+
+    def run_batch_fn(**kwargs):
+        repeat = kwargs["repeat"]
+        run = _command_timeline_graph_run(
+            repeat=repeat,
+            replays=4 * (repeat + 2),
+        )
+        if repeat == 2:
+            run["correctness"]["rank_graph_counters"][3][
+                "captures"
+            ] = 2
+        return run
+
+    with pytest.raises(
+        ValueError,
+        match="graph capture counters changed",
+    ):
+        _worker_module().run_policy_campaign(
+            target_model="/models/target",
+            draft_model="/models/draft",
+            policy="learned",
+            batch_size=4,
+            engine_factory=lambda *args, **kwargs: adapter,
+            sampling_params_type=_FakeSamplingParams,
+            synchronize=lambda: None,
+            clock_ns=lambda: 0,
+            run_batch_fn=run_batch_fn,
+            warmup_runs=1,
+            measured_runs=5,
+            cuda_graph_mode="graph",
+            command_timeline=True,
+        )
+
+
+def test_worker_cli_command_timeline_is_opt_in():
+    module = _worker_module()
+    common = [
+        "--target-model",
+        "/models/target",
+        "--draft-model",
+        "/models/draft",
+        "--policy",
+        "learned",
+        "--batch-size",
+        "4",
+        "--out",
+        "/tmp/result.json",
+    ]
+
+    assert module.parse_args(common).command_timeline is False
+    assert module.parse_args(
+        [*common, "--command-timeline"]
+    ).command_timeline is True
 
 
 def test_policy_campaign_forwards_explicit_graph_budget_overrides():

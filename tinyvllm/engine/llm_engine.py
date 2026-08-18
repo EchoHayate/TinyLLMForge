@@ -1101,10 +1101,62 @@ class LLMEngine:
             "rank_inventory": list(expected),
         }
 
-    def finalize_decode_internal_profile(self, *, timeout_s):
+    def reset_decode_internal_profile(self, *, timeout_s):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "reset_decode_internal_profile",
+                timeout_s=timeout_s,
+            )
+        )
+        ranked = [(0, local_result)]
+        ranked.extend(
+            (ack.rank, ack.result)
+            for ack in worker_acks
+        )
+        rows = {}
+        reference = None
+        for outer_rank, row in ranked:
+            if (
+                not isinstance(row, dict)
+                or row.get("rank") != outer_rank
+                or not isinstance(row.get("enabled"), bool)
+                or not isinstance(row.get("profile_label"), str)
+                or not row.get("profile_label")
+                or outer_rank in rows
+            ):
+                raise RuntimeError(
+                    "decode internal profile reset "
+                    "acknowledgement is invalid"
+                )
+            non_rank = {
+                key: value
+                for key, value in row.items()
+                if key != "rank"
+            }
+            if reference is None:
+                reference = non_rank
+            elif non_rank != reference:
+                raise RuntimeError(
+                    "decode internal profile reset ranks disagree"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise RuntimeError(
+                "decode internal profile reset ranks are incomplete"
+            )
+        return tuple(rows[rank] for rank in expected)
+
+    def finalize_decode_internal_profile(
+        self,
+        *,
+        already_synchronized=False,
+        timeout_s,
+    ):
         local_result, worker_acks = (
             self.call_model_runner_acknowledged(
                 "finalize_decode_internal_profile",
+                already_synchronized,
                 timeout_s=timeout_s,
             )
         )
