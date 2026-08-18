@@ -260,7 +260,37 @@
 - Review-2 fix self-review: no remaining P0-P2 findings
 - Review-2 fix commit: `SELF/HEAD`
 
-- Task 5: pending
+## Task 5: Canonical Exact-Identity Diagnostic
+
+- Status: implemented
+- Base SHA: `ebded1867081a1c6fac96331c2fe5cf8c21bb751`
+- Brief: `.superpowers/sdd/task-5-brief.md`
+- Required invariants:
+  - fixed 8-epoch, 4-block balanced schedule with 40 measured batches;
+  - exact TP4/B4/Q4, prompt/output/temperature, Proposal-KV, graph/eager, source/checkpoint/tokenizer/GPU identity;
+  - exact token/proposal/accepted-prefix/transaction parity and no padding/oversizing;
+  - command/CUDA/engine/telemetry joins are identity-complete and conservation fail-closed;
+  - stationarity and localization thresholds are inclusive at the approved boundaries;
+  - classification precedence is correctness, timeline/conservation, stationarity, then localization;
+  - derived artifact fields are recomputed from embedded normalized epochs;
+  - immutable schema-v2 payloads are not imported, mutated, or reinterpreted.
+- Implementer: Codex
+- Implementer report: `.superpowers/sdd/task-5-implementer-report.md`
+- RED: collection error because the Task 5 diagnostic module did not exist,
+  `1 error in 0.13s`
+- Initial implementation run: `68 passed, 15 failed`
+- Intermediate implementation run: `70 passed, 13 failed`
+- First complete Task 5 GREEN: `83 passed in 5.18s`
+- Review-fix RED: `7 failed, 83 deselected in 0.39s`
+- Review-fix targeted GREEN: `7 passed, 83 deselected in 0.12s`
+- Final complete Task 5 GREEN: `90 passed in 5.22s`
+- Reused-helper regression: `217 passed in 6.79s`
+- Python syntax verification: PASS
+- `git diff --check`: PASS
+- Implementer self-review: no remaining P0-P2 findings
+- Implementer commit: `SELF/HEAD`
+- Task review: pending
+
 - Task 6: pending
 - Task 7: pending
 - Task 8: pending
