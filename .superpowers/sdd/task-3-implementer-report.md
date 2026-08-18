@@ -304,3 +304,63 @@ The inherited failure shape is unchanged: five tests stop at
 prerequisite source-closure mismatch. Frozen fingerprints were not rewritten.
 
 Syntax compilation completed with exit code `0` and no diagnostics.
+
+## Review 2 Minor Follow-up
+
+Review authority:
+
+```text
+.superpowers/sdd/task-3-review-2.md
+```
+
+The re-review approved Task 3 correctness and identified one remaining
+performance-relevant Minor: speculative publication still requested five
+generator-backed phase contexts when the normal recorder existed with
+`enabled=False`.
+
+The publication helper now performs the same one-time enabled check as
+`LLMEngine.step()`:
+
+- enabled recorders use `timeline.phase` exactly as before;
+- absent or disabled recorders reuse one non-generator `nullcontext`; and
+- proposal lifecycle prepare, Proposal-KV commit, Scheduler commit, proposal
+  lifecycle commit, and side-state seal remain in the same order and
+  exception boundaries.
+
+### Review-2 RED evidence
+
+The focused test used a normal
+`EngineStepTimelineRecorder(enabled=False)`, reached the complete speculative
+publication sequence, and observed five calls to `recorder.phase()`:
+
+```text
+1 failed, 29 deselected in 0.17s
+```
+
+### Review-2 GREEN evidence
+
+Targeted disabled-publication test:
+
+```text
+1 passed, 29 deselected in 0.08s
+```
+
+Full Task 3 focused selection:
+
+```text
+28 passed, 27 deselected in 0.25s
+```
+
+Planned four-file regression:
+
+```text
+215 passed in 7.02s
+```
+
+Task 1 and Task 2 regression:
+
+```text
+56 passed in 1.28s
+```
+
+Syntax compilation completed with exit code `0` and no diagnostics.

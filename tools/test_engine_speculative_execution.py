@@ -36,6 +36,9 @@ sys.modules.setdefault("tinyvllm.engine", engine_package)
 sys.modules.setdefault("tinyvllm.speculative", speculative_package)
 
 import tinyvllm.engine.speculative_execution as speculative_execution
+from tinyvllm.engine.engine_step_timeline import (
+    EngineStepTimelineRecorder,
+)
 from tinyvllm.engine.speculative_execution import (
     build_engine_speculative_commit_rows,
     build_engine_speculative_partition,
@@ -290,6 +293,8 @@ def test_publication_timeline_phases_wrap_existing_operation_order():
     )
 
     class Timeline:
+        enabled = True
+
         @contextmanager
         def phase(self, name):
             events.append(("phase_start", name))
@@ -323,6 +328,39 @@ def test_publication_timeline_phases_wrap_existing_operation_order():
         ("phase_start", "side_state_seal"),
         ("phase_end", "side_state_seal"),
     ]
+
+
+def test_disabled_recorder_publication_does_not_request_phase_contexts():
+    events = []
+    helper, engine, runtime, prepared, plan = (
+        _publication_helper(events)
+    )
+    recorder = EngineStepTimelineRecorder(enabled=False)
+    phase_requests = []
+    recorder_phase = recorder.phase
+
+    def record_phase_request(name):
+        phase_requests.append(name)
+        return recorder_phase(name)
+
+    recorder.phase = record_phase_request
+    engine.engine_step_timeline = recorder
+
+    helper(
+        engine,
+        runtime,
+        prepared,
+        (plan,),
+        object(),
+    )
+
+    assert events == [
+        "proposal_finalize_prepared",
+        "target_kv_committed",
+        "scheduler_committed",
+        "proposal_finalize_committed",
+    ]
+    assert phase_requests == []
 
 
 def test_publication_records_transactional_commit_timing():

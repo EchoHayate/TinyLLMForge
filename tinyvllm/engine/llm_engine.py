@@ -218,10 +218,13 @@ def _commit_prepared_speculative_publication(
     started_at = clock()
     timeline = getattr(engine, "engine_step_timeline", None)
 
-    def phase(name):
-        if timeline is None:
-            return __import__("contextlib").nullcontext()
-        return timeline.phase(name)
+    if timeline is None or not timeline.enabled:
+        disabled_phase = __import__("contextlib").nullcontext()
+
+        def phase(name):
+            return disabled_phase
+    else:
+        phase = timeline.phase
 
     lifecycle_dispatch = (
         lambda method_name, *args: (

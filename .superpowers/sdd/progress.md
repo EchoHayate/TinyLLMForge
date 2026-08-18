@@ -96,7 +96,7 @@
 
 ## Task 3: Engine Step Envelope and Conservation
 
-- Status: completed; review fixes applied
+- Status: completed; review-2 Minor follow-up applied
 - Base SHA: `7de6f15f357c919185b1dfe5f810089da4b80cce`
 - Brief: `.superpowers/sdd/task-3-brief.md`
 - Required invariants:
@@ -130,6 +130,7 @@
 - Syntax verification: PASS
 - Implementer commit: `SELF/HEAD`
 - Task review: `.superpowers/sdd/task-3-review-1.md` — Needs fixes
+- Task re-review 1: `.superpowers/sdd/task-3-review-2.md` — Approved with Minor follow-up
 - Review-fix RED cycles:
   - operation exception plus phase-exit clock failure, and clock-only
     phase-exit failure:
@@ -156,6 +157,18 @@
   - frozen source fingerprints were not rewritten.
 - Review-fix syntax verification: PASS
 - Review-fix commit: `SELF/HEAD`
+- Review-2 Minor RED:
+  `1 failed, 29 deselected in 0.17s`
+- Review-2 Minor targeted GREEN:
+  `1 passed, 29 deselected in 0.08s`
+- Review-2 Minor full Task 3 focused GREEN:
+  `28 passed, 27 deselected in 0.25s`
+- Review-2 Minor planned four-file regression:
+  `215 passed in 7.02s`
+- Review-2 Minor Task 1 + Task 2 regression:
+  `56 passed in 1.28s`
+- Review-2 Minor syntax verification: PASS
+- Review-2 Minor commit: `SELF/HEAD`
 
 - Task 4: pending
 - Task 5: pending
