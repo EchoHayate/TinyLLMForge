@@ -49083,6 +49083,20 @@ runner py_compile:
   PASS
 ```
 
-The next safe action is to commit and push this fail-fast improvement, then
-rerun the same read-only preflight against the pushed source commit. Do not
-run `execute` unless the result is `READY` with four clean GPUs.
+Post-push live verification confirmed:
+
+```text
+status=INCONCLUSIVE_ENVIRONMENT
+available_idle_gpu_count=3
+gpu_indices=[]
+gpu_uuids=[]
+Kerberos gate=READY
+preflight exit=2
+traceback=NONE
+primary destination created=NO
+controller destination created=NO
+```
+
+The remaining blocker is external GPU occupancy only. Re-run the same
+read-only preflight when a fourth GPU becomes fully idle and process-free.
+Do not run `execute` unless the result is `READY` with four clean GPUs.

@@ -236,6 +236,11 @@ now passes:
 The campaign remains unstarted and the tag remains reusable because no
 primary or controller run directory was created.
 
+Post-push live verification confirmed that the CLI now emits the structured
+result and exits with status `2`, without a traceback. The result included
+the pushed source commit, a READY Kerberos receipt above the 5400-second
+minimum, the untouched primary/controller paths, and an empty GPU selection.
+
 ## Final Classification
 
 ```text
