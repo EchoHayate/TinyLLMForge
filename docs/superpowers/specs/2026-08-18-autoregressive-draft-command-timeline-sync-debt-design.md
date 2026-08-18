@@ -581,6 +581,30 @@ manifest.sha256
 existing raw GPU and host telemetry per epoch. `source/` is the frozen
 source tree used by the remote workload.
 
+### Sitian-only storage override
+
+All generated archives, bundles, raw outputs, telemetry, logs, receipts,
+manifests, caches, validation roots, and review artifacts live under:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+```
+
+The runner uses two immutable remote destinations for a fresh tag:
+
+```text
+runs/<run-tag>
+controller-verification/<run-tag>
+```
+
+The first is the execution bundle. The second is a new no-overwrite copy used
+for the independent controller verification. No source archive, downloaded
+bundle, validation copy, log, receipt, or cache may be created on the local
+machine, local `/tmp`, local `/private/tmp`, remote `/`, or remote `/tmp`.
+The historical `verify.command-timeline.local.*` names remain stable detached
+attestation filenames, but `local` denotes the second controller verification
+invocation, not a physical local-machine artifact directory.
+
 ### Canonical assembler
 
 The assembler:
@@ -608,8 +632,10 @@ The verifier must not trust assembler summaries. It independently:
 - compares the full canonical structure; and
 - verifies the final checksum manifest.
 
-The same verifier runs against the frozen remote source and current local
-source. Both receipts must agree on all semantic fields.
+The same verifier runs first against the frozen source inside the primary
+remote bundle and then against the current source snapshot from the immutable
+remote controller copy. Both receipts must agree on all semantic fields after
+removing only `verified_at_utc`, `verification_location`, and `artifact_path`.
 
 ### Manifest
 
@@ -660,7 +686,7 @@ Focused tests must cover:
 - block schedule and position balance;
 - localization threshold boundaries;
 - tampered raw input, source, timeline, and manifest rejection;
-- remote/local verifier semantic equivalence; and
+- primary/controller-copy verifier semantic equivalence; and
 - runner safety, ownership, Kerberos TTL, GPU cleanliness, and immutable tag
   handling.
 
@@ -717,7 +743,7 @@ verified:
 5. the source-bound runner, assembler, independent verifier, and manifest
    contracts pass local fail-closed tests;
 6. a separately authorized fresh remote bundle completes all eight epochs;
-7. remote and local verifier receipts agree;
+7. primary and controller-copy verifier receipts agree;
 8. the manifest passes a fresh checksum verification;
 9. a completion audit maps every requirement to retained evidence; and
 10. only then is a boundary-specific optimization proposed.

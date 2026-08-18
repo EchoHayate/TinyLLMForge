@@ -16,6 +16,12 @@
 - Keep branch `feat/kv-sparse-attention`.
 - Preserve immutable campaign `20260817-steady-state-schema-v2-tp4-b4-q4-r3`.
 - Do not stage `artifacts/`, `experiments/`, source archives, PID files, worker logs, or raw remote output.
+- Never create generated archives, bundles, raw outputs, telemetry, logs,
+  receipts, manifests, caches, validation roots, or review artifacts on the
+  local machine, local `/tmp`, local `/private/tmp`, remote `/`, or remote
+  `/tmp`.
+- Keep every generated Task 7/8 object under
+  `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.
 - Stage only explicit intended source, test, spec, plan, audit, and handoff paths.
 - Every commit uses `git -c core.hooksPath=/dev/null commit`.
 - Every commit message ends with exactly one `Co-authored-by: TRAE CLI <noreply@bytedance.com>` trailer.
@@ -1305,6 +1311,16 @@ git push origin feat/kv-sparse-attention
 - `run_bundle(*, run_tag, command_runner=subprocess.run)`.
 - CLI subcommands `preflight`, `execute`, and `verify-local`.
 
+`verify-local` is retained as a stable CLI/API name, but it verifies the
+no-overwrite remote controller copy at:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  controller-verification/<run-tag>
+```
+
+It must not create or consume a physical local-machine artifact directory.
+
 - [ ] **Step 1: Write runner command, source closure, and safety tests**
 
 Assert the exact schedule:
@@ -1372,17 +1388,18 @@ current process.
 Reuse CUDA Graph runner preflight helpers and test:
 
 - tag must match `[A-Za-z0-9_-]+`;
-- local and remote destination must not already exist;
+- primary remote and controller-copy destinations must not already exist;
 - Kerberos principal/TGT and at least `5400 s` remaining lifetime;
 - exactly four selected GPUs, each under idle memory/utilization thresholds;
 - no unrelated selected-GPU compute process;
 - GPU UUID set retained before and after every epoch;
-- partial evidence transferred on owned-worker failure;
+- partial evidence copied to the remote controller-copy destination on
+  owned-worker failure;
 - no next epoch after a failed epoch;
 - pre-manifest verifier must pass before manifest creation;
 - remote verifier must pass after manifest;
-- local verifier must pass after transfer; and
-- normalized remote/local receipts must be identical.
+- controller-copy verifier must pass after the no-overwrite remote copy; and
+- normalized primary/controller-copy receipts must be identical.
 
 - [ ] **Step 3: Run runner tests and confirm RED**
 
@@ -1399,7 +1416,9 @@ Expected: missing runner and five-repeat command support.
 - [ ] **Step 4: Implement the local runner contract**
 
 Base connection, Kerberos, GPU parser, archive safety, and source hash logic on
-`run_autoregressive_draft_cuda_graph_gate_remote.py`.
+`run_autoregressive_draft_cuda_graph_gate_remote.py`. Production execution
+streams or builds the source archive only under the remote task root; it
+never materializes a local source archive.
 
 For each epoch:
 
@@ -1421,8 +1440,9 @@ After all epochs:
 4. generate `manifest.sha256` over every authoritative file except detached
    attestations;
 5. run remote verification;
-6. transfer to a new local artifact directory;
-7. run local verification against current source; and
+6. copy to a new no-overwrite remote controller-verification directory;
+7. run the second verification against the controller copy and current
+   remote source snapshot; and
 8. compare normalized receipts.
 
 Do not execute the runner in this task.
