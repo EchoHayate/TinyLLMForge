@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+import fnmatch
 import json
 import os
 from pathlib import Path, PurePosixPath
 import shlex
+import stat
 import subprocess
 import sys
 import threading
@@ -30,92 +32,28 @@ APPROVED_REPO_ROOTS = frozenset(
         REMOTE_TASK1_TEST_ROOT,
     }
 )
-FORBIDDEN_PARTS = {
+FORBIDDEN_ALWAYS_DIRS = (
     ".git",
-    "__pycache__",
-    ".pytest_cache",
     "artifacts",
     "experiments",
-    "log",
-    "logs",
-}
-FORBIDDEN_SUFFIXES = {
-    ".7z",
-    ".bz2",
-    ".pyc",
-    ".log",
-    ".lz",
-    ".lz4",
-    ".pid",
-    ".rar",
-    ".tar",
-    ".tbz",
-    ".tbz2",
-    ".tgz",
-    ".gz",
-    ".txz",
-    ".xz",
-    ".zip",
-    ".zst",
-}
-INITIAL_SNAPSHOT_EXCLUDES = (
-    ".git",
-    ".git/*",
-    "*/.git",
-    "*/.git/*",
-    "artifacts",
-    "artifacts/*",
-    "*/artifacts",
-    "*/artifacts/*",
-    "experiments",
-    "experiments/*",
-    "*/experiments",
-    "*/experiments/*",
-    "__pycache__",
-    "__pycache__/*",
-    "*/__pycache__",
-    "*/__pycache__/*",
-    ".pytest_cache",
-    ".pytest_cache/*",
-    "*/.pytest_cache",
-    "*/.pytest_cache/*",
+)
+FORBIDDEN_CACHE_DIRS = (
     ".cache",
-    ".cache/*",
-    "*/.cache",
-    "*/.cache/*",
     "cache",
-    "cache/*",
-    "*/cache",
-    "*/cache/*",
     "caches",
-    "caches/*",
-    "*/caches",
-    "*/caches/*",
+    "__pycache__",
+    ".pytest_cache",
+)
+FORBIDDEN_LOG_DIRS = (
     "log",
-    "log/*",
-    "*/log",
-    "*/log/*",
     "logs",
-    "logs/*",
-    "*/logs",
-    "*/logs/*",
+)
+FORBIDDEN_RAW_DIRS = (
     "raw-output",
-    "raw-output/*",
-    "*/raw-output",
-    "*/raw-output/*",
     "raw_output",
-    "raw_output/*",
-    "*/raw_output",
-    "*/raw_output/*",
     "rawoutput",
-    "rawoutput/*",
-    "*/rawoutput",
-    "*/rawoutput/*",
-    "._*",
-    "*.pyc",
-    "*.log",
-    "*.pid",
-    "*.out",
+)
+FORBIDDEN_ARCHIVE_PATTERNS = (
     "*.7z",
     "*.bz2",
     "*.gz",
@@ -131,8 +69,27 @@ INITIAL_SNAPSHOT_EXCLUDES = (
     "*.xz",
     "*.zip",
     "*.zst",
+)
+FORBIDDEN_PARTS = frozenset(
+    FORBIDDEN_ALWAYS_DIRS
+    + FORBIDDEN_CACHE_DIRS
+    + FORBIDDEN_LOG_DIRS
+    + FORBIDDEN_RAW_DIRS
+)
+FORBIDDEN_FILE_PATTERNS = (
+    "._*",
+    "*.pyc",
+    "*.log",
+    "*.pid",
+    "*.out",
+    *FORBIDDEN_ARCHIVE_PATTERNS,
     "*review-package.diff",
 )
+INITIAL_SNAPSHOT_EXCLUDES = tuple(
+    pattern
+    for name in sorted(FORBIDDEN_PARTS)
+    for pattern in (name, f"{name}/*", f"*/{name}", f"*/{name}/*")
+) + FORBIDDEN_FILE_PATTERNS
 
 
 @dataclass(frozen=True)
@@ -169,6 +126,16 @@ def remote_layout(config: ScratchConfig) -> dict[str, str]:
     }
 
 
+def _is_forbidden_path(path: PurePosixPath) -> bool:
+    return (
+        any(part in FORBIDDEN_PARTS for part in path.parts)
+        or any(
+            fnmatch.fnmatchcase(path.name, pattern)
+            for pattern in FORBIDDEN_FILE_PATTERNS
+        )
+    )
+
+
 def validate_relative_paths(
     paths: Sequence[str],
     *,
@@ -196,22 +163,26 @@ def validate_relative_paths(
             or path.parts[0].startswith("-")
         ):
             raise ValueError(f"path is not repository-relative: {raw_path}")
-        if any(part in FORBIDDEN_PARTS for part in path.parts):
+        if _is_forbidden_path(path):
             raise ValueError(f"path is forbidden: {raw_path}")
-        if (
-            path.suffix.lower() in FORBIDDEN_SUFFIXES
-            or path.name.endswith("-review-package.diff")
-        ):
-            raise ValueError(f"path is forbidden: {raw_path}")
-        candidate = root.joinpath(*path.parts)
+        candidate = root
+        final_mode = None
         try:
-            resolved = candidate.resolve(strict=True)
-            resolved.relative_to(root)
-        except (FileNotFoundError, ValueError) as exc:
+            for index, part in enumerate(path.parts):
+                candidate = candidate / part
+                mode = candidate.lstat().st_mode
+                if stat.S_ISLNK(mode):
+                    raise ValueError(f"path contains symlink: {raw_path}")
+                if index < len(path.parts) - 1 and not stat.S_ISDIR(mode):
+                    raise ValueError(
+                        f"path is not a repository file: {raw_path}"
+                    )
+                final_mode = mode
+        except FileNotFoundError as exc:
             raise ValueError(
                 f"path is not a repository file: {raw_path}"
             ) from exc
-        if not resolved.is_file():
+        if final_mode is None or not stat.S_ISREG(final_mode):
             raise ValueError(f"path is not a repository file: {raw_path}")
         normalized.append(path.as_posix())
     return tuple(dict.fromkeys(normalized))
@@ -288,34 +259,42 @@ def run_with_retries(
     return last
 
 
-def _initial_snapshot_verify_checks() -> str:
+def _shell_find_names(patterns: Sequence[str]) -> str:
+    return "\\( " + " -o ".join(
+        f"-name {shlex.quote(pattern)}" for pattern in patterns
+    ) + " \\)"
+
+
+def _forbidden_verification_checks(find_root: str = "source") -> str:
+    cache_names = _shell_find_names(FORBIDDEN_CACHE_DIRS)
+    log_names = _shell_find_names(FORBIDDEN_LOG_DIRS)
+    raw_names = _shell_find_names(FORBIDDEN_RAW_DIRS)
+    archive_names = _shell_find_names(FORBIDDEN_ARCHIVE_PATTERNS)
     return (
-        "test \"$(find source -name '.git' | wc -l)\" -eq 0; "
-        "test \"$(find source -type d -name 'artifacts' | wc -l)\" -eq 0; "
-        "test \"$(find source -type d -name 'experiments' | wc -l)\" -eq 0; "
-        "test \"$(find source -type d \\( "
-        "-name '__pycache__' -o -name '.pytest_cache' -o "
-        "-name '.cache' -o -name 'cache' -o -name 'caches' "
-        "\\) | wc -l)\" -eq 0; "
-        "test \"$(find source -type f -name '*.pyc' | wc -l)\" -eq 0; "
-        "test \"$(find source \\( -type d \\( "
-        "-name 'log' -o -name 'logs' \\) -o "
-        "-type f -name '*.log' \\) | wc -l)\" -eq 0; "
-        "test \"$(find source -type f -name '*.pid' | wc -l)\" -eq 0; "
-        "test \"$(find source \\( -type d \\( "
-        "-name 'raw-output' -o -name 'raw_output' -o "
-        "-name 'rawoutput' \\) -o -type f -name '*.out' "
-        "\\) | wc -l)\" -eq 0; "
-        "test \"$(find source -type f \\( "
-        "-name '*.7z' -o -name '*.bz2' -o -name '*.gz' -o "
-        "-name '*.lz' -o -name '*.lz4' -o -name '*.rar' -o "
-        "-name '*.tar' -o -name '*.tar.*' -o -name '*.tbz' -o "
-        "-name '*.tbz2' -o -name '*.tgz' -o -name '*.txz' -o "
-        "-name '*.xz' -o -name '*.zip' -o -name '*.zst' "
-        "\\) | wc -l)\" -eq 0; "
-        "test \"$(find source -name '*review-package.diff' | wc -l)\" "
+        f"test \"$(find {find_root} -name "
+        f"{shlex.quote(FORBIDDEN_ALWAYS_DIRS[0])} | wc -l)\" -eq 0; "
+        f"test \"$(find {find_root} -type d -name "
+        f"{shlex.quote(FORBIDDEN_ALWAYS_DIRS[1])} | wc -l)\" "
         "-eq 0; "
-        "test \"$(find source -name '._*' | wc -l)\" -eq 0"
+        f"test \"$(find {find_root} -type d -name "
+        f"{shlex.quote(FORBIDDEN_ALWAYS_DIRS[2])} | wc -l)\" "
+        "-eq 0; "
+        f"test \"$(find {find_root} -type d {cache_names} | wc -l)\" "
+        "-eq 0; "
+        f"test \"$(find {find_root} -type f -name '*.pyc' | wc -l)\" "
+        "-eq 0; "
+        f"test \"$(find {find_root} \\( -type d {log_names} -o "
+        "-type f -name '*.log' \\) | wc -l)\" -eq 0; "
+        f"test \"$(find {find_root} -type f -name '*.pid' | wc -l)\" "
+        "-eq 0; "
+        f"test \"$(find {find_root} \\( -type d {raw_names} -o "
+        "-type f -name '*.out' "
+        "\\) | wc -l)\" -eq 0; "
+        f"test \"$(find {find_root} -type f {archive_names} | wc -l)\" "
+        "-eq 0; "
+        f"test \"$(find {find_root} -name '*review-package.diff' | wc -l)\" "
+        "-eq 0; "
+        f"test \"$(find {find_root} -name '._*' | wc -l)\" -eq 0"
     )
 
 
@@ -341,7 +320,7 @@ def initial_snapshot_commands(
             "set -eu; "
             f"stage={shlex.quote(stage)}; "
             "cd \"$stage\"; "
-            + _initial_snapshot_verify_checks()
+            + _forbidden_verification_checks()
         ),
     }
 
@@ -389,66 +368,127 @@ def _decode_output(value: bytes | str | None) -> str:
     return value
 
 
+def _close_pipe(pipe: object | None) -> None:
+    if pipe is None:
+        return
+    try:
+        pipe.close()
+    except OSError:
+        pass
+
+
+def _reap_process(
+    process: subprocess.Popen[bytes] | None,
+    *,
+    timeout: float = 1.0,
+) -> None:
+    if process is None:
+        return
+    try:
+        running = process.poll() is None
+    except OSError:
+        running = True
+    if running:
+        try:
+            process.terminate()
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        process.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except (OSError, ProcessLookupError):
+        return
+    try:
+        process.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        process.wait(timeout=timeout)
+    except (OSError, ProcessLookupError, subprocess.TimeoutExpired):
+        pass
+
+
 def _stream_with_retries(
     producer_argv: Sequence[str],
     consumer_argv: Sequence[str],
     *,
     config: ScratchConfig,
+    attempts: Optional[int] = None,
 ) -> subprocess.CompletedProcess[str]:
     environment = _command_environment(config)
+    attempt_limit = config.attempts if attempts is None else attempts
+    if attempt_limit < 1:
+        raise ValueError("attempts must be at least one")
     last = None
-    for attempt in range(1, config.attempts + 1):
-        producer = subprocess.Popen(
-            producer_argv,
-            cwd=config.repo_root,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        assert producer.stdout is not None
-        consumer = subprocess.Popen(
-            consumer_argv,
-            env=environment,
-            stdin=producer.stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        producer.stdout.close()
+    for attempt in range(1, attempt_limit + 1):
+        producer = None
+        consumer = None
+        stderr_thread = None
+        stderr_thread_started = False
         producer_stderr_chunks = []
+        try:
+            producer = subprocess.Popen(
+                producer_argv,
+                cwd=config.repo_root,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert producer.stdout is not None
+            consumer = subprocess.Popen(
+                consumer_argv,
+                env=environment,
+                stdin=producer.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            producer.stdout.close()
 
-        def drain_producer_stderr() -> None:
-            if producer.stderr is not None:
-                producer_stderr_chunks.append(producer.stderr.read())
+            def drain_producer_stderr() -> None:
+                if producer is not None and producer.stderr is not None:
+                    producer_stderr_chunks.append(producer.stderr.read())
 
-        stderr_thread = threading.Thread(
-            target=drain_producer_stderr,
-            daemon=True,
-        )
-        stderr_thread.start()
-        consumer_stdout, consumer_stderr = consumer.communicate()
-        producer_returncode = producer.wait()
-        stderr_thread.join()
-        producer_stderr = (
-            b""
-            if not producer_stderr_chunks
-            else producer_stderr_chunks[0]
-        )
-        returncode = (
-            producer_returncode
-            if producer_returncode != 0
-            else consumer.returncode
-        )
-        stderr = _decode_output(producer_stderr)
-        stderr += _decode_output(consumer_stderr)
-        last = subprocess.CompletedProcess(
-            args=tuple(consumer_argv),
-            returncode=returncode,
-            stdout=_decode_output(consumer_stdout),
-            stderr=stderr,
-        )
+            stderr_thread = threading.Thread(
+                target=drain_producer_stderr,
+                daemon=True,
+            )
+            stderr_thread.start()
+            stderr_thread_started = True
+            consumer_stdout, consumer_stderr = consumer.communicate()
+            producer_returncode = producer.wait()
+            stderr_thread.join()
+            producer_stderr = (
+                b""
+                if not producer_stderr_chunks
+                else producer_stderr_chunks[0]
+            )
+            returncode = (
+                producer_returncode
+                if producer_returncode != 0
+                else consumer.returncode
+            )
+            stderr = _decode_output(producer_stderr)
+            stderr += _decode_output(consumer_stderr)
+            last = subprocess.CompletedProcess(
+                args=tuple(consumer_argv),
+                returncode=returncode,
+                stdout=_decode_output(consumer_stdout),
+                stderr=stderr,
+            )
+        finally:
+            _close_pipe(None if producer is None else producer.stdout)
+            _reap_process(consumer)
+            _reap_process(producer)
+            if stderr_thread is not None and stderr_thread_started:
+                stderr_thread.join(timeout=1.0)
+            _close_pipe(None if producer is None else producer.stderr)
+            _close_pipe(None if consumer is None else consumer.stdout)
+            _close_pipe(None if consumer is None else consumer.stderr)
         if last.returncode == 0:
             return last
-        if attempt < config.attempts:
+        if attempt < attempt_limit:
             time.sleep(2.0)
     assert last is not None
     return last
@@ -480,7 +520,7 @@ def _initial_promotion_command(
         "test \"$(cat \"$head_receipt\")\" = \"$head\"; "
         "wc -l < \"$hash_receipt\"; exit 0; fi; "
         "cd \"$stage\"; "
-        + _initial_snapshot_verify_checks()
+        + _forbidden_verification_checks()
         + "; "
         "mkdir -p \"$receipts\"; "
         "head_new=\"$receipts/.source-head-$nonce\"; "
@@ -559,33 +599,53 @@ def _incremental_remote_command(
     backup = f"{root}/.incoming-sync-{nonce}"
     path_receipt = f"{receipts}/sync-{nonce}.paths.txt"
     hash_receipt = f"{receipts}/sync-{nonce}.sha256"
+    state_receipt = f"{receipts}/sync-{nonce}.state"
+    lock = f"{root}/.sync-transaction-lock"
     backup_commands = []
     rollback_commands = []
     verify_commands = []
+    apply_commands = []
     for path in paths:
         quoted_path = shlex.quote(path)
         parent = PurePosixPath(path).parent.as_posix()
         quoted_parent = shlex.quote(parent)
+        temporary_name = f".sync-{nonce}-{PurePosixPath(path).name}"
+        temporary_path = (
+            PurePosixPath(path).parent / temporary_name
+        ).as_posix()
+        quoted_temporary_path = shlex.quote(temporary_path)
         backup_commands.append(
-            "mkdir -p \"$backup/files\"/"
+            "mkdir -p \"$backup/original\"/"
             f"{quoted_parent}; "
-            f"if test -f \"$source\"/{quoted_path} && "
-            f"test ! -L \"$source\"/{quoted_path}; then "
+            f"if test -e \"$source\"/{quoted_path} || "
+            f"test -L \"$source\"/{quoted_path}; then "
+            f"test -f \"$source\"/{quoted_path}; "
+            f"test ! -L \"$source\"/{quoted_path}; "
             f"cp -p \"$source\"/{quoted_path} "
-            f"\"$backup/files\"/{quoted_path}; "
+            f"\"$backup/original\"/{quoted_path}; "
             f"printf '%s\\n' {quoted_path} >> \"$backup/existing\"; "
             "fi"
         )
         rollback_commands.append(
+            f"if grep -Fqx -- {quoted_path} \"$backup/applied\"; then "
             f"if grep -Fqx -- {quoted_path} \"$backup/existing\"; then "
             f"mkdir -p \"$source\"/{quoted_parent}; "
-            f"cp -p \"$backup/files\"/{quoted_path} "
+            f"cp -p \"$backup/original\"/{quoted_path} "
             f"\"$source\"/{quoted_path} 2>/dev/null || true; "
-            f"else rm -f \"$source\"/{quoted_path}; fi"
+            f"else rm -f \"$source\"/{quoted_path}; fi; fi; "
+            f"rm -f \"$source\"/{quoted_temporary_path}"
         )
         verify_commands.append(
-            f"test -f \"$source\"/{quoted_path}; "
-            f"test ! -L \"$source\"/{quoted_path}"
+            f"test -f \"$backup/incoming\"/{quoted_path}; "
+            f"test ! -L \"$backup/incoming\"/{quoted_path}"
+        )
+        apply_commands.append(
+            f"mkdir -p \"$source\"/{quoted_parent}; "
+            f"cp -p \"$backup/incoming\"/{quoted_path} "
+            f"\"$source\"/{quoted_temporary_path}; "
+            f"mv \"$source\"/{quoted_temporary_path} "
+            f"\"$source\"/{quoted_path}; "
+            f"printf '%s\\n' {quoted_path} >> \"$backup/applied\""
         )
     path_lines = "".join(
         f"printf '%s\\n' {shlex.quote(path)}; " for path in paths
@@ -597,31 +657,94 @@ def _incremental_remote_command(
         f"receipts={shlex.quote(receipts)}; backup={shlex.quote(backup)}; "
         f"path_receipt={shlex.quote(path_receipt)}; "
         f"hash_receipt={shlex.quote(hash_receipt)}; "
+        f"state_receipt={shlex.quote(state_receipt)}; "
+        f"lock={shlex.quote(lock)}; "
         "test -d \"$source\"; test ! -L \"$source\"; "
-        "rm -rf \"$backup\"; mkdir -p \"$backup/files\" \"$receipts\"; "
-        ": > \"$backup/existing\"; committed=0; "
-        + "; ".join(backup_commands)
-        + "; rollback() { "
+        "mkdir -p \"$receipts\"; "
+        "if test -f \"$state_receipt\"; then "
+        "test \"$(cat \"$state_receipt\")\" = committed; "
+        "test -f \"$path_receipt\"; test -f \"$hash_receipt\"; "
+        "printf '%s\\n' \"$hash_receipt\"; exit 0; fi; "
+        "if test -e \"$backup\" || test -L \"$backup\" || "
+        "test -e \"$path_receipt\" || test -L \"$path_receipt\" || "
+        "test -e \"$hash_receipt\" || test -L \"$hash_receipt\"; then "
+        "exit 75; fi; "
+        "mkdir \"$backup\" || exit 75; "
+        "mkdir -p \"$backup/incoming\" \"$backup/original\"; "
+        ": > \"$backup/existing\"; : > \"$backup/applied\"; "
+        "committed=0; lock_owned=0; "
+        "published_path=0; published_hash=0; "
+        "rollback() { "
         "if test \"$committed\" -eq 0; then "
         + "; ".join(rollback_commands)
-        + "; rm -f \"$path_receipt\" \"$hash_receipt\"; fi; "
-        "rm -rf \"$backup\"; }; "
+        + "; "
+        "if test \"$published_path\" -eq 1; then "
+        "rm -f \"$path_receipt\"; fi; "
+        "if test \"$published_hash\" -eq 1; then "
+        "rm -f \"$hash_receipt\"; fi; "
+        "rm -rf \"$backup\"; "
+        "fi; "
+        "if test \"$lock_owned\" -eq 1; then rmdir \"$lock\" "
+        "2>/dev/null || true; fi; "
+        "}; "
         "trap rollback EXIT HUP INT TERM; "
-        "tar -xf - -C \"$source\"; "
+        "tar -xf - -C \"$backup/incoming\"; "
+        + _forbidden_verification_checks('"$backup/incoming"')
+        + "; "
         + "; ".join(verify_commands)
-        + "; path_new=\"$backup/paths.txt\"; "
+        + "; "
+        "path_new=\"$backup/paths.txt\"; "
         "hash_new=\"$backup/files.sha256\"; "
+        "state_new=\"$backup/state\"; "
         "{ "
         + path_lines
         + "} > \"$path_new\"; "
-        f"(cd \"$source\" && sha256sum -- {hash_operands}) > \"$hash_new\"; "
+        f"(cd \"$backup/incoming\" && sha256sum -- {hash_operands}) "
+        "> \"$hash_new\"; "
+        "if ! mkdir \"$lock\"; then exit 75; fi; lock_owned=1; "
+        + "; ".join(backup_commands)
+        + "; "
+        + "; ".join(apply_commands)
+        + "; "
         "mv \"$path_new\" \"$path_receipt\"; "
+        "published_path=1; "
         "mv \"$hash_new\" \"$hash_receipt\"; "
+        "published_hash=1; "
+        "printf 'committed\\n' > \"$state_new\"; "
+        "mv \"$state_new\" \"$state_receipt\"; "
         "committed=1; trap - EXIT HUP INT TERM; "
+        "rmdir \"$lock\"; lock_owned=0; "
         "rm -rf \"$backup\"; "
-        f"printf '%s\\n' {shlex.quote(hash_receipt)}"
+        "printf '%s\\n' \"$hash_receipt\""
     )
     return command, hash_receipt
+
+
+def _incremental_commit_status_command(
+    config: ScratchConfig,
+    *,
+    nonce: str,
+) -> str:
+    receipts = f"{config.remote_root}/receipts"
+    path_receipt = f"{receipts}/sync-{nonce}.paths.txt"
+    hash_receipt = f"{receipts}/sync-{nonce}.sha256"
+    state_receipt = f"{receipts}/sync-{nonce}.state"
+    return (
+        "set -eu; "
+        f"path_receipt={shlex.quote(path_receipt)}; "
+        f"hash_receipt={shlex.quote(hash_receipt)}; "
+        f"state_receipt={shlex.quote(state_receipt)}; "
+        "attempt=0; "
+        "while test \"$attempt\" -lt 100; do "
+        "if test -f \"$state_receipt\"; then "
+        "state=$(cat \"$state_receipt\"); "
+        "if test \"$state\" = committed; then "
+        "test -f \"$path_receipt\"; test -f \"$hash_receipt\"; "
+        "printf '%s\\n' \"$hash_receipt\"; exit 0; fi; "
+        "exit 1; fi; "
+        "attempt=$((attempt + 1)); sleep 0.1; "
+        "done; exit 1"
+    )
 
 
 def _initialize(config: ScratchConfig) -> tuple[str, int]:
@@ -678,10 +801,17 @@ def _sync(
         commands["tar"],
         (*ssh_argv(config), remote_command),
         config=config,
+        attempts=1,
     )
     receipt = result.stdout.strip()
-    if result.returncode != 0:
-        raise RuntimeError("incremental source sync failed")
+    if result.returncode != 0 or receipt != expected_receipt:
+        status = _remote_command(
+            config,
+            _incremental_commit_status_command(config, nonce=nonce),
+        )
+        receipt = status.stdout.strip()
+        if status.returncode != 0 or receipt != expected_receipt:
+            raise RuntimeError("incremental source sync failed")
     if receipt != expected_receipt:
         raise RuntimeError("invalid incremental sync receipt")
     return receipt, len(checked)

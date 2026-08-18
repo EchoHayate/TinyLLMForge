@@ -148,6 +148,41 @@ class PolicyTests(unittest.TestCase):
         finally:
             escape.unlink()
 
+    def test_explicit_paths_reject_symlink_operand_and_parent_before_sync(self):
+        module = load_module()
+        operand_link = ROOT / "tools" / ".sitian-in-repo-link.py"
+        parent_link = ROOT / ".sitian-in-repo-parent"
+        for candidate in (operand_link, parent_link):
+            if candidate.exists() or candidate.is_symlink():
+                candidate.unlink()
+        operand_link.symlink_to("sitian_remote_scratch.py")
+        parent_link.symlink_to("tools", target_is_directory=True)
+        paths = [
+            "tools/.sitian-in-repo-link.py",
+            ".sitian-in-repo-parent/sitian_remote_scratch.py",
+        ]
+        try:
+            for relative_path in paths:
+                with self.subTest(path=relative_path):
+                    with self.assertRaises(ValueError):
+                        module.validate_relative_paths([relative_path])
+            config = module.ScratchConfig.default(ROOT)
+            with mock.patch.object(module, "_stream_with_retries") as stream:
+                error = None
+                try:
+                    module._sync(config, [paths[0]])
+                except Exception as exc:
+                    error = exc
+                self.assertTrue(
+                    isinstance(error, ValueError) and not stream.called,
+                    "symlink path must be rejected before transport",
+                )
+            self.assertTrue(operand_link.is_symlink())
+            self.assertTrue(parent_link.is_symlink())
+        finally:
+            operand_link.unlink()
+            parent_link.unlink()
+
     def test_explicit_paths_reject_log_trees_and_common_archives(self):
         module = load_module()
         rejected = [
@@ -165,6 +200,42 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 with self.assertRaises(ValueError):
                     module.validate_relative_paths([path])
+
+    def test_explicit_paths_reject_every_shared_forbidden_class(self):
+        module = load_module()
+        rejected = [
+            ".cache/blob.bin",
+            "cache/blob.bin",
+            "caches/blob.bin",
+            "raw-output/chunk.txt",
+            "raw_output/chunk.txt",
+            "rawoutput/chunk.txt",
+            "tools/._metadata.py",
+            ".superpowers/sdd/taskreview-package.diff",
+        ]
+        created = []
+        try:
+            for relative_path in rejected:
+                candidate = ROOT / relative_path
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text("forbidden\n", encoding="utf-8")
+                created.append(candidate)
+            for relative_path in rejected:
+                with self.subTest(path=relative_path):
+                    with self.assertRaises(ValueError):
+                        module.validate_relative_paths([relative_path])
+        finally:
+            for candidate in reversed(created):
+                if candidate.exists() or candidate.is_symlink():
+                    candidate.unlink()
+            for relative_path in rejected:
+                parent = (ROOT / relative_path).parent
+                while parent != ROOT:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
 
     def test_incremental_tar_argv_terminates_options_before_paths(self):
         module = load_module()
@@ -360,6 +431,200 @@ class TransportTests(unittest.TestCase):
                 [".superpowers/sdd/task-5-review-package.diff"],
             )
 
+    def test_incremental_remote_verification_uses_shared_forbidden_policy(self):
+        module = load_module()
+        config = SimpleNamespace(remote_root="/remote/task-root")
+        command, _ = module._incremental_remote_command(
+            config,
+            ["tools/allowed.py"],
+            nonce="policy-test",
+        )
+        for token in (
+            ".git",
+            "artifacts",
+            "experiments",
+            "__pycache__",
+            ".pytest_cache",
+            ".cache",
+            "cache",
+            "caches",
+            "logs",
+            "*.pyc",
+            "*.log",
+            "*.pid",
+            "raw-output",
+            "raw_output",
+            "rawoutput",
+            "*.tar",
+            "*review-package.diff",
+            "._*",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, command)
+
+    def test_incremental_sync_recovers_commit_after_response_loss(self):
+        module = load_module()
+        config = module.ScratchConfig.default(ROOT)
+        nonce = "100-200-300"
+        expected_receipt = (
+            config.remote_root + f"/receipts/sync-{nonce}.sha256"
+        )
+        lost_response = module.subprocess.CompletedProcess(
+            ["ssh"],
+            255,
+            "",
+            "connection lost after commit",
+        )
+        committed = module.subprocess.CompletedProcess(
+            ["ssh"],
+            0,
+            expected_receipt + "\n",
+            "",
+        )
+        with mock.patch.object(module.time, "time", return_value=100):
+            with mock.patch.object(module.os, "getpid", return_value=200):
+                with mock.patch.object(
+                    module.time,
+                    "time_ns",
+                    return_value=300,
+                ):
+                    with mock.patch.object(
+                        module,
+                        "_stream_with_retries",
+                        return_value=lost_response,
+                    ) as stream:
+                        with mock.patch.object(
+                            module,
+                            "_remote_command",
+                            return_value=committed,
+                        ) as remote:
+                            error = None
+                            try:
+                                receipt, count = module._sync(
+                                    config,
+                                    ["tools/sitian_remote_scratch.py"],
+                                )
+                            except Exception as exc:
+                                error = exc
+        self.assertIsNone(error, "committed transaction must recover")
+        self.assertEqual(receipt, expected_receipt)
+        self.assertEqual(count, 1)
+        self.assertEqual(stream.call_args[1]["attempts"], 1)
+        remote.assert_called_once()
+
+    def test_incremental_transaction_reentry_preserves_committed_result(self):
+        module = load_module()
+        root = ROOT / ".sitian-sync-committed-fixture"
+        source_file = root / "source" / "tools" / "allowed.py"
+        nonce = "committed-reentry"
+        config = SimpleNamespace(remote_root=str(root))
+        command, expected_receipt = module._incremental_remote_command(
+            config,
+            ["tools/allowed.py"],
+            nonce=nonce,
+        )
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as handle:
+            data = b"new\n"
+            info = tarfile.TarInfo("tools/allowed.py")
+            info.size = len(data)
+            handle.addfile(info, io.BytesIO(data))
+        try:
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("old\n", encoding="utf-8")
+            first = subprocess.run(
+                ("/bin/sh", "-c", command),
+                input=archive.getvalue(),
+                capture_output=True,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            receipts = root / "receipts"
+            committed_snapshot = {
+                path.name: path.read_bytes()
+                for path in receipts.iterdir()
+                if path.is_file()
+            }
+            second = subprocess.run(
+                ("/bin/sh", "-c", command),
+                input=b"",
+                capture_output=True,
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(
+                second.stdout.decode().strip(),
+                expected_receipt,
+            )
+            self.assertEqual(source_file.read_text(encoding="utf-8"), "new\n")
+            self.assertEqual(
+                {
+                    path.name: path.read_bytes()
+                    for path in receipts.iterdir()
+                    if path.is_file()
+                },
+                committed_snapshot,
+            )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_incremental_stale_attempt_preserves_backup_and_receipts(self):
+        module = load_module()
+        root = ROOT / ".sitian-sync-stale-fixture"
+        source_file = root / "source" / "tools" / "allowed.py"
+        receipts = root / "receipts"
+        nonce = "stale-overlap"
+        backup = root / f".incoming-sync-{nonce}"
+        path_receipt = receipts / f"sync-{nonce}.paths.txt"
+        hash_receipt = receipts / f"sync-{nonce}.sha256"
+        state_receipt = receipts / f"sync-{nonce}.state"
+        config = SimpleNamespace(remote_root=str(root))
+        command, _ = module._incremental_remote_command(
+            config,
+            ["tools/allowed.py"],
+            nonce=nonce,
+        )
+        try:
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("verified\n", encoding="utf-8")
+            receipts.mkdir()
+            backup.mkdir()
+            (backup / "owner-sentinel").write_text(
+                "old attempt\n",
+                encoding="utf-8",
+            )
+            path_receipt.write_text(
+                "tools/allowed.py\n",
+                encoding="utf-8",
+            )
+            hash_receipt.write_text(
+                "0" * 64 + "  tools/allowed.py\n",
+                encoding="utf-8",
+            )
+            state_receipt.write_text("started\n", encoding="utf-8")
+            receipt_snapshot = {
+                path.name: path.read_bytes()
+                for path in receipts.iterdir()
+            }
+            result = subprocess.run(
+                ("/bin/sh", "-c", command),
+                input=b"",
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(
+                source_file.read_text(encoding="utf-8"),
+                "verified\n",
+            )
+            self.assertTrue((backup / "owner-sentinel").is_file())
+            self.assertEqual(
+                {
+                    path.name: path.read_bytes()
+                    for path in receipts.iterdir()
+                },
+                receipt_snapshot,
+            )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_stream_pipeline_closes_and_propagates_producer_failure(self):
         driver = r"""
 import importlib.util
@@ -428,6 +693,34 @@ print(json.dumps({
         self.assertEqual(payload["returncode"], 7)
         self.assertEqual(payload["stdout"], "131072")
         self.assertEqual(payload["stderr_bytes"], 131072)
+
+    def test_stream_pipeline_reaps_producer_when_consumer_spawn_fails(self):
+        module = load_module()
+        producer = mock.Mock()
+        producer.stdout = mock.Mock()
+        producer.stderr = mock.Mock()
+        producer.poll.return_value = None
+        producer.wait.side_effect = [
+            subprocess.TimeoutExpired(["producer"], 1.0),
+            -9,
+        ]
+        with mock.patch.object(
+            module.subprocess,
+            "Popen",
+            side_effect=[producer, OSError("consumer spawn failed")],
+        ):
+            with self.assertRaisesRegex(OSError, "consumer spawn failed"):
+                module._stream_with_retries(
+                    ["producer"],
+                    ["consumer"],
+                    config=module.ScratchConfig.default(ROOT),
+                    attempts=1,
+                )
+        producer.stdout.close.assert_called_once()
+        producer.stderr.close.assert_called_once()
+        producer.terminate.assert_called_once()
+        producer.kill.assert_called_once()
+        self.assertEqual(producer.wait.call_count, 2)
 
 
 if __name__ == "__main__":
