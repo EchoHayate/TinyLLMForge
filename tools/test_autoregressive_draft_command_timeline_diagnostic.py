@@ -474,19 +474,22 @@ def _raw_epochs() -> dict[str, dict]:
     epochs = {}
     for identity in diagnostic.expected_epoch_identities():
         worker = _worker(identity.label)
-        if identity.block_index == 1 and identity.label == "eager":
-            request_sha = worker["prompt_sha256"]
-            worker["measured_runs"] = [
-                _run(
-                    "eager",
-                    repeat,
-                    queue_debt_ns=180_000_000,
-                    cuda_ns=370_000_000,
-                    request_sha=request_sha,
-                )
-                for repeat in range(5)
-            ]
         epochs[identity.key] = {"worker": worker}
+    return epochs
+
+
+def _raw_epochs_with_half_integer_e2e() -> dict[str, dict]:
+    epochs = _raw_epochs()
+    for identity in diagnostic.expected_epoch_identities():
+        base = (
+            1_100_000_000
+            if identity.label == "graph"
+            else 1_000_000_000
+        )
+        worker = epochs[identity.key]["worker"]
+        for run in worker["measured_runs"]:
+            for offset, row in enumerate(run["timing"]["per_request"]):
+                row["completion_latency_ns"] = base + offset
     return epochs
 
 
@@ -1149,6 +1152,81 @@ def test_exact_half_ns_midpoint_reaches_localization_without_float_drift():
     assert beyond["median_unexplained_ratio_passed"] is False
 
 
+def test_half_integer_b4_median_survives_the_complete_artifact_path():
+    raw_epochs = _raw_epochs_with_half_integer_e2e()
+    identities = diagnostic.expected_epoch_identities()
+    eager_half = {
+        "numerator": 2_000_000_003,
+        "denominator": 2,
+    }
+    graph_half = {
+        "numerator": 2_200_000_003,
+        "denominator": 2,
+    }
+    pair_half = {
+        "numerator": 2_100_000_003,
+        "denominator": 2,
+    }
+
+    first_admission = diagnostic.build_epoch_admission(
+        identities[0],
+        raw_epochs[identities[0].key],
+    )
+    assert first_admission["metrics"]["e2e"] == [eager_half] * 5
+    assert first_admission["stationarity"]["e2e"]["values"] == (
+        [eager_half] * 5
+    )
+    assert first_admission["stationarity"]["e2e"]["median"] == eager_half
+    assert diagnostic.stationarity_for_values(
+        first_admission["metrics"]["e2e"]
+    )["median"] == eager_half
+
+    epochs = {
+        identity.key: diagnostic.build_epoch_admission(
+            identity,
+            raw_epochs[identity.key],
+        )
+        for identity in identities
+    }
+    effects = diagnostic.compute_paired_boundary_effects(epochs)
+    assert effects["blocks"][0]["e2e_delta_ns"] == 100_000_000
+    assert effects["blocks"][0]["median_e2e_ns"] == pair_half
+
+    artifact = diagnostic.build_command_timeline_artifact(
+        metadata={
+            "configuration": copy.deepcopy(
+                diagnostic.EXACT_CONFIGURATION
+            ),
+            "provenance": {
+                "run_tag": "task5-half-integer",
+                "captured_at_unix_ns": 1_800_000_000_000_000_000,
+            },
+        },
+        epoch_raw_inputs=raw_epochs,
+        input_files={
+            "epoch_inputs": {
+                "path": "workers/half-integer-epochs.json",
+                "sha256": "3" * 64,
+            },
+        },
+        source_files={
+            "tools/source.py": "4" * 64,
+        },
+    )
+    assert artifact["epochs"][identities[0].key]["metrics"]["e2e"] == (
+        [eager_half] * 5
+    )
+    assert artifact["epochs"][identities[1].key]["metrics"]["e2e"] == (
+        [graph_half] * 5
+    )
+    assert artifact["effects"]["blocks"][0]["median_e2e_ns"] == (
+        pair_half
+    )
+    assert diagnostic.validate_command_timeline_artifact(
+        artifact
+    ) == artifact
+
+
 def _classification_effects(
     *,
     explained_ns: int = 60,
@@ -1214,19 +1292,10 @@ def _admission(**overrides) -> dict:
     return row
 
 
-def _position_balanced_localization_effects() -> dict:
-    blocks = _classification_blocks(same_sign_blocks=4)
-    blocks[1]["component_deltas_ns"].update({
-        "worker_queue_debt": -120,
-        "worker_cuda_execution": 210,
-    })
-    return diagnostic.summarize_boundary_effects(blocks)
-
-
 def test_classification_localizes_exact_inclusive_boundaries():
     result = diagnostic.classify_boundary(
         _admission(),
-        _position_balanced_localization_effects(),
+        _classification_effects(same_sign_blocks=4),
     )
     assert result == {
         "classification": "BOUNDARY_LOCALIZED",
@@ -1239,30 +1308,128 @@ def test_classification_localizes_exact_inclusive_boundaries():
     }
 
 
-def test_classification_rejects_true_chronological_order_crossover():
-    blocks = _classification_blocks(same_sign_blocks=4)
+def test_stable_graph_minus_eager_label_effect_is_not_a_crossover():
+    blocks = _classification_blocks(
+        qualifying_blocks=4,
+        same_sign_blocks=4,
+    )
     assert all(block["e2e_delta_ns"] > 0 for block in blocks)
-    chronological_second_minus_first = [
-        (
-            block["e2e_delta_ns"]
-            if block["order"] == "eager_graph"
-            else -block["e2e_delta_ns"]
-        )
-        for block in blocks
-    ]
-    assert chronological_second_minus_first == [100, -100, -100, 100]
 
     effects = diagnostic.summarize_boundary_effects(blocks)
+    boundary = effects["boundaries"]["worker_queue_debt"]
     result = diagnostic.classify_boundary(_admission(), effects)
-    assert effects["boundaries"]["worker_queue_debt"][
-        "position_balance_consistent"
-    ] is False
-    assert effects["boundaries"]["worker_queue_debt"][
-        "sequence_interaction_consistent"
-    ] is False
+    assert boundary["block_effects"] == [
+        {
+            "block_index": 0,
+            "order": "eager_graph",
+            "label_effect_ns": 60,
+            "position_effect_ns": 60,
+        },
+        {
+            "block_index": 1,
+            "order": "graph_eager",
+            "label_effect_ns": 60,
+            "position_effect_ns": -60,
+        },
+        {
+            "block_index": 2,
+            "order": "graph_eager",
+            "label_effect_ns": 60,
+            "position_effect_ns": -60,
+        },
+        {
+            "block_index": 3,
+            "order": "eager_graph",
+            "label_effect_ns": 60,
+            "position_effect_ns": 60,
+        },
+    ]
+    assert boundary["aggregate_label_effect_ns"] == 60
+    assert boundary["aggregate_position_effect_ns"] == 0
+    assert boundary["eager_graph_position_effect_ns"] == 60
+    assert boundary["graph_eager_position_effect_ns"] == -60
+    assert boundary["order_interaction_ns"] == 0
+    order_checks = {
+        order: {
+            key: value
+            for key, value in check.items()
+            if key in {
+                "aggregate_label_effect_ns",
+                "aggregate_position_effect_ns",
+                "supports_aggregate_label",
+                "has_qualifying_block",
+                "label_reversal_block_indices",
+                "no_label_reversal",
+                "passed",
+            }
+        }
+        for order, check in boundary["order_group_checks"].items()
+    }
+    assert order_checks == {
+        "eager_graph": {
+            "aggregate_label_effect_ns": 60,
+            "aggregate_position_effect_ns": 60,
+            "supports_aggregate_label": True,
+            "has_qualifying_block": True,
+            "label_reversal_block_indices": [],
+            "no_label_reversal": True,
+            "passed": True,
+        },
+        "graph_eager": {
+            "aggregate_label_effect_ns": 60,
+            "aggregate_position_effect_ns": -60,
+            "supports_aggregate_label": True,
+            "has_qualifying_block": True,
+            "label_reversal_block_indices": [],
+            "no_label_reversal": True,
+            "passed": True,
+        },
+    }
+    assert boundary["position_balance_consistent"] is True
+    assert boundary["order_interaction_below_label"] is True
+    assert boundary["sequence_interaction_consistent"] is True
+    assert result["classification"] == "BOUNDARY_LOCALIZED"
+    assert result["localized_boundary"] == "worker_queue_debt"
+    assert result["runtime_optimization_authorized"] is True
+
+
+def test_position_driven_order_confound_is_not_a_label_effect():
+    blocks = _classification_blocks(
+        qualifying_blocks=4,
+        same_sign_blocks=4,
+    )
+    for block_index in (1, 2):
+        blocks[block_index]["e2e_delta_ns"] *= -1
+        blocks[block_index]["component_deltas_ns"] = {
+            name: -value
+            for name, value in blocks[block_index][
+                "component_deltas_ns"
+            ].items()
+        }
+
+    effects = diagnostic.summarize_boundary_effects(blocks)
+    boundary = effects["boundaries"]["worker_queue_debt"]
+    result = diagnostic.classify_boundary(_admission(), effects)
+    assert [
+        row["label_effect_ns"] for row in boundary["block_effects"]
+    ] == [60, -60, -60, 60]
+    assert [
+        row["position_effect_ns"] for row in boundary["block_effects"]
+    ] == [60, 60, 60, 60]
+    assert boundary["aggregate_label_effect_ns"] == 0
+    assert boundary["aggregate_position_effect_ns"] == 60
+    assert boundary["eager_graph_position_effect_ns"] == 60
+    assert boundary["graph_eager_position_effect_ns"] == 60
+    assert boundary["order_interaction_ns"] == 120
+    assert all(
+        check["supports_aggregate_label"] is False
+        for check in boundary["order_group_checks"].values()
+    )
+    assert boundary["position_balance_consistent"] is False
+    assert boundary["order_interaction_below_label"] is False
+    assert boundary["sequence_interaction_consistent"] is False
     assert result["classification"] == "PAIRED_PROTOCOL_UNSTABLE"
     assert result["localized_boundary"] is None
-    assert result["stable_but_unlocalized"] is True
     assert result["runtime_optimization_authorized"] is False
 
 
@@ -1306,15 +1473,11 @@ def test_classification_rejects_order_reversal_sequence_interaction():
 
 def test_classification_rejects_multiple_localized_boundaries():
     blocks = _classification_blocks(same_sign_blocks=4)
-    for block_index, block in enumerate(blocks):
+    for block in blocks:
         block["component_deltas_ns"] = {
-            "worker_queue_debt": (
-                -120 if block_index == 1 else 60
-            ),
-            "worker_cuda_execution": (
-                -120 if block_index == 1 else 60
-            ),
-            "ack_wait": 330 if block_index == 1 else -30,
+            "worker_queue_debt": 60,
+            "worker_cuda_execution": 60,
+            "ack_wait": -30,
             "scheduler_postprocess": 0,
         }
     effects = diagnostic.summarize_boundary_effects(blocks)
@@ -1336,7 +1499,7 @@ def _large_integer_effects(
     blocks = []
     for block_index, queue_ns in enumerate((
         600_000_000_000_000_000,
-        -700_000_000_000_000_000,
+        700_000_000_000_000_000,
         third_explained_ns,
         500_000_000_000_000_000,
     )):

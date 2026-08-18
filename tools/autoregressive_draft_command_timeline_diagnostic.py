@@ -2700,6 +2700,14 @@ def summarize_boundary_effects(blocks: object) -> dict:
             )
             for name in BOUNDARY_NAMES
         }
+        normalized_position_components = {
+            name: (
+                value
+                if expected_order == "eager_graph"
+                else -value
+            )
+            for name, value in normalized_components.items()
+        }
         unexplained = _fraction(
             row.get("absolute_unexplained_ns"),
             "absolute unexplained E2E",
@@ -2750,6 +2758,16 @@ def summarize_boundary_effects(blocks: object) -> dict:
             "component_deltas_ns": {
                 name: _canonical_fraction(value)
                 for name, value in normalized_components.items()
+            },
+            "component_label_effects_ns": {
+                name: _canonical_fraction(value)
+                for name, value in normalized_components.items()
+            },
+            "component_position_effects_ns": {
+                name: _canonical_fraction(value)
+                for name, value in (
+                    normalized_position_components.items()
+                )
             },
             "explanation_ratios": explanation,
             "explanation_ratio_defined": explanation_defined,
@@ -2830,82 +2848,128 @@ def summarize_boundary_effects(blocks: object) -> dict:
             if negative_label_count >= BOUNDARY_BLOCK_COUNT
             else 0
         )
+        aggregate_label = statistics.median(component_values)
         position_values = [
-            (
-                component
-                if row["order"] == "eager_graph"
-                else -component
+            _fraction(
+                row["component_position_effects_ns"][name],
+                f"{name} position effect",
             )
-            for row, component in zip(
-                normalized_blocks,
-                component_values,
-            )
+            for row in normalized_blocks
         ]
         aggregate_position = statistics.median(position_values)
-        aggregate_position_sign = _sign(aggregate_position)
-        position_same_direction_count = sum(
-            _sign(value) == aggregate_position_sign != 0
-            for value in position_values
+        label_conclusion_consistent = (
+            label_common_sign != 0
+            and _sign(aggregate_label) == label_common_sign
         )
         position_balance_consistent = (
-            aggregate_position_sign != 0
-            and position_same_direction_count
-            >= BOUNDARY_BLOCK_COUNT
+            label_conclusion_consistent
+            and abs(aggregate_position) < abs(aggregate_label)
         )
         order_group_checks = {}
         for order in ("eager_graph", "graph_eager"):
             group = [
-                (row, position)
-                for row, position in zip(
+                (row, label, position)
+                for row, label, position in zip(
                     normalized_blocks,
+                    component_values,
                     position_values,
                 )
                 if row["order"] == order
             ]
-            group_position = statistics.median(
-                position for _row, position in group
+            group_label = statistics.median(
+                label for _row, label, _position in group
             )
-            direction_matches = (
-                _sign(group_position)
-                == aggregate_position_sign
-                != 0
+            group_position = statistics.median(
+                position for _row, _label, position in group
+            )
+            supports_aggregate_label = (
+                label_conclusion_consistent
+                and _sign(group_label) == label_common_sign
             )
             has_qualifying_block = any(
                 row["block_index"] in qualifying
-                and _sign(position) == aggregate_position_sign
-                for row, position in group
+                and _sign(label) == label_common_sign
+                for row, label, _position in group
+            )
+            label_reversal_block_indices = [
+                row["block_index"]
+                for row, label, _position in group
+                if (
+                    _sign(label) != 0
+                    and _sign(label) != label_common_sign
+                )
+            ]
+            no_label_reversal = not label_reversal_block_indices
+            group_passed = (
+                supports_aggregate_label
+                and has_qualifying_block
+                and no_label_reversal
             )
             order_group_checks[order] = {
+                "aggregate_label_effect_ns": (
+                    _canonical_fraction(group_label)
+                ),
+                "aggregate_position_effect_ns": (
+                    _canonical_fraction(group_position)
+                ),
                 "aggregate_position_delta_ns": (
                     _canonical_fraction(group_position)
                 ),
-                "direction_matches": direction_matches,
-                "has_qualifying_block": has_qualifying_block,
-                "passed": (
-                    direction_matches and has_qualifying_block
+                "supports_aggregate_label": (
+                    supports_aggregate_label
                 ),
+                "direction_matches": supports_aggregate_label,
+                "has_qualifying_block": has_qualifying_block,
+                "label_reversal_block_indices": (
+                    label_reversal_block_indices
+                ),
+                "no_label_reversal": no_label_reversal,
+                "passed": group_passed,
             }
         order_consistent = all(
             check["passed"] for check in order_group_checks.values()
         )
-        sequence_interaction = (
+        order_interaction = (
             _fraction(
                 order_group_checks["eager_graph"][
-                    "aggregate_position_delta_ns"
+                    "aggregate_label_effect_ns"
                 ],
-                "eager-graph position effect",
+                "eager-graph label effect",
             )
             - _fraction(
                 order_group_checks["graph_eager"][
-                    "aggregate_position_delta_ns"
+                    "aggregate_label_effect_ns"
                 ],
-                "graph-eager position effect",
+                "graph-eager label effect",
             )
+        )
+        interaction_below_label = (
+            label_conclusion_consistent
+            and abs(order_interaction)
+            < 2 * abs(aggregate_label)
+        )
+        sequence_interaction_consistent = (
+            order_consistent
+            and position_balance_consistent
+            and interaction_below_label
         )
         undefined = [
             row["block_index"]
             for row in normalized_blocks
             if not row["explanation_ratio_defined"][name]
+        ]
+        block_effects = [
+            {
+                "block_index": row["block_index"],
+                "order": row["order"],
+                "label_effect_ns": _canonical_fraction(label),
+                "position_effect_ns": _canonical_fraction(position),
+            }
+            for row, label, position in zip(
+                normalized_blocks,
+                component_values,
+                position_values,
+            )
         ]
         boundaries[name] = {
             "qualifying_block_indices": qualifying,
@@ -2913,26 +2977,54 @@ def summarize_boundary_effects(blocks: object) -> dict:
             "same_sign_block_indices": same_sign,
             "same_sign_block_count": len(same_sign),
             "undefined_explanation_block_indices": undefined,
+            "block_effects": block_effects,
             "order_group_checks": order_group_checks,
             "aggregate_label_sign": label_common_sign,
+            "aggregate_label_effect_ns": _canonical_fraction(
+                aggregate_label
+            ),
+            "aggregate_position_effect_ns": _canonical_fraction(
+                aggregate_position
+            ),
             "aggregate_position_delta_ns": _canonical_fraction(
                 aggregate_position
             ),
-            "sequence_interaction_ns": _canonical_fraction(
-                sequence_interaction
+            "eager_graph_position_effect_ns": copy.deepcopy(
+                order_group_checks["eager_graph"][
+                    "aggregate_position_effect_ns"
+                ]
             ),
-            "sequence_interaction_consistent": order_consistent,
+            "graph_eager_position_effect_ns": copy.deepcopy(
+                order_group_checks["graph_eager"][
+                    "aggregate_position_effect_ns"
+                ]
+            ),
+            "order_interaction_ns": _canonical_fraction(
+                order_interaction
+            ),
+            "sequence_interaction_ns": _canonical_fraction(
+                order_interaction
+            ),
+            "label_conclusion_consistent": (
+                label_conclusion_consistent
+            ),
+            "order_interaction_below_label": (
+                interaction_below_label
+            ),
+            "sequence_interaction_consistent": (
+                sequence_interaction_consistent
+            ),
             "position_balance_consistent": (
                 position_balance_consistent
             ),
             "localized": (
                 len(qualifying) >= BOUNDARY_BLOCK_COUNT
                 and len(same_sign) >= BOUNDARY_BLOCK_COUNT
-                and label_common_sign != 0
+                and label_conclusion_consistent
                 and unexplained_ratio_passed
                 and not undefined
                 and position_balance_consistent
-                and order_consistent
+                and sequence_interaction_consistent
             ),
         }
     return {
