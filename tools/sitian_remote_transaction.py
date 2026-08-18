@@ -910,7 +910,7 @@ def _remove_empty_nonce_directory(
 
 
 @contextlib.contextmanager
-def _transaction_signal_handlers():
+def _transaction_signal_handlers(committed_result=None):
     installed = []
     signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
@@ -936,7 +936,8 @@ def _transaction_signal_handlers():
         body_completed = True
     except BaseException as exc:
         primary_error = exc
-        raise
+        if not committed_result:
+            raise
     finally:
         cleanup_error = None
         if body_mask_restore_attempted:
@@ -959,6 +960,7 @@ def _transaction_signal_handlers():
             cleanup_error is not None
             and primary_error is None
             and not body_completed
+            and not committed_result
         ):
             raise cleanup_error
 
@@ -1746,7 +1748,8 @@ def commit_sync_generation(
             "sync delta identity does not match nonce and explicit paths"
         )
 
-    with _transaction_signal_handlers():
+    committed_result = []
+    with _transaction_signal_handlers(committed_result):
         with locked_remote_root(remote_root) as root_fd:
             _inject(fault_injector, "after_lock")
             source_fd = None
@@ -1893,21 +1896,28 @@ def commit_sync_generation(
                 _rename_exchange_at(
                     root_fd, "source", nonce_fd, "generation"
                 )
-                _inject(fault_injector, "after_exchange")
-                committed = _read_expected_committed_at(
-                    root_fd,
-                    nonce=nonce,
-                    operation="sync",
-                    source_head=head,
-                    explicit_paths=paths,
-                )
-                _require_exact_receipt(committed, receipt)
+                committed_result.append(receipt)
+                try:
+                    _inject(fault_injector, "after_exchange")
+                except BaseException:
+                    pass
+                try:
+                    committed = _read_expected_committed_at(
+                        root_fd,
+                        nonce=nonce,
+                        operation="sync",
+                        source_head=head,
+                        explicit_paths=paths,
+                    )
+                    _require_exact_receipt(committed, receipt)
+                except BaseException:
+                    pass
                 try:
                     _inject(fault_injector, "before_external_receipts")
                 except BaseException:
                     pass
                 try:
-                    _materialize_sync_receipts_at(root_fd, committed)
+                    _materialize_sync_receipts_at(root_fd, receipt)
                 except BaseException:
                     pass
                 try:
@@ -1921,7 +1931,7 @@ def commit_sync_generation(
                     )
                 except BaseException:
                     pass
-                return committed
+                return receipt
             finally:
                 if generation_fd is not None:
                     _close_fd_best_effort(generation_fd)
@@ -1941,6 +1951,7 @@ def commit_sync_generation(
                     except BaseException:
                         pass
                     _close_fd_best_effort(transactions_fd)
+    return committed_result[0]
 
 
 def _create_delta_parent(delta_fd, relative_path):

@@ -34,6 +34,59 @@ def load_module():
     return module
 
 
+def run_sync_helper_with_post_exchange_event(
+    root, nonce, archive, event
+):
+    driver = r"""
+import os
+import signal
+import sys
+from tools import sitian_remote_transaction as transaction
+
+event = sys.argv[1]
+real_inject = transaction._inject
+
+def inject(fault_injector, point):
+    if point == "after_exchange":
+        if event == "exception":
+            raise transaction.InjectedFailure(point)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_inject(fault_injector, point)
+
+transaction._inject = inject
+sys.exit(transaction.main(sys.argv[2:]))
+"""
+    process = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            driver,
+            event,
+            "sync-commit",
+            "--remote-root",
+            str(root),
+            "--nonce",
+            nonce,
+            "--source-head",
+            "b" * 40,
+            "--path",
+            "tools/sitian_remote_scratch.py",
+        ),
+        input=archive,
+        capture_output=True,
+        env={
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    return subprocess.CompletedProcess(
+        process.args,
+        process.returncode,
+        process.stdout.decode("utf-8", errors="replace"),
+        process.stderr.decode("utf-8", errors="replace"),
+    )
+
+
 class PolicyTests(unittest.TestCase):
     def test_repo_root_accepts_only_authoritative_and_approved_remote_roots(self):
         module = load_module()
@@ -738,6 +791,90 @@ class TransportTests(unittest.TestCase):
             self.assertTrue(receipt.is_symlink())
             self.assertEqual(target.read_text(encoding="utf-8"), "outside\n")
             remote.assert_not_called()
+
+    def test_incremental_controller_accepts_post_exchange_helper_success(
+        self,
+    ):
+        module = load_module()
+        for event in ("exception", "sigterm"):
+            with self.subTest(event=event), tempfile.TemporaryDirectory(
+                prefix="sitian-controller-post-exchange-{}-".format(event)
+            ) as temporary:
+                root = Path(temporary)
+                generation = root / ".transactions/init-nonce/generation"
+                generation.joinpath("tools").mkdir(parents=True)
+                generation.joinpath(
+                    "tools/sitian_remote_scratch.py"
+                ).write_bytes(b"old\n")
+                transaction.commit_initial_generation(
+                    root,
+                    ".transactions/init-nonce/generation",
+                    "a" * 40,
+                )
+                nonce = "100-200-300"
+                archive = self._single_file_archive(
+                    "tools/sitian_remote_scratch.py",
+                    b"new\n",
+                )
+                config = SimpleNamespace(
+                    repo_root=ROOT,
+                    remote_root=str(root),
+                    remote_host=module.REMOTE_HOST,
+                    krb5_cache=module.KRB5_CACHE,
+                    attempts=1,
+                )
+                helper_results = []
+
+                def run_real_helper(*args, **kwargs):
+                    del args, kwargs
+                    result = run_sync_helper_with_post_exchange_event(
+                        root, nonce, archive, event
+                    )
+                    helper_results.append(result)
+                    return result
+
+                with mock.patch.object(
+                    module.time, "time", return_value=100
+                ), mock.patch.object(
+                    module.os, "getpid", return_value=200
+                ), mock.patch.object(
+                    module.time, "time_ns", return_value=300
+                ), mock.patch.object(
+                    module,
+                    "_resolve_local_head",
+                    return_value="b" * 40,
+                ), mock.patch.object(
+                    module,
+                    "_stream_with_retries",
+                    side_effect=run_real_helper,
+                ), mock.patch.object(
+                    module,
+                    "_remote_command",
+                ) as remote:
+                    receipt, count = module._sync(
+                        config,
+                        ["tools/sitian_remote_scratch.py"],
+                    )
+
+                expected_receipt = str(
+                    root / "receipts/sync-{}.sha256".format(nonce)
+                )
+                self.assertEqual(receipt, expected_receipt)
+                self.assertEqual(count, 1)
+                self.assertEqual(len(helper_results), 1)
+                self.assertEqual(helper_results[0].returncode, 0)
+                self.assertEqual(
+                    helper_results[0].stdout, expected_receipt + "\n"
+                )
+                self.assertEqual(helper_results[0].stderr, "")
+                self.assertEqual(
+                    (
+                        root
+                        / "source/tools/sitian_remote_scratch.py"
+                    ).read_bytes(),
+                    b"new\n",
+                )
+                remote.assert_not_called()
 
     def test_production_controller_has_no_fault_injector_or_old_state_machine(
         self,

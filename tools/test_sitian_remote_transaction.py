@@ -318,6 +318,49 @@ class TransactionPrimitiveTests(unittest.TestCase):
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         return environment
 
+    def run_helper_with_post_exchange_event(
+        self, root, nonce, archive, event
+    ):
+        driver = r"""
+import os
+import signal
+import sys
+from tools import sitian_remote_transaction as transaction
+
+event = sys.argv[1]
+real_inject = transaction._inject
+
+def inject(fault_injector, point):
+    if point == "after_exchange":
+        if event == "exception":
+            raise transaction.InjectedFailure(point)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_inject(fault_injector, point)
+
+transaction._inject = inject
+sys.exit(transaction.main(sys.argv[2:]))
+"""
+        return subprocess.run(
+            (
+                sys.executable,
+                "-c",
+                driver,
+                event,
+                "sync-commit",
+                "--remote-root",
+                str(root),
+                "--nonce",
+                nonce,
+                "--source-head",
+                "b" * 40,
+                "--path",
+                "tools/a.py",
+            ),
+            input=archive,
+            capture_output=True,
+            env=self.helper_environment(),
+        )
+
     def fail_at(self, expected):
         def inject(actual):
             if actual == expected:
@@ -1350,7 +1393,7 @@ class TransactionPrimitiveTests(unittest.TestCase):
         with mock.patch.object(
             transaction,
             "_transaction_signal_handlers",
-            side_effect=lambda: contextlib.nullcontext(),
+            side_effect=lambda *args, **kwargs: contextlib.nullcontext(),
         ):
             sync_thread = threading.Thread(target=run_sync)
             init_thread = threading.Thread(target=run_init)
@@ -1466,45 +1509,35 @@ class TransactionPrimitiveTests(unittest.TestCase):
                 explicit_paths=("tools/b.py",),
             )
 
-    def test_sync_response_loss_after_exchange_confirms_and_repairs_receipts(
-        self,
-    ):
-        root = self.make_initialized_root()
-        delta = self.stage_delta(
-            root,
-            "response-loss",
-            (("tools/a.py", b"committed\n"),),
-        )
+    def test_sync_helper_preserves_success_after_exchange_event(self):
+        for event in ("exception", "sigterm"):
+            with self.subTest(event=event):
+                root = self.make_initialized_root(
+                    "post-exchange-{}".format(event)
+                )
+                nonce = "post-exchange-{}".format(event)
+                archive = self.make_delta_archive(
+                    (("tools/a.py", b"committed\n"),)
+                )
 
-        with self.assertRaises(transaction.InjectedFailure):
-            transaction.commit_sync_generation(
-                root,
-                delta,
-                nonce="response-loss",
-                source_head="b" * 40,
-                explicit_paths=("tools/a.py",),
-                fault_injector=self.fail_at("after_exchange"),
-            )
+                result = self.run_helper_with_post_exchange_event(
+                    root, nonce, archive, event
+                )
 
-        self.assertEqual(
-            (root / "source/tools/a.py").read_bytes(),
-            b"committed\n",
-        )
-        confirmed = transaction.confirm_committed_generation(
-            root,
-            nonce="response-loss",
-            operation="sync",
-            source_head="b" * 40,
-            explicit_paths=("tools/a.py",),
-        )
-        self.assertEqual(confirmed.nonce, "response-loss")
-        for suffix in ("paths.txt", "sha256", "state"):
-            self.assertTrue(
-                (
-                    root
-                    / "receipts/sync-response-loss.{}".format(suffix)
-                ).is_file()
-            )
+                expected = (
+                    str(
+                        root
+                        / "receipts/sync-{}.sha256".format(nonce)
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(
+                    (root / "source/tools/a.py").read_bytes(),
+                    b"committed\n",
+                )
 
     def test_second_cleanup_exception_does_not_leave_sync_lock_held(self):
         root = self.make_initialized_root()
@@ -1566,32 +1599,14 @@ class TransactionPrimitiveTests(unittest.TestCase):
                     )
                     continue
 
-                if fault_point == "after_exchange":
-                    with self.assertRaises(transaction.InjectedFailure):
-                        transaction.commit_sync_generation(
-                            root,
-                            delta,
-                            nonce=nonce,
-                            source_head="b" * 40,
-                            explicit_paths=("tools/a.py",),
-                            fault_injector=self.fail_at(fault_point),
-                        )
-                    receipt = transaction.confirm_committed_generation(
-                        root,
-                        nonce=nonce,
-                        operation="sync",
-                        source_head="b" * 40,
-                        explicit_paths=("tools/a.py",),
-                    )
-                else:
-                    receipt = transaction.commit_sync_generation(
-                        root,
-                        delta,
-                        nonce=nonce,
-                        source_head="b" * 40,
-                        explicit_paths=("tools/a.py",),
-                        fault_injector=self.fail_at(fault_point),
-                    )
+                receipt = transaction.commit_sync_generation(
+                    root,
+                    delta,
+                    nonce=nonce,
+                    source_head="b" * 40,
+                    explicit_paths=("tools/a.py",),
+                    fault_injector=self.fail_at(fault_point),
+                )
 
                 self.assertEqual(receipt.nonce, nonce)
                 self.assertEqual(
