@@ -268,6 +268,27 @@ class PolicyTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    @staticmethod
+    def _single_file_archive(path, data):
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as handle:
+            info = tarfile.TarInfo(path)
+            info.size = len(data)
+            handle.addfile(info, io.BytesIO(data))
+        return archive.getvalue()
+
+    @staticmethod
+    def _run_incremental_fixture(command, archive, failure_point=None):
+        environment = os.environ.copy()
+        if failure_point is not None:
+            environment["SITIAN_SYNC_FAIL_POINT"] = failure_point
+        return subprocess.run(
+            ("/bin/sh", "-c", command),
+            input=archive,
+            capture_output=True,
+            env=environment,
+        )
+
     def test_retry_stops_after_first_success(self):
         module = load_module()
         runner = mock.Mock(side_effect=[
@@ -624,6 +645,173 @@ class TransportTests(unittest.TestCase):
             )
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_incremental_uncommitted_fault_boundaries_roll_back_everything(self):
+        module = load_module()
+        archive = self._single_file_archive(
+            "tools/allowed.py",
+            b"new\n",
+        )
+        failure_points = (
+            "before_file_rename",
+            "after_file_rename",
+            "after_path_receipt_publish",
+            "after_hash_receipt_publish",
+            "before_state_receipt_publish",
+        )
+        for failure_point in failure_points:
+            with self.subTest(failure_point=failure_point):
+                root = ROOT / f".sitian-sync-fault-{failure_point}"
+                nonce = f"fault-{failure_point}"
+                source_file = root / "source" / "tools" / "allowed.py"
+                receipts = root / "receipts"
+                config = SimpleNamespace(remote_root=str(root))
+                command, _ = module._incremental_remote_command(
+                    config,
+                    ["tools/allowed.py"],
+                    nonce=nonce,
+                )
+                try:
+                    source_file.parent.mkdir(parents=True)
+                    source_file.write_text("old\n", encoding="utf-8")
+                    result = self._run_incremental_fixture(
+                        command,
+                        archive,
+                        failure_point,
+                    )
+                    self.assertEqual(
+                        result.returncode,
+                        129,
+                        f"{failure_point} did not interrupt transaction",
+                    )
+                    self.assertEqual(
+                        source_file.read_text(encoding="utf-8"),
+                        "old\n",
+                    )
+                    self.assertFalse(
+                        any(receipts.glob(f"sync-{nonce}.*"))
+                        if receipts.exists()
+                        else False
+                    )
+                    self.assertFalse(
+                        (root / f".incoming-sync-{nonce}").exists()
+                    )
+                    self.assertFalse(
+                        (root / ".sync-transaction-lock").exists()
+                    )
+                finally:
+                    shutil.rmtree(root, ignore_errors=True)
+
+    def test_incremental_committed_fault_releases_owned_lock_for_next_nonce(self):
+        module = load_module()
+        root = ROOT / ".sitian-sync-committed-cleanup-fixture"
+        source_file = root / "source" / "tools" / "allowed.py"
+        config = SimpleNamespace(remote_root=str(root))
+        first_nonce = "committed-cleanup-first"
+        second_nonce = "committed-cleanup-second"
+        first_command, _ = module._incremental_remote_command(
+            config,
+            ["tools/allowed.py"],
+            nonce=first_nonce,
+        )
+        second_command, second_receipt = module._incremental_remote_command(
+            config,
+            ["tools/allowed.py"],
+            nonce=second_nonce,
+        )
+        try:
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("old\n", encoding="utf-8")
+            first = self._run_incremental_fixture(
+                first_command,
+                self._single_file_archive(
+                    "tools/allowed.py",
+                    b"first\n",
+                ),
+                "after_state_receipt_publish",
+            )
+            self.assertEqual(
+                first.returncode,
+                129,
+                "post-commit failure injection did not interrupt response",
+            )
+            self.assertEqual(
+                source_file.read_text(encoding="utf-8"),
+                "first\n",
+            )
+            receipts = root / "receipts"
+            for suffix in ("paths.txt", "sha256", "state"):
+                self.assertTrue(
+                    (receipts / f"sync-{first_nonce}.{suffix}").is_file()
+                )
+            self.assertFalse((root / ".sync-transaction-lock").exists())
+            self.assertFalse(
+                (root / f".incoming-sync-{first_nonce}").exists()
+            )
+
+            second = self._run_incremental_fixture(
+                second_command,
+                self._single_file_archive(
+                    "tools/allowed.py",
+                    b"second\n",
+                ),
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(second.stdout.decode().strip(), second_receipt)
+            self.assertEqual(
+                source_file.read_text(encoding="utf-8"),
+                "second\n",
+            )
+            self.assertFalse((root / ".sync-transaction-lock").exists())
+            self.assertFalse(
+                (root / f".incoming-sync-{second_nonce}").exists()
+            )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_incremental_remote_parent_symlink_fails_without_side_effects(self):
+        module = load_module()
+        root = ROOT / ".sitian-sync-parent-symlink-fixture"
+        outside = ROOT / ".sitian-sync-parent-symlink-outside"
+        source_parent = root / "source" / "pkg"
+        outside_file = outside / "allowed.py"
+        nonce = "parent-symlink"
+        config = SimpleNamespace(remote_root=str(root))
+        command, _ = module._incremental_remote_command(
+            config,
+            ["pkg/allowed.py"],
+            nonce=nonce,
+        )
+        try:
+            source_parent.parent.mkdir(parents=True)
+            outside.mkdir()
+            outside_file.write_text("outside-old\n", encoding="utf-8")
+            source_parent.symlink_to(outside, target_is_directory=True)
+            result = self._run_incremental_fixture(
+                command,
+                self._single_file_archive(
+                    "pkg/allowed.py",
+                    b"outside-new\n",
+                ),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"full init", result.stderr)
+            self.assertTrue(source_parent.is_symlink())
+            self.assertEqual(
+                outside_file.read_text(encoding="utf-8"),
+                "outside-old\n",
+            )
+            receipts = root / "receipts"
+            self.assertFalse(
+                any(receipts.glob(f"sync-{nonce}.*"))
+                if receipts.exists()
+                else False
+            )
+            self.assertFalse((root / f".incoming-sync-{nonce}").exists())
+            self.assertFalse((root / ".sync-transaction-lock").exists())
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
 
     def test_stream_pipeline_closes_and_propagates_producer_failure(self):
         driver = r"""

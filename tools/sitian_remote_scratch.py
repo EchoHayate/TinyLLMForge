@@ -605,13 +605,44 @@ def _incremental_remote_command(
     rollback_commands = []
     verify_commands = []
     apply_commands = []
+    topology_commands = []
+    checked_parents = set()
     for path in paths:
         quoted_path = shlex.quote(path)
-        parent = PurePosixPath(path).parent.as_posix()
+        posix_path = PurePosixPath(path)
+        parent = posix_path.parent.as_posix()
         quoted_parent = shlex.quote(parent)
-        temporary_name = f".sync-{nonce}-{PurePosixPath(path).name}"
+        parent_parts = posix_path.parts[:-1]
+        for index in range(1, len(parent_parts) + 1):
+            parent_path = PurePosixPath(*parent_parts[:index]).as_posix()
+            if parent_path in checked_parents:
+                continue
+            checked_parents.add(parent_path)
+            quoted_parent_path = shlex.quote(parent_path)
+            topology_commands.append(
+                f"if test -e \"$source\"/{quoted_parent_path} || "
+                f"test -L \"$source\"/{quoted_parent_path}; then "
+                f"if test -L \"$source\"/{quoted_parent_path} || "
+                f"test ! -d \"$source\"/{quoted_parent_path}; then "
+                "printf '%s\\n' "
+                f"{shlex.quote('incremental sync requires full init: unsafe remote parent ' + parent_path)} "
+                ">&2; exit 76; fi; "
+                "else printf '%s\\n' "
+                f"{shlex.quote('incremental sync requires full init: missing remote parent ' + parent_path)} "
+                ">&2; exit 76; fi"
+            )
+        topology_commands.append(
+            f"if test -e \"$source\"/{quoted_path} || "
+            f"test -L \"$source\"/{quoted_path}; then "
+            f"if test -L \"$source\"/{quoted_path} || "
+            f"test ! -f \"$source\"/{quoted_path}; then "
+            "printf '%s\\n' "
+            f"{shlex.quote('incremental sync requires full init: unsafe remote final ' + path)} "
+            ">&2; exit 76; fi; fi"
+        )
+        temporary_name = f".sync-{nonce}-{posix_path.name}"
         temporary_path = (
-            PurePosixPath(path).parent / temporary_name
+            posix_path.parent / temporary_name
         ).as_posix()
         quoted_temporary_path = shlex.quote(temporary_path)
         backup_commands.append(
@@ -627,9 +658,8 @@ def _incremental_remote_command(
             "fi"
         )
         rollback_commands.append(
-            f"if grep -Fqx -- {quoted_path} \"$backup/applied\"; then "
+            f"if grep -Fqx -- {quoted_path} \"$backup/intended\"; then "
             f"if grep -Fqx -- {quoted_path} \"$backup/existing\"; then "
-            f"mkdir -p \"$source\"/{quoted_parent}; "
             f"cp -p \"$backup/original\"/{quoted_path} "
             f"\"$source\"/{quoted_path} 2>/dev/null || true; "
             f"else rm -f \"$source\"/{quoted_path}; fi; fi; "
@@ -640,12 +670,13 @@ def _incremental_remote_command(
             f"test ! -L \"$backup/incoming\"/{quoted_path}"
         )
         apply_commands.append(
-            f"mkdir -p \"$source\"/{quoted_parent}; "
             f"cp -p \"$backup/incoming\"/{quoted_path} "
             f"\"$source\"/{quoted_temporary_path}; "
+            f"printf '%s\\n' {quoted_path} >> \"$backup/intended\"; "
+            "checkpoint before_file_rename; "
             f"mv \"$source\"/{quoted_temporary_path} "
             f"\"$source\"/{quoted_path}; "
-            f"printf '%s\\n' {quoted_path} >> \"$backup/applied\""
+            "checkpoint after_file_rename"
         )
     path_lines = "".join(
         f"printf '%s\\n' {shlex.quote(path)}; " for path in paths
@@ -658,7 +689,7 @@ def _incremental_remote_command(
         f"path_receipt={shlex.quote(path_receipt)}; "
         f"hash_receipt={shlex.quote(hash_receipt)}; "
         f"state_receipt={shlex.quote(state_receipt)}; "
-        f"lock={shlex.quote(lock)}; "
+        f"lock={shlex.quote(lock)}; nonce={shlex.quote(nonce)}; "
         "test -d \"$source\"; test ! -L \"$source\"; "
         "mkdir -p \"$receipts\"; "
         "if test -f \"$state_receipt\"; then "
@@ -667,27 +698,58 @@ def _incremental_remote_command(
         "printf '%s\\n' \"$hash_receipt\"; exit 0; fi; "
         "if test -e \"$backup\" || test -L \"$backup\" || "
         "test -e \"$path_receipt\" || test -L \"$path_receipt\" || "
-        "test -e \"$hash_receipt\" || test -L \"$hash_receipt\"; then "
+        "test -e \"$hash_receipt\" || test -L \"$hash_receipt\" || "
+        "test -e \"$state_receipt\" || test -L \"$state_receipt\"; then "
         "exit 75; fi; "
         "mkdir \"$backup\" || exit 75; "
         "mkdir -p \"$backup/incoming\" \"$backup/original\"; "
-        ": > \"$backup/existing\"; : > \"$backup/applied\"; "
+        ": > \"$backup/existing\"; : > \"$backup/intended\"; "
         "committed=0; lock_owned=0; "
-        "published_path=0; published_hash=0; "
-        "rollback() { "
+        "checkpoint() { "
+        "if test \"${SITIAN_SYNC_FAIL_POINT-}\" = \"$1\"; then "
+        "kill -HUP \"$$\"; fi; "
+        "}; "
+        "transaction_committed() { "
+        "test -f \"$state_receipt\" && test ! -L \"$state_receipt\" && "
+        "test \"$(cat \"$state_receipt\")\" = committed && "
+        "test -f \"$path_receipt\" && test ! -L \"$path_receipt\" && "
+        "test -f \"$hash_receipt\" && test ! -L \"$hash_receipt\"; "
+        "}; "
+        "release_lock() { "
+        "if test \"$lock_owned\" -eq 0; then return 0; fi; "
+        "released_lock=\"$backup/released-lock\"; "
+        "if test -f \"$lock/owner\" && test ! -L \"$lock/owner\" && "
+        "test \"$(cat \"$lock/owner\")\" = \"$nonce\"; then "
+        "rm -rf \"$released_lock\"; "
+        "if mv \"$lock\" \"$released_lock\"; then "
+        "lock_owned=0; return 0; fi; "
+        "elif test -f \"$released_lock/owner\" && "
+        "test ! -L \"$released_lock/owner\" && "
+        "test \"$(cat \"$released_lock/owner\")\" = \"$nonce\"; then "
+        "lock_owned=0; return 0; "
+        "fi; "
+        "return 1; "
+        "}; "
+        "cleanup() { "
+        "status=$?; trap - EXIT HUP INT TERM; "
+        "if transaction_committed; then committed=1; fi; "
         "if test \"$committed\" -eq 0; then "
         + "; ".join(rollback_commands)
         + "; "
-        "if test \"$published_path\" -eq 1; then "
-        "rm -f \"$path_receipt\"; fi; "
-        "if test \"$published_hash\" -eq 1; then "
-        "rm -f \"$hash_receipt\"; fi; "
-        "rm -rf \"$backup\"; "
+        "rm -f \"$path_receipt\" \"$hash_receipt\" \"$state_receipt\"; "
         "fi; "
-        "if test \"$lock_owned\" -eq 1; then rmdir \"$lock\" "
-        "2>/dev/null || true; fi; "
+        "release_lock || true; "
+        "rm -rf \"$backup\"; "
+        "exit \"$status\"; "
         "}; "
-        "trap rollback EXIT HUP INT TERM; "
+        "on_hup() { exit 129; }; "
+        "on_int() { exit 130; }; "
+        "on_term() { exit 143; }; "
+        "enable_signal_traps() { "
+        "trap on_hup HUP; trap on_int INT; trap on_term TERM; "
+        "}; "
+        "trap cleanup EXIT; "
+        "enable_signal_traps; "
         "tar -xf - -C \"$backup/incoming\"; "
         + _forbidden_verification_checks('"$backup/incoming"')
         + "; "
@@ -701,20 +763,33 @@ def _incremental_remote_command(
         + "} > \"$path_new\"; "
         f"(cd \"$backup/incoming\" && sha256sum -- {hash_operands}) "
         "> \"$hash_new\"; "
-        "if ! mkdir \"$lock\"; then exit 75; fi; lock_owned=1; "
+        "trap '' HUP INT TERM; "
+        "if ! mkdir \"$lock\"; then "
+        "enable_signal_traps; exit 75; fi; "
+        "lock_owned=1; "
+        "if ! printf '%s\\n' \"$nonce\" > \"$lock/owner\"; then "
+        "rm -f \"$lock/owner\"; rmdir \"$lock\" 2>/dev/null || true; "
+        "lock_owned=0; enable_signal_traps; exit 75; fi; "
+        "enable_signal_traps; "
+        + "; ".join(topology_commands)
+        + "; "
         + "; ".join(backup_commands)
         + "; "
         + "; ".join(apply_commands)
         + "; "
         "mv \"$path_new\" \"$path_receipt\"; "
-        "published_path=1; "
+        "checkpoint after_path_receipt_publish; "
         "mv \"$hash_new\" \"$hash_receipt\"; "
-        "published_hash=1; "
+        "checkpoint after_hash_receipt_publish; "
         "printf 'committed\\n' > \"$state_new\"; "
+        "checkpoint before_state_receipt_publish; "
         "mv \"$state_new\" \"$state_receipt\"; "
-        "committed=1; trap - EXIT HUP INT TERM; "
-        "rmdir \"$lock\"; lock_owned=0; "
+        "checkpoint after_state_receipt_publish; committed=1; "
+        "trap '' HUP INT TERM; "
+        "release_lock; "
+        "enable_signal_traps; "
         "rm -rf \"$backup\"; "
+        "trap - EXIT HUP INT TERM; "
         "printf '%s\\n' \"$hash_receipt\""
     )
     return command, hash_receipt
