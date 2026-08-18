@@ -396,6 +396,58 @@ def test_traced_executor_records_method_and_ack_boundaries():
     assert timeline_module.active_model_runner_command_trace() is None
 
 
+def test_traced_ack_send_failure_preserves_error_and_terminalizes_timeline():
+    timeline = timeline_module.ModelRunnerCommandTimelineRecorder(
+        rank=1,
+        max_rows=8,
+        clock_identity=timeline_module.CommandClockIdentity(
+            boot_id="boot",
+            implementation="clock_gettime(CLOCK_MONOTONIC)",
+            resolution_s=1e-9,
+            monotonic=True,
+            adjustable=False,
+            captured_at_unix_ns=1,
+        ),
+    )
+    envelope = ModelRunnerCommandEnvelope(
+        command_id=34,
+        method_name="add",
+        args=(4, 5),
+        requires_ack=True,
+        trace_identity=make_trace_identity(
+            command_id=34,
+            requires_ack=True,
+        ),
+    )
+    timeline.record_worker_receive(
+        envelope.trace_identity,
+        event_woken_monotonic_ns=30,
+        envelope_read_monotonic_ns=40,
+    )
+
+    try:
+        execute_acknowledged_command(
+            envelope,
+            rank=1,
+            target=_Target(),
+            send_ack=_SendFailure(),
+            timeline=timeline,
+            clock_ns=iter((50, 60, 70, 80)).__next__,
+        )
+    except OSError as error:
+        assert str(error) == "ack pipe closed"
+    else:
+        raise AssertionError("traced ack send failure was swallowed")
+
+    row = timeline.snapshot()["rows"][0]
+    assert row["status"] == "error"
+    assert row["error_type"] == "OSError"
+    assert row["error_detail"] == "ack pipe closed"
+    assert row["ack_send_started_monotonic_ns"] == 70
+    assert row["ack_send_finished_monotonic_ns"] == 80
+    assert row["terminal_error_monotonic_ns"] == 80
+
+
 def test_untraced_envelope_preserves_existing_semantics():
     envelope = ModelRunnerCommandEnvelope(
         command_id=32,

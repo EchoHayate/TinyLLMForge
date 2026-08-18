@@ -31,7 +31,7 @@
 
 ## Task 2: Shared-Memory Command and Ack-Wait Wiring
 
-- Status: implemented; awaiting task review
+- Status: review fixes implemented; awaiting re-review
 - Base SHA: `13c0c017222d65a252e7b1a019510b4413520963`
 - Brief: `.superpowers/sdd/task-2-brief.md`
 - Required invariants:
@@ -56,8 +56,22 @@
     still has the same 23 mismatches after Task 2;
   - immutable fingerprint expectations were not rewritten.
 - Syntax verification: PASS
-- Implementer commit: `SELF/HEAD`
-- Task review: pending
+- Initial implementer commit:
+  `e2479a3ad3adff6375c44de214653b3b0c1549e8`
+- Task review: `.superpowers/sdd/task-2-review-1.md` — Needs fixes
+- Review fix RED: `6 failed in 0.37s`
+- Review fix focused GREEN: `6 passed in 0.26s`
+- Review fix Task 1 + Task 2 regression: `54 passed in 1.11s`
+- Review fix exact planned regression: `55 passed, 6 failed in 1.32s`
+  - all six failures remain in the known frozen
+    `test_qwen35_real_binding_engine_ack_transport_preflight.py`
+    source-fingerprint family;
+  - five failures stop at
+    `ValueError: LLMEngine source hash is invalid`;
+  - one failure reports the inherited prerequisite source-closure mismatch;
+  - immutable fingerprint expectations were not rewritten.
+- Review fix syntax verification: PASS
+- Review fix commit: `SELF/HEAD`
 
 ## Remaining Tasks
 

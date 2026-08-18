@@ -187,13 +187,30 @@ def execute_acknowledged_command(
                 error_type=error_type,
             )
 
+    def record_terminal_error(error):
+        if not traced:
+            return
+        try:
+            timeline.record_terminal_error(
+                envelope.command_id,
+                finished_ns=clock_ns(),
+                error_type=type(error).__name__,
+                error_detail=str(error),
+            )
+        except BaseException:
+            pass
+
     def send(acknowledgement):
         if traced:
             timeline.record_ack_send_start(
                 envelope.command_id,
                 started_ns=clock_ns(),
             )
-        send_ack(acknowledgement)
+        try:
+            send_ack(acknowledgement)
+        except BaseException as error:
+            record_terminal_error(error)
+            raise
         if traced:
             timeline.record_ack_send_end(
                 envelope.command_id,
@@ -235,6 +252,8 @@ def execute_acknowledged_command(
                 or not envelope.requires_ack
                 or rank == 0
             ):
+                if rank != 0 and envelope.requires_ack:
+                    record_terminal_error(error)
                 raise
             acknowledgement = ModelRunnerCommandAck(
                 command_id=envelope.command_id,

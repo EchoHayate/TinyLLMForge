@@ -203,6 +203,33 @@ def test_rank_zero_acknowledged_command_remains_unfinished_before_ack_wait():
     )
 
 
+def test_terminal_error_closes_awaiting_ack_with_bounded_detail():
+    module = load_module()
+    recorder = module.ModelRunnerCommandTimelineRecorder(
+        rank=0,
+        max_rows=8,
+        clock_identity=clock_identity(module),
+    )
+    recorder.record_dispatch(identity(module, 1, requires_ack=True))
+    recorder.record_method_start(1, started_ns=1_200)
+    recorder.record_method_end(1, finished_ns=1_500)
+
+    recorder.record_terminal_error(
+        1,
+        finished_ns=1_550,
+        error_type="X" * 200,
+        error_detail="é" * 3_000,
+    )
+
+    row = recorder.snapshot()["rows"][0]
+    assert row["status"] == "error"
+    assert row["error_type"] == "X" * 128
+    assert len(row["error_detail"].encode("utf-8")) <= 4_096
+    assert row["terminal_error_monotonic_ns"] == 1_550
+    assert row["ack_wait_started_monotonic_ns"] is None
+    assert row["ack_wait_finished_monotonic_ns"] is None
+
+
 def test_recorder_rejects_snapshot_during_active_phase():
     module = load_module()
     recorder = module.ModelRunnerCommandTimelineRecorder(

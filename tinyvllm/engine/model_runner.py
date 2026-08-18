@@ -3476,7 +3476,12 @@ class ModelRunner:
             from tinyvllm.engine.engine_step_timeline import (
                 active_engine_step_trace,
             )
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as error:
+            if (
+                error.name
+                != "tinyvllm.engine.engine_step_timeline"
+            ):
+                raise
             return None
         return active_engine_step_trace()
 
@@ -3561,7 +3566,12 @@ class ModelRunner:
         command_id = next(self._command_ids)
         trace_identity = None
         trace_context = None
-        if self.command_timeline.enabled:
+        management_method = method_name in (
+            "configure_command_timeline",
+            "reset_command_timeline",
+            "command_timeline_snapshot",
+        )
+        if self.command_timeline.enabled and not management_method:
             trace_context = self._active_command_timeline_trace()
         if (
             trace_context is not None

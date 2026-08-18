@@ -232,3 +232,190 @@ Output: exit code 0 with no diagnostics.
 ## Commit
 
 `SELF/HEAD`
+
+---
+
+## Review 1 fix
+
+Review input:
+
+- `.superpowers/sdd/task-2-review-1.md`
+
+Review-fix files:
+
+- `.superpowers/sdd/progress.md`
+- `.superpowers/sdd/task-2-implementer-report.md`
+- `.superpowers/sdd/task-2-review-1.md`
+- `tinyvllm/engine/model_runner_command_timeline.py`
+- `tinyvllm/engine/model_runner_command_ack.py`
+- `tinyvllm/engine/model_runner.py`
+- `tinyvllm/engine/llm_engine.py`
+- `tools/test_model_runner_command_timeline.py`
+- `tools/test_model_runner_command_ack.py`
+- `tools/test_model_runner_live_ack_wiring.py`
+
+### Review-fix implementation
+
+- Excluded `configure_command_timeline`, `reset_command_timeline`, and
+  `command_timeline_snapshot` from trace-context reads and trace-identity
+  creation. This exclusion applies even if an enabled recorder observes a
+  deliberately stale active measured step/repeat context.
+- Added an explicit recorder terminal-error transition for the active
+  `method`, `awaiting_ack`, `ack_send`, and `ack_wait` phases.
+- Terminal rows use:
+  - `status="error"`;
+  - bounded `error_type`;
+  - UTF-8 `error_detail` bounded to 4096 bytes, matching the existing
+    acknowledgement detail limit;
+  - `terminal_error_monotonic_ns`; and
+  - the corresponding method, ack-send, or ack-wait finish timestamp when
+    that phase had already started.
+- Worker ack-send failure, rank-zero local execution failure, and rank-zero
+  collector timeout/error now terminalize traced rows without replacing the
+  original exception. Recorder cleanup is best-effort only so observation
+  failures cannot mask transport or execution failures.
+- Rank-zero local failure still poisons the acknowledgement collector before
+  re-raising. Collector timeout/error poisoning remains owned by the
+  collector and is unchanged.
+- The lazy engine-step bridge now suppresses only
+  `ModuleNotFoundError` whose `name` is exactly
+  `tinyvllm.engine.engine_step_timeline`; nested dependency failures are
+  re-raised.
+
+### Review-fix RED evidence
+
+The mandatory tests were added before review-fix production edits and run
+with:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_command_timeline.py::test_terminal_error_closes_awaiting_ack_with_bounded_detail \
+  tools/test_model_runner_command_ack.py::test_traced_ack_send_failure_preserves_error_and_terminalizes_timeline \
+  tools/test_model_runner_live_ack_wiring.py::test_model_runner_management_dispatch_ignores_stale_measured_trace \
+  tools/test_model_runner_live_ack_wiring.py::test_model_runner_lazy_engine_step_import_only_suppresses_absent_module \
+  tools/test_model_runner_live_ack_wiring.py::test_engine_traced_local_exception_terminalizes_timeline \
+  tools/test_model_runner_live_ack_wiring.py::test_engine_traced_collector_failure_terminalizes_ack_wait
+```
+
+Output:
+
+```text
+6 failed in 0.37s
+```
+
+The intended failures were:
+
+- missing `record_terminal_error`;
+- worker ack-send `OSError` left `ack_send` unfinished;
+- management dispatch read the trace clock under stale context;
+- nested `ModuleNotFoundError` was hidden;
+- rank-zero local `ValueError` left `awaiting_ack` unfinished; and
+- collector timeout left the acknowledged row unfinished.
+
+### Review-fix GREEN and regression evidence
+
+Focused GREEN, rerun after the final test refinement:
+
+```text
+6 passed in 0.26s
+```
+
+The collector case covers both `TimeoutError` and a non-timeout
+`RuntimeError` while asserting object identity of the re-raised exception.
+
+Complete Task 1 core plus Task 2 transport regression:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_command_timeline.py \
+  tools/test_model_runner_command_ack.py \
+  tools/test_model_runner_live_ack_wiring.py
+```
+
+Output:
+
+```text
+54 passed in 1.11s
+```
+
+Exact planned regression:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_command_timeline.py \
+  tools/test_model_runner_command_ack.py \
+  tools/test_model_runner_live_ack_wiring.py \
+  tools/test_qwen35_real_binding_engine_ack_transport_preflight.py
+```
+
+Output:
+
+```text
+55 passed, 6 failed in 1.32s
+```
+
+The six failures remain the inherited frozen source-fingerprint boundary:
+
+- five fail with
+  `ValueError: LLMEngine source hash is invalid`; and
+- one reports the pre-existing prerequisite source-closure mismatch.
+
+Task 2 owns intentional changes to the live `LLMEngine`, `ModelRunner`,
+acknowledgement transport, and command timeline sources. It does not own the
+immutable historical preflight fingerprint contract, which was already red
+at the supplied Task 2 base. No frozen hash expectation was changed.
+
+Syntax verification:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m py_compile \
+  tinyvllm/engine/model_runner_command_timeline.py \
+  tinyvllm/engine/model_runner_command_ack.py \
+  tinyvllm/engine/model_runner.py \
+  tinyvllm/engine/llm_engine.py \
+  tools/test_model_runner_command_timeline.py \
+  tools/test_model_runner_command_ack.py \
+  tools/test_model_runner_live_ack_wiring.py
+```
+
+Output: exit code 0 with no diagnostics.
+
+### Review-fix invariant checks
+
+- Enabled stale measured context cannot stamp any of the three management
+  operations, and snapshot cannot trace or block on itself.
+- Worker send failure preserves and re-raises the original `OSError` while
+  producing a snapshot-able terminal error row.
+- Rank-zero local failure preserves the original exception, retains
+  collector poisoning, and closes `awaiting_ack`.
+- Collector timeout and non-timeout failure preserve the original exception
+  object and close `ack_wait`.
+- Existing worker `Exception` to error-ack conversion, `BaseException`
+  propagation, acknowledgement send propagation, and bounded ack detail
+  remain covered by the complete regression.
+- Rank zero and workers still use the same command ID and trace identity.
+- TP1 remains local-only with no worker ack wait.
+- Ordinary `call()` commands remain `requires_ack=False`.
+- Configure/reset/snapshot remain acknowledged all-rank operations.
+- No completion fence, `torch.cuda.synchronize()`, CUDA Event, or other
+  measured request-path synchronization was added.
+
+### Review-fix residual concerns
+
+- Task 3's engine-step context module is still intentionally absent. Exact
+  absence remains a lazy no-op; a future nested dependency failure will now
+  surface instead of being misclassified as absence.
+- Terminal cleanup is deliberately best-effort in exception handlers to
+  guarantee that telemetry cannot replace the original execution or
+  transport exception.
+- No GPU, CUDA, NCCL, checkpoint, SSH, remote write, or remote workload was
+  run.
+- The six frozen fingerprint failures remain intentionally visible.
+
+### Review-fix commit
+
+`SELF/HEAD`

@@ -679,6 +679,20 @@ class LLMEngine:
             raise RuntimeError(
                 "ModelRunner acknowledgement collector is not installed"
             )
+
+        def record_terminal_error(error):
+            if envelope.trace_identity is None:
+                return
+            try:
+                self.model_runner.command_timeline.record_terminal_error(
+                    envelope.command_id,
+                    finished_ns=self._clock_ns(),
+                    error_type=type(error).__name__,
+                    error_detail=str(error),
+                )
+            except BaseException:
+                pass
+
         try:
             local_result = (
                 self.model_runner.execute_command_envelope(envelope)
@@ -689,23 +703,32 @@ class LLMEngine:
                     "rank 0 command failed after dispatch: "
                     f"{type(error).__name__}: {error}"
                 )
+            record_terminal_error(error)
             raise
         if self.model_runner.world_size == 1:
             return local_result, ()
         ack_wait_started = self._clock_ns()
-        worker_acks = collector.collect(
-            envelope.command_id,
-            expected_ranks=tuple(
-                range(1, self.model_runner.world_size)
-            ),
-            timeout_s=timeout_s,
-            is_rank_alive=self._is_worker_rank_alive,
-        )
-        ack_wait_finished = self._clock_ns()
         if envelope.trace_identity is not None:
-            self.model_runner.command_timeline.record_ack_wait(
+            self.model_runner.command_timeline.record_ack_wait_start(
                 envelope.command_id,
                 started_ns=ack_wait_started,
+            )
+        try:
+            worker_acks = collector.collect(
+                envelope.command_id,
+                expected_ranks=tuple(
+                    range(1, self.model_runner.world_size)
+                ),
+                timeout_s=timeout_s,
+                is_rank_alive=self._is_worker_rank_alive,
+            )
+        except BaseException as error:
+            record_terminal_error(error)
+            raise
+        ack_wait_finished = self._clock_ns()
+        if envelope.trace_identity is not None:
+            self.model_runner.command_timeline.record_ack_wait_end(
+                envelope.command_id,
                 finished_ns=ack_wait_finished,
             )
         return local_result, worker_acks

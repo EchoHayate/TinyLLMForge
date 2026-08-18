@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 from itertools import count
 import os
 import pickle
@@ -173,6 +174,7 @@ class _Timeline:
         self.dispatches = []
         self.receives = []
         self.ack_waits = []
+        self.ack_wait_starts = {}
 
     def record_dispatch(self, identity):
         self.dispatches.append(identity)
@@ -192,6 +194,16 @@ class _Timeline:
 
     def record_ack_wait(self, command_id, *, started_ns, finished_ns):
         self.ack_waits.append((command_id, started_ns, finished_ns))
+
+    def record_ack_wait_start(self, command_id, *, started_ns):
+        self.ack_wait_starts[command_id] = started_ns
+
+    def record_ack_wait_end(self, command_id, *, finished_ns):
+        self.ack_waits.append((
+            command_id,
+            self.ack_wait_starts.pop(command_id),
+            finished_ns,
+        ))
 
 
 def _step_trace():
@@ -313,6 +325,91 @@ def test_model_runner_dispatch_traces_only_enabled_active_repeat():
         dispatch_published_monotonic_ns=400,
     )
     assert timeline.dispatches == [envelope.trace_identity]
+
+
+def test_model_runner_management_dispatch_ignores_stale_measured_trace():
+    dispatch = _model_runner_method("dispatch_command")
+    execute = _model_runner_method("execute_command_envelope")
+    snapshot = _model_runner_method("command_timeline_snapshot")
+    timeline = ModelRunnerCommandTimelineRecorder(
+        rank=0,
+        max_rows=8,
+        clock_identity=CommandClockIdentity(
+            boot_id="boot",
+            implementation="clock_gettime(CLOCK_MONOTONIC)",
+            resolution_s=1e-9,
+            monotonic=True,
+            adjustable=False,
+            captured_at_unix_ns=1,
+        ),
+    )
+    runner = types.SimpleNamespace(
+        rank=0,
+        world_size=1,
+        _command_ids=count(),
+        command_timeline=timeline,
+        _command_timeline_clock_ns=lambda: (_ for _ in ()).throw(
+            AssertionError("management command read timeline clock")
+        ),
+        _active_command_timeline_trace=_step_trace,
+        write_shm=lambda envelope: None,
+    )
+    runner.command_timeline_snapshot = types.MethodType(snapshot, runner)
+
+    envelopes = tuple(
+        dispatch(
+            runner,
+            method_name,
+            *(True, 8) if method_name == "configure_command_timeline" else (),
+            requires_ack=True,
+        )
+        for method_name in (
+            "configure_command_timeline",
+            "reset_command_timeline",
+            "command_timeline_snapshot",
+        )
+    )
+
+    assert all(envelope.trace_identity is None for envelope in envelopes)
+    assert execute(runner, envelopes[-1])["rows"] == []
+
+
+def test_model_runner_lazy_engine_step_import_only_suppresses_absent_module():
+    read_trace = _model_runner_method("_read_active_engine_step_trace")
+    original_import = builtins.__import__
+
+    def import_with_missing_timeline(name, *args, **kwargs):
+        if name == "tinyvllm.engine.engine_step_timeline":
+            raise ModuleNotFoundError(
+                "missing engine step timeline",
+                name=name,
+            )
+        return original_import(name, *args, **kwargs)
+
+    builtins.__import__ = import_with_missing_timeline
+    try:
+        assert read_trace() is None
+    finally:
+        builtins.__import__ = original_import
+
+    def import_with_missing_dependency(name, *args, **kwargs):
+        if name == "tinyvllm.engine.engine_step_timeline":
+            raise ModuleNotFoundError(
+                "missing nested dependency",
+                name="timeline_nested_dependency",
+            )
+        return original_import(name, *args, **kwargs)
+
+    builtins.__import__ = import_with_missing_dependency
+    try:
+        try:
+            read_trace()
+        except ModuleNotFoundError as error:
+            assert error.name == "timeline_nested_dependency"
+        else:
+            raise AssertionError("nested timeline import failure was hidden")
+    finally:
+        builtins.__import__ = original_import
 
 
 def test_model_runner_dispatch_emits_monotonic_envelopes():
@@ -1009,6 +1106,60 @@ def test_engine_local_exception_poisons_collector():
     assert "rank zero failed" in poison_reasons[0]
 
 
+def test_engine_traced_local_exception_terminalizes_timeline():
+    dispatch = _model_runner_method("dispatch_command")
+    execute = _model_runner_method("execute_command_envelope")
+    call_ack = _engine_method("call_model_runner_acknowledged")
+    timeline = ModelRunnerCommandTimelineRecorder(
+        rank=0,
+        max_rows=8,
+        clock_identity=CommandClockIdentity(
+            boot_id="boot",
+            implementation="clock_gettime(CLOCK_MONOTONIC)",
+            resolution_s=1e-9,
+            monotonic=True,
+            adjustable=False,
+            captured_at_unix_ns=1,
+        ),
+    )
+    runner = types.SimpleNamespace(
+        rank=0,
+        world_size=2,
+        _command_ids=count(29),
+        command_timeline=timeline,
+        _command_timeline_clock_ns=iter((10, 20, 30, 40)).__next__,
+        _active_command_timeline_trace=_step_trace,
+        write_shm=lambda envelope: None,
+        fail=lambda: (_ for _ in ()).throw(ValueError("rank zero failed")),
+    )
+    runner.dispatch_command = types.MethodType(dispatch, runner)
+    runner.execute_command_envelope = types.MethodType(execute, runner)
+    poison_reasons = []
+    collector = types.SimpleNamespace(
+        poison=poison_reasons.append,
+    )
+    engine = types.SimpleNamespace(
+        model_runner=runner,
+        model_runner_ack_collector=collector,
+        ps=[_Process()],
+        _clock_ns=iter((50,)).__next__,
+    )
+
+    try:
+        call_ack(engine, "fail", timeout_s=1.0)
+    except ValueError as error:
+        assert str(error) == "rank zero failed"
+    else:
+        raise AssertionError("rank-zero exception was swallowed")
+
+    row = timeline.snapshot()["rows"][0]
+    assert row["status"] == "error"
+    assert row["error_type"] == "ValueError"
+    assert row["error_detail"] == "rank zero failed"
+    assert row["terminal_error_monotonic_ns"] == 50
+    assert "rank zero failed" in poison_reasons[0]
+
+
 def test_engine_collector_failure_propagates():
     call_ack = _engine_method("call_model_runner_acknowledged")
 
@@ -1051,6 +1202,71 @@ def test_engine_collector_failure_propagates():
         assert str(error) == "worker ack timeout"
     else:
         raise AssertionError("collector failure was swallowed")
+
+
+def test_engine_traced_collector_failure_terminalizes_ack_wait():
+    dispatch = _model_runner_method("dispatch_command")
+    execute = _model_runner_method("execute_command_envelope")
+    call_ack = _engine_method("call_model_runner_acknowledged")
+
+    class Collector:
+        def __init__(self, error):
+            self.error = error
+
+        def collect(self, *args, **kwargs):
+            raise self.error
+
+    cases = (
+        (39, TimeoutError("worker ack timeout")),
+        (49, RuntimeError("worker error acknowledgement")),
+    )
+    for command_id, expected_error in cases:
+        timeline = ModelRunnerCommandTimelineRecorder(
+            rank=0,
+            max_rows=8,
+            clock_identity=CommandClockIdentity(
+                boot_id="boot",
+                implementation="clock_gettime(CLOCK_MONOTONIC)",
+                resolution_s=1e-9,
+                monotonic=True,
+                adjustable=False,
+                captured_at_unix_ns=1,
+            ),
+        )
+        runner = types.SimpleNamespace(
+            rank=0,
+            world_size=2,
+            _command_ids=count(command_id),
+            command_timeline=timeline,
+            _command_timeline_clock_ns=iter((10, 20, 30, 40)).__next__,
+            _active_command_timeline_trace=_step_trace,
+            write_shm=lambda envelope: None,
+            prepare=lambda: "local-ok",
+        )
+        runner.dispatch_command = types.MethodType(dispatch, runner)
+        runner.execute_command_envelope = types.MethodType(execute, runner)
+        engine = types.SimpleNamespace(
+            model_runner=runner,
+            model_runner_ack_collector=Collector(expected_error),
+            ps=[_Process()],
+            _is_worker_rank_alive=lambda rank: True,
+            _clock_ns=iter((50, 60)).__next__,
+        )
+
+        try:
+            call_ack(engine, "prepare", timeout_s=1.0)
+        except (TimeoutError, RuntimeError) as error:
+            assert error is expected_error
+        else:
+            raise AssertionError("collector failure was swallowed")
+
+        row = timeline.snapshot()["rows"][0]
+        assert row["status"] == "error"
+        assert row["error_type"] == type(expected_error).__name__
+        assert row["error_detail"] == str(expected_error)
+        assert row["ack_wait_started_monotonic_ns"] == 50
+        assert row["ack_wait_finished_monotonic_ns"] == 60
+        assert row["terminal_error_monotonic_ns"] == 60
 
 
 def test_engine_channel_helpers_create_close_and_map_liveness():

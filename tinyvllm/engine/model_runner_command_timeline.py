@@ -11,6 +11,7 @@ import time
 
 SCHEMA_VERSION = 1
 MAX_ERROR_TYPE_LENGTH = 128
+MAX_ERROR_DETAIL_BYTES = 4096
 _ACTIVE_TRACE = ContextVar(
     "tinyvllm_model_runner_command_trace",
     default=None,
@@ -41,6 +42,15 @@ def _sha256(value, name):
     ):
         raise ValueError(f"{name} must be a lowercase SHA256")
     return value
+
+
+def _bounded_utf8_text(value, name, max_bytes):
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 @dataclass(frozen=True)
@@ -248,6 +258,8 @@ class ModelRunnerCommandTimelineRecorder:
             "ack_wait_finished_monotonic_ns": None,
             "status": "pending",
             "error_type": "",
+            "error_detail": "",
+            "terminal_error_monotonic_ns": None,
         }
         self._rows.append(row)
         self._rows_by_command_id[command_id] = row
@@ -445,6 +457,72 @@ class ModelRunnerCommandTimelineRecorder:
     def record_ack_wait(self, command_id, *, started_ns, finished_ns):
         self.record_ack_wait_start(command_id, started_ns=started_ns)
         self.record_ack_wait_end(command_id, finished_ns=finished_ns)
+
+    def record_terminal_error(
+        self,
+        command_id,
+        *,
+        finished_ns,
+        error_type,
+        error_detail,
+    ):
+        row = self._row(command_id)
+        if row is None:
+            return
+        finished_ns = _nonnegative_int(finished_ns, "finished_ns")
+        phase = self._active_phases.get(command_id)
+        if phase not in (
+            "method",
+            "awaiting_ack",
+            "ack_send",
+            "ack_wait",
+        ):
+            raise ValueError(
+                f"command {command_id} has no terminal error phase"
+            )
+        if phase == "method":
+            started_key = (
+                "local_method_started_monotonic_ns"
+                if self._rank == 0
+                else "method_started_monotonic_ns"
+            )
+            finished_key = (
+                "local_method_finished_monotonic_ns"
+                if self._rank == 0
+                else "method_finished_monotonic_ns"
+            )
+            if finished_ns < row[started_key]:
+                raise ValueError("method finish timestamp is invalid")
+            row[finished_key] = finished_ns
+        elif phase == "ack_send":
+            if finished_ns < row["ack_send_started_monotonic_ns"]:
+                raise ValueError("ack send finish timestamp is invalid")
+            row["ack_send_finished_monotonic_ns"] = finished_ns
+        elif phase == "ack_wait":
+            if finished_ns < row["ack_wait_started_monotonic_ns"]:
+                raise ValueError("ack wait finish timestamp is invalid")
+            row["ack_wait_finished_monotonic_ns"] = finished_ns
+        else:
+            method_finished_ns = (
+                row["local_method_finished_monotonic_ns"]
+                if self._rank == 0
+                else row["method_finished_monotonic_ns"]
+            )
+            if finished_ns < method_finished_ns:
+                raise ValueError("terminal error timestamp is invalid")
+        self._active_phases.pop(command_id, None)
+        row["status"] = "error"
+        row["error_type"] = _bounded_utf8_text(
+            error_type,
+            "error_type",
+            MAX_ERROR_TYPE_LENGTH,
+        )
+        row["error_detail"] = _bounded_utf8_text(
+            error_detail,
+            "error_detail",
+            MAX_ERROR_DETAIL_BYTES,
+        )
+        row["terminal_error_monotonic_ns"] = finished_ns
 
     def snapshot(self):
         if self._active_phases:
