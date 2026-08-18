@@ -909,10 +909,38 @@ def _remove_empty_nonce_directory(
         os.close(grandparent_fd)
 
 
+_TRANSACTION_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+
+
+def _has_committed_result(committed_result):
+    return (
+        committed_result is not None
+        and len(committed_result) == 1
+        and committed_result[0] is not None
+    )
+
+
+def _consume_pending_transaction_signals():
+    pending = set(signal.sigpending()).intersection(_TRANSACTION_SIGNALS)
+    for signum in sorted(pending):
+        signal.sigwait((signum,))
+
+
+@contextlib.contextmanager
+def _blocked_transaction_signals():
+    previous_mask = signal.pthread_sigmask(
+        signal.SIG_BLOCK, _TRANSACTION_SIGNALS
+    )
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+
 @contextlib.contextmanager
 def _transaction_signal_handlers(committed_result=None):
     installed = []
-    signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+    signals = _TRANSACTION_SIGNALS
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
     body_mask_restore_attempted = False
     body_completed = False
@@ -936,7 +964,7 @@ def _transaction_signal_handlers(committed_result=None):
         body_completed = True
     except BaseException as exc:
         primary_error = exc
-        if not committed_result:
+        if not _has_committed_result(committed_result):
             raise
     finally:
         cleanup_error = None
@@ -945,6 +973,12 @@ def _transaction_signal_handlers(committed_result=None):
                 signal.pthread_sigmask(signal.SIG_BLOCK, signals)
             except BaseException as exc:
                 cleanup_error = exc
+        if _has_committed_result(committed_result):
+            try:
+                _consume_pending_transaction_signals()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
         for signum, previous in reversed(installed):
             try:
                 signal.signal(signum, previous)
@@ -960,7 +994,7 @@ def _transaction_signal_handlers(committed_result=None):
             cleanup_error is not None
             and primary_error is None
             and not body_completed
-            and not committed_result
+            and not _has_committed_result(committed_result)
         ):
             raise cleanup_error
 
@@ -1748,7 +1782,7 @@ def commit_sync_generation(
             "sync delta identity does not match nonce and explicit paths"
         )
 
-    committed_result = []
+    committed_result = [None]
     with _transaction_signal_handlers(committed_result):
         with locked_remote_root(remote_root) as root_fd:
             _inject(fault_injector, "after_lock")
@@ -1893,10 +1927,11 @@ def commit_sync_generation(
                     raise TransactionError(
                         "generation entry changed before sync exchange"
                     )
-                _rename_exchange_at(
-                    root_fd, "source", nonce_fd, "generation"
-                )
-                committed_result.append(receipt)
+                with _blocked_transaction_signals():
+                    _rename_exchange_at(
+                        root_fd, "source", nonce_fd, "generation"
+                    )
+                    committed_result[0] = receipt
                 try:
                     _inject(fault_injector, "after_exchange")
                 except BaseException:

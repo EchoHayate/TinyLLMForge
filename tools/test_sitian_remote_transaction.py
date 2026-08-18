@@ -323,21 +323,52 @@ class TransactionPrimitiveTests(unittest.TestCase):
     ):
         driver = r"""
 import os
+from pathlib import Path
 import signal
 import sys
 from tools import sitian_remote_transaction as transaction
 
 event = sys.argv[1]
 real_inject = transaction._inject
+real_renameat2 = transaction._RENAMEAT2
+real_pthread_sigmask = transaction.signal.pthread_sigmask
+remote_root = Path(sys.argv[4])
+teardown_signal_sent = False
 
 def inject(fault_injector, point):
+    if point == "before_exchange" and event == "before_exchange_sigterm":
+        os.kill(os.getpid(), signal.SIGTERM)
     if point == "after_exchange":
         if event == "exception":
             raise transaction.InjectedFailure(point)
-        os.kill(os.getpid(), signal.SIGTERM)
+        if event == "sigterm":
+            os.kill(os.getpid(), signal.SIGTERM)
     return real_inject(fault_injector, point)
 
+def renameat2(*args):
+    result = real_renameat2(*args)
+    if result == 0 and event == "exchange_return_sigterm":
+        os.kill(os.getpid(), signal.SIGTERM)
+    return result
+
+def pthread_sigmask(how, mask):
+    global teardown_signal_sent
+    previous = real_pthread_sigmask(how, mask)
+    source = remote_root / "source" / "tools" / "a.py"
+    if (
+        event == "teardown_pending_sigterm"
+        and not teardown_signal_sent
+        and how == signal.SIG_BLOCK
+        and source.is_file()
+        and source.read_bytes() == b"committed\n"
+    ):
+        teardown_signal_sent = True
+        os.kill(os.getpid(), signal.SIGTERM)
+    return previous
+
 transaction._inject = inject
+transaction._RENAMEAT2 = renameat2
+transaction.signal.pthread_sigmask = pthread_sigmask
 sys.exit(transaction.main(sys.argv[2:]))
 """
         return subprocess.run(
@@ -1538,6 +1569,62 @@ sys.exit(transaction.main(sys.argv[2:]))
                     (root / "source/tools/a.py").read_bytes(),
                     b"committed\n",
                 )
+
+    def test_sync_helper_closes_real_signal_commit_windows(self):
+        for event in (
+            "exchange_return_sigterm",
+            "teardown_pending_sigterm",
+        ):
+            with self.subTest(event=event):
+                root = self.make_initialized_root(
+                    "signal-window-{}".format(event)
+                )
+                nonce = "signal-window-{}".format(event)
+                archive = self.make_delta_archive(
+                    (("tools/a.py", b"committed\n"),)
+                )
+
+                result = self.run_helper_with_post_exchange_event(
+                    root, nonce, archive, event
+                )
+
+                expected = (
+                    str(
+                        root
+                        / "receipts/sync-{}.sha256".format(nonce)
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(
+                    (root / "source/tools/a.py").read_bytes(),
+                    b"committed\n",
+                )
+
+    def test_sync_helper_pre_exchange_sigterm_remains_failure(self):
+        root = self.make_initialized_root("signal-window-pre-exchange")
+        source_before = self.tree_snapshot(root / "source")
+        receipts_before = self.tree_snapshot(root / "receipts")
+        archive = self.make_delta_archive(
+            (("tools/a.py", b"committed\n"),)
+        )
+
+        result = self.run_helper_with_post_exchange_event(
+            root,
+            "signal-window-pre-exchange",
+            archive,
+            "before_exchange_sigterm",
+        )
+
+        self.assertEqual(result.returncode, 143)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(b"transaction interrupted by signal 15", result.stderr)
+        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
+        self.assertEqual(
+            self.tree_snapshot(root / "receipts"), receipts_before
+        )
 
     def test_second_cleanup_exception_does_not_leave_sync_lock_held(self):
         root = self.make_initialized_root()

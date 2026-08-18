@@ -39,21 +39,55 @@ def run_sync_helper_with_post_exchange_event(
 ):
     driver = r"""
 import os
+from pathlib import Path
 import signal
 import sys
 from tools import sitian_remote_transaction as transaction
 
 event = sys.argv[1]
 real_inject = transaction._inject
+real_renameat2 = transaction._RENAMEAT2
+real_pthread_sigmask = transaction.signal.pthread_sigmask
+remote_root = Path(sys.argv[4])
+teardown_signal_sent = False
 
 def inject(fault_injector, point):
     if point == "after_exchange":
         if event == "exception":
             raise transaction.InjectedFailure(point)
-        os.kill(os.getpid(), signal.SIGTERM)
+        if event == "sigterm":
+            os.kill(os.getpid(), signal.SIGTERM)
     return real_inject(fault_injector, point)
 
+def renameat2(*args):
+    result = real_renameat2(*args)
+    if result == 0 and event == "exchange_return_sigterm":
+        os.kill(os.getpid(), signal.SIGTERM)
+    return result
+
+def pthread_sigmask(how, mask):
+    global teardown_signal_sent
+    previous = real_pthread_sigmask(how, mask)
+    source = (
+        remote_root
+        / "source"
+        / "tools"
+        / "sitian_remote_scratch.py"
+    )
+    if (
+        event == "teardown_pending_sigterm"
+        and not teardown_signal_sent
+        and how == signal.SIG_BLOCK
+        and source.is_file()
+        and source.read_bytes() == b"new\n"
+    ):
+        teardown_signal_sent = True
+        os.kill(os.getpid(), signal.SIGTERM)
+    return previous
+
 transaction._inject = inject
+transaction._RENAMEAT2 = renameat2
+transaction.signal.pthread_sigmask = pthread_sigmask
 sys.exit(transaction.main(sys.argv[2:]))
 """
     process = subprocess.run(
@@ -796,7 +830,12 @@ class TransportTests(unittest.TestCase):
         self,
     ):
         module = load_module()
-        for event in ("exception", "sigterm"):
+        for event in (
+            "exception",
+            "sigterm",
+            "exchange_return_sigterm",
+            "teardown_pending_sigterm",
+        ):
             with self.subTest(event=event), tempfile.TemporaryDirectory(
                 prefix="sitian-controller-post-exchange-{}-".format(event)
             ) as temporary:
