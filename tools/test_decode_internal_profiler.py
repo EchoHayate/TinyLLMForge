@@ -258,6 +258,7 @@ def test_records_step_and_collective_and_synchronizes_once():
         "command_id": None,
         "engine_step_id": None,
         "repeat_index": None,
+        "speculative_selected_sequence_ids_sha256": None,
         "wall_ns": 300,
         "cuda_ns": 1_000_000,
         "non_cuda_upper_bound_ns": 0,
@@ -270,12 +271,16 @@ def test_records_step_and_collective_and_synchronizes_once():
         "command_id": None,
         "engine_step_id": None,
         "repeat_index": None,
+        "request_set_sha256": "a" * 64,
+        "speculative_selected_sequence_ids_sha256": None,
         "operation": "row_parallel_all_reduce",
         "tensor_shape": [4, 2048],
         "tensor_dtype": "torch.bfloat16",
         "wall_ns": 100,
         "cuda_ns": 500_000,
     }]
+    assert snapshot["dropped_steps"] == 0
+    assert snapshot["dropped_collectives"] == 0
 
 
 def test_finalize_already_synchronized_reuses_existing_fence():
@@ -329,7 +334,7 @@ def test_profile_rows_bind_only_the_active_command_identity():
             batch_kind="decode",
             is_decode=True,
             active_sequence_count=4,
-            request_set_sha256="a" * 64,
+            request_set_sha256="c" * 64,
             dispatch="graph",
         )
         with profiler.collective(
@@ -366,6 +371,26 @@ def test_profile_rows_bind_only_the_active_command_identity():
         snapshot["steps"][1][name]
         for name in identity_fields
     ) == (None, None, None)
+    assert snapshot["steps"][0]["request_set_sha256"] == "a" * 64
+    assert (
+        snapshot["steps"][0][
+            "speculative_selected_sequence_ids_sha256"
+        ]
+        == "b" * 64
+    )
+    assert snapshot["collectives"][0]["request_set_sha256"] == "a" * 64
+    assert (
+        snapshot["collectives"][0][
+            "speculative_selected_sequence_ids_sha256"
+        ]
+        == "b" * 64
+    )
+    assert (
+        snapshot["steps"][1][
+            "speculative_selected_sequence_ids_sha256"
+        ]
+        is None
+    )
 
 
 def test_prefill_has_no_decode_ordinal_and_decode_ordinals_increment():

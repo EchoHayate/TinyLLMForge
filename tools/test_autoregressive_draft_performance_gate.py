@@ -743,6 +743,9 @@ class _FakeWorkerEngine:
         self.command_timeline_configurations = 0
         self.decode_profile_configurations = 0
         self.command_timeline_repeat = None
+        self.command_timeline_request_set_sha256 = None
+        self.last_command_timeline_repeat = None
+        self.last_command_timeline_request_set_sha256 = None
 
     def is_finished(self):
         return not self.pending
@@ -828,6 +831,7 @@ class _FakeWorkerEngine:
         assert repeat_index >= 0
         assert self.command_timeline_repeat is None
         self.command_timeline_repeat = repeat_index
+        self.command_timeline_request_set_sha256 = request_set_sha256
         self.events.append(
             ("begin-repeat", repeat_index, request_set_sha256)
         )
@@ -839,20 +843,49 @@ class _FakeWorkerEngine:
     def end_command_timeline_repeat(self):
         assert self.command_timeline_repeat is not None
         repeat_index = self.command_timeline_repeat
+        request_set_sha256 = self.command_timeline_request_set_sha256
+        self.last_command_timeline_repeat = repeat_index
+        self.last_command_timeline_request_set_sha256 = request_set_sha256
         self.command_timeline_repeat = None
+        self.command_timeline_request_set_sha256 = None
         self.events.append(("end-repeat", repeat_index))
-        return {"repeat_index": repeat_index}
+        return {
+            "repeat_index": repeat_index,
+            "request_set_sha256": request_set_sha256,
+        }
 
     def command_timeline_snapshots(self, timeout_s):
         assert timeout_s == 60.0
         self.events.append("command-snapshot")
+        selected_sha256 = "b" * 64
         return tuple(
             {
                 "schema_version": 1,
                 "rank": rank,
                 "enabled": True,
                 "clock": {"boot_id": "boot"},
-                "rows": [{"command_id": 10 + rank}],
+                "rows": [
+                    {
+                        "rank": rank,
+                        "command_id": 10 + index,
+                        "method_name": "step",
+                        "requires_ack": True,
+                        "engine_step_id": index,
+                        "repeat_index": (
+                            self.last_command_timeline_repeat
+                        ),
+                        "request_set_sha256": (
+                            self.last_command_timeline_request_set_sha256
+                        ),
+                        "batch_kind": "speculative",
+                        "speculative_selected_sequence_ids_sha256": (
+                            selected_sha256
+                        ),
+                        "dispatch_started_monotonic_ns": 100 + index,
+                        "dispatch_published_monotonic_ns": 110 + index,
+                    }
+                    for index in range(self.step_index)
+                ],
                 "dropped_rows": 0,
             }
             for rank in range(4)
@@ -867,11 +900,11 @@ class _FakeWorkerEngine:
         assert already_synchronized is True
         assert timeout_s == 60.0
         self.events.append("cuda-snapshot")
-        repeat_index = (
-            self.step_index
-            if self.command_timeline_repeat is None
-            else self.command_timeline_repeat
+        repeat_index = self.last_command_timeline_repeat
+        request_set_sha256 = (
+            self.last_command_timeline_request_set_sha256
         )
+        selected_sha256 = "b" * 64
         return {
             "enabled": True,
             "rank_inventory": [0, 1, 2, 3],
@@ -880,12 +913,34 @@ class _FakeWorkerEngine:
                     "rank": rank,
                     "enabled": True,
                     "finalization_status": "complete",
-                    "steps": [{
-                        "command_id": 10 + rank,
-                        "engine_step_id": 0,
-                        "repeat_index": repeat_index,
-                    }],
-                    "collectives": [],
+                    "steps": [
+                        {
+                            "rank": rank,
+                            "command_id": 10 + index,
+                            "engine_step_id": index,
+                            "repeat_index": repeat_index,
+                            "request_set_sha256": request_set_sha256,
+                            "speculative_selected_sequence_ids_sha256": (
+                                selected_sha256
+                            ),
+                        }
+                        for index in range(self.step_index)
+                    ],
+                    "collectives": [
+                        {
+                            "rank": rank,
+                            "command_id": 10 + index,
+                            "engine_step_id": index,
+                            "repeat_index": repeat_index,
+                            "request_set_sha256": request_set_sha256,
+                            "speculative_selected_sequence_ids_sha256": (
+                                selected_sha256
+                            ),
+                        }
+                        for index in range(self.step_index)
+                    ],
+                    "dropped_steps": 0,
+                    "dropped_collectives": 0,
                 }
                 for rank in range(4)
             ],
@@ -897,7 +952,17 @@ class _FakeWorkerEngine:
             "schema_version": 1,
             "enabled": True,
             "steps": [
-                {"engine_step_id": index}
+                {
+                    "engine_step_id": index,
+                    "repeat_index": self.last_command_timeline_repeat,
+                    "request_set_sha256": (
+                        self.last_command_timeline_request_set_sha256
+                    ),
+                    "batch_kind": "speculative",
+                    "speculative_selected_sequence_ids_sha256": (
+                        "b" * 64
+                    ),
+                }
                 for index in range(self.step_index)
             ],
             "dropped_steps": 0,
@@ -1402,9 +1467,51 @@ def test_policy_campaign_runs_one_warmup_three_measured_and_closes():
     }
 
 
-def _command_timeline_graph_run(*, repeat, replays, mode="graph"):
+def _command_timeline_graph_run(
+    *,
+    repeat,
+    replays,
+    timeline_repeat_index,
+    request_set_sha256,
+    mode="graph",
+):
     run = _run(policy="learned", batch_size=4, repeat=repeat)
     graph = mode == "graph"
+    command_id = 101
+    engine_step_id = 201
+    selected_sequence_ids_sha256 = "a" * 64
+    command_identity = {
+        "command_id": command_id,
+        "method_name": "step",
+        "requires_ack": True,
+        "engine_step_id": engine_step_id,
+        "repeat_index": timeline_repeat_index,
+        "request_set_sha256": request_set_sha256,
+        "batch_kind": "speculative",
+        "speculative_selected_sequence_ids_sha256": (
+            selected_sequence_ids_sha256
+        ),
+        "dispatch_started_monotonic_ns": 1_000,
+        "dispatch_published_monotonic_ns": 2_000,
+    }
+    cuda_identity = {
+        "command_id": command_id,
+        "engine_step_id": engine_step_id,
+        "repeat_index": timeline_repeat_index,
+        "request_set_sha256": request_set_sha256,
+        "speculative_selected_sequence_ids_sha256": (
+            selected_sequence_ids_sha256
+        ),
+    }
+    engine_step_identity = {
+        "engine_step_id": engine_step_id,
+        "repeat_index": timeline_repeat_index,
+        "request_set_sha256": request_set_sha256,
+        "batch_kind": "speculative",
+        "speculative_selected_sequence_ids_sha256": (
+            selected_sequence_ids_sha256
+        ),
+    }
     run["correctness"] = {
         "rank_graph_counters": [
             {
@@ -1430,21 +1537,78 @@ def _command_timeline_graph_run(*, repeat, replays, mode="graph"):
     }
     run["runtime"]["command_timeline"] = {
         "schema_version": 1,
-        "rank_snapshots": [{"rank": rank} for rank in range(4)],
+        "rank_snapshots": [
+            {
+                "schema_version": 1,
+                "rank": rank,
+                "enabled": True,
+                "clock": {"boot_id": "boot"},
+                "rows": [{
+                    "rank": rank,
+                    **copy.deepcopy(command_identity),
+                }],
+                "dropped_rows": 0,
+            }
+            for rank in range(4)
+        ],
         "cuda_rank_snapshots": [
             {
                 "rank": rank,
                 "steps": [{
-                    "command_id": rank + 1,
-                    "engine_step_id": 0,
-                    "repeat_index": repeat,
+                    "rank": rank,
+                    **copy.deepcopy(cuda_identity),
                 }],
+                "collectives": [{
+                    "rank": rank,
+                    **copy.deepcopy(cuda_identity),
+                }],
+                "dropped_steps": 0,
+                "dropped_collectives": 0,
             }
             for rank in range(4)
         ],
-        "engine_steps": [{"engine_step_id": 0}],
+        "engine_steps": [engine_step_identity],
+        "engine_dropped_steps": 0,
     }
     return run
+
+
+def _run_command_timeline_campaign(*, mutate_run=None):
+    adapter = _FakeWorkerAdapter()
+
+    def run_batch_fn(**kwargs):
+        repeat = kwargs["repeat"]
+        timeline_repeat_index = kwargs[
+            "command_timeline_repeat_index"
+        ]
+        request_set_sha256 = _worker_module()._request_set_sha256(
+            kwargs["prompt_rows"]
+        )
+        run = _command_timeline_graph_run(
+            repeat=repeat,
+            replays=4 * (repeat + 2),
+            timeline_repeat_index=timeline_repeat_index,
+            request_set_sha256=request_set_sha256,
+        )
+        if mutate_run is not None:
+            mutate_run(run, timeline_repeat_index)
+        return run
+
+    return _worker_module().run_policy_campaign(
+        target_model="/models/target",
+        draft_model="/models/draft",
+        policy="learned",
+        batch_size=4,
+        engine_factory=lambda *args, **kwargs: adapter,
+        sampling_params_type=_FakeSamplingParams,
+        synchronize=lambda: None,
+        clock_ns=lambda: 0,
+        run_batch_fn=run_batch_fn,
+        warmup_runs=1,
+        measured_runs=5,
+        cuda_graph_mode="graph",
+        command_timeline=True,
+    )
 
 
 def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
@@ -1460,13 +1624,11 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
         run = _command_timeline_graph_run(
             repeat=repeat,
             replays=4 * (repeat + 2),
+            timeline_repeat_index=timeline_repeat_index,
+            request_set_sha256=_worker_module()._request_set_sha256(
+                kwargs["prompt_rows"]
+            ),
         )
-        for rank_row in run["runtime"]["command_timeline"][
-            "cuda_rank_snapshots"
-        ]:
-            rank_row["steps"][0]["repeat_index"] = (
-                timeline_repeat_index
-            )
         return run
 
     result = _worker_module().run_policy_campaign(
@@ -1550,6 +1712,12 @@ def test_policy_campaign_command_timeline_rejects_graph_counter_drift():
         run = _command_timeline_graph_run(
             repeat=repeat,
             replays=4 * (repeat + 2),
+            timeline_repeat_index=kwargs[
+                "command_timeline_repeat_index"
+            ],
+            request_set_sha256=_worker_module()._request_set_sha256(
+                kwargs["prompt_rows"]
+            ),
         )
         if repeat == 2:
             run["correctness"]["rank_graph_counters"][3][
@@ -1576,6 +1744,124 @@ def test_policy_campaign_command_timeline_rejects_graph_counter_drift():
             cuda_graph_mode="graph",
             command_timeline=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda timeline: timeline["rank_snapshots"][0].update(
+                rows=[]
+            ),
+            "command row evidence is missing",
+        ),
+        (
+            lambda timeline: timeline["rank_snapshots"][0].update(
+                dropped_rows=1
+            ),
+            "command rows were dropped",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0].update(
+                dropped_steps=1
+            ),
+            "CUDA evidence was dropped",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0].update(
+                dropped_collectives=1
+            ),
+            "CUDA evidence was dropped",
+        ),
+        (
+            lambda timeline: timeline.update(engine_dropped_steps=1),
+            "engine step evidence was dropped",
+        ),
+        (
+            lambda timeline: timeline["rank_snapshots"][0]["rows"][
+                0
+            ].update(repeat_index=99),
+            "repeat identity mismatch",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0][
+                "steps"
+            ][0].update(request_set_sha256="b" * 64),
+            "request digest mismatch",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0][
+                "steps"
+            ][0].update(command_id=999),
+            "unknown command identity",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0][
+                "steps"
+            ][0].update(engine_step_id=999),
+            "unknown engine step identity",
+        ),
+        (
+            lambda timeline: timeline["engine_steps"][0].update(
+                speculative_selected_sequence_ids_sha256="b" * 64
+            ),
+            "selected-sequence digest mismatch",
+        ),
+        (
+            lambda timeline: timeline["rank_snapshots"][0]["rows"][
+                0
+            ].pop("command_id"),
+            "command identity is malformed",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0][
+                "steps"
+            ][0].pop("request_set_sha256"),
+            "CUDA step identity is malformed",
+        ),
+        (
+            lambda timeline: timeline["engine_steps"][0].pop(
+                "repeat_index"
+            ),
+            "engine step identity is malformed",
+        ),
+        (
+            lambda timeline: timeline["rank_snapshots"][3]["rows"][
+                0
+            ].update(command_id=999),
+            "command inventories differ across ranks",
+        ),
+    ],
+)
+def test_policy_campaign_command_timeline_rejects_invalid_evidence(
+    mutation,
+    message,
+):
+    def mutate_run(run, timeline_repeat_index):
+        if timeline_repeat_index == 2:
+            mutation(run["runtime"]["command_timeline"])
+
+    with pytest.raises(ValueError, match=message):
+        _run_command_timeline_campaign(mutate_run=mutate_run)
+
+
+def test_policy_campaign_command_timeline_rejects_warmup_reuse():
+    def mutate_run(run, timeline_repeat_index):
+        if timeline_repeat_index != 1:
+            return
+        timeline = run["runtime"]["command_timeline"]
+        for rank_snapshot in timeline["rank_snapshots"]:
+            rank_snapshot["rows"][0]["repeat_index"] = 0
+        for cuda_snapshot in timeline["cuda_rank_snapshots"]:
+            for row in (
+                cuda_snapshot["steps"]
+                + cuda_snapshot["collectives"]
+            ):
+                row["repeat_index"] = 0
+        timeline["engine_steps"][0]["repeat_index"] = 0
+
+    with pytest.raises(ValueError, match="repeat identity mismatch"):
+        _run_command_timeline_campaign(mutate_run=mutate_run)
 
 
 def test_worker_cli_command_timeline_is_opt_in():

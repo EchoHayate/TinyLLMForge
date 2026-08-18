@@ -119,7 +119,221 @@ def _request_set_sha256(prompt_rows: list[dict]) -> str:
     ])
 
 
-def _validate_command_timeline_run(run: dict) -> None:
+def _identity_nonnegative_int(value, name):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+    ):
+        raise ValueError(f"{name} is malformed")
+    return value
+
+
+def _identity_sha256(value, name, *, optional=False):
+    if optional and value is None:
+        return value
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} is malformed")
+    return value
+
+
+def _zero_evidence_counter(value, name):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} is malformed")
+    return value == 0
+
+
+def _command_transport_identity(
+    row,
+    *,
+    expected_rank,
+    expected_repeat_index,
+    expected_request_set_sha256,
+):
+    required = (
+        "rank",
+        "command_id",
+        "method_name",
+        "requires_ack",
+        "engine_step_id",
+        "repeat_index",
+        "request_set_sha256",
+        "batch_kind",
+        "speculative_selected_sequence_ids_sha256",
+        "dispatch_started_monotonic_ns",
+        "dispatch_published_monotonic_ns",
+    )
+    if (
+        not isinstance(row, dict)
+        or any(name not in row for name in required)
+    ):
+        raise ValueError("command identity is malformed")
+    if row["rank"] != expected_rank:
+        raise ValueError("command identity is malformed")
+    command_id = _identity_nonnegative_int(
+        row["command_id"],
+        "command identity",
+    )
+    engine_step_id = _identity_nonnegative_int(
+        row["engine_step_id"],
+        "command identity",
+    )
+    if not isinstance(row["method_name"], str) or not row["method_name"]:
+        raise ValueError("command identity is malformed")
+    if not isinstance(row["requires_ack"], bool):
+        raise ValueError("command identity is malformed")
+    if not isinstance(row["batch_kind"], str) or not row["batch_kind"]:
+        raise ValueError("command identity is malformed")
+    repeat_index = _identity_nonnegative_int(
+        row["repeat_index"],
+        "command identity",
+    )
+    if repeat_index != expected_repeat_index:
+        raise ValueError("command timeline repeat identity mismatch")
+    request_set_sha256 = _identity_sha256(
+        row["request_set_sha256"],
+        "command request digest",
+    )
+    if request_set_sha256 != expected_request_set_sha256:
+        raise ValueError("command timeline request digest mismatch")
+    selected_sha256 = _identity_sha256(
+        row["speculative_selected_sequence_ids_sha256"],
+        "command selected-sequence digest",
+        optional=True,
+    )
+    dispatch_started = _identity_nonnegative_int(
+        row["dispatch_started_monotonic_ns"],
+        "command identity",
+    )
+    dispatch_published = _identity_nonnegative_int(
+        row["dispatch_published_monotonic_ns"],
+        "command identity",
+    )
+    if dispatch_published < dispatch_started:
+        raise ValueError("command identity is malformed")
+    return (
+        command_id,
+        row["method_name"],
+        row["requires_ack"],
+        engine_step_id,
+        repeat_index,
+        request_set_sha256,
+        row["batch_kind"],
+        selected_sha256,
+        dispatch_started,
+        dispatch_published,
+    )
+
+
+def _timeline_row_identity(
+    row,
+    *,
+    kind,
+    expected_rank,
+    expected_repeat_index,
+    expected_request_set_sha256,
+):
+    required = (
+        "rank",
+        "command_id",
+        "engine_step_id",
+        "repeat_index",
+        "request_set_sha256",
+        "speculative_selected_sequence_ids_sha256",
+    )
+    if (
+        not isinstance(row, dict)
+        or any(name not in row for name in required)
+    ):
+        raise ValueError(f"{kind} identity is malformed")
+    if row["rank"] != expected_rank:
+        raise ValueError(f"{kind} identity is malformed")
+    command_id = _identity_nonnegative_int(
+        row["command_id"],
+        f"{kind} identity",
+    )
+    engine_step_id = _identity_nonnegative_int(
+        row["engine_step_id"],
+        f"{kind} identity",
+    )
+    repeat_index = _identity_nonnegative_int(
+        row["repeat_index"],
+        f"{kind} identity",
+    )
+    if repeat_index != expected_repeat_index:
+        raise ValueError("command timeline repeat identity mismatch")
+    request_set_sha256 = _identity_sha256(
+        row["request_set_sha256"],
+        f"{kind} request digest",
+    )
+    if request_set_sha256 != expected_request_set_sha256:
+        raise ValueError("command timeline request digest mismatch")
+    selected_sha256 = _identity_sha256(
+        row["speculative_selected_sequence_ids_sha256"],
+        f"{kind} selected-sequence digest",
+        optional=True,
+    )
+    return (
+        command_id,
+        engine_step_id,
+        selected_sha256,
+    )
+
+
+def _engine_step_identity(
+    row,
+    *,
+    expected_repeat_index,
+    expected_request_set_sha256,
+):
+    required = (
+        "engine_step_id",
+        "repeat_index",
+        "request_set_sha256",
+        "batch_kind",
+        "speculative_selected_sequence_ids_sha256",
+    )
+    if (
+        not isinstance(row, dict)
+        or any(name not in row for name in required)
+    ):
+        raise ValueError("engine step identity is malformed")
+    engine_step_id = _identity_nonnegative_int(
+        row["engine_step_id"],
+        "engine step identity",
+    )
+    repeat_index = _identity_nonnegative_int(
+        row["repeat_index"],
+        "engine step identity",
+    )
+    if repeat_index != expected_repeat_index:
+        raise ValueError("command timeline repeat identity mismatch")
+    request_set_sha256 = _identity_sha256(
+        row["request_set_sha256"],
+        "engine step request digest",
+    )
+    if request_set_sha256 != expected_request_set_sha256:
+        raise ValueError("command timeline request digest mismatch")
+    if not isinstance(row["batch_kind"], str) or not row["batch_kind"]:
+        raise ValueError("engine step identity is malformed")
+    selected_sha256 = _identity_sha256(
+        row["speculative_selected_sequence_ids_sha256"],
+        "engine step selected-sequence digest",
+        optional=True,
+    )
+    return engine_step_id, selected_sha256
+
+
+def _validate_command_timeline_run(
+    run: dict,
+    *,
+    expected_repeat_index: int,
+    expected_request_set_sha256: str,
+) -> None:
     try:
         repeat = run["repeat"]
         timeline = run["runtime"]["command_timeline"]
@@ -129,6 +343,14 @@ def _validate_command_timeline_run(run: dict) -> None:
         ) from error
     if timeline.get("schema_version") != 1:
         raise ValueError("command timeline schema is invalid")
+    _identity_nonnegative_int(
+        expected_repeat_index,
+        "expected repeat identity",
+    )
+    _identity_sha256(
+        expected_request_set_sha256,
+        "expected request digest",
+    )
     for name in ("rank_snapshots", "cuda_rank_snapshots"):
         rows = timeline.get(name)
         if (
@@ -140,6 +362,45 @@ def _validate_command_timeline_run(run: dict) -> None:
             raise ValueError(
                 f"command timeline {name} rank inventory is invalid"
             )
+    command_inventories = []
+    command_rows_by_rank = []
+    for rank, snapshot in enumerate(timeline["rank_snapshots"]):
+        rows = snapshot.get("rows")
+        if not isinstance(rows, list) or not rows:
+            raise ValueError(
+                "command timeline command row evidence is missing"
+            )
+        if not _zero_evidence_counter(
+            snapshot.get("dropped_rows"),
+            "command dropped_rows",
+        ):
+            raise ValueError("command timeline command rows were dropped")
+        inventory = [
+            _command_transport_identity(
+                row,
+                expected_rank=rank,
+                expected_repeat_index=expected_repeat_index,
+                expected_request_set_sha256=(
+                    expected_request_set_sha256
+                ),
+            )
+            for row in rows
+        ]
+        command_ids = [identity[0] for identity in inventory]
+        if len(set(command_ids)) != len(command_ids):
+            raise ValueError("command identity is malformed")
+        command_inventories.append(inventory)
+        command_rows_by_rank.append({
+            identity[0]: identity
+            for identity in inventory
+        })
+    if any(
+        inventory != command_inventories[0]
+        for inventory in command_inventories[1:]
+    ):
+        raise ValueError(
+            "command timeline command inventories differ across ranks"
+        )
     cuda_rows = timeline["cuda_rank_snapshots"]
     if any(
         not isinstance(row.get("steps"), list)
@@ -147,9 +408,106 @@ def _validate_command_timeline_run(run: dict) -> None:
         for row in cuda_rows
     ):
         raise ValueError("command timeline CUDA step evidence is missing")
+    for snapshot in cuda_rows:
+        if (
+            not _zero_evidence_counter(
+                snapshot.get("dropped_steps"),
+                "CUDA dropped_steps",
+            )
+            or not _zero_evidence_counter(
+                snapshot.get("dropped_collectives"),
+                "CUDA dropped_collectives",
+            )
+        ):
+            raise ValueError("command timeline CUDA evidence was dropped")
+        if not isinstance(snapshot.get("collectives"), list):
+            raise ValueError(
+                "command timeline CUDA collective evidence is malformed"
+            )
     engine_steps = timeline.get("engine_steps")
     if not isinstance(engine_steps, list) or not engine_steps:
         raise ValueError("command timeline engine step evidence is missing")
+    if not _zero_evidence_counter(
+        timeline.get("engine_dropped_steps"),
+        "engine dropped_steps",
+    ):
+        raise ValueError(
+            "command timeline engine step evidence was dropped"
+        )
+    engine_step_rows = {}
+    for row in engine_steps:
+        engine_step_id, selected_sha256 = _engine_step_identity(
+            row,
+            expected_repeat_index=expected_repeat_index,
+            expected_request_set_sha256=expected_request_set_sha256,
+        )
+        if engine_step_id in engine_step_rows:
+            raise ValueError("engine step identity is malformed")
+        engine_step_rows[engine_step_id] = selected_sha256
+    for inventory in command_inventories:
+        for command_identity in inventory:
+            if command_identity[3] not in engine_step_rows:
+                raise ValueError(
+                    "command timeline unknown engine step identity"
+                )
+            selected_digests = {
+                value
+                for value in (
+                    command_identity[7],
+                    engine_step_rows[command_identity[3]],
+                )
+                if value is not None
+            }
+            if len(selected_digests) > 1:
+                raise ValueError(
+                    "command timeline selected-sequence digest mismatch"
+                )
+    for rank, snapshot in enumerate(cuda_rows):
+        command_rows = command_rows_by_rank[rank]
+        for kind, rows in (
+            ("CUDA step", snapshot["steps"]),
+            ("CUDA collective", snapshot["collectives"]),
+        ):
+            for row in rows:
+                (
+                    command_id,
+                    engine_step_id,
+                    selected_sha256,
+                ) = _timeline_row_identity(
+                    row,
+                    kind=kind,
+                    expected_rank=rank,
+                    expected_repeat_index=expected_repeat_index,
+                    expected_request_set_sha256=(
+                        expected_request_set_sha256
+                    ),
+                )
+                command_identity = command_rows.get(command_id)
+                if command_identity is None:
+                    raise ValueError(
+                        "command timeline unknown command identity"
+                    )
+                if engine_step_id not in engine_step_rows:
+                    raise ValueError(
+                        "command timeline unknown engine step identity"
+                    )
+                if command_identity[3] != engine_step_id:
+                    raise ValueError(
+                        "command timeline command/step identity mismatch"
+                    )
+                selected_digests = {
+                    value
+                    for value in (
+                        command_identity[7],
+                        selected_sha256,
+                        engine_step_rows[engine_step_id],
+                    )
+                    if value is not None
+                }
+                if len(selected_digests) > 1:
+                    raise ValueError(
+                        "command timeline selected-sequence digest mismatch"
+                    )
     if not isinstance(repeat, int) or isinstance(repeat, bool):
         raise ValueError("command timeline repeat is invalid")
 
@@ -159,14 +517,27 @@ def _validate_command_timeline_graph_lifecycle(
     warmup_results: list[dict],
     measured_results: list[dict],
     cuda_graph_mode: str,
+    expected_request_set_sha256: str,
 ) -> None:
-    for run in warmup_results + measured_results:
-        _validate_command_timeline_run(run)
-    runs = warmup_results + measured_results
     if len(warmup_results) != 1 or len(measured_results) != 5:
         raise ValueError(
             "command timeline requires one warmup and five measured runs"
         )
+    _validate_command_timeline_run(
+        warmup_results[0],
+        expected_repeat_index=0,
+        expected_request_set_sha256=expected_request_set_sha256,
+    )
+    for expected_repeat_index, run in enumerate(
+        measured_results,
+        start=1,
+    ):
+        _validate_command_timeline_run(
+            run,
+            expected_repeat_index=expected_repeat_index,
+            expected_request_set_sha256=expected_request_set_sha256,
+        )
+    runs = warmup_results + measured_results
     for rank in range(TENSOR_PARALLEL_SIZE):
         counter_rows = [
             run["correctness"]["rank_graph_counters"][rank]
@@ -991,6 +1362,7 @@ def run_request_batch(
             "rank_snapshots": list(command_rows),
             "cuda_rank_snapshots": list(cuda_result["ranks"]),
             "engine_steps": list(step_rows["steps"]),
+            "engine_dropped_steps": step_rows["dropped_steps"],
         }
 
     if policy == "learned":
@@ -1251,6 +1623,9 @@ def run_policy_campaign(
                 warmup_results=warmup_results,
                 measured_results=measured_results,
                 cuda_graph_mode=cuda_graph_mode,
+                expected_request_set_sha256=_request_set_sha256(
+                    prompt_rows
+                ),
             )
         config = getattr(engine, "config", None)
         return {

@@ -157,6 +157,11 @@ class DecodeInternalProfiler:
         start_event = self._event_factory()
         start_event.record()
         command_trace = self._active_command_trace()
+        command_request_set_sha256 = (
+            None
+            if command_trace is None
+            else command_trace.request_set_sha256
+        )
         self._active_step = {
             "rank": self.rank,
             "step_index": len(self._pending_steps),
@@ -164,7 +169,11 @@ class DecodeInternalProfiler:
             "is_decode": is_decode,
             "decode_ordinal": decode_ordinal,
             "active_sequence_count": int(active_sequence_count),
-            "request_set_sha256": request_set_sha256,
+            "request_set_sha256": (
+                command_request_set_sha256
+                if command_request_set_sha256 is not None
+                else request_set_sha256
+            ),
             "dispatch": dispatch,
             "command_id": (
                 None
@@ -180,6 +189,14 @@ class DecodeInternalProfiler:
                 None
                 if command_trace is None
                 else command_trace.repeat_index
+            ),
+            "speculative_selected_sequence_ids_sha256": (
+                None
+                if command_trace is None
+                else (
+                    command_trace
+                    .speculative_selected_sequence_ids_sha256
+                )
             ),
             "_wall_start_ns": self._clock_ns(),
             "_cuda_start": start_event,
@@ -236,6 +253,14 @@ class DecodeInternalProfiler:
                 "command_id": self._active_step["command_id"],
                 "engine_step_id": self._active_step["engine_step_id"],
                 "repeat_index": self._active_step["repeat_index"],
+                "request_set_sha256": (
+                    self._active_step["request_set_sha256"]
+                ),
+                "speculative_selected_sequence_ids_sha256": (
+                    self._active_step[
+                        "speculative_selected_sequence_ids_sha256"
+                    ]
+                ),
                 "operation": str(operation),
                 "tensor_shape": [
                     int(value) for value in tensor.shape
@@ -300,6 +325,7 @@ class DecodeInternalProfiler:
                     "command_id",
                     "engine_step_id",
                     "repeat_index",
+                    "speculative_selected_sequence_ids_sha256",
                 )
             } | {
                 "wall_ns": wall_ns,
@@ -320,6 +346,8 @@ class DecodeInternalProfiler:
                     "command_id",
                     "engine_step_id",
                     "repeat_index",
+                    "request_set_sha256",
+                    "speculative_selected_sequence_ids_sha256",
                     "operation",
                     "tensor_shape",
                     "tensor_dtype",
@@ -337,5 +365,7 @@ class DecodeInternalProfiler:
             "finalization_status": "complete",
             "steps": steps,
             "collectives": collectives,
+            "dropped_steps": 0,
+            "dropped_collectives": 0,
         }
         return copy.deepcopy(self._finalized)

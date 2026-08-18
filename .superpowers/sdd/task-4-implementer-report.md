@@ -224,3 +224,102 @@ The temporary review reports were written outside the repository under
 ## Commit
 
 `SELF/HEAD`
+
+## Review 1 Fix
+
+Review source:
+`.superpowers/sdd/task-4-review-1.md` (`Needs fixes`).
+
+The review correctly identified that the initial campaign gate validated
+rank cardinality but could accept empty, dropped, stale, malformed, or
+unrelated timeline evidence. The fix remains inside Task 4:
+
+- every rank command snapshot must contain rows and report zero drops;
+- enabled CUDA snapshots report zero dropped steps/collectives and contain
+  non-empty step evidence;
+- the exported engine-step snapshot reports its dropped-step count;
+- warmup is bound to timeline repeat `0`, while measured runs are bound to
+  `1..5`;
+- command, CUDA step/collective, and engine-step rows are bound to the
+  canonical campaign request digest and expected repeat;
+- row-level rank, command ID, engine-step ID, transport inventory, and
+  optional selected-sequence digest relationships are reconciled;
+- malformed identities, unknown IDs, inconsistent selected digests, and
+  reused warmup evidence fail closed; and
+- CUDA rows capture the command-trace request/selection identity at
+  `begin_step`, while rows outside a command scope retain absent command
+  identity.
+
+The disabled worker path remains unchanged: it emits no command-timeline
+field and retains the existing schema-v2 output shape, defaults, and callback
+signature. The disabled profiler snapshot also retains its prior shape.
+
+### Review-fix RED
+
+Before production validation changes:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-task4-review-red-pycache \
+python3 -m pytest -q \
+  tools/test_autoregressive_draft_performance_gate.py \
+  -k 'command_timeline_rejects_invalid_evidence or command_timeline_rejects_warmup_reuse'
+```
+
+Output:
+
+```text
+13 failed, 38 deselected in 0.28s
+```
+
+All 13 failures were `Failed: DID NOT RAISE <class 'ValueError'>`, directly
+demonstrating the missing validation.
+
+### Review-fix GREEN
+
+Final focused Task 4 selection:
+
+```text
+28 passed, 51 deselected in 0.28s
+```
+
+Complete Task 4 regression:
+
+```text
+132 passed in 2.99s
+```
+
+Task 1 and Task 2 regression:
+
+```text
+56 passed in 1.55s
+```
+
+Task 3 four-file regression:
+
+```text
+215 passed in 3.30s
+```
+
+Exact inherited-fingerprint regression:
+
+```text
+57 passed, 6 failed in 1.86s
+```
+
+The inherited failure shape is unchanged: five failures stop at
+`ValueError: LLMEngine source hash is invalid`, and one reports the existing
+prerequisite source-closure mismatch. No frozen fingerprint was rewritten.
+
+Python compilation completed with exit code `0`. `git diff --check` passed,
+and a changed-line scan found no added CUDA synchronization, completion
+fence, event wait, barrier, or request-path wait.
+
+### Review-fix Self-Review
+
+The final diff was checked against the review requirements for evidence
+completeness, expected repeat/request identity, cross-rank transport
+inventory, command/engine-step reconciliation, optional selected-sequence
+digest consistency, disabled compatibility, and synchronization neutrality.
+No remaining P0-P2 finding was identified.
+
+Review-fix commit: `SELF/HEAD`.

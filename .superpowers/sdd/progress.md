@@ -173,7 +173,7 @@
 
 ## Task 4: Deferred CUDA Identity and Worker Export
 
-- Status: completed
+- Status: Review-1 fix complete
 - Base SHA: `8da831bb9d4622adc8bb0ed556ebd3f8830a5933`
 - Brief: `.superpowers/sdd/task-4-brief.md`
 - Required invariants:
@@ -207,7 +207,30 @@
 - Static no-new-sync/wait/fence check: PASS
 - Implementer self-review: no remaining P0-P2 findings
 - Implementer commit: `SELF/HEAD`
-- Task review: pending
+- Task review: `.superpowers/sdd/task-4-review-1.md` — Needs fixes
+- Review-1 fix RED:
+  `13 failed, 38 deselected in 0.28s`
+  - every case failed with `DID NOT RAISE`, proving cardinality-only
+    validation accepted empty, dropped, stale, malformed, or unrelated
+    evidence.
+- Review-1 fix focused GREEN:
+  `28 passed, 51 deselected in 0.28s`
+- Review-1 fix complete Task 4 regression:
+  `132 passed in 2.99s`
+- Review-1 fix Task 1 + Task 2 regression:
+  `56 passed in 1.55s`
+- Review-1 fix Task 3 four-file regression:
+  `215 passed in 3.30s`
+- Review-1 fix exact inherited-fingerprint regression:
+  `57 passed, 6 failed in 1.86s`
+  - five failures stop at
+    `ValueError: LLMEngine source hash is invalid`;
+  - one failure reports the inherited prerequisite source-closure mismatch;
+  - frozen source fingerprints were not rewritten.
+- Review-1 fix syntax verification: PASS
+- Review-1 fix static no-new-sync/wait/fence check: PASS
+- Review-1 fix self-review: no remaining P0-P2 findings
+- Review-1 fix commit: `SELF/HEAD`
 
 - Task 5: pending
 - Task 6: pending
