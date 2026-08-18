@@ -604,11 +604,24 @@ def read_committed_generation(
         os.close(root_fd)
 
 
+def _close_fd_best_effort(fd):
+    try:
+        os.close(fd)
+    except OSError:
+        return
+    except BaseException:
+        try:
+            os.close(fd)
+        except BaseException:
+            return
+
+
 @contextlib.contextmanager
 def locked_remote_root(remote_root):
     root_fd = open_directory_no_follow(Path(remote_root))
     transactions_fd = None
     lock_fd = None
+    lock_acquired = False
     try:
         try:
             os.mkdir(".transactions", 0o700, dir_fd=root_fd)
@@ -626,13 +639,19 @@ def locked_remote_root(remote_root):
         if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
             raise TransactionError("source lock is not a regular file")
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        lock_acquired = True
         yield root_fd
     finally:
         if lock_fd is not None:
-            os.close(lock_fd)
+            if lock_acquired:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                except BaseException:
+                    pass
+            _close_fd_best_effort(lock_fd)
         if transactions_fd is not None:
-            os.close(transactions_fd)
-        os.close(root_fd)
+            _close_fd_best_effort(transactions_fd)
+        _close_fd_best_effort(root_fd)
 
 
 def _rename_exchange_at(
@@ -765,6 +784,8 @@ def _transaction_signal_handlers():
     signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
     body_mask_restore_attempted = False
+    body_completed = False
+    primary_error = None
     try:
         for signum in signals:
             previous = signal.getsignal(signum)
@@ -781,6 +802,10 @@ def _transaction_signal_handlers():
         body_mask_restore_attempted = True
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         yield
+        body_completed = True
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         cleanup_error = None
         if body_mask_restore_attempted:
@@ -799,7 +824,11 @@ def _transaction_signal_handlers():
         except BaseException as exc:
             if cleanup_error is None:
                 cleanup_error = exc
-        if cleanup_error is not None:
+        if (
+            cleanup_error is not None
+            and primary_error is None
+            and not body_completed
+        ):
             raise cleanup_error
 
 

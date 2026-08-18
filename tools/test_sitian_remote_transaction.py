@@ -228,6 +228,66 @@ class TransactionPrimitiveTests(unittest.TestCase):
         with transaction.locked_remote_root(root):
             pass
 
+    def test_lock_cleanup_interruption_preserves_result_and_releases_resources(
+        self,
+    ):
+        for target in ("source.lock", ".transactions", "root"):
+            with self.subTest(target=target):
+                root = self.make_root("root-{}".format(target.replace(".", "")))
+                before = len(os.listdir("/proc/self/fd"))
+                real_close = transaction.os.close
+                close_interrupted = [False]
+
+                def fd_target(fd):
+                    return os.readlink("/proc/self/fd/{}".format(fd))
+
+                def should_interrupt(fd):
+                    path = fd_target(fd)
+                    if target == "source.lock":
+                        return path.endswith("/.transactions/source.lock")
+                    if target == ".transactions":
+                        return path.endswith("/.transactions")
+                    return path == str(root)
+
+                def interrupt_target_close(fd):
+                    if not close_interrupted[0] and should_interrupt(fd):
+                        close_interrupted[0] = True
+                        raise transaction.TransactionInterrupted(
+                            signal.SIGTERM
+                        )
+                    return real_close(fd)
+
+                def use_lock():
+                    with transaction.locked_remote_root(root):
+                        return "body-result"
+
+                with mock.patch.object(
+                    transaction.os,
+                    "close",
+                    side_effect=interrupt_target_close,
+                ):
+                    self.assertEqual(use_lock(), "body-result")
+
+                self.assertTrue(close_interrupted[0])
+                self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+                transactions_fd = transaction.open_directory_no_follow(
+                    root / ".transactions"
+                )
+                competing_fd = os.open(
+                    "source.lock",
+                    os.O_RDWR | os.O_NOFOLLOW,
+                    dir_fd=transactions_fd,
+                )
+                try:
+                    transaction.fcntl.flock(
+                        competing_fd,
+                        transaction.fcntl.LOCK_EX
+                        | transaction.fcntl.LOCK_NB,
+                    )
+                finally:
+                    os.close(competing_fd)
+                    os.close(transactions_fd)
+
     def test_directory_open_rejects_symlink(self):
         root = self.make_root()
         target = root / "real"
@@ -1105,6 +1165,53 @@ class TransactionPrimitiveTests(unittest.TestCase):
                 (signal.SIG_SETMASK, caller_mask),
             ],
         )
+
+    def test_signal_restoration_failure_preserves_primary_exception(self):
+        managed = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        previous = {signum: object() for signum in managed}
+
+        for phase in ("pre_exchange", "after_exchange"):
+            with self.subTest(phase=phase):
+                primary = RuntimeError("{} primary".format(phase))
+                restoration_attempts = []
+                mask_calls = []
+
+                def install_or_restore(signum, handler):
+                    if handler is transaction._raise_transaction_interrupted:
+                        return
+                    restoration_attempts.append(signum)
+                    if len(restoration_attempts) == 1:
+                        raise RuntimeError("forced restoration failure")
+
+                def change_mask(how, mask):
+                    mask_calls.append((how, set(mask)))
+                    return {"caller-mask"}
+
+                with mock.patch.object(
+                    transaction.signal,
+                    "getsignal",
+                    side_effect=lambda signum: previous[signum],
+                ), mock.patch.object(
+                    transaction.signal,
+                    "pthread_sigmask",
+                    side_effect=change_mask,
+                ), mock.patch.object(
+                    transaction.signal,
+                    "signal",
+                    side_effect=install_or_restore,
+                ):
+                    with self.assertRaises(RuntimeError) as raised:
+                        with transaction._transaction_signal_handlers():
+                            raise primary
+
+                self.assertIs(raised.exception, primary)
+                self.assertEqual(
+                    restoration_attempts, list(reversed(managed))
+                )
+                self.assertEqual(
+                    mask_calls[-1],
+                    (signal.SIG_SETMASK, {"caller-mask"}),
+                )
 
 
 if __name__ == "__main__":
