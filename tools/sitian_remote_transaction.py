@@ -1027,16 +1027,22 @@ def _confirm_initial_generation(remote_root, generation_name, nonce, head):
                 _remove_tree_at(
                     generation_parent_fd, generation_parts[-1]
                 )
-            except FileNotFoundError:
+            except BaseException:
                 pass
             finally:
                 if generation_parent_fd is not None:
-                    os.close(generation_parent_fd)
-            _remove_empty_nonce_directory(
-                root_fd,
-                generation_name,
-                expected_parent_info=generation_parent_info,
-            )
+                    try:
+                        os.close(generation_parent_fd)
+                    except BaseException:
+                        pass
+            try:
+                _remove_empty_nonce_directory(
+                    root_fd,
+                    generation_name,
+                    expected_parent_info=generation_parent_info,
+                )
+            except BaseException:
+                pass
             return receipt
 
 

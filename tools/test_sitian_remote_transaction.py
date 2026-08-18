@@ -753,6 +753,82 @@ class TransactionPrimitiveTests(unittest.TestCase):
                 self.assert_initial_detached_receipts(root, confirmed)
                 self.assertFalse(generation.exists())
 
+    def test_initial_confirmation_remove_tree_failure_preserves_commit(self):
+        root = self.make_root()
+        generation_name = ".transactions/init-nonce/generation"
+        generation = root / generation_name
+        self.write_file(generation, "tools/new.py", b"committed\n")
+        committed = transaction.commit_initial_generation(
+            root,
+            generation_name,
+            "a" * 40,
+        )
+        self.write_file(generation, "residue.txt", b"old generation\n")
+        for name in (
+            "source-head.txt",
+            "source-files.sha256",
+            "source-transaction.txt",
+        ):
+            (root / "receipts" / name).unlink()
+        source_before = self.tree_snapshot(root / "source")
+        before = len(os.listdir("/dev/fd"))
+
+        with mock.patch.object(
+            transaction,
+            "_remove_tree_at",
+            side_effect=OSError(errno.EIO, "forced cleanup failure"),
+        ):
+            confirmed = transaction.commit_initial_generation(
+                root,
+                generation_name,
+                "a" * 40,
+            )
+
+        transaction._require_exact_receipt(confirmed, committed)
+        self.assert_initial_detached_receipts(root, confirmed)
+        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
+        self.assertEqual(
+            generation.joinpath("residue.txt").read_bytes(),
+            b"old generation\n",
+        )
+        self.assertEqual(len(os.listdir("/dev/fd")), before)
+
+    def test_initial_confirmation_nonce_cleanup_failure_preserves_commit(self):
+        root = self.make_root()
+        generation_name = ".transactions/init-nonce/generation"
+        generation = root / generation_name
+        self.write_file(generation, "tools/new.py", b"committed\n")
+        committed = transaction.commit_initial_generation(
+            root,
+            generation_name,
+            "a" * 40,
+        )
+        for name in (
+            "source-head.txt",
+            "source-files.sha256",
+            "source-transaction.txt",
+        ):
+            (root / "receipts" / name).unlink()
+        source_before = self.tree_snapshot(root / "source")
+        before = len(os.listdir("/dev/fd"))
+
+        with mock.patch.object(
+            transaction,
+            "_remove_empty_nonce_directory",
+            side_effect=RuntimeError("forced nonce cleanup failure"),
+        ):
+            confirmed = transaction.commit_initial_generation(
+                root,
+                generation_name,
+                "a" * 40,
+            )
+
+        transaction._require_exact_receipt(confirmed, committed)
+        self.assert_initial_detached_receipts(root, confirmed)
+        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
+        self.assertFalse(generation.exists())
+        self.assertEqual(len(os.listdir("/dev/fd")), before)
+
     def test_init_commit_cli_promotes_generation_and_prints_file_count(self):
         root = self.make_root()
         generation = root / ".transactions/cli-nonce/generation"
