@@ -1349,6 +1349,7 @@ def test_stable_graph_minus_eager_label_effect_is_not_a_crossover():
     assert boundary["eager_graph_position_effect_ns"] == 60
     assert boundary["graph_eager_position_effect_ns"] == -60
     assert boundary["order_interaction_ns"] == 0
+    assert boundary["sequence_interaction_ns"] == 120
     order_checks = {
         order: {
             key: value
@@ -1421,6 +1422,7 @@ def test_position_driven_order_confound_is_not_a_label_effect():
     assert boundary["eager_graph_position_effect_ns"] == 60
     assert boundary["graph_eager_position_effect_ns"] == 60
     assert boundary["order_interaction_ns"] == 120
+    assert boundary["sequence_interaction_ns"] == 0
     assert all(
         check["supports_aggregate_label"] is False
         for check in boundary["order_group_checks"].values()
@@ -1461,10 +1463,22 @@ def test_classification_rejects_order_reversal_sequence_interaction():
                 "scheduler_postprocess": 0,
             },
         })
-    result = diagnostic.classify_boundary(
-        _admission(),
-        diagnostic.summarize_boundary_effects(blocks),
-    )
+    effects = diagnostic.summarize_boundary_effects(blocks)
+    boundary = effects["boundaries"]["worker_queue_debt"]
+    result = diagnostic.classify_boundary(_admission(), effects)
+    assert boundary["eager_graph_position_effect_ns"] == 0
+    assert boundary["graph_eager_position_effect_ns"] == 60
+    assert boundary["order_interaction_ns"] == 60
+    assert boundary["sequence_interaction_ns"] == -60
+    assert boundary["order_group_checks"]["eager_graph"][
+        "label_reversal_block_indices"
+    ] == [0]
+    assert boundary["order_group_checks"]["eager_graph"][
+        "no_label_reversal"
+    ] is False
+    assert boundary["order_group_checks"]["eager_graph"]["passed"] is False
+    assert boundary["position_balance_consistent"] is False
+    assert boundary["sequence_interaction_consistent"] is False
     assert result["classification"] == "PAIRED_PROTOCOL_UNSTABLE"
     assert result["localized_boundary"] is None
     assert result["stable_but_unlocalized"] is True

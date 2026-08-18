@@ -2943,6 +2943,21 @@ def summarize_boundary_effects(blocks: object) -> dict:
                 "graph-eager label effect",
             )
         )
+        eager_graph_position = _fraction(
+            order_group_checks["eager_graph"][
+                "aggregate_position_effect_ns"
+            ],
+            "eager-graph position effect",
+        )
+        graph_eager_position = _fraction(
+            order_group_checks["graph_eager"][
+                "aggregate_position_effect_ns"
+            ],
+            "graph-eager position effect",
+        )
+        sequence_interaction = (
+            eager_graph_position - graph_eager_position
+        )
         interaction_below_label = (
             label_conclusion_consistent
             and abs(order_interaction)
@@ -2952,6 +2967,8 @@ def summarize_boundary_effects(blocks: object) -> dict:
             order_consistent
             and position_balance_consistent
             and interaction_below_label
+            and _sign(eager_graph_position) == label_common_sign
+            and _sign(graph_eager_position) == -label_common_sign
         )
         undefined = [
             row["block_index"]
@@ -3003,7 +3020,7 @@ def summarize_boundary_effects(blocks: object) -> dict:
                 order_interaction
             ),
             "sequence_interaction_ns": _canonical_fraction(
-                order_interaction
+                sequence_interaction
             ),
             "label_conclusion_consistent": (
                 label_conclusion_consistent
