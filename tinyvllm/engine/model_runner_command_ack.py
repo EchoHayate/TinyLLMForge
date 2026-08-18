@@ -1,6 +1,13 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 import math
 import time
+
+from tinyvllm.engine.model_runner_command_timeline import (
+    CommandTraceIdentity,
+    command_trace_scope,
+)
 
 
 _ACK_STATUSES = {
@@ -59,6 +66,7 @@ class ModelRunnerCommandEnvelope:
     method_name: str
     args: tuple
     requires_ack: bool
+    trace_identity: CommandTraceIdentity | None = None
 
     def __post_init__(self):
         _non_negative_integer(self.command_id, "command_id")
@@ -74,6 +82,30 @@ class ModelRunnerCommandEnvelope:
             raise ValueError("args must be a tuple")
         if not isinstance(self.requires_ack, bool):
             raise ValueError("requires_ack must be a bool")
+        if self.trace_identity is not None and not isinstance(
+            self.trace_identity,
+            CommandTraceIdentity,
+        ):
+            raise ValueError(
+                "trace_identity must be CommandTraceIdentity or None"
+            )
+        if (
+            self.trace_identity is not None
+            and self.trace_identity.command_id != self.command_id
+        ):
+            raise ValueError("trace identity command mismatch")
+        if (
+            self.trace_identity is not None
+            and self.trace_identity.method_name != self.method_name
+        ):
+            raise ValueError("trace identity method mismatch")
+        if (
+            self.trace_identity is not None
+            and self.trace_identity.requires_ack != self.requires_ack
+        ):
+            raise ValueError(
+                "trace identity acknowledgement mismatch"
+            )
 
 
 @dataclass(frozen=True)
@@ -121,45 +153,102 @@ def execute_acknowledged_command(
     rank: int,
     target: object,
     send_ack,
+    timeline=None,
+    clock_ns=time.monotonic_ns,
 ):
     if not isinstance(envelope, ModelRunnerCommandEnvelope):
         raise ValueError(
             "envelope must be a ModelRunnerCommandEnvelope"
         )
-    _positive_integer(rank, "rank")
+    _non_negative_integer(rank, "rank")
+    if not callable(send_ack):
+        raise ValueError("send_ack must be callable")
+    if not callable(clock_ns):
+        raise ValueError("clock_ns must be callable")
+    traced = (
+        envelope.trace_identity is not None
+        and timeline is not None
+        and bool(getattr(timeline, "enabled", False))
+    )
+
+    def record_method_start():
+        if traced:
+            timeline.record_method_start(
+                envelope.command_id,
+                started_ns=clock_ns(),
+            )
+
+    def record_method_end(*, status, error_type=""):
+        if traced:
+            timeline.record_method_end(
+                envelope.command_id,
+                finished_ns=clock_ns(),
+                status=status,
+                error_type=error_type,
+            )
+
+    def send(acknowledgement):
+        if traced:
+            timeline.record_ack_send_start(
+                envelope.command_id,
+                started_ns=clock_ns(),
+            )
+        send_ack(acknowledgement)
+        if traced:
+            timeline.record_ack_send_end(
+                envelope.command_id,
+                finished_ns=clock_ns(),
+            )
+
     method = getattr(target, envelope.method_name, None)
-    if method is None or not callable(method):
-        if not envelope.requires_ack:
-            raise AttributeError(
+    with command_trace_scope(envelope.trace_identity):
+        record_method_start()
+        if method is None or not callable(method):
+            error = AttributeError(
                 f"unknown command method: {envelope.method_name}"
             )
-        acknowledgement = ModelRunnerCommandAck(
-            command_id=envelope.command_id,
-            rank=rank,
-            status="error",
-            error_type="AttributeError",
-            error_detail=(
-                f"unknown command method: {envelope.method_name}"
-            ),
-        )
-        send_ack(acknowledgement)
-        return None
+            record_method_end(
+                status="error",
+                error_type=type(error).__name__,
+            )
+            if not envelope.requires_ack or rank == 0:
+                raise error
+            acknowledgement = ModelRunnerCommandAck(
+                command_id=envelope.command_id,
+                rank=rank,
+                status="error",
+                error_type=type(error).__name__,
+                error_detail=str(error),
+            )
+            send(acknowledgement)
+            return None
 
-    if not envelope.requires_ack:
-        return method(*envelope.args)
+        try:
+            result = method(*envelope.args)
+        except BaseException as error:
+            record_method_end(
+                status="error",
+                error_type=type(error).__name__,
+            )
+            if (
+                not isinstance(error, Exception)
+                or not envelope.requires_ack
+                or rank == 0
+            ):
+                raise
+            acknowledgement = ModelRunnerCommandAck(
+                command_id=envelope.command_id,
+                rank=rank,
+                status="error",
+                error_type=type(error).__name__,
+                error_detail=str(error),
+            )
+            send(acknowledgement)
+            return None
+        record_method_end(status="ok")
 
-    try:
-        result = method(*envelope.args)
-    except Exception as error:
-        acknowledgement = ModelRunnerCommandAck(
-            command_id=envelope.command_id,
-            rank=rank,
-            status="error",
-            error_type=type(error).__name__,
-            error_detail=str(error),
-        )
-        send_ack(acknowledgement)
-        return None
+    if not envelope.requires_ack or rank == 0:
+        return result
 
     acknowledgement = ModelRunnerCommandAck(
         command_id=envelope.command_id,
@@ -167,7 +256,7 @@ def execute_acknowledged_command(
         status="ok",
         result=result,
     )
-    send_ack(acknowledgement)
+    send(acknowledgement)
     return result
 
 

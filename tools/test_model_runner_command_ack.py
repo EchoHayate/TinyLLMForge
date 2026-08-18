@@ -31,6 +31,10 @@ for package_name in ("tinyvllm", "tinyvllm.engine"):
     sys.modules[package_name] = package
 
 
+timeline_module = _load_module(
+    "tinyvllm.engine.model_runner_command_timeline",
+    "tinyvllm/engine/model_runner_command_timeline.py",
+)
 ack_module = _load_module(
     "tinyvllm.engine.model_runner_command_ack",
     "tinyvllm/engine/model_runner_command_ack.py",
@@ -101,6 +105,53 @@ class _FakeClock:
 
     def sleep(self, duration):
         self.value += duration
+
+
+class _FakeTimeline:
+    enabled = True
+
+    def __init__(self):
+        self.events = []
+
+    def record_method_start(self, command_id, *, started_ns):
+        self.events.append(("method_start", command_id, started_ns))
+
+    def record_method_end(
+        self,
+        command_id,
+        *,
+        finished_ns,
+        status="ok",
+        error_type="",
+    ):
+        self.events.append((
+            "method_end",
+            command_id,
+            finished_ns,
+            status,
+            error_type,
+        ))
+
+    def record_ack_send_start(self, command_id, *, started_ns):
+        self.events.append(("ack_start", command_id, started_ns))
+
+    def record_ack_send_end(self, command_id, *, finished_ns):
+        self.events.append(("ack_end", command_id, finished_ns))
+
+
+def make_trace_identity(command_id, requires_ack):
+    return timeline_module.CommandTraceIdentity(
+        command_id=command_id,
+        method_name="add",
+        requires_ack=requires_ack,
+        engine_step_id=4,
+        repeat_index=2,
+        request_set_sha256="a" * 64,
+        batch_kind="decode",
+        speculative_selected_sequence_ids_sha256="b" * 64,
+        dispatch_started_monotonic_ns=10,
+        dispatch_published_monotonic_ns=20,
+    )
 
 
 def _worker_main(
@@ -311,6 +362,74 @@ def test_executor_fire_and_forget_and_send_failure_semantics():
         assert error.code == 9
     else:
         raise AssertionError("BaseException was converted to acknowledgement")
+
+
+def test_traced_executor_records_method_and_ack_boundaries():
+    timeline = _FakeTimeline()
+    clock = iter((100, 200, 300, 400)).__next__
+    envelope = ModelRunnerCommandEnvelope(
+        command_id=31,
+        method_name="add",
+        args=(4, 5),
+        requires_ack=True,
+        trace_identity=make_trace_identity(
+            command_id=31,
+            requires_ack=True,
+        ),
+    )
+    sent = []
+
+    assert execute_acknowledged_command(
+        envelope,
+        rank=2,
+        target=_Target(),
+        send_ack=sent.append,
+        timeline=timeline,
+        clock_ns=clock,
+    ) == 9
+    assert timeline.events == [
+        ("method_start", 31, 100),
+        ("method_end", 31, 200, "ok", ""),
+        ("ack_start", 31, 300),
+        ("ack_end", 31, 400),
+    ]
+    assert timeline_module.active_model_runner_command_trace() is None
+
+
+def test_untraced_envelope_preserves_existing_semantics():
+    envelope = ModelRunnerCommandEnvelope(
+        command_id=32,
+        method_name="add",
+        args=(1, 2),
+        requires_ack=False,
+    )
+    assert envelope.trace_identity is None
+    assert execute_acknowledged_command(
+        envelope,
+        rank=1,
+        target=_Target(),
+        send_ack=lambda value: None,
+    ) == 3
+
+
+def test_envelope_rejects_mismatched_trace_identity():
+    trace = make_trace_identity(command_id=33, requires_ack=True)
+    invalid = (
+        dict(command_id=34, method_name="add", requires_ack=True),
+        dict(command_id=33, method_name="fail", requires_ack=True),
+        dict(command_id=33, method_name="add", requires_ack=False),
+    )
+    for values in invalid:
+        try:
+            ModelRunnerCommandEnvelope(
+                args=(),
+                trace_identity=trace,
+                **values,
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("mismatched trace identity was accepted")
 
 
 def test_collector_orders_real_spawned_worker_success():

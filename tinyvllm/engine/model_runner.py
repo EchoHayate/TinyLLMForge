@@ -37,6 +37,11 @@ from tinyvllm.engine.model_runner_command_ack import (
     ModelRunnerCommandEnvelope,
     execute_acknowledged_command,
 )
+from tinyvllm.engine.model_runner_command_timeline import (
+    CommandTraceIdentity,
+    ModelRunnerCommandTimelineRecorder,
+    read_command_clock_identity,
+)
 from tinyvllm.engine.h2d_slot_reuse_diagnostic import (
     H2D_SLOT_REUSE_SCHEMA,
     H2DSlotReuseDiagnostic,
@@ -2114,6 +2119,22 @@ class ModelRunner:
         self.event = event
         self.ack_sender = ack_sender
         self._command_ids = count()
+        self._command_timeline_clock_ns = time.monotonic_ns
+        self._command_timeline_max_rows = (
+            config.autoregressive_draft_command_timeline_max_rows
+        )
+        self.command_timeline = (
+            ModelRunnerCommandTimelineRecorder(
+                rank=rank,
+                max_rows=self._command_timeline_max_rows,
+                clock_identity=read_command_clock_identity(),
+            )
+            if config.autoregressive_draft_command_timeline
+            else ModelRunnerCommandTimelineRecorder.disabled(rank)
+        )
+        self._active_command_timeline_trace = (
+            self._read_active_engine_step_trace
+        )
 
         dist_port = os.environ.get("TINYVLLM_DIST_PORT", os.environ.get("MASTER_PORT", "2333"))
         self.shared_memory_name = _model_runner_shared_memory_name(
@@ -3443,20 +3464,55 @@ class ModelRunner:
                 rank=self.rank,
                 target=self,
                 send_ack=self.ack_sender.send,
+                timeline=self.command_timeline,
+                clock_ns=self._command_timeline_clock_ns,
             )
             if envelope.method_name == "exit":
                 break
+
+    @staticmethod
+    def _read_active_engine_step_trace():
+        try:
+            from tinyvllm.engine.engine_step_timeline import (
+                active_engine_step_trace,
+            )
+        except ModuleNotFoundError:
+            return None
+        return active_engine_step_trace()
 
     def read_shm(self):
         # 多进程环境下 避免主进程调用
         assert self.world_size > 1 and self.rank
         self.event.wait()                               # 等待主进程信号 一直等待，直到 event被set()后才会往下执行
+        event_woken_monotonic_ns = (
+            self._command_timeline_clock_ns()
+            if self.command_timeline.enabled
+            else None
+        )
         n = int.from_bytes(
             self.shm.buf[0:4],                          # 这里的单位是 byte，一个字节，或者说一个char
             "little")
         payload = pickle.loads(self.shm.buf[4:n+4])
+        envelope_read_monotonic_ns = (
+            self._command_timeline_clock_ns()
+            if self.command_timeline.enabled
+            else None
+        )
         self.event.clear()                              # 重置事件标志，方便下一次等待
         if isinstance(payload, ModelRunnerCommandEnvelope):
+            if (
+                payload.trace_identity is not None
+                and self.command_timeline.enabled
+            ):
+                self.command_timeline.record_worker_receive(
+                    payload.trace_identity,
+                    event_woken_monotonic_ns=(
+                        event_woken_monotonic_ns
+                    ),
+                    envelope_read_monotonic_ns=(
+                        envelope_read_monotonic_ns
+                    ),
+                )
             return payload
         if (
             isinstance(payload, list)
@@ -3502,25 +3558,121 @@ class ModelRunner:
             raise RuntimeError(
                 "only rank 0 may dispatch ModelRunner commands"
             )
+        command_id = next(self._command_ids)
+        trace_identity = None
+        trace_context = None
+        if self.command_timeline.enabled:
+            trace_context = self._active_command_timeline_trace()
+        if (
+            trace_context is not None
+            and getattr(trace_context, "repeat_index", None) is not None
+            and getattr(trace_context, "engine_step_id", None) is not None
+        ):
+            dispatch_started_monotonic_ns = (
+                self._command_timeline_clock_ns()
+            )
+            dispatch_published_monotonic_ns = (
+                self._command_timeline_clock_ns()
+            )
+            trace_identity = CommandTraceIdentity(
+                command_id=command_id,
+                method_name=method_name,
+                requires_ack=requires_ack,
+                engine_step_id=trace_context.engine_step_id,
+                repeat_index=trace_context.repeat_index,
+                request_set_sha256=getattr(
+                    trace_context,
+                    "request_set_sha256",
+                    None,
+                ),
+                batch_kind=getattr(
+                    trace_context,
+                    "batch_kind",
+                    None,
+                ),
+                speculative_selected_sequence_ids_sha256=getattr(
+                    trace_context,
+                    "speculative_selected_sequence_ids_sha256",
+                    None,
+                ),
+                dispatch_started_monotonic_ns=(
+                    dispatch_started_monotonic_ns
+                ),
+                dispatch_published_monotonic_ns=(
+                    dispatch_published_monotonic_ns
+                ),
+            )
         envelope = ModelRunnerCommandEnvelope(
-            command_id=next(self._command_ids),
+            command_id=command_id,
             method_name=method_name,
             args=tuple(args),
             requires_ack=requires_ack,
+            trace_identity=trace_identity,
         )
         if self.world_size > 1:
             self.write_shm(envelope)
+        if trace_identity is not None:
+            self.command_timeline.record_dispatch(trace_identity)
         return envelope
+
+    def execute_command_envelope(self, envelope):
+        return execute_acknowledged_command(
+            envelope,
+            rank=self.rank,
+            target=self,
+            send_ack=lambda acknowledgement: None,
+            timeline=self.command_timeline,
+            clock_ns=self._command_timeline_clock_ns,
+        )
 
     def call(self, method_name, *args):         #动态方法调用 提供一个通用接口 把主进程调用的函数推给从进程
         if self.rank == 0:
-            self.dispatch_command(
+            envelope = self.dispatch_command(
                 method_name,
                 *args,
                 requires_ack=False,
             )
+            return self.execute_command_envelope(envelope)
         method = getattr(self, method_name, None)       #获取函数对象
         return method(*args)            #执行函数并返回结果
+
+    def configure_command_timeline(self, enabled, max_rows):
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                "command timeline enabled must be a bool"
+            )
+        if (
+            isinstance(max_rows, bool)
+            or not isinstance(max_rows, int)
+            or max_rows <= 0
+        ):
+            raise ValueError(
+                "command timeline max rows must be a positive integer"
+            )
+        self._command_timeline_max_rows = max_rows
+        self.command_timeline = (
+            ModelRunnerCommandTimelineRecorder(
+                rank=self.rank,
+                max_rows=max_rows,
+                clock_identity=read_command_clock_identity(),
+            )
+            if enabled
+            else ModelRunnerCommandTimelineRecorder.disabled(self.rank)
+        )
+        return {
+            "rank": self.rank,
+            "enabled": enabled,
+            "max_rows": max_rows,
+        }
+
+    def reset_command_timeline(self):
+        return self.configure_command_timeline(
+            self.command_timeline.enabled,
+            self._command_timeline_max_rows,
+        )
+
+    def command_timeline_snapshot(self):
+        return self.command_timeline.snapshot()
 
     def memory_snapshot(self):
         kv_bytes = int(

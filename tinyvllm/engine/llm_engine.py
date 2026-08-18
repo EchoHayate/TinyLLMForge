@@ -669,28 +669,30 @@ class LLMEngine:
         *args,
         timeout_s,
     ):
-        if self.model_runner.world_size == 1:
-            method = getattr(self.model_runner, method_name)
-            return method(*args), ()
-        collector = self.model_runner_ack_collector
-        if collector is None:
-            raise RuntimeError(
-                "ModelRunner acknowledgement collector is not installed"
-            )
         envelope = self.model_runner.dispatch_command(
             method_name,
             *args,
-            requires_ack=True,
+            requires_ack=(self.model_runner.world_size > 1),
         )
-        method = getattr(self.model_runner, method_name)
-        try:
-            local_result = method(*args)
-        except BaseException as error:
-            collector.poison(
-                "rank 0 command failed after dispatch: "
-                f"{type(error).__name__}: {error}"
+        collector = self.model_runner_ack_collector
+        if self.model_runner.world_size > 1 and collector is None:
+            raise RuntimeError(
+                "ModelRunner acknowledgement collector is not installed"
             )
+        try:
+            local_result = (
+                self.model_runner.execute_command_envelope(envelope)
+            )
+        except BaseException as error:
+            if collector is not None:
+                collector.poison(
+                    "rank 0 command failed after dispatch: "
+                    f"{type(error).__name__}: {error}"
+                )
             raise
+        if self.model_runner.world_size == 1:
+            return local_result, ()
+        ack_wait_started = self._clock_ns()
         worker_acks = collector.collect(
             envelope.command_id,
             expected_ranks=tuple(
@@ -699,7 +701,76 @@ class LLMEngine:
             timeout_s=timeout_s,
             is_rank_alive=self._is_worker_rank_alive,
         )
+        ack_wait_finished = self._clock_ns()
+        if envelope.trace_identity is not None:
+            self.model_runner.command_timeline.record_ack_wait(
+                envelope.command_id,
+                started_ns=ack_wait_started,
+                finished_ns=ack_wait_finished,
+            )
         return local_result, worker_acks
+
+    def configure_command_timeline(
+        self,
+        enabled,
+        max_rows,
+        timeout_s,
+    ):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "configure_command_timeline",
+                enabled,
+                max_rows,
+                timeout_s=timeout_s,
+            )
+        )
+        rows = (local_result,) + tuple(
+            acknowledgement.result
+            for acknowledgement in worker_acks
+        )
+        expected_ranks = tuple(
+            range(self.model_runner.world_size)
+        )
+        if (
+            tuple(row.get("rank") for row in rows) != expected_ranks
+            or any(
+                row.get("enabled") is not enabled
+                or row.get("max_rows") != max_rows
+                for row in rows
+            )
+        ):
+            raise ValueError(
+                "command timeline configuration rank inventory mismatch"
+            )
+        return {
+            "enabled": enabled,
+            "max_rows": max_rows,
+            "rank_inventory": list(expected_ranks),
+        }
+
+    def reset_command_timeline(self, timeout_s):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "reset_command_timeline",
+                timeout_s=timeout_s,
+            )
+        )
+        return (local_result,) + tuple(
+            acknowledgement.result
+            for acknowledgement in worker_acks
+        )
+
+    def command_timeline_snapshots(self, timeout_s):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "command_timeline_snapshot",
+                timeout_s=timeout_s,
+            )
+        )
+        return (local_result,) + tuple(
+            acknowledgement.result
+            for acknowledgement in worker_acks
+        )
 
     def _call_speculative_side_state_phase(
         self,

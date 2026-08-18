@@ -22,6 +22,11 @@ from tinyvllm.engine.model_runner_command_ack import (
     ModelRunnerCommandEnvelope,
     execute_acknowledged_command,
 )
+from tinyvllm.engine.model_runner_command_timeline import (
+    CommandClockIdentity,
+    CommandTraceIdentity,
+    ModelRunnerCommandTimelineRecorder,
+)
 
 
 def _load_class_method(relative_path, class_name, method_name, namespace):
@@ -51,6 +56,18 @@ def _load_class_method(relative_path, class_name, method_name, namespace):
 
 def _model_runner_method(name):
     namespace = {
+        "CommandTraceIdentity": CommandTraceIdentity,
+        "read_command_clock_identity": lambda: CommandClockIdentity(
+            boot_id="boot",
+            implementation="clock_gettime(CLOCK_MONOTONIC)",
+            resolution_s=1e-9,
+            monotonic=True,
+            adjustable=False,
+            captured_at_unix_ns=1,
+        ),
+        "ModelRunnerCommandTimelineRecorder": (
+            ModelRunnerCommandTimelineRecorder
+        ),
         "count": count,
         "pickle": pickle,
         "ModelRunnerCommandEnvelope": ModelRunnerCommandEnvelope,
@@ -84,13 +101,16 @@ class _Buffer:
 
 
 class _Event:
-    def __init__(self):
+    def __init__(self, on_set=None):
         self.set_calls = 0
         self.clear_calls = 0
         self.wait_calls = 0
+        self.on_set = on_set
 
     def set(self):
         self.set_calls += 1
+        if self.on_set is not None:
+            self.on_set()
 
     def clear(self):
         self.clear_calls += 1
@@ -147,6 +167,48 @@ class _Context:
         return receiver, sender
 
 
+class _Timeline:
+    def __init__(self, *, enabled):
+        self.enabled = enabled
+        self.dispatches = []
+        self.receives = []
+        self.ack_waits = []
+
+    def record_dispatch(self, identity):
+        self.dispatches.append(identity)
+
+    def record_worker_receive(
+        self,
+        identity,
+        *,
+        event_woken_monotonic_ns,
+        envelope_read_monotonic_ns,
+    ):
+        self.receives.append((
+            identity,
+            event_woken_monotonic_ns,
+            envelope_read_monotonic_ns,
+        ))
+
+    def record_ack_wait(self, command_id, *, started_ns, finished_ns):
+        self.ack_waits.append((command_id, started_ns, finished_ns))
+
+
+def _step_trace():
+    return types.SimpleNamespace(
+        engine_step_id=7,
+        repeat_index=3,
+        request_set_sha256="a" * 64,
+        batch_kind="decode",
+        speculative_selected_sequence_ids_sha256="b" * 64,
+    )
+
+
+def _decode_shared_envelope(shared):
+    n = int.from_bytes(shared.buf[0:4], "little")
+    return pickle.loads(shared.buf[4:n + 4])
+
+
 def test_model_runner_call_preserves_fire_and_forget_local_result():
     call = _model_runner_method("call")
     captured = []
@@ -161,14 +223,96 @@ def test_model_runner_call_preserves_fire_and_forget_local_result():
             requires_ack,
         ):
             captured.append((method_name, args, requires_ack))
+            return ModelRunnerCommandEnvelope(
+                command_id=11,
+                method_name=method_name,
+                args=tuple(args),
+                requires_ack=requires_ack,
+            )
 
-        def add(self, left, right):
+        def execute_command_envelope(self, envelope):
+            assert envelope.command_id == 11
+            return self.add(*envelope.args)
+
+        @staticmethod
+        def add(left, right):
             return left + right
 
     runner = Runner()
 
     assert call(runner, "add", 2, 5) == 7
     assert captured == [("add", (2, 5), False)]
+
+
+def test_model_runner_dispatch_traces_only_enabled_active_repeat():
+    dispatch = _model_runner_method("dispatch_command")
+    written = []
+    disabled = types.SimpleNamespace(
+        rank=0,
+        world_size=2,
+        _command_ids=count(),
+        command_timeline=_Timeline(enabled=False),
+        _command_timeline_clock_ns=lambda: (_ for _ in ()).throw(
+            AssertionError("disabled timeline read the clock")
+        ),
+        _active_command_timeline_trace=_step_trace,
+        write_shm=written.append,
+    )
+
+    disabled_envelope = dispatch(
+        disabled,
+        "run",
+        1,
+        requires_ack=False,
+    )
+    assert disabled_envelope.trace_identity is None
+
+    no_context = types.SimpleNamespace(
+        rank=0,
+        world_size=1,
+        _command_ids=count(10),
+        command_timeline=_Timeline(enabled=True),
+        _command_timeline_clock_ns=iter((100, 200)).__next__,
+        _active_command_timeline_trace=lambda: None,
+        write_shm=written.append,
+    )
+    assert dispatch(
+        no_context,
+        "run",
+        2,
+        requires_ack=False,
+    ).trace_identity is None
+
+    timeline = _Timeline(enabled=True)
+    traced = types.SimpleNamespace(
+        rank=0,
+        world_size=2,
+        _command_ids=count(20),
+        command_timeline=timeline,
+        _command_timeline_clock_ns=iter((300, 400)).__next__,
+        _active_command_timeline_trace=_step_trace,
+        write_shm=written.append,
+    )
+    envelope = dispatch(
+        traced,
+        "run",
+        3,
+        requires_ack=True,
+    )
+
+    assert envelope.trace_identity == CommandTraceIdentity(
+        command_id=20,
+        method_name="run",
+        requires_ack=True,
+        engine_step_id=7,
+        repeat_index=3,
+        request_set_sha256="a" * 64,
+        batch_kind="decode",
+        speculative_selected_sequence_ids_sha256="b" * 64,
+        dispatch_started_monotonic_ns=300,
+        dispatch_published_monotonic_ns=400,
+    )
+    assert timeline.dispatches == [envelope.trace_identity]
 
 
 def test_model_runner_dispatch_emits_monotonic_envelopes():
@@ -178,6 +322,9 @@ def test_model_runner_dispatch_emits_monotonic_envelopes():
         rank=0,
         world_size=2,
         _command_ids=count(),
+        command_timeline=_Timeline(enabled=False),
+        _command_timeline_clock_ns=lambda: 0,
+        _active_command_timeline_trace=lambda: None,
         write_shm=written.append,
     )
 
@@ -230,6 +377,10 @@ def test_model_runner_shared_memory_envelope_and_legacy_decode():
         shm=shared,
         event=event,
         _command_ids=count(100),
+        command_timeline=_Timeline(enabled=False),
+        _command_timeline_clock_ns=lambda: (_ for _ in ()).throw(
+            AssertionError("disabled read_shm read the clock")
+        ),
     )
     assert read_shm(worker) == envelope
     assert event.set_calls == 1
@@ -244,6 +395,83 @@ def test_model_runner_shared_memory_envelope_and_legacy_decode():
     assert converted.args == (7, 8)
     assert converted.requires_ack is False
     assert converted.command_id == 100
+
+
+def test_model_runner_write_serializes_final_publish_before_event_set():
+    write_shm = _model_runner_method("write_shm")
+    shared = _Buffer()
+    seen = []
+    event = _Event(
+        on_set=lambda: seen.append(_decode_shared_envelope(shared))
+    )
+    envelope = ModelRunnerCommandEnvelope(
+        command_id=23,
+        method_name="prepare",
+        args=(),
+        requires_ack=True,
+        trace_identity=CommandTraceIdentity(
+            command_id=23,
+            method_name="prepare",
+            requires_ack=True,
+            engine_step_id=7,
+            repeat_index=3,
+            request_set_sha256="a" * 64,
+            batch_kind="decode",
+            speculative_selected_sequence_ids_sha256="b" * 64,
+            dispatch_started_monotonic_ns=300,
+            dispatch_published_monotonic_ns=400,
+        ),
+    )
+    runner = types.SimpleNamespace(
+        world_size=2,
+        rank=0,
+        shm=shared,
+        event=[event],
+    )
+
+    write_shm(runner, envelope)
+
+    assert seen == [envelope]
+    assert seen[0].trace_identity.dispatch_published_monotonic_ns == 400
+
+
+def test_model_runner_read_records_wake_and_read_before_return():
+    read_shm = _model_runner_method("read_shm")
+    timeline = _Timeline(enabled=True)
+    shared = _Buffer()
+    envelope = ModelRunnerCommandEnvelope(
+        command_id=24,
+        method_name="prepare",
+        args=(),
+        requires_ack=True,
+        trace_identity=CommandTraceIdentity(
+            command_id=24,
+            method_name="prepare",
+            requires_ack=True,
+            engine_step_id=7,
+            repeat_index=3,
+            request_set_sha256="a" * 64,
+            batch_kind="decode",
+            speculative_selected_sequence_ids_sha256="b" * 64,
+            dispatch_started_monotonic_ns=300,
+            dispatch_published_monotonic_ns=400,
+        ),
+    )
+    payload = pickle.dumps(envelope)
+    shared.buf[0:4] = len(payload).to_bytes(4, "little")
+    shared.buf[4:4 + len(payload)] = payload
+    worker = types.SimpleNamespace(
+        world_size=2,
+        rank=1,
+        shm=shared,
+        event=_Event(),
+        _command_ids=count(),
+        command_timeline=timeline,
+        _command_timeline_clock_ns=iter((500, 600)).__next__,
+    )
+
+    assert read_shm(worker) == envelope
+    assert timeline.receives == [(envelope.trace_identity, 500, 600)]
 
 
 def test_model_runner_worker_loop_ack_no_ack_and_exit():
@@ -273,6 +501,8 @@ def test_model_runner_worker_loop_ack_no_ack_and_exit():
     class Runner:
         rank = 1
         ack_sender = sender
+        command_timeline = _Timeline(enabled=False)
+        _command_timeline_clock_ns = staticmethod(lambda: 0)
 
         def read_shm(self):
             return next(envelopes)
@@ -312,21 +542,82 @@ def test_model_runner_constructor_has_ack_sender_contract():
     assert "ack_sender=None" in source
     assert "self.ack_sender = ack_sender" in source
     assert "self._command_ids = count()" in source
+    assert "ModelRunnerCommandTimelineRecorder.disabled" in source
+    assert "self._command_timeline_clock_ns = time.monotonic_ns" in source
+
+
+def test_model_runner_command_timeline_lifecycle_resets_rows():
+    configure = _model_runner_method("configure_command_timeline")
+    reset = _model_runner_method("reset_command_timeline")
+    snapshot = _model_runner_method("command_timeline_snapshot")
+    runner = types.SimpleNamespace(
+        rank=2,
+        command_timeline=ModelRunnerCommandTimelineRecorder.disabled(2),
+        _command_timeline_max_rows=8,
+    )
+
+    assert configure(runner, True, 16) == {
+        "rank": 2,
+        "enabled": True,
+        "max_rows": 16,
+    }
+    assert snapshot(runner) == {
+        "schema_version": 1,
+        "rank": 2,
+        "enabled": True,
+        "clock": {
+            "boot_id": "boot",
+            "implementation": "clock_gettime(CLOCK_MONOTONIC)",
+            "resolution_s": 1e-9,
+            "monotonic": True,
+            "adjustable": False,
+            "captured_at_unix_ns": 1,
+        },
+        "rows": [],
+        "dropped_rows": 0,
+    }
+    runner.configure_command_timeline = lambda enabled, max_rows: configure(
+        runner,
+        enabled,
+        max_rows,
+    )
+    assert reset(runner) == {
+        "rank": 2,
+        "enabled": True,
+        "max_rows": 16,
+    }
+    assert snapshot(runner)["rows"] == []
 
 
 def test_engine_tp1_acknowledged_call_is_local_only():
     call_ack = _engine_method("call_model_runner_acknowledged")
+    dispatched = []
 
     class Runner:
         world_size = 1
+        command_timeline = _Timeline(enabled=True)
 
-        def add(self, left, right):
-            return left + right
+        def dispatch_command(self, method_name, *args, requires_ack):
+            envelope = ModelRunnerCommandEnvelope(
+                command_id=41,
+                method_name=method_name,
+                args=tuple(args),
+                requires_ack=requires_ack,
+            )
+            dispatched.append(envelope)
+            return envelope
+
+        @staticmethod
+        def execute_command_envelope(envelope):
+            return sum(envelope.args)
 
     engine = types.SimpleNamespace(
         model_runner=Runner(),
         model_runner_ack_collector=None,
         ps=[],
+        _clock_ns=lambda: (_ for _ in ()).throw(
+            AssertionError("TP1 recorded a worker ack wait")
+        ),
     )
 
     assert call_ack(
@@ -336,6 +627,58 @@ def test_engine_tp1_acknowledged_call_is_local_only():
         6,
         timeout_s=1.0,
     ) == (10, ())
+    assert dispatched[0].requires_ack is False
+    assert engine.model_runner.command_timeline.ack_waits == []
+
+
+def test_engine_tp1_traced_local_call_finishes_without_ack_wait():
+    dispatch = _model_runner_method("dispatch_command")
+    execute = _model_runner_method("execute_command_envelope")
+    call_ack = _engine_method("call_model_runner_acknowledged")
+    timeline = ModelRunnerCommandTimelineRecorder(
+        rank=0,
+        max_rows=8,
+        clock_identity=CommandClockIdentity(
+            boot_id="boot",
+            implementation="clock_gettime(CLOCK_MONOTONIC)",
+            resolution_s=1e-9,
+            monotonic=True,
+            adjustable=False,
+            captured_at_unix_ns=1,
+        ),
+    )
+    runner = types.SimpleNamespace(
+        rank=0,
+        world_size=1,
+        _command_ids=count(),
+        command_timeline=timeline,
+        _command_timeline_clock_ns=iter((10, 20, 30, 40)).__next__,
+        _active_command_timeline_trace=_step_trace,
+        write_shm=lambda envelope: None,
+        add=lambda left, right: left + right,
+    )
+    runner.dispatch_command = types.MethodType(dispatch, runner)
+    runner.execute_command_envelope = types.MethodType(execute, runner)
+    engine = types.SimpleNamespace(
+        model_runner=runner,
+        model_runner_ack_collector=None,
+        ps=[],
+        _clock_ns=lambda: (_ for _ in ()).throw(
+            AssertionError("TP1 recorded a worker ack wait")
+        ),
+    )
+
+    assert call_ack(
+        engine,
+        "add",
+        4,
+        6,
+        timeout_s=1.0,
+    ) == (10, ())
+    row = timeline.snapshot()["rows"][0]
+    assert row["requires_ack"] is False
+    assert row["ack_wait_started_monotonic_ns"] is None
+    assert row["ack_wait_finished_monotonic_ns"] is None
 
 
 def test_engine_tp_acknowledged_call_collects_workers():
@@ -346,11 +689,24 @@ def test_engine_tp_acknowledged_call_collects_workers():
         method_name="prepare",
         args=(17,),
         requires_ack=True,
+        trace_identity=CommandTraceIdentity(
+            command_id=8,
+            method_name="prepare",
+            requires_ack=True,
+            engine_step_id=7,
+            repeat_index=3,
+            request_set_sha256="a" * 64,
+            batch_kind="decode",
+            speculative_selected_sequence_ids_sha256="b" * 64,
+            dispatch_started_monotonic_ns=10,
+            dispatch_published_monotonic_ns=20,
+        ),
     )
     collector_calls = []
 
     class Runner:
         world_size = 3
+        command_timeline = _Timeline(enabled=True)
 
         def dispatch_command(
             self,
@@ -365,7 +721,9 @@ def test_engine_tp_acknowledged_call_collects_workers():
             )
             return envelope
 
-        def prepare(self, value):
+        def execute_command_envelope(self, dispatched_envelope):
+            assert dispatched_envelope is envelope
+            value, = dispatched_envelope.args
             return {"rank": 0, "value": value}
 
     worker_acks = (
@@ -395,6 +753,7 @@ def test_engine_tp_acknowledged_call_collects_workers():
             _Process(alive=True),
             _Process(alive=True),
         ],
+        _clock_ns=iter((100, 200)).__next__,
     )
     engine._is_worker_rank_alive = lambda rank: rank_alive(
         engine,
@@ -413,6 +772,88 @@ def test_engine_tp_acknowledged_call_collects_workers():
     assert collector_calls[0][1]["expected_ranks"] == (1, 2)
     assert collector_calls[0][1]["timeout_s"] == 2.5
     assert collector_calls[0][1]["is_rank_alive"](1) is True
+    assert engine.model_runner.command_timeline.ack_waits == [
+        (8, 100, 200)
+    ]
+
+
+def test_engine_command_timeline_management_is_acknowledged_all_rank():
+    configure = _engine_method("configure_command_timeline")
+    reset = _engine_method("reset_command_timeline")
+    snapshots = _engine_method("command_timeline_snapshots")
+    calls = []
+
+    def call_ack(method_name, *args, timeout_s):
+        calls.append((method_name, args, timeout_s))
+        if method_name == "configure_command_timeline":
+            local = {"rank": 0, "enabled": args[0], "max_rows": args[1]}
+            workers = tuple(
+                types.SimpleNamespace(
+                    rank=rank,
+                    result={
+                        "rank": rank,
+                        "enabled": args[0],
+                        "max_rows": args[1],
+                    },
+                )
+                for rank in (1, 2)
+            )
+            return local, workers
+        if method_name == "reset_command_timeline":
+            local = {"rank": 0, "enabled": True, "max_rows": 64}
+            workers = tuple(
+                types.SimpleNamespace(
+                    rank=rank,
+                    result={"rank": rank, "enabled": True, "max_rows": 64},
+                )
+                for rank in (1, 2)
+            )
+            return local, workers
+        local = {"rank": 0, "enabled": True, "rows": [{"command_id": 5}]}
+        workers = tuple(
+            types.SimpleNamespace(
+                rank=rank,
+                result={
+                    "rank": rank,
+                    "enabled": True,
+                    "rows": [{"command_id": 5}],
+                },
+            )
+            for rank in (1, 2)
+        )
+        return local, workers
+
+    engine = types.SimpleNamespace(
+        model_runner=types.SimpleNamespace(world_size=3),
+        call_model_runner_acknowledged=call_ack,
+    )
+
+    assert configure(
+        engine,
+        True,
+        64,
+        timeout_s=4.0,
+    ) == {
+        "enabled": True,
+        "max_rows": 64,
+        "rank_inventory": [0, 1, 2],
+    }
+    assert reset(engine, timeout_s=5.0) == (
+        {"rank": 0, "enabled": True, "max_rows": 64},
+        {"rank": 1, "enabled": True, "max_rows": 64},
+        {"rank": 2, "enabled": True, "max_rows": 64},
+    )
+    measured = snapshots(engine, timeout_s=6.0)
+    assert tuple(row["rank"] for row in measured) == (0, 1, 2)
+    assert all(
+        snapshot["rows"] == [{"command_id": 5}]
+        for snapshot in measured
+    )
+    assert calls == [
+        ("configure_command_timeline", (True, 64), 4.0),
+        ("reset_command_timeline", (), 5.0),
+        ("command_timeline_snapshot", (), 6.0),
+    ]
 
 
 def test_engine_step_logits_authority_is_all_rank_and_rank_zero_only():
@@ -542,6 +983,9 @@ def test_engine_local_exception_poisons_collector():
         def fail(self):
             raise ValueError("rank zero failed")
 
+        def execute_command_envelope(self, envelope):
+            return self.fail(*envelope.args)
+
     class Collector:
         def poison(self, reason):
             poison_reasons.append(reason)
@@ -582,6 +1026,9 @@ def test_engine_collector_failure_propagates():
         def prepare(self):
             return "local-ok"
 
+        def execute_command_envelope(self, envelope):
+            return self.prepare(*envelope.args)
+
     class Collector:
         def collect(self, *args, **kwargs):
             raise TimeoutError("worker ack timeout")
@@ -591,6 +1038,7 @@ def test_engine_collector_failure_propagates():
         model_runner_ack_collector=Collector(),
         ps=[_Process()],
         _is_worker_rank_alive=lambda rank: True,
+        _clock_ns=lambda: 100,
     )
 
     try:

@@ -29,9 +29,38 @@
 - Review fix regression: `59 passed in 0.86s`
 - Review fix commit: `SELF/HEAD`
 
+## Task 2: Shared-Memory Command and Ack-Wait Wiring
+
+- Status: implemented; awaiting task review
+- Base SHA: `13c0c017222d65a252e7b1a019510b4413520963`
+- Brief: `.superpowers/sdd/task-2-brief.md`
+- Required invariants:
+  - trace identity is stamped only while the timeline is enabled and an engine step/repeat context is active;
+  - the final publish timestamp is serialized before worker events are set;
+  - rank zero and workers share the same command ID and trace identity;
+  - TP1 remains local-only with no worker ack wait;
+  - ordinary `call()` commands remain `requires_ack=False`;
+  - timeline management commands use acknowledged all-rank calls and do not contaminate measured snapshots;
+  - no completion fence or `torch.cuda.synchronize()` is added.
+- Implementer: Codex
+- Implementer report: `.superpowers/sdd/task-2-implementer-report.md`
+- RED: `5 failed, 30 deselected in 0.21s`
+- TP1 lifecycle RED: `1 failed, 19 deselected in 0.13s`
+- Focused GREEN: `7 passed, 30 deselected in 0.25s`
+- Task 1 + Task 2 focused regression: `48 passed in 0.94s`
+- Exact planned regression: `49 passed, 6 failed in 1.16s`
+  - all six failures are the known frozen
+    `test_qwen35_real_binding_engine_ack_transport_preflight.py`
+    source-fingerprint family;
+  - the prerequisite closure had 23 mismatches at the Task 2 base SHA and
+    still has the same 23 mismatches after Task 2;
+  - immutable fingerprint expectations were not rewritten.
+- Syntax verification: PASS
+- Implementer commit: `SELF/HEAD`
+- Task review: pending
+
 ## Remaining Tasks
 
-- Task 2: preparing
 - Task 3: pending
 - Task 4: pending
 - Task 5: pending
