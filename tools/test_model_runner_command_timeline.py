@@ -154,6 +154,55 @@ def test_recorder_captures_worker_lifecycle_and_returns_deep_copy():
     assert recorder.snapshot()["rows"][0]["status"] == "error"
 
 
+def test_worker_acknowledged_command_remains_unfinished_before_ack_send():
+    module = load_module()
+    recorder = module.ModelRunnerCommandTimelineRecorder(
+        rank=1,
+        max_rows=8,
+        clock_identity=clock_identity(module),
+    )
+    recorder.record_worker_receive(
+        identity(module, 1, requires_ack=True),
+        event_woken_monotonic_ns=1_200,
+        envelope_read_monotonic_ns=1_250,
+    )
+    recorder.record_method_start(1, started_ns=1_300)
+    recorder.record_method_end(1, finished_ns=1_500)
+
+    with pytest.raises(ValueError, match="unfinished"):
+        recorder.snapshot()
+
+    recorder.record_ack_send_start(1, started_ns=1_550)
+    recorder.record_ack_send_end(1, finished_ns=1_600)
+    assert recorder.snapshot()["rows"][0]["ack_send_finished_monotonic_ns"] == (
+        1_600
+    )
+
+
+def test_rank_zero_acknowledged_command_remains_unfinished_before_ack_wait():
+    module = load_module()
+    recorder = module.ModelRunnerCommandTimelineRecorder(
+        rank=0,
+        max_rows=8,
+        clock_identity=clock_identity(module),
+    )
+    recorder.record_dispatch(identity(module, 1, requires_ack=True))
+    recorder.record_method_start(1, started_ns=1_200)
+    recorder.record_method_end(1, finished_ns=1_500)
+
+    with pytest.raises(ValueError, match="unfinished"):
+        recorder.snapshot()
+
+    recorder.record_ack_wait(
+        1,
+        started_ns=1_550,
+        finished_ns=1_600,
+    )
+    assert recorder.snapshot()["rows"][0]["ack_wait_finished_monotonic_ns"] == (
+        1_600
+    )
+
+
 def test_recorder_rejects_snapshot_during_active_phase():
     module = load_module()
     recorder = module.ModelRunnerCommandTimelineRecorder(

@@ -5,6 +5,7 @@
 - `.superpowers/sdd/task-1-brief.md`
 - `.superpowers/sdd/progress.md`
 - `.superpowers/sdd/task-1-implementer-report.md`
+- `.superpowers/sdd/task-1-review-1.md`
 - `tinyvllm/config.py`
 - `tinyvllm/engine/model_runner_command_timeline.py`
 - `tools/test_autoregressive_draft_cuda_graph_config.py`
@@ -81,6 +82,72 @@ python3 -m py_compile \
 
 Output: exit code 0 with no diagnostics.
 
+## Review 1 fix evidence
+
+Review finding:
+
+```text
+requires_ack=True rows became snapshot-complete after method_end and before
+the required worker ack-send or rank-zero ack-wait lifecycle started.
+```
+
+Focused RED command:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m pytest -q \
+  tools/test_model_runner_command_timeline.py \
+  -k 'acknowledged_command_remains_unfinished'
+```
+
+RED output:
+
+```text
+2 failed, 9 deselected in 0.06s
+```
+
+Both failures were `Failed: DID NOT RAISE` from `snapshot()` immediately
+after `record_method_end()` and before ack-send or ack-wait start.
+
+Minimum fix:
+
+- acknowledged commands transition from `method` to an unfinished
+  `awaiting_ack` lifecycle state;
+- worker `record_ack_send_start()` transitions only from `awaiting_ack`;
+- rank-zero `record_ack_wait_start()` transitions only from
+  `awaiting_ack`; and
+- the command becomes snapshot-complete only after the corresponding ack
+  end method removes the active phase.
+
+Focused review GREEN:
+
+```text
+2 passed, 9 deselected in 0.04s
+```
+
+Updated Task 1 focused GREEN:
+
+```text
+12 passed, 19 deselected in 0.09s
+```
+
+Updated relevant regression result:
+
+```text
+59 passed in 0.86s
+```
+
+Review-fix syntax verification:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-command-timeline-pycache \
+python3 -m py_compile \
+  tinyvllm/engine/model_runner_command_timeline.py \
+  tools/test_model_runner_command_timeline.py
+```
+
+Output: exit code 0 with no diagnostics.
+
 ## Invariant checks
 
 - Timeline configuration remains default-off and validates a positive
@@ -101,6 +168,8 @@ Output: exit code 0 with no diagnostics.
 ## Commit
 
 `SELF/HEAD`
+
+Review 1 fix commit: `SELF/HEAD`
 
 ## Residual concerns
 

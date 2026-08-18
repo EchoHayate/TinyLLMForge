@@ -9,7 +9,7 @@
 
 ## Task 1: Default-Off Command Timeline Core
 
-- Status: implementation complete; review pending
+- Status: review fix implemented; re-review pending
 - Base SHA: `c5aa2d7d3c8050c61cd1b0ce735bd717ba862fd3`
 - Brief: `.superpowers/sdd/task-1-brief.md`
 - Required clarification: `CommandClockIdentity` must record a wall-clock capture field named `captured_at_unix_ns`, sourced from `time.time_ns()`, in addition to monotonic/boot identity.
@@ -21,7 +21,12 @@
 - Implementer: Codex
 - Implementer report: `.superpowers/sdd/task-1-implementer-report.md`
 - Implementer commit: `SELF/HEAD`
-- Task review: pending
+- Task review: `.superpowers/sdd/task-1-review-1.md` — Needs fixes
+- Review fix RED: `2 failed, 9 deselected in 0.06s`
+- Review fix focused GREEN: `2 passed, 9 deselected in 0.04s`
+- Review fix Task 1 GREEN: `12 passed, 19 deselected in 0.09s`
+- Review fix regression: `59 passed in 0.86s`
+- Review fix commit: `SELF/HEAD`
 
 ## Remaining Tasks
 

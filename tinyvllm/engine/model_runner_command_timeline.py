@@ -283,6 +283,13 @@ class ModelRunnerCommandTimelineRecorder:
             )
         self._active_phases.pop(command_id, None)
 
+    def _transition_phase(self, command_id, current, next_phase):
+        if self._active_phases.get(command_id) != current:
+            raise ValueError(
+                f"command {command_id} is not in {current} phase"
+            )
+        self._active_phases[command_id] = next_phase
+
     def record_dispatch(self, identity):
         if not self._enabled:
             return
@@ -369,7 +376,14 @@ class ModelRunnerCommandTimelineRecorder:
         )
         if finished_ns < row[started_key]:
             raise ValueError("method finish timestamp is invalid")
-        self._finish_phase(command_id, "method")
+        if row["requires_ack"]:
+            self._transition_phase(
+                command_id,
+                "method",
+                "awaiting_ack",
+            )
+        else:
+            self._finish_phase(command_id, "method")
         row[finished_key] = finished_ns
         row["status"] = status
         row["error_type"] = error_type[:MAX_ERROR_TYPE_LENGTH]
@@ -383,7 +397,11 @@ class ModelRunnerCommandTimelineRecorder:
         started_ns = _nonnegative_int(started_ns, "started_ns")
         if started_ns < row["method_finished_monotonic_ns"]:
             raise ValueError("ack send start timestamp is invalid")
-        self._start_phase(command_id, "ack_send")
+        self._transition_phase(
+            command_id,
+            "awaiting_ack",
+            "ack_send",
+        )
         row["ack_send_started_monotonic_ns"] = started_ns
 
     def record_ack_send_end(self, command_id, *, finished_ns):
@@ -407,7 +425,11 @@ class ModelRunnerCommandTimelineRecorder:
         started_ns = _nonnegative_int(started_ns, "started_ns")
         if started_ns < row["dispatch_published_monotonic_ns"]:
             raise ValueError("ack wait start timestamp is invalid")
-        self._start_phase(command_id, "ack_wait")
+        self._transition_phase(
+            command_id,
+            "awaiting_ack",
+            "ack_wait",
+        )
         row["ack_wait_started_monotonic_ns"] = started_ns
 
     def record_ack_wait_end(self, command_id, *, finished_ns):
