@@ -24,6 +24,47 @@ def load_module():
 
 
 class PolicyTests(unittest.TestCase):
+    def test_repo_root_accepts_only_authoritative_and_approved_remote_roots(self):
+        module = load_module()
+        accepted = [
+            ROOT,
+            Path(module.REMOTE_ROOT) / "source",
+            Path(module.REMOTE_ROOT) / "red-task1",
+        ]
+        for path in accepted:
+            with self.subTest(accepted=path):
+                self.assertEqual(
+                    module.ScratchConfig.default(path).repo_root,
+                    path,
+                )
+
+        rejected = [
+            Path(module.REMOTE_ROOT),
+            Path(module.REMOTE_ROOT) / "tmp",
+            Path(module.REMOTE_ROOT) / "pycache",
+            Path(module.REMOTE_ROOT) / "cache",
+            Path(module.REMOTE_ROOT) / "logs",
+            Path(module.REMOTE_ROOT) / "receipts",
+            Path(module.REMOTE_ROOT) / "env",
+        ]
+        for path in rejected:
+            with self.subTest(rejected=path):
+                with self.assertRaises(ValueError):
+                    module.ScratchConfig.default(path)
+
+    def test_fixed_configuration_values_cannot_be_overridden(self):
+        module = load_module()
+        overrides = [
+            {"remote_host": "other-host"},
+            {"remote_root": "/private/tmp/other-root"},
+            {"krb5_cache": "FILE:/private/tmp/other-cache"},
+            {"attempts": 1},
+        ]
+        for override in overrides:
+            with self.subTest(override=override):
+                with self.assertRaises(TypeError):
+                    module.ScratchConfig(repo_root=ROOT, **override)
+
     def test_fixed_layout_stays_under_remote_task_root(self):
         module = load_module()
         config = module.ScratchConfig.default(ROOT)
@@ -73,6 +114,60 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 with self.assertRaises(ValueError):
                     module.validate_relative_paths([path])
+
+    def test_explicit_paths_reject_broad_or_unsafe_operands(self):
+        module = load_module()
+        rejected = [
+            ".",
+            "tools",
+            "--checkpoint-action=exfiltrate",
+            "tools/does-not-exist-task1.py",
+        ]
+        for path in rejected:
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    module.validate_relative_paths([path])
+
+        escape = ROOT / "tools" / ".sitian-remote-scratch-escape"
+        if escape.exists() or escape.is_symlink():
+            escape.unlink()
+        escape.symlink_to("/etc/passwd")
+        try:
+            with self.assertRaises(ValueError):
+                module.validate_relative_paths(
+                    ["tools/.sitian-remote-scratch-escape"]
+                )
+        finally:
+            escape.unlink()
+
+    def test_explicit_paths_reject_log_trees_and_common_archives(self):
+        module = load_module()
+        rejected = [
+            "logs/output.txt",
+            "nested/logs/output.txt",
+            "bundle.tar.xz",
+            "bundle.tar.bz2",
+            "bundle.7z",
+            "bundle.zst",
+            "bundle.rar",
+            "bundle.txz",
+            "bundle.tbz2",
+        ]
+        for path in rejected:
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    module.validate_relative_paths([path])
+
+    def test_incremental_tar_argv_terminates_options_before_paths(self):
+        module = load_module()
+        builder = getattr(module, "incremental_tar_argv", None)
+        self.assertIsNotNone(builder)
+        argv = builder(["tools/sitian_remote_scratch.py"])
+        separator = argv.index("--")
+        self.assertEqual(
+            argv[separator + 1:],
+            ("tools/sitian_remote_scratch.py",),
+        )
 
     def test_remote_cache_environment_has_no_local_tmp_path(self):
         module = load_module()
