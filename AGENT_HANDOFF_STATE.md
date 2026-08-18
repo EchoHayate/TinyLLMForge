@@ -48638,3 +48638,208 @@ Next actions:
    parity, unchanged capture/resources during measured runs, all-rank replay,
    dual verifier receipts, and a final checksum manifest before classifying
    performance.
+
+## 2026-08-18 final schema-v2 TP4/B4/Q4 gate result
+
+Authoritative checkout and branch:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+  -> /Users/bytedance/dev/TinyLLMForge
+
+branch=feat/kv-sparse-attention
+source commit=09a23b74968139f3fb2eacb082b8bf9c79f94727
+origin source commit=09a23b74968139f3fb2eacb082b8bf9c79f94727
+```
+
+The schema-v2 canonical failure exposed by `r2` was fixed with TDD in:
+
+```text
+09a23b7 fix(cuda-graph): accept bounded logical proposal rows
+```
+
+Root cause:
+
+```text
+production graph capture/replay identity is exact TP4/B4/Q4
+logical proposal evidence is emitted for active sequences only
+terminal calls can therefore contain fewer than B4 rows
+remaining output budget can make a row shorter than Q4
+```
+
+The corrected contract permits only non-empty logical calls with `1..B4`
+rows and non-empty rows with `1..Q4` tokens. It does not pad, round, or relax
+the graph execution identity. Empty calls/rows, more than B4 rows, and more
+than Q4 tokens remain rejected.
+
+TDD and local verification:
+
+```text
+real ragged shape RED:
+  calls 1-3: 4 rows x Q4
+  call 4: row lengths [3, 4, 4, 3]
+  call 5: 2 rows x Q4
+
+focused regression:
+  7 passed
+
+complete gate/runtime focused suite:
+  122 passed in 7.79s
+
+compileall:
+  PASS
+
+remote-runner process-destruction safety test:
+  1 passed
+
+git diff --check:
+  PASS
+```
+
+Fresh immutable campaign:
+
+```text
+run tag:
+  20260817-steady-state-schema-v2-tp4-b4-q4-r3
+
+local evidence:
+  artifacts/autoregressive_draft_cuda_graph/
+    20260817-steady-state-schema-v2-tp4-b4-q4-r3/remote/
+
+selected GPUs:
+  [1, 2, 4, 5]
+
+preflight:
+  READY
+  Kerberos remaining lifetime=32315 s
+  minimum required=5400 s
+```
+
+Do not resume, merge, or rewrite `r1`, `r2`, or `r3`. `r1` and `r2` remain
+incomplete diagnostic campaigns. `r3` is the immutable complete result for
+source commit `09a23b7`.
+
+Source binding:
+
+```text
+source commit:
+  09a23b74968139f3fb2eacb082b8bf9c79f94727
+
+source patch SHA256:
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+source tree SHA256:
+  96c7961a8027e56db8cfab17eb49811b6f7e8465be9c7432fae2f6105bd9c9da
+
+payload SHA256:
+  3a8120e76fe414f2bc12fa1363f1452651bd96173eb8d98eeffd0bb068cebaa4
+
+source files verified:
+  130
+```
+
+Completeness and correctness:
+
+```text
+pair-level warmups=2
+measured pairs=8
+eager_graph order=4
+graph_eager order=4
+position balanced=true
+
+target-token parity=8/8
+logical proposal-token parity=8/8
+accepted-prefix parity=8/8
+transaction-digest parity=8/8
+acceptance parity=8/8
+active transactions=0 in every measured mode
+
+every graph rank:
+  captures=1
+  measured replay count increased from warmup
+  capture attempts/captures unchanged during measured run
+  ready entry count=1 and unchanged
+  retained static/reserved/capture duration unchanged
+  quarantines=0
+  fallback_pre_replay=0
+```
+
+Acceptance:
+
+```text
+accepted/proposed=51/70 in every measured worker
+acceptance rate=0.7285714285714285
+```
+
+Controlled performance:
+
+```text
+median eager throughput:
+  25.71424705405486 tok/s
+
+median graph throughput:
+  30.211924132596863 tok/s
+
+median eager TPOT:
+  94.181602 ms
+
+median graph TPOT:
+  72.495060 ms
+
+mean paired throughput delta:
+  +4.683516416145697 tok/s
+
+paired bootstrap 95% CI:
+  [-4.083510972867552, +12.876712331393636] tok/s
+
+median graph-minus-eager E2E:
+  -530.401256 ms
+
+median graph-minus-eager proposal-forward:
+  -350.421230 ms
+
+peak eager reserved bytes:
+  76376178688
+
+peak graph reserved bytes:
+  76395053056
+```
+
+Proposal-forward improved in every pair, but request-level throughput had two
+large regressions and the paired bootstrap lower bound remained negative.
+The canonical gate requires a positive lower bound.
+
+Verifier and checksum evidence:
+
+```text
+verify.remote.json=NO_GO_PERFORMANCE
+verify.local.json=NO_GO_PERFORMANCE
+fresh /private/tmp/r3-verify-fresh.json=NO_GO_PERFORMANCE
+all three receipts matched exactly
+fresh shasum -a 256 -c manifest.sha256=PASS
+```
+
+Final boundary:
+
+```text
+KERBEROS_TTL_FAIL_FAST=ESTABLISHED
+SCHEMA_V2_LOGICAL_EVIDENCE_CONTRACT=ESTABLISHED
+REAL_TP4_B4_Q4_CAPTURE_REPLAY=ESTABLISHED
+REAL_EAGER_GRAPH_CORRECTNESS_PARITY=ESTABLISHED
+PROPOSAL_KV_TRANSACTION_PARITY=ESTABLISHED
+STEADY_STATE_RESOURCE_STABILITY=ESTABLISHED
+CONTROLLED_EIGHT_PAIR_PERFORMANCE=NO_GO_PERFORMANCE
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Immediate continuation:
+
+1. keep `r3` immutable and never stage `artifacts/` or raw worker data;
+2. commit and push only this handoff and the canonical completion audit;
+3. for the next optimization, profile request-level TTFT/E2E scheduling and
+   synchronization dispersion outside `proposal_forward`;
+4. preserve exact-greedy tokens, Proposal-KV transaction semantics, TP
+   convergence, fail-closed replay behavior, and exact TP4/B4/Q4 identity;
+5. use another never-before-used tag for any future controlled performance
+   campaign.

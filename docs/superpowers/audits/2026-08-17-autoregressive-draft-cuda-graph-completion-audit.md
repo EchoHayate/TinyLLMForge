@@ -2,13 +2,15 @@
 
 **Date:** 2026-08-17
 
+**Final reconciliation:** 2026-08-18
+
 **Repository:** `/Users/bytedance/Desktop/TinyLLMForge`
 
 **Branch:** `feat/kv-sparse-attention`
 
 **Runtime correctness classification:** `ESTABLISHED_IN_RECORDED_TP4_B4_Q4_SCOPE`
 
-**Controlled performance classification:** `INCONCLUSIVE_ENVIRONMENT_PARTIAL_4_OF_8`
+**Controlled performance classification:** `NO_GO_PERFORMANCE`
 
 **Promotion:** `NOT_PROMOTABLE`
 
@@ -77,31 +79,43 @@ showed graph throughput approximately `+2.76%`, but it is not a controlled
 performance conclusion because it contains one sample and substantial
 bootstrap/capture variance.
 
-The required source-bound campaign completed both warmup pairs and four of
-eight measured position-balanced pairs. All four completed pairs preserved
-exact correctness and all-rank replay. Before pair 4 could finish, an
-unrelated root-owned `VLLM::EngineCore` appeared on physical GPU 3 and
-consumed approximately `73.3 GiB`. The gate's rank 3 exited and the remaining
-ranks stopped making progress. Only the gate's own process group was
-terminated; the external process was not signaled or modified.
+The fresh source-bound schema-v2 campaign
+`20260817-steady-state-schema-v2-tp4-b4-q4-r3` completed two warmup pairs and
+all eight measured position-balanced pairs. It used source commit
+`09a23b74968139f3fb2eacb082b8bf9c79f94727`, four clean GPUs
+`[1, 2, 4, 5]`, and one in-process warmup plus one measured batch in every
+fresh eager or graph worker.
 
-The retained four-pair aggregate is:
+All eight measured pairs preserved exact target-token, logical
+proposal-token, accepted-prefix, transaction-digest, and acceptance parity.
+Every graph rank retained one exact TP4/B4/Q4 graph entry, increased replay
+count after warmup, kept capture and resource counters unchanged during the
+measured batch, and reported zero quarantine or pre-replay fallback.
+
+The completed eight-pair aggregate is:
 
 ```text
-order counts:                    eager_graph=2, graph_eager=2
-exact parity:                    4 of 4
-all-rank capture/replay:         4 of 4
-median eager throughput:         0.989071982502008 tok/s
-median graph throughput:         0.9749348881219722 tok/s
-mean paired throughput delta:   -0.002993426456363135 tok/s
-median eager TPOT:               1.9743923907000003 s
-median graph TPOT:               2.0375849077333337 s
-observed capture range:          1.758702684-3.101219179 s
+order counts:                       eager_graph=4, graph_eager=4
+exact parity:                       8 of 8
+all-rank steady-state replay:       8 of 8
+median eager throughput:            25.71424705405486 tok/s
+median graph throughput:            30.211924132596863 tok/s
+mean paired throughput delta:       +4.683516416145697 tok/s
+paired bootstrap 95% CI:            [-4.083510972867552, +12.876712331393636] tok/s
+median eager TPOT:                  94.181602 ms
+median graph TPOT:                  72.495060 ms
+median graph-minus-eager E2E:       -530.401256 ms
+median graph-minus-eager proposal:  -350.421230 ms
+peak eager reserved bytes:          76376178688
+peak graph reserved bytes:          76395053056
+accepted / proposed per worker:     51 / 70
+acceptance rate:                    0.7285714285714285
 ```
 
-Because the contract requires eight measured pairs and a paired bootstrap
-confidence interval, the partial aggregate cannot be classified as `GO` or
-`NO_GO_PERFORMANCE`.
+Median throughput and median TPOT both favor graph replay, but the paired
+bootstrap throughput-delta confidence interval crosses zero. The exact gate
+requires `ci_low > 0`; therefore the completed controlled result is
+`NO_GO_PERFORMANCE`, not `GO`.
 
 Strict result:
 
@@ -111,7 +125,7 @@ REAL_TP4_CUDA_GRAPH_CAPTURE_REPLAY=ESTABLISHED
 REAL_EAGER_GRAPH_CORRECTNESS_PARITY=ESTABLISHED
 PRODUCTION_DEFAULT_CAPTURE_BUDGET=ESTABLISHED
 GRAPH_PROCESS_GROUP_TEARDOWN_ORDER=ESTABLISHED
-CONTROLLED_EIGHT_PAIR_PERFORMANCE=INCONCLUSIVE_ENVIRONMENT_PARTIAL_4_OF_8
+CONTROLLED_EIGHT_PAIR_PERFORMANCE=NO_GO_PERFORMANCE
 FINAL_PROMOTION=NOT_PROMOTABLE
 ```
 
@@ -307,7 +321,7 @@ performance tooling, and source-bound verifier behavior.
   batch, dynamic Q, or another draft architecture; or
 - Phase 1 promotion readiness.
 
-## Next Action
+## Historical Next Action Before `r3` (Superseded)
 
 After physical GPU 3 is again clean:
 
@@ -396,7 +410,7 @@ git diff --check:
   PASS
 ```
 
-### Reconciled Prompt-to-Artifact Checklist
+### Pre-`r3` Reconciled Prompt-to-Artifact Checklist (Superseded)
 
 | Requirement | Evidence | Verdict |
 | --- | --- | --- |
@@ -424,3 +438,116 @@ PROMOTION=NOT_PROMOTABLE
 The next valid performance result must use a new source-bound schema-v2 run
 tag and four clean GPUs. The interrupted schema-v1 tag must not be resumed or
 reclassified.
+
+## 2026-08-18 Final Schema-v2 Completion Reconciliation
+
+### Authoritative evidence
+
+```text
+run tag:
+  20260817-steady-state-schema-v2-tp4-b4-q4-r3
+
+local evidence root:
+  artifacts/autoregressive_draft_cuda_graph/
+    20260817-steady-state-schema-v2-tp4-b4-q4-r3/remote/
+
+source commit:
+  09a23b74968139f3fb2eacb082b8bf9c79f94727
+
+source patch SHA256:
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+source tree SHA256:
+  96c7961a8027e56db8cfab17eb49811b6f7e8465be9c7432fae2f6105bd9c9da
+
+payload SHA256:
+  3a8120e76fe414f2bc12fa1363f1452651bd96173eb8d98eeffd0bb068cebaa4
+```
+
+The source patch is the SHA256 of an empty patch because the source commit was
+clean when the bundle was created. The source manifest verifies 130 source
+files. The manifest checksum also covers all 20 raw worker JSON files, the
+canonical payload, provenance, environment, source bundle, and remote
+verifier receipt.
+
+### Final prompt-to-artifact checklist
+
+| Explicit requirement | Concrete artifact or fresh check | Verdict |
+| --- | --- | --- |
+| Use only the authoritative TinyLLMForge checkout | repository path resolves from `/Users/bytedance/Desktop/TinyLLMForge` to `/Users/bytedance/dev/TinyLLMForge` | `ACHIEVED` |
+| Commit and push the Kerberos TTL fail-fast guard | commits `284eac6`, `9d87e41`, and `5b8ed5f`; origin branch matched locally before the run | `ACHIEVED` |
+| Reject insufficient Kerberos lifetime before local/SSH side effects | `preflight.json` records READY with 32,315 seconds remaining and 5,400 seconds required | `ACHIEVED` |
+| Never resume or rewrite interrupted `r1` or failed `r2` | fresh never-before-used `r3` local and remote roots | `ACHIEVED` |
+| Fix the canonical schema without padding logical evidence | commit `09a23b7`; bounded logical rows preserve the real `4/4/4/4/2` active-row pattern | `ACHIEVED` |
+| Preserve exact TP4/B4/Q4 graph execution identity | canonical configuration is TP4/B4/Q4; source-bound graph identity and Qwen3 backend reject non-TP4/B4/Q4 capture/replay; every graph rank retained exactly one ready entry | `ACHIEVED` |
+| Prompt length 256, output length 16, greedy, dense direct, offload disabled | `result.json.configuration` | `ACHIEVED` |
+| Two pair-level warmups | `result.json.warmups`, count 2 | `ACHIEVED` |
+| Eight measured pairs | `result.json.pairs`, count 8 | `ACHIEVED` |
+| Balanced order | four `eager_graph` and four `graph_eager` rows | `ACHIEVED` |
+| One in-process warmup and one measured run per worker | schema-v2 configuration and all 20 raw worker payloads | `ACHIEVED` |
+| Measured graph work is replay-only with respect to capture | warmup/measured capture attempts, captures, retained bytes, entry count, and capture duration are unchanged on every rank; replay count increases | `ACHIEVED` |
+| Exact target-token parity | all eight measured eager/graph pairs | `ACHIEVED` |
+| Exact logical proposal-token parity | all eight measured eager/graph pairs, including bounded ragged terminal rows | `ACHIEVED` |
+| Accepted-prefix parity | all eight measured eager/graph pairs | `ACHIEVED` |
+| Proposal-KV accepted-prefix commit and rejected-suffix rollback authority | transaction digest parity and zero active transactions in every measured pair | `ACHIEVED` |
+| TP failure convergence and fail-closed replay boundary remain covered | source-bound runtime plus focused local regression suite | `ACHIEVED` |
+| Zero quarantine and pre-replay fallback | every measured graph rank | `ACHIEVED` |
+| Acceptance evidence | every measured worker reports 51 accepted of 70 proposed, rate 0.7285714285714285 | `ACHIEVED` |
+| Phase timing evidence | per-pair E2E, TTFT, TPOT, proposal-forward, and proposal-detail rows in `result.json` | `ACHIEVED` |
+| Memory evidence | per-rank measured peaks plus aggregate eager/graph reserved peaks | `ACHIEVED` |
+| Remote verifier | `verify.remote.json` | `ACHIEVED` |
+| Downloaded local verifier | `verify.local.json` | `ACHIEVED` |
+| Fresh independent verifier | `/private/tmp/r3-verify-fresh.json` matched both archived receipts exactly | `ACHIEVED` |
+| Final checksum manifest | fresh `shasum -a 256 -c manifest.sha256` passed every listed file | `ACHIEVED` |
+| Controlled final classification | canonical and all three verifier receipts report `NO_GO_PERFORMANCE` | `ACHIEVED` |
+| Versionable audit and handoff are committed and pushed | final documentation commit plus local/origin branch-head equality after push | `ACHIEVED` |
+
+### Final controlled result
+
+The gate's `GO` rule requires all three performance conditions:
+
+```text
+median graph throughput > median eager throughput
+median graph TPOT <= median eager TPOT
+paired throughput-delta bootstrap CI lower bound > 0
+```
+
+The first two conditions passed. The third did not:
+
+```text
+median eager throughput:       25.71424705405486 tok/s
+median graph throughput:       30.211924132596863 tok/s
+median eager TPOT:             94.181602 ms
+median graph TPOT:             72.495060 ms
+mean paired throughput delta:  +4.683516416145697 tok/s
+bootstrap 95% CI:              [-4.083510972867552, +12.876712331393636] tok/s
+```
+
+Proposal-forward timing improved in every measured pair, with a median
+graph-minus-eager delta of approximately `-350.421 ms`. End-to-end timing was
+much noisier: six pairs favored graph and two regressed enough to make the
+paired throughput interval cross zero. The evidence therefore supports a
+real proposal-forward optimization but not a statistically stable
+request-level throughput promotion.
+
+### Final classification
+
+```text
+KERBEROS_TTL_FAIL_FAST=ESTABLISHED
+SCHEMA_V2_CANONICAL_LOGICAL_EVIDENCE=ESTABLISHED
+REAL_TP4_B4_Q4_GRAPH_CAPTURE_REPLAY=ESTABLISHED
+REAL_EAGER_GRAPH_CORRECTNESS_PARITY=ESTABLISHED
+PROPOSAL_KV_TRANSACTION_PARITY=ESTABLISHED
+STEADY_STATE_CAPTURE_RESOURCE_STABILITY=ESTABLISHED
+DUAL_AND_FRESH_VERIFIER=ESTABLISHED
+CHECKSUM_MANIFEST=ESTABLISHED
+CONTROLLED_EIGHT_PAIR_PERFORMANCE=NO_GO_PERFORMANCE
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+The next optimization should target the request-level variance outside
+`proposal_forward`, especially TTFT/E2E scheduling and synchronization
+dispersion. Any future performance claim requires another new tag and the
+same complete source-bound gate; `r3` is immutable final evidence for this
+implementation.
