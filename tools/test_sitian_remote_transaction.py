@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -284,6 +285,38 @@ class TransactionPrimitiveTests(unittest.TestCase):
         delta = self.test_root / name
         delta.mkdir()
         return delta
+
+    def make_delta_archive(self, members):
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as handle:
+            for name, data in members:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                handle.addfile(info, io.BytesIO(data))
+        return archive.getvalue()
+
+    def stage_delta(self, root, nonce, members, paths=("tools/a.py",)):
+        return transaction._stage_delta_stream(
+            root,
+            nonce,
+            paths,
+            io.BytesIO(self.make_delta_archive(members)),
+        )
+
+    def helper_command(self, root, command, *arguments):
+        return (
+            sys.executable,
+            str(Path(transaction.__file__).resolve()),
+            command,
+            "--remote-root",
+            str(root),
+            *arguments,
+        )
+
+    def helper_environment(self):
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        return environment
 
     def fail_at(self, expected):
         def inject(actual):
@@ -1043,10 +1076,11 @@ class TransactionPrimitiveTests(unittest.TestCase):
 
     def test_sync_clone_preserves_symlinks_and_applies_only_explicit_delta(self):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"new-a\n")
-        self.write_file(delta, "tools/b.py", b"unlisted-new-b\n")
-        self.write_file(delta, "new-unlisted.py", b"must-not-appear\n")
+        delta = self.stage_delta(
+            root,
+            "sync-clone",
+            (("tools/a.py", b"new-a\n"),),
+        )
 
         receipt = transaction.commit_sync_generation(
             root,
@@ -1059,7 +1093,6 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual(receipt.operation, "sync")
         self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new-a\n")
         self.assertEqual((root / "source/tools/b.py").read_bytes(), b"old-b\n")
-        self.assertFalse((root / "source/new-unlisted.py").exists())
         self.assertTrue((root / "source/current.py").is_symlink())
         self.assertEqual(os.readlink(root / "source/current.py"), "tools/a.py")
         transaction.read_committed_generation(
@@ -1086,8 +1119,12 @@ class TransactionPrimitiveTests(unittest.TestCase):
             "a" * 40,
         )
         source_parent = root / "source/pkg"
-        delta = self.make_delta()
-        self.write_file(delta, "pkg/allowed.py", b"outside-new\n")
+        delta = self.stage_delta(
+            root,
+            "sync-parent-link",
+            (("pkg/allowed.py", b"outside-new\n"),),
+            paths=("pkg/allowed.py",),
+        )
 
         with self.assertRaisesRegex(
             transaction.TransactionError,
@@ -1109,29 +1146,168 @@ class TransactionPrimitiveTests(unittest.TestCase):
 
     def test_sync_delta_staging_rejects_nonce_parent_symlink_escape(self):
         root = self.make_root()
-        transactions = root / ".transactions"
-        transactions.mkdir()
         outside = self.test_root / "outside-delta-stage"
         outside.mkdir()
-        (transactions / ".delta-..").symlink_to(
+        (root / ".transactions").symlink_to(
             outside, target_is_directory=True
         )
 
-        with mock.patch.object(transaction, "_remove_tree_at"):
-            with self.assertRaises(transaction.TransactionError):
+        with self.assertRaises((OSError, transaction.TransactionError)):
+            transaction._stage_delta_stream(
+                root,
+                "valid-nonce",
+                ("tools/a.py",),
+                io.BytesIO(
+                    self.make_delta_archive(
+                        (("tools/a.py", b"new\n"),)
+                    )
+                ),
+            )
+
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_sync_delta_staging_rejects_valid_nonce_final_symlink(self):
+        root = self.make_root()
+        transactions = root / ".transactions"
+        transactions.mkdir()
+        outside = self.test_root / "outside-delta-final"
+        outside.mkdir()
+
+        with mock.patch.object(
+            transaction,
+            "_private_delta_name",
+            return_value=".delta-valid-nonce-fixed",
+            create=True,
+        ):
+            (transactions / ".delta-valid-nonce-fixed").symlink_to(
+                outside, target_is_directory=True
+            )
+            with self.assertRaises((OSError, transaction.TransactionError)):
                 transaction._stage_delta_stream(
                     root,
-                    "../escaped",
+                    "valid-nonce",
                     ("tools/a.py",),
-                    io.BytesIO(),
+                    io.BytesIO(
+                        self.make_delta_archive(
+                            (("tools/a.py", b"new\n"),)
+                        )
+                    ),
                 )
 
-        self.assertFalse((outside / "escaped").exists())
+        self.assertTrue(
+            (transactions / ".delta-valid-nonce-fixed").is_symlink()
+        )
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_sync_delta_archive_requires_exact_canonical_membership(self):
+        cases = (
+            ("missing", (), ("tools/a.py",)),
+            (
+                "unexpected",
+                (
+                    ("tools/a.py", b"a\n"),
+                    ("tools/b.py", b"b\n"),
+                ),
+                ("tools/a.py",),
+            ),
+            (
+                "duplicate",
+                (
+                    ("tools/a.py", b"a\n"),
+                    ("tools/a.py", b"b\n"),
+                ),
+                ("tools/a.py",),
+            ),
+            (
+                "dot-alias",
+                (("./tools/a.py", b"a\n"),),
+                ("tools/a.py",),
+            ),
+            (
+                "double-slash-alias",
+                (("tools//a.py", b"a\n"),),
+                ("tools/a.py",),
+            ),
+        )
+        for label, members, paths in cases:
+            with self.subTest(label=label):
+                root = self.make_root("archive-{}".format(label))
+                with self.assertRaises(transaction.TransactionError):
+                    transaction._stage_delta_stream(
+                        root,
+                        "archive-{}".format(label),
+                        paths,
+                        io.BytesIO(self.make_delta_archive(members)),
+                    )
+                transactions = root / ".transactions"
+                if transactions.exists():
+                    self.assertEqual(
+                        [
+                            path.name
+                            for path in transactions.iterdir()
+                            if path.name != "source.lock"
+                        ],
+                        [],
+                    )
+
+    def test_sync_commit_rejects_outside_delta_root(self):
+        root = self.make_initialized_root()
+        outside = self.make_delta("outside-authority")
+        self.write_file(outside, "tools/a.py", b"outside\n")
+        source_before = self.tree_snapshot(root / "source")
+
+        with self.assertRaises(transaction.TransactionError):
+            transaction.commit_sync_generation(
+                root,
+                outside,
+                nonce="outside-authority",
+                source_head="b" * 40,
+                explicit_paths=("tools/a.py",),
+            )
+
+        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
+
+    def test_sync_commit_rejects_transactions_parent_swap_after_staging(self):
+        root = self.make_initialized_root()
+        staged = self.stage_delta(
+            root,
+            "parent-swap",
+            (("tools/a.py", b"validated\n"),),
+        )
+        staged_name = Path(os.fspath(staged)).name
+        transactions = root / ".transactions"
+        held_transactions = root / ".transactions-held"
+        transactions.rename(held_transactions)
+        replacement = root / ".transactions" / staged_name
+        self.write_file(replacement, "tools/a.py", b"swapped\n")
+        source_before = self.tree_snapshot(root / "source")
+
+        with self.assertRaises(transaction.TransactionError):
+            transaction.commit_sync_generation(
+                root,
+                staged,
+                nonce="parent-swap",
+                source_head="b" * 40,
+                explicit_paths=("tools/a.py",),
+            )
+
+        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
+        self.assertEqual(
+            (held_transactions / staged_name / "tools/a.py").read_bytes(),
+            b"validated\n",
+        )
+        self.assertEqual(
+            (replacement / "tools/a.py").read_bytes(),
+            b"swapped\n",
+        )
 
     def test_init_and_sync_serialize_on_the_same_flock(self):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"sync\n")
+        delta = self.stage_delta(
+            root,
+            "sync-lock",
+            (("tools/a.py", b"sync\n"),),
+        )
         init_generation = root / ".transactions/init-two/generation"
         self.write_file(init_generation, "tools/init.py", b"init\n")
         sync_locked = threading.Event()
@@ -1198,8 +1374,11 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self,
     ):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"once\n")
+        delta = self.stage_delta(
+            root,
+            "same-nonce",
+            (("tools/a.py", b"once\n"),),
+        )
         first = transaction.commit_sync_generation(
             root,
             delta,
@@ -1207,15 +1386,18 @@ class TransactionPrimitiveTests(unittest.TestCase):
             source_head="b" * 40,
             explicit_paths=("tools/a.py",),
         )
-        shutil_target = self.test_root / "delta-removed"
-        delta.rename(shutil_target)
         receipts = root / "receipts"
         for path in receipts.glob("sync-same-nonce.*"):
             path.unlink()
+        second_delta = self.stage_delta(
+            root,
+            "same-nonce",
+            (("tools/a.py", b"unexpected\n"),),
+        )
 
         second = transaction.commit_sync_generation(
             root,
-            delta,
+            second_delta,
             nonce="same-nonce",
             source_head="b" * 40,
             explicit_paths=("tools/a.py",),
@@ -1230,8 +1412,11 @@ class TransactionPrimitiveTests(unittest.TestCase):
 
     def test_sync_confirmation_rejects_detached_receipt_symlink(self):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"committed\n")
+        delta = self.stage_delta(
+            root,
+            "receipt-link",
+            (("tools/a.py", b"committed\n"),),
+        )
         transaction.commit_sync_generation(
             root,
             delta,
@@ -1259,8 +1444,11 @@ class TransactionPrimitiveTests(unittest.TestCase):
 
     def test_sync_confirmation_rejects_mismatched_explicit_paths(self):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"committed\n")
+        delta = self.stage_delta(
+            root,
+            "path-mismatch",
+            (("tools/a.py", b"committed\n"),),
+        )
         transaction.commit_sync_generation(
             root,
             delta,
@@ -1282,8 +1470,11 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self,
     ):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"committed\n")
+        delta = self.stage_delta(
+            root,
+            "response-loss",
+            (("tools/a.py", b"committed\n"),),
+        )
 
         with self.assertRaises(transaction.InjectedFailure):
             transaction.commit_sync_generation(
@@ -1317,67 +1508,266 @@ class TransactionPrimitiveTests(unittest.TestCase):
 
     def test_second_cleanup_exception_does_not_leave_sync_lock_held(self):
         root = self.make_initialized_root()
-        delta = self.make_delta()
-        self.write_file(delta, "tools/a.py", b"committed\n")
-        real_remove = transaction._remove_tree_at
-        interrupted = [False]
+        delta = self.stage_delta(
+            root,
+            "cleanup-signal",
+            (("tools/a.py", b"committed\n"),),
+        )
 
-        def interrupt_old_generation(parent_fd, name):
-            if name == "generation" and not interrupted[0]:
-                interrupted[0] = True
-                raise transaction.TransactionInterrupted(signal.SIGTERM)
-            return real_remove(parent_fd, name)
+        def deliver_signal(point):
+            if point == "before_old_generation_cleanup":
+                os.kill(os.getpid(), signal.SIGTERM)
 
-        with mock.patch.object(
-            transaction,
-            "_remove_tree_at",
-            side_effect=interrupt_old_generation,
-        ):
-            receipt = transaction.commit_sync_generation(
-                root,
-                delta,
-                nonce="cleanup-signal",
-                source_head="b" * 40,
-                explicit_paths=("tools/a.py",),
-            )
+        receipt = transaction.commit_sync_generation(
+            root,
+            delta,
+            nonce="cleanup-signal",
+            source_head="b" * 40,
+            explicit_paths=("tools/a.py",),
+            fault_injector=deliver_signal,
+        )
 
-        self.assertTrue(interrupted[0])
         self.assertEqual(receipt.nonce, "cleanup-signal")
         with transaction.locked_remote_root(root):
             pass
 
-    def test_sync_and_confirm_cli_modes_are_available(self):
-        parser = transaction.build_parser()
-        sync = parser.parse_args(
-            (
+    def test_sync_fault_points_preserve_pre_or_post_exchange_invariants(self):
+        for fault_point in SYNC_FAULT_POINTS:
+            with self.subTest(fault_point=fault_point):
+                root = self.make_initialized_root(
+                    "sync-fault-{}".format(fault_point)
+                )
+                nonce = "fault-{}".format(fault_point)
+                delta = self.stage_delta(
+                    root,
+                    nonce,
+                    (("tools/a.py", b"committed\n"),),
+                )
+                source_before = self.tree_snapshot(root / "source")
+                receipts_before = self.tree_snapshot(root / "receipts")
+
+                if fault_point in PRE_EXCHANGE_FAULT_POINTS:
+                    with self.assertRaises(transaction.InjectedFailure):
+                        transaction.commit_sync_generation(
+                            root,
+                            delta,
+                            nonce=nonce,
+                            source_head="b" * 40,
+                            explicit_paths=("tools/a.py",),
+                            fault_injector=self.fail_at(fault_point),
+                        )
+                    self.assertEqual(
+                        self.tree_snapshot(root / "source"),
+                        source_before,
+                    )
+                    self.assertEqual(
+                        self.tree_snapshot(root / "receipts"),
+                        receipts_before,
+                    )
+                    continue
+
+                if fault_point == "after_exchange":
+                    with self.assertRaises(transaction.InjectedFailure):
+                        transaction.commit_sync_generation(
+                            root,
+                            delta,
+                            nonce=nonce,
+                            source_head="b" * 40,
+                            explicit_paths=("tools/a.py",),
+                            fault_injector=self.fail_at(fault_point),
+                        )
+                    receipt = transaction.confirm_committed_generation(
+                        root,
+                        nonce=nonce,
+                        operation="sync",
+                        source_head="b" * 40,
+                        explicit_paths=("tools/a.py",),
+                    )
+                else:
+                    receipt = transaction.commit_sync_generation(
+                        root,
+                        delta,
+                        nonce=nonce,
+                        source_head="b" * 40,
+                        explicit_paths=("tools/a.py",),
+                        fault_injector=self.fail_at(fault_point),
+                    )
+
+                self.assertEqual(receipt.nonce, nonce)
+                self.assertEqual(
+                    (root / "source/tools/a.py").read_bytes(),
+                    b"committed\n",
+                )
+                for suffix in ("paths.txt", "sha256", "state"):
+                    self.assertTrue(
+                        (
+                            root
+                            / "receipts/sync-{}.{}".format(nonce, suffix)
+                        ).is_file()
+                    )
+
+    def test_sync_preexisting_new_nonce_receipt_symlink_never_commits_and_fails(
+        self,
+    ):
+        root = self.make_initialized_root()
+        source_before = self.tree_snapshot(root / "source")
+        target = root / "receipts/target.state"
+        target.write_text("outside\n", encoding="utf-8")
+        receipt = root / "receipts/sync-topology.state"
+        receipt.symlink_to(target.name)
+        archive = self.make_delta_archive(
+            (("tools/a.py", b"committed\n"),)
+        )
+        result = subprocess.run(
+            self.helper_command(
+                root,
                 "sync-commit",
-                "--remote-root",
-                "/remote/root",
                 "--nonce",
-                "n1",
+                "topology",
                 "--source-head",
                 "b" * 40,
                 "--path",
                 "tools/a.py",
-            )
+            ),
+            input=archive,
+            capture_output=True,
+            env=self.helper_environment(),
         )
-        confirm = parser.parse_args(
-            (
-                "confirm",
-                "--remote-root",
-                "/remote/root",
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b"")
+        self.assertNotEqual(result.stderr, b"")
+        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
+        self.assertTrue(receipt.is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), "outside\n")
+
+    def test_sync_same_nonce_concurrent_helper_processes_both_succeed(self):
+        root = self.make_initialized_root()
+        nonce = "concurrent-same-nonce"
+        payload = b"x" * (2 * 1024 * 1024)
+        archive = self.make_delta_archive((("tools/a.py", payload),))
+        command = self.helper_command(
+            root,
+            "sync-commit",
+            "--nonce",
+            nonce,
+            "--source-head",
+            "b" * 40,
+            "--path",
+            "tools/a.py",
+        )
+        processes = [
+            subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self.helper_environment(),
+            )
+            for _ in range(2)
+        ]
+        outcomes = [None, None]
+        start = threading.Barrier(3)
+
+        def communicate(index):
+            start.wait()
+            outcomes[index] = processes[index].communicate(
+                input=archive, timeout=20
+            )
+
+        threads = [
+            threading.Thread(target=communicate, args=(index,))
+            for index in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        start.wait()
+        for thread in threads:
+            thread.join(25)
+
+        expected = (
+            str(root / "receipts/sync-{}.sha256".format(nonce)) + "\n"
+        ).encode("utf-8")
+        for index, process in enumerate(processes):
+            with self.subTest(process=index):
+                self.assertFalse(threads[index].is_alive())
+                stdout, stderr = outcomes[index]
+                self.assertEqual(process.returncode, 0, stderr)
+                self.assertEqual(stdout, expected)
+                self.assertEqual(stderr, b"")
+        self.assertEqual((root / "source/tools/a.py").read_bytes(), payload)
+        transactions = root / ".transactions"
+        self.assertEqual(
+            [
+                path.name
+                for path in transactions.iterdir()
+                if path.name != "source.lock"
+            ],
+            [],
+        )
+
+    def test_sync_confirm_and_status_cli_contracts(self):
+        root = self.make_initialized_root()
+        archive = self.make_delta_archive(
+            (("tools/a.py", b"cli-committed\n"),)
+        )
+        nonce = "cli-contract"
+        sync = subprocess.run(
+            self.helper_command(
+                root,
+                "sync-commit",
                 "--nonce",
-                "n1",
+                nonce,
+                "--source-head",
+                "b" * 40,
+                "--path",
+                "tools/a.py",
+            ),
+            input=archive,
+            capture_output=True,
+            env=self.helper_environment(),
+        )
+        receipt = str(root / "receipts/sync-{}.sha256".format(nonce))
+        self.assertEqual(sync.returncode, 0, sync.stderr)
+        self.assertEqual(sync.stdout, (receipt + "\n").encode("utf-8"))
+        self.assertEqual(sync.stderr, b"")
+
+        confirm = subprocess.run(
+            self.helper_command(
+                root,
+                "confirm",
+                "--nonce",
+                nonce,
                 "--operation",
                 "sync",
                 "--source-head",
                 "b" * 40,
                 "--path",
                 "tools/a.py",
-            )
+            ),
+            capture_output=True,
+            env=self.helper_environment(),
         )
-        self.assertEqual(sync.command, "sync-commit")
-        self.assertEqual(confirm.command, "confirm")
+        self.assertEqual(confirm.returncode, 0, confirm.stderr)
+        self.assertEqual(confirm.stdout, (receipt + "\n").encode("utf-8"))
+        self.assertEqual(confirm.stderr, b"")
+
+        committed = transaction.read_committed_generation(root)
+        status = subprocess.run(
+            self.helper_command(root, "status"),
+            capture_output=True,
+            env=self.helper_environment(),
+        )
+        expected_status = (
+            "head={}\ncount={}\nlatest={}\n".format(
+                committed.source_head,
+                committed.source_file_count,
+                receipt,
+            )
+        ).encode("utf-8")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(status.stdout, expected_status)
+        self.assertEqual(status.stderr, b"")
 
     def test_initial_confirmation_receipt_symlink_fails_without_exchange(self):
         root = self.make_root()

@@ -10,9 +10,12 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+
+from tools import sitian_remote_transaction as transaction
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -616,6 +619,125 @@ class TransportTests(unittest.TestCase):
 
         stream.assert_called_once()
         remote.assert_not_called()
+
+    def test_incremental_controller_non_255_helper_failure_is_precommit(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(
+            prefix="sitian-controller-commit-boundary-"
+        ) as temporary:
+            root = Path(temporary)
+            generation = root / ".transactions/init-nonce/generation"
+            generation.joinpath("tools").mkdir(parents=True)
+            generation.joinpath("tools/a.py").write_bytes(b"old\n")
+            transaction.commit_initial_generation(
+                root,
+                ".transactions/init-nonce/generation",
+                "a" * 40,
+            )
+            source_before = generation_snapshot = {}
+            for path in sorted((root / "source").rglob("*")):
+                relative = path.relative_to(root / "source").as_posix()
+                if path.is_symlink():
+                    generation_snapshot[relative] = (
+                        "symlink",
+                        os.readlink(path),
+                    )
+                elif path.is_dir():
+                    generation_snapshot[relative] = ("directory", None)
+                else:
+                    generation_snapshot[relative] = (
+                        "file",
+                        path.read_bytes(),
+                    )
+            source_before = generation_snapshot
+            nonce = "100-200-300"
+            target = root / "receipts/target.state"
+            target.write_text("outside\n", encoding="utf-8")
+            receipt = root / "receipts/sync-{}.state".format(nonce)
+            receipt.symlink_to(target.name)
+            archive = self._single_file_archive(
+                "tools/sitian_remote_scratch.py",
+                b"new\n",
+            )
+            config = SimpleNamespace(
+                repo_root=ROOT,
+                remote_root=str(root),
+                remote_host=module.REMOTE_HOST,
+                krb5_cache=module.KRB5_CACHE,
+                attempts=1,
+            )
+
+            def run_real_helper(*args, **kwargs):
+                del args, kwargs
+                process = subprocess.run(
+                    (
+                        sys.executable,
+                        str(Path(transaction.__file__).resolve()),
+                        "sync-commit",
+                        "--remote-root",
+                        str(root),
+                        "--nonce",
+                        nonce,
+                        "--source-head",
+                        "b" * 40,
+                        "--path",
+                        "tools/sitian_remote_scratch.py",
+                    ),
+                    input=archive,
+                    capture_output=True,
+                    env={
+                        **os.environ,
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                    },
+                )
+                return subprocess.CompletedProcess(
+                    process.args,
+                    process.returncode,
+                    process.stdout.decode("utf-8", errors="replace"),
+                    process.stderr.decode("utf-8", errors="replace"),
+                )
+
+            with mock.patch.object(module.time, "time", return_value=100), \
+                    mock.patch.object(module.os, "getpid", return_value=200), \
+                    mock.patch.object(
+                        module.time, "time_ns", return_value=300
+                    ), mock.patch.object(
+                        module,
+                        "_resolve_local_head",
+                        return_value="b" * 40,
+                    ), mock.patch.object(
+                        module,
+                        "_stream_with_retries",
+                        side_effect=run_real_helper,
+                    ), mock.patch.object(
+                        module,
+                        "_remote_command",
+                    ) as remote:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "incremental source sync failed",
+                ):
+                    module._sync(
+                        config,
+                        ["tools/sitian_remote_scratch.py"],
+                    )
+
+            source_after = {}
+            for path in sorted((root / "source").rglob("*")):
+                relative = path.relative_to(root / "source").as_posix()
+                if path.is_symlink():
+                    source_after[relative] = (
+                        "symlink",
+                        os.readlink(path),
+                    )
+                elif path.is_dir():
+                    source_after[relative] = ("directory", None)
+                else:
+                    source_after[relative] = ("file", path.read_bytes())
+            self.assertEqual(source_after, source_before)
+            self.assertTrue(receipt.is_symlink())
+            self.assertEqual(target.read_text(encoding="utf-8"), "outside\n")
+            remote.assert_not_called()
 
     def test_production_controller_has_no_fault_injector_or_old_state_machine(
         self,

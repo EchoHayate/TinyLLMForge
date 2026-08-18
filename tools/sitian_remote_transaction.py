@@ -147,6 +147,64 @@ class CommitReceipt:
         self.created_at_unix_ns = created_at_unix_ns
 
 
+class _StagedDelta:
+    def __init__(
+        self,
+        *,
+        remote_root,
+        nonce,
+        explicit_paths,
+        root_info,
+        transactions_fd,
+        transactions_info,
+        name,
+        delta_fd,
+        delta_info,
+    ):
+        self.remote_root = str(remote_root)
+        self.nonce = nonce
+        self.explicit_paths = tuple(explicit_paths)
+        self.root_info = root_info
+        self.transactions_fd = transactions_fd
+        self.transactions_info = transactions_info
+        self.name = name
+        self.delta_fd = delta_fd
+        self.delta_info = delta_info
+        self.closed = False
+
+    def __fspath__(self):
+        return str(
+            Path(self.remote_root) / ".transactions" / self.name
+        )
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            try:
+                named = os.stat(
+                    self.name,
+                    dir_fd=self.transactions_fd,
+                    follow_symlinks=False,
+                )
+            except (FileNotFoundError, OSError):
+                named = None
+            if (
+                named is not None
+                and stat.S_ISDIR(named.st_mode)
+                and named.st_dev == self.delta_info.st_dev
+                and named.st_ino == self.delta_info.st_ino
+            ):
+                try:
+                    _remove_tree_at(self.transactions_fd, self.name)
+                except BaseException:
+                    pass
+        finally:
+            _close_fd_best_effort(self.delta_fd)
+            _close_fd_best_effort(self.transactions_fd)
+
+
 def _raise_transaction_interrupted(signum, frame):
     del frame
     raise TransactionInterrupted(signum)
@@ -1560,6 +1618,35 @@ def _materialize_sync_receipts_at(root_fd, receipt):
         os.close(receipts_fd)
 
 
+def _validate_sync_receipt_targets_at(root_fd, nonce):
+    try:
+        os.mkdir("receipts", 0o700, dir_fd=root_fd)
+    except FileExistsError:
+        pass
+    try:
+        receipts_fd = os.open(
+            "receipts", _DIRECTORY_FLAGS, dir_fd=root_fd
+        )
+    except OSError as exc:
+        raise TransactionError(
+            "cannot open detached receipt directory: {}".format(exc)
+        )
+    try:
+        for name in _sync_receipt_names(nonce):
+            try:
+                info = os.stat(
+                    name, dir_fd=receipts_fd, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                raise TransactionError(
+                    "detached receipt is not a regular file: {}".format(name)
+                )
+    finally:
+        os.close(receipts_fd)
+
+
 def _open_or_create_directory_at(parent_fd, name, mode=0o700):
     try:
         os.mkdir(name, mode, dir_fd=parent_fd)
@@ -1577,9 +1664,6 @@ def _cleanup_nonce_at(root_fd, nonce):
             ".transactions", _DIRECTORY_FLAGS, dir_fd=root_fd
         )
         _remove_tree_at(transactions_fd, nonce)
-        _remove_tree_at(
-            transactions_fd, ".delta-{}".format(nonce)
-        )
     except BaseException:
         pass
     finally:
@@ -1650,6 +1734,17 @@ def commit_sync_generation(
     paths = _validate_explicit_paths(explicit_paths)
     head = _validate_source_head(source_head)
     nonce = _validate_nonce(nonce)
+    if not isinstance(delta_root, _StagedDelta):
+        raise TransactionError(
+            "sync delta must be created by streamed staging"
+        )
+    staged = delta_root
+    if staged.closed:
+        raise TransactionError("sync delta staging is already closed")
+    if staged.nonce != nonce or staged.explicit_paths != paths:
+        raise TransactionError(
+            "sync delta identity does not match nonce and explicit paths"
+        )
 
     with _transaction_signal_handlers():
         with locked_remote_root(remote_root) as root_fd:
@@ -1674,15 +1769,68 @@ def commit_sync_generation(
                         expected_head=head,
                         expected_paths=paths,
                     )
-                    _materialize_sync_receipts_at(root_fd, expected)
-                    _cleanup_nonce_at(root_fd, nonce)
+                    try:
+                        _materialize_sync_receipts_at(root_fd, expected)
+                    except BaseException:
+                        pass
+                    try:
+                        _cleanup_nonce_at(root_fd, nonce)
+                    except BaseException:
+                        pass
                     return expected
 
                 source_info = os.fstat(source_fd)
-                delta_fd = open_directory_no_follow(Path(delta_root))
                 transactions_fd = os.open(
                     ".transactions", _DIRECTORY_FLAGS, dir_fd=root_fd
                 )
+                if not _same_file_identity(
+                    os.fstat(root_fd), staged.root_info
+                ):
+                    raise TransactionError(
+                        "remote root changed after delta staging"
+                    )
+                if not _same_file_identity(
+                    os.fstat(transactions_fd),
+                    staged.transactions_info,
+                ):
+                    raise TransactionError(
+                        "transactions directory changed after delta staging"
+                    )
+                if not _same_file_identity(
+                    os.fstat(staged.transactions_fd),
+                    staged.transactions_info,
+                ):
+                    raise TransactionError(
+                        "held transactions directory identity changed"
+                    )
+                if not _same_file_identity(
+                    os.fstat(staged.delta_fd), staged.delta_info
+                ):
+                    raise TransactionError(
+                        "held sync delta identity changed"
+                    )
+                try:
+                    named_delta = os.stat(
+                        staged.name,
+                        dir_fd=transactions_fd,
+                        follow_symlinks=False,
+                    )
+                except OSError as exc:
+                    raise TransactionError(
+                        "sync delta entry changed after staging: {}".format(
+                            exc
+                        )
+                    )
+                if (
+                    not stat.S_ISDIR(named_delta.st_mode)
+                    or not _same_file_identity(
+                        named_delta, staged.delta_info
+                    )
+                ):
+                    raise TransactionError(
+                        "sync delta entry changed after staging"
+                    )
+                delta_fd = os.dup(staged.delta_fd)
                 try:
                     os.mkdir(nonce, 0o700, dir_fd=transactions_fd)
                 except FileExistsError as exc:
@@ -1715,6 +1863,7 @@ def commit_sync_generation(
                     expected_head=head,
                     expected_paths=paths,
                 )
+                _validate_sync_receipt_targets_at(root_fd, nonce)
                 _inject(fault_injector, "before_exchange")
                 named_source = os.stat(
                     "source", dir_fd=root_fd, follow_symlinks=False
@@ -1753,10 +1902,25 @@ def commit_sync_generation(
                     explicit_paths=paths,
                 )
                 _require_exact_receipt(committed, receipt)
-                _inject(fault_injector, "before_external_receipts")
-                _materialize_sync_receipts_at(root_fd, committed)
-                _inject(fault_injector, "after_external_receipts")
-                _inject(fault_injector, "before_old_generation_cleanup")
+                try:
+                    _inject(fault_injector, "before_external_receipts")
+                except BaseException:
+                    pass
+                try:
+                    _materialize_sync_receipts_at(root_fd, committed)
+                except BaseException:
+                    pass
+                try:
+                    _inject(fault_injector, "after_external_receipts")
+                except BaseException:
+                    pass
+                try:
+                    _inject(
+                        fault_injector,
+                        "before_old_generation_cleanup",
+                    )
+                except BaseException:
+                    pass
                 return committed
             finally:
                 if generation_fd is not None:
@@ -1793,13 +1957,20 @@ def _create_delta_parent(delta_fd, relative_path):
         raise
 
 
+def _private_delta_name(nonce):
+    return ".delta-{}-{}-{}".format(
+        nonce, os.getpid(), time.time_ns()
+    )
+
+
 def _stage_delta_stream(remote_root, nonce, explicit_paths, stream):
     paths = _validate_explicit_paths(explicit_paths)
     nonce = _validate_nonce(nonce)
-    delta_name = ".delta-{}".format(nonce)
+    delta_name = _private_delta_name(nonce)
     root_fd = open_directory_no_follow(Path(remote_root))
     transactions_fd = None
     delta_fd = None
+    created_delta = False
     try:
         transactions_fd = _open_or_create_directory_at(
             root_fd, ".transactions"
@@ -1808,8 +1979,9 @@ def _stage_delta_stream(remote_root, nonce, explicit_paths, stream):
             os.mkdir(delta_name, 0o700, dir_fd=transactions_fd)
         except FileExistsError as exc:
             raise TransactionError(
-                "sync delta nonce already exists"
+                "sync delta private name already exists"
             ) from exc
+        created_delta = True
         delta_fd = os.open(
             delta_name, _DIRECTORY_FLAGS, dir_fd=transactions_fd
         )
@@ -1822,6 +1994,7 @@ def _stage_delta_stream(remote_root, nonce, explicit_paths, stream):
                 if (
                     member_path.is_absolute()
                     or ".." in member_path.parts
+                    or member.name != normalized
                     or normalized not in expected
                     or not member.isfile()
                     or normalized in seen
@@ -1866,11 +2039,22 @@ def _stage_delta_stream(remote_root, nonce, explicit_paths, stream):
                 seen.add(normalized)
         if seen != expected:
             raise TransactionError("delta archive is missing explicit paths")
-        return str(
-            Path(remote_root) / ".transactions" / delta_name
+        staged = _StagedDelta(
+            remote_root=remote_root,
+            nonce=nonce,
+            explicit_paths=paths,
+            root_info=os.fstat(root_fd),
+            transactions_fd=transactions_fd,
+            transactions_info=os.fstat(transactions_fd),
+            name=delta_name,
+            delta_fd=delta_fd,
+            delta_info=os.fstat(delta_fd),
         )
+        transactions_fd = None
+        delta_fd = None
+        return staged
     except BaseException:
-        if transactions_fd is not None:
+        if transactions_fd is not None and created_delta:
             try:
                 _remove_tree_at(transactions_fd, delta_name)
             except BaseException:
@@ -1884,27 +2068,9 @@ def _stage_delta_stream(remote_root, nonce, explicit_paths, stream):
         _close_fd_best_effort(root_fd)
 
 
-def _cleanup_staged_delta(remote_root, nonce):
-    try:
-        root_fd = open_directory_no_follow(Path(remote_root))
-    except OSError:
-        return
-    try:
-        transactions_fd = None
-        try:
-            transactions_fd = os.open(
-                ".transactions", _DIRECTORY_FLAGS, dir_fd=root_fd
-            )
-            _remove_tree_at(
-                transactions_fd, ".delta-{}".format(nonce)
-            )
-        except BaseException:
-            pass
-        finally:
-            if transactions_fd is not None:
-                _close_fd_best_effort(transactions_fd)
-    finally:
-        _close_fd_best_effort(root_fd)
+def _cleanup_staged_delta(staged):
+    if isinstance(staged, _StagedDelta):
+        staged.close()
 
 
 def _status_committed_generation(remote_root):
@@ -1963,6 +2129,7 @@ def main(argv=None):
             output = "{}\n".format(receipt.source_file_count)
         elif arguments.command == "sync-commit":
             remote_root = Path(arguments.remote_root)
+            staged = None
             try:
                 receipt = confirm_committed_generation(
                     remote_root,
@@ -1972,7 +2139,7 @@ def main(argv=None):
                     explicit_paths=arguments.path,
                 )
             except (OSError, TransactionError):
-                delta_root = _stage_delta_stream(
+                staged = _stage_delta_stream(
                     remote_root,
                     arguments.nonce,
                     arguments.path,
@@ -1981,13 +2148,13 @@ def main(argv=None):
                 try:
                     receipt = commit_sync_generation(
                         remote_root,
-                        delta_root,
+                        staged,
                         nonce=arguments.nonce,
                         source_head=arguments.source_head,
                         explicit_paths=arguments.path,
                     )
                 finally:
-                    _cleanup_staged_delta(remote_root, arguments.nonce)
+                    _cleanup_staged_delta(staged)
             output = _sync_receipt_path(
                 remote_root, receipt.nonce
             ) + "\n"
