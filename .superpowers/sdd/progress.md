@@ -173,7 +173,7 @@
 
 ## Task 4: Deferred CUDA Identity and Worker Export
 
-- Status: second review fix complete
+- Status: completed
 - Base SHA: `8da831bb9d4622adc8bb0ed556ebd3f8830a5933`
 - Brief: `.superpowers/sdd/task-4-brief.md`
 - Required invariants:
@@ -209,6 +209,7 @@
 - Implementer commit: `SELF/HEAD`
 - Task review: `.superpowers/sdd/task-4-review-1.md` — Needs fixes
 - Task re-review 1: `.superpowers/sdd/task-4-review-2.md` — Needs fixes
+- Task re-review 2: `.superpowers/sdd/task-4-review-3.md` — Approved
 - Review-1 fix RED:
   `13 failed, 38 deselected in 0.28s`
   - every case failed with `DID NOT RAISE`, proving cardinality-only
