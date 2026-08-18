@@ -311,3 +311,39 @@
 - Task 8: pending
 - Whole-branch review: pending
 - Remote execution authorization: not granted
+
+## Sitian Remote Scratch Workflow
+
+- Plan:
+  `docs/superpowers/plans/2026-08-18-tinyllmforge-sitian-remote-scratch.md`
+- Remote root:
+  `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`
+- Task 1: complete
+  - commits: `4238f7b..17368cd`
+  - remote TDD RED: `8 tests, 26 expected failures`
+  - remote TDD GREEN: `8 passed`
+  - review:
+    `.superpowers/sdd/sitian-remote-scratch-task-1-review-2.md`
+  - verdict: spec compliant; task quality approved
+  - local `/private/tmp` TinyLLMForge matching items after Task 1: zero
+- Task 2: complete
+  - unsafe inline source mutation was replaced by the approved transaction
+    engine;
+  - final commits: `915bdd2`, `52626be`;
+  - validation-root suite: `111 passed in 6.195s`;
+  - real-source suite: `111 passed in 6.830s`;
+  - final source head:
+    `52626becb3250ea9e5f631901e60367ff5622339`;
+  - strict confirmation valid, forbidden 0, AppleDouble 0, residue 0,
+    lock available;
+  - final whole-slice review:
+    `transaction-engine-final-review-52626be.md`;
+  - verdict: Critical 0 / Important 0 / Minor 0.
+- Task 3: superseded
+  - the old standalone remote-runner slice is owned by current
+    command-timeline Tasks 6-8.
+- Task 4: complete
+  - canonical audit:
+    `docs/superpowers/audits/2026-08-18-tinyllmforge-sitian-remote-scratch-audit.md`;
+  - active continuation: Task 5 independent re-review at `a1e6f42`;
+  - no GPU/model/performance execution authorized.

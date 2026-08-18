@@ -48843,3 +48843,93 @@ Immediate continuation:
    convergence, fail-closed replay behavior, and exact TP4/B4/Q4 identity;
 5. use another never-before-used tag for any future controlled performance
    campaign.
+
+## 2026-08-18 Sitian transaction-engine closure and active continuation
+
+The authoritative checkout remains:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+```
+
+Do not use the retired adaptive-ngram worktree.
+
+The Sitian source transaction engine is complete at:
+
+```text
+local and origin head:
+  52626becb3250ea9e5f631901e60367ff5622339
+
+branch:
+  feat/kv-sparse-attention
+
+remote source:
+  /data00/home/sitian/tinyllmforge-workspaces/
+    command-timeline-20260818/source
+```
+
+Final remote acceptance:
+
+```text
+source files=1302
+strict confirmation=valid
+validation-root suite=111 passed
+real-source suite=111 passed
+forbidden=0
+AppleDouble=0
+transaction residue=0
+lock available=true
+```
+
+Final independent gate:
+
+```text
+report:
+  /data00/home/sitian/tinyllmforge-workspaces/
+    command-timeline-20260818/receipts/reviews/
+    transaction-engine-final-review-52626be.md
+
+verdict:
+  PASS
+  Critical 0
+  Important 0
+  Minor 0
+```
+
+Canonical local audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-18-tinyllmforge-sitian-remote-scratch-audit.md
+```
+
+All future generated caches, logs, receipts, review packages, validation
+roots, and test environments must remain under:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+```
+
+Never place them under local or remote `/`, `/tmp`, `/private/tmp`, or the
+repository source tree.
+
+Active performance-plan continuation:
+
+```text
+Task 5:
+  review-1 fixes are committed at a1e6f42;
+  run independent re-review next.
+
+Task 6:
+  pending.
+
+Task 7:
+  pending.
+
+Task 8:
+  pending.
+```
+
+Do not allocate GPUs, load models, run a source-bound performance gate, or
+refresh Kerberos without separate authorization. CPU-only review and
+validation artifacts continue to use the mounted Sitian task root.
