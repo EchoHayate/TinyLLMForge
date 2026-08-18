@@ -121,6 +121,29 @@ def test_autoregressive_draft_graph_defaults_fail_closed():
         model.cleanup()
 
 
+def test_command_timeline_defaults_off_and_validates_capacity():
+    model, config = _config()
+    try:
+        assert config.autoregressive_draft_command_timeline is False
+        assert (
+            config.autoregressive_draft_command_timeline_max_rows
+            == 8192
+        )
+    finally:
+        model.cleanup()
+
+    with pytest.raises(
+        ValueError,
+        match="autoregressive_draft_command_timeline must be a bool",
+    ):
+        _config(autoregressive_draft_command_timeline=1)
+    with pytest.raises(
+        ValueError,
+        match="command timeline max rows must be a positive integer",
+    ):
+        _config(autoregressive_draft_command_timeline_max_rows=0)
+
+
 def test_autoregressive_draft_graph_allowlists_are_canonical():
     model, config = _config(
         autoregressive_draft_cuda_graph_q_allowlist=[4, 2, 4],

@@ -85,6 +85,8 @@ class Config:
     autoregressive_draft_cuda_graph_max_reserved_bytes: int = 512 * 1024 * 1024
     autoregressive_draft_cuda_graph_max_total_capture_ns: int = 5_000_000_000
     autoregressive_draft_cuda_graph_max_single_capture_ns: int = 4_000_000_000
+    autoregressive_draft_command_timeline: bool = False
+    autoregressive_draft_command_timeline_max_rows: int = 8192
     hf_config: AutoConfig | None = None                 # hugging face config, 加载模型的层数，隐藏层数，注意力头数
     eos: int  = -1                                      # end of sentence, 使用模型默认的句子结束符
     kvcache_block_size: int = 256                       
@@ -429,6 +431,28 @@ class Config:
         ):
             raise ValueError(
                 "autoregressive_draft_cuda_graphs must be a bool"
+            )
+        if not isinstance(
+            self.autoregressive_draft_command_timeline,
+            bool,
+        ):
+            raise ValueError(
+                "autoregressive_draft_command_timeline must be a bool"
+            )
+        if (
+            isinstance(
+                self.autoregressive_draft_command_timeline_max_rows,
+                bool,
+            )
+            or not isinstance(
+                self.autoregressive_draft_command_timeline_max_rows,
+                int,
+            )
+            or self.autoregressive_draft_command_timeline_max_rows
+            <= 0
+        ):
+            raise ValueError(
+                "command timeline max rows must be a positive integer"
             )
         self.autoregressive_draft_cuda_graph_q_allowlist = (
             _normalize_positive_int_tuple(
