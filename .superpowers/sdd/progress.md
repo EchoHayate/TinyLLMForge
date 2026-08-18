@@ -323,7 +323,22 @@
   - Minor: 0
 - Task 5: complete (commits `ebded18..5cb6a18`, review clean)
 
-- Task 6: pending
+- Task 6: complete
+  - commits:
+    - `87b8fea7fd966c08277ad4682ebbf9ae02b651c2`
+    - `146bfda4c90af97fc31a5a4aa668c8c9ecddd030`
+  - TDD RED: `15 failed, 10 passed, 97 deselected`
+  - review-fix RED: `29 failed, 122 deselected`
+  - final pinned-pytest-8.4.2 regression:
+    `151 passed in 37.18s`
+  - independent focused verification:
+    `30 passed, 121 deselected in 10.35s`
+  - final review:
+    `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/receipts/reviews/task6-final-review-146bfda.md`
+  - verdict: Critical 0 / Important 0 / Minor 0
+  - local `/tmp/TinyLLMForge_task6_final_review_146bfda` review residue:
+    precisely deleted after inspection
+  - Task 6: complete (commits `f25612f..146bfda`, review clean)
 - Task 7: pending
 - Task 8: pending
 - Whole-branch review: pending
