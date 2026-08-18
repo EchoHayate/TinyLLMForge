@@ -471,12 +471,23 @@ def _worker(mode: str) -> dict:
 
 
 def _raw_epochs() -> dict[str, dict]:
-    return {
-        identity.key: {
-            "worker": _worker(identity.label),
-        }
-        for identity in diagnostic.expected_epoch_identities()
-    }
+    epochs = {}
+    for identity in diagnostic.expected_epoch_identities():
+        worker = _worker(identity.label)
+        if identity.block_index == 1 and identity.label == "eager":
+            request_sha = worker["prompt_sha256"]
+            worker["measured_runs"] = [
+                _run(
+                    "eager",
+                    repeat,
+                    queue_debt_ns=180_000_000,
+                    cuda_ns=370_000_000,
+                    request_sha=request_sha,
+                )
+                for repeat in range(5)
+            ]
+        epochs[identity.key] = {"worker": worker}
+    return epochs
 
 
 def _artifact() -> dict:
@@ -1096,6 +1107,48 @@ def test_stationarity_rejects_one_unit_beyond_a_threshold(values):
     assert diagnostic.stationarity_for_values(values)["passed"] is False
 
 
+def test_b4_request_timing_uses_the_exact_even_cardinality_midpoint():
+    identity = diagnostic.expected_epoch_identities()[0]
+    worker = _worker(identity.label)
+    request_values = [1, 2, 100, 101]
+    for run in worker["measured_runs"]:
+        for row, value in zip(
+            run["timing"]["per_request"],
+            request_values,
+        ):
+            row["completion_latency_ns"] = value
+    admission = diagnostic.build_epoch_admission(
+        identity,
+        {"worker": worker},
+    )
+    assert admission["metrics"]["e2e"] == [51] * 5
+    assert admission["stationarity"]["e2e"]["values"] == [51] * 5
+    assert admission["stationarity"]["e2e"]["median"] == 51
+    assert admission["stationarity"]["e2e"]["passed"] is True
+
+
+def test_exact_half_ns_midpoint_reaches_localization_without_float_drift():
+    midpoint = diagnostic._median(
+        [1, 2, 2_000_000_000_000_001, 2_000_000_000_000_002],
+        "B4 request timing",
+    )
+    assert midpoint == {
+        "numerator": 2_000_000_000_000_003,
+        "denominator": 2,
+    }
+    blocks = _classification_blocks(same_sign_blocks=4)
+    for block in blocks:
+        block["median_e2e_pair_ns"] = [midpoint, midpoint]
+        block["absolute_unexplained_ns"] = 100_000_000_000_000
+    exact = diagnostic.summarize_boundary_effects(blocks)
+    assert exact["median_unexplained_ratio_passed"] is True
+
+    blocks[2]["absolute_unexplained_ns"] += 1
+    blocks[3]["absolute_unexplained_ns"] += 1
+    beyond = diagnostic.summarize_boundary_effects(blocks)
+    assert beyond["median_unexplained_ratio_passed"] is False
+
+
 def _classification_effects(
     *,
     explained_ns: int = 60,
@@ -1161,10 +1214,19 @@ def _admission(**overrides) -> dict:
     return row
 
 
+def _position_balanced_localization_effects() -> dict:
+    blocks = _classification_blocks(same_sign_blocks=4)
+    blocks[1]["component_deltas_ns"].update({
+        "worker_queue_debt": -120,
+        "worker_cuda_execution": 210,
+    })
+    return diagnostic.summarize_boundary_effects(blocks)
+
+
 def test_classification_localizes_exact_inclusive_boundaries():
     result = diagnostic.classify_boundary(
         _admission(),
-        _classification_effects(),
+        _position_balanced_localization_effects(),
     )
     assert result == {
         "classification": "BOUNDARY_LOCALIZED",
@@ -1175,6 +1237,33 @@ def test_classification_localizes_exact_inclusive_boundaries():
         "phase_1_complete": False,
         "promotion_ready": False,
     }
+
+
+def test_classification_rejects_true_chronological_order_crossover():
+    blocks = _classification_blocks(same_sign_blocks=4)
+    assert all(block["e2e_delta_ns"] > 0 for block in blocks)
+    chronological_second_minus_first = [
+        (
+            block["e2e_delta_ns"]
+            if block["order"] == "eager_graph"
+            else -block["e2e_delta_ns"]
+        )
+        for block in blocks
+    ]
+    assert chronological_second_minus_first == [100, -100, -100, 100]
+
+    effects = diagnostic.summarize_boundary_effects(blocks)
+    result = diagnostic.classify_boundary(_admission(), effects)
+    assert effects["boundaries"]["worker_queue_debt"][
+        "position_balance_consistent"
+    ] is False
+    assert effects["boundaries"]["worker_queue_debt"][
+        "sequence_interaction_consistent"
+    ] is False
+    assert result["classification"] == "PAIRED_PROTOCOL_UNSTABLE"
+    assert result["localized_boundary"] is None
+    assert result["stable_but_unlocalized"] is True
+    assert result["runtime_optimization_authorized"] is False
 
 
 def test_classification_rejects_mixed_signs_within_one_order_group():
@@ -1217,11 +1306,15 @@ def test_classification_rejects_order_reversal_sequence_interaction():
 
 def test_classification_rejects_multiple_localized_boundaries():
     blocks = _classification_blocks(same_sign_blocks=4)
-    for block in blocks:
+    for block_index, block in enumerate(blocks):
         block["component_deltas_ns"] = {
-            "worker_queue_debt": 60,
-            "worker_cuda_execution": 60,
-            "ack_wait": -30,
+            "worker_queue_debt": (
+                -120 if block_index == 1 else 60
+            ),
+            "worker_cuda_execution": (
+                -120 if block_index == 1 else 60
+            ),
+            "ack_wait": 330 if block_index == 1 else -30,
             "scheduler_postprocess": 0,
         }
     effects = diagnostic.summarize_boundary_effects(blocks)
@@ -1243,9 +1336,9 @@ def _large_integer_effects(
     blocks = []
     for block_index, queue_ns in enumerate((
         600_000_000_000_000_000,
-        600_000_000_000_000_000,
+        -700_000_000_000_000_000,
         third_explained_ns,
-        0,
+        500_000_000_000_000_000,
     )):
         blocks.append({
             "block_index": block_index,

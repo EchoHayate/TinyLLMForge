@@ -282,13 +282,69 @@ def _duration(start: object, finish: object, name: str) -> int:
     return normalized_finish - normalized_start
 
 
-def _median(values: list[int], name: str) -> int:
+def _fraction(
+    value: object,
+    name: str,
+    *,
+    minimum: int | None = None,
+) -> Fraction:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an exact rational")
+    if isinstance(value, int):
+        normalized = Fraction(_integer(value, name), 1)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+        normalized = Fraction(str(value))
+    elif isinstance(value, dict):
+        if tuple(value) != ("numerator", "denominator"):
+            raise ValueError(
+                f"{name} rational representation is not canonical"
+            )
+        numerator = _integer(value["numerator"], f"{name} numerator")
+        denominator = _integer(
+            value["denominator"],
+            f"{name} denominator",
+            minimum=1,
+        )
+        normalized = Fraction(numerator, denominator)
+        if (
+            normalized.numerator != numerator
+            or normalized.denominator != denominator
+        ):
+            raise ValueError(
+                f"{name} rational representation is not reduced"
+            )
+    else:
+        raise ValueError(f"{name} must be an exact rational")
+    if minimum is not None and normalized < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return normalized
+
+
+def _canonical_fraction(value: Fraction) -> int | dict:
+    if value.denominator == 1:
+        return _integer(value.numerator, "exact integer")
+    return {
+        "numerator": _integer(
+            value.numerator,
+            "exact rational numerator",
+        ),
+        "denominator": _integer(
+            value.denominator,
+            "exact rational denominator",
+            minimum=1,
+        ),
+    }
+
+
+def _median(values: list[int], name: str) -> int | dict:
     if not values:
         raise ValueError(f"{name} must not be empty")
-    normalized = [
-        _integer(value, name, minimum=0) for value in values
-    ]
-    return statistics.median_low(normalized)
+    normalized = sorted(
+        _fraction(value, name, minimum=0) for value in values
+    )
+    return _canonical_fraction(statistics.median(normalized))
 
 
 def _sign(value: int | float) -> int:
@@ -2364,7 +2420,7 @@ def join_repeat_timeline(
 
 def stationarity_for_values(values: object) -> dict:
     normalized = [
-        _number(value, "stationarity value", minimum=0.0)
+        _fraction(value, "stationarity value", minimum=0)
         for value in _list(values, "stationarity values")
     ]
     if len(normalized) != MEASURED_RUNS_PER_EPOCH:
@@ -2373,29 +2429,43 @@ def stationarity_for_values(values: object) -> dict:
     deviations = [abs(value - median) for value in normalized]
     mad = statistics.median(deviations)
     robust_dispersion = (
-        0.0 if median == 0.0 and mad == 0.0
-        else math.inf if median == 0.0
+        Fraction(0, 1) if median == 0 and mad == 0
+        else math.inf if median == 0
         else mad / median
     )
     first_half_median = statistics.median(normalized[0:2])
     second_half_median = statistics.median(normalized[3:5])
     half_delta = abs(second_half_median - first_half_median)
     half_drift = (
-        0.0 if median == 0.0 and half_delta == 0.0
-        else math.inf if median == 0.0
+        Fraction(0, 1) if median == 0 and half_delta == 0
+        else math.inf if median == 0
         else half_delta / median
     )
-    robust_passed = robust_dispersion <= ROBUST_DISPERSION_LIMIT
-    drift_passed = half_drift <= HALF_DRIFT_LIMIT
+    robust_passed = (
+        robust_dispersion != math.inf
+        and robust_dispersion <= Fraction(
+            str(ROBUST_DISPERSION_LIMIT)
+        )
+    )
+    drift_passed = (
+        half_drift != math.inf
+        and half_drift <= Fraction(str(HALF_DRIFT_LIMIT))
+    )
     return {
-        "values": normalized,
-        "median": float(median),
-        "mad": float(mad),
+        "values": [
+            _canonical_fraction(value) for value in normalized
+        ],
+        "median": _canonical_fraction(median),
+        "mad": _canonical_fraction(mad),
         "robust_dispersion": float(robust_dispersion),
         "robust_dispersion_limit": ROBUST_DISPERSION_LIMIT,
         "robust_dispersion_passed": robust_passed,
-        "first_half_median": float(first_half_median),
-        "second_half_median": float(second_half_median),
+        "first_half_median": _canonical_fraction(
+            first_half_median
+        ),
+        "second_half_median": _canonical_fraction(
+            second_half_median
+        ),
         "half_drift": float(half_drift),
         "half_drift_limit": HALF_DRIFT_LIMIT,
         "half_drift_passed": drift_passed,
@@ -2613,7 +2683,7 @@ def summarize_boundary_effects(blocks: object) -> dict:
         expected_order = "_".join(BLOCK_SCHEDULE[block_index])
         if row.get("order") != expected_order:
             raise ValueError("boundary effect block order mismatch")
-        e2e_delta = _integer(
+        e2e_delta = _fraction(
             row.get("e2e_delta_ns"),
             "E2E paired delta",
         )
@@ -2624,38 +2694,40 @@ def summarize_boundary_effects(blocks: object) -> dict:
         if tuple(components) != BOUNDARY_NAMES:
             raise ValueError("boundary component inventory is invalid")
         normalized_components = {
-            name: _integer(
+            name: _fraction(
                 components[name],
                 f"{name} paired delta",
             )
             for name in BOUNDARY_NAMES
         }
-        unexplained = _integer(
+        unexplained = _fraction(
             row.get("absolute_unexplained_ns"),
             "absolute unexplained E2E",
             minimum=0,
         )
         median_pair = row.get("median_e2e_pair_ns")
         if median_pair is None:
-            median_e2e_integer = _integer(
+            median_e2e_fraction = _fraction(
                 row.get("median_e2e_ns"),
                 "median E2E",
                 minimum=1,
             )
-            median_e2e_fraction = Fraction(median_e2e_integer, 1)
         else:
             pair = _list(median_pair, "median E2E pair")
             if len(pair) != 2:
                 raise ValueError("median E2E pair must have two values")
-            first = _integer(pair[0], "first median E2E", minimum=1)
-            second = _integer(pair[1], "second median E2E", minimum=1)
+            first = _fraction(
+                pair[0],
+                "first median E2E",
+                minimum=1,
+            )
+            second = _fraction(
+                pair[1],
+                "second median E2E",
+                minimum=1,
+            )
             median_e2e_fraction = Fraction(first + second, 2)
         median_e2e_fractions.append(median_e2e_fraction)
-        median_e2e = (
-            median_e2e_fraction.numerator
-            if median_e2e_fraction.denominator == 1
-            else float(median_e2e_fraction)
-        )
         explanation = {}
         explanation_defined = {}
         for name in BOUNDARY_NAMES:
@@ -2667,22 +2739,33 @@ def summarize_boundary_effects(blocks: object) -> dict:
                 explanation[name] = 0.0
                 explanation_defined[name] = True
             else:
-                explanation[name] = (
+                explanation[name] = float(
                     abs(component) / abs(e2e_delta)
                 )
                 explanation_defined[name] = True
         normalized_blocks.append({
             "block_index": block_index,
             "order": expected_order,
-            "e2e_delta_ns": e2e_delta,
-            "component_deltas_ns": normalized_components,
+            "e2e_delta_ns": _canonical_fraction(e2e_delta),
+            "component_deltas_ns": {
+                name: _canonical_fraction(value)
+                for name, value in normalized_components.items()
+            },
             "explanation_ratios": explanation,
             "explanation_ratio_defined": explanation_defined,
-            "absolute_unexplained_ns": unexplained,
-            "median_e2e_ns": median_e2e,
+            "absolute_unexplained_ns": _canonical_fraction(
+                unexplained
+            ),
+            "median_e2e_ns": _canonical_fraction(
+                median_e2e_fraction
+            ),
         })
     median_unexplained = statistics.median(
-        Fraction(row["absolute_unexplained_ns"], 1)
+        _fraction(
+            row["absolute_unexplained_ns"],
+            "absolute unexplained E2E",
+            minimum=0,
+        )
         for row in normalized_blocks
     )
     median_e2e = statistics.median(median_e2e_fractions)
@@ -2697,58 +2780,105 @@ def summarize_boundary_effects(blocks: object) -> dict:
     )
     boundaries = {}
     for name in BOUNDARY_NAMES:
+        component_values = [
+            _fraction(
+                row["component_deltas_ns"][name],
+                f"{name} paired delta",
+            )
+            for row in normalized_blocks
+        ]
+        e2e_values = [
+            _fraction(
+                row["e2e_delta_ns"],
+                "E2E paired delta",
+            )
+            for row in normalized_blocks
+        ]
         qualifying = [
             row["block_index"]
-            for row in normalized_blocks
+            for row, component, e2e_delta in zip(
+                normalized_blocks,
+                component_values,
+                e2e_values,
+            )
             if (
                 row["explanation_ratio_defined"][name]
-                and abs(row["component_deltas_ns"][name])
-                * BOUNDARY_EXPLANATION_RATIO.denominator
-                >= abs(row["e2e_delta_ns"])
-                * BOUNDARY_EXPLANATION_RATIO.numerator
+                and abs(component)
+                >= abs(e2e_delta) * BOUNDARY_EXPLANATION_RATIO
             )
         ]
         same_sign = [
             row["block_index"]
-            for row in normalized_blocks
+            for row, component, e2e_delta in zip(
+                normalized_blocks,
+                component_values,
+                e2e_values,
+            )
             if (
-                _sign(row["component_deltas_ns"][name])
-                == _sign(row["e2e_delta_ns"])
+                _sign(component)
+                == _sign(e2e_delta)
                 != 0
             )
         ]
-        component_signs = {
-            _sign(row["component_deltas_ns"][name])
-            for row in normalized_blocks
-            if row["component_deltas_ns"][name] != 0
-        }
-        common_sign = (
-            next(iter(component_signs))
-            if len(component_signs) == 1
+        label_signs = [_sign(value) for value in component_values]
+        positive_label_count = label_signs.count(1)
+        negative_label_count = label_signs.count(-1)
+        label_common_sign = (
+            1
+            if positive_label_count >= BOUNDARY_BLOCK_COUNT
+            else -1
+            if negative_label_count >= BOUNDARY_BLOCK_COUNT
             else 0
+        )
+        position_values = [
+            (
+                component
+                if row["order"] == "eager_graph"
+                else -component
+            )
+            for row, component in zip(
+                normalized_blocks,
+                component_values,
+            )
+        ]
+        aggregate_position = statistics.median(position_values)
+        aggregate_position_sign = _sign(aggregate_position)
+        position_same_direction_count = sum(
+            _sign(value) == aggregate_position_sign != 0
+            for value in position_values
+        )
+        position_balance_consistent = (
+            aggregate_position_sign != 0
+            and position_same_direction_count
+            >= BOUNDARY_BLOCK_COUNT
         )
         order_group_checks = {}
         for order in ("eager_graph", "graph_eager"):
-            group_rows = [
-                row for row in normalized_blocks
+            group = [
+                (row, position)
+                for row, position in zip(
+                    normalized_blocks,
+                    position_values,
+                )
                 if row["order"] == order
             ]
-            group_signs = {
-                _sign(row["component_deltas_ns"][name])
-                for row in group_rows
-                if row["component_deltas_ns"][name] != 0
-            }
+            group_position = statistics.median(
+                position for _row, position in group
+            )
             direction_matches = (
-                common_sign != 0
-                and group_signs == {common_sign}
+                _sign(group_position)
+                == aggregate_position_sign
+                != 0
             )
             has_qualifying_block = any(
                 row["block_index"] in qualifying
-                and _sign(row["component_deltas_ns"][name])
-                == common_sign
-                for row in group_rows
+                and _sign(position) == aggregate_position_sign
+                for row, position in group
             )
             order_group_checks[order] = {
+                "aggregate_position_delta_ns": (
+                    _canonical_fraction(group_position)
+                ),
                 "direction_matches": direction_matches,
                 "has_qualifying_block": has_qualifying_block,
                 "passed": (
@@ -2757,6 +2887,20 @@ def summarize_boundary_effects(blocks: object) -> dict:
             }
         order_consistent = all(
             check["passed"] for check in order_group_checks.values()
+        )
+        sequence_interaction = (
+            _fraction(
+                order_group_checks["eager_graph"][
+                    "aggregate_position_delta_ns"
+                ],
+                "eager-graph position effect",
+            )
+            - _fraction(
+                order_group_checks["graph_eager"][
+                    "aggregate_position_delta_ns"
+                ],
+                "graph-eager position effect",
+            )
         )
         undefined = [
             row["block_index"]
@@ -2770,30 +2914,33 @@ def summarize_boundary_effects(blocks: object) -> dict:
             "same_sign_block_count": len(same_sign),
             "undefined_explanation_block_indices": undefined,
             "order_group_checks": order_group_checks,
+            "aggregate_label_sign": label_common_sign,
+            "aggregate_position_delta_ns": _canonical_fraction(
+                aggregate_position
+            ),
+            "sequence_interaction_ns": _canonical_fraction(
+                sequence_interaction
+            ),
             "sequence_interaction_consistent": order_consistent,
-            "position_balance_consistent": order_consistent,
+            "position_balance_consistent": (
+                position_balance_consistent
+            ),
             "localized": (
                 len(qualifying) >= BOUNDARY_BLOCK_COUNT
                 and len(same_sign) >= BOUNDARY_BLOCK_COUNT
+                and label_common_sign != 0
                 and unexplained_ratio_passed
                 and not undefined
+                and position_balance_consistent
                 and order_consistent
             ),
         }
-    median_unexplained_value = (
-        median_unexplained.numerator
-        if median_unexplained.denominator == 1
-        else float(median_unexplained)
-    )
-    median_e2e_value = (
-        median_e2e.numerator
-        if median_e2e.denominator == 1
-        else float(median_e2e)
-    )
     return {
         "blocks": normalized_blocks,
-        "median_absolute_unexplained_ns": median_unexplained_value,
-        "median_e2e_ns": median_e2e_value,
+        "median_absolute_unexplained_ns": _canonical_fraction(
+            median_unexplained
+        ),
+        "median_e2e_ns": _canonical_fraction(median_e2e),
         "median_unexplained_ratio": float(unexplained_ratio),
         "median_unexplained_ratio_passed": unexplained_ratio_passed,
         "boundaries": boundaries,
@@ -2818,24 +2965,57 @@ def compute_paired_boundary_effects(
         }
         eager = by_label["eager"]
         graph = by_label["graph"]
-        eager_e2e = statistics.median(eager["metrics"]["e2e"])
-        graph_e2e = statistics.median(graph["metrics"]["e2e"])
+        eager_e2e = statistics.median(
+            _fraction(value, "eager E2E", minimum=0)
+            for value in eager["metrics"]["e2e"]
+        )
+        graph_e2e = statistics.median(
+            _fraction(value, "graph E2E", minimum=0)
+            for value in graph["metrics"]["e2e"]
+        )
         e2e_delta = graph_e2e - eager_e2e
         component_deltas = {}
         for name in BOUNDARY_NAMES:
             component_deltas[name] = (
-                statistics.median(graph["metrics"][name])
-                - statistics.median(eager["metrics"][name])
+                statistics.median(
+                    _fraction(
+                        value,
+                        f"graph {name}",
+                        minimum=0,
+                    )
+                    for value in graph["metrics"][name]
+                )
+                - statistics.median(
+                    _fraction(
+                        value,
+                        f"eager {name}",
+                        minimum=0,
+                    )
+                    for value in eager["metrics"][name]
+                )
             )
-        unexplained = abs(e2e_delta - sum(component_deltas.values()))
+        unexplained = abs(
+            e2e_delta
+            - sum(component_deltas.values(), Fraction(0, 1))
+        )
         blocks.append({
             "block_index": block_index,
             "order": "_".join(BLOCK_SCHEDULE[block_index]),
-            "e2e_delta_ns": e2e_delta,
-            "component_deltas_ns": component_deltas,
-            "absolute_unexplained_ns": unexplained,
-            "median_e2e_ns": min(eager_e2e, graph_e2e),
-            "median_e2e_pair_ns": [eager_e2e, graph_e2e],
+            "e2e_delta_ns": _canonical_fraction(e2e_delta),
+            "component_deltas_ns": {
+                name: _canonical_fraction(value)
+                for name, value in component_deltas.items()
+            },
+            "absolute_unexplained_ns": _canonical_fraction(
+                unexplained
+            ),
+            "median_e2e_ns": _canonical_fraction(
+                min(eager_e2e, graph_e2e)
+            ),
+            "median_e2e_pair_ns": [
+                _canonical_fraction(eager_e2e),
+                _canonical_fraction(graph_e2e),
+            ],
         })
     return summarize_boundary_effects(blocks)
 
