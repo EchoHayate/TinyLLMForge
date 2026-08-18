@@ -252,6 +252,10 @@ def _validate_explicit_paths(paths):
     for path in paths:
         parts = _split_relative_path(path)
         normalized_path = PurePosixPath(*parts).as_posix()
+        if path != normalized_path:
+            raise TransactionError(
+                "explicit path is not canonical: {}".format(path)
+            )
         if _is_forbidden(normalized_path):
             raise TransactionError(
                 "explicit path is forbidden: {}".format(normalized_path)
@@ -268,6 +272,16 @@ def _sha256_bytes(data):
 
 def _sha256_fd(fd):
     digest = hashlib.sha256()
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            return digest.hexdigest()
+        digest.update(chunk)
+
+
+def _manifest_file_sha256(fd):
+    digest = hashlib.sha256()
+    digest.update(b"file\0")
     while True:
         chunk = os.read(fd, 1024 * 1024)
         if not chunk:
@@ -318,7 +332,9 @@ def _walk_manifest(directory_fd, prefix, entries):
         elif stat.S_ISREG(mode):
             file_fd = _open_regular_at(directory_fd, name)
             try:
-                entries.append((relative_path, _sha256_fd(file_fd)))
+                entries.append(
+                    (relative_path, _manifest_file_sha256(file_fd))
+                )
             finally:
                 os.close(file_fd)
         elif stat.S_ISLNK(mode):
@@ -624,9 +640,11 @@ def rename_exchange(parent_fd, left, right):
         raise OSError(errno.ENOSYS, "renameat2 is unavailable")
     left_parts = _split_relative_path(left)
     right_parts = _split_relative_path(right)
-    left_parent_fd = os.dup(parent_fd)
-    right_parent_fd = os.dup(parent_fd)
+    left_parent_fd = None
+    right_parent_fd = None
     try:
+        left_parent_fd = os.dup(parent_fd)
+        right_parent_fd = os.dup(parent_fd)
         for part in left_parts[:-1]:
             next_fd = os.open(
                 part, _DIRECTORY_FLAGS, dir_fd=left_parent_fd
@@ -654,8 +672,10 @@ def rename_exchange(parent_fd, left, right):
                 "{} <-> {}".format(left, right),
             )
     finally:
-        os.close(right_parent_fd)
-        os.close(left_parent_fd)
+        if right_parent_fd is not None:
+            os.close(right_parent_fd)
+        if left_parent_fd is not None:
+            os.close(left_parent_fd)
 
 
 def _remove_tree_contents(directory_fd):
@@ -726,16 +746,17 @@ def _remove_empty_nonce_directory(root_fd, generation_name):
 
 @contextlib.contextmanager
 def _transaction_signal_handlers():
-    previous = {}
+    installed = []
     signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
-    for signum in signals:
-        previous[signum] = signal.getsignal(signum)
-        signal.signal(signum, _raise_transaction_interrupted)
     try:
+        for signum in signals:
+            previous = signal.getsignal(signum)
+            signal.signal(signum, _raise_transaction_interrupted)
+            installed.append((signum, previous))
         yield
     finally:
-        for signum in signals:
-            signal.signal(signum, previous[signum])
+        for signum, previous in reversed(installed):
+            signal.signal(signum, previous)
 
 
 def _inject(fault_injector, point):
@@ -762,11 +783,21 @@ def promote_generation(
         with locked_remote_root(remote_root) as root_fd:
             try:
                 _inject(fault_injector, "after_lock")
+                generation_parent_fd = None
+                generation_fd = None
                 try:
-                    generation_fd = _open_directory_at(
-                        root_fd, generation_name
+                    generation_parent_fd = _open_directory_at(
+                        root_fd,
+                        PurePosixPath(*generation_parts[:-1]).as_posix(),
+                    )
+                    generation_fd = os.open(
+                        generation_parts[-1],
+                        _DIRECTORY_FLAGS,
+                        dir_fd=generation_parent_fd,
                     )
                 except OSError as exc:
+                    if generation_parent_fd is not None:
+                        os.close(generation_parent_fd)
                     raise TransactionError(
                         "cannot open generation without following symlinks: "
                         "{}".format(exc)
@@ -782,31 +813,57 @@ def promote_generation(
                         expected_head=receipt.source_head,
                         expected_paths=receipt.explicit_paths,
                     )
+
+                    _inject(fault_injector, "before_exchange")
+                    source_exists = True
+                    try:
+                        source_info = os.stat(
+                            "source", dir_fd=root_fd, follow_symlinks=False
+                        )
+                    except FileNotFoundError:
+                        source_exists = False
+                    else:
+                        if not stat.S_ISDIR(source_info.st_mode):
+                            raise TransactionError(
+                                "source is not a real directory"
+                            )
+                        source_fd = os.open(
+                            "source", _DIRECTORY_FLAGS, dir_fd=root_fd
+                        )
+                        os.close(source_fd)
+
+                    opened_info = os.fstat(generation_fd)
+                    try:
+                        named_info = os.stat(
+                            generation_parts[-1],
+                            dir_fd=generation_parent_fd,
+                            follow_symlinks=False,
+                        )
+                    except OSError as exc:
+                        raise TransactionError(
+                            "generation entry changed before promotion: "
+                            "{}".format(exc)
+                        )
+                    if (
+                        not stat.S_ISDIR(named_info.st_mode)
+                        or named_info.st_dev != opened_info.st_dev
+                        or named_info.st_ino != opened_info.st_ino
+                    ):
+                        raise TransactionError(
+                            "generation entry changed before promotion"
+                        )
+                    if not source_exists:
+                        os.rename(
+                            generation_parts[-1],
+                            "source",
+                            src_dir_fd=generation_parent_fd,
+                            dst_dir_fd=root_fd,
+                        )
+                    else:
+                        rename_exchange(root_fd, "source", generation_name)
                 finally:
                     os.close(generation_fd)
-
-                _inject(fault_injector, "before_exchange")
-                try:
-                    source_info = os.stat(
-                        "source", dir_fd=root_fd, follow_symlinks=False
-                    )
-                except FileNotFoundError:
-                    os.rename(
-                        generation_name,
-                        "source",
-                        src_dir_fd=root_fd,
-                        dst_dir_fd=root_fd,
-                    )
-                else:
-                    if not stat.S_ISDIR(source_info.st_mode):
-                        raise TransactionError(
-                            "source is not a real directory"
-                        )
-                    source_fd = os.open(
-                        "source", _DIRECTORY_FLAGS, dir_fd=root_fd
-                    )
-                    os.close(source_fd)
-                    rename_exchange(root_fd, "source", generation_name)
+                    os.close(generation_parent_fd)
                 _inject(fault_injector, "after_exchange")
                 committed_fd = os.open(
                     "source", _DIRECTORY_FLAGS, dir_fd=root_fd

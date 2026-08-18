@@ -108,7 +108,9 @@ class TransactionPrimitiveTests(unittest.TestCase):
                 ).hexdigest()
                 entries.append((relative.as_posix(), digest))
             elif path.is_file():
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                digest = hashlib.sha256(
+                    b"file\0" + path.read_bytes()
+                ).hexdigest()
                 entries.append((relative.as_posix(), digest))
         data = "".join(
             "{}  {}\n".format(digest, path) for path, digest in entries
@@ -281,6 +283,55 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual(self.read_marker(root / "source"), "old")
         self.assertEqual(self.read_marker(outside / "generation"), "outside")
 
+    def test_exchange_partial_acquisition_closes_open_file_descriptors(self):
+        root = self.make_root()
+        self.write_generation(root / "source", marker="old")
+        self.write_generation(
+            root / ".transactions/n1/generation", marker="new"
+        )
+        root_fd = transaction.open_directory_no_follow(root)
+        self.addCleanup(os.close, root_fd)
+
+        real_dup = os.dup
+        dup_calls = []
+
+        def fail_second_dup(fd):
+            dup_calls.append(fd)
+            if len(dup_calls) == 2:
+                raise OSError(errno.EMFILE, "forced dup failure")
+            return real_dup(fd)
+
+        before = len(os.listdir("/proc/self/fd"))
+        with mock.patch.object(
+            transaction.os, "dup", side_effect=fail_second_dup
+        ):
+            with self.assertRaises(OSError):
+                transaction.rename_exchange(
+                    root_fd,
+                    "source",
+                    ".transactions/n1/generation",
+                )
+        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+
+        real_open = os.open
+
+        def fail_nested_open(path, flags, *args, **kwargs):
+            if path == "n1":
+                raise OSError(errno.EMFILE, "forced open failure")
+            return real_open(path, flags, *args, **kwargs)
+
+        before = len(os.listdir("/proc/self/fd"))
+        with mock.patch.object(
+            transaction.os, "open", side_effect=fail_nested_open
+        ):
+            with self.assertRaises(OSError):
+                transaction.rename_exchange(
+                    root_fd,
+                    "source",
+                    ".transactions/n1/generation",
+                )
+        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+
     def test_exchange_implementation_contains_no_rename_fallback(self):
         source = inspect.getsource(transaction.rename_exchange)
         self.assertIn("_RENAMEAT2", source)
@@ -299,6 +350,32 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
         self.assertFalse(generation.exists())
         self.read_committed(root)
+
+    def test_first_source_promotion_rejects_swapped_generation_entry(self):
+        root = self.make_root()
+        nonce_root = root / ".transactions/n1"
+        generation = nonce_root / "generation"
+        self.write_file(generation, "tools/a.py", b"validated\n")
+        receipt = self.make_receipt(generation)
+
+        def swap_generation(point):
+            if point != "before_exchange":
+                return
+            generation.rename(nonce_root / "validated-generation")
+            self.write_file(generation, "tools/a.py", b"swapped\n")
+
+        with self.assertRaises(transaction.TransactionError):
+            transaction.promote_generation(
+                root,
+                ".transactions/n1/generation",
+                receipt,
+                fault_injector=swap_generation,
+            )
+        self.assertFalse((root / "source").exists())
+        self.assertEqual(
+            (nonce_root / "validated-generation/tools/a.py").read_bytes(),
+            b"validated\n",
+        )
 
     def test_existing_source_promotion_exchanges_directories(self):
         root = self.make_root()
@@ -364,6 +441,17 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual(receipt.nonce, "n1")
         self.assertEqual(receipt.source_head, "abc")
         self.assertEqual(receipt.explicit_paths, ("tools/a.py",))
+
+    def test_explicit_paths_reject_noncanonical_spellings(self):
+        variants = (
+            "./tools/a.py",
+            "tools//a.py",
+            "tools/a.py/",
+        )
+        for path in variants:
+            with self.subTest(path=path):
+                with self.assertRaises(transaction.TransactionError):
+                    transaction._validate_explicit_paths((path,))
 
     def test_strict_receipt_rejects_each_embedded_file_symlink(self):
         embedded_names = (
@@ -435,6 +523,24 @@ class TransactionPrimitiveTests(unittest.TestCase):
                 expected_head="abc",
                 expected_paths=["tools/a.py"],
             )
+
+    def test_strict_receipt_rejects_symlink_replaced_by_crafted_file(self):
+        root = self.make_root()
+        source = root / "source"
+        source.mkdir()
+        self.write_file(source, "tools/a.py", b"content\n")
+        link = source / "current.py"
+        link.symlink_to("tools/a.py")
+        receipt = self.make_receipt(source)
+        source_fd = transaction.open_directory_no_follow(source)
+        try:
+            transaction.write_embedded_receipt(source_fd, receipt)
+        finally:
+            os.close(source_fd)
+        link.unlink()
+        link.write_bytes(b"symlink\0tools/a.py")
+        with self.assertRaises(transaction.TransactionError):
+            self.read_committed(root)
 
     def test_strict_receipt_rejects_embedded_manifest_mismatch(self):
         root = self.make_committed_root()
@@ -529,6 +635,41 @@ class TransactionPrimitiveTests(unittest.TestCase):
         with self.assertRaises(transaction.TransactionInterrupted) as raised:
             transaction._raise_transaction_interrupted(signal.SIGTERM, None)
         self.assertEqual(raised.exception.signum, signal.SIGTERM)
+
+    def test_signal_handler_partial_installation_restores_installed_only(self):
+        previous = {
+            signal.SIGHUP: object(),
+            signal.SIGINT: object(),
+            signal.SIGTERM: object(),
+        }
+        install_attempts = []
+        restored = []
+
+        def install_or_restore(signum, handler):
+            if handler is transaction._raise_transaction_interrupted:
+                install_attempts.append(signum)
+                if len(install_attempts) == 2:
+                    raise OSError(errno.EINTR, "forced installation failure")
+                return
+            restored.append((signum, handler))
+
+        with mock.patch.object(
+            transaction.signal,
+            "getsignal",
+            side_effect=lambda signum: previous[signum],
+        ), mock.patch.object(
+            transaction.signal,
+            "signal",
+            side_effect=install_or_restore,
+        ):
+            with self.assertRaises(OSError):
+                with transaction._transaction_signal_handlers():
+                    self.fail("handler context should not be entered")
+
+        self.assertEqual(
+            restored,
+            [(signal.SIGHUP, previous[signal.SIGHUP])],
+        )
 
 
 if __name__ == "__main__":
