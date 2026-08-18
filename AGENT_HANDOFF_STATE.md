@@ -48980,7 +48980,7 @@ Final validation:
 
 ```text
 Task 7 affected suite:
-  291 passed in 41.99s
+  292 passed in 41.80s
 
 Task 8 dependency-light suite:
   533 passed in 51.40s
@@ -49034,3 +49034,55 @@ PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-18 live command-timeline preflight follow-up
+
+The never-before-used tag remains:
+
+```text
+20260818-command-timeline-tp4-b4-q4-r1
+```
+
+The first live read-only preflight established:
+
+```text
+source commit gate: PASS
+Kerberos minimum lifetime gate: PASS
+primary destination absent: PASS
+controller destination absent: PASS
+fully idle and process-free GPUs: 3
+required GPUs: 4
+campaign execute: NOT_RUN
+```
+
+GPU 0, 3, 5, 6, and 7 had existing external `server.py`, VLLM, xLLM, or
+Manhattan compute processes. They were inspected read-only. No process was
+paused, signalled, terminated, or adopted.
+
+The preflight previously raised a traceback when fewer than four idle GPU
+rows were returned. The runner now preserves the strict four-GPU classifier
+but converts that orchestration result to:
+
+```text
+status=INCONCLUSIVE_ENVIRONMENT
+available_idle_gpu_count=<observed count>
+gpu_indices=[]
+gpu_uuids=[]
+```
+
+Regression and full affected validation:
+
+```text
+focused preflight tests:
+  3 passed
+
+affected command-timeline suite:
+  292 passed in 41.80s
+
+runner py_compile:
+  PASS
+```
+
+The next safe action is to commit and push this fail-fast improvement, then
+rerun the same read-only preflight against the pushed source commit. Do not
+run `execute` unless the result is `READY` with four clean GPUs.

@@ -1928,6 +1928,57 @@ def test_command_timeline_preflight_is_read_only_and_orders_fail_fast_gates():
     assert commands[3][0] == "ssh"
 
 
+def test_command_timeline_preflight_reports_insufficient_idle_gpus(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_insufficient_gpu_test"
+    )
+    payload = _command_timeline_ready_gpu_payload()
+    payload["gpu_rows"] = payload["gpu_rows"][:3]
+    kerberos = {
+        "status": "READY",
+        "remaining_lifetime_seconds": 7200,
+    }
+    source_commit = "9" * 40
+
+    monkeypatch.setattr(
+        runner,
+        "_local_kerberos_preflight",
+        lambda **_kwargs: kerberos,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_local_source_commit",
+        lambda **_kwargs: source_commit,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_run_remote_command",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        ),
+    )
+
+    result = runner.run_preflight(run_tag="task7_gpu_busy")
+
+    assert result == {
+        "status": "INCONCLUSIVE_ENVIRONMENT",
+        "reason": "GPU preflight requires exactly four rows",
+        "available_idle_gpu_count": 3,
+        "gpu_indices": [],
+        "gpu_uuids": [],
+        "source_commit": source_commit,
+        "local_kerberos": kerberos,
+        "primary_run": runner.primary_run_path("task7_gpu_busy"),
+        "controller_run": runner.controller_run_path(
+            "task7_gpu_busy"
+        ),
+    }
+
+
 def test_command_timeline_bundle_stops_after_first_worker_failure_and_copies_partial():
     runner = _load_command_timeline_runner(
         "command_timeline_runner_partial_failure_test"

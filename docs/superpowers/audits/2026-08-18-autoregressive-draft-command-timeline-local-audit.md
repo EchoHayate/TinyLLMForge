@@ -139,7 +139,7 @@ tools/test_autoregressive_draft_performance_gate.py
 Result:
 
 ```text
-291 passed in 41.99s
+292 passed in 41.80s
 ```
 
 The three runner/diagnostic/verifier entry points also passed `py_compile`.
@@ -198,6 +198,43 @@ rm -rf
 ```
 
 in the two timeline profiler modules and the command-timeline remote runner.
+
+## Live Preflight Follow-up
+
+The first live read-only preflight used the never-before-used tag:
+
+```text
+20260818-command-timeline-tp4-b4-q4-r1
+```
+
+It passed the source-commit and Kerberos gates and confirmed that neither the
+primary nor controller destination existed. It stopped before execution
+because only three GPUs were fully idle and process-free.
+
+The occupied GPUs belonged to existing external `server.py`, VLLM, xLLM,
+and Manhattan services. No process was paused, signalled, or terminated.
+
+The live attempt also exposed that insufficient idle GPUs produced a Python
+traceback instead of a structured environment result. The orchestration
+layer now converts strict GPU-classification failures into:
+
+```text
+status=INCONCLUSIVE_ENVIRONMENT
+gpu_indices=[]
+gpu_uuids=[]
+available_idle_gpu_count=<observed count>
+```
+
+The strict four-idle-GPU classifier and all ownership thresholds remain
+unchanged. A new regression test covers this result, and the affected suite
+now passes:
+
+```text
+292 passed in 41.80s
+```
+
+The campaign remains unstarted and the tag remains reusable because no
+primary or controller run directory was created.
 
 ## Final Classification
 

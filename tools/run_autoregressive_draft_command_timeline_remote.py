@@ -823,7 +823,23 @@ def run_preflight(
         raise ValueError("primary remote destination already exists")
     if payload.get("controller_exists") is not False:
         raise ValueError("controller remote destination already exists")
-    gpu = classify_gpu_preflight(payload.get("gpu_rows"))
+    gpu_rows = payload.get("gpu_rows")
+    try:
+        gpu = classify_gpu_preflight(gpu_rows)
+    except ValueError as error:
+        return {
+            "status": "INCONCLUSIVE_ENVIRONMENT",
+            "reason": str(error),
+            "available_idle_gpu_count": (
+                len(gpu_rows) if isinstance(gpu_rows, list) else 0
+            ),
+            "gpu_indices": [],
+            "gpu_uuids": [],
+            "source_commit": source_commit,
+            "local_kerberos": kerberos,
+            "primary_run": primary_run_path(tag),
+            "controller_run": controller_run_path(tag),
+        }
     return {
         **gpu,
         "source_commit": source_commit,
