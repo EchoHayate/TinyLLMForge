@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import signal
 import stat
 import sys
+import tarfile
 import time
 
 
@@ -117,6 +118,10 @@ class TransactionInterrupted(TransactionError):
             "transaction interrupted by signal {}".format(signum)
         )
         self.signum = signum
+
+
+class InjectedFailure(TransactionError):
+    pass
 
 
 class CommitReceipt:
@@ -277,6 +282,17 @@ def _validate_explicit_paths(paths):
     if len(set(normalized)) != len(normalized):
         raise TransactionError("explicit paths contain duplicates")
     return tuple(normalized)
+
+
+def _validate_nonce(nonce):
+    if not isinstance(nonce, str) or not nonce:
+        raise TransactionError("transaction nonce must be non-empty")
+    parts = _split_relative_path(nonce)
+    if len(parts) != 1 or parts[0] != nonce:
+        raise TransactionError(
+            "transaction nonce must be one canonical path component"
+        )
+    return nonce
 
 
 def _sha256_bytes(data):
@@ -1299,6 +1315,619 @@ def commit_initial_generation(
     )
 
 
+def _copy_regular_file(source_fd, destination_fd, name, mode):
+    temporary = ".{}.clone-{}-{}".format(name, os.getpid(), time.time_ns())
+    output_fd = None
+    try:
+        output_fd = os.open(
+            temporary,
+            _REGULAR_WRITE_FLAGS,
+            mode & 0o777,
+            dir_fd=destination_fd,
+        )
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            view = memoryview(chunk)
+            written = 0
+            while written < len(view):
+                written += os.write(output_fd, view[written:])
+        os.fchmod(output_fd, mode & 0o777)
+        os.fsync(output_fd)
+        os.close(output_fd)
+        output_fd = None
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=destination_fd,
+            dst_dir_fd=destination_fd,
+        )
+    finally:
+        if output_fd is not None:
+            _close_fd_best_effort(output_fd)
+        try:
+            os.unlink(temporary, dir_fd=destination_fd)
+        except FileNotFoundError:
+            pass
+
+
+def _clone_tree(source_fd, destination_fd, prefix=""):
+    for name in sorted(os.listdir(source_fd)):
+        if not prefix and name == _EMBEDDED_DIRECTORY:
+            continue
+        relative_path = name if not prefix else prefix + "/" + name
+        if _is_forbidden(relative_path):
+            raise TransactionError(
+                "source contains forbidden member: {}".format(relative_path)
+            )
+        info = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            os.mkdir(name, 0o700, dir_fd=destination_fd)
+            source_child_fd = os.open(
+                name, _DIRECTORY_FLAGS, dir_fd=source_fd
+            )
+            destination_child_fd = os.open(
+                name, _DIRECTORY_FLAGS, dir_fd=destination_fd
+            )
+            try:
+                _clone_tree(
+                    source_child_fd,
+                    destination_child_fd,
+                    relative_path,
+                )
+                os.fchmod(destination_child_fd, info.st_mode & 0o777)
+            finally:
+                os.close(destination_child_fd)
+                os.close(source_child_fd)
+        elif stat.S_ISREG(info.st_mode):
+            file_fd = _open_regular_at(source_fd, name)
+            try:
+                _copy_regular_file(
+                    file_fd,
+                    destination_fd,
+                    name,
+                    info.st_mode,
+                )
+            finally:
+                os.close(file_fd)
+        elif stat.S_ISLNK(info.st_mode):
+            os.symlink(
+                os.readlink(name, dir_fd=source_fd),
+                name,
+                dir_fd=destination_fd,
+            )
+        else:
+            raise TransactionError(
+                "source contains unsupported member: {}".format(
+                    relative_path
+                )
+            )
+
+
+def _open_explicit_parent(directory_fd, relative_path, purpose):
+    parts = _split_relative_path(relative_path)
+    parent_fd = os.dup(directory_fd)
+    try:
+        for part in parts[:-1]:
+            try:
+                next_fd = os.open(
+                    part, _DIRECTORY_FLAGS, dir_fd=parent_fd
+                )
+            except OSError as exc:
+                raise TransactionError(
+                    "incremental sync requires full init: unsafe or missing "
+                    "{} parent for {}: {}".format(
+                        purpose, relative_path, exc
+                    )
+                )
+            os.close(parent_fd)
+            parent_fd = next_fd
+        return parent_fd, parts[-1]
+    except BaseException:
+        os.close(parent_fd)
+        raise
+
+
+def _apply_explicit_delta(generation_fd, delta_fd, explicit_paths):
+    for relative_path in explicit_paths:
+        delta_parent_fd, name = _open_explicit_parent(
+            delta_fd, relative_path, "delta"
+        )
+        generation_parent_fd = None
+        source_fd = None
+        output_fd = None
+        temporary = ".{}.sync-{}-{}".format(
+            name, os.getpid(), time.time_ns()
+        )
+        try:
+            source_fd = _open_regular_at(delta_parent_fd, name)
+            generation_parent_fd, generation_name = _open_explicit_parent(
+                generation_fd, relative_path, "remote"
+            )
+            try:
+                existing = os.stat(
+                    generation_name,
+                    dir_fd=generation_parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                existing = None
+            if existing is not None and not stat.S_ISREG(existing.st_mode):
+                raise TransactionError(
+                    "incremental sync requires full init: unsafe remote "
+                    "final {}".format(relative_path)
+                )
+            source_mode = os.fstat(source_fd).st_mode
+            output_fd = os.open(
+                temporary,
+                _REGULAR_WRITE_FLAGS,
+                source_mode & 0o777,
+                dir_fd=generation_parent_fd,
+            )
+            while True:
+                chunk = os.read(source_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                view = memoryview(chunk)
+                written = 0
+                while written < len(view):
+                    written += os.write(output_fd, view[written:])
+            os.fchmod(output_fd, source_mode & 0o777)
+            os.fsync(output_fd)
+            os.close(output_fd)
+            output_fd = None
+            os.replace(
+                temporary,
+                generation_name,
+                src_dir_fd=generation_parent_fd,
+                dst_dir_fd=generation_parent_fd,
+            )
+        except (OSError, TransactionError) as exc:
+            if isinstance(exc, TransactionError):
+                raise
+            raise TransactionError(
+                "cannot apply explicit delta {}: {}".format(
+                    relative_path, exc
+                )
+            )
+        finally:
+            if output_fd is not None:
+                _close_fd_best_effort(output_fd)
+            if generation_parent_fd is not None:
+                try:
+                    os.unlink(temporary, dir_fd=generation_parent_fd)
+                except FileNotFoundError:
+                    pass
+                os.close(generation_parent_fd)
+            if source_fd is not None:
+                os.close(source_fd)
+            os.close(delta_parent_fd)
+
+
+def _sync_receipt_names(nonce):
+    prefix = "sync-{}".format(nonce)
+    return (
+        prefix + ".paths.txt",
+        prefix + ".sha256",
+        prefix + ".state",
+    )
+
+
+def _sync_receipt_path(remote_root, nonce):
+    return str(Path(remote_root) / "receipts" / _sync_receipt_names(nonce)[1])
+
+
+def _materialize_sync_receipts_at(root_fd, receipt):
+    if receipt.operation != "sync":
+        raise TransactionError("detached sync receipts require sync operation")
+    try:
+        os.mkdir("receipts", 0o700, dir_fd=root_fd)
+    except FileExistsError:
+        pass
+    receipts_fd = os.open("receipts", _DIRECTORY_FLAGS, dir_fd=root_fd)
+    try:
+        names = _sync_receipt_names(receipt.nonce)
+        for name in names:
+            try:
+                info = os.stat(
+                    name, dir_fd=receipts_fd, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                raise TransactionError(
+                    "detached receipt is not a regular file: {}".format(name)
+                )
+        paths_data = "".join(
+            "{}\n".format(path) for path in receipt.explicit_paths
+        ).encode("utf-8")
+        hashes_data = "".join(
+            "{}  {}\n".format(
+                receipt.explicit_path_sha256[path], path
+            )
+            for path in receipt.explicit_paths
+        ).encode("utf-8")
+        values = (
+            (names[0], paths_data),
+            (names[1], hashes_data),
+            (names[2], b"committed\n"),
+        )
+        for name, data in values:
+            _write_regular_at(receipts_fd, name, data)
+        os.fsync(receipts_fd)
+    finally:
+        os.close(receipts_fd)
+
+
+def _open_or_create_directory_at(parent_fd, name, mode=0o700):
+    try:
+        os.mkdir(name, mode, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    directory_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+    os.fchmod(directory_fd, mode)
+    return directory_fd
+
+
+def _cleanup_nonce_at(root_fd, nonce):
+    transactions_fd = None
+    try:
+        transactions_fd = os.open(
+            ".transactions", _DIRECTORY_FLAGS, dir_fd=root_fd
+        )
+        _remove_tree_at(transactions_fd, nonce)
+        _remove_tree_at(
+            transactions_fd, ".delta-{}".format(nonce)
+        )
+    except BaseException:
+        pass
+    finally:
+        if transactions_fd is not None:
+            _close_fd_best_effort(transactions_fd)
+
+
+def _read_expected_committed_at(
+    root_fd,
+    *,
+    nonce,
+    operation,
+    source_head,
+    explicit_paths
+):
+    source_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
+    try:
+        return _read_generation_fd(
+            source_fd,
+            expected_nonce=nonce,
+            expected_operation=operation,
+            expected_head=source_head,
+            expected_paths=explicit_paths,
+        )
+    finally:
+        os.close(source_fd)
+
+
+def confirm_committed_generation(
+    remote_root,
+    *,
+    nonce,
+    operation,
+    source_head,
+    explicit_paths
+):
+    paths = _validate_explicit_paths(explicit_paths)
+    head = _validate_source_head(source_head)
+    nonce = _validate_nonce(nonce)
+    if operation not in ("init", "sync"):
+        raise TransactionError("confirmation operation is invalid")
+    with _transaction_signal_handlers():
+        with locked_remote_root(remote_root) as root_fd:
+            receipt = _read_expected_committed_at(
+                root_fd,
+                nonce=nonce,
+                operation=operation,
+                source_head=head,
+                explicit_paths=paths,
+            )
+            if operation == "init":
+                _materialize_initial_receipts_at(root_fd, receipt)
+            else:
+                _materialize_sync_receipts_at(root_fd, receipt)
+            _cleanup_nonce_at(root_fd, nonce)
+            return receipt
+
+
+def commit_sync_generation(
+    remote_root,
+    delta_root,
+    *,
+    nonce,
+    source_head,
+    explicit_paths,
+    fault_injector=None
+):
+    paths = _validate_explicit_paths(explicit_paths)
+    head = _validate_source_head(source_head)
+    nonce = _validate_nonce(nonce)
+
+    with _transaction_signal_handlers():
+        with locked_remote_root(remote_root) as root_fd:
+            _inject(fault_injector, "after_lock")
+            source_fd = None
+            transactions_fd = None
+            nonce_fd = None
+            generation_fd = None
+            delta_fd = None
+            generation_info = None
+            source_info = None
+            try:
+                source_fd = os.open(
+                    "source", _DIRECTORY_FLAGS, dir_fd=root_fd
+                )
+                current = _read_generation_fd(source_fd)
+                if current.nonce == nonce:
+                    expected = _read_generation_fd(
+                        source_fd,
+                        expected_nonce=nonce,
+                        expected_operation="sync",
+                        expected_head=head,
+                        expected_paths=paths,
+                    )
+                    _materialize_sync_receipts_at(root_fd, expected)
+                    _cleanup_nonce_at(root_fd, nonce)
+                    return expected
+
+                source_info = os.fstat(source_fd)
+                delta_fd = open_directory_no_follow(Path(delta_root))
+                transactions_fd = os.open(
+                    ".transactions", _DIRECTORY_FLAGS, dir_fd=root_fd
+                )
+                try:
+                    os.mkdir(nonce, 0o700, dir_fd=transactions_fd)
+                except FileExistsError as exc:
+                    raise TransactionError(
+                        "sync transaction nonce already exists"
+                    ) from exc
+                nonce_fd = os.open(
+                    nonce, _DIRECTORY_FLAGS, dir_fd=transactions_fd
+                )
+                os.mkdir("generation", 0o700, dir_fd=nonce_fd)
+                generation_fd = os.open(
+                    "generation", _DIRECTORY_FLAGS, dir_fd=nonce_fd
+                )
+                _clone_tree(source_fd, generation_fd)
+                _inject(fault_injector, "after_generation_ready")
+                _apply_explicit_delta(generation_fd, delta_fd, paths)
+                receipt = _generation_receipt(
+                    generation_fd,
+                    operation="sync",
+                    nonce=nonce,
+                    source_head=head,
+                    explicit_paths=paths,
+                )
+                write_embedded_receipt(generation_fd, receipt)
+                _inject(fault_injector, "after_embedded_receipt")
+                _read_generation_fd(
+                    generation_fd,
+                    expected_nonce=nonce,
+                    expected_operation="sync",
+                    expected_head=head,
+                    expected_paths=paths,
+                )
+                _inject(fault_injector, "before_exchange")
+                named_source = os.stat(
+                    "source", dir_fd=root_fd, follow_symlinks=False
+                )
+                if (
+                    not stat.S_ISDIR(named_source.st_mode)
+                    or not _same_file_identity(named_source, source_info)
+                ):
+                    raise TransactionError(
+                        "source entry changed before sync exchange"
+                    )
+                generation_info = os.fstat(generation_fd)
+                named_generation = os.stat(
+                    "generation",
+                    dir_fd=nonce_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISDIR(named_generation.st_mode)
+                    or not _same_file_identity(
+                        named_generation, generation_info
+                    )
+                ):
+                    raise TransactionError(
+                        "generation entry changed before sync exchange"
+                    )
+                _rename_exchange_at(
+                    root_fd, "source", nonce_fd, "generation"
+                )
+                _inject(fault_injector, "after_exchange")
+                committed = _read_expected_committed_at(
+                    root_fd,
+                    nonce=nonce,
+                    operation="sync",
+                    source_head=head,
+                    explicit_paths=paths,
+                )
+                _require_exact_receipt(committed, receipt)
+                _inject(fault_injector, "before_external_receipts")
+                _materialize_sync_receipts_at(root_fd, committed)
+                _inject(fault_injector, "after_external_receipts")
+                _inject(fault_injector, "before_old_generation_cleanup")
+                return committed
+            finally:
+                if generation_fd is not None:
+                    _close_fd_best_effort(generation_fd)
+                if delta_fd is not None:
+                    _close_fd_best_effort(delta_fd)
+                if source_fd is not None:
+                    _close_fd_best_effort(source_fd)
+                if nonce_fd is not None:
+                    try:
+                        _remove_tree_at(nonce_fd, "generation")
+                    except BaseException:
+                        pass
+                    _close_fd_best_effort(nonce_fd)
+                if transactions_fd is not None:
+                    try:
+                        os.rmdir(nonce, dir_fd=transactions_fd)
+                    except BaseException:
+                        pass
+                    _close_fd_best_effort(transactions_fd)
+
+
+def _create_delta_parent(delta_fd, relative_path):
+    parts = _split_relative_path(relative_path)
+    parent_fd = os.dup(delta_fd)
+    try:
+        for part in parts[:-1]:
+            next_fd = _open_or_create_directory_at(parent_fd, part)
+            os.close(parent_fd)
+            parent_fd = next_fd
+        return parent_fd, parts[-1]
+    except BaseException:
+        os.close(parent_fd)
+        raise
+
+
+def _stage_delta_stream(remote_root, nonce, explicit_paths, stream):
+    paths = _validate_explicit_paths(explicit_paths)
+    nonce = _validate_nonce(nonce)
+    delta_name = ".delta-{}".format(nonce)
+    root_fd = open_directory_no_follow(Path(remote_root))
+    transactions_fd = None
+    delta_fd = None
+    try:
+        transactions_fd = _open_or_create_directory_at(
+            root_fd, ".transactions"
+        )
+        try:
+            os.mkdir(delta_name, 0o700, dir_fd=transactions_fd)
+        except FileExistsError as exc:
+            raise TransactionError(
+                "sync delta nonce already exists"
+            ) from exc
+        delta_fd = os.open(
+            delta_name, _DIRECTORY_FLAGS, dir_fd=transactions_fd
+        )
+        expected = set(paths)
+        seen = set()
+        with tarfile.open(fileobj=stream, mode="r|*") as archive:
+            for member in archive:
+                member_path = PurePosixPath(member.name)
+                normalized = member_path.as_posix()
+                if (
+                    member_path.is_absolute()
+                    or ".." in member_path.parts
+                    or normalized not in expected
+                    or not member.isfile()
+                    or normalized in seen
+                ):
+                    raise TransactionError(
+                        "delta archive contains unexpected member: {}".format(
+                            member.name
+                        )
+                    )
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise TransactionError(
+                        "delta archive member has no file data"
+                    )
+                parent_fd, name = _create_delta_parent(
+                    delta_fd, normalized
+                )
+                output_fd = None
+                try:
+                    output_fd = os.open(
+                        name,
+                        _REGULAR_WRITE_FLAGS,
+                        member.mode & 0o777,
+                        dir_fd=parent_fd,
+                    )
+                    while True:
+                        chunk = extracted.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        view = memoryview(chunk)
+                        written = 0
+                        while written < len(view):
+                            written += os.write(
+                                output_fd, view[written:]
+                            )
+                    os.fsync(output_fd)
+                finally:
+                    extracted.close()
+                    if output_fd is not None:
+                        os.close(output_fd)
+                    os.close(parent_fd)
+                seen.add(normalized)
+        if seen != expected:
+            raise TransactionError("delta archive is missing explicit paths")
+        return str(
+            Path(remote_root) / ".transactions" / delta_name
+        )
+    except BaseException:
+        if transactions_fd is not None:
+            try:
+                _remove_tree_at(transactions_fd, delta_name)
+            except BaseException:
+                pass
+        raise
+    finally:
+        if delta_fd is not None:
+            _close_fd_best_effort(delta_fd)
+        if transactions_fd is not None:
+            _close_fd_best_effort(transactions_fd)
+        _close_fd_best_effort(root_fd)
+
+
+def _cleanup_staged_delta(remote_root, nonce):
+    try:
+        root_fd = open_directory_no_follow(Path(remote_root))
+    except OSError:
+        return
+    try:
+        transactions_fd = None
+        try:
+            transactions_fd = os.open(
+                ".transactions", _DIRECTORY_FLAGS, dir_fd=root_fd
+            )
+            _remove_tree_at(
+                transactions_fd, ".delta-{}".format(nonce)
+            )
+        except BaseException:
+            pass
+        finally:
+            if transactions_fd is not None:
+                _close_fd_best_effort(transactions_fd)
+    finally:
+        _close_fd_best_effort(root_fd)
+
+
+def _status_committed_generation(remote_root):
+    with _transaction_signal_handlers():
+        with locked_remote_root(remote_root) as root_fd:
+            source_fd = os.open(
+                "source", _DIRECTORY_FLAGS, dir_fd=root_fd
+            )
+            try:
+                receipt = _read_generation_fd(source_fd)
+            finally:
+                os.close(source_fd)
+            if receipt.operation == "init":
+                _materialize_initial_receipts_at(root_fd, receipt)
+                latest = "none"
+            else:
+                _materialize_sync_receipts_at(root_fd, receipt)
+                latest = _sync_receipt_path(
+                    remote_root, receipt.nonce
+                )
+            return receipt, latest
+
+
 def build_parser():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1306,24 +1935,94 @@ def build_parser():
     init_commit.add_argument("--remote-root", required=True)
     init_commit.add_argument("--generation", required=True)
     init_commit.add_argument("--source-head", required=True)
+    sync_commit = subparsers.add_parser("sync-commit")
+    sync_commit.add_argument("--remote-root", required=True)
+    sync_commit.add_argument("--nonce", required=True)
+    sync_commit.add_argument("--source-head", required=True)
+    sync_commit.add_argument("--path", action="append", required=True)
+    confirm = subparsers.add_parser("confirm")
+    confirm.add_argument("--remote-root", required=True)
+    confirm.add_argument("--nonce", required=True)
+    confirm.add_argument("--operation", choices=("init", "sync"), required=True)
+    confirm.add_argument("--source-head", required=True)
+    confirm.add_argument("--path", action="append", default=[])
+    status_parser = subparsers.add_parser("status")
+    status_parser.add_argument("--remote-root", required=True)
     return parser
 
 
 def main(argv=None):
     arguments = build_parser().parse_args(argv)
     try:
-        receipt = commit_initial_generation(
-            Path(arguments.remote_root),
-            arguments.generation,
-            arguments.source_head,
-        )
+        if arguments.command == "init-commit":
+            receipt = commit_initial_generation(
+                Path(arguments.remote_root),
+                arguments.generation,
+                arguments.source_head,
+            )
+            output = "{}\n".format(receipt.source_file_count)
+        elif arguments.command == "sync-commit":
+            remote_root = Path(arguments.remote_root)
+            try:
+                receipt = confirm_committed_generation(
+                    remote_root,
+                    nonce=arguments.nonce,
+                    operation="sync",
+                    source_head=arguments.source_head,
+                    explicit_paths=arguments.path,
+                )
+            except (OSError, TransactionError):
+                delta_root = _stage_delta_stream(
+                    remote_root,
+                    arguments.nonce,
+                    arguments.path,
+                    sys.stdin.buffer,
+                )
+                try:
+                    receipt = commit_sync_generation(
+                        remote_root,
+                        delta_root,
+                        nonce=arguments.nonce,
+                        source_head=arguments.source_head,
+                        explicit_paths=arguments.path,
+                    )
+                finally:
+                    _cleanup_staged_delta(remote_root, arguments.nonce)
+            output = _sync_receipt_path(
+                remote_root, receipt.nonce
+            ) + "\n"
+        elif arguments.command == "confirm":
+            receipt = confirm_committed_generation(
+                Path(arguments.remote_root),
+                nonce=arguments.nonce,
+                operation=arguments.operation,
+                source_head=arguments.source_head,
+                explicit_paths=arguments.path,
+            )
+            if receipt.operation == "sync":
+                output = _sync_receipt_path(
+                    arguments.remote_root, receipt.nonce
+                ) + "\n"
+            else:
+                output = "{}\n".format(receipt.source_file_count)
+        else:
+            receipt, latest = _status_committed_generation(
+                Path(arguments.remote_root)
+            )
+            output = (
+                "head={}\ncount={}\nlatest={}\n".format(
+                    receipt.source_head,
+                    receipt.source_file_count,
+                    latest,
+                )
+            )
     except TransactionInterrupted as exc:
         sys.stderr.write("{}\n".format(exc))
         return 128 + int(exc.signum)
     except (OSError, TransactionError) as exc:
         sys.stderr.write("{}\n".format(exc))
         return 1
-    sys.stdout.write("{}\n".format(receipt.source_file_count))
+    sys.stdout.write(output)
     return 0
 
 

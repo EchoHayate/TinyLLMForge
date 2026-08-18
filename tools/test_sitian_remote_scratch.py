@@ -278,18 +278,6 @@ class TransportTests(unittest.TestCase):
             handle.addfile(info, io.BytesIO(data))
         return archive.getvalue()
 
-    @staticmethod
-    def _run_incremental_fixture(command, archive, failure_point=None):
-        environment = os.environ.copy()
-        if failure_point is not None:
-            environment["SITIAN_SYNC_FAIL_POINT"] = failure_point
-        return subprocess.run(
-            ("/bin/sh", "-c", command),
-            input=archive,
-            capture_output=True,
-            env=environment,
-        )
-
     def test_retry_stops_after_first_success(self):
         module = load_module()
         runner = mock.Mock(side_effect=[
@@ -478,6 +466,8 @@ class TransportTests(unittest.TestCase):
         commands = module.incremental_sync_commands(
             config,
             ["tools/sitian_remote_scratch.py"],
+            nonce="command-test",
+            source_head="b" * 40,
         )
         self.assertIn("--no-xattrs", commands["tar"])
         self.assertIn("--no-mac-metadata", commands["tar"])
@@ -489,53 +479,59 @@ class TransportTests(unittest.TestCase):
             module.incremental_sync_commands(
                 config,
                 [".superpowers/sdd/task-5-review-package.diff"],
+                nonce="command-test",
+                source_head="b" * 40,
             )
 
-    def test_incremental_remote_verification_uses_shared_forbidden_policy(self):
+    def test_incremental_commands_invoke_sync_commit_without_shell_rollback(
+        self,
+    ):
         module = load_module()
-        config = SimpleNamespace(remote_root="/remote/task-root")
-        command, _ = module._incremental_remote_command(
-            config,
-            ["tools/allowed.py"],
-            nonce="policy-test",
+        module.APPROVED_REPO_ROOTS = frozenset(
+            set(module.APPROVED_REPO_ROOTS) | {ROOT.resolve()}
         )
-        for token in (
-            ".git",
-            "artifacts",
-            "experiments",
-            "__pycache__",
-            ".pytest_cache",
-            ".cache",
-            "cache",
-            "caches",
-            "logs",
-            "*.pyc",
-            "*.log",
-            "*.pid",
-            "raw-output",
-            "raw_output",
-            "rawoutput",
-            "*.tar",
-            "*review-package.diff",
-            "._*",
-        ):
-            with self.subTest(token=token):
-                self.assertIn(token, command)
+        config = module.ScratchConfig.default(ROOT)
+        commands = module.incremental_sync_commands(
+            config,
+            ["tools/sitian_remote_scratch.py"],
+            nonce="sync-nonce",
+            source_head="b" * 40,
+        )
 
-    def test_incremental_sync_recovers_commit_after_response_loss(self):
+        self.assertIn("--no-xattrs", commands["tar"])
+        remote = " ".join(commands["ssh"])
+        self.assertIn("sitian_remote_transaction.py", remote)
+        self.assertIn("sync-commit", remote)
+        self.assertIn("--nonce sync-nonce", remote)
+        self.assertIn("--source-head " + "b" * 40, remote)
+        self.assertIn("--path tools/sitian_remote_scratch.py", remote)
+        for forbidden in (
+            "SITIAN_SYNC_FAIL_POINT",
+            "checkpoint",
+            "rollback",
+            ".incoming-sync-",
+            ".sync-transaction-lock",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, remote)
+
+    def test_incremental_controller_streams_once_then_confirms_ambiguity(self):
         module = load_module()
+        module.APPROVED_REPO_ROOTS = frozenset(
+            set(module.APPROVED_REPO_ROOTS) | {ROOT.resolve()}
+        )
         config = module.ScratchConfig.default(ROOT)
         nonce = "100-200-300"
         expected_receipt = (
-            config.remote_root + f"/receipts/sync-{nonce}.sha256"
+            config.remote_root + "/receipts/sync-{}.sha256".format(nonce)
         )
         lost_response = module.subprocess.CompletedProcess(
             ["ssh"],
             255,
             "",
-            "connection lost after commit",
+            "connection lost after exchange",
         )
-        committed = module.subprocess.CompletedProcess(
+        confirmed = module.subprocess.CompletedProcess(
             ["ssh"],
             0,
             expected_receipt + "\n",
@@ -550,307 +546,93 @@ class TransportTests(unittest.TestCase):
                 ):
                     with mock.patch.object(
                         module,
-                        "_stream_with_retries",
-                        return_value=lost_response,
-                    ) as stream:
+                        "_resolve_local_head",
+                        return_value="b" * 40,
+                    ):
                         with mock.patch.object(
                             module,
-                            "_remote_command",
-                            return_value=committed,
-                        ) as remote:
-                            error = None
-                            try:
+                            "_stream_with_retries",
+                            return_value=lost_response,
+                        ) as stream:
+                            with mock.patch.object(
+                                module,
+                                "_remote_command",
+                                return_value=confirmed,
+                            ) as remote:
                                 receipt, count = module._sync(
                                     config,
                                     ["tools/sitian_remote_scratch.py"],
                                 )
-                            except Exception as exc:
-                                error = exc
-        self.assertIsNone(error, "committed transaction must recover")
+
         self.assertEqual(receipt, expected_receipt)
         self.assertEqual(count, 1)
+        stream.assert_called_once()
         self.assertEqual(stream.call_args[1]["attempts"], 1)
         remote.assert_called_once()
+        confirm_command = remote.call_args[0][1]
+        self.assertIn(" confirm ", " " + confirm_command + " ")
+        self.assertIn("--nonce " + nonce, confirm_command)
+        self.assertIn("--operation sync", confirm_command)
+        self.assertIn("--source-head " + "b" * 40, confirm_command)
+        self.assertIn(
+            "--path tools/sitian_remote_scratch.py",
+            confirm_command,
+        )
 
-    def test_incremental_transaction_reentry_preserves_committed_result(self):
+    def test_incremental_controller_does_not_confirm_unambiguous_rejection(
+        self,
+    ):
         module = load_module()
-        root = ROOT / ".sitian-sync-committed-fixture"
-        source_file = root / "source" / "tools" / "allowed.py"
-        nonce = "committed-reentry"
-        config = SimpleNamespace(remote_root=str(root))
-        command, expected_receipt = module._incremental_remote_command(
-            config,
-            ["tools/allowed.py"],
-            nonce=nonce,
+        module.APPROVED_REPO_ROOTS = frozenset(
+            set(module.APPROVED_REPO_ROOTS) | {ROOT.resolve()}
         )
-        archive = io.BytesIO()
-        with tarfile.open(fileobj=archive, mode="w") as handle:
-            data = b"new\n"
-            info = tarfile.TarInfo("tools/allowed.py")
-            info.size = len(data)
-            handle.addfile(info, io.BytesIO(data))
-        try:
-            source_file.parent.mkdir(parents=True)
-            source_file.write_text("old\n", encoding="utf-8")
-            first = subprocess.run(
-                ("/bin/sh", "-c", command),
-                input=archive.getvalue(),
-                capture_output=True,
-            )
-            self.assertEqual(first.returncode, 0, first.stderr)
-            receipts = root / "receipts"
-            committed_snapshot = {
-                path.name: path.read_bytes()
-                for path in receipts.iterdir()
-                if path.is_file()
-            }
-            second = subprocess.run(
-                ("/bin/sh", "-c", command),
-                input=b"",
-                capture_output=True,
-            )
-            self.assertEqual(second.returncode, 0, second.stderr)
-            self.assertEqual(
-                second.stdout.decode().strip(),
-                expected_receipt,
-            )
-            self.assertEqual(source_file.read_text(encoding="utf-8"), "new\n")
-            self.assertEqual(
-                {
-                    path.name: path.read_bytes()
-                    for path in receipts.iterdir()
-                    if path.is_file()
-                },
-                committed_snapshot,
-            )
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-
-    def test_incremental_stale_attempt_preserves_backup_and_receipts(self):
-        module = load_module()
-        root = ROOT / ".sitian-sync-stale-fixture"
-        source_file = root / "source" / "tools" / "allowed.py"
-        receipts = root / "receipts"
-        nonce = "stale-overlap"
-        backup = root / f".incoming-sync-{nonce}"
-        path_receipt = receipts / f"sync-{nonce}.paths.txt"
-        hash_receipt = receipts / f"sync-{nonce}.sha256"
-        state_receipt = receipts / f"sync-{nonce}.state"
-        config = SimpleNamespace(remote_root=str(root))
-        command, _ = module._incremental_remote_command(
-            config,
-            ["tools/allowed.py"],
-            nonce=nonce,
+        config = module.ScratchConfig.default(ROOT)
+        rejected = module.subprocess.CompletedProcess(
+            ["ssh"],
+            76,
+            "",
+            "incremental sync requires full init",
         )
-        try:
-            source_file.parent.mkdir(parents=True)
-            source_file.write_text("verified\n", encoding="utf-8")
-            receipts.mkdir()
-            backup.mkdir()
-            (backup / "owner-sentinel").write_text(
-                "old attempt\n",
-                encoding="utf-8",
-            )
-            path_receipt.write_text(
-                "tools/allowed.py\n",
-                encoding="utf-8",
-            )
-            hash_receipt.write_text(
-                "0" * 64 + "  tools/allowed.py\n",
-                encoding="utf-8",
-            )
-            state_receipt.write_text("started\n", encoding="utf-8")
-            receipt_snapshot = {
-                path.name: path.read_bytes()
-                for path in receipts.iterdir()
-            }
-            result = subprocess.run(
-                ("/bin/sh", "-c", command),
-                input=b"",
-                capture_output=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(
-                source_file.read_text(encoding="utf-8"),
-                "verified\n",
-            )
-            self.assertTrue((backup / "owner-sentinel").is_file())
-            self.assertEqual(
-                {
-                    path.name: path.read_bytes()
-                    for path in receipts.iterdir()
-                },
-                receipt_snapshot,
-            )
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-
-    def test_incremental_uncommitted_fault_boundaries_roll_back_everything(self):
-        module = load_module()
-        archive = self._single_file_archive(
-            "tools/allowed.py",
-            b"new\n",
-        )
-        failure_points = (
-            "before_file_rename",
-            "after_file_rename",
-            "after_path_receipt_publish",
-            "after_hash_receipt_publish",
-            "before_state_receipt_publish",
-        )
-        for failure_point in failure_points:
-            with self.subTest(failure_point=failure_point):
-                root = ROOT / f".sitian-sync-fault-{failure_point}"
-                nonce = f"fault-{failure_point}"
-                source_file = root / "source" / "tools" / "allowed.py"
-                receipts = root / "receipts"
-                config = SimpleNamespace(remote_root=str(root))
-                command, _ = module._incremental_remote_command(
+        with mock.patch.object(
+            module,
+            "_resolve_local_head",
+            return_value="b" * 40,
+        ), mock.patch.object(
+            module,
+            "_stream_with_retries",
+            return_value=rejected,
+        ) as stream, mock.patch.object(
+            module,
+            "_remote_command",
+        ) as remote:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "incremental source sync failed",
+            ):
+                module._sync(
                     config,
-                    ["tools/allowed.py"],
-                    nonce=nonce,
+                    ["tools/sitian_remote_scratch.py"],
                 )
-                try:
-                    source_file.parent.mkdir(parents=True)
-                    source_file.write_text("old\n", encoding="utf-8")
-                    result = self._run_incremental_fixture(
-                        command,
-                        archive,
-                        failure_point,
-                    )
-                    self.assertEqual(
-                        result.returncode,
-                        129,
-                        f"{failure_point} did not interrupt transaction",
-                    )
-                    self.assertEqual(
-                        source_file.read_text(encoding="utf-8"),
-                        "old\n",
-                    )
-                    self.assertFalse(
-                        any(receipts.glob(f"sync-{nonce}.*"))
-                        if receipts.exists()
-                        else False
-                    )
-                    self.assertFalse(
-                        (root / f".incoming-sync-{nonce}").exists()
-                    )
-                    self.assertFalse(
-                        (root / ".sync-transaction-lock").exists()
-                    )
-                finally:
-                    shutil.rmtree(root, ignore_errors=True)
 
-    def test_incremental_committed_fault_releases_owned_lock_for_next_nonce(self):
+        stream.assert_called_once()
+        remote.assert_not_called()
+
+    def test_production_controller_has_no_fault_injector_or_old_state_machine(
+        self,
+    ):
         module = load_module()
-        root = ROOT / ".sitian-sync-committed-cleanup-fixture"
-        source_file = root / "source" / "tools" / "allowed.py"
-        config = SimpleNamespace(remote_root=str(root))
-        first_nonce = "committed-cleanup-first"
-        second_nonce = "committed-cleanup-second"
-        first_command, _ = module._incremental_remote_command(
-            config,
-            ["tools/allowed.py"],
-            nonce=first_nonce,
-        )
-        second_command, second_receipt = module._incremental_remote_command(
-            config,
-            ["tools/allowed.py"],
-            nonce=second_nonce,
-        )
-        try:
-            source_file.parent.mkdir(parents=True)
-            source_file.write_text("old\n", encoding="utf-8")
-            first = self._run_incremental_fixture(
-                first_command,
-                self._single_file_archive(
-                    "tools/allowed.py",
-                    b"first\n",
-                ),
-                "after_state_receipt_publish",
-            )
-            self.assertEqual(
-                first.returncode,
-                129,
-                "post-commit failure injection did not interrupt response",
-            )
-            self.assertEqual(
-                source_file.read_text(encoding="utf-8"),
-                "first\n",
-            )
-            receipts = root / "receipts"
-            for suffix in ("paths.txt", "sha256", "state"):
-                self.assertTrue(
-                    (receipts / f"sync-{first_nonce}.{suffix}").is_file()
-                )
-            self.assertFalse((root / ".sync-transaction-lock").exists())
-            self.assertFalse(
-                (root / f".incoming-sync-{first_nonce}").exists()
-            )
-
-            second = self._run_incremental_fixture(
-                second_command,
-                self._single_file_archive(
-                    "tools/allowed.py",
-                    b"second\n",
-                ),
-            )
-            self.assertEqual(second.returncode, 0, second.stderr)
-            self.assertEqual(second.stdout.decode().strip(), second_receipt)
-            self.assertEqual(
-                source_file.read_text(encoding="utf-8"),
-                "second\n",
-            )
-            self.assertFalse((root / ".sync-transaction-lock").exists())
-            self.assertFalse(
-                (root / f".incoming-sync-{second_nonce}").exists()
-            )
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-
-    def test_incremental_remote_parent_symlink_fails_without_side_effects(self):
-        module = load_module()
-        root = ROOT / ".sitian-sync-parent-symlink-fixture"
-        outside = ROOT / ".sitian-sync-parent-symlink-outside"
-        source_parent = root / "source" / "pkg"
-        outside_file = outside / "allowed.py"
-        nonce = "parent-symlink"
-        config = SimpleNamespace(remote_root=str(root))
-        command, _ = module._incremental_remote_command(
-            config,
-            ["pkg/allowed.py"],
-            nonce=nonce,
-        )
-        try:
-            source_parent.parent.mkdir(parents=True)
-            outside.mkdir()
-            outside_file.write_text("outside-old\n", encoding="utf-8")
-            source_parent.symlink_to(outside, target_is_directory=True)
-            result = self._run_incremental_fixture(
-                command,
-                self._single_file_archive(
-                    "pkg/allowed.py",
-                    b"outside-new\n",
-                ),
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b"full init", result.stderr)
-            self.assertTrue(source_parent.is_symlink())
-            self.assertEqual(
-                outside_file.read_text(encoding="utf-8"),
-                "outside-old\n",
-            )
-            receipts = root / "receipts"
-            self.assertFalse(
-                any(receipts.glob(f"sync-{nonce}.*"))
-                if receipts.exists()
-                else False
-            )
-            self.assertFalse((root / f".incoming-sync-{nonce}").exists())
-            self.assertFalse((root / ".sync-transaction-lock").exists())
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-            shutil.rmtree(outside, ignore_errors=True)
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertFalse(hasattr(module, "_incremental_remote_command"))
+        self.assertFalse(hasattr(module, "_incremental_commit_status_command"))
+        for forbidden in (
+            "SITIAN_SYNC_FAIL_POINT",
+            "testing-fault-point",
+            "checkpoint()",
+            "transaction_committed()",
+            "rollback_commands",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
 
     def test_stream_pipeline_closes_and_propagates_producer_failure(self):
         driver = r"""

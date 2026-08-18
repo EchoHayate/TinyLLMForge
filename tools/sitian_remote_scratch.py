@@ -26,12 +26,14 @@ LOCAL_REPO_ROOT = Path("/Users/bytedance/dev/TinyLLMForge")
 REMOTE_SOURCE_ROOT = Path(REMOTE_ROOT) / "source"
 REMOTE_TASK1_TEST_ROOT = Path(REMOTE_ROOT) / "red-task1"
 REMOTE_TASK2_TEST_ROOT = Path(REMOTE_ROOT) / "task2-red-c1bd1ae"
+REMOTE_TASK3_TEST_ROOT = Path(REMOTE_ROOT) / "task3-red-80f2531"
 APPROVED_REPO_ROOTS = frozenset(
     {
         LOCAL_REPO_ROOT,
         REMOTE_SOURCE_ROOT,
         REMOTE_TASK1_TEST_ROOT,
         REMOTE_TASK2_TEST_ROOT,
+        REMOTE_TASK3_TEST_ROOT,
     }
 )
 FORBIDDEN_ALWAYS_DIRS = (
@@ -211,7 +213,7 @@ def ssh_argv(config: ScratchConfig) -> tuple[str, ...]:
     return (
         "ssh",
         "-o",
-        "ProxyCommand=nc -x 127.0.0.1:63445 -X 5 -w 10 %h %p",
+        "ProxyCommand=nc -x 127.0.0.1:63223 -X 5 -w 10 %h %p",
         "-o",
         "ControlMaster=no",
         "-o",
@@ -395,17 +397,46 @@ def initial_snapshot_commands(
 def incremental_sync_commands(
     config: ScratchConfig,
     paths: Sequence[str],
+    *,
+    nonce: Optional[str] = None,
+    source_head: Optional[str] = None,
 ) -> dict[str, tuple[str, ...]]:
     checked = validate_relative_paths(paths, repo_root=config.repo_root)
+    transaction_nonce = (
+        f"{int(time.time())}-{os.getpid()}-{time.time_ns()}"
+        if nonce is None
+        else nonce
+    )
+    head = (
+        _resolve_local_head(config)
+        if source_head is None
+        else source_head
+    )
+    helper = (
+        f"{config.remote_root}/source/tools/"
+        "sitian_remote_transaction.py"
+    )
+    command = [
+        "set -eu;",
+        f"root={shlex.quote(config.remote_root)};",
+        "python3",
+        shlex.quote(helper),
+        "sync-commit",
+        "--remote-root",
+        '"$root"',
+        "--nonce",
+        shlex.quote(transaction_nonce),
+        "--source-head",
+        shlex.quote(head),
+    ]
+    for path in checked:
+        command.extend(("--path", shlex.quote(path)))
     return {
         "tar": incremental_tar_argv(
             checked,
             repo_root=config.repo_root,
         ),
-        "ssh": (
-            *ssh_argv(config),
-            f"tar -xf - -C {shlex.quote(config.remote_root + '/source')}",
-        ),
+        "ssh": (*ssh_argv(config), " ".join(command)),
     }
 
 
@@ -413,6 +444,24 @@ def _command_environment(config: ScratchConfig) -> dict[str, str]:
     environment = os.environ.copy()
     environment["KRB5CCNAME"] = config.krb5_cache
     return environment
+
+
+def _resolve_local_head(config: ScratchConfig) -> str:
+    result = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=config.repo_root,
+        env=_command_environment(config),
+        capture_output=True,
+        text=True,
+    )
+    head = result.stdout.strip()
+    if (
+        result.returncode != 0
+        or len(head) != 40
+        or any(character not in "0123456789abcdef" for character in head)
+    ):
+        raise RuntimeError("unable to resolve local HEAD")
+    return head
 
 
 def _remote_command(
@@ -561,252 +610,8 @@ def _stream_with_retries(
     return last
 
 
-def _incremental_remote_command(
-    config: ScratchConfig,
-    paths: Sequence[str],
-    *,
-    nonce: str,
-) -> tuple[str, str]:
-    root = config.remote_root
-    source = f"{root}/source"
-    receipts = f"{root}/receipts"
-    backup = f"{root}/.incoming-sync-{nonce}"
-    path_receipt = f"{receipts}/sync-{nonce}.paths.txt"
-    hash_receipt = f"{receipts}/sync-{nonce}.sha256"
-    state_receipt = f"{receipts}/sync-{nonce}.state"
-    lock = f"{root}/.sync-transaction-lock"
-    backup_commands = []
-    rollback_commands = []
-    verify_commands = []
-    apply_commands = []
-    topology_commands = []
-    checked_parents = set()
-    for path in paths:
-        quoted_path = shlex.quote(path)
-        posix_path = PurePosixPath(path)
-        parent = posix_path.parent.as_posix()
-        quoted_parent = shlex.quote(parent)
-        parent_parts = posix_path.parts[:-1]
-        for index in range(1, len(parent_parts) + 1):
-            parent_path = PurePosixPath(*parent_parts[:index]).as_posix()
-            if parent_path in checked_parents:
-                continue
-            checked_parents.add(parent_path)
-            quoted_parent_path = shlex.quote(parent_path)
-            topology_commands.append(
-                f"if test -e \"$source\"/{quoted_parent_path} || "
-                f"test -L \"$source\"/{quoted_parent_path}; then "
-                f"if test -L \"$source\"/{quoted_parent_path} || "
-                f"test ! -d \"$source\"/{quoted_parent_path}; then "
-                "printf '%s\\n' "
-                f"{shlex.quote('incremental sync requires full init: unsafe remote parent ' + parent_path)} "
-                ">&2; exit 76; fi; "
-                "else printf '%s\\n' "
-                f"{shlex.quote('incremental sync requires full init: missing remote parent ' + parent_path)} "
-                ">&2; exit 76; fi"
-            )
-        topology_commands.append(
-            f"if test -e \"$source\"/{quoted_path} || "
-            f"test -L \"$source\"/{quoted_path}; then "
-            f"if test -L \"$source\"/{quoted_path} || "
-            f"test ! -f \"$source\"/{quoted_path}; then "
-            "printf '%s\\n' "
-            f"{shlex.quote('incremental sync requires full init: unsafe remote final ' + path)} "
-            ">&2; exit 76; fi; fi"
-        )
-        temporary_name = f".sync-{nonce}-{posix_path.name}"
-        temporary_path = (
-            posix_path.parent / temporary_name
-        ).as_posix()
-        quoted_temporary_path = shlex.quote(temporary_path)
-        backup_commands.append(
-            "mkdir -p \"$backup/original\"/"
-            f"{quoted_parent}; "
-            f"if test -e \"$source\"/{quoted_path} || "
-            f"test -L \"$source\"/{quoted_path}; then "
-            f"test -f \"$source\"/{quoted_path}; "
-            f"test ! -L \"$source\"/{quoted_path}; "
-            f"cp -p \"$source\"/{quoted_path} "
-            f"\"$backup/original\"/{quoted_path}; "
-            f"printf '%s\\n' {quoted_path} >> \"$backup/existing\"; "
-            "fi"
-        )
-        rollback_commands.append(
-            f"if grep -Fqx -- {quoted_path} \"$backup/intended\"; then "
-            f"if grep -Fqx -- {quoted_path} \"$backup/existing\"; then "
-            f"cp -p \"$backup/original\"/{quoted_path} "
-            f"\"$source\"/{quoted_path} 2>/dev/null || true; "
-            f"else rm -f \"$source\"/{quoted_path}; fi; fi; "
-            f"rm -f \"$source\"/{quoted_temporary_path}"
-        )
-        verify_commands.append(
-            f"test -f \"$backup/incoming\"/{quoted_path}; "
-            f"test ! -L \"$backup/incoming\"/{quoted_path}"
-        )
-        apply_commands.append(
-            f"cp -p \"$backup/incoming\"/{quoted_path} "
-            f"\"$source\"/{quoted_temporary_path}; "
-            f"printf '%s\\n' {quoted_path} >> \"$backup/intended\"; "
-            "checkpoint before_file_rename; "
-            f"mv \"$source\"/{quoted_temporary_path} "
-            f"\"$source\"/{quoted_path}; "
-            "checkpoint after_file_rename"
-        )
-    path_lines = "".join(
-        f"printf '%s\\n' {shlex.quote(path)}; " for path in paths
-    )
-    hash_operands = " ".join(shlex.quote(path) for path in paths)
-    command = (
-        "set -eu; "
-        f"root={shlex.quote(root)}; source={shlex.quote(source)}; "
-        f"receipts={shlex.quote(receipts)}; backup={shlex.quote(backup)}; "
-        f"path_receipt={shlex.quote(path_receipt)}; "
-        f"hash_receipt={shlex.quote(hash_receipt)}; "
-        f"state_receipt={shlex.quote(state_receipt)}; "
-        f"lock={shlex.quote(lock)}; nonce={shlex.quote(nonce)}; "
-        "test -d \"$source\"; test ! -L \"$source\"; "
-        "mkdir -p \"$receipts\"; "
-        "if test -f \"$state_receipt\"; then "
-        "test \"$(cat \"$state_receipt\")\" = committed; "
-        "test -f \"$path_receipt\"; test -f \"$hash_receipt\"; "
-        "printf '%s\\n' \"$hash_receipt\"; exit 0; fi; "
-        "if test -e \"$backup\" || test -L \"$backup\" || "
-        "test -e \"$path_receipt\" || test -L \"$path_receipt\" || "
-        "test -e \"$hash_receipt\" || test -L \"$hash_receipt\" || "
-        "test -e \"$state_receipt\" || test -L \"$state_receipt\"; then "
-        "exit 75; fi; "
-        "mkdir \"$backup\" || exit 75; "
-        "mkdir -p \"$backup/incoming\" \"$backup/original\"; "
-        ": > \"$backup/existing\"; : > \"$backup/intended\"; "
-        "committed=0; lock_owned=0; "
-        "checkpoint() { "
-        "if test \"${SITIAN_SYNC_FAIL_POINT-}\" = \"$1\"; then "
-        "kill -HUP \"$$\"; fi; "
-        "}; "
-        "transaction_committed() { "
-        "test -f \"$state_receipt\" && test ! -L \"$state_receipt\" && "
-        "test \"$(cat \"$state_receipt\")\" = committed && "
-        "test -f \"$path_receipt\" && test ! -L \"$path_receipt\" && "
-        "test -f \"$hash_receipt\" && test ! -L \"$hash_receipt\"; "
-        "}; "
-        "release_lock() { "
-        "if test \"$lock_owned\" -eq 0; then return 0; fi; "
-        "released_lock=\"$backup/released-lock\"; "
-        "if test -f \"$lock/owner\" && test ! -L \"$lock/owner\" && "
-        "test \"$(cat \"$lock/owner\")\" = \"$nonce\"; then "
-        "rm -rf \"$released_lock\"; "
-        "if mv \"$lock\" \"$released_lock\"; then "
-        "lock_owned=0; return 0; fi; "
-        "elif test -f \"$released_lock/owner\" && "
-        "test ! -L \"$released_lock/owner\" && "
-        "test \"$(cat \"$released_lock/owner\")\" = \"$nonce\"; then "
-        "lock_owned=0; return 0; "
-        "fi; "
-        "return 1; "
-        "}; "
-        "cleanup() { "
-        "status=$?; trap - EXIT HUP INT TERM; "
-        "if transaction_committed; then committed=1; fi; "
-        "if test \"$committed\" -eq 0; then "
-        + "; ".join(rollback_commands)
-        + "; "
-        "rm -f \"$path_receipt\" \"$hash_receipt\" \"$state_receipt\"; "
-        "fi; "
-        "release_lock || true; "
-        "rm -rf \"$backup\"; "
-        "exit \"$status\"; "
-        "}; "
-        "on_hup() { exit 129; }; "
-        "on_int() { exit 130; }; "
-        "on_term() { exit 143; }; "
-        "enable_signal_traps() { "
-        "trap on_hup HUP; trap on_int INT; trap on_term TERM; "
-        "}; "
-        "trap cleanup EXIT; "
-        "enable_signal_traps; "
-        "tar -xf - -C \"$backup/incoming\"; "
-        + _forbidden_verification_checks('"$backup/incoming"')
-        + "; "
-        + "; ".join(verify_commands)
-        + "; "
-        "path_new=\"$backup/paths.txt\"; "
-        "hash_new=\"$backup/files.sha256\"; "
-        "state_new=\"$backup/state\"; "
-        "{ "
-        + path_lines
-        + "} > \"$path_new\"; "
-        f"(cd \"$backup/incoming\" && sha256sum -- {hash_operands}) "
-        "> \"$hash_new\"; "
-        "trap '' HUP INT TERM; "
-        "if ! mkdir \"$lock\"; then "
-        "enable_signal_traps; exit 75; fi; "
-        "lock_owned=1; "
-        "if ! printf '%s\\n' \"$nonce\" > \"$lock/owner\"; then "
-        "rm -f \"$lock/owner\"; rmdir \"$lock\" 2>/dev/null || true; "
-        "lock_owned=0; enable_signal_traps; exit 75; fi; "
-        "enable_signal_traps; "
-        + "; ".join(topology_commands)
-        + "; "
-        + "; ".join(backup_commands)
-        + "; "
-        + "; ".join(apply_commands)
-        + "; "
-        "mv \"$path_new\" \"$path_receipt\"; "
-        "checkpoint after_path_receipt_publish; "
-        "mv \"$hash_new\" \"$hash_receipt\"; "
-        "checkpoint after_hash_receipt_publish; "
-        "printf 'committed\\n' > \"$state_new\"; "
-        "checkpoint before_state_receipt_publish; "
-        "mv \"$state_new\" \"$state_receipt\"; "
-        "checkpoint after_state_receipt_publish; committed=1; "
-        "trap '' HUP INT TERM; "
-        "release_lock; "
-        "enable_signal_traps; "
-        "rm -rf \"$backup\"; "
-        "trap - EXIT HUP INT TERM; "
-        "printf '%s\\n' \"$hash_receipt\""
-    )
-    return command, hash_receipt
-
-
-def _incremental_commit_status_command(
-    config: ScratchConfig,
-    *,
-    nonce: str,
-) -> str:
-    receipts = f"{config.remote_root}/receipts"
-    path_receipt = f"{receipts}/sync-{nonce}.paths.txt"
-    hash_receipt = f"{receipts}/sync-{nonce}.sha256"
-    state_receipt = f"{receipts}/sync-{nonce}.state"
-    return (
-        "set -eu; "
-        f"path_receipt={shlex.quote(path_receipt)}; "
-        f"hash_receipt={shlex.quote(hash_receipt)}; "
-        f"state_receipt={shlex.quote(state_receipt)}; "
-        "attempt=0; "
-        "while test \"$attempt\" -lt 100; do "
-        "if test -f \"$state_receipt\"; then "
-        "state=$(cat \"$state_receipt\"); "
-        "if test \"$state\" = committed; then "
-        "test -f \"$path_receipt\"; test -f \"$hash_receipt\"; "
-        "printf '%s\\n' \"$hash_receipt\"; exit 0; fi; "
-        "exit 1; fi; "
-        "attempt=$((attempt + 1)); sleep 0.1; "
-        "done; exit 1"
-    )
-
-
 def _initialize(config: ScratchConfig) -> tuple[str, int]:
-    head_result = subprocess.run(
-        ("git", "rev-parse", "HEAD"),
-        cwd=config.repo_root,
-        env=_command_environment(config),
-        capture_output=True,
-        text=True,
-    )
-    head = head_result.stdout.strip()
-    if head_result.returncode != 0 or len(head) != 40:
-        raise RuntimeError("unable to resolve local HEAD")
+    head = _resolve_local_head(config)
     commands = initial_snapshot_commands(config)
     stream_result = _stream_with_retries(
         commands["archive"],
@@ -834,50 +639,77 @@ def _sync(
     config: ScratchConfig,
     paths: Sequence[str],
 ) -> tuple[str, int]:
-    commands = incremental_sync_commands(config, paths)
     checked = validate_relative_paths(paths, repo_root=config.repo_root)
     nonce = f"{int(time.time())}-{os.getpid()}-{time.time_ns()}"
-    remote_command, expected_receipt = _incremental_remote_command(
+    head = _resolve_local_head(config)
+    commands = incremental_sync_commands(
         config,
         checked,
         nonce=nonce,
+        source_head=head,
+    )
+    expected_receipt = (
+        f"{config.remote_root}/receipts/sync-{nonce}.sha256"
     )
     result = _stream_with_retries(
         commands["tar"],
-        (*ssh_argv(config), remote_command),
+        commands["ssh"],
         config=config,
         attempts=1,
     )
     receipt = result.stdout.strip()
-    if result.returncode != 0 or receipt != expected_receipt:
-        status = _remote_command(
-            config,
-            _incremental_commit_status_command(config, nonce=nonce),
+    if result.returncode == 255:
+        helper = (
+            f"{config.remote_root}/source/tools/"
+            "sitian_remote_transaction.py"
         )
-        receipt = status.stdout.strip()
-        if status.returncode != 0 or receipt != expected_receipt:
+        confirm_parts = [
+            "set -eu;",
+            "python3",
+            shlex.quote(helper),
+            "confirm",
+            "--remote-root",
+            shlex.quote(config.remote_root),
+            "--nonce",
+            shlex.quote(nonce),
+            "--operation",
+            "sync",
+            "--source-head",
+            shlex.quote(head),
+        ]
+        for path in checked:
+            confirm_parts.extend(("--path", shlex.quote(path)))
+        confirmation = _remote_command(
+            config,
+            " ".join(confirm_parts),
+        )
+        receipt = confirmation.stdout.strip()
+        if (
+            confirmation.returncode != 0
+            or receipt != expected_receipt
+        ):
             raise RuntimeError("incremental source sync failed")
-    if receipt != expected_receipt:
+    elif result.returncode != 0:
+        raise RuntimeError("incremental source sync failed")
+    elif receipt != expected_receipt:
         raise RuntimeError("invalid incremental sync receipt")
     return receipt, len(checked)
 
 
 def _status(config: ScratchConfig) -> tuple[str, int, str]:
-    root = shlex.quote(config.remote_root)
-    command = (
-        "set -eu; "
-        f"root={root}; receipts=\"$root/receipts\"; "
-        "head=missing; count=0; latest=none; "
-        "if test -f \"$receipts/source-head.txt\"; then "
-        "head=$(cat \"$receipts/source-head.txt\"); fi; "
-        "if test -f \"$receipts/source-files.sha256\"; then "
-        "count=$(wc -l < \"$receipts/source-files.sha256\"); fi; "
-        "candidate=$(find \"$receipts\" -maxdepth 1 -type f "
-        "-name 'sync-*.sha256' -printf '%f\\n' 2>/dev/null | "
-        "LC_ALL=C sort | tail -n 1); "
-        "if test -n \"$candidate\"; then latest=\"$receipts/$candidate\"; fi; "
-        "printf 'head=%s\\ncount=%s\\nlatest=%s\\n' "
-        "\"$head\" \"$count\" \"$latest\""
+    helper = (
+        f"{config.remote_root}/source/tools/"
+        "sitian_remote_transaction.py"
+    )
+    command = " ".join(
+        (
+            "set -eu;",
+            "python3",
+            shlex.quote(helper),
+            "status",
+            "--remote-root",
+            shlex.quote(config.remote_root),
+        )
     )
     result = _remote_command(config, command)
     if result.returncode != 0:
