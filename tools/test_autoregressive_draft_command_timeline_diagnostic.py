@@ -16,6 +16,11 @@ MODULE_PATH = (
     / "tools"
     / "autoregressive_draft_command_timeline_diagnostic.py"
 )
+VERIFIER_PATH = (
+    ROOT
+    / "tools"
+    / "verify_autoregressive_draft_command_timeline_diagnostic.py"
+)
 assert MODULE_PATH.exists(), f"missing module: {MODULE_PATH}"
 SPEC = importlib.util.spec_from_file_location(
     "autoregressive_draft_command_timeline_diagnostic_test_module",
@@ -25,6 +30,15 @@ assert SPEC is not None and SPEC.loader is not None
 diagnostic = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = diagnostic
 SPEC.loader.exec_module(diagnostic)
+
+
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _sha(value: object) -> str:
@@ -1784,3 +1798,466 @@ def test_canonical_json_rejects_oversized_integer_data():
         diagnostic.canonical_json_bytes({
             "timestamp": 1 << 80,
         })
+
+
+DETACHED_COMMAND_TIMELINE_PATHS = {
+    "manifest.sha256",
+    "verify.command-timeline.remote.json",
+    "verify.command-timeline.remote.log",
+    "verify.command-timeline.local.json",
+    "verify.command-timeline.local.log",
+}
+
+
+def _sha_path(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(diagnostic.canonical_json_bytes(payload))
+
+
+def _result_summary(artifact_path: Path, artifact: dict) -> dict:
+    return {
+        "artifact_sha256": _sha_path(artifact_path),
+        "classification": artifact["classification"],
+        "localized_boundary": artifact["localized_boundary"],
+        "runtime_optimization_authorized": artifact[
+            "classification"
+        ] == "BOUNDARY_LOCALIZED",
+        "performance_improvement_established": False,
+        "phase_1_complete": False,
+        "promotion_ready": False,
+    }
+
+
+def _write_manifest(bundle_root: Path) -> Path:
+    manifest_path = bundle_root / "manifest.sha256"
+    rows = []
+    for path in sorted(
+        candidate
+        for candidate in bundle_root.rglob("*")
+        if (
+            candidate.is_file()
+            and candidate.relative_to(bundle_root).as_posix()
+            not in DETACHED_COMMAND_TIMELINE_PATHS
+        )
+    ):
+        relative = path.relative_to(bundle_root).as_posix()
+        rows.append(f"{_sha_path(path)}  {relative}")
+    manifest_path.write_text(
+        "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _refresh_artifact_result_and_manifest(
+    bundle_root: Path,
+    artifact: dict,
+) -> None:
+    artifact_path = bundle_root / "command-timeline.json"
+    _write_json(artifact_path, artifact)
+    _write_json(
+        bundle_root / "result.json",
+        _result_summary(artifact_path, artifact),
+    )
+    _write_manifest(bundle_root)
+
+
+@pytest.fixture
+def command_timeline_bundle(tmp_path) -> dict:
+    bundle_root = tmp_path / "bundle"
+    source_root = tmp_path / "source-root"
+    bundle_root.mkdir()
+    source_path = source_root / "tools" / "source.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("BOUND_SOURCE = True\n", encoding="utf-8")
+    source_files = {
+        "tools/source.py": _sha_path(source_path),
+    }
+    metadata = {
+        "configuration": copy.deepcopy(
+            diagnostic.EXACT_CONFIGURATION
+        ),
+        "provenance": {
+            "run_tag": "task6-source-bound",
+            "captured_at_unix_ns": 1_800_000_000_000_000_000,
+        },
+    }
+    metadata_path = bundle_root / "metadata.json"
+    source_manifest_path = bundle_root / "source_manifest.json"
+    _write_json(metadata_path, metadata)
+    _write_json(source_manifest_path, source_files)
+
+    raw_epochs = _raw_epochs()
+    input_files = {
+        "metadata": {
+            "path": "metadata.json",
+            "sha256": _sha_path(metadata_path),
+        },
+        "source_manifest": {
+            "path": "source_manifest.json",
+            "sha256": _sha_path(source_manifest_path),
+        },
+    }
+    for identity in diagnostic.expected_epoch_identities():
+        worker_path = (
+            bundle_root
+            / "workers"
+            / f"block-{identity.block_index}"
+            / f"{identity.label}.json"
+        )
+        telemetry_path = (
+            bundle_root
+            / "telemetry"
+            / f"block-{identity.block_index}"
+            / f"{identity.label}.json"
+        )
+        telemetry = {
+            "epoch_key": identity.key,
+            "bound_even_when_not_derived": True,
+        }
+        _write_json(
+            worker_path,
+            raw_epochs[identity.key]["worker"],
+        )
+        _write_json(telemetry_path, telemetry)
+        raw_epochs[identity.key]["telemetry"] = telemetry
+        input_files[f"worker:{identity.key}"] = {
+            "path": worker_path.relative_to(bundle_root).as_posix(),
+            "sha256": _sha_path(worker_path),
+        }
+        input_files[f"telemetry:{identity.key}"] = {
+            "path": telemetry_path.relative_to(
+                bundle_root
+            ).as_posix(),
+            "sha256": _sha_path(telemetry_path),
+        }
+
+    artifact = diagnostic.build_command_timeline_artifact(
+        metadata=metadata,
+        epoch_raw_inputs=raw_epochs,
+        input_files=input_files,
+        source_files=source_files,
+    )
+    artifact_path = bundle_root / "command-timeline.json"
+    _write_json(artifact_path, artifact)
+    _write_json(
+        bundle_root / "result.json",
+        _result_summary(artifact_path, artifact),
+    )
+    (bundle_root / "source.patch").write_bytes(b"")
+    manifest_path = _write_manifest(bundle_root)
+    return {
+        "artifact": artifact,
+        "artifact_path": artifact_path,
+        "bundle_root": bundle_root,
+        "manifest_path": manifest_path,
+        "source_root": source_root,
+    }
+
+
+def test_verifier_recomputes_complete_source_bound_bundle(
+    command_timeline_bundle,
+):
+    verifier = load_module(VERIFIER_PATH, "command_timeline_verifier")
+    receipt = verifier.verify_command_timeline_diagnostic(
+        artifact_path=command_timeline_bundle["artifact_path"],
+        source_root=command_timeline_bundle["source_root"],
+        manifest_path=command_timeline_bundle["manifest_path"],
+    )
+    artifact = command_timeline_bundle["artifact"]
+    assert receipt["verified"] is True
+    assert receipt["artifact_sha256"] == _sha_path(
+        command_timeline_bundle["artifact_path"]
+    )
+    assert receipt["classification"] == artifact["classification"]
+    assert receipt["localized_boundary"] == artifact[
+        "localized_boundary"
+    ]
+    assert receipt["runtime_optimization_authorized"] is True
+    assert receipt["performance_improvement_established"] is False
+    assert receipt["phase_1_complete"] is False
+    assert receipt["promotion_ready"] is False
+    assert receipt["source_file_count"] == 1
+    assert receipt["raw_input_file_count"] == 18
+    assert receipt["manifest_verified"] is True
+    assert receipt["manifest_file_count"] == 21
+    assert receipt["source_inventory_sha256"] == (
+        diagnostic.canonical_json_sha256(artifact["source_files"])
+    )
+    assert receipt["raw_input_inventory_sha256"] == (
+        diagnostic.canonical_json_sha256(
+            artifact["raw_input_files"]
+        )
+    )
+    assert receipt["manifest_sha256"] == _sha_path(
+        command_timeline_bundle["manifest_path"]
+    )
+    assert receipt["verifier_source_sha256"] == _sha_path(
+        VERIFIER_PATH
+    )
+
+
+def test_verifier_rejects_worker_byte_tamper(
+    command_timeline_bundle,
+):
+    worker = (
+        command_timeline_bundle["bundle_root"]
+        / "workers"
+        / "block-0"
+        / "eager.json"
+    )
+    worker.write_bytes(worker.read_bytes() + b"\n")
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_worker_byte_tamper",
+    )
+    with pytest.raises(ValueError, match="raw input hash mismatch"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
+def test_verifier_rejects_timeline_row_raw_tamper_after_rebinding(
+    command_timeline_bundle,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    worker_path = bundle_root / "workers" / "block-0" / "eager.json"
+    worker = json.loads(worker_path.read_text(encoding="utf-8"))
+    for snapshot in worker["measured_runs"][0]["runtime"][
+        "command_timeline"
+    ]["rank_snapshots"]:
+        snapshot["rows"][0]["method_name"] = "prepare-tampered"
+    _write_json(worker_path, worker)
+    artifact = copy.deepcopy(command_timeline_bundle["artifact"])
+    first_key = diagnostic.expected_epoch_identities()[0].key
+    artifact["raw_input_files"][f"worker:{first_key}"]["sha256"] = (
+        _sha_path(worker_path)
+    )
+    _refresh_artifact_result_and_manifest(bundle_root, artifact)
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_timeline_row_raw_tamper",
+    )
+    with pytest.raises(
+        ValueError,
+        match="canonical artifact mismatch after recomputation",
+    ):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
+def test_verifier_rejects_source_file_tamper(
+    command_timeline_bundle,
+):
+    source = (
+        command_timeline_bundle["source_root"]
+        / "tools"
+        / "source.py"
+    )
+    source.write_text("BOUND_SOURCE = False\n", encoding="utf-8")
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_source_tamper",
+    )
+    with pytest.raises(ValueError, match="source hash mismatch"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ["/absolute.json", "../escape.json"],
+)
+def test_manifest_rejects_unsafe_absolute_or_parent_path(
+    command_timeline_bundle,
+    unsafe_path,
+):
+    manifest = command_timeline_bundle["manifest_path"]
+    rows = manifest.read_text(encoding="utf-8").splitlines()
+    digest = rows[0].split("  ", 1)[0]
+    rows[0] = f"{digest}  {unsafe_path}"
+    manifest.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_manifest_unsafe",
+    )
+    with pytest.raises(ValueError, match="safe relative"):
+        verifier.verify_manifest(
+            manifest,
+            command_timeline_bundle["bundle_root"],
+        )
+
+
+def test_manifest_rejects_duplicate_path(command_timeline_bundle):
+    manifest = command_timeline_bundle["manifest_path"]
+    rows = manifest.read_text(encoding="utf-8").splitlines()
+    manifest.write_text(
+        "\n".join([*rows, rows[0]]) + "\n",
+        encoding="utf-8",
+    )
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_manifest_duplicate",
+    )
+    with pytest.raises(ValueError, match="duplicated"):
+        verifier.verify_manifest(
+            manifest,
+            command_timeline_bundle["bundle_root"],
+        )
+
+
+def test_verifier_rejects_missing_authoritative_result(
+    command_timeline_bundle,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    (bundle_root / "result.json").unlink()
+    _write_manifest(bundle_root)
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_missing_authoritative",
+    )
+    with pytest.raises(ValueError, match="authoritative file is missing"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
+def test_manifest_rejects_extra_unlisted_authoritative_file(
+    command_timeline_bundle,
+):
+    (
+        command_timeline_bundle["bundle_root"] / "unlisted.json"
+    ).write_text("{}\n", encoding="utf-8")
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_manifest_extra",
+    )
+    with pytest.raises(ValueError, match="manifest inventory"):
+        verifier.verify_manifest(
+            command_timeline_bundle["manifest_path"],
+            command_timeline_bundle["bundle_root"],
+        )
+
+
+def test_verifier_rejects_result_summary_mismatch(
+    command_timeline_bundle,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    result_path = bundle_root / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["localized_boundary"] = "ack_wait"
+    _write_json(result_path, result)
+    _write_manifest(bundle_root)
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_result_summary_tamper",
+    )
+    with pytest.raises(ValueError, match="result summary mismatch"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("classification", "PAIRED_PROTOCOL_UNSTABLE"),
+        ("performance_improvement_established", True),
+        ("phase_1_complete", True),
+        ("promotion_ready", True),
+    ],
+)
+def test_verifier_rejects_classification_or_false_claim_tamper(
+    command_timeline_bundle,
+    field,
+    value,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    artifact = copy.deepcopy(command_timeline_bundle["artifact"])
+    artifact[field] = value
+    if field == "classification":
+        artifact["runtime_optimization_authorized"] = False
+    _refresh_artifact_result_and_manifest(bundle_root, artifact)
+    verifier = load_module(
+        VERIFIER_PATH,
+        f"command_timeline_claim_tamper_{field}",
+    )
+    with pytest.raises(
+        ValueError,
+        match="recomputation|must remain false|canonical",
+    ):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
+def test_remote_and_local_receipts_are_canonically_equivalent(
+    command_timeline_bundle,
+    capsys,
+):
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_receipt_equivalence",
+    )
+    bundle_root = command_timeline_bundle["bundle_root"]
+    remote_path = (
+        bundle_root / "verify.command-timeline.remote.json"
+    )
+    local_path = bundle_root / "verify.command-timeline.local.json"
+    common = [
+        "--artifact",
+        str(command_timeline_bundle["artifact_path"]),
+        "--source-root",
+        str(command_timeline_bundle["source_root"]),
+        "--manifest",
+        str(command_timeline_bundle["manifest_path"]),
+    ]
+    assert verifier.main([
+        *common,
+        "--receipt",
+        str(remote_path),
+        "--verification-location",
+        "remote",
+    ]) == 0
+    capsys.readouterr()
+    assert verifier.main([
+        *common,
+        "--receipt",
+        str(local_path),
+        "--verification-location",
+        "local",
+    ]) == 0
+    capsys.readouterr()
+    remote = json.loads(remote_path.read_text(encoding="utf-8"))
+    local = json.loads(local_path.read_text(encoding="utf-8"))
+    for receipt in (remote, local):
+        assert receipt["verified_at_utc"]
+        assert receipt["verification_location"] in {"remote", "local"}
+        assert receipt["artifact_path"]
+        for field in (
+            "verified_at_utc",
+            "verification_location",
+            "artifact_path",
+        ):
+            receipt.pop(field)
+    assert diagnostic.canonical_json_bytes(remote) == (
+        diagnostic.canonical_json_bytes(local)
+    )
