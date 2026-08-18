@@ -467,10 +467,12 @@ def _resolve_local_head(config: ScratchConfig) -> str:
 def _remote_command(
     config: ScratchConfig,
     command: str,
+    *,
+    attempts: Optional[int] = None,
 ) -> subprocess.CompletedProcess[str]:
     return run_with_retries(
         (*ssh_argv(config), command),
-        attempts=config.attempts,
+        attempts=config.attempts if attempts is None else attempts,
         capture_output=True,
         env=_command_environment(config),
     )
@@ -626,7 +628,36 @@ def _initialize(config: ScratchConfig) -> tuple[str, int]:
     promote_result = _remote_command(
         config,
         remote_commit,
+        attempts=1,
     )
+    if promote_result.returncode == 255:
+        generation = PurePosixPath(str(commands["stage"]))
+        nonce = generation.parent.name
+        helper = (
+            f"{config.remote_root}/source/tools/"
+            "sitian_remote_transaction.py"
+        )
+        confirm_command = " ".join(
+            (
+                "set -eu;",
+                "python3",
+                shlex.quote(helper),
+                "confirm",
+                "--remote-root",
+                shlex.quote(config.remote_root),
+                "--nonce",
+                shlex.quote(nonce),
+                "--operation",
+                "init",
+                "--source-head",
+                shlex.quote(head),
+            )
+        )
+        confirmation = _remote_command(config, confirm_command)
+        count_text = confirmation.stdout.strip()
+        if confirmation.returncode != 0 or not count_text.isdigit():
+            raise RuntimeError("initial source promotion failed")
+        return head, int(count_text)
     if promote_result.returncode != 0:
         raise RuntimeError("initial source promotion failed")
     count_text = promote_result.stdout.strip()

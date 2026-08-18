@@ -1104,6 +1104,39 @@ def _materialize_initial_receipts_at(root_fd, receipt):
         os.close(receipts_fd)
 
 
+def _validate_initial_receipt_targets_at(root_fd):
+    try:
+        os.mkdir("receipts", 0o700, dir_fd=root_fd)
+    except FileExistsError:
+        pass
+    try:
+        receipts_fd = os.open(
+            "receipts", _DIRECTORY_FLAGS, dir_fd=root_fd
+        )
+    except OSError as exc:
+        raise TransactionError(
+            "cannot open detached receipt directory: {}".format(exc)
+        )
+    try:
+        for name in (
+            _DETACHED_HEAD_FILE,
+            _DETACHED_MANIFEST_FILE,
+            _DETACHED_TRANSACTION_FILE,
+        ):
+            try:
+                info = os.stat(
+                    name, dir_fd=receipts_fd, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                raise TransactionError(
+                    "detached receipt is not a regular file: {}".format(name)
+                )
+    finally:
+        os.close(receipts_fd)
+
+
 def _confirm_initial_generation(remote_root, generation_name, nonce, head):
     with _transaction_signal_handlers():
         with locked_remote_root(remote_root) as root_fd:
@@ -1171,6 +1204,7 @@ def promote_generation(
     receipt,
     fault_injector=None,
     receipt_factory=None,
+    pre_commit=None,
     post_commit=None,
 ):
     generation_parts = _split_relative_path(generation_name)
@@ -1212,6 +1246,8 @@ def promote_generation(
                     )
                 generation_parent_info = os.fstat(generation_parent_fd)
                 _inject(fault_injector, "after_generation_ready")
+                if pre_commit is not None:
+                    pre_commit(root_fd)
                 embedded_receipt_exists = False
                 if receipt is None:
                     if receipt_factory is None:
@@ -1414,6 +1450,7 @@ def commit_initial_generation(
         None,
         fault_injector=fault_injector,
         receipt_factory=make_receipt,
+        pre_commit=_validate_initial_receipt_targets_at,
         post_commit=_materialize_initial_receipts_at,
     )
 
@@ -1724,17 +1761,31 @@ def _read_expected_committed_at(
     source_head,
     explicit_paths
 ):
-    source_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
     try:
-        return _read_generation_fd(
-            source_fd,
-            expected_nonce=nonce,
-            expected_operation=operation,
-            expected_head=source_head,
-            expected_paths=explicit_paths,
+        source_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
+    except FileNotFoundError as exc:
+        raise _GenerationNotCommitted(
+            "matching committed source is unavailable: {}".format(exc)
         )
+    except OSError as exc:
+        raise TransactionError(
+            "cannot open committed source without following symlinks: "
+            "{}".format(exc)
+        )
+    try:
+        receipt = _read_generation_fd(source_fd)
     finally:
         os.close(source_fd)
+    if (
+        receipt.nonce != nonce
+        or receipt.operation != operation
+        or receipt.source_head != source_head
+        or receipt.explicit_paths != tuple(explicit_paths)
+    ):
+        raise _GenerationNotCommitted(
+            "source is not the expected committed generation"
+        )
+    return receipt
 
 
 def confirm_committed_generation(
@@ -1825,10 +1876,7 @@ def commit_sync_generation(
                         expected_head=head,
                         expected_paths=paths,
                     )
-                    try:
-                        _materialize_sync_receipts_at(root_fd, expected)
-                    except BaseException:
-                        pass
+                    _materialize_sync_receipts_at(root_fd, expected)
                     try:
                         _cleanup_nonce_at(root_fd, nonce)
                     except BaseException:
@@ -2227,7 +2275,7 @@ def main(argv=None):
                         committed_result[0] = receipt
                 except TransactionInterrupted:
                     raise
-                except (OSError, TransactionError):
+                except _GenerationNotCommitted:
                     staged = _stage_delta_stream(
                         remote_root,
                         arguments.nonce,

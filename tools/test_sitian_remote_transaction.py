@@ -1542,6 +1542,58 @@ sys.exit(transaction.main())
                 (receipts / "sync-same-nonce.{}".format(suffix)).is_file()
             )
 
+    def test_sync_same_nonce_rejects_detached_receipt_symlinks(self):
+        nonce = "same-nonce-link"
+        receipt_names = transaction._sync_receipt_names(nonce)
+        archive = self.make_delta_archive(
+            (("tools/a.py", b"committed\n"),)
+        )
+        for receipt_name in receipt_names:
+            with self.subTest(receipt_name=receipt_name):
+                root = self.make_initialized_root(
+                    "same-nonce-link-" + receipt_name
+                )
+                command = self.helper_command(
+                    root,
+                    "sync-commit",
+                    "--nonce",
+                    nonce,
+                    "--source-head",
+                    "b" * 40,
+                    "--path",
+                    "tools/a.py",
+                )
+                first = subprocess.run(
+                    command,
+                    input=archive,
+                    capture_output=True,
+                    env=self.helper_environment(),
+                )
+                self.assertEqual(first.returncode, 0, first.stderr)
+                receipts = root / "receipts"
+                receipt = receipts / receipt_name
+                self.replace_with_symlink(receipt)
+                target = receipt.with_name(receipt.name + ".target")
+                source_before = self.tree_snapshot(root / "source")
+                target_before = target.read_bytes()
+                link_before = os.readlink(receipt)
+
+                repeated = subprocess.run(
+                    command,
+                    input=archive,
+                    capture_output=True,
+                    env=self.helper_environment(),
+                )
+
+                self.assertNotEqual(repeated.returncode, 0)
+                self.assertEqual(repeated.stdout, b"")
+                self.assertEqual(
+                    self.tree_snapshot(root / "source"), source_before
+                )
+                self.assertTrue(receipt.is_symlink())
+                self.assertEqual(os.readlink(receipt), link_before)
+                self.assertEqual(target.read_bytes(), target_before)
+
     def test_sync_confirmation_rejects_detached_receipt_symlink(self):
         root = self.make_initialized_root()
         delta = self.stage_delta(
@@ -1976,6 +2028,54 @@ sys.exit(transaction.main())
             (generation / "tools/a.py").read_bytes(),
             b"unexpected\n",
         )
+
+    def test_fresh_init_rejects_detached_receipt_symlinks_before_promotion(
+        self,
+    ):
+        receipt_names = (
+            "source-head.txt",
+            "source-files.sha256",
+            "source-transaction.txt",
+        )
+        for receipt_name in receipt_names:
+            with self.subTest(receipt_name=receipt_name):
+                root = self.make_root("fresh-init-" + receipt_name)
+                generation_name = (
+                    ".transactions/fresh-init-nonce/generation"
+                )
+                generation = root / generation_name
+                self.write_file(generation, "tools/a.py", b"candidate\n")
+                receipts = root / "receipts"
+                receipts.mkdir()
+                target = receipts / (receipt_name + ".target")
+                target.write_bytes(b"outside\n")
+                receipt = receipts / receipt_name
+                receipt.symlink_to(target.name)
+                source_before = self.tree_snapshot(root / "source")
+                target_before = target.read_bytes()
+                link_before = os.readlink(receipt)
+
+                result = subprocess.run(
+                    self.helper_command(
+                        root,
+                        "init-commit",
+                        "--generation",
+                        generation_name,
+                        "--source-head",
+                        "d" * 40,
+                    ),
+                    capture_output=True,
+                    env=self.helper_environment(),
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, b"")
+                self.assertEqual(
+                    self.tree_snapshot(root / "source"), source_before
+                )
+                self.assertTrue(receipt.is_symlink())
+                self.assertEqual(os.readlink(receipt), link_before)
+                self.assertEqual(target.read_bytes(), target_before)
 
     def test_exact_receipt_comparison_rejects_every_changed_field(self):
         changed_fields = (

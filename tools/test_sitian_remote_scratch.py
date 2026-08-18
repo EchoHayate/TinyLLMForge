@@ -726,6 +726,191 @@ class TransportTests(unittest.TestCase):
             confirm_command,
         )
 
+    def test_initial_controller_preserves_unambiguous_commit_failures(self):
+        module = load_module()
+        config = module.ScratchConfig.default(ROOT)
+        head = "b" * 40
+        streamed = module.subprocess.CompletedProcess(
+            ["ssh"], 0, "", ""
+        )
+        real_run_with_retries = module.run_with_retries
+        for status in (143, 1):
+            with self.subTest(status=status):
+                rejected = module.subprocess.CompletedProcess(
+                    ["ssh"],
+                    status,
+                    "",
+                    "init commit failed",
+                )
+                attempt_limits = []
+                mutation_attempts = []
+
+                def mutation_runner(argv, **kwargs):
+                    del kwargs
+                    mutation_attempts.append(tuple(argv))
+                    return rejected
+
+                def run_at_retry_boundary(argv, *, attempts, **kwargs):
+                    attempt_limits.append(attempts)
+                    return real_run_with_retries(
+                        argv,
+                        attempts=attempts,
+                        runner=mutation_runner,
+                        sleep=lambda _: None,
+                        **kwargs,
+                    )
+
+                with mock.patch.object(
+                    module,
+                    "_resolve_local_head",
+                    return_value=head,
+                ), mock.patch.object(
+                    module,
+                    "_stream_with_retries",
+                    return_value=streamed,
+                ) as stream, mock.patch.object(
+                    module,
+                    "run_with_retries",
+                    side_effect=run_at_retry_boundary,
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "initial source promotion failed",
+                    ):
+                        module._initialize(config)
+
+                stream.assert_called_once()
+                self.assertTrue(mutation_attempts)
+                self.assertTrue(
+                    all(
+                        " init-commit "
+                        in " " + attempt[-1] + " "
+                        for attempt in mutation_attempts
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        " confirm " not in " " + attempt[-1] + " "
+                        for attempt in mutation_attempts
+                    )
+                )
+                self.assertEqual(
+                    (attempt_limits, len(mutation_attempts)),
+                    ([1], 1),
+                )
+
+    def test_initial_controller_confirms_ambiguous_matching_commit_once(self):
+        module = load_module()
+        config = module.ScratchConfig.default(ROOT)
+        head = "b" * 40
+        streamed = module.subprocess.CompletedProcess(
+            ["ssh"], 0, "", ""
+        )
+        lost_response = module.subprocess.CompletedProcess(
+            ["ssh"],
+            255,
+            "",
+            "connection lost after init commit",
+        )
+        confirmed = module.subprocess.CompletedProcess(
+            ["ssh"], 0, "17\n", ""
+        )
+        with mock.patch.object(
+            module,
+            "_resolve_local_head",
+            return_value=head,
+        ), mock.patch.object(
+            module,
+            "_stream_with_retries",
+            return_value=streamed,
+        ) as stream, mock.patch.object(
+            module,
+            "_remote_command",
+            side_effect=(lost_response, confirmed),
+        ) as remote:
+            failure = None
+            result = None
+            try:
+                result = module._initialize(config)
+            except RuntimeError as exc:
+                failure = exc
+
+        stream.assert_called_once()
+        self.assertEqual(remote.call_count, 2)
+        mutation_command = remote.call_args_list[0][0][1]
+        confirmation_command = remote.call_args_list[1][0][1]
+        generation = mutation_command.split("--generation ", 1)[1].split(
+            " ", 1
+        )[0]
+        nonce = generation.split("/")[1]
+        self.assertIn(" init-commit ", " " + mutation_command + " ")
+        self.assertIn(" confirm ", " " + confirmation_command + " ")
+        self.assertIn(
+            config.remote_root
+            + "/source/tools/sitian_remote_transaction.py",
+            confirmation_command,
+        )
+        self.assertIn("--nonce " + nonce, confirmation_command)
+        self.assertIn("--operation init", confirmation_command)
+        self.assertIn("--source-head " + head, confirmation_command)
+        self.assertNotIn("--path", confirmation_command)
+        self.assertIsNone(failure)
+        self.assertEqual(result, (head, 17))
+
+    def test_initial_controller_ambiguous_unmatched_commit_remains_failure(self):
+        module = load_module()
+        config = module.ScratchConfig.default(ROOT)
+        head = "b" * 40
+        streamed = module.subprocess.CompletedProcess(
+            ["ssh"], 0, "", ""
+        )
+        lost_response = module.subprocess.CompletedProcess(
+            ["ssh"],
+            255,
+            "",
+            "connection lost before init commit",
+        )
+        not_committed = module.subprocess.CompletedProcess(
+            ["ssh"], 1, "", "matching init commit not found"
+        )
+        with mock.patch.object(
+            module,
+            "_resolve_local_head",
+            return_value=head,
+        ), mock.patch.object(
+            module,
+            "_stream_with_retries",
+            return_value=streamed,
+        ) as stream, mock.patch.object(
+            module,
+            "_remote_command",
+            side_effect=(lost_response, not_committed),
+        ) as remote:
+            failure = None
+            try:
+                module._initialize(config)
+            except RuntimeError as exc:
+                failure = exc
+
+        stream.assert_called_once()
+        self.assertEqual(remote.call_count, 2)
+        mutation_command = remote.call_args_list[0][0][1]
+        confirmation_command = remote.call_args_list[1][0][1]
+        generation = mutation_command.split("--generation ", 1)[1].split(
+            " ", 1
+        )[0]
+        nonce = generation.split("/")[1]
+        self.assertIn(" confirm ", " " + confirmation_command + " ")
+        self.assertIn("--nonce " + nonce, confirmation_command)
+        self.assertIn("--operation init", confirmation_command)
+        self.assertIn("--source-head " + head, confirmation_command)
+        self.assertNotIn("--path", confirmation_command)
+        self.assertIsInstance(failure, RuntimeError)
+        self.assertEqual(
+            str(failure),
+            "initial source promotion failed",
+        )
+
     def test_incremental_controller_does_not_confirm_unambiguous_rejection(
         self,
     ):
