@@ -1818,6 +1818,23 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_bytes(diagnostic.canonical_json_bytes(payload))
 
 
+def _telemetry_sidecar(identity, worker: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "epoch_key": identity.key,
+        "measured_runs": [
+            {
+                "repeat": run["repeat"],
+                "command_timeline_repeat_index": run[
+                    "command_timeline_repeat_index"
+                ],
+                "telemetry": copy.deepcopy(run["telemetry"]),
+            }
+            for run in worker["measured_runs"]
+        ],
+    }
+
+
 def _result_summary(artifact_path: Path, artifact: dict) -> dict:
     return {
         "artifact_sha256": _sha_path(artifact_path),
@@ -1864,6 +1881,32 @@ def _refresh_artifact_result_and_manifest(
         _result_summary(artifact_path, artifact),
     )
     _write_manifest(bundle_root)
+
+
+def _replace_with_symlink(
+    path: Path,
+    *,
+    root: Path,
+    destination: str,
+    in_root_target: Path | None = None,
+) -> None:
+    if destination == "in_root":
+        target = in_root_target or (
+            root
+            / ".symlink-targets"
+            / path.relative_to(root)
+        )
+    elif destination == "escaping":
+        target = (
+            root.parent
+            / f"{root.name}-escaping-symlink-targets"
+            / path.relative_to(root)
+        )
+    else:
+        raise AssertionError(f"unexpected destination: {destination}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    path.rename(target)
+    path.symlink_to(target, target_is_directory=target.is_dir())
 
 
 @pytest.fixture
@@ -1915,10 +1958,10 @@ def command_timeline_bundle(tmp_path) -> dict:
             / f"block-{identity.block_index}"
             / f"{identity.label}.json"
         )
-        telemetry = {
-            "epoch_key": identity.key,
-            "bound_even_when_not_derived": True,
-        }
+        telemetry = _telemetry_sidecar(
+            identity,
+            raw_epochs[identity.key]["worker"],
+        )
         _write_json(
             worker_path,
             raw_epochs[identity.key]["worker"],
@@ -2055,6 +2098,41 @@ def test_verifier_rejects_timeline_row_raw_tamper_after_rebinding(
         )
 
 
+def test_verifier_rejects_telemetry_tamper_after_complete_rebinding(
+    command_timeline_bundle,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    identity = diagnostic.expected_epoch_identities()[0]
+    telemetry_path = (
+        bundle_root
+        / "telemetry"
+        / "block-0"
+        / "eager.json"
+    )
+    telemetry = json.loads(
+        telemetry_path.read_text(encoding="utf-8")
+    )
+    telemetry["measured_runs"][0]["telemetry"]["host_rows"][0][
+        "sampled_at_monotonic_ns"
+    ] += 1
+    _write_json(telemetry_path, telemetry)
+    artifact = copy.deepcopy(command_timeline_bundle["artifact"])
+    artifact["raw_input_files"][f"telemetry:{identity.key}"][
+        "sha256"
+    ] = _sha_path(telemetry_path)
+    _refresh_artifact_result_and_manifest(bundle_root, artifact)
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_telemetry_semantic_tamper",
+    )
+    with pytest.raises(ValueError, match="telemetry sidecar mismatch"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=command_timeline_bundle["manifest_path"],
+        )
+
+
 def test_verifier_rejects_source_file_tamper(
     command_timeline_bundle,
 ):
@@ -2074,6 +2152,124 @@ def test_verifier_rejects_source_file_tamper(
             source_root=command_timeline_bundle["source_root"],
             manifest_path=command_timeline_bundle["manifest_path"],
         )
+
+
+@pytest.mark.parametrize(
+    ("authoritative_name", "relative"),
+    [
+        ("artifact", "command-timeline.json"),
+        ("result", "result.json"),
+        ("metadata", "metadata.json"),
+        ("worker", "workers/block-0"),
+        ("telemetry", "telemetry/block-0"),
+    ],
+)
+@pytest.mark.parametrize("destination", ["escaping", "in_root"])
+@pytest.mark.parametrize("with_manifest", [False, True])
+def test_verifier_rejects_authoritative_symlinks(
+    command_timeline_bundle,
+    authoritative_name,
+    relative,
+    destination,
+    with_manifest,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    _replace_with_symlink(
+        bundle_root / relative,
+        root=bundle_root,
+        destination=destination,
+    )
+    manifest_path = None
+    if with_manifest:
+        manifest_path = _write_manifest(bundle_root)
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_authoritative_symlink_"
+        f"{authoritative_name}_{destination}_{with_manifest}",
+    )
+    with pytest.raises(ValueError, match="symlink"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=command_timeline_bundle["source_root"],
+            manifest_path=manifest_path,
+        )
+
+
+@pytest.mark.parametrize("destination", ["escaping", "in_root"])
+@pytest.mark.parametrize("with_manifest", [False, True])
+def test_verifier_rejects_source_binding_symlinks(
+    command_timeline_bundle,
+    destination,
+    with_manifest,
+):
+    source_root = command_timeline_bundle["source_root"]
+    _replace_with_symlink(
+        source_root / "tools",
+        root=source_root,
+        destination=destination,
+    )
+    verifier = load_module(
+        VERIFIER_PATH,
+        "command_timeline_source_symlink_"
+        f"{destination}_{with_manifest}",
+    )
+    with pytest.raises(ValueError, match="symlink"):
+        verifier.verify_command_timeline_diagnostic(
+            artifact_path=command_timeline_bundle["artifact_path"],
+            source_root=source_root,
+            manifest_path=(
+                command_timeline_bundle["manifest_path"]
+                if with_manifest
+                else None
+            ),
+        )
+
+
+@pytest.mark.parametrize("destination", ["escaping", "in_root"])
+def test_manifest_rejects_manifest_path_symlink(
+    command_timeline_bundle,
+    destination,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    manifest_path = command_timeline_bundle["manifest_path"]
+    _replace_with_symlink(
+        manifest_path,
+        root=bundle_root,
+        destination=destination,
+        in_root_target=(
+            bundle_root / "verify.command-timeline.local.log"
+            if destination == "in_root"
+            else None
+        ),
+    )
+    verifier = load_module(
+        VERIFIER_PATH,
+        f"command_timeline_manifest_symlink_{destination}",
+    )
+    with pytest.raises(ValueError, match="symlink"):
+        verifier.verify_manifest(manifest_path, bundle_root)
+
+
+@pytest.mark.parametrize("destination", ["escaping", "in_root"])
+def test_manifest_inventory_rejects_unlisted_symlink(
+    command_timeline_bundle,
+    destination,
+):
+    bundle_root = command_timeline_bundle["bundle_root"]
+    unlisted = bundle_root / "unlisted.json"
+    unlisted.write_text("{}\n", encoding="utf-8")
+    _replace_with_symlink(
+        unlisted,
+        root=bundle_root,
+        destination=destination,
+    )
+    manifest_path = _write_manifest(bundle_root)
+    verifier = load_module(
+        VERIFIER_PATH,
+        f"command_timeline_inventory_symlink_{destination}",
+    )
+    with pytest.raises(ValueError, match="symlink"):
+        verifier.verify_manifest(manifest_path, bundle_root)
 
 
 @pytest.mark.parametrize(

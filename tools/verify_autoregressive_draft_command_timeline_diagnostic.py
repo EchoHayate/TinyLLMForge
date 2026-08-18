@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import stat
 import sys
 
 
@@ -91,15 +92,41 @@ def _resolve_bound_path(
     if not isinstance(relative_path, str) or not relative_path:
         raise ValueError(f"{name} path must be a relative path")
     pure = PurePosixPath(relative_path)
-    if pure.is_absolute() or ".." in pure.parts:
+    if (
+        pure.is_absolute()
+        or not pure.parts
+        or ".." in pure.parts
+        or pure.as_posix() != relative_path
+    ):
         raise ValueError(f"{name} path must be a safe relative path")
-    path = root / Path(*pure.parts)
     try:
-        path.resolve().relative_to(root.resolve())
-    except ValueError as error:
+        root_info = root.lstat()
+        resolved_root = root.resolve(strict=True)
+    except OSError as error:
+        raise ValueError(f"{name} root is invalid") from error
+    if stat.S_ISLNK(root_info.st_mode):
+        raise ValueError(f"{name} root must not be a symlink")
+    if not stat.S_ISDIR(root_info.st_mode):
+        raise ValueError(f"{name} root must be a directory")
+
+    path = root
+    for index, part in enumerate(pure.parts):
+        path = path / part
+        try:
+            info = path.lstat()
+        except OSError as error:
+            raise ValueError(f"bound file is missing: {name}") from error
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError(f"{name} path must not contain a symlink")
+        if index < len(pure.parts) - 1:
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError(f"{name} path component is not a directory")
+        elif not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"{name} must be a regular file")
+    try:
+        path.resolve(strict=True).relative_to(resolved_root)
+    except (OSError, ValueError) as error:
         raise ValueError(f"{name} path escapes its root") from error
-    if not path.is_file():
-        raise ValueError(f"bound file is missing: {name}")
     return path
 
 
@@ -171,14 +198,13 @@ def verify_manifest(
     manifest_path = Path(manifest_path)
     artifact_root = Path(artifact_root)
     expected_manifest = artifact_root / "manifest.sha256"
-    try:
-        is_expected_path = (
-            manifest_path.resolve() == expected_manifest.resolve()
-        )
-    except OSError as error:
-        raise ValueError("manifest is missing") from error
-    if not is_expected_path or not manifest_path.is_file():
+    if manifest_path != expected_manifest:
         raise ValueError("manifest must be manifest.sha256")
+    manifest_path = _resolve_bound_path(
+        artifact_root,
+        "manifest.sha256",
+        name="manifest",
+    )
 
     rows = {}
     for line_number, line in enumerate(
@@ -218,15 +244,32 @@ def verify_manifest(
             raise ValueError(f"manifest hash mismatch: {normalized}")
         rows[normalized] = digest
 
-    actual = {
-        path.relative_to(artifact_root).as_posix()
-        for path in artifact_root.rglob("*")
-        if (
-            path.is_file()
-            and path.relative_to(artifact_root).as_posix()
-            not in DETACHED_ATTESTATION_PATHS
+    actual = set()
+    for path in artifact_root.rglob("*"):
+        relative = path.relative_to(artifact_root).as_posix()
+        try:
+            info = path.lstat()
+        except OSError as error:
+            raise ValueError(
+                f"manifest inventory path is invalid: {relative}"
+            ) from error
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError(
+                f"manifest inventory must not contain a symlink: {relative}"
+            )
+        if stat.S_ISDIR(info.st_mode):
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(
+                f"manifest inventory entry must be regular: {relative}"
+            )
+        _resolve_bound_path(
+            artifact_root,
+            relative,
+            name=f"manifest inventory {relative}",
         )
-    }
+        if relative not in DETACHED_ATTESTATION_PATHS:
+            actual.add(relative)
     if set(rows) != actual:
         raise ValueError(
             "manifest inventory does not cover every authoritative file"
@@ -241,35 +284,77 @@ def verify_manifest(
 def _require_authoritative_layout(
     artifact_path: Path,
 ) -> dict[str, Path]:
+    if ".." in artifact_path.parts:
+        raise ValueError("canonical artifact path must not contain ..")
     artifact_root = artifact_path.parent
-    canonical_path = artifact_root / "command-timeline.json"
-    if artifact_path.resolve() != canonical_path.resolve():
+    if artifact_path.name != "command-timeline.json":
         raise ValueError(
             "canonical artifact must be command-timeline.json"
         )
     required = {
-        "artifact": canonical_path,
-        "result": artifact_root / "result.json",
-        "metadata": artifact_root / "metadata.json",
-        "source_manifest": artifact_root / "source_manifest.json",
+        "artifact": "command-timeline.json",
+        "result": "result.json",
+        "metadata": "metadata.json",
+        "source_manifest": "source_manifest.json",
     }
     for identity in expected_epoch_identities():
         required[f"worker:{identity.key}"] = (
-            artifact_root
-            / "workers"
-            / f"block-{identity.block_index}"
-            / f"{identity.label}.json"
+            f"workers/block-{identity.block_index}/"
+            f"{identity.label}.json"
         )
         required[f"telemetry:{identity.key}"] = (
-            artifact_root
-            / "telemetry"
-            / f"block-{identity.block_index}"
-            / f"{identity.label}.json"
+            f"telemetry/block-{identity.block_index}/"
+            f"{identity.label}.json"
         )
-    for name, path in required.items():
-        if not path.is_file():
-            raise ValueError(f"authoritative file is missing: {name}")
-    return required
+    resolved = {}
+    for name, relative in required.items():
+        try:
+            resolved[name] = _resolve_bound_path(
+                artifact_root,
+                relative,
+                name=f"authoritative file {name}",
+            )
+        except ValueError as error:
+            if str(error).startswith("bound file is missing:"):
+                raise ValueError(
+                    f"authoritative file is missing: {name}"
+                ) from error
+            raise
+    return resolved
+
+
+def _expected_telemetry_sidecar(
+    identity,
+    worker: dict,
+) -> dict:
+    measured_runs = worker.get("measured_runs")
+    if not isinstance(measured_runs, list) or len(measured_runs) != 5:
+        raise ValueError(
+            f"bound worker measured runs are invalid: {identity.key}"
+        )
+    rows = []
+    for run in measured_runs:
+        if not isinstance(run, dict):
+            raise ValueError(
+                f"bound worker measured run is invalid: {identity.key}"
+            )
+        try:
+            rows.append({
+                "repeat": run["repeat"],
+                "command_timeline_repeat_index": run[
+                    "command_timeline_repeat_index"
+                ],
+                "telemetry": run["telemetry"],
+            })
+        except KeyError as error:
+            raise ValueError(
+                f"bound worker telemetry is invalid: {identity.key}"
+            ) from error
+    return {
+        "schema_version": 1,
+        "epoch_key": identity.key,
+        "measured_runs": rows,
+    }
 
 
 def _load_bound_bundle_inputs(
@@ -294,17 +379,29 @@ def _load_bound_bundle_inputs(
         raise ValueError("bound source manifest mismatch")
     epoch_raw_inputs = {}
     for identity in expected_epoch_identities():
+        worker = _restore_protocol_mapping_order(
+            _load_json(
+                verified_inputs[f"worker:{identity.key}"],
+                name=f"bound worker {identity.key}",
+            )
+        )
+        telemetry = _load_json(
+            verified_inputs[f"telemetry:{identity.key}"],
+            name=f"bound telemetry {identity.key}",
+        )
+        expected_telemetry = _expected_telemetry_sidecar(
+            identity,
+            worker,
+        )
+        if canonical_json_bytes(telemetry) != canonical_json_bytes(
+            expected_telemetry
+        ):
+            raise ValueError(
+                f"bound telemetry sidecar mismatch: {identity.key}"
+            )
         epoch_raw_inputs[identity.key] = {
-            "worker": _restore_protocol_mapping_order(
-                _load_json(
-                    verified_inputs[f"worker:{identity.key}"],
-                    name=f"bound worker {identity.key}",
-                )
-            ),
-            "telemetry": _load_json(
-                verified_inputs[f"telemetry:{identity.key}"],
-                name=f"bound telemetry {identity.key}",
-            ),
+            "worker": worker,
+            "telemetry": telemetry,
         }
     return {
         "metadata": metadata,
