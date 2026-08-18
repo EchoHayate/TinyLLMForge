@@ -48,8 +48,14 @@ event = sys.argv[1]
 real_inject = transaction._inject
 real_renameat2 = transaction._RENAMEAT2
 real_pthread_sigmask = transaction.signal.pthread_sigmask
+real_consume_pending = transaction._consume_pending_transaction_signals
+real_cleanup_staged_delta = transaction._cleanup_staged_delta
+real_stdout = sys.stdout
 remote_root = Path(sys.argv[4])
 teardown_signal_sent = False
+post_drain_signal_sent = False
+cleanup_signal_sent = False
+stdout_signal_sent = False
 
 def inject(fault_injector, point):
     if point == "after_exchange":
@@ -85,10 +91,61 @@ def pthread_sigmask(how, mask):
         os.kill(os.getpid(), signal.SIGTERM)
     return previous
 
+def consume_pending():
+    global post_drain_signal_sent
+    real_consume_pending()
+    if (
+        event == "post_drain_sigterm"
+        and not post_drain_signal_sent
+        and (
+            remote_root
+            / "source"
+            / "tools"
+            / "sitian_remote_scratch.py"
+        ).read_bytes() == b"new\n"
+    ):
+        post_drain_signal_sent = True
+        os.kill(os.getpid(), signal.SIGTERM)
+
+def cleanup_staged_delta(staged):
+    global cleanup_signal_sent
+    if (
+        event == "staged_cleanup_sigterm"
+        and not cleanup_signal_sent
+        and (
+            remote_root
+            / "source"
+            / "tools"
+            / "sitian_remote_scratch.py"
+        ).read_bytes() == b"new\n"
+    ):
+        cleanup_signal_sent = True
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_cleanup_staged_delta(staged)
+
+class StdoutProxy:
+    def write(self, data):
+        global stdout_signal_sent
+        if (
+            event == "before_stdout_sigterm"
+            and not stdout_signal_sent
+            and data.endswith(".sha256\n")
+        ):
+            stdout_signal_sent = True
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real_stdout.write(data)
+
+    def flush(self):
+        return real_stdout.flush()
+
 transaction._inject = inject
 transaction._RENAMEAT2 = renameat2
 transaction.signal.pthread_sigmask = pthread_sigmask
-sys.exit(transaction.main(sys.argv[2:]))
+transaction._consume_pending_transaction_signals = consume_pending
+transaction._cleanup_staged_delta = cleanup_staged_delta
+sys.stdout = StdoutProxy()
+sys.argv = [sys.argv[0]] + sys.argv[2:]
+sys.exit(transaction.main())
 """
     process = subprocess.run(
         (
@@ -835,6 +892,9 @@ class TransportTests(unittest.TestCase):
             "sigterm",
             "exchange_return_sigterm",
             "teardown_pending_sigterm",
+            "post_drain_sigterm",
+            "staged_cleanup_sigterm",
+            "before_stdout_sigterm",
         ):
             with self.subTest(event=event), tempfile.TemporaryDirectory(
                 prefix="sitian-controller-post-exchange-{}-".format(event)

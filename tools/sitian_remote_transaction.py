@@ -927,18 +927,22 @@ def _consume_pending_transaction_signals():
 
 
 @contextlib.contextmanager
-def _blocked_transaction_signals():
+def _blocked_transaction_signals(retain_if_committed=None):
     previous_mask = signal.pthread_sigmask(
         signal.SIG_BLOCK, _TRANSACTION_SIGNALS
     )
     try:
         yield
     finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        if not _has_committed_result(retain_if_committed):
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 @contextlib.contextmanager
-def _transaction_signal_handlers(committed_result=None):
+def _transaction_signal_handlers(
+    committed_result=None,
+    retain_committed_signals=False,
+):
     installed = []
     signals = _TRANSACTION_SIGNALS
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
@@ -979,17 +983,22 @@ def _transaction_signal_handlers(committed_result=None):
             except BaseException as exc:
                 if cleanup_error is None:
                     cleanup_error = exc
-        for signum, previous in reversed(installed):
+        retain = (
+            retain_committed_signals
+            and _has_committed_result(committed_result)
+        )
+        if not retain:
+            for signum, previous in reversed(installed):
+                try:
+                    signal.signal(signum, previous)
+                except BaseException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
             try:
-                signal.signal(signum, previous)
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
             except BaseException as exc:
                 if cleanup_error is None:
                     cleanup_error = exc
-        try:
-            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
-        except BaseException as exc:
-            if cleanup_error is None:
-                cleanup_error = exc
         if (
             cleanup_error is not None
             and primary_error is None
@@ -1765,7 +1774,10 @@ def commit_sync_generation(
     nonce,
     source_head,
     explicit_paths,
-    fault_injector=None
+    fault_injector=None,
+    _committed_result=None,
+    _manage_signal_handlers=True,
+    _retain_committed_signals=False,
 ):
     paths = _validate_explicit_paths(explicit_paths)
     head = _validate_source_head(source_head)
@@ -1782,8 +1794,15 @@ def commit_sync_generation(
             "sync delta identity does not match nonce and explicit paths"
         )
 
-    committed_result = [None]
-    with _transaction_signal_handlers(committed_result):
+    committed_result = (
+        [None] if _committed_result is None else _committed_result
+    )
+    signal_context = (
+        _transaction_signal_handlers(committed_result)
+        if _manage_signal_handlers
+        else contextlib.nullcontext()
+    )
+    with signal_context:
         with locked_remote_root(remote_root) as root_fd:
             _inject(fault_injector, "after_lock")
             source_fd = None
@@ -1814,6 +1833,12 @@ def commit_sync_generation(
                         _cleanup_nonce_at(root_fd, nonce)
                     except BaseException:
                         pass
+                    with _blocked_transaction_signals(
+                        committed_result
+                        if _retain_committed_signals
+                        else None
+                    ):
+                        committed_result[0] = expected
                     return expected
 
                 source_info = os.fstat(source_fd)
@@ -1927,7 +1952,11 @@ def commit_sync_generation(
                     raise TransactionError(
                         "generation entry changed before sync exchange"
                     )
-                with _blocked_transaction_signals():
+                with _blocked_transaction_signals(
+                    committed_result
+                    if _retain_committed_signals
+                    else None
+                ):
                     _rename_exchange_at(
                         root_fd, "source", nonce_fd, "generation"
                     )
@@ -2164,6 +2193,7 @@ def build_parser():
 
 
 def main(argv=None):
+    retain_committed_signals = argv is None
     arguments = build_parser().parse_args(argv)
     try:
         if arguments.command == "init-commit":
@@ -2175,35 +2205,54 @@ def main(argv=None):
             output = "{}\n".format(receipt.source_file_count)
         elif arguments.command == "sync-commit":
             remote_root = Path(arguments.remote_root)
-            staged = None
-            try:
-                receipt = confirm_committed_generation(
-                    remote_root,
-                    nonce=arguments.nonce,
-                    operation="sync",
-                    source_head=arguments.source_head,
-                    explicit_paths=arguments.path,
-                )
-            except (OSError, TransactionError):
-                staged = _stage_delta_stream(
-                    remote_root,
-                    arguments.nonce,
-                    arguments.path,
-                    sys.stdin.buffer,
-                )
+            committed_result = [None]
+            with _transaction_signal_handlers(
+                committed_result,
+                retain_committed_signals=retain_committed_signals,
+            ):
+                staged = None
                 try:
-                    receipt = commit_sync_generation(
+                    receipt = confirm_committed_generation(
                         remote_root,
-                        staged,
                         nonce=arguments.nonce,
+                        operation="sync",
                         source_head=arguments.source_head,
                         explicit_paths=arguments.path,
                     )
-                finally:
-                    _cleanup_staged_delta(staged)
-            output = _sync_receipt_path(
-                remote_root, receipt.nonce
-            ) + "\n"
+                    with _blocked_transaction_signals(
+                        committed_result
+                        if retain_committed_signals
+                        else None
+                    ):
+                        committed_result[0] = receipt
+                except (OSError, TransactionError):
+                    staged = _stage_delta_stream(
+                        remote_root,
+                        arguments.nonce,
+                        arguments.path,
+                        sys.stdin.buffer,
+                    )
+                    try:
+                        receipt = commit_sync_generation(
+                            remote_root,
+                            staged,
+                            nonce=arguments.nonce,
+                            source_head=arguments.source_head,
+                            explicit_paths=arguments.path,
+                            _committed_result=committed_result,
+                            _manage_signal_handlers=False,
+                            _retain_committed_signals=(
+                                retain_committed_signals
+                            ),
+                        )
+                    finally:
+                        _cleanup_staged_delta(staged)
+                output = _sync_receipt_path(
+                    remote_root, receipt.nonce
+                ) + "\n"
+            sys.stdout.write(output)
+            sys.stdout.flush()
+            return 0
         elif arguments.command == "confirm":
             receipt = confirm_committed_generation(
                 Path(arguments.remote_root),
