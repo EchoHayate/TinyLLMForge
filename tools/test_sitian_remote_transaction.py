@@ -334,6 +334,7 @@ real_renameat2 = transaction._RENAMEAT2
 real_pthread_sigmask = transaction.signal.pthread_sigmask
 real_consume_pending = transaction._consume_pending_transaction_signals
 real_cleanup_staged_delta = transaction._cleanup_staged_delta
+real_confirm_committed = transaction.confirm_committed_generation
 real_stdout = sys.stdout
 remote_root = Path(sys.argv[4])
 teardown_signal_sent = False
@@ -398,6 +399,11 @@ def cleanup_staged_delta(staged):
         os.kill(os.getpid(), signal.SIGTERM)
     return real_cleanup_staged_delta(staged)
 
+def confirm_committed_generation(*args, **kwargs):
+    if event == "confirm_probe_sigterm":
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_confirm_committed(*args, **kwargs)
+
 class StdoutProxy:
     def write(self, data):
         global stdout_signal_sent
@@ -418,6 +424,7 @@ transaction._RENAMEAT2 = renameat2
 transaction.signal.pthread_sigmask = pthread_sigmask
 transaction._consume_pending_transaction_signals = consume_pending
 transaction._cleanup_staged_delta = cleanup_staged_delta
+transaction.confirm_committed_generation = confirm_committed_generation
 sys.stdout = StdoutProxy()
 sys.argv = [sys.argv[0]] + sys.argv[2:]
 sys.exit(transaction.main())
@@ -1658,27 +1665,40 @@ sys.exit(transaction.main())
                 )
 
     def test_sync_helper_pre_exchange_sigterm_remains_failure(self):
-        root = self.make_initialized_root("signal-window-pre-exchange")
-        source_before = self.tree_snapshot(root / "source")
-        receipts_before = self.tree_snapshot(root / "receipts")
-        archive = self.make_delta_archive(
-            (("tools/a.py", b"committed\n"),)
-        )
-
-        result = self.run_helper_with_post_exchange_event(
-            root,
-            "signal-window-pre-exchange",
-            archive,
+        for event in (
+            "confirm_probe_sigterm",
             "before_exchange_sigterm",
-        )
+        ):
+            with self.subTest(event=event):
+                root = self.make_initialized_root(
+                    "signal-window-pre-exchange-{}".format(event)
+                )
+                source_before = self.tree_snapshot(root / "source")
+                receipts_before = self.tree_snapshot(root / "receipts")
+                archive = self.make_delta_archive(
+                    (("tools/a.py", b"committed\n"),)
+                )
 
-        self.assertEqual(result.returncode, 143)
-        self.assertEqual(result.stdout, b"")
-        self.assertIn(b"transaction interrupted by signal 15", result.stderr)
-        self.assertEqual(self.tree_snapshot(root / "source"), source_before)
-        self.assertEqual(
-            self.tree_snapshot(root / "receipts"), receipts_before
-        )
+                result = self.run_helper_with_post_exchange_event(
+                    root,
+                    "signal-window-pre-exchange-{}".format(event),
+                    archive,
+                    event,
+                )
+
+                self.assertEqual(result.returncode, 143)
+                self.assertEqual(result.stdout, b"")
+                self.assertIn(
+                    b"transaction interrupted by signal 15",
+                    result.stderr,
+                )
+                self.assertEqual(
+                    self.tree_snapshot(root / "source"), source_before
+                )
+                self.assertEqual(
+                    self.tree_snapshot(root / "receipts"),
+                    receipts_before,
+                )
 
     def test_second_cleanup_exception_does_not_leave_sync_lock_held(self):
         root = self.make_initialized_root()

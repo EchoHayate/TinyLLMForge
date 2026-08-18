@@ -2225,6 +2225,8 @@ def main(argv=None):
                         else None
                     ):
                         committed_result[0] = receipt
+                except TransactionInterrupted:
+                    raise
                 except (OSError, TransactionError):
                     staged = _stage_delta_stream(
                         remote_root,
