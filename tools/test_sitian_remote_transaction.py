@@ -102,7 +102,12 @@ class TransactionPrimitiveTests(unittest.TestCase):
             relative = path.relative_to(source)
             if relative == metadata or metadata in relative.parents:
                 continue
-            if path.is_file() and not path.is_symlink():
+            if path.is_symlink():
+                digest = hashlib.sha256(
+                    b"symlink\0" + os.fsencode(os.readlink(str(path)))
+                ).hexdigest()
+                entries.append((relative.as_posix(), digest))
+            elif path.is_file():
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
                 entries.append((relative.as_posix(), digest))
         data = "".join(
@@ -253,6 +258,29 @@ class TransactionPrimitiveTests(unittest.TestCase):
             "new",
         )
 
+    def test_exchange_rejects_symlinked_nested_parent(self):
+        root = self.make_root()
+        self.write_generation(root / "source", marker="old")
+        outside = self.test_root / "outside-exchange"
+        self.write_generation(outside / "generation", marker="outside")
+        transactions = root / ".transactions"
+        transactions.mkdir()
+        (transactions / "n1").symlink_to(
+            outside, target_is_directory=True
+        )
+        root_fd = transaction.open_directory_no_follow(root)
+        try:
+            with self.assertRaises(OSError):
+                transaction.rename_exchange(
+                    root_fd,
+                    "source",
+                    ".transactions/n1/generation",
+                )
+        finally:
+            os.close(root_fd)
+        self.assertEqual(self.read_marker(root / "source"), "old")
+        self.assertEqual(self.read_marker(outside / "generation"), "outside")
+
     def test_exchange_implementation_contains_no_rename_fallback(self):
         source = inspect.getsource(transaction.rename_exchange)
         self.assertIn("_RENAMEAT2", source)
@@ -384,6 +412,29 @@ class TransactionPrimitiveTests(unittest.TestCase):
         (root / "source/README.md").write_bytes(b"tampered manifest\n")
         with self.assertRaises(transaction.TransactionError):
             self.read_committed(root)
+
+    def test_strict_receipt_rejects_symlink_target_mismatch(self):
+        root = self.make_root()
+        source = root / "source"
+        source.mkdir()
+        self.write_file(source, "tools/a.py", b"content\n")
+        (source / "current.py").symlink_to("tools/a.py")
+        receipt = self.make_receipt(source)
+        source_fd = transaction.open_directory_no_follow(source)
+        try:
+            transaction.write_embedded_receipt(source_fd, receipt)
+        finally:
+            os.close(source_fd)
+        (source / "current.py").unlink()
+        (source / "current.py").symlink_to("README.md")
+        with self.assertRaises(transaction.TransactionError):
+            transaction.read_committed_generation(
+                root,
+                expected_nonce="n1",
+                expected_operation="sync",
+                expected_head="abc",
+                expected_paths=["tools/a.py"],
+            )
 
     def test_strict_receipt_rejects_embedded_manifest_mismatch(self):
         root = self.make_committed_root()

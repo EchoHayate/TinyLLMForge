@@ -322,7 +322,13 @@ def _walk_manifest(directory_fd, prefix, entries):
             finally:
                 os.close(file_fd)
         elif stat.S_ISLNK(mode):
-            continue
+            target = os.readlink(name, dir_fd=directory_fd)
+            entries.append(
+                (
+                    relative_path,
+                    _sha256_bytes(b"symlink\0" + os.fsencode(target)),
+                )
+            )
         else:
             raise TransactionError(
                 "source contains unsupported member: {}".format(
@@ -614,26 +620,42 @@ def locked_remote_root(remote_root):
 
 
 def rename_exchange(parent_fd, left, right):
-    left_bytes = os.fsencode(PurePosixPath(*_split_relative_path(left)).as_posix())
-    right_bytes = os.fsencode(
-        PurePosixPath(*_split_relative_path(right)).as_posix()
-    )
     if _RENAMEAT2 is None:
         raise OSError(errno.ENOSYS, "renameat2 is unavailable")
-    result = _RENAMEAT2(
-        parent_fd,
-        left_bytes,
-        parent_fd,
-        right_bytes,
-        RENAME_EXCHANGE,
-    )
-    if result != 0:
-        error_number = ctypes.get_errno()
-        raise OSError(
-            error_number,
-            os.strerror(error_number),
-            "{} <-> {}".format(left, right),
+    left_parts = _split_relative_path(left)
+    right_parts = _split_relative_path(right)
+    left_parent_fd = os.dup(parent_fd)
+    right_parent_fd = os.dup(parent_fd)
+    try:
+        for part in left_parts[:-1]:
+            next_fd = os.open(
+                part, _DIRECTORY_FLAGS, dir_fd=left_parent_fd
+            )
+            os.close(left_parent_fd)
+            left_parent_fd = next_fd
+        for part in right_parts[:-1]:
+            next_fd = os.open(
+                part, _DIRECTORY_FLAGS, dir_fd=right_parent_fd
+            )
+            os.close(right_parent_fd)
+            right_parent_fd = next_fd
+        result = _RENAMEAT2(
+            left_parent_fd,
+            os.fsencode(left_parts[-1]),
+            right_parent_fd,
+            os.fsencode(right_parts[-1]),
+            RENAME_EXCHANGE,
         )
+        if result != 0:
+            error_number = ctypes.get_errno()
+            raise OSError(
+                error_number,
+                os.strerror(error_number),
+                "{} <-> {}".format(left, right),
+            )
+    finally:
+        os.close(right_parent_fd)
+        os.close(left_parent_fd)
 
 
 def _remove_tree_contents(directory_fd):
