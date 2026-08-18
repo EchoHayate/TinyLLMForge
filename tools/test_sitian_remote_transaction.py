@@ -599,6 +599,80 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
         self.assertEqual(generation.joinpath("old.txt").read_bytes(), b"old\n")
 
+    def test_non_oserror_cleanup_failure_preserves_outcome_and_closes_fds(self):
+        for with_primary_error in (False, True):
+            with self.subTest(with_primary_error=with_primary_error):
+                root = self.make_root(
+                    "cleanup-runtime-{}".format(int(with_primary_error))
+                )
+                self.write_file(root / "source", "old.txt", b"old\n")
+                generation = root / ".transactions/n1/generation"
+                self.write_file(generation, "tools/a.py", b"new\n")
+                receipt = self.make_receipt(generation)
+                before = len(os.listdir("/proc/self/fd"))
+
+                def inject(point):
+                    if with_primary_error and point == "after_exchange":
+                        raise ValueError("primary response failure")
+
+                with mock.patch.object(
+                    transaction,
+                    "_remove_tree_at",
+                    side_effect=RuntimeError("cleanup runtime failure"),
+                ):
+                    if with_primary_error:
+                        with self.assertRaisesRegex(
+                            ValueError, "primary response failure"
+                        ):
+                            transaction.promote_generation(
+                                root,
+                                ".transactions/n1/generation",
+                                receipt,
+                                fault_injector=inject,
+                            )
+                    else:
+                        result = transaction.promote_generation(
+                            root,
+                            ".transactions/n1/generation",
+                            receipt,
+                        )
+                        self.assertEqual(
+                            result.created_at_unix_ns,
+                            receipt.created_at_unix_ns,
+                        )
+
+                self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+                committed = self.read_committed(root)
+                self.assertEqual(
+                    committed.created_at_unix_ns,
+                    receipt.created_at_unix_ns,
+                )
+                self.assertEqual(
+                    generation.joinpath("old.txt").read_bytes(), b"old\n"
+                )
+
+    def test_confirmation_fstat_failure_closes_source_fd(self):
+        root = self.make_committed_root()
+        root_fd = transaction.open_directory_no_follow(root)
+        source_info = os.stat(
+            "source", dir_fd=root_fd, follow_symlinks=False
+        )
+        before = len(os.listdir("/proc/self/fd"))
+        try:
+            with mock.patch.object(
+                transaction.os,
+                "fstat",
+                side_effect=OSError(errno.EIO, "forced fstat failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "forced fstat failure"):
+                    transaction._open_source_for_confirmation(
+                        root_fd, source_info
+                    )
+            self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+        finally:
+            os.close(root_fd)
+        self.read_committed(root)
+
     def test_promotion_closes_all_open_file_descriptors(self):
         root = self.make_root()
         generation = root / ".transactions/n1/generation"

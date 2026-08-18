@@ -831,12 +831,18 @@ def _open_source_for_confirmation(root_fd, generation_info):
                 exc
             )
         )
-    source_info = os.fstat(source_fd)
-    if not _same_file_identity(source_info, generation_info):
-        os.close(source_fd)
-        raise TransactionError(
-            "promoted source does not match validated generation"
-        )
+    try:
+        source_info = os.fstat(source_fd)
+        if not _same_file_identity(source_info, generation_info):
+            raise TransactionError(
+                "promoted source does not match validated generation"
+            )
+    except BaseException:
+        try:
+            os.close(source_fd)
+        except OSError:
+            pass
+        raise
     return source_fd
 
 
@@ -979,16 +985,16 @@ def promote_generation(
                             generation_parent_fd,
                             generation_parts[-1],
                         )
-                    except (OSError, TransactionError):
+                    except BaseException:
                         pass
                     if generation_fd is not None:
                         try:
                             os.close(generation_fd)
-                        except OSError:
+                        except BaseException:
                             pass
                     try:
                         os.close(generation_parent_fd)
-                    except OSError:
+                    except BaseException:
                         pass
                 try:
                     _remove_empty_nonce_directory(
@@ -996,5 +1002,5 @@ def promote_generation(
                         generation_name,
                         expected_parent_info=generation_parent_info,
                     )
-                except (OSError, TransactionError):
+                except BaseException:
                     pass
