@@ -96,7 +96,7 @@
 
 ## Task 3: Engine Step Envelope and Conservation
 
-- Status: completed; review-2 Minor follow-up applied
+- Status: completed
 - Base SHA: `7de6f15f357c919185b1dfe5f810089da4b80cce`
 - Brief: `.superpowers/sdd/task-3-brief.md`
 - Required invariants:
@@ -131,6 +131,7 @@
 - Implementer commit: `SELF/HEAD`
 - Task review: `.superpowers/sdd/task-3-review-1.md` — Needs fixes
 - Task re-review 1: `.superpowers/sdd/task-3-review-2.md` — Approved with Minor follow-up
+- Task re-review 2: `.superpowers/sdd/task-3-review-3.md` — Approved
 - Review-fix RED cycles:
   - operation exception plus phase-exit clock failure, and clock-only
     phase-exit failure:
