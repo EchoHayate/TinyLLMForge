@@ -1,4 +1,5 @@
 import ctypes
+import contextlib
 import errno
 import hashlib
 import inspect
@@ -9,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -776,6 +778,132 @@ class TransactionPrimitiveTests(unittest.TestCase):
             expected_head="b" * 40,
             expected_paths=(),
         )
+
+    def test_init_commit_cli_returns_conventional_signal_exit_codes(self):
+        for signum, expected_status in (
+            (signal.SIGINT, 130),
+            (signal.SIGTERM, 143),
+        ):
+            with self.subTest(signum=signum):
+                root = self.make_root("cli-signal-{}".format(signum))
+
+                def interrupt_while_locked(*args, **kwargs):
+                    del args, kwargs
+                    with transaction.locked_remote_root(root):
+                        raise transaction.TransactionInterrupted(signum)
+
+                with mock.patch.object(
+                    transaction,
+                    "commit_initial_generation",
+                    side_effect=interrupt_while_locked,
+                ), mock.patch("sys.stderr"):
+                    result = transaction.main(
+                        (
+                            "init-commit",
+                            "--remote-root",
+                            str(root),
+                            "--generation",
+                            ".transactions/signal-nonce/generation",
+                            "--source-head",
+                            "f" * 40,
+                        )
+                    )
+
+                self.assertEqual(result, expected_status)
+                holder = LockHolder(root)
+                try:
+                    holder.wait_until_locked()
+                    holder.release_normally()
+                    self.assertEqual(holder.wait(), 0)
+                finally:
+                    if holder.process.poll() is None:
+                        holder.terminate()
+                        holder.wait()
+
+    def test_initial_commit_response_is_decided_under_promotion_lock(self):
+        root = self.make_root()
+        first_generation = (
+            root / ".transactions/first-nonce/generation"
+        )
+        second_generation = (
+            root / ".transactions/second-nonce/generation"
+        )
+        self.write_file(first_generation, "tools/first.py", b"first\n")
+        self.write_file(second_generation, "tools/second.py", b"second\n")
+
+        first_at_response = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+        second_done = threading.Event()
+        first_outcome = {}
+        second_outcome = {}
+        real_read = transaction.read_committed_generation
+
+        def pause_first(point):
+            if point == "before_old_generation_cleanup":
+                first_at_response.set()
+                self.assertTrue(release_first.wait(10))
+
+        def first_writer():
+            try:
+                first_outcome["receipt"] = (
+                    transaction.commit_initial_generation(
+                        root,
+                        ".transactions/first-nonce/generation",
+                        "1" * 40,
+                        fault_injector=pause_first,
+                    )
+                )
+            except BaseException as exc:
+                first_outcome["error"] = exc
+
+        def second_writer():
+            second_started.set()
+            try:
+                second_outcome["receipt"] = (
+                    transaction.commit_initial_generation(
+                        root,
+                        ".transactions/second-nonce/generation",
+                        "2" * 40,
+                    )
+                )
+            except BaseException as exc:
+                second_outcome["error"] = exc
+            finally:
+                second_done.set()
+
+        first_thread = threading.Thread(target=first_writer)
+        second_thread = threading.Thread(target=second_writer)
+
+        def delay_unlocked_first_read(*args, **kwargs):
+            if threading.current_thread() is first_thread:
+                self.assertTrue(second_done.wait(10))
+            return real_read(*args, **kwargs)
+
+        with mock.patch.object(
+            transaction,
+            "_transaction_signal_handlers",
+            side_effect=lambda: contextlib.nullcontext(),
+        ), mock.patch.object(
+            transaction,
+            "read_committed_generation",
+            side_effect=delay_unlocked_first_read,
+        ):
+            first_thread.start()
+            self.assertTrue(first_at_response.wait(10))
+            second_thread.start()
+            self.assertTrue(second_started.wait(10))
+            self.assertFalse(second_done.wait(0.2))
+            release_first.set()
+            first_thread.join(10)
+            second_thread.join(10)
+
+        self.assertFalse(first_thread.is_alive())
+        self.assertFalse(second_thread.is_alive())
+        self.assertNotIn("error", first_outcome)
+        self.assertNotIn("error", second_outcome)
+        self.assertEqual(first_outcome["receipt"].nonce, "first-nonce")
+        self.assertEqual(second_outcome["receipt"].nonce, "second-nonce")
 
     def test_initial_commit_reuses_valid_embedded_receipt_before_exchange(self):
         root = self.make_root()

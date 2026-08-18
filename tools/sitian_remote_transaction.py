@@ -1283,7 +1283,7 @@ def commit_initial_generation(
             expected_paths=(),
         )
 
-    receipt = promote_generation(
+    return promote_generation(
         remote_root,
         generation_name,
         None,
@@ -1291,15 +1291,6 @@ def commit_initial_generation(
         receipt_factory=make_receipt,
         post_commit=_materialize_initial_receipts_at,
     )
-    confirmed = read_committed_generation(
-        remote_root,
-        expected_nonce=nonce,
-        expected_operation="init",
-        expected_head=head,
-        expected_paths=(),
-    )
-    _require_exact_receipt(confirmed, receipt)
-    return confirmed
 
 
 def build_parser():
@@ -1320,6 +1311,9 @@ def main(argv=None):
             arguments.generation,
             arguments.source_head,
         )
+    except TransactionInterrupted as exc:
+        sys.stderr.write("{}\n".format(exc))
+        return 128 + int(exc.signum)
     except (OSError, TransactionError) as exc:
         sys.stderr.write("{}\n".format(exc))
         return 1

@@ -306,9 +306,56 @@ def initial_snapshot_commands(
     nonce = f"{os.getpid()}-{time.time_ns()}"
     generation_name = f".transactions/{nonce}/generation"
     generation = f"{config.remote_root}/{generation_name}"
-    excludes = " ".join(
-        f"--exclude={shlex.quote(pattern)}"
-        for pattern in INITIAL_SNAPSHOT_EXCLUDES
+    tar_argv = (
+        "tar",
+        *(f"--exclude={pattern}" for pattern in INITIAL_SNAPSHOT_EXCLUDES),
+        "-xf",
+        "-",
+    )
+    bootstrap = "\n".join(
+        (
+            "import os",
+            "import subprocess",
+            "import sys",
+            "flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW",
+            "opened = []",
+            "def open_private(parent_fd, name):",
+            "    try:",
+            "        os.mkdir(name, 0o700, dir_fd=parent_fd)",
+            "    except FileExistsError:",
+            "        pass",
+            "    fd = os.open(name, flags, dir_fd=parent_fd)",
+            "    os.fchmod(fd, 0o700)",
+            "    opened.append(fd)",
+            "    return fd",
+            "generation_parts = sys.argv[2].split('/')",
+            "if (len(generation_parts) != 3 or",
+            "        generation_parts[0] != '.transactions' or",
+            "        generation_parts[2] != 'generation'):",
+            "    raise ValueError('invalid generation path')",
+            "status = 1",
+            "try:",
+            "    root_fd = os.open(sys.argv[1], flags)",
+            "    opened.append(root_fd)",
+            "    transactions_fd = open_private(",
+            "        root_fd, generation_parts[0]",
+            "    )",
+            "    nonce_fd = open_private(",
+            "        transactions_fd, generation_parts[1]",
+            "    )",
+            "    generation_fd = open_private(",
+            "        nonce_fd, generation_parts[2]",
+            "    )",
+            "    status = subprocess.call(",
+            "        sys.argv[3:],",
+            "        cwd='/proc/self/fd/{}'.format(generation_fd),",
+            "        pass_fds=(generation_fd,),",
+            "    )",
+            "finally:",
+            "    for fd in reversed(opened):",
+            "        os.close(fd)",
+            "sys.exit(status)",
+        )
     )
     layout = remote_layout(config)
     return {
@@ -316,9 +363,11 @@ def initial_snapshot_commands(
         "stage": generation,
         "remote_extract": (
             "set -eu; "
-            f"generation={shlex.quote(generation)}; "
-            "mkdir -p \"$generation\"; "
-            f"tar {excludes} -xf - -C \"$generation\""
+            "python3 -c "
+            f"{shlex.quote(bootstrap)} "
+            f"{shlex.quote(config.remote_root)} "
+            f"{shlex.quote(generation_name)} "
+            + " ".join(shlex.quote(argument) for argument in tar_argv)
         ),
         "remote_commit": (
             "set -eu; "

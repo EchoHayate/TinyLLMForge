@@ -402,6 +402,76 @@ class TransportTests(unittest.TestCase):
                 ignore_errors=True,
             )
 
+    def test_remote_extract_rejects_symlinked_transaction_components(self):
+        module = load_module()
+        archive = self._single_file_archive("escape.txt", b"escaped\n")
+        for component in (".transactions", "nonce", "generation"):
+            with self.subTest(component=component):
+                root = ROOT / ".sitian-init-symlink-{}".format(component)
+                outside = ROOT / ".sitian-init-outside-{}".format(component)
+                root.mkdir()
+                outside.mkdir()
+                config = SimpleNamespace(remote_root=str(root))
+                commands = module.initial_snapshot_commands(config)
+                generation = Path(commands["stage"])
+                nonce_dir = generation.parent
+                transactions = nonce_dir.parent
+                if component == ".transactions":
+                    transactions.symlink_to(
+                        outside, target_is_directory=True
+                    )
+                else:
+                    transactions.mkdir(mode=0o700)
+                    if component == "nonce":
+                        nonce_dir.symlink_to(
+                            outside, target_is_directory=True
+                        )
+                    else:
+                        nonce_dir.mkdir(mode=0o700)
+                        generation.symlink_to(
+                            outside, target_is_directory=True
+                        )
+                try:
+                    result = subprocess.run(
+                        ("/bin/sh", "-c", commands["remote_extract"]),
+                        input=archive,
+                        capture_output=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((outside / "escape.txt").exists())
+                finally:
+                    shutil.rmtree(root, ignore_errors=True)
+                    shutil.rmtree(outside, ignore_errors=True)
+
+    def test_remote_extract_creates_private_transaction_directories(self):
+        module = load_module()
+        root = ROOT / ".sitian-init-private-modes"
+        root.mkdir()
+        config = SimpleNamespace(remote_root=str(root))
+        commands = module.initial_snapshot_commands(config)
+        generation = Path(commands["stage"])
+        try:
+            result = subprocess.run(
+                ("/bin/sh", "-c", commands["remote_extract"]),
+                input=self._single_file_archive(
+                    "tools/allowed.py", b"allowed\n"
+                ),
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for directory in (
+                generation.parent.parent,
+                generation.parent,
+                generation,
+            ):
+                with self.subTest(directory=directory):
+                    self.assertEqual(
+                        directory.stat().st_mode & 0o777,
+                        0o700,
+                    )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_incremental_sync_requires_explicit_allowed_paths(self):
         module = load_module()
         config = module.ScratchConfig.default(ROOT)
