@@ -94,7 +94,43 @@
 
 ## Remaining Tasks
 
-- Task 3: pending
+## Task 3: Engine Step Envelope and Conservation
+
+- Status: completed
+- Base SHA: `7de6f15f357c919185b1dfe5f810089da4b80cce`
+- Brief: `.superpowers/sdd/task-3-brief.md`
+- Required invariants:
+  - fixed phase inventory with explicit skipped rows;
+  - one active step and at most one active phase, with nested/repeated phases rejected;
+  - active ContextVar identity integrates with Task 2 dispatch without circular-import masking;
+  - existing scheduler/speculative/Proposal-KV/lifecycle/side-state operation order is unchanged;
+  - step failures finalize telemetry without suppressing the original exception;
+  - conservation uses `max(2_000_000 ns, 1% step wall)` and fails closed;
+  - no completion fence or `torch.cuda.synchronize()` is added.
+- Implementer: Codex
+- Implementer report: `.superpowers/sdd/task-3-implementer-report.md`
+- RED: `14 failed, 1 passed, 27 deselected in 0.21s`
+- Review-fix RED cycles:
+  - reset clears engine rows/repeat: `1 failed, 15 deselected in 0.07s`;
+  - active reset rejects before dispatch:
+    `1 failed, 16 deselected in 0.13s`;
+  - missing command data fails closed:
+    `1 failed, 1 passed, 16 deselected in 0.06s`;
+  - finish-clock failure cleans ContextVar:
+    `1 failed, 18 deselected in 0.07s`.
+- Focused GREEN: `21 passed, 27 deselected in 0.20s`
+- Planned focused regression: `208 passed in 5.76s`
+- Task 1 + Task 2 regression: `56 passed in 1.29s`
+- Exact inherited-fingerprint regression:
+  `57 passed, 6 failed in 1.44s`
+  - five failures stop at
+    `ValueError: LLMEngine source hash is invalid`;
+  - one failure reports the inherited prerequisite source-closure mismatch;
+  - frozen source fingerprints were not rewritten.
+- Syntax verification: PASS
+- Implementer commit: `SELF/HEAD`
+- Task review: pending
+
 - Task 4: pending
 - Task 5: pending
 - Task 6: pending

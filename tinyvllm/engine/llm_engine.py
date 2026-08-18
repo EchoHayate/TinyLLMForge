@@ -42,6 +42,9 @@ from tinyvllm.speculative.batch_runtime import (
 from tinyvllm.engine.model_runner_command_ack import (
     ModelRunnerCommandAckCollector,
 )
+from tinyvllm.engine.engine_step_timeline import (
+    EngineStepTimelineRecorder,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_engine_restore import (
     Qwen35HybridPrefixEngineRestoreCoordinator,
 )
@@ -67,6 +70,8 @@ from dataclasses import fields
 from itertools import count
 
 import gc
+import hashlib
+import json
 from time import perf_counter
 import time
 import atexit
@@ -138,6 +143,14 @@ def _try_qwen35_hybrid_prefix_restore(
     return restored
 
 
+def _sequence_ids_sha256(sequence_ids):
+    payload = json.dumps(
+        [int(sequence_id) for sequence_id in sequence_ids],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _call_speculative_proposal_lifecycle(
     engine,
     method_name,
@@ -203,6 +216,13 @@ def _commit_prepared_speculative_publication(
     if clock is None:
         clock = __import__("time").perf_counter
     started_at = clock()
+    timeline = getattr(engine, "engine_step_timeline", None)
+
+    def phase(name):
+        if timeline is None:
+            return __import__("contextlib").nullcontext()
+        return timeline.phase(name)
+
     lifecycle_dispatch = (
         lambda method_name, *args: (
             _call_speculative_proposal_lifecycle(
@@ -227,14 +247,15 @@ def _commit_prepared_speculative_publication(
                 "proposal finalization rows require a "
                 "ModelRunner executor descriptor"
             )
-        finalize_ticket = (
-            prepare_model_runner_proposal_finalize_batch(
-                engine.model_runner,
-                descriptor,
-                finalize_rows,
-                dispatch=lifecycle_dispatch,
+        with phase("proposal_lifecycle_finalize_prepare"):
+            finalize_ticket = (
+                prepare_model_runner_proposal_finalize_batch(
+                    engine.model_runner,
+                    descriptor,
+                    finalize_rows,
+                    dispatch=lifecycle_dispatch,
+                )
             )
-        )
     side_applied = False
     try:
         apply_prepared_speculative_side_state(
@@ -244,14 +265,16 @@ def _commit_prepared_speculative_publication(
             prepared_runtime.side_state_state == "applied"
         )
         if kv_plans:
-            (
-                engine.scheduler.block_manager
-                .commit_speculative_kv_commit_batch(kv_plans)
-            )
+            with phase("proposal_kv_prepare_commit"):
+                (
+                    engine.scheduler.block_manager
+                    .commit_speculative_kv_commit_batch(kv_plans)
+                )
         try:
-            engine.scheduler.commit_prepared_postprocess(
-                prepared_scheduler
-            )
+            with phase("scheduler_commit_postprocess"):
+                engine.scheduler.commit_prepared_postprocess(
+                    prepared_scheduler
+                )
         except BaseException:
             for plan in kv_plans:
                 if plan.transaction.state == "committed":
@@ -300,12 +323,13 @@ def _commit_prepared_speculative_publication(
     prepared_runtime.state = "committed"
     if finalize_ticket is not None:
         try:
-            commit_model_runner_proposal_finalize_batch(
-                engine.model_runner,
-                descriptor,
-                finalize_ticket,
-                dispatch=lifecycle_dispatch,
-            )
+            with phase("proposal_lifecycle_finalize_commit"):
+                commit_model_runner_proposal_finalize_batch(
+                    engine.model_runner,
+                    descriptor,
+                    finalize_ticket,
+                    dispatch=lifecycle_dispatch,
+                )
         except BaseException as error:
             engine.speculative_runtime_poisoned = True
             engine.speculative_runtime_poison_reason = (
@@ -314,9 +338,10 @@ def _commit_prepared_speculative_publication(
             )
             raise
     try:
-        seal_prepared_speculative_side_state(
-            prepared_runtime
-        )
+        with phase("side_state_seal"):
+            seal_prepared_speculative_side_state(
+                prepared_runtime
+            )
     except BaseException as error:
         engine.speculative_runtime_poisoned = True
         engine.speculative_runtime_poison_reason = (
@@ -389,12 +414,12 @@ class LLMEngine:
         ):
             raise ValueError(f"worker rank out of range: {rank}")
         return bool(self.ps[rank - 1].is_alive())
-    
+
     def __init__(self, model, **kwargs):
         self._clock_ns = kwargs.pop("_clock_ns", time.monotonic_ns)
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}    #过滤掉和config无关的参数
-        config  = Config(model, **config_kwargs)       
+        config  = Config(model, **config_kwargs)
         self.ps = []
         self.events = []
         ctx = mp.get_context("spawn")                       # 生成全新解释器，继承基本资源，全局变量，打开的文件，线程不会被继承
@@ -421,6 +446,14 @@ class LLMEngine:
             self.events.append(event)
 
         self.model_runner = ModelRunner(config, 0, self.events)     # 生成主进程
+        self.engine_step_timeline = EngineStepTimelineRecorder(
+            enabled=config.autoregressive_draft_command_timeline,
+            max_steps=(
+                config.autoregressive_draft_command_timeline_max_rows
+            ),
+        )
+        self._command_timeline_repeat_index = None
+        self._command_timeline_request_set_sha256 = None
         self.model_runner_ack_collector = (
             ModelRunnerCommandAckCollector(
                 self.model_runner_ack_receivers
@@ -564,7 +597,7 @@ class LLMEngine:
         self.speculative_runtime = runtime
         self.speculative_runtime_poisoned = False
         self.speculative_runtime_poison_reason = None
-        
+
     def exit(self):
         existing_receipt = getattr(self, "_exit_receipt", None)
         if existing_receipt is not None:
@@ -765,6 +798,15 @@ class LLMEngine:
             raise ValueError(
                 "command timeline configuration rank inventory mismatch"
             )
+        from tinyvllm.engine.engine_step_timeline import (
+            EngineStepTimelineRecorder as StepTimelineRecorder,
+        )
+        self.engine_step_timeline = StepTimelineRecorder(
+            enabled=enabled,
+            max_steps=max_rows,
+        )
+        self._command_timeline_repeat_index = None
+        self._command_timeline_request_set_sha256 = None
         return {
             "enabled": enabled,
             "max_rows": max_rows,
@@ -772,16 +814,35 @@ class LLMEngine:
         }
 
     def reset_command_timeline(self, timeout_s):
+        timeline = self.engine_step_timeline
+        if timeline.active:
+            raise RuntimeError(
+                "cannot reset command timeline during an active step"
+            )
         local_result, worker_acks = (
             self.call_model_runner_acknowledged(
                 "reset_command_timeline",
                 timeout_s=timeout_s,
             )
         )
-        return (local_result,) + tuple(
+        rows = (local_result,) + tuple(
             acknowledgement.result
             for acknowledgement in worker_acks
         )
+        from tinyvllm.engine.engine_step_timeline import (
+            EngineStepTimelineRecorder as StepTimelineRecorder,
+        )
+        self.engine_step_timeline = StepTimelineRecorder(
+            enabled=timeline.enabled,
+            max_steps=(
+                timeline.max_steps
+                if timeline.enabled
+                else 1
+            ),
+        )
+        self._command_timeline_repeat_index = None
+        self._command_timeline_request_set_sha256 = None
+        return rows
 
     def command_timeline_snapshots(self, timeout_s):
         local_result, worker_acks = (
@@ -794,6 +855,67 @@ class LLMEngine:
             acknowledgement.result
             for acknowledgement in worker_acks
         )
+
+    def begin_command_timeline_repeat(
+        self,
+        repeat_index,
+        *,
+        request_set_sha256=None,
+    ):
+        if self._command_timeline_repeat_index is not None:
+            raise RuntimeError(
+                "command timeline repeat is already active"
+            )
+        if (
+            isinstance(repeat_index, bool)
+            or not isinstance(repeat_index, int)
+            or repeat_index < 0
+        ):
+            raise ValueError(
+                "repeat_index must be a non-negative integer"
+            )
+        if request_set_sha256 is not None and (
+            not isinstance(request_set_sha256, str)
+            or len(request_set_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in request_set_sha256
+            )
+        ):
+            raise ValueError(
+                "request_set_sha256 must be a lowercase SHA256 or None"
+            )
+        self._command_timeline_repeat_index = repeat_index
+        self._command_timeline_request_set_sha256 = (
+            request_set_sha256
+        )
+        return {
+            "repeat_index": repeat_index,
+            "request_set_sha256": request_set_sha256,
+        }
+
+    def end_command_timeline_repeat(self):
+        repeat_index = self._command_timeline_repeat_index
+        if repeat_index is None:
+            raise RuntimeError(
+                "command timeline repeat is not active"
+            )
+        if self.engine_step_timeline.active:
+            raise RuntimeError(
+                "cannot end command timeline repeat during an active step"
+            )
+        receipt = {
+            "repeat_index": repeat_index,
+            "request_set_sha256": (
+                self._command_timeline_request_set_sha256
+            ),
+        }
+        self._command_timeline_repeat_index = None
+        self._command_timeline_request_set_sha256 = None
+        return receipt
+
+    def engine_step_timeline_snapshot(self):
+        return self.engine_step_timeline.snapshot()
 
     def _call_speculative_side_state_phase(
         self,
@@ -3227,8 +3349,8 @@ class LLMEngine:
         return coordinator
 
     def add_request(
-        self, 
-        prompt: str | list[int], 
+        self,
+        prompt: str | list[int],
         sampling_params: SamplingParams
     ):
         if isinstance(prompt, str):
@@ -3293,149 +3415,699 @@ class LLMEngine:
         return self.scheduler.block_manager.clear_reusable_cache()
 
     def step(self):     #decode阶段：每次step生成新的token加到seq后面
-        queue_before = self.scheduler.observation_snapshot()
-        decision_now_ns = self._clock_ns()
-        scheduled = self.scheduler.schedule(decision_now_ns)
-        if len(scheduled) == 4:
-            seqs, is_prefill, do_sample, batch_kind = scheduled
-        else:
-            seqs, is_prefill, do_sample = scheduled
-            batch_kind = None
-        partition = build_engine_speculative_partition(
-            self.scheduler.last_speculative_selection,
-            tuple(seqs),
-            expected_schedule_generation=(
-                self.scheduler.schedule_generation
-            ),
-        )
-        identity_builder = getattr(
+        step_timeline = getattr(
             self,
-            "_kv_offload_identity_rows",
+            "engine_step_timeline",
             None,
         )
-
-        def kv_block_identity_rows_for(rows):
-            if identity_builder is None:
-                return ()
-            return identity_builder(tuple(rows))
-
-        runtime = getattr(self, "speculative_runtime", None)
-        if partition.selected_sequences and runtime is None:
-            raise RuntimeError(
-                "speculative rows selected before engine runtime "
-                "installation"
-            )
+        step_trace = None
         if (
-            partition.selected_sequences
-            and self.speculative_runtime_poisoned
+            step_timeline is not None
+            and step_timeline.enabled
         ):
-            raise RuntimeError(
-                "speculative runtime is poisoned: "
-                f"{self.speculative_runtime_poison_reason}"
+            step_trace = step_timeline.begin_step(
+                repeat_index=self._command_timeline_repeat_index,
+                request_set_sha256=(
+                    self._command_timeline_request_set_sha256
+                ),
+                batch_kind="unknown",
+                speculative_selected_sequence_ids_sha256=None,
             )
-        self.last_batch_kind = batch_kind
-        self.last_scheduled_seqs = seqs
-        completion_lengths_before = {
-            seq.seq_id: len(seq.completion_token_ids)
-            for seq in seqs
-        }
-        scheduled_rows = [{
-            "seq_id": seq.seq_id,
-            "is_decode": bool(
-                getattr(seq, "step_is_decode", False)
-                if batch_kind == "mixed"
-                else not is_prefill
-            ),
-            "do_sample": bool(
-                getattr(seq, "step_do_sample", do_sample)
-                if batch_kind == "mixed"
-                else do_sample
-            ),
-            "prefill_chunk_start": seq.prefill_chunk_start,
-            "prefill_chunk_end": seq.prefill_chunk_end,
-            "prefill_chunk_final": bool(seq.prefill_chunk_final),
-        } for seq in seqs]
-        if batch_kind == "mixed":
-            prefill_tokens = sum(
-                row["prefill_chunk_end"]
-                - row["prefill_chunk_start"]
-                for row in scheduled_rows
-                if not row["is_decode"]
-            )
-            decode_tokens = sum(
-                1
-                for row in scheduled_rows
-                if row["is_decode"]
-            )
-            num_tokens = prefill_tokens + decode_tokens
-        elif is_prefill:
-            num_tokens = sum(
-                row["prefill_chunk_end"]
-                - row["prefill_chunk_start"]
-                for row in scheduled_rows
-            )
-        else:
-            num_tokens = -len(seqs)
-        speculative_output_token_counts = {}
-        speculative_accepted_draft_token_counts = {}
-        speculative_proposal_token_counts = {}
-        speculative_proposal_token_ids_by_seq = {}
-        speculative_accepted_draft_token_ids_by_seq = {}
-        speculative_proposal_row_count = 0
-        speculative_first_target_callback_count = 0
-        speculative_fixed_q_group_count = 0
-        speculative_runtime_timing_ms = {}
-        if partition.selected_sequences:
-            model_runner_config = getattr(
-                self.model_runner,
-                "config",
+
+        def step_phase(name):
+            if step_timeline is None:
+                return __import__("contextlib").nullcontext()
+            return step_timeline.phase(name)
+
+        step_error = None
+        try:
+            queue_before = self.scheduler.observation_snapshot()
+            decision_now_ns = self._clock_ns()
+            with step_phase("scheduler_schedule"):
+                scheduled = self.scheduler.schedule(decision_now_ns)
+            with step_phase("partition_and_step_setup"):
+                if len(scheduled) == 4:
+                    seqs, is_prefill, do_sample, batch_kind = scheduled
+                else:
+                    seqs, is_prefill, do_sample = scheduled
+                    batch_kind = None
+                partition = build_engine_speculative_partition(
+                    self.scheduler.last_speculative_selection,
+                    tuple(seqs),
+                    expected_schedule_generation=(
+                        self.scheduler.schedule_generation
+                    ),
+                )
+                if step_trace is not None:
+                    step_trace = (
+                        step_timeline.bind_step_identity(
+                            step_trace,
+                            batch_kind=(
+                                batch_kind
+                                or (
+                                    "prefill"
+                                    if is_prefill
+                                    else "decode"
+                                )
+                            ),
+                            speculative_selected_sequence_ids_sha256=(
+                                _sequence_ids_sha256(
+                                    partition.selected_sequence_ids
+                                )
+                            ),
+                        )
+                    )
+            identity_builder = getattr(
+                self,
+                "_kv_offload_identity_rows",
                 None,
             )
-            residency_enabled = bool(
-                getattr(
-                    model_runner_config,
-                    "kv_offload_mvp0",
-                    False,
-                )
-            )
-            residency_ticket_id = None
-            residency_state = None
-            residency_prepare_rows = ()
-            residency_precommit_rows = ()
-            residency_publication_committed = False
 
-            def rollback_residency():
-                nonlocal residency_state
-                rejected_identities = tuple(
-                    identity
-                    for row in residency_prepare_rows
-                    for identity in (
-                        row.reserved_block_identities
+            def kv_block_identity_rows_for(rows):
+                if identity_builder is None:
+                    return ()
+                return identity_builder(tuple(rows))
+
+            runtime = getattr(self, "speculative_runtime", None)
+            if partition.selected_sequences and runtime is None:
+                raise RuntimeError(
+                    "speculative rows selected before engine runtime "
+                    "installation"
+                )
+            if (
+                partition.selected_sequences
+                and self.speculative_runtime_poisoned
+            ):
+                raise RuntimeError(
+                    "speculative runtime is poisoned: "
+                    f"{self.speculative_runtime_poison_reason}"
+                )
+            self.last_batch_kind = batch_kind
+            self.last_scheduled_seqs = seqs
+            completion_lengths_before = {
+                seq.seq_id: len(seq.completion_token_ids)
+                for seq in seqs
+            }
+            scheduled_rows = [{
+                "seq_id": seq.seq_id,
+                "is_decode": bool(
+                    getattr(seq, "step_is_decode", False)
+                    if batch_kind == "mixed"
+                    else not is_prefill
+                ),
+                "do_sample": bool(
+                    getattr(seq, "step_do_sample", do_sample)
+                    if batch_kind == "mixed"
+                    else do_sample
+                ),
+                "prefill_chunk_start": seq.prefill_chunk_start,
+                "prefill_chunk_end": seq.prefill_chunk_end,
+                "prefill_chunk_final": bool(seq.prefill_chunk_final),
+            } for seq in seqs]
+            if batch_kind == "mixed":
+                prefill_tokens = sum(
+                    row["prefill_chunk_end"]
+                    - row["prefill_chunk_start"]
+                    for row in scheduled_rows
+                    if not row["is_decode"]
+                )
+                decode_tokens = sum(
+                    1
+                    for row in scheduled_rows
+                    if row["is_decode"]
+                )
+                num_tokens = prefill_tokens + decode_tokens
+            elif is_prefill:
+                num_tokens = sum(
+                    row["prefill_chunk_end"]
+                    - row["prefill_chunk_start"]
+                    for row in scheduled_rows
+                )
+            else:
+                num_tokens = -len(seqs)
+            speculative_output_token_counts = {}
+            speculative_accepted_draft_token_counts = {}
+            speculative_proposal_token_counts = {}
+            speculative_proposal_token_ids_by_seq = {}
+            speculative_accepted_draft_token_ids_by_seq = {}
+            speculative_proposal_row_count = 0
+            speculative_first_target_callback_count = 0
+            speculative_fixed_q_group_count = 0
+            speculative_runtime_timing_ms = {}
+            if partition.selected_sequences:
+                model_runner_config = getattr(
+                    self.model_runner,
+                    "config",
+                    None,
+                )
+                residency_enabled = bool(
+                    getattr(
+                        model_runner_config,
+                        "kv_offload_mvp0",
+                        False,
                     )
                 )
-                self._call_speculative_residency_phase(
-                    "rollback_speculative_residency_batch",
-                    residency_ticket_id,
-                    expected_operation="rollback",
-                    expected_status="rolled_back",
-                    expected_sequence_ids=tuple(
-                        row.sequence_id
+                residency_ticket_id = None
+                residency_state = None
+                residency_prepare_rows = ()
+                residency_precommit_rows = ()
+                residency_publication_committed = False
+
+                def rollback_residency():
+                    nonlocal residency_state
+                    rejected_identities = tuple(
+                        identity
                         for row in residency_prepare_rows
-                    ),
-                    expected_committed_block_identities=(),
-                    expected_rejected_block_identities=(
-                        rejected_identities
-                    ),
-                    timeout_s=60.0,
-                )
-                residency_state = "rolled_back"
-
-            ordinary_token_ids = ()
-            if partition.suppressed_sequences:
-                suppressed_identity_rows = (
-                    kv_block_identity_rows_for(
-                        partition.suppressed_sequences
+                        for identity in (
+                            row.reserved_block_identities
+                        )
                     )
+                    self._call_speculative_residency_phase(
+                        "rollback_speculative_residency_batch",
+                        residency_ticket_id,
+                        expected_operation="rollback",
+                        expected_status="rolled_back",
+                        expected_sequence_ids=tuple(
+                            row.sequence_id
+                            for row in residency_prepare_rows
+                        ),
+                        expected_committed_block_identities=(),
+                        expected_rejected_block_identities=(
+                            rejected_identities
+                        ),
+                        timeout_s=60.0,
+                    )
+                    residency_state = "rolled_back"
+
+                ordinary_token_ids = ()
+                if partition.suppressed_sequences:
+                    suppressed_identity_rows = (
+                        kv_block_identity_rows_for(
+                            partition.suppressed_sequences
+                        )
+                    )
+                    drain_releases = getattr(
+                        self.scheduler,
+                        "drain_hybrid_state_release_events",
+                        None,
+                    )
+                    released_leases = (
+                        drain_releases()
+                        if drain_releases is not None
+                        else ()
+                    )
+                    try:
+                        if released_leases or suppressed_identity_rows:
+                            with step_phase(
+                                "ordinary_or_first_target_dispatch"
+                            ):
+                                ordinary_token_ids = (
+                                    self.model_runner.call(
+                                        "run",
+                                        partition.suppressed_sequences,
+                                        is_prefill,
+                                        do_sample,
+                                        batch_kind,
+                                        released_leases,
+                                        suppressed_identity_rows,
+                                    )
+                                )
+                        else:
+                            with step_phase(
+                                "ordinary_or_first_target_dispatch"
+                            ):
+                                ordinary_token_ids = (
+                                    self.model_runner.call(
+                                        "run",
+                                        partition.suppressed_sequences,
+                                        is_prefill,
+                                        do_sample,
+                                        batch_kind,
+                                    )
+                                )
+                    except BaseException:
+                        restore_releases = getattr(
+                            self.scheduler,
+                            "restore_hybrid_state_release_events",
+                            None,
+                        )
+                        if restore_releases is not None:
+                            restore_releases(released_leases)
+                        raise
+                else:
+                    self.flush_pending_hybrid_state_releases(
+                        timeout_s=60.0,
+                    )
+                prepared_runtime = None
+                try:
+                    def run_tail_batch(items):
+                        nonlocal residency_ticket_id
+                        nonlocal residency_state
+                        nonlocal residency_prepare_rows
+                        if not residency_enabled:
+                            return run_model_runner_tail_batch(
+                                self.model_runner,
+                                items,
+                            )
+                        if residency_ticket_id is not None:
+                            raise RuntimeError(
+                                "speculative residency tail callback "
+                                "must run exactly once"
+                            )
+                        residency_prepare_rows = (
+                            build_speculative_residency_prepare_rows(
+                                items
+                            )
+                        )
+                        residency_ticket_id = next(
+                            self._speculative_residency_ticket_ids
+                        )
+                        sequence_ids = tuple(
+                            row.sequence_id
+                            for row in residency_prepare_rows
+                        )
+                        self._call_speculative_residency_phase(
+                            "prepare_speculative_residency_batch",
+                            residency_ticket_id,
+                            residency_prepare_rows,
+                            expected_operation="prepare",
+                            expected_status="prepared",
+                            expected_sequence_ids=sequence_ids,
+                            expected_committed_block_identities=(),
+                            expected_rejected_block_identities=(),
+                            timeout_s=60.0,
+                        )
+                        residency_state = "prepared"
+                        try:
+                            return run_model_runner_tail_batch(
+                                self.model_runner,
+                                items,
+                                residency_ticket_id,
+                            )
+                        except BaseException as error:
+                            try:
+                                rollback_residency()
+                            except BaseException as rollback_error:
+                                residency_state = "rollback_failed"
+                                self.speculative_runtime_poisoned = True
+                                self.speculative_runtime_poison_reason = (
+                                    "speculative residency rollback "
+                                    f"failed: {rollback_error}"
+                                )
+                                raise rollback_error from error
+                            raise
+
+                    run_first_targets_and_proposals = (
+                        build_model_runner_proposal_provider(
+                            self.model_runner,
+                            runtime,
+                            kv_block_identity_rows_for,
+                        )
+                    )
+                    side_state_callbacks = (
+                        build_model_runner_side_state_callbacks(
+                            self.model_runner,
+                            dispatch=(
+                                lambda method_name, *args: (
+                                    self
+                                    ._call_speculative_side_state_phase(
+                                        method_name,
+                                        *args,
+                                    )
+                                )
+                            ),
+                        )
+                    )
+                    with step_phase("speculative_prepare"):
+                        prepared_runtime = (
+                            prepare_native_speculative_batch(
+                                block_manager=(
+                                    self.scheduler.block_manager
+                                ),
+                                seqs=partition.selected_sequences,
+                                eos_token=self.scheduler.eos,
+                                run_first_targets_and_proposals=(
+                                    run_first_targets_and_proposals
+                                ),
+                                run_tail_batch=run_tail_batch,
+                                side_state_callbacks=(
+                                    side_state_callbacks
+                                ),
+                            )
+                        )
+                    commit_rows = (
+                        build_engine_prepared_speculative_commit_rows(
+                            prepared_runtime,
+                            partition.selected_sequences,
+                            eos_token=self.scheduler.eos,
+                        )
+                    )
+                    commit_row_by_sequence_id = {
+                        row.sequence_id: row
+                        for row in commit_rows
+                    }
+                    ordinary_token_iter = iter(
+                        ordinary_token_ids or ()
+                    )
+                    scheduler_rows = []
+                    for seq in seqs:
+                        commit_row = (
+                            commit_row_by_sequence_id.get(
+                                seq.seq_id
+                            )
+                        )
+                        if commit_row is not None:
+                            scheduler_rows.append(
+                                ScheduledOutputRow(
+                                    sequence_id=seq.seq_id,
+                                    output_tokens=(
+                                        commit_row.output_tokens
+                                    ),
+                                    speculative=True,
+                                    accepted_draft_tokens=(
+                                        commit_row
+                                        .accepted_draft_tokens
+                                    ),
+                                )
+                            )
+                            continue
+                        row_is_decode = (
+                            bool(
+                                getattr(
+                                    seq,
+                                    "step_is_decode",
+                                    False,
+                                )
+                            )
+                            if batch_kind == "mixed"
+                            else not is_prefill
+                        )
+                        row_do_sample = (
+                            bool(
+                                getattr(
+                                    seq,
+                                    "step_do_sample",
+                                    do_sample,
+                                )
+                            )
+                            if batch_kind == "mixed"
+                            else do_sample
+                        )
+                        output_tokens = (
+                            (next(ordinary_token_iter),)
+                            if row_is_decode or row_do_sample
+                            else ()
+                        )
+                        scheduler_rows.append(
+                            ScheduledOutputRow(
+                                sequence_id=seq.seq_id,
+                                output_tokens=output_tokens,
+                                speculative=False,
+                            )
+                        )
+                    try:
+                        next(ordinary_token_iter)
+                    except StopIteration:
+                        pass
+                    else:
+                        raise ValueError(
+                            "ordinary speculative-suppressed execution "
+                            "returned extra output tokens"
+                        )
+                    scheduler_rows = tuple(scheduler_rows)
+                    step_end_ns = self._clock_ns()
+                    with step_phase(
+                        "scheduler_prepare_postprocess"
+                    ):
+                        prepared_scheduler = (
+                            self.scheduler.prepare_postprocess(
+                                tuple(seqs),
+                                scheduler_rows,
+                                is_prefill,
+                                do_sample,
+                                batch_kind,
+                                decision_now_ns=decision_now_ns,
+                                step_end_ns=step_end_ns,
+                            )
+                        )
+                    kv_plans = tuple(
+                        self.scheduler.block_manager
+                        .prepare_speculative_kv_commit(
+                            row.transaction,
+                            row.sequence,
+                            row.accepted_tokens,
+                        )
+                        for row in prepared_runtime.sequences
+                        if row.transaction is not None
+                    )
+                    if residency_ticket_id is not None:
+                        residency_precommit_rows = (
+                            build_speculative_residency_precommit_rows(
+                                kv_plans
+                            )
+                        )
+                        committed_identities = tuple(
+                            identity
+                            for row in residency_precommit_rows
+                            for identity in (
+                                row.committed_block_identities
+                            )
+                        )
+                        rejected_identities = tuple(
+                            identity
+                            for row in residency_precommit_rows
+                            for identity in (
+                                row.rejected_block_identities
+                            )
+                        )
+                        with step_phase(
+                            "residency_precommit_or_seal"
+                        ):
+                            self._call_speculative_residency_phase(
+                                "precommit_speculative_residency_batch",
+                                residency_ticket_id,
+                                residency_precommit_rows,
+                                expected_operation="precommit",
+                                expected_status="precommitted",
+                                expected_sequence_ids=tuple(
+                                    row.sequence_id
+                                    for row in residency_precommit_rows
+                                ),
+                                expected_committed_block_identities=(
+                                    committed_identities
+                                ),
+                                expected_rejected_block_identities=(
+                                    rejected_identities
+                                ),
+                                timeout_s=60.0,
+                            )
+                        residency_state = "precommitted"
+                    _commit_prepared_speculative_publication(
+                        self,
+                        runtime,
+                        prepared_runtime,
+                        kv_plans,
+                        prepared_scheduler,
+                    )
+                    residency_publication_committed = True
+                    if residency_ticket_id is not None:
+                        committed_identities = tuple(
+                            identity
+                            for row in residency_precommit_rows
+                            for identity in (
+                                row.committed_block_identities
+                            )
+                        )
+                        rejected_identities = tuple(
+                            identity
+                            for row in residency_precommit_rows
+                            for identity in (
+                                row.rejected_block_identities
+                            )
+                        )
+                        try:
+                            self._call_speculative_residency_phase(
+                                "seal_speculative_residency_batch",
+                                residency_ticket_id,
+                                expected_operation="seal",
+                                expected_status="sealed",
+                                expected_sequence_ids=tuple(
+                                    row.sequence_id
+                                    for row in residency_precommit_rows
+                                ),
+                                expected_committed_block_identities=(
+                                    committed_identities
+                                ),
+                                expected_rejected_block_identities=(
+                                    rejected_identities
+                                ),
+                                timeout_s=60.0,
+                            )
+                        except BaseException as error:
+                            prepared_runtime.state = "committed"
+                            self.speculative_runtime_poisoned = True
+                            self.speculative_runtime_poison_reason = (
+                                "speculative residency seal failed: "
+                                f"{error}"
+                            )
+                            raise
+                        residency_state = "sealed"
+                    descriptor = getattr(
+                        runtime,
+                        "model_runner_executor",
+                        None,
+                    )
+                    capabilities = getattr(
+                        descriptor,
+                        "capabilities",
+                        None,
+                    )
+                    if (
+                        descriptor is not None
+                        and getattr(
+                            capabilities,
+                            "requires_proposal_lifecycle",
+                            False,
+                        )
+                    ):
+                        try:
+                            for seq in seqs:
+                                if not seq.is_finished:
+                                    continue
+                                release_model_runner_proposal_sequence(
+                                    self.model_runner,
+                                    descriptor,
+                                    seq.seq_id,
+                                    int(
+                                        getattr(
+                                            seq,
+                                            "sequence_epoch",
+                                            0,
+                                        )
+                                    ),
+                                    dispatch=(
+                                        lambda method_name, *args: (
+                                            _call_speculative_proposal_lifecycle(
+                                                self,
+                                                method_name,
+                                                *args,
+                                            )
+                                        )
+                                    ),
+                                )
+                        except BaseException as error:
+                            self.speculative_runtime_poisoned = True
+                            self.speculative_runtime_poison_reason = (
+                                "proposal executor sequence release "
+                                f"failed: {error}"
+                            )
+                            raise
+                    prepared_runtime.state = "committed"
+                    speculative_output_token_counts = {
+                        row.sequence_id: len(row.output_tokens)
+                        for row in commit_rows
+                    }
+                    speculative_accepted_draft_token_counts = {
+                        row.sequence_id: len(
+                            row.accepted_draft_tokens
+                        )
+                        for row in commit_rows
+                    }
+                    speculative_proposal_token_counts = {
+                        row.sequence_id: len(
+                            row.proposal.token_ids
+                        )
+                        for row in prepared_runtime.sequences
+                    }
+                    speculative_proposal_token_ids_by_seq = {
+                        row.sequence_id: list(
+                            row.proposal.token_ids
+                        )
+                        for row in prepared_runtime.sequences
+                    }
+                    speculative_accepted_draft_token_ids_by_seq = {
+                        row.sequence_id: list(
+                            row.accepted_draft_tokens
+                        )
+                        for row in commit_rows
+                    }
+                    speculative_proposal_row_count = sum(
+                        1
+                        for count in (
+                            speculative_proposal_token_counts
+                            .values()
+                        )
+                        if count > 0
+                    )
+                    speculative_first_target_callback_count = (
+                        prepared_runtime
+                        .first_target_callback_count
+                    )
+                    speculative_fixed_q_group_count = (
+                        prepared_runtime.tail_callback_count
+                    )
+                    speculative_runtime_timing_ms = dict(
+                        prepared_runtime.timing_ms
+                    )
+                except BaseException as error:
+                    residency_rollback_error = None
+                    if (
+                        residency_ticket_id is not None
+                        and residency_state
+                        in ("prepared", "precommitted")
+                        and not residency_publication_committed
+                    ):
+                        try:
+                            rollback_residency()
+                        except BaseException as rollback_error:
+                            residency_state = "rollback_failed"
+                            residency_rollback_error = rollback_error
+                            self.speculative_runtime_poisoned = True
+                            self.speculative_runtime_poison_reason = (
+                                "speculative residency rollback failed: "
+                                f"{rollback_error}"
+                            )
+                    if (
+                        prepared_runtime is not None
+                        and prepared_runtime.state == "prepared"
+                    ):
+                        rollback_prepared_native_speculative_batch(
+                            block_manager=(
+                                self.scheduler.block_manager
+                            ),
+                            prepared=prepared_runtime,
+                        )
+                    if residency_rollback_error is not None:
+                        raise residency_rollback_error from error
+                    raise
+                lifecycle = runtime.lifecycle
+                if lifecycle is not None:
+                    try:
+                        for seq, row in zip(
+                            seqs,
+                            scheduler_rows,
+                        ):
+                            if not row.output_tokens:
+                                continue
+                            lifecycle.synchronize_verified_history(
+                                seq.seq_id,
+                                tuple(seq.token_ids),
+                            )
+                            if seq.is_finished:
+                                lifecycle.release_sequence(
+                                    seq.seq_id
+                                )
+                    except BaseException as error:
+                        self.speculative_runtime_poisoned = True
+                        self.speculative_runtime_poison_reason = (
+                            "draft lifecycle synchronization failed: "
+                            f"{error}"
+                        )
+                        raise
+                token_ids = ()
+            else:
+                ordinary_identity_rows = (
+                    kv_block_identity_rows_for(seqs)
                 )
                 drain_releases = getattr(
                     self.scheduler,
@@ -3448,24 +4120,30 @@ class LLMEngine:
                     else ()
                 )
                 try:
-                    if released_leases or suppressed_identity_rows:
-                        ordinary_token_ids = self.model_runner.call(
-                            "run",
-                            partition.suppressed_sequences,
-                            is_prefill,
-                            do_sample,
-                            batch_kind,
-                            released_leases,
-                            suppressed_identity_rows,
-                        )
+                    if released_leases or ordinary_identity_rows:
+                        with step_phase(
+                            "ordinary_or_first_target_dispatch"
+                        ):
+                            token_ids = self.model_runner.call(
+                                "run",
+                                seqs,
+                                is_prefill,
+                                do_sample,
+                                batch_kind,
+                                released_leases,
+                                ordinary_identity_rows,
+                            )
                     else:
-                        ordinary_token_ids = self.model_runner.call(
-                            "run",
-                            partition.suppressed_sequences,
-                            is_prefill,
-                            do_sample,
-                            batch_kind,
-                        )
+                        with step_phase(
+                            "ordinary_or_first_target_dispatch"
+                        ):
+                            token_ids = self.model_runner.call(
+                                "run",
+                                seqs,
+                                is_prefill,
+                                do_sample,
+                                batch_kind,
+                            )
                 except BaseException:
                     restore_releases = getattr(
                         self.scheduler,
@@ -3475,297 +4153,48 @@ class LLMEngine:
                     if restore_releases is not None:
                         restore_releases(released_leases)
                     raise
-            else:
-                self.flush_pending_hybrid_state_releases(
-                    timeout_s=60.0,
-                )
-            prepared_runtime = None
-            try:
-                def run_tail_batch(items):
-                    nonlocal residency_ticket_id
-                    nonlocal residency_state
-                    nonlocal residency_prepare_rows
-                    if not residency_enabled:
-                        return run_model_runner_tail_batch(
-                            self.model_runner,
-                            items,
-                        )
-                    if residency_ticket_id is not None:
-                        raise RuntimeError(
-                            "speculative residency tail callback "
-                            "must run exactly once"
-                        )
-                    residency_prepare_rows = (
-                        build_speculative_residency_prepare_rows(
-                            items
-                        )
-                    )
-                    residency_ticket_id = next(
-                        self._speculative_residency_ticket_ids
-                    )
-                    sequence_ids = tuple(
-                        row.sequence_id
-                        for row in residency_prepare_rows
-                    )
-                    self._call_speculative_residency_phase(
-                        "prepare_speculative_residency_batch",
-                        residency_ticket_id,
-                        residency_prepare_rows,
-                        expected_operation="prepare",
-                        expected_status="prepared",
-                        expected_sequence_ids=sequence_ids,
-                        expected_committed_block_identities=(),
-                        expected_rejected_block_identities=(),
-                        timeout_s=60.0,
-                    )
-                    residency_state = "prepared"
-                    try:
-                        return run_model_runner_tail_batch(
-                            self.model_runner,
-                            items,
-                            residency_ticket_id,
-                        )
-                    except BaseException as error:
-                        try:
-                            rollback_residency()
-                        except BaseException as rollback_error:
-                            residency_state = "rollback_failed"
-                            self.speculative_runtime_poisoned = True
-                            self.speculative_runtime_poison_reason = (
-                                "speculative residency rollback "
-                                f"failed: {rollback_error}"
-                            )
-                            raise rollback_error from error
-                        raise
-
-                run_first_targets_and_proposals = (
-                    build_model_runner_proposal_provider(
-                        self.model_runner,
-                        runtime,
-                        kv_block_identity_rows_for,
-                    )
-                )
-                side_state_callbacks = (
-                    build_model_runner_side_state_callbacks(
-                        self.model_runner,
-                        dispatch=(
-                            lambda method_name, *args: (
-                                self
-                                ._call_speculative_side_state_phase(
-                                    method_name,
-                                    *args,
-                                )
-                            )
-                        ),
-                    )
-                )
-                prepared_runtime = (
-                    prepare_native_speculative_batch(
-                        block_manager=(
-                            self.scheduler.block_manager
-                        ),
-                        seqs=partition.selected_sequences,
-                        eos_token=self.scheduler.eos,
-                        run_first_targets_and_proposals=(
-                            run_first_targets_and_proposals
-                        ),
-                        run_tail_batch=run_tail_batch,
-                        side_state_callbacks=(
-                            side_state_callbacks
-                        ),
-                    )
-                )
-                commit_rows = (
-                    build_engine_prepared_speculative_commit_rows(
-                        prepared_runtime,
-                        partition.selected_sequences,
-                        eos_token=self.scheduler.eos,
-                    )
-                )
-                commit_row_by_sequence_id = {
-                    row.sequence_id: row
-                    for row in commit_rows
-                }
-                ordinary_token_iter = iter(
-                    ordinary_token_ids or ()
-                )
-                scheduler_rows = []
-                for seq in seqs:
-                    commit_row = (
-                        commit_row_by_sequence_id.get(
-                            seq.seq_id
-                        )
-                    )
-                    if commit_row is not None:
-                        scheduler_rows.append(
-                            ScheduledOutputRow(
-                                sequence_id=seq.seq_id,
-                                output_tokens=(
-                                    commit_row.output_tokens
-                                ),
-                                speculative=True,
-                                accepted_draft_tokens=(
-                                    commit_row
-                                    .accepted_draft_tokens
-                                ),
-                            )
-                        )
-                        continue
-                    row_is_decode = (
-                        bool(
-                            getattr(
-                                seq,
-                                "step_is_decode",
-                                False,
-                            )
-                        )
-                        if batch_kind == "mixed"
-                        else not is_prefill
-                    )
-                    row_do_sample = (
-                        bool(
-                            getattr(
-                                seq,
-                                "step_do_sample",
-                                do_sample,
-                            )
-                        )
-                        if batch_kind == "mixed"
-                        else do_sample
-                    )
-                    output_tokens = (
-                        (next(ordinary_token_iter),)
-                        if row_is_decode or row_do_sample
-                        else ()
-                    )
-                    scheduler_rows.append(
-                        ScheduledOutputRow(
-                            sequence_id=seq.seq_id,
-                            output_tokens=output_tokens,
-                            speculative=False,
-                        )
-                    )
-                try:
-                    next(ordinary_token_iter)
-                except StopIteration:
-                    pass
-                else:
-                    raise ValueError(
-                        "ordinary speculative-suppressed execution "
-                        "returned extra output tokens"
-                    )
-                scheduler_rows = tuple(scheduler_rows)
                 step_end_ns = self._clock_ns()
-                prepared_scheduler = (
-                    self.scheduler.prepare_postprocess(
-                        tuple(seqs),
-                        scheduler_rows,
+            if not partition.selected_sequences:
+                with step_phase("ordinary_scheduler_postprocess"):
+                    self.scheduler.postprocess(
+                        seqs,
+                        token_ids,
                         is_prefill,
                         do_sample,
                         batch_kind,
                         decision_now_ns=decision_now_ns,
                         step_end_ns=step_end_ns,
                     )
+                lifecycle = (
+                    None
+                    if runtime is None
+                    else runtime.lifecycle
                 )
-                kv_plans = tuple(
-                    self.scheduler.block_manager
-                    .prepare_speculative_kv_commit(
-                        row.transaction,
-                        row.sequence,
-                        row.accepted_tokens,
-                    )
-                    for row in prepared_runtime.sequences
-                    if row.transaction is not None
-                )
-                if residency_ticket_id is not None:
-                    residency_precommit_rows = (
-                        build_speculative_residency_precommit_rows(
-                            kv_plans
-                        )
-                    )
-                    committed_identities = tuple(
-                        identity
-                        for row in residency_precommit_rows
-                        for identity in (
-                            row.committed_block_identities
-                        )
-                    )
-                    rejected_identities = tuple(
-                        identity
-                        for row in residency_precommit_rows
-                        for identity in (
-                            row.rejected_block_identities
-                        )
-                    )
-                    self._call_speculative_residency_phase(
-                        "precommit_speculative_residency_batch",
-                        residency_ticket_id,
-                        residency_precommit_rows,
-                        expected_operation="precommit",
-                        expected_status="precommitted",
-                        expected_sequence_ids=tuple(
-                            row.sequence_id
-                            for row in residency_precommit_rows
-                        ),
-                        expected_committed_block_identities=(
-                            committed_identities
-                        ),
-                        expected_rejected_block_identities=(
-                            rejected_identities
-                        ),
-                        timeout_s=60.0,
-                    )
-                    residency_state = "precommitted"
-                _commit_prepared_speculative_publication(
-                    self,
-                    runtime,
-                    prepared_runtime,
-                    kv_plans,
-                    prepared_scheduler,
-                )
-                residency_publication_committed = True
-                if residency_ticket_id is not None:
-                    committed_identities = tuple(
-                        identity
-                        for row in residency_precommit_rows
-                        for identity in (
-                            row.committed_block_identities
-                        )
-                    )
-                    rejected_identities = tuple(
-                        identity
-                        for row in residency_precommit_rows
-                        for identity in (
-                            row.rejected_block_identities
-                        )
-                    )
+                if lifecycle is not None:
                     try:
-                        self._call_speculative_residency_phase(
-                            "seal_speculative_residency_batch",
-                            residency_ticket_id,
-                            expected_operation="seal",
-                            expected_status="sealed",
-                            expected_sequence_ids=tuple(
-                                row.sequence_id
-                                for row in residency_precommit_rows
-                            ),
-                            expected_committed_block_identities=(
-                                committed_identities
-                            ),
-                            expected_rejected_block_identities=(
-                                rejected_identities
-                            ),
-                            timeout_s=60.0,
-                        )
+                        for seq in seqs:
+                            if (
+                                len(seq.completion_token_ids)
+                                == completion_lengths_before[
+                                    seq.seq_id
+                                ]
+                            ):
+                                continue
+                            lifecycle.synchronize_verified_history(
+                                seq.seq_id,
+                                tuple(seq.token_ids),
+                            )
+                            if seq.is_finished:
+                                lifecycle.release_sequence(
+                                    seq.seq_id
+                                )
                     except BaseException as error:
-                        prepared_runtime.state = "committed"
                         self.speculative_runtime_poisoned = True
                         self.speculative_runtime_poison_reason = (
-                            "speculative residency seal failed: "
+                            "draft lifecycle synchronization failed: "
                             f"{error}"
                         )
                         raise
-                    residency_state = "sealed"
                 descriptor = getattr(
                     runtime,
                     "model_runner_executor",
@@ -3816,304 +4245,131 @@ class LLMEngine:
                             f"failed: {error}"
                         )
                         raise
-                prepared_runtime.state = "committed"
-                speculative_output_token_counts = {
-                    row.sequence_id: len(row.output_tokens)
-                    for row in commit_rows
-                }
-                speculative_accepted_draft_token_counts = {
-                    row.sequence_id: len(
-                        row.accepted_draft_tokens
-                    )
-                    for row in commit_rows
-                }
-                speculative_proposal_token_counts = {
-                    row.sequence_id: len(
-                        row.proposal.token_ids
-                    )
-                    for row in prepared_runtime.sequences
-                }
-                speculative_proposal_token_ids_by_seq = {
-                    row.sequence_id: list(
-                        row.proposal.token_ids
-                    )
-                    for row in prepared_runtime.sequences
-                }
-                speculative_accepted_draft_token_ids_by_seq = {
-                    row.sequence_id: list(
-                        row.accepted_draft_tokens
-                    )
-                    for row in commit_rows
-                }
-                speculative_proposal_row_count = sum(
-                    1
-                    for count in (
-                        speculative_proposal_token_counts
-                        .values()
-                    )
-                    if count > 0
+            outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
+            token_deltas = {
+                seq.seq_id: list(
+                    seq.completion_token_ids[
+                        completion_lengths_before[seq.seq_id]:
+                    ]
                 )
-                speculative_first_target_callback_count = (
-                    prepared_runtime
-                    .first_target_callback_count
-                )
-                speculative_fixed_q_group_count = (
-                    prepared_runtime.tail_callback_count
-                )
-                speculative_runtime_timing_ms = dict(
-                    prepared_runtime.timing_ms
-                )
-            except BaseException as error:
-                residency_rollback_error = None
-                if (
-                    residency_ticket_id is not None
-                    and residency_state
-                    in ("prepared", "precommitted")
-                    and not residency_publication_committed
-                ):
-                    try:
-                        rollback_residency()
-                    except BaseException as rollback_error:
-                        residency_state = "rollback_failed"
-                        residency_rollback_error = rollback_error
-                        self.speculative_runtime_poisoned = True
-                        self.speculative_runtime_poison_reason = (
-                            "speculative residency rollback failed: "
-                            f"{rollback_error}"
+                for seq in seqs
+            }
+            timing_observation = self.scheduler.last_slo_observation()
+            self.last_step_observation = {
+                "policy_branch": self.scheduler.last_policy_branch,
+                "batch_kind": batch_kind,
+                "is_prefill": bool(is_prefill),
+                "do_sample": bool(do_sample),
+                "speculative_schedule_generation": (
+                    partition.schedule_generation
+                ),
+                "speculative_selected_seq_ids": list(
+                    partition.selected_sequence_ids
+                ),
+                "speculative_suppressed_seq_ids": list(
+                    partition.suppressed_sequence_ids
+                ),
+                "scheduled": scheduled_rows,
+                "queue_before": queue_before,
+                "queue_after": self.scheduler.observation_snapshot(),
+                "new_completion_tokens_by_seq": token_deltas,
+                "finished_seq_ids": [
+                    seq.seq_id for seq in seqs if seq.is_finished
+                ],
+                "speculative_output_token_counts": (
+                    speculative_output_token_counts
+                ),
+                "speculative_accepted_draft_token_counts": (
+                    speculative_accepted_draft_token_counts
+                ),
+                "speculative_proposal_token_counts": (
+                    speculative_proposal_token_counts
+                ),
+                "speculative_proposal_token_ids_by_seq": (
+                    speculative_proposal_token_ids_by_seq
+                ),
+                "speculative_accepted_draft_token_ids_by_seq": (
+                    speculative_accepted_draft_token_ids_by_seq
+                ),
+                "speculative_proposal_row_count": (
+                    speculative_proposal_row_count
+                ),
+                "speculative_first_target_callback_count": (
+                    speculative_first_target_callback_count
+                ),
+                "speculative_fixed_q_group_count": (
+                    speculative_fixed_q_group_count
+                ),
+                "speculative_runtime_timing_ms": (
+                    speculative_runtime_timing_ms
+                ),
+                "memory": self.model_runner.memory_snapshot(),
+                **timing_observation,
+            }
+            return outputs, num_tokens      #计算的是每个step的单次增量
+        except BaseException as error:
+            step_error = error
+            raise
+        finally:
+            if step_trace is not None:
+                command_rows = None
+                telemetry_error = None
+                try:
+                    command_snapshot = (
+                        self.model_runner
+                        .command_timeline.snapshot()
+                    )
+                    command_rows = command_snapshot.get("rows")
+                except BaseException as error:
+                    telemetry_error = error
+                finalized_step = None
+                try:
+                    finalized_step = (
+                        step_timeline.finish_step(
+                            step_trace,
+                            error=step_error,
+                            command_rows=command_rows,
                         )
+                    )
+                except BaseException as error:
+                    if telemetry_error is None:
+                        telemetry_error = error
                 if (
-                    prepared_runtime is not None
-                    and prepared_runtime.state == "prepared"
-                ):
-                    rollback_prepared_native_speculative_batch(
-                        block_manager=(
-                            self.scheduler.block_manager
+                    finalized_step is not None
+                    and isinstance(
+                        getattr(
+                            self,
+                            "last_step_observation",
+                            None,
                         ),
-                        prepared=prepared_runtime,
+                        dict,
                     )
-                if residency_rollback_error is not None:
-                    raise residency_rollback_error from error
-                raise
-            lifecycle = runtime.lifecycle
-            if lifecycle is not None:
-                try:
-                    for seq, row in zip(
-                        seqs,
-                        scheduler_rows,
-                    ):
-                        if not row.output_tokens:
-                            continue
-                        lifecycle.synchronize_verified_history(
-                            seq.seq_id,
-                            tuple(seq.token_ids),
-                        )
-                        if seq.is_finished:
-                            lifecycle.release_sequence(
-                                seq.seq_id
+                ):
+                    self.last_step_observation[
+                        "command_timeline_step"
+                    ] = {
+                        "identity": {
+                            key: finalized_step[key]
+                            for key in (
+                                "engine_step_id",
+                                "repeat_index",
+                                "request_set_sha256",
+                                "batch_kind",
+                                "speculative_selected_sequence_ids_sha256",
                             )
-                except BaseException as error:
-                    self.speculative_runtime_poisoned = True
-                    self.speculative_runtime_poison_reason = (
-                        "draft lifecycle synchronization failed: "
-                        f"{error}"
-                    )
-                    raise
-            token_ids = ()
-        else:
-            ordinary_identity_rows = (
-                kv_block_identity_rows_for(seqs)
-            )
-            drain_releases = getattr(
-                self.scheduler,
-                "drain_hybrid_state_release_events",
-                None,
-            )
-            released_leases = (
-                drain_releases()
-                if drain_releases is not None
-                else ()
-            )
-            try:
-                if released_leases or ordinary_identity_rows:
-                    token_ids = self.model_runner.call(
-                        "run",
-                        seqs,
-                        is_prefill,
-                        do_sample,
-                        batch_kind,
-                        released_leases,
-                        ordinary_identity_rows,
-                    )
-                else:
-                    token_ids = self.model_runner.call(
-                        "run",
-                        seqs,
-                        is_prefill,
-                        do_sample,
-                        batch_kind,
-                    )
-            except BaseException:
-                restore_releases = getattr(
-                    self.scheduler,
-                    "restore_hybrid_state_release_events",
-                    None,
-                )
-                if restore_releases is not None:
-                    restore_releases(released_leases)
-                raise
-            step_end_ns = self._clock_ns()
-        if not partition.selected_sequences:
-            self.scheduler.postprocess(
-                seqs,
-                token_ids,
-                is_prefill,
-                do_sample,
-                batch_kind,
-                decision_now_ns=decision_now_ns,
-                step_end_ns=step_end_ns,
-            )
-            lifecycle = (
-                None
-                if runtime is None
-                else runtime.lifecycle
-            )
-            if lifecycle is not None:
-                try:
-                    for seq in seqs:
-                        if (
-                            len(seq.completion_token_ids)
-                            == completion_lengths_before[
-                                seq.seq_id
-                            ]
-                        ):
-                            continue
-                        lifecycle.synchronize_verified_history(
-                            seq.seq_id,
-                            tuple(seq.token_ids),
-                        )
-                        if seq.is_finished:
-                            lifecycle.release_sequence(
-                                seq.seq_id
-                            )
-                except BaseException as error:
-                    self.speculative_runtime_poisoned = True
-                    self.speculative_runtime_poison_reason = (
-                        "draft lifecycle synchronization failed: "
-                        f"{error}"
-                    )
-                    raise
-            descriptor = getattr(
-                runtime,
-                "model_runner_executor",
-                None,
-            )
-            capabilities = getattr(
-                descriptor,
-                "capabilities",
-                None,
-            )
-            if (
-                descriptor is not None
-                and getattr(
-                    capabilities,
-                    "requires_proposal_lifecycle",
-                    False,
-                )
-            ):
-                try:
-                    for seq in seqs:
-                        if not seq.is_finished:
-                            continue
-                        release_model_runner_proposal_sequence(
-                            self.model_runner,
-                            descriptor,
-                            seq.seq_id,
-                            int(
-                                getattr(
-                                    seq,
-                                    "sequence_epoch",
-                                    0,
-                                )
-                            ),
-                            dispatch=(
-                                lambda method_name, *args: (
-                                    _call_speculative_proposal_lifecycle(
-                                        self,
-                                        method_name,
-                                        *args,
-                                    )
-                                )
-                            ),
-                        )
-                except BaseException as error:
-                    self.speculative_runtime_poisoned = True
-                    self.speculative_runtime_poison_reason = (
-                        "proposal executor sequence release "
-                        f"failed: {error}"
-                    )
-                    raise
-        outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
-        token_deltas = {
-            seq.seq_id: list(
-                seq.completion_token_ids[
-                    completion_lengths_before[seq.seq_id]:
-                ]
-            )
-            for seq in seqs
-        }
-        timing_observation = self.scheduler.last_slo_observation()
-        self.last_step_observation = {
-            "policy_branch": self.scheduler.last_policy_branch,
-            "batch_kind": batch_kind,
-            "is_prefill": bool(is_prefill),
-            "do_sample": bool(do_sample),
-            "speculative_schedule_generation": (
-                partition.schedule_generation
-            ),
-            "speculative_selected_seq_ids": list(
-                partition.selected_sequence_ids
-            ),
-            "speculative_suppressed_seq_ids": list(
-                partition.suppressed_sequence_ids
-            ),
-            "scheduled": scheduled_rows,
-            "queue_before": queue_before,
-            "queue_after": self.scheduler.observation_snapshot(),
-            "new_completion_tokens_by_seq": token_deltas,
-            "finished_seq_ids": [
-                seq.seq_id for seq in seqs if seq.is_finished
-            ],
-            "speculative_output_token_counts": (
-                speculative_output_token_counts
-            ),
-            "speculative_accepted_draft_token_counts": (
-                speculative_accepted_draft_token_counts
-            ),
-            "speculative_proposal_token_counts": (
-                speculative_proposal_token_counts
-            ),
-            "speculative_proposal_token_ids_by_seq": (
-                speculative_proposal_token_ids_by_seq
-            ),
-            "speculative_accepted_draft_token_ids_by_seq": (
-                speculative_accepted_draft_token_ids_by_seq
-            ),
-            "speculative_proposal_row_count": (
-                speculative_proposal_row_count
-            ),
-            "speculative_first_target_callback_count": (
-                speculative_first_target_callback_count
-            ),
-            "speculative_fixed_q_group_count": (
-                speculative_fixed_q_group_count
-            ),
-            "speculative_runtime_timing_ms": (
-                speculative_runtime_timing_ms
-            ),
-            "memory": self.model_runner.memory_snapshot(),
-            **timing_observation,
-        }
-        return outputs, num_tokens      #计算的是每个step的单次增量
+                        },
+                        "phases": finalized_step["phases"],
+                        "status": finalized_step["status"],
+                        "detail": finalized_step["detail"],
+                        "conservation_status": finalized_step[
+                            "conservation_status"
+                        ],
+                        "conservation_detail": finalized_step[
+                            "conservation_detail"
+                        ],
+                    }
+                if step_error is None and telemetry_error is not None:
+                    raise telemetry_error
 
     def is_finished(self):
         return self.scheduler.is_finished()
@@ -4131,18 +4387,18 @@ class LLMEngine:
         return len(events)
 
     def generate(
-        self, 
+        self,
         prompts: list[str] | list[list[int]],               #输入提示：可以是字符串列表（未分词）也可以是token id列表（已分词）
-        sampling_params: SamplingParams | list[SamplingParams], 
-        use_tqdm: bool = True, 
+        sampling_params: SamplingParams | list[SamplingParams],
+        use_tqdm: bool = True,
     ) -> list[int]:
-        if use_tqdm: 
+        if use_tqdm:
             pbar = tqdm(total = len(prompts), desc = "Generating", dynamic_ncols = True)
         if not isinstance(sampling_params, list):
             sampling_params = [sampling_params] * len(prompts)    #保证每个prompt都有一组sampling_params
         for prompt, sp in zip(prompts, sampling_params):
             self.add_request(prompt, sp)
-        
+
         outputs = {}
         prefill_throughput = decode_throughput = 0.0
         while not self.is_finished():           #根据waiting和running队列是否为空判断
@@ -4168,4 +4424,4 @@ class LLMEngine:
         if use_tqdm:
             pbar.close()
         return outputs
-    
+

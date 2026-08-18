@@ -7,6 +7,7 @@ import types
 from types import SimpleNamespace
 
 import pytest
+from contextlib import contextmanager
 
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -279,6 +280,48 @@ def test_two_phase_publication_orders_proposal_lifecycle_exactly():
         "target_kv_committed",
         "scheduler_committed",
         "proposal_finalize_committed",
+    ]
+
+
+def test_publication_timeline_phases_wrap_existing_operation_order():
+    events = []
+    helper, engine, runtime, prepared, plan = (
+        _publication_helper(events)
+    )
+
+    class Timeline:
+        @contextmanager
+        def phase(self, name):
+            events.append(("phase_start", name))
+            try:
+                yield
+            finally:
+                events.append(("phase_end", name))
+
+    engine.engine_step_timeline = Timeline()
+    helper(
+        engine,
+        runtime,
+        prepared,
+        (plan,),
+        object(),
+    )
+
+    assert events == [
+        ("phase_start", "proposal_lifecycle_finalize_prepare"),
+        "proposal_finalize_prepared",
+        ("phase_end", "proposal_lifecycle_finalize_prepare"),
+        ("phase_start", "proposal_kv_prepare_commit"),
+        "target_kv_committed",
+        ("phase_end", "proposal_kv_prepare_commit"),
+        ("phase_start", "scheduler_commit_postprocess"),
+        "scheduler_committed",
+        ("phase_end", "scheduler_commit_postprocess"),
+        ("phase_start", "proposal_lifecycle_finalize_commit"),
+        "proposal_finalize_committed",
+        ("phase_end", "proposal_lifecycle_finalize_commit"),
+        ("phase_start", "side_state_seal"),
+        ("phase_end", "side_state_seal"),
     ]
 
 
