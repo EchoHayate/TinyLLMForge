@@ -23,6 +23,9 @@ _EMBEDDED_DIRECTORY = ".tinyllmforge-scratch"
 _COMMIT_FILE = "commit.json"
 _MANIFEST_FILE = "source-files.sha256"
 _EXPLICIT_PATHS_FILE = "explicit-paths.txt"
+_EMBEDDED_FILES = frozenset(
+    (_COMMIT_FILE, _MANIFEST_FILE, _EXPLICIT_PATHS_FILE)
+)
 _HASH_LENGTH = 64
 _FORBIDDEN_PARTS = frozenset(
     (
@@ -500,6 +503,12 @@ def _read_generation_fd(
             "cannot open embedded receipt directory: {}".format(exc)
         )
     try:
+        embedded_entries = frozenset(os.listdir(embedded_fd))
+        if embedded_entries != _EMBEDDED_FILES:
+            raise TransactionError(
+                "embedded receipt directory has unexpected members: "
+                "{}".format(", ".join(sorted(embedded_entries)))
+            )
         commit_data = _read_regular_at(embedded_fd, _COMMIT_FILE)
         manifest_data = _read_regular_at(embedded_fd, _MANIFEST_FILE)
         explicit_paths_data = _read_regular_at(

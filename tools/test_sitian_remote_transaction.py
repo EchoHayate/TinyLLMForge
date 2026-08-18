@@ -811,6 +811,27 @@ class TransactionPrimitiveTests(unittest.TestCase):
                     self.read_committed(root)
                 root.rename(self.test_root / ("rejected-" + name))
 
+    def test_strict_receipt_rejects_extra_embedded_directory_members(self):
+        for kind in ("file", "appledouble", "symlink", "directory"):
+            with self.subTest(kind=kind):
+                root = self.make_committed_root()
+                embedded = root / "source/.tinyllmforge-scratch"
+                if kind == "file":
+                    (embedded / "extra").write_bytes(b"extra\n")
+                elif kind == "appledouble":
+                    (embedded / "._metadata").write_bytes(b"metadata\n")
+                elif kind == "symlink":
+                    (embedded / "extra-link").symlink_to("commit.json")
+                else:
+                    (embedded / "extra-directory").mkdir()
+                try:
+                    with self.assertRaises(transaction.TransactionError):
+                        self.read_committed(root)
+                finally:
+                    root.rename(
+                        self.test_root / ("rejected-extra-" + kind)
+                    )
+
     def test_strict_receipt_rejects_wrong_expected_identity(self):
         cases = (
             {"expected_nonce": "wrong"},
