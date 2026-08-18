@@ -3160,7 +3160,6 @@ def classify_boundary(
     classification = "PAIRED_PROTOCOL_UNSTABLE"
     localized_boundary = None
     stable_but_unlocalized = False
-    authorized = False
     if not identity_passed:
         classification = "INVALID_IDENTITY_OR_CORRECTNESS"
     elif not timeline_passed:
@@ -3183,14 +3182,13 @@ def classify_boundary(
         if len(candidates) == 1:
             localized_boundary = candidates[0]
             classification = "BOUNDARY_LOCALIZED"
-            authorized = True
         else:
             stable_but_unlocalized = True
     return {
         "classification": classification,
         "localized_boundary": localized_boundary,
         "stable_but_unlocalized": stable_but_unlocalized,
-        "runtime_optimization_authorized": authorized,
+        "runtime_optimization_authorized": False,
         "performance_improvement_established": False,
         "phase_1_complete": False,
         "promotion_ready": False,
@@ -3430,14 +3428,9 @@ def validate_command_timeline_artifact(
         raise ValueError(
             "artifact derived-field recomputation mismatch"
         )
-    if (
-        row["runtime_optimization_authorized"]
-        is not (
-            row["classification"] == "BOUNDARY_LOCALIZED"
-        )
-    ):
+    if row["runtime_optimization_authorized"] is not False:
         raise ValueError(
-            "runtime optimization authorization is invalid"
+            "runtime optimization must remain unauthorized"
         )
     if row["performance_improvement_established"] is not False:
         raise ValueError(

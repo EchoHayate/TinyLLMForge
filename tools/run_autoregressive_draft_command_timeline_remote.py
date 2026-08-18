@@ -6,15 +6,18 @@ import argparse
 import copy
 from datetime import datetime
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
+import time
 import traceback
 
 
@@ -30,6 +33,7 @@ REMOTE_TASK_ROOT = (
     "/data00/home/sitian/tinyllmforge-workspaces/"
     "command-timeline-20260818"
 )
+REMOTE_RUNTIME_ROOT = f"{REMOTE_TASK_ROOT}/runtime/ssh"
 REMOTE_CURRENT_SOURCE = f"{REMOTE_TASK_ROOT}/source"
 REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
 REMOTE_PACKAGE_ROOT = (
@@ -46,6 +50,7 @@ MINIMUM_KERBEROS_LIFETIME_SECONDS = 5400
 KERBEROS_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
 MAX_IDLE_MEMORY_USED_MIB = 1024
 MAX_IDLE_UTILIZATION_PERCENT = 5
+WORKER_TIMEOUT_SECONDS = 1800
 RUN_TAG_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SOURCE_PATHS = (
     "tinyvllm/",
@@ -125,6 +130,29 @@ def build_epoch_schedule() -> list[tuple[str, str, str]]:
 
 
 def build_ssh_command(remote_arguments) -> list[str]:
+    runtime_directories = [
+        f"{REMOTE_RUNTIME_ROOT}/scratch",
+        f"{REMOTE_RUNTIME_ROOT}/pycache",
+        f"{REMOTE_RUNTIME_ROOT}/xdg",
+    ]
+    remote_environment = [
+        "env",
+        f"TMPDIR={runtime_directories[0]}",
+        f"TMP={runtime_directories[0]}",
+        f"TEMP={runtime_directories[0]}",
+        f"PYTHONPYCACHEPREFIX={runtime_directories[1]}",
+        f"XDG_CACHE_HOME={runtime_directories[2]}",
+    ]
+    remote_payload = shlex.join([
+        *remote_environment,
+        *(str(value) for value in remote_arguments),
+    ])
+    bootstrap = (
+        "umask 077; mkdir -p "
+        + " ".join(shlex.quote(path) for path in runtime_directories)
+        + "; exec "
+        + remote_payload
+    )
     return [
         "ssh",
         "-o",
@@ -136,7 +164,7 @@ def build_ssh_command(remote_arguments) -> list[str]:
         "-o",
         "ConnectTimeout=20",
         REMOTE_TARGET,
-        shlex.join([str(value) for value in remote_arguments]),
+        shlex.join(["bash", "-c", bootstrap]),
     ]
 
 
@@ -317,6 +345,80 @@ def build_source_archive(repo_root: Path, archive_path: Path) -> Path:
                 with path.open("rb") as handle:
                     archive.addfile(info, handle)
     return destination
+
+
+def build_source_archive_bytes(repo_root: Path) -> bytes:
+    root = Path(repo_root)
+    inventory = _source_inventory(root)
+    if not inventory:
+        raise ValueError("source archive inventory is empty")
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:") as archive:
+        root_info = tarfile.TarInfo("source")
+        root_info.type = tarfile.DIRTYPE
+        root_info.mode = 0o755
+        archive.addfile(root_info)
+        for path, archive_name, is_directory in inventory:
+            info = archive.gettarinfo(str(path), arcname=archive_name)
+            if info.issym() or info.islnk():
+                raise ValueError("source archive must not contain links")
+            if is_directory:
+                if not info.isdir():
+                    raise ValueError(
+                        "source archive directory is invalid"
+                    )
+                archive.addfile(info)
+            else:
+                if not info.isreg():
+                    raise ValueError(
+                        "source archive entry is not regular"
+                    )
+                with path.open("rb") as handle:
+                    archive.addfile(info, handle)
+    return buffer.getvalue()
+
+
+def _encode_prepare_payload(
+    *,
+    source_archive: bytes,
+    source_patch: bytes,
+) -> bytes:
+    if not isinstance(source_archive, bytes) or not source_archive:
+        raise ValueError("source archive payload is invalid")
+    if not isinstance(source_patch, bytes):
+        raise ValueError("source patch payload is invalid")
+    header = _canonical_json_bytes({
+        "source_archive_bytes": len(source_archive),
+        "source_patch_bytes": len(source_patch),
+    })
+    return header + source_archive + source_patch
+
+
+def _decode_prepare_payload(payload: bytes) -> tuple[bytes, bytes]:
+    if not isinstance(payload, bytes) or not payload:
+        raise ValueError("prepare payload is invalid")
+    header_bytes, separator, body = payload.partition(b"\n")
+    if separator != b"\n":
+        raise ValueError("prepare payload header is missing")
+    try:
+        header = json.loads(header_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("prepare payload header is invalid") from error
+    if not isinstance(header, dict):
+        raise ValueError("prepare payload header is invalid")
+    archive_size = header.get("source_archive_bytes")
+    patch_size = header.get("source_patch_bytes")
+    if (
+        isinstance(archive_size, bool)
+        or not isinstance(archive_size, int)
+        or archive_size <= 0
+        or isinstance(patch_size, bool)
+        or not isinstance(patch_size, int)
+        or patch_size < 0
+        or len(body) != archive_size + patch_size
+    ):
+        raise ValueError("prepare payload lengths are invalid")
+    return body[:archive_size], body[archive_size:]
 
 
 def extract_source_archive(archive_path: Path, output_root: Path) -> Path:
@@ -554,6 +656,39 @@ def _run_command(
     return result
 
 
+def _run_remote_command(
+    remote_arguments,
+    *,
+    command_runner=subprocess.run,
+    context: str,
+    now=None,
+    kerberos_status: dict | None = None,
+    allow_failure: bool = False,
+    **kwargs,
+):
+    kerberos = (
+        _local_kerberos_preflight(
+            command_runner=command_runner,
+            now=now,
+        )
+        if kerberos_status is None
+        else kerberos_status
+    )
+    if kerberos.get("status") != "READY":
+        reason = kerberos.get(
+            "reason",
+            "local Kerberos lifetime is insufficient",
+        )
+        raise RuntimeError(f"{context} blocked: {reason}")
+    return _run_command(
+        build_ssh_command(remote_arguments),
+        command_runner=command_runner,
+        context=context,
+        allow_failure=allow_failure,
+        **kwargs,
+    )
+
+
 def _local_source_commit(
     *,
     repo_root: Path,
@@ -665,14 +800,16 @@ def run_preflight(
         repo_root=root,
         command_runner=command_runner,
     )
-    result = _run_command(
-        build_ssh_command([
+    result = _run_remote_command(
+        [
             "bash",
             "-lc",
             _preflight_remote_script(tag),
-        ]),
+        ],
         command_runner=command_runner,
         context="remote read-only preflight",
+        now=now,
+        kerberos_status=kerberos,
         text=True,
         capture_output=True,
     )
@@ -775,17 +912,55 @@ def normalize_verification_receipt(receipt: dict) -> dict:
     }
 
 
-def _action_command(action: str, arguments: list[str]) -> list[str]:
+def _action_remote_arguments(
+    action: str,
+    arguments: list[str],
+) -> list[str]:
+    if not arguments:
+        raise ValueError("remote action requires a run tag")
+    tag = validate_run_tag(arguments[0])
+    if action == "prepare":
+        source_root = REMOTE_CURRENT_SOURCE
+    elif action == "controller-verify":
+        source_root = f"{controller_run_path(tag)}/source"
+    else:
+        source_root = f"{primary_run_path(tag)}/source"
     script = " ".join((
         f"TASK7_ACTION={action}",
         "exec",
         shlex.quote(REMOTE_PYTHON),
-        shlex.quote(f"{REMOTE_CURRENT_SOURCE}/tools/{Path(__file__).name}"),
+        shlex.quote(f"{source_root}/tools/{Path(__file__).name}"),
         "_remote-action",
         shlex.quote(action),
         *(shlex.quote(value) for value in arguments),
     ))
-    return build_ssh_command(["bash", "-lc", script])
+    return ["bash", "-lc", script]
+
+
+def _action_command(action: str, arguments: list[str]) -> list[str]:
+    return build_ssh_command(
+        _action_remote_arguments(action, arguments)
+    )
+
+
+def _run_remote_action(
+    action: str,
+    arguments: list[str],
+    *,
+    command_runner=subprocess.run,
+    context: str,
+    now=None,
+    allow_failure: bool = False,
+    **kwargs,
+):
+    return _run_remote_command(
+        _action_remote_arguments(action, arguments),
+        command_runner=command_runner,
+        context=context,
+        now=now,
+        allow_failure=allow_failure,
+        **kwargs,
+    )
 
 
 def _inventory_rows_from_result(result) -> list[dict]:
@@ -820,11 +995,14 @@ def _copy_partial(
     *,
     run_tag: str,
     command_runner=subprocess.run,
+    now=None,
 ) -> None:
-    _run_command(
-        _action_command("partial-copy", [run_tag]),
+    _run_remote_action(
+        "partial-copy",
+        [run_tag],
         command_runner=command_runner,
         context="partial evidence controller copy",
+        now=now,
         text=True,
         capture_output=True,
     )
@@ -879,14 +1057,18 @@ def run_bundle(
         repo_root=root,
         command_runner=command_runner,
     )
-    _run_command(
-        _action_command(
-            "prepare",
-            [tag, preflight["source_commit"], json.dumps(preflight)],
-        ),
+    source_archive = build_source_archive_bytes(root)
+    prepare_payload = _encode_prepare_payload(
+        source_archive=source_archive,
+        source_patch=source_patch,
+    )
+    _run_remote_action(
+        "prepare",
+        [tag, preflight["source_commit"], json.dumps(preflight)],
         command_runner=command_runner,
         context="remote bundle preparation",
-        input=source_patch,
+        now=now,
+        input=prepare_payload,
         capture_output=True,
     )
     completed_epochs = []
@@ -894,13 +1076,12 @@ def run_bundle(
         build_epoch_schedule()
     ):
         identity = f"{block}:{mode}:{position}"
-        before_result = _run_command(
-            _action_command(
-                "inventory-before",
-                [tag, str(epoch_index)],
-            ),
+        before_result = _run_remote_action(
+            "inventory-before",
+            [tag, str(epoch_index)],
             command_runner=command_runner,
             context=f"GPU inventory before {identity}",
+            now=now,
             allow_failure=True,
             text=True,
             capture_output=True,
@@ -909,6 +1090,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -923,6 +1105,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -939,6 +1122,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -947,22 +1131,21 @@ def run_bundle(
                 primary=primary,
                 controller=controller,
             )
-        worker_result = _run_command(
-            _action_command(
-                "epoch",
-                [
-                    tag,
-                    str(epoch_index),
-                    mode,
-                    position,
-                    json.dumps(gpu_indices),
-                    json.dumps(gpu_uuids),
-                    target_model,
-                    draft_model,
-                ],
-            ),
+        worker_result = _run_remote_action(
+            "epoch",
+            [
+                tag,
+                str(epoch_index),
+                mode,
+                position,
+                json.dumps(gpu_indices),
+                json.dumps(gpu_uuids),
+                target_model,
+                draft_model,
+            ],
             command_runner=command_runner,
             context=f"worker epoch {identity}",
+            now=now,
             allow_failure=True,
             text=True,
             capture_output=True,
@@ -971,6 +1154,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -979,13 +1163,12 @@ def run_bundle(
                 primary=primary,
                 controller=controller,
             )
-        after_result = _run_command(
-            _action_command(
-                "inventory-after",
-                [tag, str(epoch_index)],
-            ),
+        after_result = _run_remote_action(
+            "inventory-after",
+            [tag, str(epoch_index)],
             command_runner=command_runner,
             context=f"GPU inventory after {identity}",
+            now=now,
             allow_failure=True,
             text=True,
             capture_output=True,
@@ -994,6 +1177,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -1008,6 +1192,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -1027,6 +1212,7 @@ def run_bundle(
             _copy_partial(
                 run_tag=tag,
                 command_runner=command_runner,
+                now=now,
             )
             return _failed_epoch_result(
                 identity=identity,
@@ -1046,10 +1232,12 @@ def run_bundle(
         ("controller-verify", "controller verification"),
         ("compare-receipts", "verification receipt comparison"),
     ):
-        result = _run_command(
-            _action_command(action, [tag]),
+        result = _run_remote_action(
+            action,
+            [tag],
             command_runner=command_runner,
             context=context,
+            now=now,
             allow_failure=True,
             text=True,
             capture_output=True,
@@ -1061,6 +1249,7 @@ def run_bundle(
                 _copy_partial(
                     run_tag=tag,
                     command_runner=command_runner,
+                    now=now,
                 )
             return {
                 "status": "FAILED",
@@ -1145,7 +1334,9 @@ def _remote_prepare(arguments: list[str]) -> int:
     tag = validate_run_tag(arguments[0])
     source_commit = arguments[1]
     preflight = json.loads(arguments[2])
-    source_patch = sys.stdin.buffer.read()
+    source_archive, source_patch = _decode_prepare_payload(
+        sys.stdin.buffer.read()
+    )
     primary = Path(primary_run_path(tag))
     controller = Path(controller_run_path(tag))
     if primary.exists() or controller.exists():
@@ -1154,7 +1345,8 @@ def _remote_prepare(arguments: list[str]) -> int:
     for relative in ("workers", "telemetry", "logs", "status"):
         (primary / relative).mkdir()
     archive_path = primary / "source.tar"
-    build_source_archive(Path(REMOTE_CURRENT_SOURCE), archive_path)
+    with archive_path.open("xb") as handle:
+        handle.write(source_archive)
     frozen_source = extract_source_archive(
         archive_path,
         primary / "source-extract",
@@ -1243,44 +1435,223 @@ def _terminate_and_reap(processes) -> None:
             process.wait(timeout=30)
 
 
+def _launch_owned_worker(
+    command,
+    *,
+    stdout,
+    stderr,
+):
+    return subprocess.Popen(
+        command,
+        stdout=stdout,
+        stderr=stderr,
+        text=True,
+        start_new_session=True,
+    )
+
+
+def _owned_process_group_pids(
+    process_group_id: int,
+    *,
+    command_runner=subprocess.run,
+) -> set[int]:
+    if (
+        isinstance(process_group_id, bool)
+        or not isinstance(process_group_id, int)
+        or process_group_id <= 0
+    ):
+        raise ValueError("owned process group is invalid")
+    result = command_runner(
+        ["ps", "-eo", "pid=,pgid="],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("owned process inventory failed")
+    owned = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        pid, pgid = (int(field) for field in fields)
+        if pgid == process_group_id:
+            owned.add(pid)
+    return owned
+
+
+def validate_owned_gpu_processes(
+    rows,
+    *,
+    owned_pids: set[int],
+    gpu_uuids,
+) -> dict[str, int]:
+    expected_uuids = tuple(gpu_uuids)
+    if (
+        len(expected_uuids) != 4
+        or len(set(expected_uuids)) != 4
+        or not isinstance(owned_pids, set)
+        or any(
+            isinstance(pid, bool)
+            or not isinstance(pid, int)
+            or pid <= 0
+            for pid in owned_pids
+        )
+    ):
+        raise ValueError("owned GPU process inventory is invalid")
+    selected = {
+        row.get("uuid"): row
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("uuid") in expected_uuids
+    }
+    if set(selected) != set(expected_uuids):
+        raise ValueError("owned GPU UUID inventory is incomplete")
+    binding = {}
+    for uuid in expected_uuids:
+        processes = selected[uuid].get("compute_processes")
+        if not isinstance(processes, list) or len(processes) != 1:
+            raise ValueError("TP4 GPU process binding is incomplete")
+        pid = processes[0].get("pid")
+        if pid not in owned_pids:
+            raise ValueError("selected GPU has an unowned process")
+        binding[uuid] = pid
+    if len(set(binding.values())) != 4:
+        raise ValueError("TP4 GPU process binding is duplicated")
+    return binding
+
+
+def _terminate_owned_process_group(
+    process,
+    process_group_id: int,
+) -> None:
+    if process is None:
+        return
+    deadline = time.monotonic() + 30
+    try:
+        os.killpg(process_group_id, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    if process.poll() is None:
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process_group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=30)
+    while _owned_process_group_pids(process_group_id):
+        if time.monotonic() >= deadline:
+            try:
+                os.killpg(process_group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            return
+        time.sleep(0.2)
+
+
+def _monitor_owned_worker(
+    process,
+    *,
+    process_group_id: int,
+    gpu_uuids: list[str],
+    timeout_seconds: int = WORKER_TIMEOUT_SECONDS,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+) -> tuple[int, dict[str, int], set[int]]:
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or timeout_seconds <= 0
+    ):
+        raise ValueError("worker timeout is invalid")
+    deadline = monotonic() + timeout_seconds
+    observed_owned = {process.pid}
+    binding = None
+    while process.poll() is None:
+        if monotonic() >= deadline:
+            raise TimeoutError("worker epoch exceeded bounded timeout")
+        current_owned = _owned_process_group_pids(process_group_id)
+        observed_owned.update(current_owned)
+        selected_rows = [
+            row for row in _remote_gpu_rows()
+            if row["uuid"] in gpu_uuids
+        ]
+        selected_processes = [
+            process_row
+            for row in selected_rows
+            for process_row in row["compute_processes"]
+        ]
+        for process_row in selected_processes:
+            if process_row["pid"] not in current_owned:
+                raise ValueError("selected GPU has an unowned process")
+        if (
+            len(selected_rows) == 4
+            and all(
+                len(row["compute_processes"]) == 1
+                for row in selected_rows
+            )
+        ):
+            binding = validate_owned_gpu_processes(
+                selected_rows,
+                owned_pids=current_owned,
+                gpu_uuids=gpu_uuids,
+            )
+        sleep(0.2)
+    returncode = process.wait(timeout=30)
+    if binding is None:
+        raise ValueError("TP4 GPU process binding was not observed")
+    return returncode, binding, observed_owned
+
+
 def _start_epoch_samplers(
     *,
     gpu_indices: list[int],
     gpu_path: Path,
     host_path: Path,
+    source_root: str | None = None,
 ) -> tuple[list[subprocess.Popen], list[object]]:
+    frozen_source = (
+        REMOTE_CURRENT_SOURCE if source_root is None else source_root
+    )
     gpu_script = "\n".join((
-        "import json,subprocess,sys,time",
+        "import csv,json,subprocess,sys,time",
         "indices=json.loads(sys.argv[1])",
         "while True:",
         " unix_ns=time.time_ns()",
         " monotonic_ns=time.monotonic_ns()",
         " result=subprocess.run([",
         "  'nvidia-smi',",
-        "  '--query-gpu=index,uuid',",
+        "  '--query-gpu=timestamp,index,uuid,pstate,"
+        "clocks.current.sm,clocks.current.memory,power.draw,"
+        "temperature.gpu,utilization.gpu,utilization.memory,"
+        "memory.used,clocks_throttle_reasons.active',",
         "  '--format=csv,noheader,nounits'],",
         "  capture_output=True,text=True,check=False)",
         " if result.returncode:",
         "  raise SystemExit(result.returncode)",
-        " for line in result.stdout.splitlines():",
-        "  fields=[part.strip() for part in line.split(',')]",
-        "  if len(fields)==2 and int(fields[0]) in indices:",
+        " for fields in csv.reader(result.stdout.splitlines(),"
+        " skipinitialspace=True):",
+        "  fields=[part.strip() for part in fields]",
+        "  if len(fields)==12 and int(fields[1]) in indices:",
         "   print(json.dumps({",
         "    'sampled_at_unix_ns':unix_ns,",
         "    'sampled_at_monotonic_ns':monotonic_ns,",
-        "    'gpu_index':int(fields[0]),",
-        "    'gpu_uuid':fields[1]},",
+        "    'nvidia_timestamp':fields[0],",
+        "    'gpu_index':int(fields[1]),",
+        "    'gpu_uuid':fields[2],",
+        "    'pstate':fields[3],",
+        "    'sm_clock_mhz':int(fields[4]),",
+        "    'memory_clock_mhz':int(fields[5]),",
+        "    'power_w':float(fields[6]),",
+        "    'temperature_c':int(fields[7]),",
+        "    'gpu_utilization_percent':int(fields[8]),",
+        "    'memory_utilization_percent':int(fields[9]),",
+        "    'memory_used_mib':int(fields[10]),",
+        "    'throttle_reasons_active':int(fields[11],0)},",
         "    sort_keys=True,separators=(',',':')),flush=True)",
-        " time.sleep(0.05)",
-    ))
-    host_script = "\n".join((
-        "import json,time",
-        "while True:",
-        " print(json.dumps({",
-        "  'sampled_at_unix_ns':time.time_ns(),",
-        "  'sampled_at_monotonic_ns':time.monotonic_ns()},",
-        "  sort_keys=True,separators=(',',':')),flush=True)",
-        " time.sleep(0.05)",
+        " time.sleep(0.2)",
     ))
     handles = [
         gpu_path.open("xb"),
@@ -1296,7 +1667,15 @@ def _start_epoch_samplers(
             stderr=handles[2],
         ))
         processes.append(subprocess.Popen(
-            [sys.executable, "-c", host_script],
+            [
+                REMOTE_PYTHON,
+                (
+                    f"{frozen_source}/tools/"
+                    "autoregressive_draft_host_sampler.py"
+                ),
+                "--interval-seconds",
+                "0.2",
+            ],
             stdout=handles[1],
             stderr=handles[3],
         ))
@@ -1327,6 +1706,26 @@ def _load_json_lines(path: Path, *, name: str) -> list[dict]:
     return rows
 
 
+def _monotonic_timestamps(value: object) -> list[int]:
+    timestamps = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if (
+                isinstance(key, str)
+                and key.endswith("_monotonic_ns")
+                and isinstance(child, int)
+                and not isinstance(child, bool)
+                and child >= 0
+            ):
+                timestamps.append(child)
+            else:
+                timestamps.extend(_monotonic_timestamps(child))
+    elif isinstance(value, list):
+        for child in value:
+            timestamps.extend(_monotonic_timestamps(child))
+    return timestamps
+
+
 def _attach_epoch_telemetry(
     worker: dict,
     *,
@@ -1347,8 +1746,15 @@ def _attach_epoch_telemetry(
             raise ValueError("worker campaign interval is missing")
         start_unix = interval.get("started_at_unix_ns")
         finish_unix = interval.get("finished_at_unix_ns")
-        start_monotonic = interval.get("started_at_monotonic_ns")
-        finish_monotonic = interval.get("finished_at_monotonic_ns")
+        if (
+            isinstance(start_unix, bool)
+            or not isinstance(start_unix, int)
+            or isinstance(finish_unix, bool)
+            or not isinstance(finish_unix, int)
+            or start_unix <= 0
+            or finish_unix <= start_unix
+        ):
+            raise ValueError("worker campaign interval is invalid")
         gpu_rows = [
             {
                 "repeat_index": repeat_identity,
@@ -1362,9 +1768,6 @@ def _attach_epoch_telemetry(
             if (
                 start_unix <= row.get("sampled_at_unix_ns", -1)
                 <= finish_unix
-                and start_monotonic
-                <= row.get("sampled_at_monotonic_ns", -1)
-                <= finish_monotonic
             )
         ]
         host_rows = [
@@ -1379,9 +1782,6 @@ def _attach_epoch_telemetry(
             if (
                 start_unix <= row.get("sampled_at_unix_ns", -1)
                 <= finish_unix
-                and start_monotonic
-                <= row.get("sampled_at_monotonic_ns", -1)
-                <= finish_monotonic
             )
         ]
         if (
@@ -1393,6 +1793,29 @@ def _attach_epoch_telemetry(
             "gpu_rows": gpu_rows,
             "host_rows": host_rows,
         }
+        start_monotonic = interval.get("started_at_monotonic_ns")
+        finish_monotonic = interval.get("finished_at_monotonic_ns")
+        if start_monotonic is None and finish_monotonic is None:
+            observed = _monotonic_timestamps({
+                "runtime": run.get("runtime"),
+                "gpu_rows": gpu_rows,
+                "host_rows": host_rows,
+            })
+            if len(observed) < 2 or max(observed) <= min(observed):
+                raise ValueError(
+                    "campaign monotonic interval cannot be reconstructed"
+                )
+            interval["started_at_monotonic_ns"] = min(observed)
+            interval["finished_at_monotonic_ns"] = max(observed)
+        elif (
+            isinstance(start_monotonic, bool)
+            or not isinstance(start_monotonic, int)
+            or isinstance(finish_monotonic, bool)
+            or not isinstance(finish_monotonic, int)
+            or start_monotonic < 0
+            or finish_monotonic <= start_monotonic
+        ):
+            raise ValueError("worker campaign monotonic interval is invalid")
     return result
 
 
@@ -1438,12 +1861,14 @@ def _remote_epoch(arguments: list[str]) -> int:
     samplers = []
     sampler_handles = []
     worker = None
+    worker_process_group_id = None
     try:
         invariant_status_path.write_text("125\n", encoding="utf-8")
         samplers, sampler_handles = _start_epoch_samplers(
             gpu_indices=gpu_indices,
             gpu_path=gpu_telemetry_path,
             host_path=host_telemetry_path,
+            source_root=str(source_root),
         )
         (worker_dir / f"{mode}.owned-pids").write_text(
             "\n".join(str(process.pid) for process in samplers) + "\n",
@@ -1453,18 +1878,40 @@ def _remote_epoch(arguments: list[str]) -> int:
             stdout_path.open("xb") as stdout_handle,
             stderr_path.open("xb") as stderr_handle,
         ):
-            worker = subprocess.Popen(
+            worker = _launch_owned_worker(
                 command,
                 stdout=stdout_handle,
                 stderr=stderr_handle,
-                text=True,
             )
+            worker_process_group_id = worker.pid
             with (worker_dir / f"{mode}.owned-pids").open(
                 "a",
                 encoding="utf-8",
             ) as pid_handle:
                 pid_handle.write(f"{worker.pid}\n")
-            returncode = worker.wait()
+            returncode, gpu_process_binding, owned_worker_pids = (
+                _monitor_owned_worker(
+                    worker,
+                    process_group_id=worker_process_group_id,
+                    gpu_uuids=gpu_uuids,
+                )
+            )
+            (worker_dir / f"{mode}.owned-pids").write_text(
+                "\n".join(str(pid) for pid in sorted({
+                    *(process.pid for process in samplers),
+                    *owned_worker_pids,
+                }))
+                + "\n",
+                encoding="utf-8",
+            )
+            _write_json_exclusive(
+                worker_dir / f"{mode}.gpu-process-binding.json",
+                {
+                    "process_group_id": worker_process_group_id,
+                    "gpu_uuid_to_pid": gpu_process_binding,
+                    "owned_worker_pids": sorted(owned_worker_pids),
+                },
+            )
         status_path.write_text(f"{returncode}\n", encoding="utf-8")
         if returncode != 0:
             return returncode
@@ -1515,8 +1962,12 @@ def _remote_epoch(arguments: list[str]) -> int:
             stderr_path.write_text("", encoding="utf-8")
         raise
     finally:
-        owned = [process for process in (*samplers, worker) if process]
-        _terminate_and_reap(owned)
+        _terminate_and_reap(samplers)
+        if worker is not None and worker_process_group_id is not None:
+            _terminate_owned_process_group(
+                worker,
+                worker_process_group_id,
+            )
         for handle in sampler_handles:
             handle.close()
 
@@ -1612,9 +2063,7 @@ def _remote_assemble(tag: str) -> int:
         "artifact_sha256": _sha256_path(artifact_path),
         "classification": classification,
         "localized_boundary": artifact["localized_boundary"],
-        "runtime_optimization_authorized": (
-            classification == "BOUNDARY_LOCALIZED"
-        ),
+        "runtime_optimization_authorized": False,
         "performance_improvement_established": False,
         "phase_1_complete": False,
         "promotion_ready": False,
@@ -1684,7 +2133,7 @@ def _remote_controller_verify(tag: str) -> int:
     controller = Path(controller_run_path(tag))
     _verify_bundle(
         artifact_root=controller,
-        source_root=Path(REMOTE_CURRENT_SOURCE),
+        source_root=controller / "source",
         manifest=True,
         receipt_path=controller / "verify.command-timeline.local.json",
         verification_location="local",
@@ -1774,8 +2223,9 @@ def main(argv=None) -> int:
         result = run_bundle(run_tag=args.run_tag)
     else:
         validate_run_tag(args.run_tag)
-        result = _run_command(
-            _action_command("controller-verify", [args.run_tag]),
+        result = _run_remote_action(
+            "controller-verify",
+            [args.run_tag],
             context="controller verification",
             text=True,
             capture_output=True,

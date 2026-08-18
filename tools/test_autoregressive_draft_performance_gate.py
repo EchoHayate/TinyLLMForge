@@ -1634,6 +1634,8 @@ def _run_command_timeline_campaign(*, mutate_run=None):
 def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
     adapter = _FakeWorkerAdapter()
     timeline_repeat_indices = []
+    monotonic_times = iter(range(100, 112))
+    wall_times = iter(range(1_000, 1_012))
 
     def run_batch_fn(**kwargs):
         repeat = kwargs["repeat"]
@@ -1660,6 +1662,8 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
         sampling_params_type=_FakeSamplingParams,
         synchronize=lambda: None,
         clock_ns=lambda: 0,
+        monotonic_clock_ns=lambda: next(monotonic_times),
+        wall_clock_ns=lambda: next(wall_times),
         run_batch_fn=run_batch_fn,
         warmup_runs=1,
         measured_runs=5,
@@ -1684,6 +1688,14 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
         run["correctness"]["rank_graph_counters"][0]["replays"]
         for run in result["warmup_runs"] + result["measured_runs"]
     ] == [4, 8, 12, 16, 20, 24]
+    for run in result["warmup_runs"] + result["measured_runs"]:
+        interval = run["campaign_interval"]
+        assert interval["finished_at_unix_ns"] > (
+            interval["started_at_unix_ns"]
+        )
+        assert interval["finished_at_monotonic_ns"] > (
+            interval["started_at_monotonic_ns"]
+        )
     assert all(
         len(run["runtime"]["command_timeline"]["rank_snapshots"])
         == 4

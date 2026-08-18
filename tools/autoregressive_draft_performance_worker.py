@@ -1479,6 +1479,7 @@ def run_policy_campaign(
     synchronize,
     clock_ns,
     wall_clock_ns=time.time_ns,
+    monotonic_clock_ns=time.monotonic_ns,
     run_batch_fn=run_request_batch,
     warmup_runs: int = WARMUP_RUNS,
     measured_runs: int = MEASURED_RUNS,
@@ -1598,6 +1599,9 @@ def run_policy_campaign(
             command_timeline_repeat_index: int,
         ):
             started_at_unix_ns = wall_clock_ns()
+            started_at_monotonic_ns = (
+                monotonic_clock_ns() if command_timeline else None
+            )
             run_batch_kwargs = {
                 "engine": engine,
                 "policy": policy,
@@ -1618,6 +1622,9 @@ def run_policy_campaign(
             result = run_batch_fn(
                 **run_batch_kwargs,
             )
+            finished_at_monotonic_ns = (
+                monotonic_clock_ns() if command_timeline else None
+            )
             finished_at_unix_ns = wall_clock_ns()
             if (
                 isinstance(started_at_unix_ns, bool)
@@ -1628,12 +1635,32 @@ def run_policy_campaign(
                 or finished_at_unix_ns <= started_at_unix_ns
             ):
                 raise ValueError("campaign interval is invalid")
+            if command_timeline and (
+                isinstance(started_at_monotonic_ns, bool)
+                or not isinstance(started_at_monotonic_ns, int)
+                or isinstance(finished_at_monotonic_ns, bool)
+                or not isinstance(finished_at_monotonic_ns, int)
+                or started_at_monotonic_ns < 0
+                or finished_at_monotonic_ns
+                <= started_at_monotonic_ns
+            ):
+                raise ValueError("campaign monotonic interval is invalid")
+            campaign_interval = {
+                "started_at_unix_ns": started_at_unix_ns,
+                "finished_at_unix_ns": finished_at_unix_ns,
+            }
+            if command_timeline:
+                campaign_interval.update({
+                    "started_at_monotonic_ns": (
+                        started_at_monotonic_ns
+                    ),
+                    "finished_at_monotonic_ns": (
+                        finished_at_monotonic_ns
+                    ),
+                })
             return {
                 **result,
-                "campaign_interval": {
-                    "started_at_unix_ns": started_at_unix_ns,
-                    "finished_at_unix_ns": finished_at_unix_ns,
-                },
+                "campaign_interval": campaign_interval,
             }
 
         warmup_results = [

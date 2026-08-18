@@ -1320,7 +1320,7 @@ def test_classification_localizes_exact_inclusive_boundaries():
         "classification": "BOUNDARY_LOCALIZED",
         "localized_boundary": "worker_queue_debt",
         "stable_but_unlocalized": False,
-        "runtime_optimization_authorized": True,
+        "runtime_optimization_authorized": False,
         "performance_improvement_established": False,
         "phase_1_complete": False,
         "promotion_ready": False,
@@ -1410,7 +1410,7 @@ def test_stable_graph_minus_eager_label_effect_is_not_a_crossover():
     assert boundary["sequence_interaction_consistent"] is True
     assert result["classification"] == "BOUNDARY_LOCALIZED"
     assert result["localized_boundary"] == "worker_queue_debt"
-    assert result["runtime_optimization_authorized"] is True
+    assert result["runtime_optimization_authorized"] is False
 
 
 def test_position_driven_order_confound_is_not_a_label_effect():
@@ -1572,7 +1572,7 @@ def test_integer_threshold_accepts_exact_sixty_percent_at_1e18():
     assert diagnostic.classify_boundary(
         _admission(),
         effects,
-    )["runtime_optimization_authorized"] is True
+    )["runtime_optimization_authorized"] is False
 
 
 def test_integer_threshold_rejects_one_ns_below_sixty_percent_at_1e18():
@@ -1592,7 +1592,7 @@ def test_integer_residual_accepts_exact_ten_percent_at_1e18():
         _admission(),
         _large_integer_effects(),
     )
-    assert result["runtime_optimization_authorized"] is True
+    assert result["runtime_optimization_authorized"] is False
 
 
 def test_integer_residual_rejects_one_ns_above_ten_percent_at_1e18():
@@ -1717,7 +1717,7 @@ def test_artifact_has_exact_keys_and_recomputes_all_derived_fields():
     artifact = _artifact()
     assert tuple(artifact) == diagnostic.TOP_LEVEL_KEYS
     assert artifact["classification"] == "BOUNDARY_LOCALIZED"
-    assert artifact["runtime_optimization_authorized"] is True
+    assert artifact["runtime_optimization_authorized"] is False
     assert artifact["performance_improvement_established"] is False
     assert diagnostic.validate_command_timeline_artifact(
         artifact
@@ -1741,7 +1741,7 @@ def test_artifact_has_exact_keys_and_recomputes_all_derived_fields():
         ),
         (("classification",), "PAIRED_PROTOCOL_UNSTABLE"),
         (("localized_boundary",), None),
-        (("runtime_optimization_authorized",), False),
+        (("runtime_optimization_authorized",), True),
         (("performance_improvement_established",), True),
     ],
 )
@@ -1845,9 +1845,7 @@ def _result_summary(artifact_path: Path, artifact: dict) -> dict:
         "artifact_sha256": _sha_path(artifact_path),
         "classification": artifact["classification"],
         "localized_boundary": artifact["localized_boundary"],
-        "runtime_optimization_authorized": artifact[
-            "classification"
-        ] == "BOUNDARY_LOCALIZED",
+        "runtime_optimization_authorized": False,
         "performance_improvement_established": False,
         "phase_1_complete": False,
         "promotion_ready": False,
@@ -2025,7 +2023,7 @@ def test_verifier_recomputes_complete_source_bound_bundle(
     assert receipt["localized_boundary"] == artifact[
         "localized_boundary"
     ]
-    assert receipt["runtime_optimization_authorized"] is True
+    assert receipt["runtime_optimization_authorized"] is False
     assert receipt["performance_improvement_established"] is False
     assert receipt["phase_1_complete"] is False
     assert receipt["promotion_ready"] is False
@@ -2379,6 +2377,7 @@ def test_verifier_rejects_result_summary_mismatch(
     ("field", "value"),
     [
         ("classification", "PAIRED_PROTOCOL_UNSTABLE"),
+        ("runtime_optimization_authorized", True),
         ("performance_improvement_established", True),
         ("phase_1_complete", True),
         ("promotion_ready", True),

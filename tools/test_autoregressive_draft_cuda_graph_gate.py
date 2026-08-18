@@ -1376,6 +1376,15 @@ def test_command_timeline_runner_uses_sitian_only_paths_and_safe_ssh():
     assert "ControlMaster=no" in command
     assert "ControlPath=none" in command
     assert all("/tmp" not in argument for argument in command)
+    remote_shell = command[-1]
+    for name in (
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "PYTHONPYCACHEPREFIX",
+        "XDG_CACHE_HOME",
+    ):
+        assert f"{name}={runner.REMOTE_TASK_ROOT}/runtime/" in remote_shell
 
 
 def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
@@ -1440,6 +1449,40 @@ def test_command_timeline_source_archive_rejects_symlink_component(tmp_path):
         runner.build_source_archive(repo_root, tmp_path / "source.tar")
 
 
+def test_command_timeline_source_archive_can_stream_without_local_file(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_archive_stream_test"
+    )
+    repo_root = tmp_path / "repo"
+    for relative in runner.SOURCE_PATHS:
+        path = repo_root / relative.rstrip("/")
+        if relative.endswith("/"):
+            path.mkdir(parents=True)
+            (path / "kept.py").write_text(
+                "STREAMED_SOURCE = True\n",
+                encoding="utf-8",
+            )
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"# {relative}\n", encoding="utf-8")
+
+    archive_bytes = runner.build_source_archive_bytes(repo_root)
+
+    assert isinstance(archive_bytes, bytes)
+    assert archive_bytes
+    archive_path = tmp_path / "remote-source.tar"
+    archive_path.write_bytes(archive_bytes)
+    extracted = runner.extract_source_archive(
+        archive_path,
+        tmp_path / "extract",
+    )
+    assert (extracted / "tinyvllm" / "kept.py").read_text(
+        encoding="utf-8"
+    ) == "STREAMED_SOURCE = True\n"
+
+
 def test_command_timeline_epoch_samplers_capture_stderr_without_pipes(
     tmp_path,
     monkeypatch,
@@ -1478,6 +1521,275 @@ def test_command_timeline_epoch_samplers_capture_stderr_without_pipes(
     finally:
         for handle in handles:
             handle.close()
+
+
+def test_command_timeline_epoch_samplers_retain_full_gpu_and_host_fields(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_sampler_schema_test"
+    )
+    popen_calls = []
+
+    class FakeProcess:
+        def __init__(self, command, **kwargs):
+            self.pid = 2000 + len(popen_calls)
+            popen_calls.append((command, kwargs))
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakeProcess)
+    _processes, handles = runner._start_epoch_samplers(
+        gpu_indices=[0, 1, 2, 3],
+        gpu_path=tmp_path / "gpu.jsonl",
+        host_path=tmp_path / "host.jsonl",
+        source_root="/frozen/source",
+    )
+
+    try:
+        gpu_command = " ".join(popen_calls[0][0])
+        host_command = popen_calls[1][0]
+        for field in (
+            "timestamp",
+            "pstate",
+            "clocks.current.sm",
+            "clocks.current.memory",
+            "power.draw",
+            "temperature.gpu",
+            "utilization.gpu",
+            "utilization.memory",
+            "memory.used",
+            "clocks_throttle_reasons.active",
+        ):
+            assert field in gpu_command
+        assert host_command == [
+            runner.REMOTE_PYTHON,
+            "/frozen/source/tools/autoregressive_draft_host_sampler.py",
+            "--interval-seconds",
+            "0.2",
+        ]
+    finally:
+        for handle in handles:
+            handle.close()
+
+
+def test_command_timeline_telemetry_alignment_uses_real_unix_only_worker_bounds(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_unix_telemetry_test"
+    )
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    measured_runs = []
+    gpu_rows = []
+    host_rows = []
+    for repeat in range(5):
+        start = 1_800_000_000_000_000_000 + repeat * 1_000_000_000
+        finish = start + 900_000_000
+        measured_runs.append({
+            "repeat": repeat,
+            "command_timeline_repeat_index": repeat,
+            "campaign_interval": {
+                "started_at_unix_ns": start,
+                "finished_at_unix_ns": finish,
+            },
+        })
+        for gpu_index, gpu_uuid in enumerate(gpu_uuids):
+            gpu_rows.append({
+                "sampled_at_unix_ns": start + 400_000_000,
+                "sampled_at_monotonic_ns": 10_000_000_000
+                + repeat * 1_000_000_000
+                + gpu_index,
+                "gpu_index": gpu_index,
+                "gpu_uuid": gpu_uuid,
+                "nvidia_timestamp": "2026/08/18 12:00:00.000",
+                "pstate": "P0",
+                "sm_clock_mhz": 1000,
+                "memory_clock_mhz": 1200,
+                "power_w": 200.0,
+                "temperature_c": 60,
+                "gpu_utilization_percent": 50,
+                "memory_utilization_percent": 25,
+                "memory_used_mib": 100,
+                "throttle_reasons_active": 0,
+            })
+        host_rows.append({
+            "schema_version": 1,
+            "sampled_at_unix_ns": start + 500_000_000,
+            "sampled_at_monotonic_ns": (
+                10_000_000_000 + repeat * 1_000_000_000 + 100
+            ),
+            "cpu_user_ticks": repeat,
+        })
+    gpu_path = tmp_path / "gpu.jsonl"
+    host_path = tmp_path / "host.jsonl"
+    gpu_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in gpu_rows),
+        encoding="utf-8",
+    )
+    host_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in host_rows),
+        encoding="utf-8",
+    )
+
+    attached = runner._attach_epoch_telemetry(
+        {"measured_runs": measured_runs},
+        gpu_path=gpu_path,
+        host_path=host_path,
+        gpu_uuids=gpu_uuids,
+    )
+
+    for repeat, run in enumerate(attached["measured_runs"]):
+        assert run["campaign_interval"]["started_at_unix_ns"] == (
+            measured_runs[repeat]["campaign_interval"][
+                "started_at_unix_ns"
+            ]
+        )
+        assert run["campaign_interval"]["finished_at_unix_ns"] == (
+            measured_runs[repeat]["campaign_interval"][
+                "finished_at_unix_ns"
+            ]
+        )
+        assert {
+            row["gpu_uuid"] for row in run["telemetry"]["gpu_rows"]
+        } == set(gpu_uuids)
+        assert len(run["telemetry"]["host_rows"]) == 1
+
+
+def test_command_timeline_remote_command_rechecks_kerberos_and_injects_cache_env():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_remote_wrapper_test"
+    )
+    commands = []
+
+    def command_runner(command, **_kwargs):
+        commands.append(command)
+        if command == ["klist", "--json"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    _kerberos_payload(expires="20260817220001")
+                ),
+                stderr="",
+            )
+        assert command[0] == "ssh"
+        return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    result = runner._run_remote_command(
+        ["true"],
+        command_runner=command_runner,
+        context="test remote command",
+        now=_kerberos_now(),
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.stdout == "ok"
+    assert commands[0] == ["klist", "--json"]
+    assert commands[1][0] == "ssh"
+    remote_shell = commands[1][-1]
+    assert f"TMPDIR={runner.REMOTE_TASK_ROOT}/runtime/" in remote_shell
+    assert f"XDG_CACHE_HOME={runner.REMOTE_TASK_ROOT}/runtime/" in remote_shell
+    assert "mkdir -p" in remote_shell
+    assert remote_shell.index("mkdir -p") < remote_shell.index("env")
+
+
+def test_command_timeline_owned_gpu_binding_rejects_unowned_rank_process():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_owned_gpu_test"
+    )
+    rows = [
+        {
+            "index": index,
+            "uuid": f"GPU-{index}",
+            "compute_processes": [{"pid": 100 + index}],
+        }
+        for index in range(4)
+    ]
+
+    assert runner.validate_owned_gpu_processes(
+        rows,
+        owned_pids={100, 101, 102, 103},
+        gpu_uuids=[f"GPU-{index}" for index in range(4)],
+    ) == {
+        f"GPU-{index}": 100 + index for index in range(4)
+    }
+    rows[3]["compute_processes"] = [{"pid": 999}]
+    with pytest.raises(ValueError, match="unowned"):
+        runner.validate_owned_gpu_processes(
+            rows,
+            owned_pids={100, 101, 102, 103},
+            gpu_uuids=[f"GPU-{index}" for index in range(4)],
+        )
+
+
+def test_command_timeline_worker_launch_uses_dedicated_process_group(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_group_test"
+    )
+    calls = []
+
+    class FakeProcess:
+        pid = 4321
+
+    def fake_popen(command, **kwargs):
+        calls.append((command, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    process = runner._launch_owned_worker(
+        ["python", "worker.py"],
+        stdout=runner.subprocess.DEVNULL,
+        stderr=runner.subprocess.DEVNULL,
+    )
+
+    assert process.pid == 4321
+    assert calls == [(
+        ["python", "worker.py"],
+        {
+            "stdout": runner.subprocess.DEVNULL,
+            "stderr": runner.subprocess.DEVNULL,
+            "text": True,
+            "start_new_session": True,
+        },
+    )]
+    assert runner.WORKER_TIMEOUT_SECONDS > 0
+
+
+def test_command_timeline_cleanup_signals_group_after_leader_exit(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_group_cleanup_test"
+    )
+    signals = []
+
+    class FakeProcess:
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        runner.os,
+        "killpg",
+        lambda process_group_id, signal_number: signals.append(
+            (process_group_id, signal_number)
+        ),
+    )
+    runner._terminate_owned_process_group(FakeProcess(), 4321)
+
+    assert signals
+    assert signals[0] == (4321, runner.signal.SIGTERM)
+
+
+def test_command_timeline_frozen_source_drives_workload_and_both_verifiers():
+    source = COMMAND_TIMELINE_RUNNER_PATH.read_text(encoding="utf-8")
+
+    assert "build_source_archive(Path(REMOTE_CURRENT_SOURCE)" not in source
+    assert "source_root=Path(REMOTE_CURRENT_SOURCE)" not in source
+    assert "build_source_archive_bytes" in source
+    assert 'source_root=primary / "source"' in source
+    assert 'source_root=controller / "source"' in source
 
 
 @pytest.mark.parametrize("tag", ["", "../escape", "space tag", "tag.dot"])
@@ -1580,7 +1892,19 @@ def test_command_timeline_preflight_is_read_only_and_orders_fail_fast_gates():
             )
         assert command[0] == "ssh"
         assert "TASK7_ACTION=preflight" in command[-1]
-        assert "mkdir" not in command[-1]
+        assert (
+            f"mkdir -p {runner.REMOTE_RUNTIME_ROOT}/scratch "
+            f"{runner.REMOTE_RUNTIME_ROOT}/pycache "
+            f"{runner.REMOTE_RUNTIME_ROOT}/xdg"
+        ) in command[-1]
+        assert (
+            f"mkdir -p {runner.primary_run_path('task7_ready')}"
+            not in command[-1]
+        )
+        assert (
+            f"mkdir -p {runner.controller_run_path('task7_ready')}"
+            not in command[-1]
+        )
         return types.SimpleNamespace(
             returncode=0,
             stdout=json.dumps(_command_timeline_ready_gpu_payload()),
@@ -1687,7 +2011,12 @@ def test_command_timeline_bundle_stops_after_first_worker_failure_and_copies_par
         "epoch",
         "partial-copy",
     ]
-    assert prepare_inputs == [b"diff --git a/source b/source\n"]
+    assert len(prepare_inputs) == 1
+    source_archive, source_patch = runner._decode_prepare_payload(
+        prepare_inputs[0]
+    )
+    assert source_archive
+    assert source_patch == b"diff --git a/source b/source\n"
 
 
 def test_command_timeline_bundle_copies_partial_when_inventory_query_fails():

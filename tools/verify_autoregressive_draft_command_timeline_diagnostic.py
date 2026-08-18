@@ -34,6 +34,7 @@ DETACHED_ATTESTATION_PATHS = {
     "verify.command-timeline.local.log",
 }
 FALSE_CLAIM_FIELDS = (
+    "runtime_optimization_authorized",
     "performance_improvement_established",
     "phase_1_complete",
     "promotion_ready",
@@ -420,9 +421,7 @@ def _expected_result_summary(
         "artifact_sha256": _sha256(artifact_path),
         "classification": classification,
         "localized_boundary": artifact["localized_boundary"],
-        "runtime_optimization_authorized": (
-            classification == "BOUNDARY_LOCALIZED"
-        ),
+        "runtime_optimization_authorized": False,
         "performance_improvement_established": False,
         "phase_1_complete": False,
         "promotion_ready": False,
@@ -506,9 +505,7 @@ def verify_command_timeline_diagnostic(
         "artifact_sha256": _sha256(artifact_path),
         "classification": classification,
         "localized_boundary": artifact["localized_boundary"],
-        "runtime_optimization_authorized": (
-            classification == "BOUNDARY_LOCALIZED"
-        ),
+        "runtime_optimization_authorized": False,
         "performance_improvement_established": False,
         "phase_1_complete": False,
         "promotion_ready": False,

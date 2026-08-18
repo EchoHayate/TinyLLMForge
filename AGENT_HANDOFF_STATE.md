@@ -48933,3 +48933,104 @@ Task 8:
 Do not allocate GPUs, load models, run a source-bound performance gate, or
 refresh Kerberos without separate authorization. CPU-only review and
 validation artifacts continue to use the mounted Sitian task root.
+
+## 2026-08-18 command-timeline Task 7/8 local completion reconciliation
+
+The authoritative checkout remains:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+```
+
+The branch remains:
+
+```text
+feat/kv-sparse-attention
+```
+
+Task 7 runner review fixes now include:
+
+1. Sitian-only SSH scratch, pycache, and XDG cache initialization before
+   every remote payload;
+2. centralized Kerberos TTL checking for every SSH action;
+3. in-memory local source archive construction and remote-only archive
+   persistence;
+4. frozen-source workload, primary verification, and controller-copy
+   verification;
+5. full host/GPU telemetry with Unix alignment and monotonic evidence;
+6. independent campaign monotonic bounds without coupling to injected
+   performance clocks;
+7. a dedicated worker process group, TP4 GPU UUID-to-owned-PID binding,
+   bounded timeout, and group-only cleanup even after the leader exits; and
+8. permanently false runtime-optimization authorization in artifact,
+   result, verifier, and receipt contracts.
+
+The independent Task 7 re-review initially found and then closed two
+Important defects:
+
+```text
+leader-exited TP child cleanup: FIXED
+missing Sitian cache-directory fallback risk: FIXED
+
+final Critical: 0
+final Important: 0
+```
+
+Final validation:
+
+```text
+Task 7 affected suite:
+  291 passed in 41.99s
+
+Task 8 dependency-light suite:
+  533 passed in 51.40s
+
+Task 8 Torch-backed expanded suite:
+  pytest 8.4.2
+  torch 2.7.1+cu126
+  transformers 4.57.6
+  CUDA_VISIBLE_DEVICES empty
+  687 passed, 1 warning in 79.15s
+
+compileall:
+  PASS
+
+git diff --check:
+  PASS
+
+forbidden patterns:
+  0
+```
+
+All generated Task 7/8 environments, caches, basetemps, pycache, reviews,
+and validation evidence are under:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+```
+
+No Task 7/8 generated object belongs under local or remote `/`, `/tmp`,
+`/private/tmp`, or the repository source tree.
+
+Canonical audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-18-autoregressive-draft-command-timeline-local-audit.md
+```
+
+The real source-bound GPU command-timeline bundle has not been run. Do not
+allocate GPUs, load checkpoints, refresh Kerberos, or invoke runner
+`execute` without separate authorization.
+
+Final boundary:
+
+```text
+COMMAND_TIMELINE_LOCAL_IMPLEMENTATION=ESTABLISHED
+COMMAND_TIMELINE_REMOTE_BUNDLE=NOT_RUN
+BOUNDARY_LOCALIZED=NOT_ESTABLISHED
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
