@@ -450,6 +450,195 @@ sys.exit(transaction.main())
             env=self.helper_environment(),
         )
 
+    def run_init_helper_with_post_exchange_event(
+        self, root, generation_name, event
+    ):
+        driver = r"""
+import os
+from pathlib import Path
+import signal
+import sys
+from tools import sitian_remote_transaction as transaction
+
+event = sys.argv[1]
+real_inject = transaction._inject
+real_renameat2 = transaction._RENAMEAT2
+real_pthread_sigmask = transaction.signal.pthread_sigmask
+real_consume_pending = transaction._consume_pending_transaction_signals
+real_remove_tree_at = transaction._remove_tree_at
+real_materialize = transaction._materialize_initial_receipts_at
+real_confirm_initial = transaction._confirm_initial_generation
+real_stdout = sys.stdout
+remote_root = Path(sys.argv[4])
+event_observed = False
+teardown_signal_sent = False
+post_drain_signal_sent = False
+cleanup_signal_sent = False
+stdout_signal_sent = False
+materialize_failed = False
+
+def observe():
+    global event_observed
+    event_observed = True
+
+def committed_source_exists():
+    source = remote_root / "source" / "tools" / "a.py"
+    return source.is_file() and source.read_bytes() == b"committed\n"
+
+def inject(fault_injector, point):
+    if point == "before_exchange" and event == "before_exchange_sigterm":
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    if point == "after_exchange":
+        if event == "exception":
+            observe()
+            raise transaction.InjectedFailure(point)
+        if event == "after_exchange_sigint":
+            observe()
+            os.kill(os.getpid(), signal.SIGINT)
+        if event == "after_exchange_sigterm":
+            observe()
+            os.kill(os.getpid(), signal.SIGTERM)
+    return real_inject(fault_injector, point)
+
+def renameat2(*args):
+    result = real_renameat2(*args)
+    if result == 0 and event == "exchange_return_sigterm":
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return result
+
+def pthread_sigmask(how, mask):
+    global teardown_signal_sent
+    previous = real_pthread_sigmask(how, mask)
+    if (
+        event == "handler_teardown_pending_sigterm"
+        and not teardown_signal_sent
+        and how == signal.SIG_BLOCK
+        and committed_source_exists()
+    ):
+        teardown_signal_sent = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return previous
+
+def consume_pending():
+    global post_drain_signal_sent
+    real_consume_pending()
+    if (
+        event == "post_drain_sigterm"
+        and not post_drain_signal_sent
+        and committed_source_exists()
+    ):
+        post_drain_signal_sent = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+def remove_tree_at(parent_fd, name):
+    global cleanup_signal_sent
+    if (
+        event == "old_generation_cleanup_sigterm"
+        and not cleanup_signal_sent
+        and name == "generation"
+        and committed_source_exists()
+    ):
+        cleanup_signal_sent = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_remove_tree_at(parent_fd, name)
+
+def materialize(root_fd, receipt):
+    global materialize_failed
+    if (
+        event in (
+            "detached_receipt_exception",
+            "reentry_detached_receipt_exception",
+        )
+        and not materialize_failed
+        and committed_source_exists()
+    ):
+        materialize_failed = True
+        observe()
+        raise transaction.InjectedFailure(
+            "detached_receipt_materialization"
+        )
+    if (
+        event == "reentry_detached_receipt_sigterm"
+        and not materialize_failed
+        and committed_source_exists()
+    ):
+        materialize_failed = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_materialize(root_fd, receipt)
+
+def confirm_initial(*args, **kwargs):
+    receipt = real_confirm_initial(*args, **kwargs)
+    if event == "reentry_after_confirm_sigterm":
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return receipt
+
+class StdoutProxy:
+    def write(self, data):
+        global stdout_signal_sent
+        if (
+            event == "before_stdout_sigterm"
+            and not stdout_signal_sent
+            and data == "1\n"
+        ):
+            stdout_signal_sent = True
+            observe()
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real_stdout.write(data)
+
+    def flush(self):
+        return real_stdout.flush()
+
+transaction._inject = inject
+transaction._RENAMEAT2 = renameat2
+transaction.signal.pthread_sigmask = pthread_sigmask
+transaction._consume_pending_transaction_signals = consume_pending
+transaction._remove_tree_at = remove_tree_at
+transaction._materialize_initial_receipts_at = materialize
+transaction._confirm_initial_generation = confirm_initial
+sys.stdout = StdoutProxy()
+sys.argv = [sys.argv[0]] + sys.argv[2:]
+status = transaction.main()
+if not event_observed:
+    sys.stderr.write("event was not observed: {}\n".format(event))
+    sys.exit(97)
+sys.exit(status)
+"""
+        return subprocess.run(
+            (
+                sys.executable,
+                "-c",
+                driver,
+                event,
+                "init-commit",
+                "--remote-root",
+                str(root),
+                "--generation",
+                generation_name,
+                "--source-head",
+                "b" * 40,
+            ),
+            capture_output=True,
+            env=self.helper_environment(),
+        )
+
+    def make_init_helper_root(self, name):
+        root = self.make_root(name)
+        self.write_file(root / "source", "old.txt", b"old\n")
+        generation_name = ".transactions/{}/generation".format(name)
+        self.write_file(
+            root / generation_name,
+            "tools/a.py",
+            b"committed\n",
+        )
+        return root, generation_name
+
     def fail_at(self, expected):
         def inject(actual):
             if actual == expected:
@@ -886,7 +1075,7 @@ sys.exit(transaction.main())
                     receipts_before,
                 )
 
-    def test_initial_commit_post_exchange_faults_confirm_and_rebuild_receipts(
+    def test_initial_commit_post_exchange_faults_return_committed_receipt(
         self,
     ):
         for fault_point in POST_EXCHANGE_FAULT_POINTS:
@@ -904,15 +1093,12 @@ sys.exit(transaction.main())
                     if point == fault_point:
                         raise RuntimeError("fault at {}".format(point))
 
-                with self.assertRaisesRegex(
-                    RuntimeError, "fault at {}".format(fault_point)
-                ):
-                    transaction.commit_initial_generation(
-                        root,
-                        generation_name,
-                        "a" * 40,
-                        fault_injector=inject,
-                    )
+                result = transaction.commit_initial_generation(
+                    root,
+                    generation_name,
+                    "a" * 40,
+                    fault_injector=inject,
+                )
 
                 committed = transaction.read_committed_generation(
                     root,
@@ -922,29 +1108,15 @@ sys.exit(transaction.main())
                     expected_paths=(),
                 )
                 self.assertEqual(
+                    transaction._receipt_payload(result),
+                    transaction._receipt_payload(committed),
+                )
+                self.assertEqual(
                     (root / "source/tools/new.py").read_bytes(),
                     b"new\n",
                 )
-                for name in (
-                    "source-head.txt",
-                    "source-files.sha256",
-                    "source-transaction.txt",
-                ):
-                    try:
-                        (root / "receipts" / name).unlink()
-                    except FileNotFoundError:
-                        pass
-
-                confirmed = transaction.commit_initial_generation(
-                    root,
-                    generation_name,
-                    "a" * 40,
-                )
-                self.assertEqual(
-                    confirmed.created_at_unix_ns,
-                    committed.created_at_unix_ns,
-                )
-                self.assert_initial_detached_receipts(root, confirmed)
+                self.assertFalse((root / "source/old.txt").exists())
+                self.assert_initial_detached_receipts(root, result)
                 self.assertFalse(generation.exists())
 
     def test_initial_confirmation_remove_tree_failure_preserves_commit(self):
@@ -1089,6 +1261,162 @@ sys.exit(transaction.main())
                     if holder.process.poll() is None:
                         holder.terminate()
                         holder.wait()
+
+    def test_init_helper_pre_exchange_sigterm_remains_failure(self):
+        root, generation_name = self.make_init_helper_root(
+            "init-helper-pre-exchange"
+        )
+        source_before = self.tree_snapshot(root / "source")
+
+        result = self.run_init_helper_with_post_exchange_event(
+            root,
+            generation_name,
+            "before_exchange_sigterm",
+        )
+
+        self.assertEqual(result.returncode, 143)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(
+            b"transaction interrupted by signal 15",
+            result.stderr,
+        )
+        self.assertEqual(
+            self.tree_snapshot(root / "source"),
+            source_before,
+        )
+
+    def test_init_helper_preserves_success_after_exchange_event(self):
+        for event in (
+            "exception",
+            "after_exchange_sigint",
+            "after_exchange_sigterm",
+        ):
+            with self.subTest(event=event):
+                root, generation_name = self.make_init_helper_root(
+                    "init-helper-post-exchange-{}".format(event)
+                )
+
+                result = self.run_init_helper_with_post_exchange_event(
+                    root,
+                    generation_name,
+                    event,
+                )
+
+                self.assertEqual(
+                    (root / "source/tools/a.py").read_bytes(),
+                    b"committed\n",
+                )
+                self.assertFalse((root / "source/old.txt").exists())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, b"1\n")
+                self.assertEqual(result.stderr, b"")
+
+    def test_init_helper_closes_real_signal_commit_windows(self):
+        for event in (
+            "exchange_return_sigterm",
+            "handler_teardown_pending_sigterm",
+            "post_drain_sigterm",
+            "old_generation_cleanup_sigterm",
+            "before_stdout_sigterm",
+        ):
+            with self.subTest(event=event):
+                root, generation_name = self.make_init_helper_root(
+                    "init-helper-signal-window-{}".format(event)
+                )
+
+                result = self.run_init_helper_with_post_exchange_event(
+                    root,
+                    generation_name,
+                    event,
+                )
+
+                self.assertEqual(
+                    (root / "source/tools/a.py").read_bytes(),
+                    b"committed\n",
+                )
+                self.assertFalse((root / "source/old.txt").exists())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, b"1\n")
+                self.assertEqual(result.stderr, b"")
+
+    def test_init_helper_detached_receipt_exception_preserves_success(self):
+        root, generation_name = self.make_init_helper_root(
+            "init-helper-detached-receipt"
+        )
+
+        result = self.run_init_helper_with_post_exchange_event(
+            root,
+            generation_name,
+            "detached_receipt_exception",
+        )
+
+        committed = transaction.read_committed_generation(
+            root,
+            expected_nonce="init-helper-detached-receipt",
+            expected_operation="init",
+            expected_head="b" * 40,
+            expected_paths=(),
+        )
+        self.assertEqual(committed.source_file_count, 1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, b"1\n")
+        self.assertEqual(result.stderr, b"")
+        status = subprocess.run(
+            self.helper_command(root, "status"),
+            capture_output=True,
+            env=self.helper_environment(),
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(
+            status.stdout,
+            (
+                "head={}\ncount=1\nlatest=none\n".format("b" * 40)
+            ).encode("utf-8"),
+        )
+        self.assertEqual(status.stderr, b"")
+        self.assert_initial_detached_receipts(root, committed)
+
+    def test_init_helper_reentry_preserves_success_after_receipt_events(self):
+        for event in (
+            "reentry_detached_receipt_exception",
+            "reentry_detached_receipt_sigterm",
+            "reentry_after_confirm_sigterm",
+        ):
+            with self.subTest(event=event):
+                root, generation_name = self.make_init_helper_root(
+                    "init-helper-{}".format(event)
+                )
+                committed = transaction.commit_initial_generation(
+                    root,
+                    generation_name,
+                    "b" * 40,
+                )
+
+                result = self.run_init_helper_with_post_exchange_event(
+                    root,
+                    generation_name,
+                    event,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    result.stdout,
+                    "{}\n".format(
+                        committed.source_file_count
+                    ).encode("utf-8"),
+                )
+                self.assertEqual(result.stderr, b"")
+                confirmed = transaction.read_committed_generation(
+                    root,
+                    expected_nonce=committed.nonce,
+                    expected_operation="init",
+                    expected_head=committed.source_head,
+                    expected_paths=(),
+                )
+                self.assertEqual(
+                    transaction._receipt_payload(confirmed),
+                    transaction._receipt_payload(committed),
+                )
 
     def test_initial_commit_response_is_decided_under_promotion_lock(self):
         root = self.make_root()

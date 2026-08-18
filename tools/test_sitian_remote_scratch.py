@@ -178,6 +178,196 @@ sys.exit(transaction.main())
     )
 
 
+def run_init_helper_with_post_exchange_event(
+    root, generation_name, event
+):
+    driver = r"""
+import os
+from pathlib import Path
+import signal
+import sys
+from tools import sitian_remote_transaction as transaction
+
+event = sys.argv[1]
+real_inject = transaction._inject
+real_renameat2 = transaction._RENAMEAT2
+real_pthread_sigmask = transaction.signal.pthread_sigmask
+real_consume_pending = transaction._consume_pending_transaction_signals
+real_remove_tree_at = transaction._remove_tree_at
+real_materialize = transaction._materialize_initial_receipts_at
+real_confirm_initial = transaction._confirm_initial_generation
+real_stdout = sys.stdout
+remote_root = Path(sys.argv[4])
+event_observed = False
+teardown_signal_sent = False
+post_drain_signal_sent = False
+cleanup_signal_sent = False
+stdout_signal_sent = False
+materialize_failed = False
+
+def observe():
+    global event_observed
+    event_observed = True
+
+def committed_source_exists():
+    source = (
+        remote_root
+        / "source"
+        / "tools"
+        / "sitian_remote_scratch.py"
+    )
+    return source.is_file() and source.read_bytes() == b"new\n"
+
+def inject(fault_injector, point):
+    if point == "after_exchange":
+        if event == "exception":
+            observe()
+            raise transaction.InjectedFailure(point)
+        if event == "after_exchange_sigint":
+            observe()
+            os.kill(os.getpid(), signal.SIGINT)
+        if event == "after_exchange_sigterm":
+            observe()
+            os.kill(os.getpid(), signal.SIGTERM)
+    return real_inject(fault_injector, point)
+
+def renameat2(*args):
+    result = real_renameat2(*args)
+    if result == 0 and event == "exchange_return_sigterm":
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return result
+
+def pthread_sigmask(how, mask):
+    global teardown_signal_sent
+    previous = real_pthread_sigmask(how, mask)
+    if (
+        event == "handler_teardown_pending_sigterm"
+        and not teardown_signal_sent
+        and how == signal.SIG_BLOCK
+        and committed_source_exists()
+    ):
+        teardown_signal_sent = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return previous
+
+def consume_pending():
+    global post_drain_signal_sent
+    real_consume_pending()
+    if (
+        event == "post_drain_sigterm"
+        and not post_drain_signal_sent
+        and committed_source_exists()
+    ):
+        post_drain_signal_sent = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+def remove_tree_at(parent_fd, name):
+    global cleanup_signal_sent
+    if (
+        event == "old_generation_cleanup_sigterm"
+        and not cleanup_signal_sent
+        and name == "generation"
+        and committed_source_exists()
+    ):
+        cleanup_signal_sent = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_remove_tree_at(parent_fd, name)
+
+def materialize(root_fd, receipt):
+    global materialize_failed
+    if (
+        event in (
+            "detached_receipt_exception",
+            "reentry_detached_receipt_exception",
+        )
+        and not materialize_failed
+        and committed_source_exists()
+    ):
+        materialize_failed = True
+        observe()
+        raise transaction.InjectedFailure(
+            "detached_receipt_materialization"
+        )
+    if (
+        event == "reentry_detached_receipt_sigterm"
+        and not materialize_failed
+        and committed_source_exists()
+    ):
+        materialize_failed = True
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real_materialize(root_fd, receipt)
+
+def confirm_initial(*args, **kwargs):
+    receipt = real_confirm_initial(*args, **kwargs)
+    if event == "reentry_after_confirm_sigterm":
+        observe()
+        os.kill(os.getpid(), signal.SIGTERM)
+    return receipt
+
+class StdoutProxy:
+    def write(self, data):
+        global stdout_signal_sent
+        if (
+            event == "before_stdout_sigterm"
+            and not stdout_signal_sent
+            and data == "1\n"
+        ):
+            stdout_signal_sent = True
+            observe()
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real_stdout.write(data)
+
+    def flush(self):
+        return real_stdout.flush()
+
+transaction._inject = inject
+transaction._RENAMEAT2 = renameat2
+transaction.signal.pthread_sigmask = pthread_sigmask
+transaction._consume_pending_transaction_signals = consume_pending
+transaction._remove_tree_at = remove_tree_at
+transaction._materialize_initial_receipts_at = materialize
+transaction._confirm_initial_generation = confirm_initial
+sys.stdout = StdoutProxy()
+sys.argv = [sys.argv[0]] + sys.argv[2:]
+status = transaction.main()
+if not event_observed:
+    sys.stderr.write("event was not observed: {}\n".format(event))
+    sys.exit(97)
+sys.exit(status)
+"""
+    process = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            driver,
+            event,
+            "init-commit",
+            "--remote-root",
+            str(root),
+            "--generation",
+            generation_name,
+            "--source-head",
+            "b" * 40,
+        ),
+        capture_output=True,
+        env={
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    return subprocess.CompletedProcess(
+        process.args,
+        process.returncode,
+        process.stdout.decode("utf-8", errors="replace"),
+        process.stderr.decode("utf-8", errors="replace"),
+    )
+
+
 class PolicyTests(unittest.TestCase):
     def test_repo_root_accepts_only_authoritative_and_approved_remote_roots(self):
         module = load_module()
@@ -1159,6 +1349,113 @@ class TransportTests(unittest.TestCase):
                     b"new\n",
                 )
                 remote.assert_not_called()
+
+    def test_initial_controller_accepts_post_exchange_helper_success(self):
+        module = load_module()
+        head = "b" * 40
+        for event in (
+            "exception",
+            "after_exchange_sigint",
+            "after_exchange_sigterm",
+            "exchange_return_sigterm",
+            "handler_teardown_pending_sigterm",
+            "post_drain_sigterm",
+            "old_generation_cleanup_sigterm",
+            "before_stdout_sigterm",
+            "detached_receipt_exception",
+            "reentry_detached_receipt_exception",
+            "reentry_detached_receipt_sigterm",
+            "reentry_after_confirm_sigterm",
+        ):
+            with self.subTest(event=event), tempfile.TemporaryDirectory(
+                prefix="sitian-init-controller-post-commit-{}-".format(
+                    event
+                )
+            ) as temporary:
+                root = Path(temporary)
+                root.joinpath("source").mkdir()
+                root.joinpath("source/old.txt").write_bytes(b"old\n")
+                generation_name = ".transactions/200-300/generation"
+                generation = root / generation_name
+                generation.joinpath("tools").mkdir(parents=True)
+                generation.joinpath(
+                    "tools/sitian_remote_scratch.py"
+                ).write_bytes(b"new\n")
+                if event.startswith("reentry_"):
+                    transaction.commit_initial_generation(
+                        root,
+                        generation_name,
+                        head,
+                    )
+                config = SimpleNamespace(
+                    repo_root=ROOT,
+                    remote_root=str(root),
+                    remote_host=module.REMOTE_HOST,
+                    krb5_cache=module.KRB5_CACHE,
+                    attempts=1,
+                )
+                streamed = module.subprocess.CompletedProcess(
+                    ["ssh"], 0, "", ""
+                )
+                helper_results = []
+
+                def run_real_init_helper(*args, **kwargs):
+                    del args, kwargs
+                    result = run_init_helper_with_post_exchange_event(
+                        root,
+                        generation_name,
+                        event,
+                    )
+                    helper_results.append(result)
+                    return result
+
+                with mock.patch.object(
+                    module.os, "getpid", return_value=200
+                ), mock.patch.object(
+                    module.time, "time_ns", return_value=300
+                ), mock.patch.object(
+                    module,
+                    "_resolve_local_head",
+                    return_value=head,
+                ), mock.patch.object(
+                    module,
+                    "_stream_with_retries",
+                    return_value=streamed,
+                ) as stream, mock.patch.object(
+                    module,
+                    "_remote_command",
+                    side_effect=run_real_init_helper,
+                ) as remote:
+                    failure = None
+                    result = None
+                    try:
+                        result = module._initialize(config)
+                    except RuntimeError as exc:
+                        failure = exc
+
+                stream.assert_called_once()
+                remote.assert_called_once()
+                self.assertEqual(len(helper_results), 1)
+                command = remote.call_args_list[0][0][1]
+                self.assertIn(" init-commit ", " " + command + " ")
+                self.assertNotIn(" confirm ", " " + command + " ")
+                self.assertEqual(
+                    (
+                        root
+                        / "source/tools/sitian_remote_scratch.py"
+                    ).read_bytes(),
+                    b"new\n",
+                )
+                self.assertFalse((root / "source/old.txt").exists())
+                self.assertEqual(
+                    helper_results[0].returncode,
+                    0,
+                    helper_results[0].stderr,
+                )
+                self.assertEqual(helper_results[0].stdout, "1\n")
+                self.assertEqual(helper_results[0].stderr, "")
+                self.assertIsNone(failure)
+                self.assertEqual(result, (head, 1))
 
     def test_production_controller_has_no_fault_injector_or_old_state_machine(
         self,

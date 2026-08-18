@@ -1137,8 +1137,27 @@ def _validate_initial_receipt_targets_at(root_fd):
         os.close(receipts_fd)
 
 
-def _confirm_initial_generation(remote_root, generation_name, nonce, head):
-    with _transaction_signal_handlers():
+def _confirm_initial_generation(
+    remote_root,
+    generation_name,
+    nonce,
+    head,
+    _committed_result=None,
+    _manage_signal_handlers=True,
+    _retain_committed_signals=False,
+):
+    preserve_committed_success = _committed_result is not None
+    committed_result = (
+        [None] if _committed_result is None else _committed_result
+    )
+    signal_context = (
+        _transaction_signal_handlers(
+            committed_result if preserve_committed_success else None
+        )
+        if _manage_signal_handlers
+        else contextlib.nullcontext()
+    )
+    with signal_context:
         with locked_remote_root(remote_root) as root_fd:
             try:
                 source_fd = os.open(
@@ -1166,7 +1185,19 @@ def _confirm_initial_generation(remote_root, generation_name, nonce, head):
                     )
             finally:
                 os.close(source_fd)
-            _materialize_initial_receipts_at(root_fd, receipt)
+            _validate_initial_receipt_targets_at(root_fd)
+            with _blocked_transaction_signals(
+                committed_result if _retain_committed_signals else None
+            ):
+                committed_result[0] = receipt
+            try:
+                _materialize_initial_receipts_at(root_fd, receipt)
+            except BaseException:
+                if (
+                    not preserve_committed_success
+                    or not _has_committed_result(committed_result)
+                ):
+                    raise
             generation_parts = _split_relative_path(generation_name)
             generation_parent_fd = None
             generation_parent_info = None
@@ -1196,6 +1227,7 @@ def _confirm_initial_generation(remote_root, generation_name, nonce, head):
             except BaseException:
                 pass
             return receipt
+    return committed_result[0]
 
 
 def promote_generation(
@@ -1206,6 +1238,9 @@ def promote_generation(
     receipt_factory=None,
     pre_commit=None,
     post_commit=None,
+    _committed_result=None,
+    _manage_signal_handlers=True,
+    _retain_committed_signals=False,
 ):
     generation_parts = _split_relative_path(generation_name)
     if (
@@ -1219,7 +1254,18 @@ def promote_generation(
     if receipt is not None and generation_parts[1] != receipt.nonce:
         raise TransactionError("generation nonce does not match receipt")
 
-    with _transaction_signal_handlers():
+    preserve_committed_success = _committed_result is not None
+    committed_result = (
+        [None] if _committed_result is None else _committed_result
+    )
+    signal_context = (
+        _transaction_signal_handlers(
+            committed_result if preserve_committed_success else None
+        )
+        if _manage_signal_handlers
+        else contextlib.nullcontext()
+    )
+    with signal_context:
         with locked_remote_root(remote_root) as root_fd:
             _inject(fault_injector, "after_lock")
             generation_parent_fd = None
@@ -1333,42 +1379,103 @@ def promote_generation(
                         "generation entry changed before promotion"
                     )
 
-                if not source_exists:
-                    os.rename(
-                        generation_parts[-1],
-                        "source",
-                        src_dir_fd=generation_parent_fd,
-                        dst_dir_fd=root_fd,
-                    )
-                else:
-                    _rename_exchange_at(
-                        root_fd,
-                        "source",
-                        generation_parent_fd,
-                        generation_parts[-1],
-                    )
-                _inject(fault_injector, "after_exchange")
-
-                committed_fd = _open_source_for_confirmation(
-                    root_fd, generation_info
-                )
                 try:
-                    committed_receipt = _read_generation_fd(
-                        committed_fd,
-                        expected_nonce=receipt.nonce,
-                        expected_operation=receipt.operation,
-                        expected_head=receipt.source_head,
-                        expected_paths=receipt.explicit_paths,
+                    with _blocked_transaction_signals(
+                        committed_result
+                        if (
+                            preserve_committed_success
+                            and _retain_committed_signals
+                        )
+                        else None
+                    ):
+                        if not source_exists:
+                            os.rename(
+                                generation_parts[-1],
+                                "source",
+                                src_dir_fd=generation_parent_fd,
+                                dst_dir_fd=root_fd,
+                            )
+                        else:
+                            _rename_exchange_at(
+                                root_fd,
+                                "source",
+                                generation_parent_fd,
+                                generation_parts[-1],
+                            )
+                        committed_result[0] = receipt
+                except BaseException:
+                    if (
+                        not preserve_committed_success
+                        or not _has_committed_result(committed_result)
+                    ):
+                        raise
+                try:
+                    _inject(fault_injector, "after_exchange")
+                except BaseException:
+                    if (
+                        not preserve_committed_success
+                        or not _has_committed_result(committed_result)
+                    ):
+                        raise
+
+                try:
+                    committed_fd = _open_source_for_confirmation(
+                        root_fd, generation_info
                     )
-                    _require_exact_receipt(committed_receipt, receipt)
-                finally:
-                    os.close(committed_fd)
-                _inject(fault_injector, "before_external_receipts")
+                    try:
+                        committed_receipt = _read_generation_fd(
+                            committed_fd,
+                            expected_nonce=receipt.nonce,
+                            expected_operation=receipt.operation,
+                            expected_head=receipt.source_head,
+                            expected_paths=receipt.explicit_paths,
+                        )
+                        _require_exact_receipt(committed_receipt, receipt)
+                    finally:
+                        os.close(committed_fd)
+                except BaseException:
+                    if (
+                        not preserve_committed_success
+                        or not _has_committed_result(committed_result)
+                    ):
+                        raise
+                try:
+                    _inject(fault_injector, "before_external_receipts")
+                except BaseException:
+                    if (
+                        not preserve_committed_success
+                        or not _has_committed_result(committed_result)
+                    ):
+                        raise
                 if post_commit is not None:
-                    post_commit(root_fd, committed_receipt)
-                _inject(fault_injector, "after_external_receipts")
-                _inject(fault_injector, "before_old_generation_cleanup")
-                return committed_receipt
+                    try:
+                        post_commit(root_fd, receipt)
+                    except BaseException:
+                        if (
+                            not preserve_committed_success
+                            or not _has_committed_result(committed_result)
+                        ):
+                            raise
+                try:
+                    _inject(fault_injector, "after_external_receipts")
+                except BaseException:
+                    if (
+                        not preserve_committed_success
+                        or not _has_committed_result(committed_result)
+                    ):
+                        raise
+                try:
+                    _inject(
+                        fault_injector,
+                        "before_old_generation_cleanup",
+                    )
+                except BaseException:
+                    if (
+                        not preserve_committed_success
+                        or not _has_committed_result(committed_result)
+                    ):
+                        raise
+                return receipt
             finally:
                 if generation_parent_fd is not None:
                     try:
@@ -1395,6 +1502,7 @@ def promote_generation(
                     )
                 except BaseException:
                     pass
+    return committed_result[0]
 
 
 def commit_initial_generation(
@@ -1402,6 +1510,9 @@ def commit_initial_generation(
     generation_name,
     source_head,
     fault_injector=None,
+    _committed_result=None,
+    _manage_signal_handlers=True,
+    _retain_committed_signals=False,
 ):
     generation_parts = _split_relative_path(generation_name)
     if (
@@ -1414,45 +1525,70 @@ def commit_initial_generation(
         )
     nonce = generation_parts[1]
     head = _validate_source_head(source_head)
-    try:
-        return _confirm_initial_generation(
-            remote_root, generation_name, nonce, head
-        )
-    except _GenerationNotCommitted:
-        pass
-
-    def make_receipt(generation_fd):
-        try:
-            os.stat(
-                _EMBEDDED_DIRECTORY,
-                dir_fd=generation_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            return _generation_receipt(
-                generation_fd,
-                operation="init",
-                nonce=nonce,
-                source_head=head,
-                explicit_paths=(),
-            )
-        return _read_generation_fd(
-            generation_fd,
-            expected_nonce=nonce,
-            expected_operation="init",
-            expected_head=head,
-            expected_paths=(),
-        )
-
-    return promote_generation(
-        remote_root,
-        generation_name,
-        None,
-        fault_injector=fault_injector,
-        receipt_factory=make_receipt,
-        pre_commit=_validate_initial_receipt_targets_at,
-        post_commit=_materialize_initial_receipts_at,
+    preserve_committed_signals = _committed_result is not None
+    committed_result = (
+        [None] if _committed_result is None else _committed_result
     )
+    if _manage_signal_handlers:
+        signal_context = (
+            _transaction_signal_handlers(committed_result)
+            if preserve_committed_signals
+            else _transaction_signal_handlers()
+        )
+    else:
+        signal_context = contextlib.nullcontext()
+    with signal_context:
+        try:
+            confirmed = _confirm_initial_generation(
+                remote_root,
+                generation_name,
+                nonce,
+                head,
+                _committed_result=committed_result,
+                _manage_signal_handlers=False,
+                _retain_committed_signals=_retain_committed_signals,
+            )
+        except _GenerationNotCommitted:
+            pass
+        else:
+            return confirmed
+
+        def make_receipt(generation_fd):
+            try:
+                os.stat(
+                    _EMBEDDED_DIRECTORY,
+                    dir_fd=generation_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return _generation_receipt(
+                    generation_fd,
+                    operation="init",
+                    nonce=nonce,
+                    source_head=head,
+                    explicit_paths=(),
+                )
+            return _read_generation_fd(
+                generation_fd,
+                expected_nonce=nonce,
+                expected_operation="init",
+                expected_head=head,
+                expected_paths=(),
+            )
+
+        return promote_generation(
+            remote_root,
+            generation_name,
+            None,
+            fault_injector=fault_injector,
+            receipt_factory=make_receipt,
+            pre_commit=_validate_initial_receipt_targets_at,
+            post_commit=_materialize_initial_receipts_at,
+            _committed_result=committed_result,
+            _manage_signal_handlers=False,
+            _retain_committed_signals=_retain_committed_signals,
+        )
+    return committed_result[0]
 
 
 def _copy_regular_file(source_fd, destination_fd, name, mode):
@@ -2245,12 +2381,26 @@ def main(argv=None):
     arguments = build_parser().parse_args(argv)
     try:
         if arguments.command == "init-commit":
-            receipt = commit_initial_generation(
-                Path(arguments.remote_root),
-                arguments.generation,
-                arguments.source_head,
-            )
-            output = "{}\n".format(receipt.source_file_count)
+            remote_root = Path(arguments.remote_root)
+            committed_result = [None]
+            with _transaction_signal_handlers(
+                committed_result,
+                retain_committed_signals=retain_committed_signals,
+            ):
+                receipt = commit_initial_generation(
+                    remote_root,
+                    arguments.generation,
+                    arguments.source_head,
+                    _committed_result=committed_result,
+                    _manage_signal_handlers=False,
+                    _retain_committed_signals=(
+                        retain_committed_signals
+                    ),
+                )
+                output = "{}\n".format(receipt.source_file_count)
+            sys.stdout.write(output)
+            sys.stdout.flush()
+            return 0
         elif arguments.command == "sync-commit":
             remote_root = Path(arguments.remote_root)
             committed_result = [None]
