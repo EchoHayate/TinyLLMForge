@@ -1151,12 +1151,14 @@ class LLMEngine:
         self,
         *,
         already_synchronized=False,
+        already_synchronized_rank=None,
         timeout_s,
     ):
         local_result, worker_acks = (
             self.call_model_runner_acknowledged(
                 "finalize_decode_internal_profile",
                 already_synchronized,
+                already_synchronized_rank,
                 timeout_s=timeout_s,
             )
         )
@@ -1169,6 +1171,7 @@ class LLMEngine:
         for outer_rank, row in ranked:
             if (
                 not isinstance(row, dict)
+                or type(row.get("rank")) is not int
                 or row.get("rank") != outer_rank
                 or row.get("enabled") is not True
                 or row.get("finalization_status") != "complete"

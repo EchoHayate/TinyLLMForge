@@ -894,11 +894,13 @@ class _FakeWorkerEngine:
     def finalize_decode_internal_profile(
         self,
         *,
-        already_synchronized,
+        already_synchronized_rank,
         timeout_s,
     ):
-        assert already_synchronized is True
+        assert already_synchronized_rank == 0
         assert timeout_s == 60.0
+        for rank in range(1, 4):
+            self.events.append(("profiler-synchronize", rank))
         self.events.append("cuda-snapshot")
         repeat_index = self.last_command_timeline_repeat
         request_set_sha256 = (
@@ -1304,6 +1306,24 @@ def test_worker_command_timeline_reset_snapshot_order_and_cardinality():
         "synchronize",
         final_step,
     )
+    profiler_synchronizes = [
+        event
+        for event in engine.events
+        if (
+            isinstance(event, tuple)
+            and event[0] == "profiler-synchronize"
+        )
+    ]
+    assert profiler_synchronizes == [
+        ("profiler-synchronize", 1),
+        ("profiler-synchronize", 2),
+        ("profiler-synchronize", 3),
+    ]
+    assert all(
+        engine.events.index(event) > final_synchronize
+        for event in profiler_synchronizes
+    )
+    assert all(event[1] != 0 for event in profiler_synchronizes)
     for event in (
         "command-snapshot",
         "cuda-snapshot",
@@ -1831,6 +1851,36 @@ def test_policy_campaign_command_timeline_rejects_graph_counter_drift():
             ].update(command_id=999),
             "command inventories differ across ranks",
         ),
+        (
+            lambda timeline: timeline["rank_snapshots"][1].update(
+                rank=True
+            ),
+            "rank inventory is invalid",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][1].update(
+                rank=True
+            ),
+            "rank inventory is invalid",
+        ),
+        (
+            lambda timeline: timeline["rank_snapshots"][1]["rows"][
+                0
+            ].update(rank=True),
+            "command identity is malformed",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][1][
+                "steps"
+            ][0].update(rank=True),
+            "CUDA step identity is malformed",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][1][
+                "collectives"
+            ][0].update(rank=True),
+            "CUDA collective identity is malformed",
+        ),
     ],
 )
 def test_policy_campaign_command_timeline_rejects_invalid_evidence(
@@ -1861,6 +1911,25 @@ def test_policy_campaign_command_timeline_rejects_warmup_reuse():
         timeline["engine_steps"][0]["repeat_index"] = 0
 
     with pytest.raises(ValueError, match="repeat identity mismatch"):
+        _run_command_timeline_campaign(mutate_run=mutate_run)
+
+
+@pytest.mark.parametrize(
+    ("timeline_repeat_index", "public_repeat"),
+    (
+        (0, 0),
+        (2, 99),
+    ),
+)
+def test_policy_campaign_command_timeline_rejects_public_repeat_drift(
+    timeline_repeat_index,
+    public_repeat,
+):
+    def mutate_run(run, actual_timeline_repeat_index):
+        if actual_timeline_repeat_index == timeline_repeat_index:
+            run["repeat"] = public_repeat
+
+    with pytest.raises(ValueError, match="public repeat mismatch"):
         _run_command_timeline_campaign(mutate_run=mutate_run)
 
 

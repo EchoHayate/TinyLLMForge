@@ -172,7 +172,11 @@ def _command_transport_identity(
         or any(name not in row for name in required)
     ):
         raise ValueError("command identity is malformed")
-    if row["rank"] != expected_rank:
+    rank = _identity_nonnegative_int(
+        row["rank"],
+        "command identity",
+    )
+    if rank != expected_rank:
         raise ValueError("command identity is malformed")
     command_id = _identity_nonnegative_int(
         row["command_id"],
@@ -250,7 +254,11 @@ def _timeline_row_identity(
         or any(name not in row for name in required)
     ):
         raise ValueError(f"{kind} identity is malformed")
-    if row["rank"] != expected_rank:
+    rank = _identity_nonnegative_int(
+        row["rank"],
+        f"{kind} identity",
+    )
+    if rank != expected_rank:
         raise ValueError(f"{kind} identity is malformed")
     command_id = _identity_nonnegative_int(
         row["command_id"],
@@ -331,6 +339,7 @@ def _engine_step_identity(
 def _validate_command_timeline_run(
     run: dict,
     *,
+    expected_public_repeat: int,
     expected_repeat_index: int,
     expected_request_set_sha256: str,
 ) -> None:
@@ -347,18 +356,34 @@ def _validate_command_timeline_run(
         expected_repeat_index,
         "expected repeat identity",
     )
+    if (
+        isinstance(expected_public_repeat, bool)
+        or not isinstance(expected_public_repeat, int)
+    ):
+        raise ValueError("expected public repeat is malformed")
     _identity_sha256(
         expected_request_set_sha256,
         "expected request digest",
     )
     for name in ("rank_snapshots", "cuda_rank_snapshots"):
         rows = timeline.get(name)
-        if (
-            not isinstance(rows, list)
-            or len(rows) != TENSOR_PARALLEL_SIZE
-            or [row.get("rank") for row in rows]
-            != list(range(TENSOR_PARALLEL_SIZE))
-        ):
+        if not isinstance(rows, list) or len(rows) != TENSOR_PARALLEL_SIZE:
+            raise ValueError(
+                f"command timeline {name} rank inventory is invalid"
+            )
+        try:
+            ranks = [
+                _identity_nonnegative_int(
+                    row.get("rank") if isinstance(row, dict) else None,
+                    f"{name} rank",
+                )
+                for row in rows
+            ]
+        except ValueError as error:
+            raise ValueError(
+                f"command timeline {name} rank inventory is invalid"
+            ) from error
+        if ranks != list(range(TENSOR_PARALLEL_SIZE)):
             raise ValueError(
                 f"command timeline {name} rank inventory is invalid"
             )
@@ -510,6 +535,8 @@ def _validate_command_timeline_run(
                     )
     if not isinstance(repeat, int) or isinstance(repeat, bool):
         raise ValueError("command timeline repeat is invalid")
+    if repeat != expected_public_repeat:
+        raise ValueError("command timeline public repeat mismatch")
 
 
 def _validate_command_timeline_graph_lifecycle(
@@ -525,16 +552,15 @@ def _validate_command_timeline_graph_lifecycle(
         )
     _validate_command_timeline_run(
         warmup_results[0],
+        expected_public_repeat=-1,
         expected_repeat_index=0,
         expected_request_set_sha256=expected_request_set_sha256,
     )
-    for expected_repeat_index, run in enumerate(
-        measured_results,
-        start=1,
-    ):
+    for expected_public_repeat, run in enumerate(measured_results):
         _validate_command_timeline_run(
             run,
-            expected_repeat_index=expected_repeat_index,
+            expected_public_repeat=expected_public_repeat,
+            expected_repeat_index=expected_public_repeat + 1,
             expected_request_set_sha256=expected_request_set_sha256,
         )
     runs = warmup_results + measured_results
@@ -1353,7 +1379,7 @@ def run_request_batch(
             timeout_s=60.0
         )
         cuda_result = engine.finalize_decode_internal_profile(
-            already_synchronized=True,
+            already_synchronized_rank=0,
             timeout_s=60.0,
         )
         step_rows = engine.engine_step_timeline_snapshot()

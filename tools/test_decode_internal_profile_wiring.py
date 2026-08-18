@@ -123,6 +123,98 @@ def test_llm_engine_exposes_acknowledged_profile_lifecycle():
     )
 
 
+def test_rank_aware_profile_finalization_only_reuses_rank_zero_sync():
+    finalize = _compile_method(
+        MODEL_RUNNER,
+        "ModelRunner",
+        "finalize_decode_internal_profile",
+    )
+    profiler_calls = []
+    profiler_syncs = []
+
+    class FakeProfiler:
+        def __init__(self, rank):
+            self.rank = rank
+
+        def finalize(self, *, already_synchronized):
+            profiler_calls.append((self.rank, already_synchronized))
+            if not already_synchronized:
+                profiler_syncs.append(self.rank)
+            return {"rank": self.rank}
+
+    class FakeRunner:
+        def __init__(self, rank):
+            self.rank = rank
+            self.world_size = 4
+            self.decode_internal_profiler = FakeProfiler(rank)
+
+    results = [
+        finalize(
+            FakeRunner(rank),
+            already_synchronized_rank=0,
+        )
+        for rank in range(4)
+    ]
+
+    assert results == [{"rank": rank} for rank in range(4)]
+    assert profiler_calls == [
+        (0, True),
+        (1, False),
+        (2, False),
+        (3, False),
+    ]
+    assert profiler_syncs == [1, 2, 3]
+
+
+def test_engine_rank_aware_profile_finalization_is_acknowledged():
+    calls = []
+
+    def finalized_rank(rank):
+        return {
+            "rank": rank,
+            "enabled": True,
+            "finalization_status": "complete",
+            "steps": [{"rank": rank}],
+            "collectives": [],
+        }
+
+    class FakeEngine:
+        model_runner = type("ModelRunner", (), {"world_size": 4})()
+
+        def call_model_runner_acknowledged(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return (
+                finalized_rank(0),
+                tuple(
+                    type(
+                        "Ack",
+                        (),
+                        {"rank": rank, "result": finalized_rank(rank)},
+                    )()
+                    for rank in range(1, 4)
+                ),
+            )
+
+    finalize = _compile_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "finalize_decode_internal_profile",
+    )
+    result = finalize(
+        FakeEngine(),
+        already_synchronized_rank=0,
+        timeout_s=60.0,
+    )
+
+    assert calls == [
+        (
+            ("finalize_decode_internal_profile", False, 0),
+            {"timeout_s": 60.0},
+        )
+    ]
+    assert result["rank_inventory"] == [0, 1, 2, 3]
+
+
 @pytest.mark.parametrize(
     ("method_name", "args", "kwargs"),
     (
@@ -140,7 +232,7 @@ def test_llm_engine_exposes_acknowledged_profile_lifecycle():
             "finalize_decode_internal_profile",
             (),
             {
-                "already_synchronized": True,
+                "already_synchronized_rank": 0,
                 "timeout_s": 60.0,
             },
         ),

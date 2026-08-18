@@ -9358,7 +9358,28 @@ class ModelRunner:
     def finalize_decode_internal_profile(
         self,
         already_synchronized=False,
+        already_synchronized_rank=None,
     ):
+        if not isinstance(already_synchronized, bool):
+            raise ValueError("already_synchronized must be a bool")
+        if already_synchronized_rank is not None:
+            if (
+                isinstance(already_synchronized_rank, bool)
+                or not isinstance(already_synchronized_rank, int)
+                or already_synchronized_rank < 0
+                or already_synchronized_rank >= self.world_size
+            ):
+                raise ValueError(
+                    "already_synchronized_rank must be a valid rank or None"
+                )
+            if already_synchronized:
+                raise ValueError(
+                    "already_synchronized and "
+                    "already_synchronized_rank are mutually exclusive"
+                )
+            already_synchronized = (
+                self.rank == already_synchronized_rank
+            )
         return self.decode_internal_profiler.finalize(
             already_synchronized=already_synchronized,
         )
