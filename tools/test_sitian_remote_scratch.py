@@ -38,6 +38,7 @@ class PolicyTests(unittest.TestCase):
             ROOT,
             Path(module.REMOTE_ROOT) / "source",
             Path(module.REMOTE_ROOT) / "red-task1",
+            Path(module.REMOTE_ROOT) / "task2-red-c1bd1ae",
         ]
         for path in accepted:
             with self.subTest(accepted=path):
@@ -308,14 +309,23 @@ class TransportTests(unittest.TestCase):
 
     def test_initial_snapshot_uses_git_archive_and_no_local_file(self):
         module = load_module()
-        config = module.ScratchConfig.default(ROOT)
+        config = SimpleNamespace(remote_root=module.REMOTE_ROOT)
         commands = module.initial_snapshot_commands(config)
         self.assertEqual(
             commands["archive"],
             ("git", "archive", "--format=tar", "HEAD"),
         )
-        self.assertIn(".incoming-", commands["remote_extract"])
-        self.assertIn("find source -name '._*'", commands["remote_verify"])
+        self.assertIn(".transactions/", commands["remote_extract"])
+        self.assertIn("/generation", commands["remote_extract"])
+        self.assertIn(
+            "sitian_remote_transaction.py",
+            commands["remote_commit"],
+        )
+        self.assertIn("init-commit", commands["remote_commit"])
+        self.assertNotIn(
+            "SITIAN_SYNC_FAIL_POINT",
+            commands["remote_commit"],
+        )
         self.assertNotIn("/private/tmp", json.dumps(commands))
 
     def test_initial_snapshot_excludes_and_verifies_every_forbidden_class(self):
@@ -323,7 +333,6 @@ class TransportTests(unittest.TestCase):
         config = module.ScratchConfig.default(ROOT)
         commands = module.initial_snapshot_commands(config)
         extract = commands["remote_extract"]
-        verify = commands["remote_verify"]
         for token in (
             ".git",
             "artifacts",
@@ -342,8 +351,6 @@ class TransportTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, extract)
-                self.assertIn(token, verify)
-        self.assertGreaterEqual(verify.count("| wc -l"), 8)
 
     def test_remote_extract_filters_forbidden_fixture_archive(self):
         module = load_module()
@@ -383,55 +390,17 @@ class TransportTests(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(extract.returncode, 0, extract.stderr)
-            verify = subprocess.run(
-                ("/bin/sh", "-c", commands["remote_verify"]),
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(verify.returncode, 0, verify.stderr)
             extracted = sorted(
-                path.relative_to(generated_stage / "source").as_posix()
-                for path in (generated_stage / "source").rglob("*")
+                path.relative_to(generated_stage).as_posix()
+                for path in generated_stage.rglob("*")
                 if path.is_file()
             )
             self.assertEqual(extracted, ["tools/allowed.py"])
         finally:
-            shutil.rmtree(generated_stage, ignore_errors=True)
-
-    def test_promotion_retry_requires_matching_transaction_receipt(self):
-        module = load_module()
-        root = ROOT / ".sitian-promotion-retry-fixture"
-        stage = root / ".incoming-source-test-transaction"
-        receipts = root / "receipts"
-        head = "1" * 40
-        try:
-            (root / "source").mkdir(parents=True)
-            receipts.mkdir()
-            (receipts / "source-head.txt").write_text(
-                head + "\n",
-                encoding="utf-8",
+            shutil.rmtree(
+                generated_stage.parent,
+                ignore_errors=True,
             )
-            (receipts / "source-files.sha256").write_text(
-                "0" * 64 + "  source/old.py\n",
-                encoding="utf-8",
-            )
-            command = module._initial_promotion_command(
-                SimpleNamespace(remote_root=str(root)),
-                stage=str(stage),
-                head=head,
-            )
-            result = subprocess.run(
-                ("/bin/sh", "-c", command),
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(
-                result.returncode,
-                0,
-                "same HEAD without this transaction receipt is not success",
-            )
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
 
     def test_incremental_sync_requires_explicit_allowed_paths(self):
         module = load_module()

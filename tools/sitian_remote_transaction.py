@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import ctypes
 import errno
@@ -9,6 +10,8 @@ import os
 from pathlib import Path, PurePosixPath
 import signal
 import stat
+import sys
+import time
 
 
 SCHEMA_VERSION = 1
@@ -23,6 +26,9 @@ _EMBEDDED_DIRECTORY = ".tinyllmforge-scratch"
 _COMMIT_FILE = "commit.json"
 _MANIFEST_FILE = "source-files.sha256"
 _EXPLICIT_PATHS_FILE = "explicit-paths.txt"
+_DETACHED_HEAD_FILE = "source-head.txt"
+_DETACHED_MANIFEST_FILE = "source-files.sha256"
+_DETACHED_TRANSACTION_FILE = "source-transaction.txt"
 _EMBEDDED_FILES = frozenset(
     (_COMMIT_FILE, _MANIFEST_FILE, _EXPLICIT_PATHS_FILE)
 )
@@ -98,6 +104,10 @@ else:
 
 
 class TransactionError(RuntimeError):
+    pass
+
+
+class _GenerationNotCommitted(TransactionError):
     pass
 
 
@@ -374,6 +384,19 @@ def _validate_hash(value, field):
         raise TransactionError("{} is not a sha256 digest".format(field))
 
 
+def _validate_source_head(source_head):
+    if (
+        not isinstance(source_head, str)
+        or len(source_head) != 40
+        or any(
+            character not in "0123456789abcdef"
+            for character in source_head
+        )
+    ):
+        raise TransactionError("source head must be 40 lowercase hex digits")
+    return source_head
+
+
 def _receipt_payload(receipt):
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -475,6 +498,31 @@ def write_embedded_receipt(generation_fd, receipt):
         os.fsync(embedded_fd)
     finally:
         os.close(embedded_fd)
+
+
+def _generation_receipt(
+    generation_fd,
+    *,
+    operation,
+    nonce,
+    source_head,
+    explicit_paths
+):
+    paths = _validate_explicit_paths(explicit_paths)
+    entries, manifest = _source_manifest(generation_fd)
+    return CommitReceipt(
+        operation=operation,
+        nonce=nonce,
+        source_head=source_head,
+        explicit_paths=paths,
+        explicit_path_sha256={
+            path: _hash_explicit_path(generation_fd, path)
+            for path in paths
+        },
+        source_manifest_sha256=_sha256_bytes(manifest),
+        source_file_count=len(entries),
+        created_at_unix_ns=time.time_ns(),
+    )
 
 
 def _decode_utf8(data, name):
@@ -884,8 +932,121 @@ def _open_source_for_confirmation(root_fd, generation_info):
     return source_fd
 
 
+def _materialize_initial_receipts_at(root_fd, receipt):
+    if receipt.operation != "init":
+        raise TransactionError("detached init receipts require init operation")
+    try:
+        os.mkdir("receipts", 0o700, dir_fd=root_fd)
+    except FileExistsError:
+        pass
+    receipts_fd = os.open("receipts", _DIRECTORY_FLAGS, dir_fd=root_fd)
+    source_fd = None
+    embedded_fd = None
+    try:
+        source_fd = os.open("source", _DIRECTORY_FLAGS, dir_fd=root_fd)
+        embedded_fd = os.open(
+            _EMBEDDED_DIRECTORY,
+            _DIRECTORY_FLAGS,
+            dir_fd=source_fd,
+        )
+        manifest = _read_regular_at(embedded_fd, _MANIFEST_FILE)
+        values = (
+            (
+                _DETACHED_HEAD_FILE,
+                (receipt.source_head + "\n").encode("utf-8"),
+            ),
+            (_DETACHED_MANIFEST_FILE, manifest),
+            (
+                _DETACHED_TRANSACTION_FILE,
+                (receipt.nonce + "\n").encode("utf-8"),
+            ),
+        )
+        for name, data in values:
+            try:
+                info = os.stat(
+                    name, dir_fd=receipts_fd, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                if not stat.S_ISREG(info.st_mode):
+                    raise TransactionError(
+                        "detached receipt is not a regular file: {}".format(
+                            name
+                        )
+                    )
+            _write_regular_at(receipts_fd, name, data)
+        os.fsync(receipts_fd)
+    finally:
+        if embedded_fd is not None:
+            os.close(embedded_fd)
+        if source_fd is not None:
+            os.close(source_fd)
+        os.close(receipts_fd)
+
+
+def _confirm_initial_generation(remote_root, generation_name, nonce, head):
+    with _transaction_signal_handlers():
+        with locked_remote_root(remote_root) as root_fd:
+            try:
+                source_fd = os.open(
+                    "source", _DIRECTORY_FLAGS, dir_fd=root_fd
+                )
+            except OSError as exc:
+                raise _GenerationNotCommitted(
+                    "matching committed source is unavailable: {}".format(
+                        exc
+                    )
+                )
+            try:
+                try:
+                    receipt = _read_generation_fd(
+                        source_fd,
+                        expected_nonce=nonce,
+                        expected_operation="init",
+                        expected_head=head,
+                        expected_paths=(),
+                    )
+                except TransactionError as exc:
+                    raise _GenerationNotCommitted(
+                        "source is not the expected committed generation: "
+                        "{}".format(exc)
+                    )
+            finally:
+                os.close(source_fd)
+            _materialize_initial_receipts_at(root_fd, receipt)
+            generation_parts = _split_relative_path(generation_name)
+            generation_parent_fd = None
+            generation_parent_info = None
+            try:
+                generation_parent_fd = _open_directory_at(
+                    root_fd,
+                    PurePosixPath(*generation_parts[:-1]).as_posix(),
+                )
+                generation_parent_info = os.fstat(generation_parent_fd)
+                _remove_tree_at(
+                    generation_parent_fd, generation_parts[-1]
+                )
+            except FileNotFoundError:
+                pass
+            finally:
+                if generation_parent_fd is not None:
+                    os.close(generation_parent_fd)
+            _remove_empty_nonce_directory(
+                root_fd,
+                generation_name,
+                expected_parent_info=generation_parent_info,
+            )
+            return receipt
+
+
 def promote_generation(
-    remote_root, generation_name, receipt, fault_injector=None
+    remote_root,
+    generation_name,
+    receipt,
+    fault_injector=None,
+    receipt_factory=None,
+    post_commit=None,
 ):
     generation_parts = _split_relative_path(generation_name)
     if (
@@ -896,7 +1057,7 @@ def promote_generation(
         raise TransactionError(
             "generation must be .transactions/<nonce>/generation"
         )
-    if generation_parts[1] != receipt.nonce:
+    if receipt is not None and generation_parts[1] != receipt.nonce:
         raise TransactionError("generation nonce does not match receipt")
 
     with _transaction_signal_handlers():
@@ -926,7 +1087,33 @@ def promote_generation(
                     )
                 generation_parent_info = os.fstat(generation_parent_fd)
                 _inject(fault_injector, "after_generation_ready")
-                write_embedded_receipt(generation_fd, receipt)
+                embedded_receipt_exists = False
+                if receipt is None:
+                    if receipt_factory is None:
+                        raise TransactionError(
+                            "receipt or receipt factory is required"
+                        )
+                    try:
+                        embedded_info = os.stat(
+                            _EMBEDDED_DIRECTORY,
+                            dir_fd=generation_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        if not stat.S_ISDIR(embedded_info.st_mode):
+                            raise TransactionError(
+                                "embedded receipt is not a real directory"
+                            )
+                        embedded_receipt_exists = True
+                    receipt = receipt_factory(generation_fd)
+                if generation_parts[1] != receipt.nonce:
+                    raise TransactionError(
+                        "generation nonce does not match receipt"
+                    )
+                if not embedded_receipt_exists:
+                    write_embedded_receipt(generation_fd, receipt)
                 _inject(fault_injector, "after_embedded_receipt")
                 _read_generation_fd(
                     generation_fd,
@@ -1015,6 +1202,11 @@ def promote_generation(
                     _require_exact_receipt(committed_receipt, receipt)
                 finally:
                     os.close(committed_fd)
+                _inject(fault_injector, "before_external_receipts")
+                if post_commit is not None:
+                    post_commit(root_fd, committed_receipt)
+                _inject(fault_injector, "after_external_receipts")
+                _inject(fault_injector, "before_old_generation_cleanup")
                 return committed_receipt
             finally:
                 if generation_parent_fd is not None:
@@ -1042,3 +1234,98 @@ def promote_generation(
                     )
                 except BaseException:
                     pass
+
+
+def commit_initial_generation(
+    remote_root,
+    generation_name,
+    source_head,
+    fault_injector=None,
+):
+    generation_parts = _split_relative_path(generation_name)
+    if (
+        len(generation_parts) != 3
+        or generation_parts[0] != ".transactions"
+        or generation_parts[2] != "generation"
+    ):
+        raise TransactionError(
+            "generation must be .transactions/<nonce>/generation"
+        )
+    nonce = generation_parts[1]
+    head = _validate_source_head(source_head)
+    try:
+        return _confirm_initial_generation(
+            remote_root, generation_name, nonce, head
+        )
+    except _GenerationNotCommitted:
+        pass
+
+    def make_receipt(generation_fd):
+        try:
+            os.stat(
+                _EMBEDDED_DIRECTORY,
+                dir_fd=generation_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return _generation_receipt(
+                generation_fd,
+                operation="init",
+                nonce=nonce,
+                source_head=head,
+                explicit_paths=(),
+            )
+        return _read_generation_fd(
+            generation_fd,
+            expected_nonce=nonce,
+            expected_operation="init",
+            expected_head=head,
+            expected_paths=(),
+        )
+
+    receipt = promote_generation(
+        remote_root,
+        generation_name,
+        None,
+        fault_injector=fault_injector,
+        receipt_factory=make_receipt,
+        post_commit=_materialize_initial_receipts_at,
+    )
+    confirmed = read_committed_generation(
+        remote_root,
+        expected_nonce=nonce,
+        expected_operation="init",
+        expected_head=head,
+        expected_paths=(),
+    )
+    _require_exact_receipt(confirmed, receipt)
+    return confirmed
+
+
+def build_parser():
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    init_commit = subparsers.add_parser("init-commit")
+    init_commit.add_argument("--remote-root", required=True)
+    init_commit.add_argument("--generation", required=True)
+    init_commit.add_argument("--source-head", required=True)
+    return parser
+
+
+def main(argv=None):
+    arguments = build_parser().parse_args(argv)
+    try:
+        receipt = commit_initial_generation(
+            Path(arguments.remote_root),
+            arguments.generation,
+            arguments.source_head,
+        )
+    except (OSError, TransactionError) as exc:
+        sys.stderr.write("{}\n".format(exc))
+        return 1
+    sys.stdout.write("{}\n".format(receipt.source_file_count))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

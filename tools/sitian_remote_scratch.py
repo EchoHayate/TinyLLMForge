@@ -25,11 +25,13 @@ ATTEMPTS = 5
 LOCAL_REPO_ROOT = Path("/Users/bytedance/dev/TinyLLMForge")
 REMOTE_SOURCE_ROOT = Path(REMOTE_ROOT) / "source"
 REMOTE_TASK1_TEST_ROOT = Path(REMOTE_ROOT) / "red-task1"
+REMOTE_TASK2_TEST_ROOT = Path(REMOTE_ROOT) / "task2-red-c1bd1ae"
 APPROVED_REPO_ROOTS = frozenset(
     {
         LOCAL_REPO_ROOT,
         REMOTE_SOURCE_ROOT,
         REMOTE_TASK1_TEST_ROOT,
+        REMOTE_TASK2_TEST_ROOT,
     }
 )
 FORBIDDEN_ALWAYS_DIRS = (
@@ -302,25 +304,41 @@ def initial_snapshot_commands(
     config: ScratchConfig,
 ) -> dict[str, tuple[str, ...] | str]:
     nonce = f"{os.getpid()}-{time.time_ns()}"
-    stage = f"{config.remote_root}/.incoming-source-{nonce}"
+    generation_name = f".transactions/{nonce}/generation"
+    generation = f"{config.remote_root}/{generation_name}"
     excludes = " ".join(
         f"--exclude={shlex.quote(pattern)}"
         for pattern in INITIAL_SNAPSHOT_EXCLUDES
     )
+    layout = remote_layout(config)
     return {
         "archive": ("git", "archive", "--format=tar", "HEAD"),
-        "stage": stage,
+        "stage": generation,
         "remote_extract": (
             "set -eu; "
-            f"stage={shlex.quote(stage)}; "
-            "rm -rf \"$stage\"; mkdir -p \"$stage/source\"; "
-            f"tar {excludes} -xf - -C \"$stage/source\""
+            f"generation={shlex.quote(generation)}; "
+            "mkdir -p \"$generation\"; "
+            f"tar {excludes} -xf - -C \"$generation\""
         ),
-        "remote_verify": (
+        "remote_commit": (
             "set -eu; "
-            f"stage={shlex.quote(stage)}; "
-            "cd \"$stage\"; "
-            + _forbidden_verification_checks()
+            f"root={shlex.quote(config.remote_root)}; "
+            f"generation={shlex.quote(generation)}; "
+            f"mkdir -p {shlex.quote(layout['tmp'])} "
+            f"{shlex.quote(layout['pycache'])} "
+            f"{shlex.quote(layout['cache'])}; "
+            f"TMPDIR={shlex.quote(layout['tmp'])} "
+            f"TMP={shlex.quote(layout['tmp'])} "
+            f"TEMP={shlex.quote(layout['tmp'])} "
+            f"PYTHONPYCACHEPREFIX={shlex.quote(layout['pycache'])} "
+            f"XDG_CACHE_HOME={shlex.quote(layout['cache'])} "
+            "PYTHONDONTWRITEBYTECODE=1 "
+            "python3 "
+            "\"$generation/tools/sitian_remote_transaction.py\" "
+            "init-commit "
+            "--remote-root \"$root\" "
+            f"--generation {shlex.quote(generation_name)} "
+            "--source-head __SOURCE_HEAD__"
         ),
     }
 
@@ -492,99 +510,6 @@ def _stream_with_retries(
             time.sleep(2.0)
     assert last is not None
     return last
-
-
-def _initial_promotion_command(
-    config: ScratchConfig,
-    *,
-    stage: str,
-    head: str,
-) -> str:
-    root = config.remote_root
-    nonce = stage.rsplit("-", 2)[-2] + "-" + stage.rsplit("-", 1)[-1]
-    quoted_root = shlex.quote(root)
-    quoted_stage = shlex.quote(stage)
-    quoted_head = shlex.quote(head)
-    quoted_nonce = shlex.quote(nonce)
-    return (
-        "set -eu; "
-        f"root={quoted_root}; stage={quoted_stage}; "
-        f"head={quoted_head}; nonce={quoted_nonce}; "
-        "receipts=\"$root/receipts\"; "
-        "head_receipt=\"$receipts/source-head.txt\"; "
-        "hash_receipt=\"$receipts/source-files.sha256\"; "
-        "transaction_receipt=\"$receipts/source-transaction.txt\"; "
-        "if test ! -d \"$stage/source\"; then "
-        "test -d \"$root/source\"; "
-        "test \"$(cat \"$transaction_receipt\")\" = \"$nonce\"; "
-        "test \"$(cat \"$head_receipt\")\" = \"$head\"; "
-        "wc -l < \"$hash_receipt\"; exit 0; fi; "
-        "cd \"$stage\"; "
-        + _forbidden_verification_checks()
-        + "; "
-        "mkdir -p \"$receipts\"; "
-        "head_new=\"$receipts/.source-head-$nonce\"; "
-        "hash_new=\"$receipts/.source-files-$nonce\"; "
-        "transaction_new=\"$receipts/.source-transaction-$nonce\"; "
-        "head_old=\"$receipts/.source-head-old-$nonce\"; "
-        "hash_old=\"$receipts/.source-files-old-$nonce\"; "
-        "transaction_old=\"$receipts/.source-transaction-old-$nonce\"; "
-        "printf '%s\\n' \"$head\" > \"$head_new\"; "
-        "printf '%s\\n' \"$nonce\" > \"$transaction_new\"; "
-        "(cd \"$stage\" && "
-        "find source -type f -print0 | LC_ALL=C sort -z | "
-        "xargs -0 -r sha256sum) > \"$hash_new\"; "
-        "count=$(wc -l < \"$hash_new\"); "
-        "had_head=0; had_hash=0; had_transaction=0; "
-        "had_source=0; swapped=0; committed=0; "
-        "if test -f \"$head_receipt\"; then "
-        "cp -p \"$head_receipt\" \"$head_old\"; had_head=1; fi; "
-        "if test -f \"$hash_receipt\"; then "
-        "cp -p \"$hash_receipt\" \"$hash_old\"; had_hash=1; fi; "
-        "if test -f \"$transaction_receipt\"; then "
-        "cp -p \"$transaction_receipt\" \"$transaction_old\"; "
-        "had_transaction=1; fi; "
-        "next=\"$root/source-next\"; old=\"$root/.source-old-$nonce\"; "
-        "rm -rf \"$next\" \"$old\"; "
-        "mv \"$stage/source\" \"$next\"; "
-        "rollback() { "
-        "if test \"$committed\" -eq 0; then "
-        "if test \"$swapped\" -eq 1; then "
-        "rm -rf \"$stage/source\"; "
-        "mv \"$root/source\" \"$stage/source\" 2>/dev/null || true; "
-        "if test \"$had_source\" -eq 1; then "
-        "mv \"$old\" \"$root/source\" 2>/dev/null || true; fi; "
-        "elif test \"$had_source\" -eq 1 && "
-        "test ! -e \"$root/source\"; then "
-        "mv \"$old\" \"$root/source\" 2>/dev/null || true; fi; "
-        "if test \"$had_head\" -eq 1; then "
-        "mv \"$head_old\" \"$head_receipt\" 2>/dev/null || true; "
-        "else rm -f \"$head_receipt\"; fi; "
-        "if test \"$had_hash\" -eq 1; then "
-        "mv \"$hash_old\" \"$hash_receipt\" 2>/dev/null || true; "
-        "else rm -f \"$hash_receipt\"; fi; "
-        "if test \"$had_transaction\" -eq 1; then "
-        "mv \"$transaction_old\" \"$transaction_receipt\" "
-        "2>/dev/null || true; "
-        "else rm -f \"$transaction_receipt\"; fi; "
-        "fi; "
-        "rm -f \"$head_new\" \"$hash_new\" \"$transaction_new\" "
-        "\"$head_old\" \"$hash_old\" \"$transaction_old\"; "
-        "rm -rf \"$next\"; "
-        "}; "
-        "trap rollback EXIT HUP INT TERM; "
-        "if test -e \"$root/source\" || test -L \"$root/source\"; then "
-        "test -d \"$root/source\"; test ! -L \"$root/source\"; "
-        "mv \"$root/source\" \"$old\"; had_source=1; fi; "
-        "mv \"$next\" \"$root/source\"; swapped=1; "
-        "mv \"$head_new\" \"$head_receipt\"; "
-        "mv \"$hash_new\" \"$hash_receipt\"; "
-        "mv \"$transaction_new\" \"$transaction_receipt\"; "
-        "committed=1; trap - EXIT HUP INT TERM; "
-        "rm -rf \"$old\" \"$stage\" || true; "
-        "rm -f \"$head_old\" \"$hash_old\" \"$transaction_old\" || true; "
-        "printf '%s\\n' \"$count\""
-    )
 
 
 def _incremental_remote_command(
@@ -841,16 +766,12 @@ def _initialize(config: ScratchConfig) -> tuple[str, int]:
     )
     if stream_result.returncode != 0:
         raise RuntimeError("initial source stream failed")
-    verify_result = _remote_command(config, commands["remote_verify"])
-    if verify_result.returncode != 0:
-        raise RuntimeError("initial source verification failed")
+    remote_commit = commands["remote_commit"].replace(
+        "__SOURCE_HEAD__", shlex.quote(head)
+    )
     promote_result = _remote_command(
         config,
-        _initial_promotion_command(
-            config,
-            stage=str(commands["stage"]),
-            head=head,
-        ),
+        remote_commit,
     )
     if promote_result.returncode != 0:
         raise RuntimeError("initial source promotion failed")

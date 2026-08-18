@@ -15,6 +15,21 @@ from unittest import mock
 from tools import sitian_remote_transaction as transaction
 
 
+INIT_FAULT_POINTS = (
+    "after_lock",
+    "after_generation_ready",
+    "after_embedded_receipt",
+    "before_exchange",
+    "after_exchange",
+    "before_external_receipts",
+    "after_external_receipts",
+    "before_old_generation_cleanup",
+)
+
+PRE_EXCHANGE_FAULT_POINTS = INIT_FAULT_POINTS[:4]
+POST_EXCHANGE_FAULT_POINTS = INIT_FAULT_POINTS[4:]
+
+
 class LockHolder:
     def __init__(self, root):
         code = "\n".join(
@@ -176,6 +191,56 @@ class TransactionPrimitiveTests(unittest.TestCase):
 
     def read_marker(self, path):
         return (path / "marker.txt").read_text()
+
+    def tree_snapshot(self, root):
+        if not root.exists():
+            return None
+        snapshot = {}
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                snapshot[relative] = ("symlink", os.readlink(str(path)))
+            elif path.is_dir():
+                snapshot[relative] = ("directory", None)
+            else:
+                snapshot[relative] = ("file", path.read_bytes())
+        return snapshot
+
+    def write_detached_receipts(self, root, marker):
+        receipts = root / "receipts"
+        receipts.mkdir()
+        values = {
+            "source-head.txt": marker.encode("utf-8") + b"\n",
+            "source-files.sha256": (
+                b"0" * 64 + b"  old.txt\n"
+            ),
+            "source-transaction.txt": (
+                marker.encode("utf-8") + b"\n"
+            ),
+        }
+        for name, data in values.items():
+            (receipts / name).write_bytes(data)
+
+    def assert_initial_detached_receipts(self, root, receipt):
+        receipts = root / "receipts"
+        self.assertEqual(
+            (receipts / "source-head.txt").read_text(),
+            receipt.source_head + "\n",
+        )
+        self.assertEqual(
+            (receipts / "source-transaction.txt").read_text(),
+            receipt.nonce + "\n",
+        )
+        embedded_manifest = (
+            root
+            / "source"
+            / ".tinyllmforge-scratch"
+            / "source-files.sha256"
+        ).read_bytes()
+        self.assertEqual(
+            (receipts / "source-files.sha256").read_bytes(),
+            embedded_manifest,
+        )
 
     def make_committed_root(self, paths=("tools/a.py",)):
         root = self.make_root()
@@ -586,6 +651,194 @@ class TransactionPrimitiveTests(unittest.TestCase):
         self.assertEqual((root / "source/tools/a.py").read_bytes(), b"new\n")
         self.assertFalse((root / "source/old.txt").exists())
         self.assertFalse(generation.exists())
+
+    def test_initial_commit_pre_exchange_faults_preserve_source_and_receipts(
+        self,
+    ):
+        for fault_point in PRE_EXCHANGE_FAULT_POINTS:
+            with self.subTest(fault_point=fault_point):
+                root = self.make_root("init-pre-{}".format(fault_point))
+                self.write_file(root / "source", "old.txt", b"old\n")
+                self.write_detached_receipts(root, "old")
+                generation = (
+                    root / ".transactions/init-nonce/generation"
+                )
+                self.write_file(generation, "tools/new.py", b"new\n")
+                source_before = self.tree_snapshot(root / "source")
+                receipts_before = self.tree_snapshot(root / "receipts")
+
+                def inject(point):
+                    if point == fault_point:
+                        raise RuntimeError("fault at {}".format(point))
+
+                with self.assertRaisesRegex(
+                    RuntimeError, "fault at {}".format(fault_point)
+                ):
+                    transaction.commit_initial_generation(
+                        root,
+                        ".transactions/init-nonce/generation",
+                        "a" * 40,
+                        fault_injector=inject,
+                    )
+
+                self.assertEqual(
+                    self.tree_snapshot(root / "source"),
+                    source_before,
+                )
+                self.assertEqual(
+                    self.tree_snapshot(root / "receipts"),
+                    receipts_before,
+                )
+
+    def test_initial_commit_post_exchange_faults_confirm_and_rebuild_receipts(
+        self,
+    ):
+        for fault_point in POST_EXCHANGE_FAULT_POINTS:
+            with self.subTest(fault_point=fault_point):
+                root = self.make_root("init-post-{}".format(fault_point))
+                self.write_file(root / "source", "old.txt", b"old\n")
+                self.write_detached_receipts(root, "old")
+                generation_name = (
+                    ".transactions/init-nonce/generation"
+                )
+                generation = root / generation_name
+                self.write_file(generation, "tools/new.py", b"new\n")
+
+                def inject(point):
+                    if point == fault_point:
+                        raise RuntimeError("fault at {}".format(point))
+
+                with self.assertRaisesRegex(
+                    RuntimeError, "fault at {}".format(fault_point)
+                ):
+                    transaction.commit_initial_generation(
+                        root,
+                        generation_name,
+                        "a" * 40,
+                        fault_injector=inject,
+                    )
+
+                committed = transaction.read_committed_generation(
+                    root,
+                    expected_nonce="init-nonce",
+                    expected_operation="init",
+                    expected_head="a" * 40,
+                    expected_paths=(),
+                )
+                self.assertEqual(
+                    (root / "source/tools/new.py").read_bytes(),
+                    b"new\n",
+                )
+                for name in (
+                    "source-head.txt",
+                    "source-files.sha256",
+                    "source-transaction.txt",
+                ):
+                    try:
+                        (root / "receipts" / name).unlink()
+                    except FileNotFoundError:
+                        pass
+
+                confirmed = transaction.commit_initial_generation(
+                    root,
+                    generation_name,
+                    "a" * 40,
+                )
+                self.assertEqual(
+                    confirmed.created_at_unix_ns,
+                    committed.created_at_unix_ns,
+                )
+                self.assert_initial_detached_receipts(root, confirmed)
+                self.assertFalse(generation.exists())
+
+    def test_init_commit_cli_promotes_generation_and_prints_file_count(self):
+        root = self.make_root()
+        generation = root / ".transactions/cli-nonce/generation"
+        self.write_file(generation, "tools/a.py", b"new\n")
+        with mock.patch("sys.stdout") as stdout:
+            result = transaction.main(
+                (
+                    "init-commit",
+                    "--remote-root",
+                    str(root),
+                    "--generation",
+                    ".transactions/cli-nonce/generation",
+                    "--source-head",
+                    "b" * 40,
+                )
+            )
+        self.assertEqual(result, 0)
+        stdout.write.assert_called_once_with("1\n")
+        transaction.read_committed_generation(
+            root,
+            expected_nonce="cli-nonce",
+            expected_operation="init",
+            expected_head="b" * 40,
+            expected_paths=(),
+        )
+
+    def test_initial_commit_reuses_valid_embedded_receipt_before_exchange(self):
+        root = self.make_root()
+        generation_name = ".transactions/reentry-nonce/generation"
+        generation = root / generation_name
+        self.write_file(generation, "tools/a.py", b"new\n")
+        generation_fd = transaction.open_directory_no_follow(generation)
+        try:
+            receipt = transaction._generation_receipt(
+                generation_fd,
+                operation="init",
+                nonce="reentry-nonce",
+                source_head="c" * 40,
+                explicit_paths=(),
+            )
+            transaction.write_embedded_receipt(generation_fd, receipt)
+        finally:
+            os.close(generation_fd)
+
+        result = transaction.commit_initial_generation(
+            root,
+            generation_name,
+            "c" * 40,
+        )
+
+        self.assertEqual(
+            result.created_at_unix_ns,
+            receipt.created_at_unix_ns,
+        )
+        self.assert_initial_detached_receipts(root, result)
+        self.assertFalse(generation.exists())
+
+    def test_initial_confirmation_receipt_symlink_fails_without_exchange(self):
+        root = self.make_root()
+        generation_name = ".transactions/symlink-nonce/generation"
+        generation = root / generation_name
+        self.write_file(generation, "tools/a.py", b"committed\n")
+        transaction.commit_initial_generation(
+            root,
+            generation_name,
+            "d" * 40,
+        )
+        self.write_file(generation, "tools/a.py", b"unexpected\n")
+        head_receipt = root / "receipts/source-head.txt"
+        head_target = root / "receipts/source-head-target.txt"
+        head_receipt.replace(head_target)
+        head_receipt.symlink_to(head_target.name)
+
+        with self.assertRaises(transaction.TransactionError):
+            transaction.commit_initial_generation(
+                root,
+                generation_name,
+                "d" * 40,
+            )
+
+        self.assertEqual(
+            (root / "source/tools/a.py").read_bytes(),
+            b"committed\n",
+        )
+        self.assertEqual(
+            (generation / "tools/a.py").read_bytes(),
+            b"unexpected\n",
+        )
 
     def test_exact_receipt_comparison_rejects_every_changed_field(self):
         changed_fields = (
