@@ -37,7 +37,7 @@
 - Consumes: `_load_command_timeline_runner(module_name)`.
 - Produces tests for: `_build_gpu_sampler_script() -> str` and `_start_epoch_samplers(...)`.
 
-- [ ] **Step 1: Add a fake `nvidia-smi` helper**
+- [x] **Step 1: Add a fake `nvidia-smi` helper**
 
 Add:
 
@@ -73,7 +73,7 @@ def _run_gpu_sampler_script(runner, tmp_path, body):
     )
 ```
 
-- [ ] **Step 2: Add complete-snapshot and command-identity tests**
+- [x] **Step 2: Add complete-snapshot and command-identity tests**
 
 Add:
 
@@ -133,7 +133,7 @@ for snapshot in range(2):
     )
 ```
 
-- [ ] **Step 3: Add fail-closed partial and duplicate tests**
+- [x] **Step 3: Add fail-closed partial and duplicate tests**
 
 Add:
 
@@ -170,7 +170,7 @@ for index in %r:
     assert result.stdout == ""
 ```
 
-- [ ] **Step 4: Add owned-child reaping test**
+- [x] **Step 4: Add owned-child reaping test**
 
 Add:
 
@@ -230,7 +230,7 @@ while True:
         pytest.fail("owned nvidia-smi child was not reaped")
 ```
 
-- [ ] **Step 5: Add strict coverage regression**
+- [x] **Step 5: Add strict coverage regression**
 
 Add:
 
@@ -291,7 +291,7 @@ def test_command_timeline_telemetry_attachment_rejects_boundary_only_gpu_rows(
         )
 ```
 
-- [ ] **Step 6: Run focused tests and verify RED**
+- [x] **Step 6: Run focused tests and verify RED**
 
 Atomically sync only the modified test file to the remote authoritative
 source, then run:
@@ -305,6 +305,7 @@ export PYTHONPYCACHEPREFIX=/data00/home/sitian/tinyllmforge-workspaces/command-t
 export XDG_CACHE_HOME=/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/cache
 /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/env/test/bin/python \
   -m pytest -q \
+  -p no:cacheprovider \
   tools/test_autoregressive_draft_cuda_graph_gate.py \
   -k 'persistent_gpu_sampler or boundary_only_gpu_rows' \
   --basetemp /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/pytest/persistent-gpu-sampler-red
@@ -326,7 +327,7 @@ passes, proving admission has not already been weakened.
 - Produces: `_build_gpu_sampler_script() -> str`.
 - Preserves: `_start_epoch_samplers(...) -> tuple[list[subprocess.Popen], list[object]]`.
 
-- [ ] **Step 1: Add `_build_gpu_sampler_script`**
+- [x] **Step 1: Add `_build_gpu_sampler_script`**
 
 Place it immediately before `_start_epoch_samplers`:
 
@@ -421,7 +422,7 @@ def _build_gpu_sampler_script() -> str:
     ))
 ```
 
-- [ ] **Step 2: Use the generated persistent program**
+- [x] **Step 2: Use the generated persistent program**
 
 Replace the inline repeated-subprocess `gpu_script` in
 `_start_epoch_samplers(...)` with:
@@ -433,7 +434,7 @@ Replace the inline repeated-subprocess `gpu_script` in
 Keep the existing outer sampler launch, file handles, stderr capture, host
 sampler command, and cleanup unchanged.
 
-- [ ] **Step 3: Run focused tests and verify GREEN**
+- [x] **Step 3: Run focused tests and verify GREEN**
 
 Atomically sync the runner and test file to the remote authoritative source,
 then run:
@@ -447,6 +448,7 @@ export PYTHONPYCACHEPREFIX=/data00/home/sitian/tinyllmforge-workspaces/command-t
 export XDG_CACHE_HOME=/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/cache
 /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/env/test/bin/python \
   -m pytest -q \
+  -p no:cacheprovider \
   tools/test_autoregressive_draft_cuda_graph_gate.py \
   -k 'persistent_gpu_sampler or boundary_only_gpu_rows or epoch_samplers' \
   --basetemp /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/pytest/persistent-gpu-sampler-green
@@ -454,7 +456,7 @@ export XDG_CACHE_HOME=/data00/home/sitian/tinyllmforge-workspaces/command-timeli
 
 Expected: all selected tests pass.
 
-- [ ] **Step 4: Run the full remote runner/diagnostic contract**
+- [x] **Step 4: Run the full remote runner/diagnostic contract**
 
 Run:
 
@@ -462,6 +464,7 @@ Run:
 cd /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/source
 /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/env/test/bin/python \
   -m pytest -q \
+  -p no:cacheprovider \
   tools/test_autoregressive_draft_command_timeline_diagnostic.py \
   tools/test_autoregressive_draft_cuda_graph_gate.py \
   tools/test_autoregressive_draft_performance_gate.py \
@@ -471,7 +474,7 @@ cd /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/source
 Expected: all tests pass, including ownership-race and strict telemetry
 coverage tests.
 
-- [ ] **Step 5: Run syntax and diff checks**
+- [x] **Step 5: Run syntax and diff checks**
 
 Run syntax validation remotely with task-root cache variables, then run the
 local diff check:
@@ -545,6 +548,7 @@ Use the pinned pytest environment under the Sitian task root:
 ```bash
 /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/env/test/bin/python \
   -m pytest -q \
+  -p no:cacheprovider \
   tools/test_autoregressive_draft_cuda_graph_gate.py \
   -k 'persistent_gpu_sampler or boundary_only_gpu_rows or epoch_samplers'
 ```

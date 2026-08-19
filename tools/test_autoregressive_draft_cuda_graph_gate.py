@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import time
 import types
 
 import pytest
@@ -1719,6 +1720,236 @@ def test_command_timeline_epoch_samplers_retain_full_gpu_and_host_fields(
     finally:
         for handle in handles:
             handle.close()
+
+
+def _write_fake_nvidia_smi(tmp_path, body):
+    path = tmp_path / "nvidia-smi"
+    path.write_text(
+        "#!/usr/bin/env python3\n" + body,
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _run_gpu_sampler_script(runner, tmp_path, body):
+    _write_fake_nvidia_smi(tmp_path, body)
+    environment = os.environ.copy()
+    environment["PATH"] = (
+        str(tmp_path) + os.pathsep + environment.get("PATH", "")
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            runner._build_gpu_sampler_script(),
+            json.dumps([2, 3, 4, 6]),
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+
+def test_command_timeline_persistent_gpu_sampler_emits_complete_snapshots(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_persistent_gpu_sampler_test"
+    )
+    arguments_path = tmp_path / "arguments.json"
+    body = f"""
+import json
+from pathlib import Path
+import sys
+
+Path({str(arguments_path)!r}).write_text(
+    json.dumps(sys.argv[1:]),
+    encoding="utf-8",
+)
+for snapshot in range(2):
+    for index in (2, 3, 4, 6):
+        print(
+            "2026/08/19 18:00:00.000, "
+            f"{{index}}, GPU-{{index}}, P0, 1410, 1512, "
+            "70.0, 40, 50, 10, 100, 0x0",
+            flush=True,
+        )
+"""
+    result = _run_gpu_sampler_script(runner, tmp_path, body)
+
+    assert result.returncode == 0, result.stderr
+    rows = [
+        json.loads(line)
+        for line in result.stdout.splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 8
+    for offset in (0, 4):
+        snapshot = rows[offset:offset + 4]
+        assert [row["gpu_index"] for row in snapshot] == [2, 3, 4, 6]
+        assert len({
+            row["sampled_at_unix_ns"] for row in snapshot
+        }) == 1
+        assert len({
+            row["sampled_at_monotonic_ns"] for row in snapshot
+        }) == 1
+
+    arguments = json.loads(arguments_path.read_text(encoding="utf-8"))
+    assert "--id=2,3,4,6" in arguments
+    assert "--loop-ms=200" in arguments
+    assert "--format=csv,noheader,nounits" in arguments
+    assert any(
+        argument.startswith("--query-gpu=timestamp,index,uuid,")
+        for argument in arguments
+    )
+
+
+@pytest.mark.parametrize(
+    ("indices", "message"),
+    (
+        ((2, 3, 4), "incomplete GPU snapshot"),
+        ((2, 3, 2), "duplicate GPU row"),
+    ),
+)
+def test_command_timeline_persistent_gpu_sampler_rejects_bad_snapshots(
+    tmp_path,
+    indices,
+    message,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_bad_gpu_snapshot_test"
+        + message.replace(" ", "_")
+    )
+    body = """
+for index in %r:
+    print(
+        "2026/08/19 18:00:00.000, "
+        f"{index}, GPU-{index}, P0, 1410, 1512, "
+        "70.0, 40, 50, 10, 100, 0x0",
+        flush=True,
+    )
+""" % (indices,)
+    result = _run_gpu_sampler_script(runner, tmp_path, body)
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert result.stdout == ""
+
+
+def test_command_timeline_persistent_gpu_sampler_reaps_child_on_sigterm(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_gpu_sampler_reap_test"
+    )
+    pid_path = tmp_path / "nvidia-smi.pid"
+    _write_fake_nvidia_smi(
+        tmp_path,
+        f"""
+from pathlib import Path
+import os
+import time
+
+Path({str(pid_path)!r}).write_text(str(os.getpid()), encoding="utf-8")
+while True:
+    time.sleep(1)
+""",
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = (
+        str(tmp_path) + os.pathsep + environment.get("PATH", "")
+    )
+    sampler = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            runner._build_gpu_sampler_script(),
+            json.dumps([2, 3, 4, 6]),
+        ],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + 5
+    while not pid_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pid_path.exists()
+    child_pid = int(pid_path.read_text(encoding="utf-8"))
+
+    sampler.terminate()
+    sampler.wait(timeout=5)
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("owned nvidia-smi child was not reaped")
+
+
+def test_command_timeline_telemetry_attachment_rejects_boundary_only_gpu_rows(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_strict_telemetry_coverage_test"
+    )
+    start = 1_800_000_000_000_000_000
+    finish = start + 1_000_000_000
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    gpu_path = tmp_path / "gpu.jsonl"
+    host_path = tmp_path / "host.jsonl"
+    gpu_path.write_text(
+        "".join(
+            json.dumps({
+                "sampled_at_unix_ns": start - 1,
+                "sampled_at_monotonic_ns": 1,
+                "gpu_uuid": uuid,
+            }) + "\n"
+            for uuid in gpu_uuids
+        ),
+        encoding="utf-8",
+    )
+    host_path.write_text(
+        json.dumps({
+            "sampled_at_unix_ns": start + 1,
+            "sampled_at_monotonic_ns": 2,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    worker = {
+        "measured_runs": [
+            {
+                "campaign_interval": {
+                    "started_at_unix_ns": (
+                        start + repeat * 2_000_000_000
+                    ),
+                    "finished_at_unix_ns": (
+                        finish + repeat * 2_000_000_000
+                    ),
+                },
+                "command_timeline_repeat_index": repeat,
+            }
+            for repeat in range(5)
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="telemetry coverage is incomplete",
+    ):
+        runner._attach_epoch_telemetry(
+            worker,
+            gpu_path=gpu_path,
+            host_path=host_path,
+            gpu_uuids=gpu_uuids,
+        )
 
 
 def test_command_timeline_telemetry_alignment_uses_real_unix_only_worker_bounds(
