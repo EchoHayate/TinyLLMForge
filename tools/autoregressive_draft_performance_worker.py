@@ -609,7 +609,12 @@ def _validate_command_timeline_graph_lifecycle(
             or warmup_counter.get("replays") != 4
         ):
             raise ValueError(
-                "graph warmup counters are invalid"
+                "graph warmup counters are invalid: "
+                f"rank={rank} "
+                "counters="
+                f"{json.dumps(warmup_counter, sort_keys=True, separators=(',', ':'))} "
+                "resources="
+                f"{json.dumps(resource_rows[0], sort_keys=True, separators=(',', ':'))}"
             )
         if (
             warmup_counter.get("quarantines") != 0

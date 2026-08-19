@@ -1782,6 +1782,31 @@ def test_policy_campaign_command_timeline_rejects_graph_counter_drift():
         )
 
 
+def test_policy_campaign_graph_warmup_failure_reports_rank_and_evidence():
+    def mutate_run(run, timeline_repeat_index):
+        if timeline_repeat_index == 0:
+            run["correctness"]["rank_graph_counters"][2][
+                "replays"
+            ] = 3
+
+    with pytest.raises(ValueError) as error:
+        _run_command_timeline_campaign(mutate_run=mutate_run)
+
+    message = str(error.value)
+    assert "graph warmup counters are invalid" in message
+    assert "rank=2" in message
+    assert (
+        'counters={"capture_attempts":1,"captures":1,'
+        '"fallback_pre_replay":0,"quarantines":0,"rank":2,'
+        '"replays":3}'
+    ) in message
+    assert (
+        'resources={"rank":2,"ready_entry_count":1,'
+        '"reserved_bytes":700000000,"static_bytes":55000,'
+        '"total_capture_ns":1500000000}'
+    ) in message
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
