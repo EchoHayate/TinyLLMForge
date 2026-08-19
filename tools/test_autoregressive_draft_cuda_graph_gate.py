@@ -2723,6 +2723,63 @@ def test_command_timeline_worker_monitor_refreshes_owned_pids_after_gpu_snapshot
     assert observed_owned == {5000, *gpu_pids}
 
 
+def test_command_timeline_worker_monitor_accepts_stale_gpu_snapshot_at_exit(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_monitor_exit_race_test"
+    )
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    gpu_pids = [5151, 5152, 5153, 5154]
+    owned_snapshots = iter((
+        {5000, *gpu_pids},
+        {5000},
+    ))
+
+    class FakeProcess:
+        pid = 5000
+
+        def __init__(self):
+            self.polls = iter((None, None, 0))
+
+        def poll(self):
+            return next(self.polls)
+
+        def wait(self, timeout):
+            assert timeout == 30
+            return 0
+
+    monkeypatch.setattr(
+        runner,
+        "_remote_gpu_rows",
+        lambda: [
+            {
+                "index": index,
+                "uuid": uuid,
+                "compute_processes": [{"pid": pid}],
+            }
+            for index, (uuid, pid) in enumerate(zip(gpu_uuids, gpu_pids))
+        ],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_owned_process_group_pids",
+        lambda process_group_id: next(owned_snapshots),
+    )
+
+    returncode, binding, observed_owned = runner._monitor_owned_worker(
+        FakeProcess(),
+        process_group_id=5000,
+        gpu_uuids=gpu_uuids,
+        monotonic=iter((0, 1, 2)).__next__,
+        sleep=lambda _seconds: None,
+    )
+
+    assert returncode == 0
+    assert binding == dict(zip(gpu_uuids, gpu_pids))
+    assert observed_owned == {5000, *gpu_pids}
+
+
 def test_command_timeline_worker_monitor_still_rejects_external_gpu_pid(
     monkeypatch,
 ):

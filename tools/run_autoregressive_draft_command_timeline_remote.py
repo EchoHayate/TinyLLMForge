@@ -1872,7 +1872,7 @@ def _monitor_owned_worker(
             for process_row in row["compute_processes"]
         ]
         for process_row in selected_processes:
-            if process_row["pid"] not in current_owned:
+            if process_row["pid"] not in observed_owned:
                 raise ValueError("selected GPU has an unowned process")
         if (
             len(selected_rows) == 4
@@ -1883,7 +1883,7 @@ def _monitor_owned_worker(
         ):
             binding = validate_owned_gpu_processes(
                 selected_rows,
-                owned_pids=current_owned,
+                owned_pids=observed_owned,
                 gpu_uuids=gpu_uuids,
             )
         sleep(0.2)
