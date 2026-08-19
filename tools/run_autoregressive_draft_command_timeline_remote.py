@@ -1063,6 +1063,257 @@ def _failed_epoch_result(
     }
 
 
+def run_field_sampler_diagnostic(
+    *,
+    run_tag: str,
+    command_runner=subprocess.run,
+    now=None,
+    repo_root: Path | None = None,
+    target_model: str = DEFAULT_TARGET_MODEL,
+    draft_model: str = DEFAULT_DRAFT_MODEL,
+) -> dict:
+    tag = validate_run_tag(run_tag)
+    preflight = run_preflight(
+        run_tag=tag,
+        command_runner=command_runner,
+        now=now,
+        repo_root=repo_root,
+    )
+    if preflight.get("status") != "READY":
+        return preflight
+    primary = preflight["primary_run"]
+    controller = preflight["controller_run"]
+    gpu_indices = preflight["gpu_indices"]
+    gpu_uuids = preflight["gpu_uuids"]
+    root = (
+        Path(__file__).resolve().parents[1]
+        if repo_root is None
+        else Path(repo_root)
+    )
+    source_patch = _local_source_patch(
+        repo_root=root,
+        command_runner=command_runner,
+    )
+    source_archive = build_source_archive_bytes(root)
+    prepare_payload = _encode_prepare_payload(
+        source_archive=source_archive,
+        source_patch=source_patch,
+    )
+    _run_remote_action(
+        "prepare",
+        [tag, preflight["source_commit"], json.dumps(preflight)],
+        command_runner=command_runner,
+        context="remote field sampler diagnostic preparation",
+        now=now,
+        input=prepare_payload,
+        capture_output=True,
+    )
+    epoch_index = 2
+    block, mode, position = build_epoch_schedule()[epoch_index]
+    identity = f"{block}:{mode}:{position}"
+    before_result = _run_remote_action(
+        "inventory-before",
+        [tag, str(epoch_index)],
+        command_runner=command_runner,
+        context=f"GPU inventory before {identity}",
+        now=now,
+        allow_failure=True,
+        text=True,
+        capture_output=True,
+    )
+    if before_result.returncode != 0:
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="field sampler diagnostic inventory before failed",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    try:
+        before = _inventory_rows_from_result(before_result)
+    except (RuntimeError, ValueError):
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="field sampler diagnostic inventory before is invalid",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    if not _matches_frozen_gpu_inventory(
+        before,
+        gpu_indices=gpu_indices,
+        gpu_uuids=gpu_uuids,
+    ):
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="selected GPU inventory changed",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    worker_result = _run_remote_action(
+        "epoch",
+        [
+            tag,
+            str(epoch_index),
+            mode,
+            position,
+            json.dumps(gpu_indices),
+            json.dumps(gpu_uuids),
+            target_model,
+            draft_model,
+        ],
+        command_runner=command_runner,
+        context=f"field sampler diagnostic epoch {identity}",
+        now=now,
+        allow_failure=True,
+        text=True,
+        capture_output=True,
+    )
+    if worker_result.returncode != 0:
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="field sampler diagnostic epoch failed",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    after_result = _run_remote_action(
+        "inventory-after",
+        [tag, str(epoch_index)],
+        command_runner=command_runner,
+        context=f"GPU inventory after {identity}",
+        now=now,
+        allow_failure=True,
+        text=True,
+        capture_output=True,
+    )
+    if after_result.returncode != 0:
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="field sampler diagnostic inventory after failed",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    try:
+        after = _inventory_rows_from_result(after_result)
+    except (RuntimeError, ValueError):
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="field sampler diagnostic inventory after is invalid",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    if (
+        not _same_gpu_inventory(before, after)
+        or not _matches_frozen_gpu_inventory(
+            after,
+            gpu_indices=gpu_indices,
+            gpu_uuids=gpu_uuids,
+        )
+    ):
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="selected GPU inventory changed",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    verify_result = _run_remote_action(
+        "field-sampler-diagnostic-verify",
+        [tag],
+        command_runner=command_runner,
+        context="field sampler diagnostic verification",
+        now=now,
+        allow_failure=True,
+        text=True,
+        capture_output=True,
+    )
+    try:
+        diagnostic = json.loads(verify_result.stdout)
+    except (TypeError, json.JSONDecodeError):
+        diagnostic = None
+    if (
+        verify_result.returncode != 0
+        or not isinstance(diagnostic, dict)
+        or diagnostic.get("status") != "PASS"
+    ):
+        _copy_partial(
+            run_tag=tag,
+            command_runner=command_runner,
+            now=now,
+        )
+        return _failed_epoch_result(
+            identity=identity,
+            reason="field sampler diagnostic verification failed",
+            completed_epochs=[],
+            primary=primary,
+            controller=controller,
+        )
+    copy_result = _run_remote_action(
+        "controller-copy",
+        [tag],
+        command_runner=command_runner,
+        context="field sampler diagnostic controller copy",
+        now=now,
+        allow_failure=True,
+        text=True,
+        capture_output=True,
+    )
+    if copy_result.returncode != 0:
+        return {
+            "status": "FAILED",
+            "failed_action": "controller-copy",
+            "diagnostic_epoch": identity,
+            "primary_run": primary,
+            "controller_run": controller,
+        }
+    return {
+        "status": "PASS",
+        "diagnostic_epoch": identity,
+        "primary_run": primary,
+        "controller_run": controller,
+        "diagnostic": diagnostic,
+    }
+
+
 def run_bundle(
     *,
     run_tag: str,
@@ -1664,6 +1915,20 @@ def _build_gpu_sampler_script() -> str:
         " or len(set(indices))!=4 or len(set(uuids))!=4):",
         " raise ValueError('GPU inventory is invalid')",
         "expected=tuple(zip(indices,uuids))",
+        "QUERY_NAMES=(",
+        " 'performance_state',",
+        " 'sm_clock',",
+        " 'memory_clock',",
+        " 'power_usage',",
+        " 'temperature',",
+        " 'utilization_rates',",
+        " 'memory_info',",
+        " 'clock_throttle_reasons',",
+        ")",
+        "expected_cells=tuple(",
+        " (index,gpu_uuid,query_name)",
+        " for index,gpu_uuid in expected",
+        " for query_name in QUERY_NAMES)",
         "NVML_SUCCESS=0",
         "NVML_TEMPERATURE_GPU=0",
         "NVML_CLOCK_SM=1",
@@ -1719,76 +1984,71 @@ def _build_gpu_sampler_script() -> str:
         " message=(detail.decode('utf-8','replace')",
         "  if detail else 'error code '+str(result))",
         " raise RuntimeError(name+' failed: '+message)",
-        "def timed_query(nvml,durations,key,name,query):",
+        "def query_device(nvml,handle,query_name):",
         " started_ns=time.monotonic_ns()",
-        " result=query()",
-        " durations[key]=time.monotonic_ns()-started_ns",
-        " check(nvml,name,result)",
-        "def sample_device(nvml,device):",
-        " index,gpu_uuid,handle=device",
-        " pstate=ctypes.c_int()",
-        " sm_clock=ctypes.c_uint()",
-        " memory_clock=ctypes.c_uint()",
-        " power=ctypes.c_uint()",
-        " temperature=ctypes.c_uint()",
-        " utilization=NvmlUtilization()",
-        " memory=NvmlMemory()",
-        " throttle=ctypes.c_ulonglong()",
-        " query_duration_ns={}",
-        " timed_query(nvml,query_duration_ns,'performance_state',",
-        "  'nvmlDeviceGetPerformanceState',lambda:",
-        "  nvml.nvmlDeviceGetPerformanceState(",
-        "   handle,ctypes.byref(pstate)))",
-        " timed_query(nvml,query_duration_ns,'sm_clock',",
-        "  'nvmlDeviceGetClockInfo',lambda:",
-        "  nvml.nvmlDeviceGetClockInfo(",
-        "   handle,NVML_CLOCK_SM,ctypes.byref(sm_clock)))",
-        " timed_query(nvml,query_duration_ns,'memory_clock',",
-        "  'nvmlDeviceGetClockInfo',lambda:",
-        "  nvml.nvmlDeviceGetClockInfo(",
-        "   handle,NVML_CLOCK_MEM,ctypes.byref(memory_clock)))",
-        " timed_query(nvml,query_duration_ns,'power_usage',",
-        "  'nvmlDeviceGetPowerUsage',lambda:",
-        "  nvml.nvmlDeviceGetPowerUsage(",
-        "   handle,ctypes.byref(power)))",
-        " timed_query(nvml,query_duration_ns,'temperature',",
-        "  'nvmlDeviceGetTemperature',lambda:",
-        "  nvml.nvmlDeviceGetTemperature(",
-        "   handle,NVML_TEMPERATURE_GPU,ctypes.byref(temperature)))",
-        " timed_query(nvml,query_duration_ns,'utilization_rates',",
-        "  'nvmlDeviceGetUtilizationRates',lambda:",
-        "  nvml.nvmlDeviceGetUtilizationRates(",
-        "   handle,ctypes.byref(utilization)))",
-        " timed_query(nvml,query_duration_ns,'memory_info',",
-        "  'nvmlDeviceGetMemoryInfo',lambda:",
-        "  nvml.nvmlDeviceGetMemoryInfo(",
-        "   handle,ctypes.byref(memory)))",
-        " timed_query(nvml,query_duration_ns,'clock_throttle_reasons',",
-        "  'nvmlDeviceGetCurrentClocksThrottleReasons',lambda:",
-        "  nvml.nvmlDeviceGetCurrentClocksThrottleReasons(",
-        "   handle,ctypes.byref(throttle)))",
-        " return {",
-        "  'gpu_index':index,",
-        "  'gpu_uuid':gpu_uuid,",
-        "  'pstate':'P'+str(pstate.value),",
-        "  'sm_clock_mhz':sm_clock.value,",
-        "  'memory_clock_mhz':memory_clock.value,",
-        "  'power_w':power.value/1000.0,",
-        "  'temperature_c':temperature.value,",
-        "  'gpu_utilization_percent':utilization.gpu,",
-        "  'memory_utilization_percent':utilization.memory,",
-        "  'memory_used_mib':memory.used//(1024*1024),",
-        "  'throttle_reasons_active':throttle.value,",
-        "  'query_duration_ns':query_duration_ns,",
-        "  'sampler_process_pid':os.getpid()}",
-        "def device_worker(connection,device):",
+        " if query_name=='performance_state':",
+        "  value=ctypes.c_int()",
+        "  result=nvml.nvmlDeviceGetPerformanceState(",
+        "   handle,ctypes.byref(value))",
+        "  converted='P'+str(value.value)",
+        "  api_name='nvmlDeviceGetPerformanceState'",
+        " elif query_name=='sm_clock':",
+        "  value=ctypes.c_uint()",
+        "  result=nvml.nvmlDeviceGetClockInfo(",
+        "   handle,NVML_CLOCK_SM,ctypes.byref(value))",
+        "  converted=value.value",
+        "  api_name='nvmlDeviceGetClockInfo'",
+        " elif query_name=='memory_clock':",
+        "  value=ctypes.c_uint()",
+        "  result=nvml.nvmlDeviceGetClockInfo(",
+        "   handle,NVML_CLOCK_MEM,ctypes.byref(value))",
+        "  converted=value.value",
+        "  api_name='nvmlDeviceGetClockInfo'",
+        " elif query_name=='power_usage':",
+        "  value=ctypes.c_uint()",
+        "  result=nvml.nvmlDeviceGetPowerUsage(",
+        "   handle,ctypes.byref(value))",
+        "  converted=value.value/1000.0",
+        "  api_name='nvmlDeviceGetPowerUsage'",
+        " elif query_name=='temperature':",
+        "  value=ctypes.c_uint()",
+        "  result=nvml.nvmlDeviceGetTemperature(",
+        "   handle,NVML_TEMPERATURE_GPU,ctypes.byref(value))",
+        "  converted=value.value",
+        "  api_name='nvmlDeviceGetTemperature'",
+        " elif query_name=='utilization_rates':",
+        "  value=NvmlUtilization()",
+        "  result=nvml.nvmlDeviceGetUtilizationRates(",
+        "   handle,ctypes.byref(value))",
+        "  converted={'gpu':value.gpu,'memory':value.memory}",
+        "  api_name='nvmlDeviceGetUtilizationRates'",
+        " elif query_name=='memory_info':",
+        "  value=NvmlMemory()",
+        "  result=nvml.nvmlDeviceGetMemoryInfo(",
+        "   handle,ctypes.byref(value))",
+        "  converted=value.used//(1024*1024)",
+        "  api_name='nvmlDeviceGetMemoryInfo'",
+        " elif query_name=='clock_throttle_reasons':",
+        "  value=ctypes.c_ulonglong()",
+        "  result=nvml.nvmlDeviceGetCurrentClocksThrottleReasons(",
+        "   handle,ctypes.byref(value))",
+        "  converted=value.value",
+        "  api_name='nvmlDeviceGetCurrentClocksThrottleReasons'",
+        " else:",
+        "  raise ValueError('GPU sampler query identity is invalid')",
+        " duration_ns=time.monotonic_ns()-started_ns",
+        " check(nvml,api_name,result)",
+        " return converted,duration_ns",
+        "def query_worker(connection,cell):",
         " initialized=False",
         " nvml=None",
+        " index,expected_uuid,query_name=cell",
         " try:",
+        "  signal.signal(signal.SIGTERM,signal.SIG_DFL)",
+        "  signal.signal(signal.SIGINT,signal.SIG_DFL)",
         "  nvml=configure_nvml()",
         "  check(nvml,'nvmlInit_v2',nvml.nvmlInit_v2())",
         "  initialized=True",
-        "  index,expected_uuid=device",
         "  handle=ctypes.c_void_p()",
         "  check(nvml,'nvmlDeviceGetHandleByIndex_v2',",
         "   nvml.nvmlDeviceGetHandleByIndex_v2(",
@@ -1802,18 +2062,32 @@ def _build_gpu_sampler_script() -> str:
         "   raise ValueError('GPU UUID inventory changed')",
         "  connection.send({'kind':'ready','gpu_index':index,",
         "   'gpu_uuid':observed_uuid,",
+        "   'query_name':query_name,",
         "   'sampler_process_pid':os.getpid()})",
         "  while True:",
         "   command=connection.recv()",
         "   if command=='stop':",
         "    break",
-        "   if command!='sample':",
+        "   if (not isinstance(command,tuple) or len(command)!=2",
+        "    or command[0]!='sample'",
+        "    or isinstance(command[1],bool)",
+        "    or not isinstance(command[1],int)",
+        "    or command[1]<=0):",
         "    raise ValueError('GPU sampler command is invalid')",
-        "   connection.send({'kind':'row','row':sample_device(",
-        "    nvml,(index,observed_uuid,handle))})",
+        "   generation=command[1]",
+        "   value,duration_ns=query_device(nvml,handle,query_name)",
+        "   connection.send({'kind':'result',",
+        "    'generation':generation,",
+        "    'gpu_index':index,",
+        "    'gpu_uuid':observed_uuid,",
+        "    'query_name':query_name,",
+        "    'value':value,",
+        "    'query_duration_ns':duration_ns,",
+        "    'sampler_process_pid':os.getpid()})",
         " except BaseException:",
         "  try:",
-        "   connection.send({'kind':'error','gpu_index':device[0],",
+        "   connection.send({'kind':'error','gpu_index':index,",
+        "    'query_name':query_name,",
         "    'detail':traceback.format_exc()})",
         "  except BaseException:",
         "   pass",
@@ -1823,12 +2097,19 @@ def _build_gpu_sampler_script() -> str:
         "   if shutdown_result!=NVML_SUCCESS:",
         "    try:",
         "     connection.send({'kind':'error',",
-        "      'gpu_index':device[0],",
+        "      'gpu_index':index,",
+        "      'query_name':query_name,",
         "      'detail':'nvmlShutdown failed'})",
         "    except BaseException:",
         "     pass",
         "  connection.close()",
         "def receive_message(connection,kind):",
+        " deadline=time.monotonic()+30.0",
+        " while not connection.poll(0.1):",
+        "  if stop_requested:",
+        "   raise SystemExit(0)",
+        "  if time.monotonic()>=deadline:",
+        "   raise RuntimeError('GPU sampler child response timed out')",
         " try:",
         "  message=connection.recv()",
         " except EOFError as error:",
@@ -1837,44 +2118,103 @@ def _build_gpu_sampler_script() -> str:
         "  raise RuntimeError('GPU sampler child message is invalid')",
         " if message.get('kind')!=kind:",
         "  detail=message.get('detail','unexpected child message')",
-        "  raise RuntimeError('GPU sampler child failed: '+str(detail))",
+        "  raise RuntimeError(",
+        "   'GPU sampler child failed: GPU '",
+        "   +str(message.get('gpu_index'))",
+        "   +' query '+str(message.get('query_name'))",
+        "   +': '+str(detail))",
         " return message",
         "context=multiprocessing.get_context('fork')",
         "connections=[]",
         "processes=[]",
         "try:",
-        " for device in expected:",
+        " for cell in expected_cells:",
         "  parent_connection,child_connection=context.Pipe(duplex=True)",
         "  process=context.Process(",
-        "   target=device_worker,args=(child_connection,device))",
+        "   target=query_worker,args=(child_connection,cell))",
         "  process.start()",
         "  child_connection.close()",
         "  connections.append(parent_connection)",
         "  processes.append(process)",
         " ready=[]",
-        " for device,connection in zip(expected,connections):",
+        " for cell,connection in zip(expected_cells,connections):",
         "  message=receive_message(connection,'ready')",
-        "  if (message.get('gpu_index')!=device[0]",
-        "   or message.get('gpu_uuid')!=device[1]):",
+        "  if ((message.get('gpu_index'),",
+        "       message.get('gpu_uuid'),",
+        "       message.get('query_name'))!=cell):",
         "   raise ValueError('GPU UUID inventory changed')",
         "  ready.append(message)",
-        " if len({row['sampler_process_pid'] for row in ready})!=4:",
-        "  raise RuntimeError('GPU sampler processes are not isolated')",
+        " ready_pids=[row.get('sampler_process_pid') for row in ready]",
+        " if (len(ready)!=len(expected_cells)",
+        "  or any(isinstance(pid,bool) or not isinstance(pid,int)",
+        "   or pid<=0 for pid in ready_pids)",
+        "  or len(set(ready_pids))!=len(expected_cells)):",
+        "  raise RuntimeError(",
+        "   'GPU sampler query processes are not isolated')",
         " next_sample_ns=time.monotonic_ns()",
+        " generation=0",
         " while not stop_requested:",
+        "  generation+=1",
+        "  command=('sample',generation)",
         "  for connection in connections:",
-        "   connection.send('sample')",
-        "  snapshot=[]",
-        "  for device,connection in zip(expected,connections):",
-        "   message=receive_message(connection,'row')",
-        "   row=message.get('row')",
-        "   if (not isinstance(row,dict)",
-        "    or row.get('gpu_index')!=device[0]",
-        "    or row.get('gpu_uuid')!=device[1]):",
-        "    raise RuntimeError('GPU sampler child row is invalid')",
-        "   snapshot.append(row)",
+        "   connection.send(command)",
+        "  matrix={}",
+        "  for cell,connection in zip(expected_cells,connections):",
+        "   message=receive_message(connection,'result')",
+        "   observed_cell=(",
+        "    message.get('gpu_index'),",
+        "    message.get('gpu_uuid'),",
+        "    message.get('query_name'))",
+        "   duration_ns=message.get('query_duration_ns')",
+        "   child_pid=message.get('sampler_process_pid')",
+        "   if (observed_cell!=cell",
+        "    or message.get('generation')!=generation",
+        "    or cell in matrix",
+        "    or isinstance(duration_ns,bool)",
+        "    or not isinstance(duration_ns,int)",
+        "    or duration_ns<0",
+        "    or isinstance(child_pid,bool)",
+        "    or not isinstance(child_pid,int)",
+        "    or child_pid<=0):",
+        "    raise RuntimeError(",
+        "     'GPU sampler generation matrix is invalid')",
+        "   matrix[cell]=message",
+        "  if set(matrix)!=set(expected_cells):",
+        "   raise RuntimeError(",
+        "    'GPU sampler generation matrix is incomplete')",
         "  if stop_requested:",
         "   break",
+        "  snapshot=[]",
+        "  for index,gpu_uuid in expected:",
+        "   values={query_name:matrix[",
+        "    (index,gpu_uuid,query_name)]['value']",
+        "    for query_name in QUERY_NAMES}",
+        "   durations={query_name:matrix[",
+        "    (index,gpu_uuid,query_name)]['query_duration_ns']",
+        "    for query_name in QUERY_NAMES}",
+        "   pids={query_name:matrix[",
+        "    (index,gpu_uuid,query_name)]['sampler_process_pid']",
+        "    for query_name in QUERY_NAMES}",
+        "   utilization=values['utilization_rates']",
+        "   if (not isinstance(utilization,dict)",
+        "    or set(utilization)!={'gpu','memory'}):",
+        "    raise RuntimeError(",
+        "     'GPU sampler utilization value is invalid')",
+        "   snapshot.append({",
+        "    'gpu_index':index,",
+        "    'gpu_uuid':gpu_uuid,",
+        "    'pstate':values['performance_state'],",
+        "    'sm_clock_mhz':values['sm_clock'],",
+        "    'memory_clock_mhz':values['memory_clock'],",
+        "    'power_w':values['power_usage'],",
+        "    'temperature_c':values['temperature'],",
+        "    'gpu_utilization_percent':utilization['gpu'],",
+        "    'memory_utilization_percent':utilization['memory'],",
+        "    'memory_used_mib':values['memory_info'],",
+        "    'throttle_reasons_active':values[",
+        "     'clock_throttle_reasons'],",
+        "    'query_duration_ns':durations,",
+        "    'sampler_process_pid':pids})",
         "  unix_ns=time.time_ns()",
         "  monotonic_ns=time.monotonic_ns()",
         "  seconds=unix_ns//1000000000",
@@ -1905,7 +2245,17 @@ def _build_gpu_sampler_script() -> str:
         " for connection in connections:",
         "  connection.close()",
         " for process in processes:",
-        "  process.join()",
+        "  process.join(timeout=0.1)",
+        " for process in processes:",
+        "  if process.is_alive():",
+        "   process.terminate()",
+        " for process in processes:",
+        "  process.join(timeout=0.1)",
+        " for process in processes:",
+        "  if process.is_alive():",
+        "   process.kill()",
+        " for process in processes:",
+        "  process.join(timeout=0.1)",
         " if (not active_error and not stop_requested",
         "  and any(process.exitcode!=0 for process in processes)):",
         "  raise RuntimeError('GPU sampler child exited unexpectedly')",
@@ -2099,6 +2449,181 @@ def _attach_epoch_telemetry(
         ):
             raise ValueError("worker campaign monotonic interval is invalid")
     return result
+
+
+def evaluate_field_sampler_diagnostic(
+    *,
+    worker: dict,
+    gpu_rows: list[dict],
+    gpu_indices: list[int],
+    gpu_uuids: list[str],
+    gpu_stderr: str,
+    host_stderr: str,
+) -> dict:
+    query_names = {
+        "performance_state",
+        "sm_clock",
+        "memory_clock",
+        "power_usage",
+        "temperature",
+        "utilization_rates",
+        "memory_info",
+        "clock_throttle_reasons",
+    }
+    expected_inventory = list(zip(gpu_indices, gpu_uuids))
+    expected_inventory_set = set(expected_inventory)
+    if (
+        len(gpu_indices) != 4
+        or len(gpu_uuids) != 4
+        or len(set(gpu_indices)) != 4
+        or len(set(gpu_uuids)) != 4
+        or len(expected_inventory_set) != 4
+        or any(
+            isinstance(gpu_index, bool)
+            or not isinstance(gpu_index, int)
+            or gpu_index < 0
+            for gpu_index in gpu_indices
+        )
+        or any(
+            not isinstance(gpu_uuid, str) or not gpu_uuid
+            for gpu_uuid in gpu_uuids
+        )
+    ):
+        raise ValueError("diagnostic GPU inventory is invalid")
+    if gpu_stderr or host_stderr:
+        raise ValueError("diagnostic sampler stderr is not empty")
+    measured = worker.get("measured_runs") if isinstance(worker, dict) else None
+    if not isinstance(measured, list) or len(measured) != 5:
+        raise ValueError("diagnostic must contain five measured runs")
+    intervals = []
+    for run in measured:
+        interval = run.get("campaign_interval")
+        if not isinstance(interval, dict):
+            raise ValueError("diagnostic campaign interval is missing")
+        start = interval.get("started_at_unix_ns")
+        finish = interval.get("finished_at_unix_ns")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(finish, bool)
+            or not isinstance(finish, int)
+            or start <= 0
+            or finish <= start
+        ):
+            raise ValueError("diagnostic campaign interval is invalid")
+        intervals.append((start, finish))
+    grouped_rows: dict[int, list[dict]] = {}
+    for row in gpu_rows:
+        if not isinstance(row, dict):
+            raise ValueError("diagnostic GPU row is invalid")
+        timestamp = row.get("sampled_at_unix_ns")
+        if (
+            isinstance(timestamp, bool)
+            or not isinstance(timestamp, int)
+            or timestamp <= 0
+        ):
+            raise ValueError("diagnostic GPU timestamp is invalid")
+        grouped_rows.setdefault(timestamp, []).append(row)
+    if not grouped_rows:
+        raise ValueError("diagnostic GPU telemetry is empty")
+    complete_timestamps = []
+    for timestamp, rows in grouped_rows.items():
+        indices = [row.get("gpu_index") for row in rows]
+        if (
+            len(rows) != 4
+            or {
+                (row.get("gpu_index"), row.get("gpu_uuid"))
+                for row in rows
+            } != expected_inventory_set
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                for index in indices
+            )
+            or len(set(indices)) != 4
+        ):
+            raise ValueError("diagnostic GPU generation is incomplete")
+        generation_pids = set()
+        for row in rows:
+            durations = row.get("query_duration_ns")
+            pids = row.get("sampler_process_pid")
+            if (
+                not isinstance(durations, dict)
+                or set(durations) != query_names
+                or any(
+                    isinstance(duration, bool)
+                    or not isinstance(duration, int)
+                    or duration <= 0
+                    for duration in durations.values()
+                )
+            ):
+                raise ValueError(
+                    "diagnostic query durations are invalid"
+                )
+            if (
+                not isinstance(pids, dict)
+                or set(pids) != query_names
+                or any(
+                    isinstance(pid, bool)
+                    or not isinstance(pid, int)
+                    or pid <= 0
+                    for pid in pids.values()
+                )
+            ):
+                raise ValueError(
+                    "diagnostic query process inventory is invalid"
+                )
+            generation_pids.update(pids.values())
+        if len(generation_pids) != 32:
+            raise ValueError(
+                "diagnostic query process inventory is not isolated"
+            )
+        complete_timestamps.append(timestamp)
+    complete_timestamps.sort()
+    for start, finish in intervals:
+        if not any(
+            start <= timestamp <= finish
+            for timestamp in complete_timestamps
+        ):
+            raise ValueError(
+                "diagnostic telemetry coverage is incomplete"
+            )
+    campaign_start = min(start for start, _finish in intervals)
+    campaign_finish = max(finish for _start, finish in intervals)
+    campaign_timestamps = [
+        timestamp
+        for timestamp in complete_timestamps
+        if campaign_start <= timestamp <= campaign_finish
+    ]
+    if len(campaign_timestamps) < 2:
+        raise ValueError("diagnostic generation cadence is incomplete")
+    cadence_boundaries = [
+        campaign_start,
+        *campaign_timestamps,
+        campaign_finish,
+    ]
+    maximum_gap = max(
+        later - earlier
+        for earlier, later in zip(
+            cadence_boundaries,
+            cadence_boundaries[1:],
+        )
+    )
+    shortest_repeat = min(
+        finish - start for start, finish in intervals
+    )
+    if maximum_gap >= shortest_repeat:
+        raise ValueError(
+            "diagnostic generation gap exceeds measured repeat"
+        )
+    return {
+        "status": "PASS",
+        "measured_repeat_count": len(intervals),
+        "complete_generation_count": len(complete_timestamps),
+        "maximum_generation_gap_ns": maximum_gap,
+        "shortest_repeat_duration_ns": shortest_repeat,
+    }
 
 
 def _remote_epoch(arguments: list[str]) -> int:
@@ -2445,6 +2970,51 @@ def _remote_compare_receipts(tag: str) -> int:
     return 0
 
 
+def _remote_field_sampler_diagnostic_verify(tag: str) -> int:
+    primary = Path(primary_run_path(tag))
+    worker_root = primary / "workers" / "block-1"
+    telemetry_root = primary / "telemetry" / "block-1"
+    if (worker_root / "graph.status").read_text(
+        encoding="utf-8"
+    ).strip() != "0":
+        raise ValueError("diagnostic worker status is not zero")
+    if (worker_root / "graph.invariant.status").read_text(
+        encoding="utf-8"
+    ).strip() != "0":
+        raise ValueError("diagnostic invariant status is not zero")
+    worker = json.loads(
+        (worker_root / "graph.raw.json").read_text(encoding="utf-8")
+    )
+    gpu_rows = _load_json_lines(
+        telemetry_root / "graph.gpu.jsonl",
+        name="diagnostic GPU telemetry",
+    )
+    preflight = json.loads(
+        (primary / "preflight.json").read_text(encoding="utf-8")
+    )
+    receipt = evaluate_field_sampler_diagnostic(
+        worker=worker,
+        gpu_rows=gpu_rows,
+        gpu_indices=preflight["gpu_indices"],
+        gpu_uuids=preflight["gpu_uuids"],
+        gpu_stderr=(
+            telemetry_root / "graph.gpu.jsonl.stderr"
+        ).read_text(encoding="utf-8"),
+        host_stderr=(
+            telemetry_root / "graph.host.jsonl.stderr"
+        ).read_text(encoding="utf-8"),
+    )
+    _write_json_exclusive(
+        primary / "field-sampler-diagnostic.json",
+        receipt,
+    )
+    sys.stdout.write(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+    return 0
+
+
 def _remote_action(action: str, arguments: list[str]) -> int:
     if action == "prepare":
         return _remote_prepare(arguments)
@@ -2481,13 +3051,20 @@ def _remote_action(action: str, arguments: list[str]) -> int:
         return _remote_controller_verify(tag)
     if action == "compare-receipts":
         return _remote_compare_receipts(tag)
+    if action == "field-sampler-diagnostic-verify":
+        return _remote_field_sampler_diagnostic_verify(tag)
     raise ValueError("remote action is invalid")
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("preflight", "execute", "verify-local"):
+    for command in (
+        "preflight",
+        "execute",
+        "verify-local",
+        "diagnose-field-sampler",
+    ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--run-tag", required=True)
     return parser.parse_args(argv)
@@ -2502,6 +3079,8 @@ def main(argv=None) -> int:
     args = parse_args(arguments)
     if args.command == "preflight":
         result = run_preflight(run_tag=args.run_tag)
+    elif args.command == "diagnose-field-sampler":
+        result = run_field_sampler_diagnostic(run_tag=args.run_tag)
     elif args.command == "execute":
         result = run_bundle(run_tag=args.run_tag)
     else:

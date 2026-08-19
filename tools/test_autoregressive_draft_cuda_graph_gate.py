@@ -1729,15 +1729,24 @@ def _fake_nvml_prelude(
     query_failure=None,
     uuid_mismatch=False,
     order_path=None,
+    query_delays=None,
+    startup_path=None,
 ):
     order_path_literal = repr(
         None if order_path is None else str(order_path)
+    )
+    query_delays_literal = repr(
+        {} if query_delays is None else query_delays
+    )
+    startup_path_literal = repr(
+        None if startup_path is None else str(startup_path)
     )
     return f"""
 import ctypes
 import json
 import os
 import threading
+import time
 from pathlib import Path
 
 class FakeFunction:
@@ -1751,7 +1760,13 @@ class FakeFunction:
 class FakeNvml:
     def __init__(self):
         self.query_order = {{}}
+        self.query_intervals = []
         self.query_order_lock = threading.Lock()
+        startup_path = {startup_path_literal}
+        if startup_path is not None:
+            startup_root = Path(startup_path)
+            startup_root.mkdir(parents=True, exist_ok=True)
+            (startup_root / str(os.getpid())).write_text("started\\n")
         self.nvmlInit_v2 = FakeFunction(lambda: 0)
         self.nvmlShutdown = FakeFunction(self.shutdown)
         self.nvmlErrorString = FakeFunction(
@@ -1783,7 +1798,16 @@ class FakeNvml:
             order_root = Path(order_path)
             order_root.mkdir(parents=True, exist_ok=True)
             (order_root / (str(os.getpid()) + ".json")).write_text(
-                json.dumps(self.query_order, sort_keys=True)
+                json.dumps({{
+                    "pid": os.getpid(),
+                    "gpu_indices": sorted(self.query_order),
+                    "query_names": sorted({{
+                        query
+                        for queries in self.query_order.values()
+                        for query in queries
+                    }}),
+                    "query_intervals": self.query_intervals,
+                }}, sort_keys=True)
             )
         shutdown_root = Path({str(shutdown_path)!r})
         shutdown_root.mkdir(parents=True, exist_ok=True)
@@ -1791,9 +1815,18 @@ class FakeNvml:
         return 0
 
     def record(self, device, name):
+        query_delays = {query_delays_literal}
+        started_ns = time.monotonic_ns()
+        time.sleep(float(query_delays.get(name, 0.0)))
+        finished_ns = time.monotonic_ns()
         index = int(device.value) - 100
         with self.query_order_lock:
             self.query_order.setdefault(str(index), []).append(name)
+            self.query_intervals.append({{
+                "query_name": name,
+                "started_ns": started_ns,
+                "finished_ns": finished_ns,
+            }})
 
     def get_handle(self, index, output):
         output._obj.value = int(index) + 100
@@ -1869,6 +1902,8 @@ def _direct_nvml_sampler_command(
     query_failure=None,
     uuid_mismatch=False,
     order_path=None,
+    query_delays=None,
+    startup_path=None,
     inventory=None,
 ):
     program = (
@@ -1877,6 +1912,8 @@ def _direct_nvml_sampler_command(
             query_failure=query_failure,
             uuid_mismatch=uuid_mismatch,
             order_path=order_path,
+            query_delays=query_delays,
+            startup_path=startup_path,
         )
         + "\n"
         + runner._build_gpu_sampler_script()
@@ -1949,16 +1986,18 @@ def test_command_timeline_direct_nvml_sampler_emits_complete_snapshot(
     )
 
 
-def test_command_timeline_direct_nvml_sampler_isolates_each_gpu_process(
+def test_command_timeline_direct_nvml_sampler_isolates_each_gpu_query(
     tmp_path,
 ):
     runner = _load_command_timeline_runner(
-        "command_timeline_runner_direct_nvml_process_isolation_test"
+        "command_timeline_runner_field_process_isolation_test"
     )
+    evidence_path = tmp_path / "query-processes"
     sampler = subprocess.Popen(
         _direct_nvml_sampler_command(
             runner,
             shutdown_path=tmp_path / "shutdown-markers",
+            order_path=evidence_path,
         ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1971,9 +2010,64 @@ def test_command_timeline_direct_nvml_sampler_isolates_each_gpu_process(
 
     assert sampler.returncode == 0, stderr
     assert [row["gpu_index"] for row in rows] == [2, 3, 4, 6]
-    sampler_pids = {row["sampler_process_pid"] for row in rows}
-    assert len(sampler_pids) == 4
-    assert sampler.pid not in sampler_pids
+    assert all(
+        isinstance(row["sampler_process_pid"], dict)
+        for row in rows
+    )
+    query_processes = {
+        (row["gpu_index"], query_name): pid
+        for row in rows
+        for query_name, pid in row["sampler_process_pid"].items()
+    }
+    assert len(query_processes) == 32
+    assert len(set(query_processes.values())) == 32
+    assert sampler.pid not in set(query_processes.values())
+
+
+def test_command_timeline_field_queries_run_in_one_concurrent_generation(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_concurrency_test"
+    )
+    evidence_path = tmp_path / "query-processes"
+    sampler = subprocess.Popen(
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=tmp_path / "shutdown-markers",
+            order_path=evidence_path,
+            query_delays={
+                "performance_state": 0.20,
+                "sm_clock": 0.20,
+                "memory_clock": 0.20,
+                "power_usage": 0.20,
+                "temperature": 0.20,
+                "utilization_rates": 0.20,
+                "memory_info": 0.20,
+                "clock_throttle_reasons": 0.20,
+            },
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert sampler.stdout is not None
+    rows = [json.loads(sampler.stdout.readline()) for _ in range(4)]
+    sampler.terminate()
+    _stdout, stderr = sampler.communicate(timeout=15)
+
+    assert sampler.returncode == 0, stderr
+    assert len(rows) == 4
+    evidence_files = sorted(evidence_path.glob("*.json"))
+    assert len(evidence_files) == 32
+    intervals = [
+        json.loads(path.read_text())["query_intervals"][0]
+        for path in evidence_files
+    ]
+    assert len(intervals) == 32
+    assert max(row["started_ns"] for row in intervals) < min(
+        row["finished_ns"] for row in intervals
+    )
 
 
 def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
@@ -2000,7 +2094,7 @@ def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
     _stdout, stderr = sampler.communicate(timeout=5)
 
     assert sampler.returncode == 0, stderr
-    expected_order = [
+    expected_queries = {
         "performance_state",
         "sm_clock",
         "memory_clock",
@@ -2009,19 +2103,23 @@ def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
         "utilization_rates",
         "memory_info",
         "clock_throttle_reasons",
-    ]
+    }
     order_files = sorted(order_path.glob("*.json"))
-    assert len(order_files) == 4
-    observed = {}
+    assert len(order_files) == 32
+    observed = set()
     for path in order_files:
-        child_order = json.loads(path.read_text())
-        assert len(child_order) == 1
-        observed.update(child_order)
-    assert set(observed) == {"2", "3", "4", "6"}
-    assert all(
-        order[:len(expected_order)] == expected_order
-        for order in observed.values()
-    )
+        child = json.loads(path.read_text())
+        assert len(child["gpu_indices"]) == 1
+        assert len(child["query_names"]) == 1
+        observed.add((
+            int(child["gpu_indices"][0]),
+            child["query_names"][0],
+        ))
+    assert observed == {
+        (gpu_index, query_name)
+        for gpu_index in (2, 3, 4, 6)
+        for query_name in expected_queries
+    }
 
 
 @pytest.mark.parametrize(
@@ -2068,7 +2166,9 @@ def test_command_timeline_direct_nvml_sampler_fails_closed(
     assert result.returncode != 0
     assert message in result.stderr
     assert result.stdout == ""
-    expected_shutdowns = 0 if "inventory" in kwargs else 4
+    if kwargs.get("query_failure") == "nvmlDeviceGetPowerUsage":
+        assert "GPU 2 query power_usage" in result.stderr
+    expected_shutdowns = 0 if "inventory" in kwargs else 32
     assert len(list(shutdown_path.glob("*"))) == expected_shutdowns
 
 
@@ -2095,7 +2195,228 @@ def test_command_timeline_direct_nvml_sampler_shutdowns_once_on_sigterm(
     _stdout, stderr = sampler.communicate(timeout=5)
 
     assert sampler.returncode == 0, stderr
-    assert len(list(shutdown_path.glob("*"))) == 4
+    assert len(list(shutdown_path.glob("*"))) == 32
+
+
+def test_command_timeline_field_sampler_reaps_children_when_query_hangs(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_hung_query_shutdown_test"
+    )
+    startup_path = tmp_path / "startup-markers"
+    sampler = subprocess.Popen(
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=tmp_path / "shutdown-markers",
+            startup_path=startup_path,
+            query_delays={"power_usage": 60.0},
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + 10
+    while (
+        len(list(startup_path.glob("*"))) < 32
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.05)
+    child_pids = [int(path.name) for path in startup_path.glob("*")]
+    assert len(child_pids) == 32
+
+    sampler.terminate()
+    _stdout, stderr = sampler.communicate(timeout=10)
+
+    assert sampler.returncode == 0, stderr
+    deadline = time.monotonic() + 5
+    remaining = set(child_pids)
+    while remaining and time.monotonic() < deadline:
+        for pid in tuple(remaining):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                remaining.remove(pid)
+        time.sleep(0.05)
+    assert remaining == set()
+
+
+def _field_sampler_diagnostic_fixture():
+    query_names = (
+        "performance_state",
+        "sm_clock",
+        "memory_clock",
+        "power_usage",
+        "temperature",
+        "utilization_rates",
+        "memory_info",
+        "clock_throttle_reasons",
+    )
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    base = 1_800_000_000_000_000_000
+    measured_runs = []
+    for repeat in range(5):
+        start = base + repeat * 1_500_000_000
+        measured_runs.append({
+            "command_timeline_repeat_index": repeat + 1,
+            "campaign_interval": {
+                "started_at_unix_ns": start,
+                "finished_at_unix_ns": start + 1_200_000_000,
+            },
+        })
+    final_finish = measured_runs[-1]["campaign_interval"][
+        "finished_at_unix_ns"
+    ]
+    gpu_rows = []
+    timestamp = base
+    while timestamp <= final_finish:
+        for gpu_index, gpu_uuid in enumerate(gpu_uuids):
+            gpu_rows.append({
+                "sampled_at_unix_ns": timestamp,
+                "sampled_at_monotonic_ns": timestamp - base + 1,
+                "gpu_index": gpu_index,
+                "gpu_uuid": gpu_uuid,
+                "query_duration_ns": {
+                    query_name: 1_000_000
+                    for query_name in query_names
+                },
+                "sampler_process_pid": {
+                    query_name: (
+                        10_000 + gpu_index * 100 + query_index
+                    )
+                    for query_index, query_name in enumerate(
+                        query_names
+                    )
+                },
+            })
+        timestamp += 200_000_000
+    return {
+        "worker": {"measured_runs": measured_runs},
+        "gpu_rows": gpu_rows,
+        "gpu_indices": list(range(4)),
+        "gpu_uuids": gpu_uuids,
+        "gpu_stderr": "",
+        "host_stderr": "",
+    }
+
+
+def test_command_timeline_field_sampler_diagnostic_accepts_complete_matrix():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_diagnostic_pass_test"
+    )
+    fixture = _field_sampler_diagnostic_fixture()
+
+    assert hasattr(runner, "evaluate_field_sampler_diagnostic")
+    result = runner.evaluate_field_sampler_diagnostic(**fixture)
+
+    assert result == {
+        "status": "PASS",
+        "measured_repeat_count": 5,
+        "complete_generation_count": 37,
+        "maximum_generation_gap_ns": 200_000_000,
+        "shortest_repeat_duration_ns": 1_200_000_000,
+    }
+
+
+def test_command_timeline_field_sampler_diagnostic_rejects_duplicate_frozen_index():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_diagnostic_inventory_test"
+    )
+    fixture = _field_sampler_diagnostic_fixture()
+    fixture["gpu_indices"][1] = fixture["gpu_indices"][0]
+
+    with pytest.raises(ValueError, match="diagnostic GPU inventory"):
+        runner.evaluate_field_sampler_diagnostic(**fixture)
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    (
+        ("missing_coverage", "telemetry coverage"),
+        ("wrong_uuid", "generation is incomplete"),
+        ("wrong_gpu_index", "generation is incomplete"),
+        ("wrong_gpu_mapping", "generation is incomplete"),
+        ("duplicate_pid", "process inventory is not isolated"),
+        ("missing_duration", "query durations are invalid"),
+        ("zero_duration", "query durations are invalid"),
+        ("nonempty_stderr", "sampler stderr is not empty"),
+        ("generation_gap", "generation gap exceeds"),
+        ("edge_generation_gap", "generation gap exceeds"),
+    ),
+)
+def test_command_timeline_field_sampler_diagnostic_rejects_invalid_evidence(
+    case,
+    message,
+):
+    runner = _load_command_timeline_runner(
+        f"command_timeline_runner_field_diagnostic_{case}_test"
+    )
+    fixture = copy.deepcopy(_field_sampler_diagnostic_fixture())
+    if case == "missing_coverage":
+        interval = fixture["worker"]["measured_runs"][2][
+            "campaign_interval"
+        ]
+        fixture["gpu_rows"] = [
+            row
+            for row in fixture["gpu_rows"]
+            if not (
+                interval["started_at_unix_ns"]
+                <= row["sampled_at_unix_ns"]
+                <= interval["finished_at_unix_ns"]
+            )
+        ]
+    elif case == "wrong_uuid":
+        fixture["gpu_rows"][0]["gpu_uuid"] = "GPU-wrong"
+    elif case == "wrong_gpu_index":
+        fixture["gpu_rows"][1]["gpu_index"] = 0
+    elif case == "wrong_gpu_mapping":
+        first = fixture["gpu_rows"][0]
+        second = fixture["gpu_rows"][1]
+        first["gpu_index"], second["gpu_index"] = (
+            second["gpu_index"],
+            first["gpu_index"],
+        )
+    elif case == "duplicate_pid":
+        first = fixture["gpu_rows"][0]["sampler_process_pid"]
+        fixture["gpu_rows"][1]["sampler_process_pid"][
+            "performance_state"
+        ] = first["performance_state"]
+    elif case == "missing_duration":
+        fixture["gpu_rows"][0]["query_duration_ns"].pop(
+            "temperature"
+        )
+    elif case == "zero_duration":
+        fixture["gpu_rows"][0]["query_duration_ns"][
+            "temperature"
+        ] = 0
+    elif case == "nonempty_stderr":
+        fixture["gpu_stderr"] = "unexpected sampler output"
+    elif case == "generation_gap":
+        for run in fixture["worker"]["measured_runs"]:
+            interval = run["campaign_interval"]
+            interval["finished_at_unix_ns"] = (
+                interval["started_at_unix_ns"] + 100_000_000
+            )
+    elif case == "edge_generation_gap":
+        first_start = fixture["worker"]["measured_runs"][0][
+            "campaign_interval"
+        ]["started_at_unix_ns"]
+        shortest_repeat = min(
+            run["campaign_interval"]["finished_at_unix_ns"]
+            - run["campaign_interval"]["started_at_unix_ns"]
+            for run in fixture["worker"]["measured_runs"]
+        )
+        fixture["gpu_rows"] = [
+            row
+            for row in fixture["gpu_rows"]
+            if row["sampled_at_unix_ns"] >= first_start + shortest_repeat
+        ]
+    else:
+        raise AssertionError(f"unknown case: {case}")
+
+    assert hasattr(runner, "evaluate_field_sampler_diagnostic")
+    with pytest.raises(ValueError, match=message):
+        runner.evaluate_field_sampler_diagnostic(**fixture)
 
 
 def test_command_timeline_telemetry_attachment_rejects_boundary_only_gpu_rows(
@@ -2665,6 +2986,290 @@ def test_command_timeline_preflight_reports_insufficient_idle_gpus(
             "task7_gpu_busy"
         ),
     }
+
+
+def test_command_timeline_remote_field_sampler_diagnostic_writes_receipt(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_remote_field_diagnostic_test"
+    )
+    fixture = _field_sampler_diagnostic_fixture()
+    run_root = tmp_path / "diagnostic-run"
+    worker_path = run_root / "workers" / "block-1" / "graph.raw.json"
+    telemetry_root = run_root / "telemetry" / "block-1"
+    worker_path.parent.mkdir(parents=True)
+    telemetry_root.mkdir(parents=True)
+    worker_path.write_text(
+        json.dumps(fixture["worker"]),
+        encoding="utf-8",
+    )
+    (worker_path.parent / "graph.status").write_text(
+        "0\n",
+        encoding="utf-8",
+    )
+    (worker_path.parent / "graph.invariant.status").write_text(
+        "0\n",
+        encoding="utf-8",
+    )
+    (telemetry_root / "graph.gpu.jsonl").write_text(
+        "".join(
+            json.dumps(row) + "\n"
+            for row in fixture["gpu_rows"]
+        ),
+        encoding="utf-8",
+    )
+    (telemetry_root / "graph.gpu.jsonl.stderr").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (telemetry_root / "graph.host.jsonl.stderr").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (run_root / "preflight.json").write_text(
+        json.dumps({
+            "gpu_indices": fixture["gpu_indices"],
+            "gpu_uuids": fixture["gpu_uuids"],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runner,
+        "primary_run_path",
+        lambda _tag: str(run_root),
+    )
+
+    assert hasattr(
+        runner,
+        "_remote_field_sampler_diagnostic_verify",
+    )
+    returncode = runner._remote_field_sampler_diagnostic_verify(
+        "field_diagnostic"
+    )
+
+    assert returncode == 0
+    expected = {
+        "status": "PASS",
+        "measured_repeat_count": 5,
+        "complete_generation_count": 37,
+        "maximum_generation_gap_ns": 200_000_000,
+        "shortest_repeat_duration_ns": 1_200_000_000,
+    }
+    assert json.loads(
+        (run_root / "field-sampler-diagnostic.json").read_text()
+    ) == expected
+    assert json.loads(capsys.readouterr().out) == expected
+
+
+def _field_sampler_orchestration_preflight(runner, tag):
+    return {
+        "status": "READY",
+        "source_commit": "8cf39121ffbe357812941e2e05628ed8ab1153ac",
+        "gpu_indices": [0, 1, 2, 3],
+        "gpu_uuids": ["GPU-0", "GPU-1", "GPU-2", "GPU-3"],
+        "primary_run": runner.primary_run_path(tag),
+        "controller_run": runner.controller_run_path(tag),
+    }
+
+
+def test_command_timeline_field_sampler_diagnostic_runs_only_graph_epoch_two(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_diagnostic_orchestration_test"
+    )
+    tag = "field_sampler_diagnostic"
+    preflight = _field_sampler_orchestration_preflight(runner, tag)
+    actions = []
+    prepare_inputs = []
+    receipt = {
+        "status": "PASS",
+        "measured_repeat_count": 5,
+        "complete_generation_count": 40,
+        "maximum_generation_gap_ns": 500_000_000,
+        "shortest_repeat_duration_ns": 1_200_000_000,
+    }
+
+    monkeypatch.setattr(
+        runner,
+        "run_preflight",
+        lambda **_kwargs: preflight,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_local_source_patch",
+        lambda **_kwargs: b"diagnostic patch",
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_source_archive_bytes",
+        lambda _root: b"diagnostic archive",
+    )
+
+    def remote_action(action, arguments, **kwargs):
+        actions.append((action, arguments))
+        if action == "prepare":
+            prepare_inputs.append(kwargs["input"])
+            stdout = ""
+        elif action.startswith("inventory-"):
+            stdout = json.dumps(
+                _command_timeline_ready_gpu_payload()["gpu_rows"]
+            )
+        elif action == "field-sampler-diagnostic-verify":
+            stdout = json.dumps(receipt)
+        else:
+            stdout = ""
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(runner, "_run_remote_action", remote_action)
+
+    assert hasattr(runner, "run_field_sampler_diagnostic")
+    result = runner.run_field_sampler_diagnostic(
+        run_tag=tag,
+        repo_root=tmp_path,
+    )
+
+    assert [action for action, _arguments in actions] == [
+        "prepare",
+        "inventory-before",
+        "epoch",
+        "inventory-after",
+        "field-sampler-diagnostic-verify",
+        "controller-copy",
+    ]
+    assert actions[2][1] == [
+        tag,
+        "2",
+        "graph",
+        "first",
+        json.dumps([0, 1, 2, 3]),
+        json.dumps(["GPU-0", "GPU-1", "GPU-2", "GPU-3"]),
+        runner.DEFAULT_TARGET_MODEL,
+        runner.DEFAULT_DRAFT_MODEL,
+    ]
+    assert not {
+        "assemble",
+        "manifest",
+        "primary-verify",
+        "controller-verify",
+    } & {action for action, _arguments in actions}
+    source_archive, source_patch = runner._decode_prepare_payload(
+        prepare_inputs[0]
+    )
+    assert source_archive == b"diagnostic archive"
+    assert source_patch == b"diagnostic patch"
+    assert result == {
+        "status": "PASS",
+        "diagnostic_epoch": "block-1:graph:first",
+        "primary_run": preflight["primary_run"],
+        "controller_run": preflight["controller_run"],
+        "diagnostic": receipt,
+    }
+
+
+def test_command_timeline_field_sampler_diagnostic_preserves_partial_failure(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_diagnostic_failure_test"
+    )
+    tag = "field_sampler_diagnostic_failure"
+    preflight = _field_sampler_orchestration_preflight(runner, tag)
+    actions = []
+
+    monkeypatch.setattr(
+        runner,
+        "run_preflight",
+        lambda **_kwargs: preflight,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_local_source_patch",
+        lambda **_kwargs: b"",
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_source_archive_bytes",
+        lambda _root: b"diagnostic archive",
+    )
+
+    def remote_action(action, arguments, **_kwargs):
+        actions.append((action, arguments))
+        if action.startswith("inventory-"):
+            stdout = json.dumps(
+                _command_timeline_ready_gpu_payload()["gpu_rows"]
+            )
+        else:
+            stdout = ""
+        return types.SimpleNamespace(
+            returncode=9 if action == "epoch" else 0,
+            stdout=stdout,
+            stderr="worker failed" if action == "epoch" else "",
+        )
+
+    monkeypatch.setattr(runner, "_run_remote_action", remote_action)
+
+    assert hasattr(runner, "run_field_sampler_diagnostic")
+    result = runner.run_field_sampler_diagnostic(
+        run_tag=tag,
+        repo_root=tmp_path,
+    )
+
+    assert [action for action, _arguments in actions] == [
+        "prepare",
+        "inventory-before",
+        "epoch",
+        "partial-copy",
+    ]
+    assert result["status"] == "FAILED"
+    assert result["failed_epoch"] == "block-1:graph:first"
+    assert result["reason"] == "field sampler diagnostic epoch failed"
+
+
+def test_command_timeline_parser_accepts_field_sampler_diagnostic_command():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_diagnostic_parser_test"
+    )
+
+    args = runner.parse_args([
+        "diagnose-field-sampler",
+        "--run-tag",
+        "field_sampler_diagnostic",
+    ])
+
+    assert args.command == "diagnose-field-sampler"
+    assert args.run_tag == "field_sampler_diagnostic"
+
+
+def test_command_timeline_remote_action_dispatches_field_sampler_diagnostic(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_field_diagnostic_dispatch_test"
+    )
+    observed = []
+    monkeypatch.setattr(
+        runner,
+        "_remote_field_sampler_diagnostic_verify",
+        lambda tag: observed.append(tag) or 0,
+    )
+
+    result = runner._remote_action(
+        "field-sampler-diagnostic-verify",
+        ["field_sampler_diagnostic"],
+    )
+
+    assert result == 0
+    assert observed == ["field_sampler_diagnostic"]
 
 
 def test_command_timeline_bundle_stops_after_first_worker_failure_and_copies_partial():
