@@ -1728,9 +1728,16 @@ def _fake_nvml_prelude(
     shutdown_path,
     query_failure=None,
     uuid_mismatch=False,
+    concurrency_probe=False,
+    order_path=None,
 ):
+    order_path_literal = repr(
+        None if order_path is None else str(order_path)
+    )
     return f"""
 import ctypes
+import json
+import threading
 from pathlib import Path
 
 class FakeFunction:
@@ -1743,6 +1750,11 @@ class FakeFunction:
 
 class FakeNvml:
     def __init__(self):
+        self.query_barrier = (
+            threading.Barrier(4) if {concurrency_probe!r} else None
+        )
+        self.query_order = {{}}
+        self.query_order_lock = threading.Lock()
         self.nvmlInit_v2 = FakeFunction(lambda: 0)
         self.nvmlShutdown = FakeFunction(self.shutdown)
         self.nvmlErrorString = FakeFunction(
@@ -1769,10 +1781,20 @@ class FakeNvml:
         )
 
     def shutdown(self):
+        order_path = {order_path_literal}
+        if order_path is not None:
+            Path(order_path).write_text(
+                json.dumps(self.query_order, sort_keys=True)
+            )
         path = Path({str(shutdown_path)!r})
         count = int(path.read_text()) if path.exists() else 0
         path.write_text(str(count + 1))
         return 0
+
+    def record(self, device, name):
+        index = int(device.value) - 100
+        with self.query_order_lock:
+            self.query_order.setdefault(str(index), []).append(name)
 
     def get_handle(self, index, output):
         output._obj.value = int(index) + 100
@@ -1787,36 +1809,48 @@ class FakeNvml:
         output.value = value.encode()
         return 0
 
-    def get_pstate(self, _device, output):
+    def get_pstate(self, device, output):
+        self.record(device, "performance_state")
+        if self.query_barrier is not None:
+            self.query_barrier.wait(timeout=1)
         output._obj.value = 0
         return 0
 
-    def get_clock(self, _device, clock_type, output):
+    def get_clock(self, device, clock_type, output):
+        self.record(
+            device,
+            "sm_clock" if int(clock_type) == 1 else "memory_clock",
+        )
         output._obj.value = 1410 if int(clock_type) == 1 else 1512
         return 0
 
-    def get_power(self, _device, output):
+    def get_power(self, device, output):
+        self.record(device, "power_usage")
         if {query_failure!r} == "nvmlDeviceGetPowerUsage":
             return 3
         output._obj.value = 70000
         return 0
 
-    def get_temperature(self, _device, _sensor, output):
+    def get_temperature(self, device, _sensor, output):
+        self.record(device, "temperature")
         output._obj.value = 40
         return 0
 
-    def get_utilization(self, _device, output):
+    def get_utilization(self, device, output):
+        self.record(device, "utilization_rates")
         output._obj.gpu = 50
         output._obj.memory = 10
         return 0
 
-    def get_memory(self, _device, output):
+    def get_memory(self, device, output):
+        self.record(device, "memory_info")
         output._obj.total = 1024 * 1024 * 1024
         output._obj.free = 924 * 1024 * 1024
         output._obj.used = 100 * 1024 * 1024
         return 0
 
-    def get_throttle(self, _device, output):
+    def get_throttle(self, device, output):
+        self.record(device, "clock_throttle_reasons")
         output._obj.value = 0
         return 0
 
@@ -1837,6 +1871,8 @@ def _direct_nvml_sampler_command(
     shutdown_path,
     query_failure=None,
     uuid_mismatch=False,
+    concurrency_probe=False,
+    order_path=None,
     inventory=None,
 ):
     program = (
@@ -1844,6 +1880,8 @@ def _direct_nvml_sampler_command(
             shutdown_path=shutdown_path,
             query_failure=query_failure,
             uuid_mismatch=uuid_mismatch,
+            concurrency_probe=concurrency_probe,
+            order_path=order_path,
         )
         + "\n"
         + runner._build_gpu_sampler_script()
@@ -1916,6 +1954,81 @@ def test_command_timeline_direct_nvml_sampler_emits_complete_snapshot(
     )
 
 
+def test_command_timeline_direct_nvml_sampler_queries_devices_concurrently(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_direct_nvml_concurrency_test"
+    )
+    sampler = subprocess.Popen(
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=tmp_path / "shutdown-count",
+            concurrency_probe=True,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert sampler.stdout is not None
+    rows = []
+    for _ in range(4):
+        line = sampler.stdout.readline()
+        if not line:
+            _stdout, stderr = sampler.communicate(timeout=5)
+            pytest.fail(
+                "four device query chains did not overlap: " + stderr
+            )
+        rows.append(json.loads(line))
+    sampler.terminate()
+    _stdout, stderr = sampler.communicate(timeout=5)
+
+    assert sampler.returncode == 0, stderr
+    assert [row["gpu_index"] for row in rows] == [2, 3, 4, 6]
+
+
+def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_direct_nvml_query_order_test"
+    )
+    order_path = tmp_path / "query-order.json"
+    sampler = subprocess.Popen(
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=tmp_path / "shutdown-count",
+            order_path=order_path,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert sampler.stdout is not None
+    for _ in range(4):
+        sampler.stdout.readline()
+    sampler.terminate()
+    _stdout, stderr = sampler.communicate(timeout=5)
+
+    assert sampler.returncode == 0, stderr
+    expected_order = [
+        "performance_state",
+        "sm_clock",
+        "memory_clock",
+        "power_usage",
+        "temperature",
+        "utilization_rates",
+        "memory_info",
+        "clock_throttle_reasons",
+    ]
+    observed = json.loads(order_path.read_text())
+    assert set(observed) == {"2", "3", "4", "6"}
+    assert all(
+        order[:len(expected_order)] == expected_order
+        for order in observed.values()
+    )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     (
@@ -1959,6 +2072,8 @@ def test_command_timeline_direct_nvml_sampler_fails_closed(
     assert result.returncode != 0
     assert message in result.stderr
     assert result.stdout == ""
+    if kwargs.get("query_failure") == "nvmlDeviceGetPowerUsage":
+        assert (tmp_path / "shutdown-count").read_text() == "1"
 
 
 def test_command_timeline_direct_nvml_sampler_shutdowns_once_on_sigterm(
