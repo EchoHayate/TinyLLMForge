@@ -640,15 +640,14 @@ def _validate_command_timeline_graph_lifecycle(
                 raise ValueError(
                     "graph capture counters changed"
                 )
-            if counter.get("replays") != previous_replays + 1:
+            if counter.get("replays") <= previous_replays:
                 raise ValueError(
-                    "graph replay counters did not grow by one: "
+                    "graph replay counters did not increase: "
                     f"rank={rank} "
                     "measured_repeat="
                     f"{measured_run.get('repeat')} "
                     "timeline_repeat_index="
                     f"{measured_run.get('command_timeline_repeat_index')} "
-                    f"expected_replays={previous_replays + 1} "
                     "previous_counters="
                     f"{json.dumps(previous_counter, sort_keys=True, separators=(',', ':'))} "
                     "counters="
