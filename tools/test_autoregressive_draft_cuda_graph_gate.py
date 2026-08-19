@@ -1728,7 +1728,6 @@ def _fake_nvml_prelude(
     shutdown_path,
     query_failure=None,
     uuid_mismatch=False,
-    concurrency_probe=False,
     order_path=None,
 ):
     order_path_literal = repr(
@@ -1737,6 +1736,7 @@ def _fake_nvml_prelude(
     return f"""
 import ctypes
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -1750,9 +1750,6 @@ class FakeFunction:
 
 class FakeNvml:
     def __init__(self):
-        self.query_barrier = (
-            threading.Barrier(4) if {concurrency_probe!r} else None
-        )
         self.query_order = {{}}
         self.query_order_lock = threading.Lock()
         self.nvmlInit_v2 = FakeFunction(lambda: 0)
@@ -1783,12 +1780,14 @@ class FakeNvml:
     def shutdown(self):
         order_path = {order_path_literal}
         if order_path is not None:
-            Path(order_path).write_text(
+            order_root = Path(order_path)
+            order_root.mkdir(parents=True, exist_ok=True)
+            (order_root / (str(os.getpid()) + ".json")).write_text(
                 json.dumps(self.query_order, sort_keys=True)
             )
-        path = Path({str(shutdown_path)!r})
-        count = int(path.read_text()) if path.exists() else 0
-        path.write_text(str(count + 1))
+        shutdown_root = Path({str(shutdown_path)!r})
+        shutdown_root.mkdir(parents=True, exist_ok=True)
+        (shutdown_root / str(os.getpid())).write_text("shutdown\\n")
         return 0
 
     def record(self, device, name):
@@ -1811,8 +1810,6 @@ class FakeNvml:
 
     def get_pstate(self, device, output):
         self.record(device, "performance_state")
-        if self.query_barrier is not None:
-            self.query_barrier.wait(timeout=1)
         output._obj.value = 0
         return 0
 
@@ -1871,7 +1868,6 @@ def _direct_nvml_sampler_command(
     shutdown_path,
     query_failure=None,
     uuid_mismatch=False,
-    concurrency_probe=False,
     order_path=None,
     inventory=None,
 ):
@@ -1880,7 +1876,6 @@ def _direct_nvml_sampler_command(
             shutdown_path=shutdown_path,
             query_failure=query_failure,
             uuid_mismatch=uuid_mismatch,
-            concurrency_probe=concurrency_probe,
             order_path=order_path,
         )
         + "\n"
@@ -1954,37 +1949,31 @@ def test_command_timeline_direct_nvml_sampler_emits_complete_snapshot(
     )
 
 
-def test_command_timeline_direct_nvml_sampler_queries_devices_concurrently(
+def test_command_timeline_direct_nvml_sampler_isolates_each_gpu_process(
     tmp_path,
 ):
     runner = _load_command_timeline_runner(
-        "command_timeline_runner_direct_nvml_concurrency_test"
+        "command_timeline_runner_direct_nvml_process_isolation_test"
     )
     sampler = subprocess.Popen(
         _direct_nvml_sampler_command(
             runner,
-            shutdown_path=tmp_path / "shutdown-count",
-            concurrency_probe=True,
+            shutdown_path=tmp_path / "shutdown-markers",
         ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     assert sampler.stdout is not None
-    rows = []
-    for _ in range(4):
-        line = sampler.stdout.readline()
-        if not line:
-            _stdout, stderr = sampler.communicate(timeout=5)
-            pytest.fail(
-                "four device query chains did not overlap: " + stderr
-            )
-        rows.append(json.loads(line))
+    rows = [json.loads(sampler.stdout.readline()) for _ in range(4)]
     sampler.terminate()
     _stdout, stderr = sampler.communicate(timeout=5)
 
     assert sampler.returncode == 0, stderr
     assert [row["gpu_index"] for row in rows] == [2, 3, 4, 6]
+    sampler_pids = {row["sampler_process_pid"] for row in rows}
+    assert len(sampler_pids) == 4
+    assert sampler.pid not in sampler_pids
 
 
 def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
@@ -1993,11 +1982,11 @@ def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
     runner = _load_command_timeline_runner(
         "command_timeline_runner_direct_nvml_query_order_test"
     )
-    order_path = tmp_path / "query-order.json"
+    order_path = tmp_path / "query-order"
     sampler = subprocess.Popen(
         _direct_nvml_sampler_command(
             runner,
-            shutdown_path=tmp_path / "shutdown-count",
+            shutdown_path=tmp_path / "shutdown-markers",
             order_path=order_path,
         ),
         stdout=subprocess.PIPE,
@@ -2021,7 +2010,13 @@ def test_command_timeline_direct_nvml_sampler_preserves_per_device_query_order(
         "memory_info",
         "clock_throttle_reasons",
     ]
-    observed = json.loads(order_path.read_text())
+    order_files = sorted(order_path.glob("*.json"))
+    assert len(order_files) == 4
+    observed = {}
+    for path in order_files:
+        child_order = json.loads(path.read_text())
+        assert len(child_order) == 1
+        observed.update(child_order)
     assert set(observed) == {"2", "3", "4", "6"}
     assert all(
         order[:len(expected_order)] == expected_order
@@ -2057,10 +2052,11 @@ def test_command_timeline_direct_nvml_sampler_fails_closed(
         "command_timeline_runner_direct_nvml_failure_test"
         + message.replace(" ", "_")
     )
+    shutdown_path = tmp_path / "shutdown-markers"
     result = subprocess.run(
         _direct_nvml_sampler_command(
             runner,
-            shutdown_path=tmp_path / "shutdown-count",
+            shutdown_path=shutdown_path,
             **kwargs,
         ),
         text=True,
@@ -2072,8 +2068,8 @@ def test_command_timeline_direct_nvml_sampler_fails_closed(
     assert result.returncode != 0
     assert message in result.stderr
     assert result.stdout == ""
-    if kwargs.get("query_failure") == "nvmlDeviceGetPowerUsage":
-        assert (tmp_path / "shutdown-count").read_text() == "1"
+    expected_shutdowns = 0 if "inventory" in kwargs else 4
+    assert len(list(shutdown_path.glob("*"))) == expected_shutdowns
 
 
 def test_command_timeline_direct_nvml_sampler_shutdowns_once_on_sigterm(
@@ -2082,7 +2078,7 @@ def test_command_timeline_direct_nvml_sampler_shutdowns_once_on_sigterm(
     runner = _load_command_timeline_runner(
         "command_timeline_runner_direct_nvml_shutdown_test"
     )
-    shutdown_path = tmp_path / "shutdown-count"
+    shutdown_path = tmp_path / "shutdown-markers"
     sampler = subprocess.Popen(
         _direct_nvml_sampler_command(
             runner,
@@ -2099,7 +2095,7 @@ def test_command_timeline_direct_nvml_sampler_shutdowns_once_on_sigterm(
     _stdout, stderr = sampler.communicate(timeout=5)
 
     assert sampler.returncode == 0, stderr
-    assert shutdown_path.read_text() == "1"
+    assert len(list(shutdown_path.glob("*"))) == 4
 
 
 def test_command_timeline_telemetry_attachment_rejects_boundary_only_gpu_rows(
