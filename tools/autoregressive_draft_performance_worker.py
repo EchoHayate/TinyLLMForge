@@ -1709,6 +1709,11 @@ def run_policy_campaign(
             "policy": policy,
             "batch_size": batch_size,
             "prompt_rows": prompt_rows,
+            **(
+                {"prompt_sha256": _request_set_sha256(prompt_rows)}
+                if command_timeline
+                else {}
+            ),
             "warmup_runs": warmup_results,
             "measured_runs": measured_results,
             "target_checkpoint_identifier": Path(

@@ -1714,6 +1714,14 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
     )
 
 
+def test_policy_campaign_publishes_canonical_prompt_digest_for_assembly():
+    result = _run_command_timeline_campaign()
+
+    assert result["prompt_sha256"] == (
+        _worker_module()._request_set_sha256(result["prompt_rows"])
+    )
+
+
 def test_policy_campaign_rejects_diagnostic_counts_without_timeline():
     adapter = _FakeWorkerAdapter()
 
