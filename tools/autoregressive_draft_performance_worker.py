@@ -606,7 +606,7 @@ def _validate_command_timeline_graph_lifecycle(
         if (
             warmup_counter.get("capture_attempts") != 1
             or warmup_counter.get("captures") != 1
-            or warmup_counter.get("replays") != 4
+            or warmup_counter.get("replays") != 1
         ):
             raise ValueError(
                 "graph warmup counters are invalid: "
@@ -626,7 +626,7 @@ def _validate_command_timeline_graph_lifecycle(
         warmup_resource = resource_rows[0]
         if warmup_resource.get("ready_entry_count") != 1:
             raise ValueError("graph warmup ready entry count is invalid")
-        previous_replays = 4
+        previous_replays = 1
         for counter, resources in zip(
             counter_rows[1:],
             resource_rows[1:],
@@ -638,9 +638,9 @@ def _validate_command_timeline_graph_lifecycle(
                 raise ValueError(
                     "graph capture counters changed"
                 )
-            if counter.get("replays") != previous_replays + 4:
+            if counter.get("replays") != previous_replays + 1:
                 raise ValueError(
-                    "graph replay counters did not grow by four"
+                    "graph replay counters did not grow by one"
                 )
             if (
                 counter.get("quarantines") != 0

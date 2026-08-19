@@ -1606,7 +1606,7 @@ def _run_command_timeline_campaign(*, mutate_run=None):
         )
         run = _command_timeline_graph_run(
             repeat=repeat,
-            replays=4 * (repeat + 2),
+            replays=repeat + 2,
             timeline_repeat_index=timeline_repeat_index,
             request_set_sha256=request_set_sha256,
         )
@@ -1645,7 +1645,7 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
         timeline_repeat_indices.append(timeline_repeat_index)
         run = _command_timeline_graph_run(
             repeat=repeat,
-            replays=4 * (repeat + 2),
+            replays=repeat + 2,
             timeline_repeat_index=timeline_repeat_index,
             request_set_sha256=_worker_module()._request_set_sha256(
                 kwargs["prompt_rows"]
@@ -1691,7 +1691,7 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
     assert [
         run["correctness"]["rank_graph_counters"][0]["replays"]
         for run in result["warmup_runs"] + result["measured_runs"]
-    ] == [4, 8, 12, 16, 20, 24]
+    ] == [1, 2, 3, 4, 5, 6]
     for run in result["warmup_runs"] + result["measured_runs"]:
         interval = run["campaign_interval"]
         assert interval["finished_at_unix_ns"] > (
@@ -1747,7 +1747,7 @@ def test_policy_campaign_command_timeline_rejects_graph_counter_drift():
         repeat = kwargs["repeat"]
         run = _command_timeline_graph_run(
             repeat=repeat,
-            replays=4 * (repeat + 2),
+            replays=repeat + 2,
             timeline_repeat_index=kwargs[
                 "command_timeline_repeat_index"
             ],
@@ -1787,7 +1787,7 @@ def test_policy_campaign_graph_warmup_failure_reports_rank_and_evidence():
         if timeline_repeat_index == 0:
             run["correctness"]["rank_graph_counters"][2][
                 "replays"
-            ] = 3
+            ] = 0
 
     with pytest.raises(ValueError) as error:
         _run_command_timeline_campaign(mutate_run=mutate_run)
@@ -1798,7 +1798,7 @@ def test_policy_campaign_graph_warmup_failure_reports_rank_and_evidence():
     assert (
         'counters={"capture_attempts":1,"captures":1,'
         '"fallback_pre_replay":0,"quarantines":0,"rank":2,'
-        '"replays":3}'
+        '"replays":0}'
     ) in message
     assert (
         'resources={"rank":2,"ready_entry_count":1,'
