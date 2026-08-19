@@ -1609,12 +1609,12 @@ def _monitor_owned_worker(
     while process.poll() is None:
         if monotonic() >= deadline:
             raise TimeoutError("worker epoch exceeded bounded timeout")
-        current_owned = _owned_process_group_pids(process_group_id)
-        observed_owned.update(current_owned)
         selected_rows = [
             row for row in _remote_gpu_rows()
             if row["uuid"] in gpu_uuids
         ]
+        current_owned = _owned_process_group_pids(process_group_id)
+        observed_owned.update(current_owned)
         selected_processes = [
             process_row
             for row in selected_rows

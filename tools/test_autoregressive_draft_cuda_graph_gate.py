@@ -1906,6 +1906,110 @@ def test_command_timeline_worker_launch_uses_dedicated_process_group(
     assert runner.WORKER_TIMEOUT_SECONDS > 0
 
 
+def test_command_timeline_worker_monitor_refreshes_owned_pids_after_gpu_snapshot(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_monitor_spawn_race_test"
+    )
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    gpu_pids = [5101, 5102, 5103, 5104]
+    gpu_snapshot_taken = False
+
+    class FakeProcess:
+        pid = 5000
+
+        def __init__(self):
+            self.polls = iter((None, 0))
+
+        def poll(self):
+            return next(self.polls)
+
+        def wait(self, timeout):
+            assert timeout == 30
+            return 0
+
+    def fake_gpu_rows():
+        nonlocal gpu_snapshot_taken
+        gpu_snapshot_taken = True
+        return [
+            {
+                "index": index,
+                "uuid": uuid,
+                "compute_processes": [{"pid": pid}],
+            }
+            for index, (uuid, pid) in enumerate(zip(gpu_uuids, gpu_pids))
+        ]
+
+    def fake_owned_process_group_pids(process_group_id):
+        assert process_group_id == 5000
+        if not gpu_snapshot_taken:
+            return {5000}
+        return {5000, *gpu_pids}
+
+    monkeypatch.setattr(runner, "_remote_gpu_rows", fake_gpu_rows)
+    monkeypatch.setattr(
+        runner,
+        "_owned_process_group_pids",
+        fake_owned_process_group_pids,
+    )
+
+    returncode, binding, observed_owned = runner._monitor_owned_worker(
+        FakeProcess(),
+        process_group_id=5000,
+        gpu_uuids=gpu_uuids,
+        monotonic=iter((0, 1)).__next__,
+        sleep=lambda _seconds: None,
+    )
+
+    assert returncode == 0
+    assert binding == dict(zip(gpu_uuids, gpu_pids))
+    assert observed_owned == {5000, *gpu_pids}
+
+
+def test_command_timeline_worker_monitor_still_rejects_external_gpu_pid(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_monitor_external_pid_test"
+    )
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    gpu_pids = [5201, 5202, 5203, 9999]
+
+    class FakeProcess:
+        pid = 5000
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        runner,
+        "_remote_gpu_rows",
+        lambda: [
+            {
+                "index": index,
+                "uuid": uuid,
+                "compute_processes": [{"pid": pid}],
+            }
+            for index, (uuid, pid) in enumerate(zip(gpu_uuids, gpu_pids))
+        ],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_owned_process_group_pids",
+        lambda process_group_id: {5000, 5201, 5202, 5203},
+    )
+
+    with pytest.raises(ValueError, match="unowned process"):
+        runner._monitor_owned_worker(
+            FakeProcess(),
+            process_group_id=5000,
+            gpu_uuids=gpu_uuids,
+            monotonic=iter((0, 1)).__next__,
+            sleep=lambda _seconds: None,
+        )
+
+
 def test_command_timeline_cleanup_signals_group_after_leader_exit(
     monkeypatch,
 ):
