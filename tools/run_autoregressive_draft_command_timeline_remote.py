@@ -56,6 +56,7 @@ SOURCE_PATHS = (
     "tinyvllm/",
     "tools/autoregressive_draft_performance_worker.py",
     "tools/autoregressive_draft_performance_gate.py",
+    "tools/speculative_runtime_performance_gate.py",
     "tools/autoregressive_draft_cuda_graph_contract.py",
     "tools/autoregressive_draft_cuda_graph_gate.py",
     "tools/autoregressive_draft_command_timeline_diagnostic.py",

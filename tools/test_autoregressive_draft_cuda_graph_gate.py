@@ -1418,6 +1418,7 @@ def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
         "tinyvllm/",
         "tools/autoregressive_draft_performance_worker.py",
         "tools/autoregressive_draft_performance_gate.py",
+        "tools/speculative_runtime_performance_gate.py",
         "tools/autoregressive_draft_cuda_graph_contract.py",
         "tools/autoregressive_draft_cuda_graph_gate.py",
         "tools/autoregressive_draft_command_timeline_diagnostic.py",
@@ -1428,6 +1429,17 @@ def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
         "tools/autoregressive_draft_host_sampler.py",
         "tools/run_autoregressive_draft_command_timeline_remote.py",
     }
+
+
+def test_command_timeline_source_archive_includes_worker_transitive_dependency():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_dependency_test"
+    )
+
+    assert (
+        "tools/speculative_runtime_performance_gate.py"
+        in runner.SOURCE_PATHS
+    )
 
 
 def test_command_timeline_source_archive_rejects_symlink_component(tmp_path):
