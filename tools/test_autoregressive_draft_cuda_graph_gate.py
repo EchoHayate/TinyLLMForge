@@ -1893,6 +1893,27 @@ def test_command_timeline_direct_nvml_sampler_emits_complete_snapshot(
     assert all(row["pstate"] == "P0" for row in rows)
     assert all(row["power_w"] == 70.0 for row in rows)
     assert all(row["memory_used_mib"] == 100 for row in rows)
+    expected_duration_keys = {
+        "performance_state",
+        "sm_clock",
+        "memory_clock",
+        "power_usage",
+        "temperature",
+        "utilization_rates",
+        "memory_info",
+        "clock_throttle_reasons",
+    }
+    assert all(
+        set(row["query_duration_ns"]) == expected_duration_keys
+        for row in rows
+    )
+    assert all(
+        isinstance(duration, int)
+        and not isinstance(duration, bool)
+        and duration >= 0
+        for row in rows
+        for duration in row["query_duration_ns"].values()
+    )
 
 
 @pytest.mark.parametrize(
