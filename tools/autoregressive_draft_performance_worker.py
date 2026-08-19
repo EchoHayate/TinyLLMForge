@@ -129,6 +129,92 @@ def _identity_nonnegative_int(value, name):
     return value
 
 
+def _positive_seconds_to_ns(value, name):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or value <= 0
+    ):
+        raise ValueError(f"{name} must be positive")
+    normalized = int(round(float(value) * 1_000_000_000))
+    if normalized <= 0:
+        raise ValueError(f"{name} must be positive")
+    return normalized
+
+
+def _canonical_command_timeline_timing(
+    timing,
+    *,
+    expected_request_count,
+    expected_output_tokens,
+):
+    if not isinstance(timing, dict):
+        raise ValueError("command timeline timing must be a mapping")
+    if timing.get("request_count") != expected_request_count:
+        raise ValueError("command timeline request count mismatch")
+    if timing.get("total_output_tokens") != (
+        expected_request_count * expected_output_tokens
+    ):
+        raise ValueError("command timeline output token count mismatch")
+    rows = timing.get("per_request")
+    if (
+        not isinstance(rows, list)
+        or len(rows) != expected_request_count
+        or any(not isinstance(row, dict) for row in rows)
+    ):
+        raise ValueError(
+            "command timeline per-request timing is invalid"
+        )
+    source_sequence_ids = [
+        _identity_nonnegative_int(
+            row.get("sequence_id"),
+            "command timeline source sequence ID",
+        )
+        for row in rows
+    ]
+    if source_sequence_ids != list(range(
+        source_sequence_ids[0],
+        source_sequence_ids[0] + expected_request_count,
+    )):
+        raise ValueError(
+            "command timeline source request order is invalid"
+        )
+    normalized_rows = []
+    for sequence_id, row in enumerate(rows):
+        if row.get("output_tokens") != expected_output_tokens:
+            raise ValueError(
+                "command timeline request output count mismatch"
+            )
+        normalized_rows.append({
+            "sequence_id": sequence_id,
+            "output_tokens": expected_output_tokens,
+            "ttft_ns": _positive_seconds_to_ns(
+                row.get("ttft_s"),
+                "command timeline TTFT",
+            ),
+            "tpot_ns": _positive_seconds_to_ns(
+                row.get("tpot_s"),
+                "command timeline TPOT",
+            ),
+            "completion_latency_ns": _positive_seconds_to_ns(
+                row.get("completion_latency_s"),
+                "command timeline completion latency",
+            ),
+        })
+    return {
+        "request_count": expected_request_count,
+        "total_output_tokens": (
+            expected_request_count * expected_output_tokens
+        ),
+        "batch_elapsed_ns": _positive_seconds_to_ns(
+            timing.get("batch_elapsed_s"),
+            "command timeline batch elapsed time",
+        ),
+        "per_request": normalized_rows,
+    }
+
+
 def _identity_sha256(value, name, *, optional=False):
     if optional and value is None:
         return value
@@ -670,6 +756,61 @@ def _validate_command_timeline_graph_lifecycle(
             previous_counter = counter
 
 
+def _engine_steps_with_command_references(
+    command_rows,
+    engine_steps,
+):
+    if (
+        not isinstance(command_rows, tuple)
+        or len(command_rows) != TENSOR_PARALLEL_SIZE
+        or not isinstance(engine_steps, list)
+    ):
+        raise ValueError(
+            "command timeline engine-step evidence is invalid"
+        )
+    rank_zero = command_rows[0]
+    rows = rank_zero.get("rows") if isinstance(rank_zero, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError(
+            "command timeline rank-zero command rows are invalid"
+        )
+    command_ids_by_step = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("command timeline command row is invalid")
+        engine_step_id = _identity_nonnegative_int(
+            row.get("engine_step_id"),
+            "command timeline engine step identity",
+        )
+        command_id = _identity_nonnegative_int(
+            row.get("command_id"),
+            "command timeline command identity",
+        )
+        command_ids_by_step.setdefault(engine_step_id, []).append(
+            command_id
+        )
+    normalized = []
+    for row in engine_steps:
+        if not isinstance(row, dict):
+            raise ValueError(
+                "command timeline engine-step row is invalid"
+            )
+        engine_step_id = _identity_nonnegative_int(
+            row.get("engine_step_id"),
+            "command timeline engine step identity",
+        )
+        command_ids = command_ids_by_step.get(engine_step_id)
+        if not command_ids:
+            raise ValueError(
+                "command timeline engine step has no commands"
+            )
+        normalized.append({
+            **row,
+            "command_ids": list(command_ids),
+        })
+    return normalized
+
+
 def _allocator_snapshot(rank_snapshot: dict) -> dict:
     try:
         allocator = rank_snapshot["executor"]["backend"][
@@ -1110,6 +1251,8 @@ def _runtime_result(
 def _correctness_result(
     observations: list[dict],
     after_authority: tuple[dict, ...],
+    *,
+    command_timeline: bool = False,
 ) -> dict:
     proposal_token_rows = []
     accepted_prefix_counts = []
@@ -1157,6 +1300,7 @@ def _correctness_result(
     rank_graph_quarantined = []
     rank_graph_quarantine_details = []
     rank_graph_resources = []
+    rank_graph_identities = []
     counter_names = (
         "capture_attempts",
         "captures",
@@ -1273,11 +1417,28 @@ def _correctness_result(
                 )
             resource_row[name] = value
         rank_graph_resources.append(resource_row)
+        if command_timeline:
+            if len(ready_entries) > 1:
+                raise ValueError(
+                    "command timeline graph identity is ambiguous"
+                )
+            identity_sha256 = (
+                ready_entries[0] if ready_entries else None
+            )
+            if identity_sha256 is not None:
+                _identity_sha256(
+                    identity_sha256,
+                    "command timeline graph identity",
+                )
+            rank_graph_identities.append({
+                "rank": rank,
+                "sha256": identity_sha256,
+            })
     if len(set(digests)) != 1:
         raise ValueError(
             "correctness transaction digests differ across ranks"
         )
-    return {
+    result = {
         "proposal_token_rows": proposal_token_rows,
         "accepted_prefix_counts": accepted_prefix_counts,
         "transaction_digest": digests[0],
@@ -1290,6 +1451,122 @@ def _correctness_result(
         "rank_graph_quarantine_details": (
             rank_graph_quarantine_details
         ),
+    }
+    if command_timeline:
+        result["rank_graph_identities"] = rank_graph_identities
+    return result
+
+
+def _canonical_command_timeline_correctness(
+    correctness,
+    *,
+    outputs,
+):
+    if not isinstance(correctness, dict):
+        raise ValueError(
+            "command timeline correctness must be a mapping"
+        )
+    if (
+        not isinstance(outputs, list)
+        or len(outputs) != 4
+        or any(
+            not isinstance(row, list)
+            or len(row) != MAX_OUTPUT_TOKENS
+            for row in outputs
+        )
+    ):
+        raise ValueError("command timeline target rows are invalid")
+    proposal_calls = correctness.get("proposal_token_rows")
+    flat_prefixes = correctness.get("accepted_prefix_counts")
+    if (
+        not isinstance(proposal_calls, list)
+        or not isinstance(flat_prefixes, list)
+    ):
+        raise ValueError(
+            "command timeline proposal evidence is invalid"
+        )
+    grouped_prefixes = []
+    accepted_calls = []
+    proposal_lengths = []
+    prefix_offset = 0
+    for proposal_rows in proposal_calls:
+        if (
+            not isinstance(proposal_rows, list)
+            or not proposal_rows
+            or any(
+                not isinstance(row, list)
+                or not row
+                or len(row) > MAX_PROPOSAL_TOKENS
+                for row in proposal_rows
+            )
+        ):
+            raise ValueError(
+                "command timeline proposal rows are invalid"
+            )
+        next_offset = prefix_offset + len(proposal_rows)
+        prefixes = flat_prefixes[prefix_offset:next_offset]
+        if len(prefixes) != len(proposal_rows):
+            raise ValueError(
+                "command timeline accepted-prefix inventory is invalid"
+            )
+        normalized_prefixes = []
+        accepted_rows = []
+        for proposal_row, prefix in zip(proposal_rows, prefixes):
+            if (
+                isinstance(prefix, bool)
+                or not isinstance(prefix, int)
+                or prefix < 0
+                or prefix > len(proposal_row)
+            ):
+                raise ValueError(
+                    "command timeline accepted prefix is invalid"
+                )
+            normalized_prefixes.append(prefix)
+            accepted_rows.append(list(proposal_row[:prefix]))
+        grouped_prefixes.append(normalized_prefixes)
+        accepted_calls.append(accepted_rows)
+        proposal_lengths.append([
+            len(row) for row in proposal_rows
+        ])
+        prefix_offset = next_offset
+    if prefix_offset != len(flat_prefixes):
+        raise ValueError(
+            "command timeline accepted-prefix inventory is invalid"
+        )
+    proposed_tokens = sum(
+        len(row) for call in proposal_calls for row in call
+    )
+    accepted_tokens = sum(
+        prefix for call in grouped_prefixes for prefix in call
+    )
+    canonical_transaction = {
+        "target_token_rows": copy.deepcopy(outputs),
+        "proposal_token_rows": copy.deepcopy(proposal_calls),
+        "proposal_row_lengths": proposal_lengths,
+        "accepted_prefix_counts": grouped_prefixes,
+        "accepted_token_rows": accepted_calls,
+        "active_transaction_count": correctness.get(
+            "active_transaction_count"
+        ),
+    }
+    return {
+        **correctness,
+        **canonical_transaction,
+        "runtime_transaction_digest": correctness.get(
+            "transaction_digest"
+        ),
+        "transaction_digest": _canonical_sha256(
+            canonical_transaction
+        ),
+        "acceptance": {
+            "proposed_tokens": proposed_tokens,
+            "accepted_tokens": accepted_tokens,
+            "rate": (
+                accepted_tokens / proposed_tokens
+                if proposed_tokens
+                else 0.0
+            ),
+        },
     }
 
 
@@ -1406,9 +1683,24 @@ def run_request_batch(
             "schema_version": 1,
             "rank_snapshots": list(command_rows),
             "cuda_rank_snapshots": list(cuda_result["ranks"]),
-            "engine_steps": list(step_rows["steps"]),
+            "engine_steps": _engine_steps_with_command_references(
+                command_rows,
+                list(step_rows["steps"]),
+            ),
             "engine_dropped_steps": step_rows["dropped_steps"],
         }
+
+    outputs = [
+        outputs_by_id[sequence_id]
+        for sequence_id in sorted(outputs_by_id)
+    ]
+    if len(outputs) != len(prompt_rows):
+        raise RuntimeError("engine did not return one output per prompt")
+    if any(
+        len(token_ids) != expected_output_tokens
+        for token_ids in outputs
+    ):
+        raise RuntimeError("engine output token count is incorrect")
 
     if policy == "learned":
         engine.flush_pending_hybrid_state_releases(timeout_s=60.0)
@@ -1436,7 +1728,13 @@ def run_request_batch(
         correctness = _correctness_result(
             observations,
             after_authority,
+            command_timeline=command_timeline,
         )
+        if command_timeline:
+            correctness = _canonical_command_timeline_correctness(
+                correctness,
+                outputs=outputs,
+            )
     else:
         proposal_kv = _zero_proposal_kv()
         draft_executor_timing = (
@@ -1449,17 +1747,6 @@ def run_request_batch(
     memory = _memory_result(
         engine.memory_snapshots(timeout_s=60.0)
     )
-    outputs = [
-        outputs_by_id[sequence_id]
-        for sequence_id in sorted(outputs_by_id)
-    ]
-    if len(outputs) != len(prompt_rows):
-        raise RuntimeError("engine did not return one output per prompt")
-    if any(
-        len(token_ids) != expected_output_tokens
-        for token_ids in outputs
-    ):
-        raise RuntimeError("engine output token count is incorrect")
     runtime = _runtime_result(
         observations,
         policy=policy,
@@ -1641,6 +1928,15 @@ def run_policy_campaign(
             result = run_batch_fn(
                 **run_batch_kwargs,
             )
+            if command_timeline:
+                result = {
+                    **result,
+                    "timing": _canonical_command_timeline_timing(
+                        result.get("timing"),
+                        expected_request_count=batch_size,
+                        expected_output_tokens=MAX_OUTPUT_TOKENS,
+                    ),
+                }
             finished_at_monotonic_ns = (
                 monotonic_clock_ns() if command_timeline else None
             )

@@ -1291,6 +1291,32 @@ def test_worker_command_timeline_reset_snapshot_order_and_cardinality():
         row["steps"]
         for row in timeline["cuda_rank_snapshots"]
     )
+    assert [
+        row["command_ids"] for row in timeline["engine_steps"]
+    ] == [[10], [11]]
+    correctness = run["correctness"]
+    assert correctness["target_token_rows"] == run["outputs"]
+    assert correctness["proposal_row_lengths"] == [
+        [4, 4, 4, 4],
+        [4, 4, 4, 4],
+    ]
+    assert correctness["accepted_prefix_counts"] == [
+        [2, 2, 2, 2],
+        [2, 2, 2, 2],
+    ]
+    assert correctness["accepted_token_rows"] == [
+        [[31, 32], [31, 32], [31, 32], [31, 32]],
+        [[31, 32], [31, 32], [31, 32], [31, 32]],
+    ]
+    assert correctness["acceptance"] == {
+        "proposed_tokens": 32,
+        "accepted_tokens": 16,
+        "rate": 0.5,
+    }
+    assert correctness["rank_graph_identities"] == [
+        {"rank": rank, "sha256": "b" * 64}
+        for rank in range(4)
+    ]
     first_request_clock = engine.events.index("request-clock")
     assert engine.events.index("authority") < engine.events.index(
         "reset-command-timeline"
@@ -1720,6 +1746,47 @@ def test_policy_campaign_publishes_canonical_prompt_digest_for_assembly():
     assert result["prompt_sha256"] == (
         _worker_module()._request_set_sha256(result["prompt_rows"])
     )
+
+
+def test_policy_campaign_publishes_canonical_timing_for_assembly():
+    def mutate_run(run, timeline_repeat_index):
+        sequence_offset = (timeline_repeat_index + 1) * 4
+        for sequence_index, row in enumerate(
+            run["timing"]["per_request"]
+        ):
+            row["sequence_id"] = sequence_offset + sequence_index
+
+    result = _run_command_timeline_campaign(mutate_run=mutate_run)
+
+    for run in result["warmup_runs"] + result["measured_runs"]:
+        timing = run["timing"]
+        assert set(timing) == {
+            "request_count",
+            "total_output_tokens",
+            "batch_elapsed_ns",
+            "per_request",
+        }
+        assert isinstance(timing["batch_elapsed_ns"], int)
+        assert timing["batch_elapsed_ns"] > 0
+        assert [
+            row["sequence_id"] for row in timing["per_request"]
+        ] == [0, 1, 2, 3]
+        for row in timing["per_request"]:
+            assert set(row) == {
+                "sequence_id",
+                "output_tokens",
+                "ttft_ns",
+                "tpot_ns",
+                "completion_latency_ns",
+            }
+            assert all(
+                isinstance(row[key], int) and row[key] > 0
+                for key in (
+                    "ttft_ns",
+                    "tpot_ns",
+                    "completion_latency_ns",
+                )
+            )
 
 
 def test_policy_campaign_rejects_diagnostic_counts_without_timeline():

@@ -144,8 +144,8 @@ def _rank_command_rows(
         **common,
     }
     if rank == 0:
-        local_finished = 40_000_000 + cuda_ns
-        ack_started = 40_000_000 + queue_debt_ns + cuda_ns
+        local_finished = 40_000_000 + queue_debt_ns + cuda_ns
+        ack_started = local_finished
         prior.update({
             "event_woken_monotonic_ns": None,
             "envelope_read_monotonic_ns": None,
@@ -732,6 +732,36 @@ def test_artifact_rejects_cross_graph_epoch_identity_drift():
         )
 
 
+def test_artifact_accepts_cross_graph_epoch_capture_time_variation():
+    raw = _raw_epochs()
+    graph_keys = [
+        identity.key
+        for identity in diagnostic.expected_epoch_identities()
+        if identity.label == "graph"
+    ]
+    worker = raw[graph_keys[-1]]["worker"]
+    for run in worker["warmup_runs"] + worker["measured_runs"]:
+        for resource in run["correctness"]["rank_graph_resources"]:
+            resource["total_capture_ns"] += 1_000_000 + resource["rank"]
+
+    artifact = diagnostic.build_command_timeline_artifact(
+        metadata={
+            "configuration": diagnostic.EXACT_CONFIGURATION,
+            "provenance": {"run_tag": "graph-capture-time-variation"},
+        },
+        epoch_raw_inputs=raw,
+        input_files={
+            "epochs": {
+                "path": "workers/epochs.json",
+                "sha256": "1" * 64,
+            },
+        },
+        source_files={"tools/source.py": "2" * 64},
+    )
+
+    assert artifact["schema_version"] == diagnostic.SCHEMA_VERSION
+
+
 @pytest.mark.parametrize(
     ("mode", "mutation", "message"),
     [
@@ -891,6 +921,72 @@ def test_timeline_join_computes_exact_components_and_conservation():
     assert repeat["conservation"]["passed"] is True
 
 
+def test_timeline_join_accepts_json_sorted_engine_phase_keys():
+    worker = _worker("graph")
+    for step in worker["measured_runs"][0]["runtime"][
+        "command_timeline"
+    ]["engine_steps"]:
+        step["phases"] = dict(sorted(step["phases"].items()))
+
+    repeat = diagnostic.join_repeat_timeline(worker, 0)
+
+    assert list(repeat["engine_steps"][0]["phases"]) == list(
+        diagnostic.ENGINE_STEP_PHASES
+    )
+
+
+def test_timeline_join_accepts_async_cuda_duration_beyond_cpu_wall():
+    worker = _worker("graph")
+    row = worker["measured_runs"][0]["runtime"]["command_timeline"][
+        "cuda_rank_snapshots"
+    ][0]["steps"][0]
+    row["cuda_ns"] = row["wall_ns"] + 500_000_000
+    row["non_cuda_upper_bound_ns"] = 0
+
+    repeat = diagnostic.join_repeat_timeline(worker, 0)
+
+    assert repeat["cuda_steps"][0]["cuda_ns"] == row["cuda_ns"]
+    assert repeat["cuda_steps"][0]["attributed_cuda_ns"] == row["wall_ns"]
+    assert repeat["cuda_steps"][0]["non_cuda_upper_bound_ns"] == 0
+
+
+def test_timeline_join_accepts_spec_verify_cuda_kind_with_decode_step():
+    worker = _worker("graph")
+    timeline = worker["measured_runs"][0]["runtime"]["command_timeline"]
+    for snapshot in timeline["rank_snapshots"]:
+        command = snapshot["rows"][1]
+        command["method_name"] = "run_spec_verify_batch"
+        command["batch_kind"] = "decode"
+    timeline["engine_steps"][0]["batch_kind"] = "decode"
+    for snapshot in timeline["cuda_rank_snapshots"]:
+        snapshot["steps"][0]["batch_kind"] = "spec_verify"
+
+    repeat = diagnostic.join_repeat_timeline(worker, 0)
+
+    assert repeat["cuda_steps"][0]["batch_kind"] == "spec_verify"
+    assert repeat["engine_steps"][0]["batch_kind"] == "decode"
+
+
+def test_timeline_conservation_uses_command_wall_not_cuda_attribution():
+    worker = _worker("eager")
+    timeline = worker["measured_runs"][0]["runtime"]["command_timeline"]
+    for snapshot in timeline["cuda_rank_snapshots"]:
+        row = snapshot["steps"][0]
+        row["cuda_ns"] -= 50_000_000
+        row["non_cuda_upper_bound_ns"] = row["wall_ns"] - row["cuda_ns"]
+
+    repeat = diagnostic.join_repeat_timeline(worker, 0)
+
+    assert repeat["components_ns"]["worker_cuda_execution"] == 320_000_000
+    assert repeat["conservation"] == {
+        "step_wall_ns": 490_000_000,
+        "attributed_ns": 490_000_000,
+        "residual_ns": 0,
+        "tolerance_ns": 4_900_000,
+        "passed": True,
+    }
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -979,10 +1075,10 @@ def test_timeline_join_computes_exact_components_and_conservation():
             lambda run: run["runtime"]["command_timeline"][
                 "cuda_rank_snapshots"
             ][3]["steps"][0].__setitem__(
-                "cuda_ns",
-                400_000_001,
+                "non_cuda_upper_bound_ns",
+                1,
             ),
-            "wall",
+            "upper bound",
         ),
         (
             lambda run: run["runtime"]["command_timeline"][
@@ -1091,6 +1187,19 @@ def test_timeline_identities_reject_boolean_integer_aliases(field):
                 finished_monotonic_ns=470_000_000,
             ),
             "overlap",
+        ),
+        (
+            lambda timeline: timeline["cuda_rank_snapshots"][0][
+                "steps"
+            ][0].__setitem__("batch_kind", "unknown-callback"),
+            "batch kind",
+        ),
+        (
+            lambda timeline: timeline["engine_steps"][0].__setitem__(
+                "batch_kind",
+                "other-scheduler-kind",
+            ),
+            "batch kind",
         ),
     ],
 )

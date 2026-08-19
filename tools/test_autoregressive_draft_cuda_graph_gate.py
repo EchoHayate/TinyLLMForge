@@ -2484,25 +2484,33 @@ def test_command_timeline_telemetry_alignment_uses_real_unix_only_worker_bounds(
         "command_timeline_runner_unix_telemetry_test"
     )
     gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    warmup_run = None
     measured_runs = []
     gpu_rows = []
     host_rows = []
-    for repeat in range(5):
-        start = 1_800_000_000_000_000_000 + repeat * 1_000_000_000
+    for timeline_repeat_index in range(6):
+        start = (
+            1_800_000_000_000_000_000
+            + timeline_repeat_index * 1_000_000_000
+        )
         finish = start + 900_000_000
-        measured_runs.append({
-            "repeat": repeat,
-            "command_timeline_repeat_index": repeat,
+        run = {
+            "repeat": timeline_repeat_index - 1,
+            "command_timeline_repeat_index": timeline_repeat_index,
             "campaign_interval": {
                 "started_at_unix_ns": start,
                 "finished_at_unix_ns": finish,
             },
-        })
+        }
+        if timeline_repeat_index == 0:
+            warmup_run = run
+        else:
+            measured_runs.append(run)
         for gpu_index, gpu_uuid in enumerate(gpu_uuids):
             gpu_rows.append({
                 "sampled_at_unix_ns": start + 400_000_000,
                 "sampled_at_monotonic_ns": 10_000_000_000
-                + repeat * 1_000_000_000
+                + timeline_repeat_index * 1_000_000_000
                 + gpu_index,
                 "gpu_index": gpu_index,
                 "gpu_uuid": gpu_uuid,
@@ -2521,9 +2529,11 @@ def test_command_timeline_telemetry_alignment_uses_real_unix_only_worker_bounds(
             "schema_version": 1,
             "sampled_at_unix_ns": start + 500_000_000,
             "sampled_at_monotonic_ns": (
-                10_000_000_000 + repeat * 1_000_000_000 + 100
+                10_000_000_000
+                + timeline_repeat_index * 1_000_000_000
+                + 100
             ),
-            "cpu_user_ticks": repeat,
+            "cpu_user_ticks": timeline_repeat_index,
         })
     gpu_path = tmp_path / "gpu.jsonl"
     host_path = tmp_path / "host.jsonl"
@@ -2537,12 +2547,22 @@ def test_command_timeline_telemetry_alignment_uses_real_unix_only_worker_bounds(
     )
 
     attached = runner._attach_epoch_telemetry(
-        {"measured_runs": measured_runs},
+        {
+            "warmup_runs": [warmup_run],
+            "measured_runs": measured_runs,
+        },
         gpu_path=gpu_path,
         host_path=host_path,
         gpu_uuids=gpu_uuids,
     )
 
+    assert {
+        row["gpu_uuid"]
+        for row in attached["warmup_runs"][0]["telemetry"]["gpu_rows"]
+    } == set(gpu_uuids)
+    assert len(
+        attached["warmup_runs"][0]["telemetry"]["host_rows"]
+    ) == 1
     for repeat, run in enumerate(attached["measured_runs"]):
         assert run["campaign_interval"]["started_at_unix_ns"] == (
             measured_runs[repeat]["campaign_interval"][

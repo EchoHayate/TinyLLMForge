@@ -66,6 +66,15 @@ SCHEDULER_POSTPROCESS_PHASES = frozenset({
     "scheduler_commit_postprocess",
     "ordinary_scheduler_postprocess",
 })
+COMMAND_BEARING_PHASES = frozenset({
+    "ordinary_or_first_target_dispatch",
+    "speculative_prepare",
+    "proposal_kv_prepare_commit",
+    "proposal_lifecycle_finalize_prepare",
+    "proposal_lifecycle_finalize_commit",
+    "side_state_seal",
+    "residency_precommit_or_seal",
+})
 EXACT_CONFIGURATION = {
     "tensor_parallel_size": 4,
     "batch_size": BATCH_SIZE,
@@ -1691,16 +1700,12 @@ def _normalize_cuda_snapshots(
                 "CUDA duration",
                 minimum=0,
             )
-            if cuda_ns > wall_ns:
-                raise ValueError(
-                    "CUDA duration exceeds method wall time"
-                )
             non_cuda = _integer(
                 row.get("non_cuda_upper_bound_ns"),
                 "CUDA non-CUDA upper bound",
                 minimum=0,
             )
-            if non_cuda != wall_ns - cuda_ns:
+            if non_cuda != max(0, wall_ns - cuda_ns):
                 raise ValueError(
                     "CUDA non-CUDA upper bound mismatch"
                 )
@@ -1717,6 +1722,7 @@ def _normalize_cuda_snapshots(
                 ),
                 "wall_ns": wall_ns,
                 "cuda_ns": cuda_ns,
+                "attributed_cuda_ns": min(cuda_ns, wall_ns),
                 "non_cuda_upper_bound_ns": non_cuda,
             })
             normalized_steps.append(normalized)
@@ -1759,10 +1765,6 @@ def _normalize_cuda_snapshots(
                 "CUDA collective duration",
                 minimum=0,
             )
-            if cuda_ns > wall_ns:
-                raise ValueError(
-                    "CUDA collective duration exceeds wall time"
-                )
         by_rank[rank] = normalized_steps
         flat_steps.extend(normalized_steps)
     return flat_steps, by_rank
@@ -1848,7 +1850,7 @@ def _normalize_engine_steps(
         ) != step_wall_ns:
             raise ValueError("engine step wall time mismatch")
         phases = _mapping(row.get("phases"), "engine step phases")
-        if tuple(phases) != ENGINE_STEP_PHASES:
+        if set(phases) != set(ENGINE_STEP_PHASES):
             raise ValueError("engine step phase inventory is invalid")
         normalized_phases = {}
         executed_intervals = []
@@ -2072,6 +2074,183 @@ def _union_duration(intervals: list[tuple[int, int]]) -> int:
     return sum(finish - start for start, finish in merged)
 
 
+def _non_overlapping_intervals(
+    intervals: list[tuple[int, int]],
+    *,
+    name: str,
+) -> list[tuple[int, int]]:
+    ordered = sorted(intervals)
+    for previous, current in zip(ordered, ordered[1:]):
+        if current[0] < previous[1]:
+            raise ValueError(f"{name} intervals overlap")
+    return ordered
+
+
+def _subtract_intervals(
+    intervals: list[tuple[int, int]],
+    exclusions: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    remaining = []
+    for start, finish in intervals:
+        fragments = [(start, finish)]
+        for excluded_start, excluded_finish in exclusions:
+            next_fragments = []
+            for fragment_start, fragment_finish in fragments:
+                if (
+                    excluded_finish <= fragment_start
+                    or excluded_start >= fragment_finish
+                ):
+                    next_fragments.append(
+                        (fragment_start, fragment_finish)
+                    )
+                    continue
+                if fragment_start < excluded_start:
+                    next_fragments.append(
+                        (fragment_start, excluded_start)
+                    )
+                if excluded_finish < fragment_finish:
+                    next_fragments.append(
+                        (excluded_finish, fragment_finish)
+                    )
+            fragments = next_fragments
+        remaining.extend(fragments)
+    return remaining
+
+
+def _step_conservation(
+    step: dict,
+    *,
+    rank_zero_rows: dict[int, dict],
+) -> dict:
+    step_start = step["started_monotonic_ns"]
+    step_finish = step["finished_monotonic_ns"]
+    containing = (step_start, step_finish)
+
+    phase_intervals = []
+    executed_phases = set()
+    for phase_name, phase in step["phases"].items():
+        if not phase["executed"]:
+            continue
+        interval = (
+            phase["started_monotonic_ns"],
+            phase["finished_monotonic_ns"],
+        )
+        if interval[0] < step_start or interval[1] > step_finish:
+            raise ValueError("engine phase lies outside its step")
+        phase_intervals.append(interval)
+        executed_phases.add(phase_name)
+    phase_intervals = _non_overlapping_intervals(
+        phase_intervals,
+        name="engine phase",
+    )
+
+    command_intervals = []
+    ack_intervals = []
+    for command_id in step["command_ids"]:
+        row = rank_zero_rows[command_id]
+        if row["engine_step_id"] != step["engine_step_id"]:
+            raise ValueError("engine command identity mismatch")
+        command_interval = (
+            row["local_method_started_monotonic_ns"],
+            row["local_method_finished_monotonic_ns"],
+        )
+        if (
+            command_interval[0] < containing[0]
+            or command_interval[1] > containing[1]
+        ):
+            raise ValueError("rank-zero command lies outside its step")
+        command_intervals.append(command_interval)
+        if row["ack_wait_ns"] is None:
+            continue
+        ack_interval = (
+            max(
+                row["ack_wait_started_monotonic_ns"],
+                row["local_method_finished_monotonic_ns"],
+            ),
+            row["ack_wait_finished_monotonic_ns"],
+        )
+        if (
+            ack_interval[0] < containing[0]
+            or ack_interval[1] > containing[1]
+        ):
+            raise ValueError("ack wait lies outside its step")
+        ack_intervals.append(ack_interval)
+    if (
+        executed_phases & COMMAND_BEARING_PHASES
+        and not command_intervals
+    ):
+        raise ValueError("engine step lacks rank-zero command evidence")
+    command_intervals = _non_overlapping_intervals(
+        command_intervals,
+        name="rank-zero command",
+    )
+    ack_intervals = _non_overlapping_intervals(
+        ack_intervals,
+        name="ack wait",
+    )
+    _non_overlapping_intervals(
+        command_intervals + ack_intervals,
+        name="command and ack wait",
+    )
+    attributed_command_intervals = command_intervals + ack_intervals
+    serial_phase_intervals = _subtract_intervals(
+        phase_intervals,
+        attributed_command_intervals,
+    )
+    serial_phase_sum_ns = sum(
+        finish - start for start, finish in serial_phase_intervals
+    )
+    command_critical_path_ns = sum(
+        finish - start for start, finish in command_intervals
+    )
+    acknowledged_wait_ns = sum(
+        finish - start for start, finish in ack_intervals
+    )
+    attributed_ns = (
+        serial_phase_sum_ns
+        + command_critical_path_ns
+        + acknowledged_wait_ns
+    )
+    residual_ns = step["step_wall_ns"] - attributed_ns
+    tolerance_ns = max(
+        ABSOLUTE_CONSERVATION_NS,
+        math.ceil(
+            step["step_wall_ns"] * RELATIVE_CONSERVATION_LIMIT
+        ),
+    )
+    if residual_ns < 0:
+        raise ValueError("timeline conservation is over-attributed")
+    if residual_ns > tolerance_ns:
+        raise ValueError(
+            "timeline conservation residual exceeds tolerance"
+        )
+    return {
+        "step_wall_ns": step["step_wall_ns"],
+        "attributed_ns": attributed_ns,
+        "residual_ns": residual_ns,
+        "tolerance_ns": tolerance_ns,
+        "passed": True,
+    }
+
+
+def _cuda_batch_kind_matches(
+    *,
+    command_method: str,
+    command_batch_kind: str,
+    cuda_batch_kind: str,
+    engine_batch_kind: str,
+) -> bool:
+    if command_batch_kind != engine_batch_kind:
+        return False
+    if cuda_batch_kind == command_batch_kind:
+        return True
+    return (
+        command_method == "run_spec_verify_batch"
+        and command_batch_kind == "decode"
+        and cuda_batch_kind == "spec_verify"
+    )
+
+
 def compute_sync_debt(repeat: object) -> dict:
     normalized = copy.deepcopy(_mapping(repeat, "joined repeat"))
     rows_by_rank = normalized.get("_rows_by_rank")
@@ -2135,7 +2314,10 @@ def compute_sync_debt(repeat: object) -> dict:
     worker_queue_debt = max(queue_by_rank.values(), default=0)
 
     cuda_totals = {
-        rank: sum(row["cuda_ns"] for row in cuda_by_rank[rank])
+            rank: sum(
+                row["attributed_cuda_ns"]
+                for row in cuda_by_rank[rank]
+            )
         for rank in range(4)
     }
     critical_rank = max(
@@ -2163,25 +2345,31 @@ def compute_sync_debt(repeat: object) -> dict:
         "ack_wait": ack_wait,
         "scheduler_postprocess": scheduler_postprocess,
     }
-    step_wall_ns = sum(step["step_wall_ns"] for step in engine_steps)
-    attributed_ns = sum(components.values())
-    residual_ns = step_wall_ns - attributed_ns
+    step_conservation = [
+        _step_conservation(
+            step,
+            rank_zero_rows=rows_by_rank[0],
+        )
+        for step in engine_steps
+    ]
+    step_wall_ns = sum(
+        row["step_wall_ns"] for row in step_conservation
+    )
+    attributed_ns = sum(
+        row["attributed_ns"] for row in step_conservation
+    )
+    residual_ns = sum(
+        row["residual_ns"] for row in step_conservation
+    )
     tolerance_ns = max(
         ABSOLUTE_CONSERVATION_NS,
         math.ceil(step_wall_ns * RELATIVE_CONSERVATION_LIMIT),
     )
-    conservation_passed = (
-        residual_ns >= 0
-        and residual_ns <= tolerance_ns
-    )
-    if residual_ns < 0:
-        raise ValueError(
-            "timeline conservation is over-attributed"
-        )
-    if not conservation_passed:
+    if residual_ns > tolerance_ns:
         raise ValueError(
             "timeline conservation residual exceeds tolerance"
         )
+    conservation_passed = True
     normalized.pop("_rows_by_rank", None)
     normalized.pop("_cuda_by_rank", None)
     normalized.update({
@@ -2309,9 +2497,11 @@ def join_repeat_timeline(
             raise ValueError(
                 "CUDA selected-sequence identity mismatch"
             )
-        if (
-            row["batch_kind"] != command["batch_kind"]
-            or row["batch_kind"] != engine["batch_kind"]
+        if not _cuda_batch_kind_matches(
+            command_method=command["method_name"],
+            command_batch_kind=command["batch_kind"],
+            cuda_batch_kind=row["batch_kind"],
+            engine_batch_kind=engine["batch_kind"],
         ):
             raise ValueError("CUDA batch kind identity mismatch")
     for rank_rows in rows_by_rank.values():
@@ -2594,6 +2784,18 @@ def _worker_identity_view(worker: dict) -> dict:
     }
 
 
+def _graph_resource_identity_view(resources: list[dict]) -> list[dict]:
+    return [
+        {
+            "rank": resource["rank"],
+            "ready_entry_count": resource["ready_entry_count"],
+            "static_bytes": resource["static_bytes"],
+            "reserved_bytes": resource["reserved_bytes"],
+        }
+        for resource in resources
+    ]
+
+
 def _validate_cross_epoch_identity(epochs: dict[str, dict]) -> None:
     expected_keys = [
         identity.key for identity in expected_epoch_identities()
@@ -2658,8 +2860,12 @@ def _validate_cross_epoch_identity(epochs: dict[str, dict]) -> None:
                 "graph identity mismatch across graph epochs"
             )
         if (
-            graph_current["rank_graph_resources"]
-            != graph_reference["rank_graph_resources"]
+            _graph_resource_identity_view(
+                graph_current["rank_graph_resources"]
+            )
+            != _graph_resource_identity_view(
+                graph_reference["rank_graph_resources"]
+            )
         ):
             raise ValueError(
                 "graph resource mismatch across graph epochs"

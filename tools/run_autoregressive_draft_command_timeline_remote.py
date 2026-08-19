@@ -2368,10 +2368,13 @@ def _attach_epoch_telemetry(
     gpu_samples = _load_json_lines(gpu_path, name="GPU telemetry")
     host_samples = _load_json_lines(host_path, name="host telemetry")
     result = copy.deepcopy(worker)
+    warmup = result.get("warmup_runs", [])
+    if not isinstance(warmup, list) or len(warmup) not in (0, 1):
+        raise ValueError("worker must contain at most one warmup run")
     measured = result.get("measured_runs")
     if not isinstance(measured, list) or len(measured) != 5:
         raise ValueError("worker must contain five measured runs")
-    for run in measured:
+    for run in [*warmup, *measured]:
         interval = run.get("campaign_interval")
         repeat_identity = run.get("command_timeline_repeat_index")
         if not isinstance(interval, dict):
