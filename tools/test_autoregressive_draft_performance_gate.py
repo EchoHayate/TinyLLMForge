@@ -1685,6 +1685,10 @@ def test_policy_campaign_command_timeline_is_exact_tp4_b4_q4_and_once():
         4,
     ]
     assert [
+        run["command_timeline_repeat_index"]
+        for run in result["warmup_runs"] + result["measured_runs"]
+    ] == [0, 1, 2, 3, 4, 5]
+    assert [
         run["correctness"]["rank_graph_counters"][0]["replays"]
         for run in result["warmup_runs"] + result["measured_runs"]
     ] == [4, 8, 12, 16, 20, 24]

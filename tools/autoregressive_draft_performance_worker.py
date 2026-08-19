@@ -1658,10 +1658,15 @@ def run_policy_campaign(
                         finished_at_monotonic_ns
                     ),
                 })
-            return {
+            completed = {
                 **result,
                 "campaign_interval": campaign_interval,
             }
+            if command_timeline:
+                completed["command_timeline_repeat_index"] = (
+                    command_timeline_repeat_index
+                )
+            return completed
 
         warmup_results = [
             run_once(repeat, repeat + warmup_runs)
