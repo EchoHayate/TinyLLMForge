@@ -1653,6 +1653,7 @@ def test_command_timeline_epoch_samplers_capture_stderr_without_pipes(
 
     _processes, handles = runner._start_epoch_samplers(
         gpu_indices=[0, 1, 2, 3],
+        gpu_uuids=["GPU-0", "GPU-1", "GPU-2", "GPU-3"],
         gpu_path=gpu_path,
         host_path=host_path,
     )
@@ -1690,6 +1691,7 @@ def test_command_timeline_epoch_samplers_retain_full_gpu_and_host_fields(
     monkeypatch.setattr(runner.subprocess, "Popen", FakeProcess)
     _processes, handles = runner._start_epoch_samplers(
         gpu_indices=[0, 1, 2, 3],
+        gpu_uuids=["GPU-0", "GPU-1", "GPU-2", "GPU-3"],
         gpu_path=tmp_path / "gpu.jsonl",
         host_path=tmp_path / "host.jsonl",
         source_root="/frozen/source",
@@ -1699,18 +1701,17 @@ def test_command_timeline_epoch_samplers_retain_full_gpu_and_host_fields(
         gpu_command = " ".join(popen_calls[0][0])
         host_command = popen_calls[1][0]
         for field in (
-            "timestamp",
-            "pstate",
-            "clocks.current.sm",
-            "clocks.current.memory",
-            "power.draw",
-            "temperature.gpu",
-            "utilization.gpu",
-            "utilization.memory",
-            "memory.used",
-            "clocks_throttle_reasons.active",
+            "nvmlDeviceGetPerformanceState",
+            "nvmlDeviceGetClockInfo",
+            "nvmlDeviceGetPowerUsage",
+            "nvmlDeviceGetTemperature",
+            "nvmlDeviceGetUtilizationRates",
+            "nvmlDeviceGetMemoryInfo",
+            "nvmlDeviceGetCurrentClocksThrottleReasons",
         ):
             assert field in gpu_command
+        assert '"index": 0' in gpu_command
+        assert '"uuid": "GPU-0"' in gpu_command
         assert host_command == [
             runner.REMOTE_PYTHON,
             "/frozen/source/tools/autoregressive_draft_host_sampler.py",
@@ -1722,176 +1723,247 @@ def test_command_timeline_epoch_samplers_retain_full_gpu_and_host_fields(
             handle.close()
 
 
-def _write_fake_nvidia_smi(tmp_path, body):
-    path = tmp_path / "nvidia-smi"
-    path.write_text(
-        "#!/usr/bin/env python3\n" + body,
-        encoding="utf-8",
+def _fake_nvml_prelude(
+    *,
+    shutdown_path,
+    query_failure=None,
+    uuid_mismatch=False,
+):
+    return f"""
+import ctypes
+from pathlib import Path
+
+class FakeFunction:
+    def __init__(self, callback):
+        self.callback = callback
+        self.argtypes = None
+        self.restype = None
+    def __call__(self, *arguments):
+        return self.callback(*arguments)
+
+class FakeNvml:
+    def __init__(self):
+        self.nvmlInit_v2 = FakeFunction(lambda: 0)
+        self.nvmlShutdown = FakeFunction(self.shutdown)
+        self.nvmlErrorString = FakeFunction(
+            lambda _result: b"fake NVML failure"
+        )
+        self.nvmlDeviceGetHandleByIndex_v2 = FakeFunction(
+            self.get_handle
+        )
+        self.nvmlDeviceGetUUID = FakeFunction(self.get_uuid)
+        self.nvmlDeviceGetPerformanceState = FakeFunction(
+            self.get_pstate
+        )
+        self.nvmlDeviceGetClockInfo = FakeFunction(self.get_clock)
+        self.nvmlDeviceGetPowerUsage = FakeFunction(self.get_power)
+        self.nvmlDeviceGetTemperature = FakeFunction(
+            self.get_temperature
+        )
+        self.nvmlDeviceGetUtilizationRates = FakeFunction(
+            self.get_utilization
+        )
+        self.nvmlDeviceGetMemoryInfo = FakeFunction(self.get_memory)
+        self.nvmlDeviceGetCurrentClocksThrottleReasons = FakeFunction(
+            self.get_throttle
+        )
+
+    def shutdown(self):
+        path = Path({str(shutdown_path)!r})
+        count = int(path.read_text()) if path.exists() else 0
+        path.write_text(str(count + 1))
+        return 0
+
+    def get_handle(self, index, output):
+        output._obj.value = int(index) + 100
+        return 0
+
+    def get_uuid(self, device, output, _length):
+        index = int(device.value) - 100
+        value = (
+            f"GPU-{{index + 1}}" if {uuid_mismatch!r}
+            else f"GPU-{{index}}"
+        )
+        output.value = value.encode()
+        return 0
+
+    def get_pstate(self, _device, output):
+        output._obj.value = 0
+        return 0
+
+    def get_clock(self, _device, clock_type, output):
+        output._obj.value = 1410 if int(clock_type) == 1 else 1512
+        return 0
+
+    def get_power(self, _device, output):
+        if {query_failure!r} == "nvmlDeviceGetPowerUsage":
+            return 3
+        output._obj.value = 70000
+        return 0
+
+    def get_temperature(self, _device, _sensor, output):
+        output._obj.value = 40
+        return 0
+
+    def get_utilization(self, _device, output):
+        output._obj.gpu = 50
+        output._obj.memory = 10
+        return 0
+
+    def get_memory(self, _device, output):
+        output._obj.total = 1024 * 1024 * 1024
+        output._obj.free = 924 * 1024 * 1024
+        output._obj.used = 100 * 1024 * 1024
+        return 0
+
+    def get_throttle(self, _device, output):
+        output._obj.value = 0
+        return 0
+
+ctypes.CDLL = lambda _name: FakeNvml()
+"""
+
+
+def _direct_nvml_inventory():
+    return [
+        {"index": index, "uuid": f"GPU-{index}"}
+        for index in (2, 3, 4, 6)
+    ]
+
+
+def _direct_nvml_sampler_command(
+    runner,
+    *,
+    shutdown_path,
+    query_failure=None,
+    uuid_mismatch=False,
+    inventory=None,
+):
+    program = (
+        _fake_nvml_prelude(
+            shutdown_path=shutdown_path,
+            query_failure=query_failure,
+            uuid_mismatch=uuid_mismatch,
+        )
+        + "\n"
+        + runner._build_gpu_sampler_script()
     )
-    path.chmod(0o755)
-    return path
+    return [
+        sys.executable,
+        "-c",
+        program,
+        json.dumps(
+            _direct_nvml_inventory()
+            if inventory is None
+            else inventory
+        ),
+    ]
 
 
-def _run_gpu_sampler_script(runner, tmp_path, body):
-    _write_fake_nvidia_smi(tmp_path, body)
-    environment = os.environ.copy()
-    environment["PATH"] = (
-        str(tmp_path) + os.pathsep + environment.get("PATH", "")
-    )
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            runner._build_gpu_sampler_script(),
-            json.dumps([2, 3, 4, 6]),
-        ],
-        env=environment,
-        text=True,
-        capture_output=True,
-        timeout=10,
-        check=False,
-    )
-
-
-def test_command_timeline_persistent_gpu_sampler_emits_complete_snapshots(
+def test_command_timeline_direct_nvml_sampler_emits_complete_snapshot(
     tmp_path,
 ):
     runner = _load_command_timeline_runner(
-        "command_timeline_runner_persistent_gpu_sampler_test"
+        "command_timeline_runner_direct_nvml_sampler_test"
     )
-    arguments_path = tmp_path / "arguments.json"
-    body = f"""
-import json
-from pathlib import Path
-import sys
+    sampler = subprocess.Popen(
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=tmp_path / "shutdown-count",
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert sampler.stdout is not None
+    rows = [json.loads(sampler.stdout.readline()) for _ in range(4)]
+    sampler.terminate()
+    _stdout, stderr = sampler.communicate(timeout=5)
 
-Path({str(arguments_path)!r}).write_text(
-    json.dumps(sys.argv[1:]),
-    encoding="utf-8",
-)
-for snapshot in range(2):
-    for index in (2, 3, 4, 6):
-        print(
-            "2026/08/19 18:00:00.000, "
-            f"{{index}}, GPU-{{index}}, P0, 1410, 1512, "
-            "70.0, 40, 50, 10, 100, 0x0",
-            flush=True,
-        )
-"""
-    result = _run_gpu_sampler_script(runner, tmp_path, body)
-
-    assert result.returncode == 0, result.stderr
-    rows = [
-        json.loads(line)
-        for line in result.stdout.splitlines()
-        if line.strip()
+    assert sampler.returncode == 0, stderr
+    assert [row["gpu_index"] for row in rows] == [2, 3, 4, 6]
+    assert [row["gpu_uuid"] for row in rows] == [
+        "GPU-2",
+        "GPU-3",
+        "GPU-4",
+        "GPU-6",
     ]
-    assert len(rows) == 8
-    for offset in (0, 4):
-        snapshot = rows[offset:offset + 4]
-        assert [row["gpu_index"] for row in snapshot] == [2, 3, 4, 6]
-        assert len({
-            row["sampled_at_unix_ns"] for row in snapshot
-        }) == 1
-        assert len({
-            row["sampled_at_monotonic_ns"] for row in snapshot
-        }) == 1
-
-    arguments = json.loads(arguments_path.read_text(encoding="utf-8"))
-    assert "--id=2,3,4,6" in arguments
-    assert "--loop-ms=200" in arguments
-    assert "--format=csv,noheader,nounits" in arguments
-    assert any(
-        argument.startswith("--query-gpu=timestamp,index,uuid,")
-        for argument in arguments
-    )
+    assert len({row["sampled_at_unix_ns"] for row in rows}) == 1
+    assert len({row["sampled_at_monotonic_ns"] for row in rows}) == 1
+    assert all(row["pstate"] == "P0" for row in rows)
+    assert all(row["power_w"] == 70.0 for row in rows)
+    assert all(row["memory_used_mib"] == 100 for row in rows)
 
 
 @pytest.mark.parametrize(
-    ("indices", "message"),
+    ("kwargs", "message"),
     (
-        ((2, 3, 4), "incomplete GPU snapshot"),
-        ((2, 3, 2), "duplicate GPU row"),
+        ({"uuid_mismatch": True}, "GPU UUID inventory changed"),
+        (
+            {"query_failure": "nvmlDeviceGetPowerUsage"},
+            "nvmlDeviceGetPowerUsage",
+        ),
+        (
+            {"inventory": [
+                {"index": 2, "uuid": "GPU-2"},
+                {"index": 3, "uuid": "GPU-3"},
+                {"index": 4, "uuid": "GPU-4"},
+                {"index": 4, "uuid": "GPU-6"},
+            ]},
+            "GPU inventory is invalid",
+        ),
     ),
 )
-def test_command_timeline_persistent_gpu_sampler_rejects_bad_snapshots(
+def test_command_timeline_direct_nvml_sampler_fails_closed(
     tmp_path,
-    indices,
+    kwargs,
     message,
 ):
     runner = _load_command_timeline_runner(
-        "command_timeline_runner_bad_gpu_snapshot_test"
+        "command_timeline_runner_direct_nvml_failure_test"
         + message.replace(" ", "_")
     )
-    body = """
-for index in %r:
-    print(
-        "2026/08/19 18:00:00.000, "
-        f"{index}, GPU-{index}, P0, 1410, 1512, "
-        "70.0, 40, 50, 10, 100, 0x0",
-        flush=True,
+    result = subprocess.run(
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=tmp_path / "shutdown-count",
+            **kwargs,
+        ),
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
     )
-""" % (indices,)
-    result = _run_gpu_sampler_script(runner, tmp_path, body)
 
     assert result.returncode != 0
     assert message in result.stderr
     assert result.stdout == ""
 
 
-def test_command_timeline_persistent_gpu_sampler_reaps_child_on_sigterm(
+def test_command_timeline_direct_nvml_sampler_shutdowns_once_on_sigterm(
     tmp_path,
 ):
     runner = _load_command_timeline_runner(
-        "command_timeline_runner_gpu_sampler_reap_test"
+        "command_timeline_runner_direct_nvml_shutdown_test"
     )
-    pid_path = tmp_path / "nvidia-smi.pid"
-    _write_fake_nvidia_smi(
-        tmp_path,
-        f"""
-from pathlib import Path
-import os
-import time
-
-Path({str(pid_path)!r}).write_text(str(os.getpid()), encoding="utf-8")
-while True:
-    time.sleep(1)
-""",
-    )
-    environment = os.environ.copy()
-    environment["PATH"] = (
-        str(tmp_path) + os.pathsep + environment.get("PATH", "")
-    )
+    shutdown_path = tmp_path / "shutdown-count"
     sampler = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            runner._build_gpu_sampler_script(),
-            json.dumps([2, 3, 4, 6]),
-        ],
-        env=environment,
+        _direct_nvml_sampler_command(
+            runner,
+            shutdown_path=shutdown_path,
+        ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    deadline = time.monotonic() + 5
-    while not pid_path.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert pid_path.exists()
-    child_pid = int(pid_path.read_text(encoding="utf-8"))
-
+    assert sampler.stdout is not None
+    for _ in range(4):
+        sampler.stdout.readline()
     sampler.terminate()
-    sampler.wait(timeout=5)
+    _stdout, stderr = sampler.communicate(timeout=5)
 
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        try:
-            os.kill(child_pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.01)
-    else:
-        pytest.fail("owned nvidia-smi child was not reaped")
+    assert sampler.returncode == 0, stderr
+    assert shutdown_path.read_text() == "1"
 
 
 def test_command_timeline_telemetry_attachment_rejects_boundary_only_gpu_rows(
