@@ -1387,6 +1387,28 @@ def test_command_timeline_runner_uses_sitian_only_paths_and_safe_ssh():
         assert f"{name}={runner.REMOTE_TASK_ROOT}/runtime/" in remote_shell
 
 
+def test_command_timeline_runner_supports_optional_existing_control_path(
+    monkeypatch,
+):
+    control_path = (
+        "/Users/bytedance/.ssh/"
+        "tinyllmforge-command-timeline-20260819.sock"
+    )
+    monkeypatch.setenv(
+        "TINYLLMFORGE_SSH_CONTROL_PATH",
+        control_path,
+    )
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_control_path_test"
+    )
+
+    command = runner.build_ssh_command(["true"])
+
+    assert "ControlMaster=no" in command
+    assert f"ControlPath={control_path}" in command
+    assert "ControlPath=none" not in command
+
+
 def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
     runner = _load_command_timeline_runner(
         "command_timeline_runner_archive_test"

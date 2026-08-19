@@ -131,6 +131,10 @@ def build_epoch_schedule() -> list[tuple[str, str, str]]:
 
 
 def build_ssh_command(remote_arguments) -> list[str]:
+    control_path = os.environ.get(
+        "TINYLLMFORGE_SSH_CONTROL_PATH",
+        "none",
+    )
     runtime_directories = [
         f"{REMOTE_RUNTIME_ROOT}/scratch",
         f"{REMOTE_RUNTIME_ROOT}/pycache",
@@ -159,7 +163,7 @@ def build_ssh_command(remote_arguments) -> list[str]:
         "-o",
         "ControlMaster=no",
         "-o",
-        "ControlPath=none",
+        f"ControlPath={control_path}",
         "-o",
         "BatchMode=yes",
         "-o",
