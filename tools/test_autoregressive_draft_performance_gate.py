@@ -1807,6 +1807,39 @@ def test_policy_campaign_graph_warmup_failure_reports_rank_and_evidence():
     ) in message
 
 
+def test_policy_campaign_graph_replay_drift_reports_repeat_and_evidence():
+    def mutate_run(run, timeline_repeat_index):
+        if timeline_repeat_index == 3:
+            run["correctness"]["rank_graph_counters"][1][
+                "replays"
+            ] = 3
+
+    with pytest.raises(ValueError) as error:
+        _run_command_timeline_campaign(mutate_run=mutate_run)
+
+    message = str(error.value)
+    assert "graph replay counters did not grow by one" in message
+    assert "rank=1" in message
+    assert "measured_repeat=2" in message
+    assert "timeline_repeat_index=3" in message
+    assert "expected_replays=4" in message
+    assert (
+        'previous_counters={"capture_attempts":1,"captures":1,'
+        '"fallback_pre_replay":0,"quarantines":0,"rank":1,'
+        '"replays":3}'
+    ) in message
+    assert (
+        'counters={"capture_attempts":1,"captures":1,'
+        '"fallback_pre_replay":0,"quarantines":0,"rank":1,'
+        '"replays":3}'
+    ) in message
+    assert (
+        'resources={"rank":1,"ready_entry_count":1,'
+        '"reserved_bytes":700000000,"static_bytes":55000,'
+        '"total_capture_ns":1500000000}'
+    ) in message
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

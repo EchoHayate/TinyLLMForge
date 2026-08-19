@@ -627,7 +627,9 @@ def _validate_command_timeline_graph_lifecycle(
         if warmup_resource.get("ready_entry_count") != 1:
             raise ValueError("graph warmup ready entry count is invalid")
         previous_replays = 1
-        for counter, resources in zip(
+        previous_counter = warmup_counter
+        for measured_run, counter, resources in zip(
+            runs[1:],
             counter_rows[1:],
             resource_rows[1:],
         ):
@@ -640,7 +642,19 @@ def _validate_command_timeline_graph_lifecycle(
                 )
             if counter.get("replays") != previous_replays + 1:
                 raise ValueError(
-                    "graph replay counters did not grow by one"
+                    "graph replay counters did not grow by one: "
+                    f"rank={rank} "
+                    "measured_repeat="
+                    f"{measured_run.get('repeat')} "
+                    "timeline_repeat_index="
+                    f"{measured_run.get('command_timeline_repeat_index')} "
+                    f"expected_replays={previous_replays + 1} "
+                    "previous_counters="
+                    f"{json.dumps(previous_counter, sort_keys=True, separators=(',', ':'))} "
+                    "counters="
+                    f"{json.dumps(counter, sort_keys=True, separators=(',', ':'))} "
+                    "resources="
+                    f"{json.dumps(resources, sort_keys=True, separators=(',', ':'))}"
                 )
             if (
                 counter.get("quarantines") != 0
@@ -654,6 +668,7 @@ def _validate_command_timeline_graph_lifecycle(
                     "graph retained resources changed"
                 )
             previous_replays = counter["replays"]
+            previous_counter = counter
 
 
 def _allocator_snapshot(rank_snapshot: dict) -> dict:
