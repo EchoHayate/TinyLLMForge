@@ -12,6 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -57,6 +58,9 @@ SOURCE_PATHS = (
     "tools/autoregressive_draft_performance_worker.py",
     "tools/autoregressive_draft_performance_gate.py",
     "tools/speculative_runtime_performance_gate.py",
+    "tools/autoregressive_draft_tp1_engine_gate.py",
+    "tools/autoregressive_draft_tp4_engine_gate.py",
+    "tools/autoregressive_draft_tp4_local_gate.py",
     "tools/autoregressive_draft_cuda_graph_contract.py",
     "tools/autoregressive_draft_cuda_graph_gate.py",
     "tools/autoregressive_draft_command_timeline_diagnostic.py",
@@ -443,7 +447,19 @@ def extract_source_archive(archive_path: Path, output_root: Path) -> Path:
             ):
                 raise ValueError("source archive member is unsafe")
             seen.add(member.name)
-        archive.extractall(destination, filter="data")
+        for member in members:
+            relative = _require_safe_relative(member.name)
+            extracted_path = destination.joinpath(*relative.parts)
+            if member.isdir():
+                extracted_path.mkdir(parents=True, exist_ok=True)
+                continue
+            extracted_path.parent.mkdir(parents=True, exist_ok=True)
+            source = archive.extractfile(member)
+            if source is None:
+                raise ValueError("source archive member is unreadable")
+            with extracted_path.open("xb") as output:
+                shutil.copyfileobj(source, output)
+            extracted_path.chmod(member.mode & 0o777)
     return destination / "source"
 
 

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import ast
 import copy
+from collections import deque
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tarfile
 import types
@@ -1441,6 +1445,9 @@ def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
         "tools/autoregressive_draft_performance_worker.py",
         "tools/autoregressive_draft_performance_gate.py",
         "tools/speculative_runtime_performance_gate.py",
+        "tools/autoregressive_draft_tp1_engine_gate.py",
+        "tools/autoregressive_draft_tp4_engine_gate.py",
+        "tools/autoregressive_draft_tp4_local_gate.py",
         "tools/autoregressive_draft_cuda_graph_contract.py",
         "tools/autoregressive_draft_cuda_graph_gate.py",
         "tools/autoregressive_draft_command_timeline_diagnostic.py",
@@ -1462,6 +1469,114 @@ def test_command_timeline_source_archive_includes_worker_transitive_dependency()
         "tools/speculative_runtime_performance_gate.py"
         in runner.SOURCE_PATHS
     )
+
+
+def test_command_timeline_source_archive_covers_worker_local_import_closure(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_worker_import_closure_test"
+    )
+    tools_root = ROOT / "tools"
+    pending = deque([
+        tools_root / "autoregressive_draft_performance_worker.py",
+    ])
+    discovered = set()
+
+    while pending:
+        source_path = pending.popleft().resolve()
+        if source_path in discovered:
+            continue
+        discovered.add(source_path)
+        syntax_tree = ast.parse(
+            source_path.read_text(encoding="utf-8"),
+            filename=str(source_path),
+        )
+        for node in ast.walk(syntax_tree):
+            if isinstance(node, ast.Import):
+                module_names = [
+                    alias.name
+                    for alias in node.names
+                ]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                module_names = [node.module]
+            else:
+                continue
+            for module_name in module_names:
+                if module_name.startswith("tools."):
+                    candidate = ROOT / (
+                        module_name.replace(".", "/") + ".py"
+                    )
+                elif "." not in module_name:
+                    candidate = tools_root / f"{module_name}.py"
+                else:
+                    continue
+                if candidate.is_file():
+                    pending.append(candidate)
+
+    archived_files = {
+        ROOT / relative
+        for relative in runner.SOURCE_PATHS
+        if not relative.endswith("/")
+    }
+    missing = sorted(
+        str(path.relative_to(ROOT))
+        for path in discovered - archived_files
+    )
+
+    assert missing == []
+
+    archive_path = tmp_path / "source.tar"
+    archive_path.write_bytes(runner.build_source_archive_bytes(ROOT))
+    extracted_root = tmp_path / "extracted"
+    with tarfile.open(archive_path, "r:") as archive:
+        for member in archive.getmembers():
+            destination = extracted_root / member.name
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            assert member.isreg()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = archive.extractfile(member)
+            assert source is not None
+            destination.write_bytes(source.read())
+    source_root = extracted_root / "source"
+    import_probe = """
+import sys
+import types
+
+torch = types.ModuleType("torch")
+torch.cuda = types.SimpleNamespace(synchronize=lambda: None)
+tinyvllm = types.ModuleType("tinyvllm")
+tinyvllm.SamplingParams = object
+sys.modules["torch"] = torch
+sys.modules["tinyvllm"] = tinyvllm
+
+import autoregressive_draft_performance_worker as worker
+
+dependencies = worker._default_dependencies()
+assert dependencies["engine_factory"].__module__ == (
+    "autoregressive_draft_tp4_engine_gate"
+)
+"""
+    environment = dict(os.environ)
+    environment.update({
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": os.pathsep.join((
+            str(source_root / "tools"),
+            str(source_root),
+        )),
+    })
+    completed = subprocess.run(
+        [sys.executable, "-c", import_probe],
+        cwd=source_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_command_timeline_source_archive_rejects_symlink_component(tmp_path):
