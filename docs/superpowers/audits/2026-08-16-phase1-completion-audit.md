@@ -3016,3 +3016,252 @@ PROMOTION=NOT_PROMOTABLE
 This is an environment result, not a correctness or performance failure. No
 performance benefit may be claimed from the local toolchain tests or the
 failed admission attempts.
+
+## 2026-08-20 Bounded-Journal Source-Pair Terminal Reconciliation
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete artifact/evidence | Status |
+| --- | --- | --- |
+| Compare the pinned pre-journal baseline with the bounded-journal candidate | baseline `596e724ea87966b2ab3b47cccda08c106f9084bb`; candidate `9ea37339859b4c18d54458a2ec0c5bac0fdfc50c` | `PASS` |
+| Admit exactly four clean GPUs under the frozen threshold | GPU indices `2,3,5,6`; four frozen UUIDs; every before/after inventory status `0` | `PASS` |
+| Keep all remote output beneath the Sitian task root | both child roots, both controller roots, parent root, controller parent, and preserved partial copies are under `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818` | `PASS` |
+| Run the exact eight-pair balanced source/CUDA schedule | `source-pair.json.schedule`; four baseline-first and four candidate-first pairs; eager and graph each contain both orders twice | `PASS` |
+| Complete 8 epochs, 40 measured repeats, and 160 request samples per source | `sample_counts` in parent artifact; 16/16 normalized child workers and 16/16 after-inventory receipts | `PASS` |
+| Preserve exact output, Proposal-KV transaction, active-transaction, and four-rank correctness | parent `correctness.passed=true`, `mismatch_count=0`, and `underlying_command_timeline_passed=true` | `PASS` |
+| Produce complete baseline and candidate child manifests | baseline `283` files, manifest `00ea53ca...ec8`; candidate `286` files, manifest `258e00b1...792` | `PASS` |
+| Independently verify both child bundles in primary and controller locations | all four child receipts have `verified=true`, complete manifest coverage, matching normalized receipts, and source/raw-input inventories bound | `PASS` |
+| Produce and independently verify the parent source-pair artifact | artifact `ed10b16d...a6c`; manifest `58d364ca...f10`, 10 files; primary/controller receipts both `verified=true` and hashes match | `PASS` |
+| Candidate TPOT median `<=85.66 ms` | `77.6682515 ms`, 4.8712% below baseline | `PASS` |
+| Candidate TPOT p95 `<=105.87 ms` | `107.216581 ms`, 1.346581 ms or 1.2719% above the absolute limit | `FAIL` |
+| TTFT p95 regression `<=3%` | `-14.0944%` regression, meaning an improvement | `PASS` |
+| Throughput regression `<=3%` | `-12.9961%` regression, meaning a 12.9961% improvement | `PASS` |
+| Eager and graph source-ratio stationarity | eager and graph TPOT/throughput ratio checks all pass | `PASS` |
+| All sixteen underlying source epochs pass command-timeline stationarity | both child admissions report `stationarity_passed=false`; parent `all_sixteen_source_epochs_passed=false` | `FAIL` |
+| Emit one approved terminal classification without overstating benefit | `INCONCLUSIVE_STATIONARITY`; `performance_improvement_established=false` | `PASS` |
+| Preserve failed assembly evidence without rewriting frozen source bundles | r910 candidate partial and r911 baseline/candidate failed partial controller copies retained; no frozen `source/` directory was modified | `PASS` |
+| Make future child finalization use the committed canonical tooling for both frozen sources | `_child_finalization_remote_arguments()` always launches from the candidate source while targeting the selected child tag; command-path and full campaign tests | `PASS` |
+
+### Immutable campaign and source authority
+
+The terminal campaign tag is:
+
+```text
+20260820-bounded-journal-tpot-source-pair-r911
+```
+
+Source authority:
+
+```text
+baseline:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+candidate:
+  9ea37339859b4c18d54458a2ec0c5bac0fdfc50c
+candidate branch:
+  feat/kv-sparse-attention
+candidate remote:
+  origin/feat/kv-sparse-attention
+```
+
+The candidate includes the JSON-safe stationarity fix:
+
+```text
+9ea3733 fix: keep zero-median stationarity artifacts finite
+```
+
+That fix preserves a failed stationarity decision while representing an
+undefined zero-median ratio as JSON `null` rather than `Inf`. The focused RED
+case used the exact observed shape `[0, 0, 0, 26430, 0]`; the full affected
+local suite passed:
+
+```text
+307 passed in 30.87s
+py_compile: PASS
+tabnanny: PASS
+git diff --check: PASS
+```
+
+Strict admission selected:
+
+```text
+GPU indices:
+  2,3,5,6
+GPU UUIDs:
+  GPU-63c05907-407b-8240-07a0-f38872840867
+  GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d
+  GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8
+  GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31
+```
+
+All 16 pair members completed. Every worker, invariant, before-inventory, and
+after-inventory terminal status was zero.
+
+### Assembly recovery boundary
+
+The earlier r910 campaign completed all 16 members but failed while the
+candidate child attempted canonical assembly. The full traceback was:
+
+```text
+ValueError: command timeline artifact contains a non-finite number
+```
+
+The exact paths were:
+
+```text
+epochs.b1-graph-first.stationarity.worker_queue_debt.half_drift
+epochs.b1-graph-first.stationarity.queued_behind_prior_command.half_drift
+```
+
+r911 then completed all 16 members and reached the same old-schema defect in
+the pinned baseline source. The pinned baseline must remain byte-exact, so its
+frozen source bundle was not patched. Instead, the candidate's committed
+canonical assembler/verifier loaded the baseline raw inputs while the
+independent verifier continued to bind and hash the baseline source manifest.
+Both original r911 partial controller copies were preserved with
+`-failed-partial` suffixes before fresh controller copies were created. This
+recovery changes neither measured data nor source identity.
+
+### Metrics and gate result
+
+```text
+baseline:
+  TPOT p95:                 137.207225 ms
+  TPOT median:               81.6453475 ms
+  TTFT p95:                 129.584231 ms
+  median batch throughput:   39.9216946497 tok/s
+
+candidate:
+  TPOT p95:                 107.216581 ms
+  TPOT median:               77.6682515 ms
+  TTFT p95:                 111.320054 ms
+  median batch throughput:   45.1099665366 tok/s
+
+paired direction:
+  TPOT p95:                 -21.8579%
+  TPOT median:               -4.8712%
+  TTFT p95:                 -14.0944%
+  throughput:               +12.9961%
+```
+
+The directional evidence is favorable, but two mandatory gates remain
+unsatisfied:
+
+1. candidate TPOT p95 is `1.346581 ms` above the absolute `105.87 ms` limit;
+2. not all sixteen underlying command-timeline epochs pass stationarity.
+
+The eager and graph source-ratio stationarity checks pass, correctness passes,
+and TTFT/throughput do not regress. Classification precedence nevertheless
+requires the stationarity failure to terminate as
+`INCONCLUSIVE_STATIONARITY`, not as a performance GO or NO-GO.
+
+### Manifest and verifier authority
+
+```text
+baseline child:
+  artifact: dc79b02db22bd6d725b0f5c190865eed905d1a1b7142eb02a1fe231183fda173
+  manifest: 00ea53ca3659a36d515075f638ccbfa4afb3f610c1f2b8f8ca636311f8beeec8
+  manifest files: 283
+  primary/controller verified: true/true
+
+candidate child:
+  artifact: bb682b587b59c4e0592201d343c170670cf352bbbafa75170adff2b58caa2105
+  manifest: 258e00b175771eb73f22ac43c4e86a8d5011ae9b1780d3b02e0e283bd1179792
+  manifest files: 286
+  primary/controller verified: true/true
+
+parent:
+  artifact: ed10b16df660946c87ab3ff00bf1fadabef8ed50b25faf2d9b009e702907ca6c
+  manifest: 58d364ca0c22120b3b5312714714ff0bc5a088301982dc034789ea5a6efdef10
+  manifest files: 10
+  primary/controller verified: true/true
+  verifier source: a8469b1f50d798de1960701acfdad4903b402d6850fc967aa88f1b0d048e0562
+```
+
+Primary and controller parent artifacts are byte-identical. Receipt comparison
+passed after excluding only the documented location/time fields.
+
+The post-campaign orchestration fix makes the successful recovery path the
+default path for future campaigns: runtime workers still execute from their
+own frozen baseline/candidate sources, while both child finalizations execute
+the committed candidate canonical assembler/verifier against the selected
+child's bound raw inputs and source manifest. Its focused RED failed because
+the helper did not exist; GREEN evidence is:
+
+```text
+source-pair suite:
+  35 passed
+
+source-pair + command-timeline + CUDA-graph suites:
+  308 passed in 31.44s
+
+py_compile:
+  PASS
+tabnanny:
+  PASS
+git diff --check:
+  PASS
+```
+
+Final direct re-verification ran with bytecode writes disabled and rebuilt all
+six verification views in memory:
+
+```text
+baseline primary:    verified=true
+baseline controller: verified=true
+candidate primary:   verified=true
+candidate controller: verified=true
+parent primary:      verified=true
+parent controller:   verified=true
+```
+
+One audit command initially omitted `PYTHONDONTWRITEBYTECODE=1` and created
+exactly three unmanifested `.pyc` files in the candidate primary source cache.
+The three generated cache files were identified by manifest-set difference and
+deleted explicitly. A second bytecode-disabled six-view verification passed
+with the authoritative artifact and manifest hashes unchanged.
+
+### Executive matrix update
+
+| Dimension | Current evidence | Classification |
+| --- | --- | --- |
+| Bounded journal implementation and rollback correctness | committed implementation plus focused and broad local regression | `ESTABLISHED_LOCALLY` |
+| Real four-GPU source-bound execution | 8 pairs, 16 members, 80 measured repeats total, 320 request samples total | `COMPLETE` |
+| Exact correctness and transaction parity | zero mismatches; underlying command-timeline correctness pass | `PASS` |
+| Child and parent integrity | complete manifests and primary/controller verification | `PASS` |
+| Automated child finalization compatibility | candidate canonical tooling finalizes both frozen sources | `PASS` |
+| Candidate TPOT median | `77.6682515 ms <= 85.66 ms` | `PASS` |
+| Candidate TPOT p95 | `107.216581 ms > 105.87 ms` | `FAIL_ABSOLUTE_LIMIT` |
+| TTFT p95 protection | 14.0944% improvement | `PASS` |
+| Throughput protection | 12.9961% improvement | `PASS` |
+| Eager/graph paired-ratio stationarity | all four ratio checks pass | `PASS` |
+| All sixteen child epoch stationarity | false | `FAIL` |
+| TPOT-tail benefit claim | mandatory p95 and stationarity gates are not jointly green | `NOT_ESTABLISHED` |
+
+### Final classification
+
+```text
+SOURCE_PAIR_GATE_IMPLEMENTATION=ESTABLISHED
+SOURCE_PAIR_GATE_CANDIDATE_COMMIT=9ea37339859b4c18d54458a2ec0c5bac0fdfc50c
+SOURCE_PAIR_GATE_FOUR_GPU_ADMISSION=PASS
+SOURCE_PAIR_GATE_REAL_8_PAIR_CAMPAIGN=COMPLETE
+SOURCE_PAIR_GATE_CHILD_MANIFESTS=PASS
+SOURCE_PAIR_GATE_PARENT_MANIFEST=PASS
+SOURCE_PAIR_GATE_DUAL_VERIFICATION=PASS
+SOURCE_PAIR_GATE_EXACT_CORRECTNESS=PASS
+SOURCE_PAIR_GATE_EAGER_GRAPH_RATIO_STATIONARITY=PASS
+SOURCE_PAIR_GATE_ALL_SIXTEEN_EPOCH_STATIONARITY=FAIL
+CANDIDATE_TPOT_MEDIAN_GATE=PASS
+CANDIDATE_TPOT_P95_GATE=FAIL_107_216581_MS_GT_105_87_MS
+TTFT_P95_NON_REGRESSION=PASS
+THROUGHPUT_NON_REGRESSION=PASS
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+SOURCE_PAIR_GATE_CLASSIFICATION=INCONCLUSIVE_STATIONARITY
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+No claim that the bounded-journal optimization established TPOT-tail benefit
+is admissible from r911. A future attempt must first address the underlying
+command-timeline stationarity failure and then beat the absolute TPOT p95
+limit under another fresh immutable, source-bound campaign.

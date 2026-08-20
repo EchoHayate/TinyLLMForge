@@ -860,6 +860,32 @@ def test_source_pair_execution_plan_interleaves_members_then_finalizes():
     ]
 
 
+def test_child_finalization_uses_candidate_tooling_for_both_sources():
+    runner = _load_module(
+        SOURCE_PAIR_RUNNER_PATH,
+        "source_pair_runner_child_finalization_tooling",
+    )
+    tag = "20260820-source-pair-r2"
+    candidate_source = (
+        runner.child_runner.primary_run_path(f"{tag}-candidate")
+        + "/source"
+    )
+
+    for source in ("baseline", "candidate"):
+        command = runner._child_finalization_remote_arguments(
+            tag,
+            source,
+            "assemble",
+        )
+        script = command[-1]
+
+        assert (
+            f"{candidate_source}/tools/"
+            "run_autoregressive_draft_command_timeline_remote.py"
+        ) in script
+        assert f"_remote-action assemble {tag}-{source}" in script
+
+
 def test_source_pair_git_export_uses_exact_object_without_checkout():
     runner = _load_module(
         SOURCE_PAIR_RUNNER_PATH,
@@ -1030,6 +1056,23 @@ def test_source_pair_campaign_prepares_interleaves_and_finalizes(
         "_run_remote_action",
         child_action,
     )
+    child_finalization_actions = []
+    monkeypatch.setattr(
+        runner,
+        "_run_child_finalization_action",
+        lambda run_tag, source, action, **_kwargs: (
+            child_finalization_actions.append((
+                run_tag,
+                source,
+                action,
+            ))
+            or type("Result", (), {
+                "returncode": 0,
+                "stdout": "",
+                "stderr": "",
+            })()
+        ),
+    )
     parent_actions = []
     monkeypatch.setattr(
         runner,
@@ -1085,6 +1128,11 @@ def test_source_pair_campaign_prepares_interleaves_and_finalizes(
             (7, "graph", "candidate"),
             (7, "graph", "baseline"),
         ]
+    ]
+    assert child_finalization_actions == [
+        (tag, source, action)
+        for source in ("baseline", "candidate")
+        for action in runner.CHILD_FINALIZATION_ACTIONS
     ]
     assert [action for action, _ in parent_actions] == [
         "assemble",

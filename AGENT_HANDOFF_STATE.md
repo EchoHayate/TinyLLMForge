@@ -49504,3 +49504,161 @@ admission, and immediately execute the campaign if exactly four clean GPUs
 are admitted. Further normal approval is not required. Continue to keep all
 remote task output beneath
 `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.
+
+## 2026-08-20 bounded-journal source-pair terminal result
+
+The real four-GPU source-bound gate is complete. Its immutable tag is:
+
+```text
+20260820-bounded-journal-tpot-source-pair-r911
+```
+
+Source and admission authority:
+
+```text
+baseline:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+candidate:
+  9ea37339859b4c18d54458a2ec0c5bac0fdfc50c
+GPU indices:
+  2,3,5,6
+GPU UUIDs:
+  GPU-63c05907-407b-8240-07a0-f38872840867
+  GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d
+  GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8
+  GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31
+```
+
+All 16 pair members completed. Both sources have 8 normalized epochs, 40
+measured repeats, and 160 request samples. Every worker/invariant and
+before/after inventory terminal status is zero. No unrelated process was
+signaled, killed, paused, adopted, or modified.
+
+The candidate commit includes:
+
+```text
+9ea3733 fix: keep zero-median stationarity artifacts finite
+```
+
+This was driven by an exact RED case for `[0, 0, 0, 26430, 0]`. An undefined
+zero-median drift is now represented as JSON `null` while its pass bit remains
+false. Fresh local evidence:
+
+```text
+307 passed in 30.87s
+py_compile: PASS
+tabnanny: PASS
+git diff --check: PASS
+```
+
+r910 completed all 16 members but candidate assembly exposed the old `Inf`
+schema defect. r911 completed all 16 members and then exposed the same defect
+inside the pinned baseline tool. The baseline source bundle was not modified.
+The candidate's committed canonical assembler/verifier loaded both sources'
+raw inputs while the verifier independently bound each frozen source manifest.
+The failed r911 controller copies were preserved with `-failed-partial`
+suffixes before fresh controller copies were made.
+
+The orchestrator now makes that recovery route automatic:
+
+- runtime workers continue to execute from each source's frozen bundle;
+- baseline and candidate child finalization both launch the candidate's
+  committed canonical command-timeline tool;
+- the selected child's raw inputs and frozen source manifest remain the
+  objects assembled and independently verified.
+
+Fresh post-change evidence:
+
+```text
+source-pair suite:
+  35 passed
+source-pair + command-timeline + CUDA-graph suites:
+  308 passed in 31.44s
+py_compile:
+  PASS
+tabnanny:
+  PASS
+git diff --check:
+  PASS
+```
+
+Final direct bytecode-disabled verification independently reloaded all six
+views and returned `verified=true` for baseline primary/controller, candidate
+primary/controller, and parent primary/controller. An earlier audit command
+had created three unmanifested candidate-primary `.pyc` cache files; those
+three explicit generated files were removed, and the six-view verifier rerun
+passed with all artifact/manifest hashes unchanged.
+
+Terminal metrics:
+
+```text
+baseline TPOT p95:              137.207225 ms
+candidate TPOT p95:             107.216581 ms
+candidate absolute p95 limit:   105.870000 ms
+candidate over limit:             1.346581 ms
+
+baseline TPOT median:            81.6453475 ms
+candidate TPOT median:           77.6682515 ms
+
+baseline TTFT p95:              129.584231 ms
+candidate TTFT p95:             111.320054 ms
+TTFT change:                    -14.0944%
+
+baseline median throughput:      39.9216946497 tok/s
+candidate median throughput:     45.1099665366 tok/s
+throughput change:              +12.9961%
+```
+
+Correctness passes with zero mismatches. Eager and graph TPOT/throughput ratio
+stationarity checks pass. However both child command-timeline admissions have
+`stationarity_passed=false`, so
+`all_sixteen_source_epochs_passed=false`. Candidate TPOT p95 also remains
+`1.2719%` above the absolute gate.
+
+Integrity:
+
+```text
+baseline child:
+  artifact dc79b02db22bd6d725b0f5c190865eed905d1a1b7142eb02a1fe231183fda173
+  manifest 00ea53ca3659a36d515075f638ccbfa4afb3f610c1f2b8f8ca636311f8beeec8
+  files 283
+  primary/controller verified true/true
+
+candidate child:
+  artifact bb682b587b59c4e0592201d343c170670cf352bbbafa75170adff2b58caa2105
+  manifest 258e00b175771eb73f22ac43c4e86a8d5011ae9b1780d3b02e0e283bd1179792
+  files 286
+  primary/controller verified true/true
+
+parent:
+  artifact ed10b16df660946c87ab3ff00bf1fadabef8ed50b25faf2d9b009e702907ca6c
+  manifest 58d364ca0c22120b3b5312714714ff0bc5a088301982dc034789ea5a6efdef10
+  files 10
+  primary/controller verified true/true
+```
+
+Canonical result:
+
+```text
+SOURCE_PAIR_GATE_REAL_8_PAIR_CAMPAIGN=COMPLETE
+SOURCE_PAIR_GATE_EXACT_CORRECTNESS=PASS
+SOURCE_PAIR_GATE_DUAL_VERIFICATION=PASS
+SOURCE_PAIR_GATE_EAGER_GRAPH_RATIO_STATIONARITY=PASS
+SOURCE_PAIR_GATE_ALL_SIXTEEN_EPOCH_STATIONARITY=FAIL
+CANDIDATE_TPOT_MEDIAN_GATE=PASS
+CANDIDATE_TPOT_P95_GATE=FAIL_107_216581_MS_GT_105_87_MS
+TTFT_P95_NON_REGRESSION=PASS
+THROUGHPUT_NON_REGRESSION=PASS
+SOURCE_PAIR_GATE_CLASSIFICATION=INCONCLUSIVE_STATIONARITY
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Do not claim that bounded rollback journals established TPOT-tail benefit.
+The next admissible optimization cycle must first remove the underlying
+command-timeline stationarity failure and then beat the `105.87 ms` absolute
+TPOT p95 gate in a new immutable source-bound campaign. Keep all future remote
+artifacts beneath
+`/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.

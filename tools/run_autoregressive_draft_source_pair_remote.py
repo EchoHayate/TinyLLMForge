@@ -333,6 +333,72 @@ def _run_parent_remote_action(
     )
 
 
+CHILD_FINALIZATION_ACTIONS = (
+    "assemble",
+    "pre-manifest-verify",
+    "manifest",
+    "primary-verify",
+    "controller-copy",
+    "controller-verify",
+    "compare-receipts",
+)
+
+
+def _child_finalization_remote_arguments(
+    run_tag: str,
+    source: str,
+    action: str,
+) -> list[str]:
+    tag = child_runner.validate_run_tag(run_tag)
+    if source not in ("baseline", "candidate"):
+        raise ValueError("child finalization source is invalid")
+    if action not in CHILD_FINALIZATION_ACTIONS:
+        raise ValueError("child finalization action is invalid")
+    child_tag = _child_tag(tag, source)
+    candidate_source = (
+        f"{child_runner.primary_run_path(_child_tag(tag, 'candidate'))}"
+        "/source"
+    )
+    script = " ".join((
+        f"TASK7_ACTION={action}",
+        "exec",
+        child_runner.shlex.quote(child_runner.REMOTE_PYTHON),
+        child_runner.shlex.quote(
+            f"{candidate_source}/tools/"
+            "run_autoregressive_draft_command_timeline_remote.py"
+        ),
+        "_remote-action",
+        child_runner.shlex.quote(action),
+        child_runner.shlex.quote(child_tag),
+    ))
+    return ["bash", "-lc", script]
+
+
+def _run_child_finalization_action(
+    run_tag: str,
+    source: str,
+    action: str,
+    *,
+    command_runner=subprocess.run,
+    context: str,
+    now=None,
+    allow_failure: bool = False,
+    **kwargs,
+):
+    return child_runner._run_remote_command(
+        _child_finalization_remote_arguments(
+            run_tag,
+            source,
+            action,
+        ),
+        command_runner=command_runner,
+        context=context,
+        now=now,
+        allow_failure=allow_failure,
+        **kwargs,
+    )
+
+
 def _preserve_partial_children(
     run_tag: str,
     sources: list[str],
@@ -453,7 +519,6 @@ def _finalize_child(
     command_runner,
     now,
 ) -> tuple[bool, str]:
-    child_tag = _child_tag(run_tag, source)
     for action, context in (
         ("assemble", "canonical assembly"),
         ("pre-manifest-verify", "pre-manifest verification"),
@@ -463,9 +528,10 @@ def _finalize_child(
         ("controller-verify", "controller verification"),
         ("compare-receipts", "receipt comparison"),
     ):
-        result = child_runner._run_remote_action(
+        result = _run_child_finalization_action(
+            run_tag,
+            source,
             action,
-            [child_tag],
             command_runner=command_runner,
             context=f"{source} child {context}",
             now=now,
