@@ -2620,7 +2620,7 @@ def stationarity_for_values(values: object) -> dict:
     mad = statistics.median(deviations)
     robust_dispersion = (
         Fraction(0, 1) if median == 0 and mad == 0
-        else math.inf if median == 0
+        else None if median == 0
         else mad / median
     )
     first_half_median = statistics.median(normalized[0:2])
@@ -2628,17 +2628,17 @@ def stationarity_for_values(values: object) -> dict:
     half_delta = abs(second_half_median - first_half_median)
     half_drift = (
         Fraction(0, 1) if median == 0 and half_delta == 0
-        else math.inf if median == 0
+        else None if median == 0
         else half_delta / median
     )
     robust_passed = (
-        robust_dispersion != math.inf
+        robust_dispersion is not None
         and robust_dispersion <= Fraction(
             str(ROBUST_DISPERSION_LIMIT)
         )
     )
     drift_passed = (
-        half_drift != math.inf
+        half_drift is not None
         and half_drift <= Fraction(str(HALF_DRIFT_LIMIT))
     )
     return {
@@ -2647,7 +2647,11 @@ def stationarity_for_values(values: object) -> dict:
         ],
         "median": _canonical_fraction(median),
         "mad": _canonical_fraction(mad),
-        "robust_dispersion": float(robust_dispersion),
+        "robust_dispersion": (
+            None
+            if robust_dispersion is None
+            else float(robust_dispersion)
+        ),
         "robust_dispersion_limit": ROBUST_DISPERSION_LIMIT,
         "robust_dispersion_passed": robust_passed,
         "first_half_median": _canonical_fraction(
@@ -2656,7 +2660,9 @@ def stationarity_for_values(values: object) -> dict:
         "second_half_median": _canonical_fraction(
             second_half_median
         ),
-        "half_drift": float(half_drift),
+        "half_drift": (
+            None if half_drift is None else float(half_drift)
+        ),
         "half_drift_limit": HALF_DRIFT_LIMIT,
         "half_drift_passed": drift_passed,
         "passed": robust_passed and drift_passed,

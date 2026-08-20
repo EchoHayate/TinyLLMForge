@@ -1227,6 +1227,19 @@ def test_stationarity_thresholds_are_inclusive():
     assert exact["passed"] is True
 
 
+def test_zero_median_nonzero_half_drift_is_json_safe_and_fails():
+    result = diagnostic.stationarity_for_values(
+        [0, 0, 0, 26_430, 0]
+    )
+
+    assert result["robust_dispersion"] == 0.0
+    assert result["robust_dispersion_passed"] is True
+    assert result["half_drift"] is None
+    assert result["half_drift_passed"] is False
+    assert result["passed"] is False
+    diagnostic.canonical_json_bytes(result)
+
+
 @pytest.mark.parametrize(
     "values",
     [
