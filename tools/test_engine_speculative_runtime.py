@@ -98,6 +98,26 @@ build_kv_block_identity_rows = (
 )
 
 
+class SpeculativeKVCommitRollbackError(RuntimeError):
+    def __init__(self, commit_error, rollback_error):
+        super().__init__(
+            "speculative KV commit rollback failed: "
+            f"{rollback_error}"
+        )
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+
+class SchedulerPostprocessRollbackError(RuntimeError):
+    def __init__(self, commit_error, rollback_error):
+        super().__init__(
+            "scheduler postprocess rollback failed: "
+            f"{rollback_error}"
+        )
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+
 def _engine_class():
     tree = ast.parse(ENGINE_PATH.read_text())
     return next(
@@ -155,6 +175,12 @@ def _load_engine_method(
         ),
         "validate_engine_speculative_runtime": (
             validate_engine_speculative_runtime
+        ),
+        "SpeculativeKVCommitRollbackError": (
+            SpeculativeKVCommitRollbackError
+        ),
+        "SchedulerPostprocessRollbackError": (
+            SchedulerPostprocessRollbackError
         ),
     }
     module_body = []
@@ -1624,7 +1650,16 @@ def test_step_executes_selected_runtime_and_commits_multi_token_row():
         output_tokens=(11, 12, 13),
         accepted_draft_tokens=(11, 12),
     )
-    prepared_scheduler = SimpleNamespace(state="prepared")
+    prepared_scheduler = SimpleNamespace(
+        state="prepared",
+        snapshot=SimpleNamespace(
+            extend_speculative_kv_plans=(
+                lambda scheduler, plans: events.append(
+                    ("scheduler_journal_extend", plans)
+                )
+            )
+        ),
+    )
 
     class Scheduler:
         last_policy_branch = "decode"
@@ -1886,7 +1921,16 @@ def test_step_merges_selected_and_suppressed_rows_in_schedule_order():
         output_tokens=(11, 12, 13),
         accepted_draft_tokens=(11, 12),
     )
-    prepared_scheduler = SimpleNamespace(state="prepared")
+    prepared_scheduler = SimpleNamespace(
+        state="prepared",
+        snapshot=SimpleNamespace(
+            extend_speculative_kv_plans=(
+                lambda scheduler, plans: events.append(
+                    ("scheduler_journal_extend", plans)
+                )
+            )
+        ),
+    )
 
     class ModelRunner:
         config = SimpleNamespace(kv_offload_mvp0=True)
@@ -2238,7 +2282,20 @@ def _run_selected_step_with_transaction(
         unused_block_ids=(),
         materialized_end=4,
     )
-    prepared_scheduler = SimpleNamespace(state="prepared")
+    class Journal:
+        def extend_speculative_kv_plans(
+            self,
+            scheduler,
+            plans,
+        ):
+            assert scheduler.block_manager is block_manager
+            assert plans == (plan,)
+            events.append(("scheduler_journal_extend", plans))
+
+    prepared_scheduler = SimpleNamespace(
+        state="prepared",
+        snapshot=Journal(),
+    )
 
     class BlockManager:
         def prepare_speculative_kv_commit(
@@ -2266,6 +2323,8 @@ def _run_selected_step_with_transaction(
                 raise kv_commit_error
             transaction.state = "committed"
 
+    block_manager = BlockManager()
+
     class Scheduler:
         last_policy_branch = "decode"
         last_speculative_selection = object()
@@ -2273,7 +2332,7 @@ def _run_selected_step_with_transaction(
         eos = -1
 
         def __init__(self):
-            self.block_manager = BlockManager()
+            self.block_manager = block_manager
 
         def observation_snapshot(self):
             return {"running_seq_ids": [7]}
@@ -2288,7 +2347,14 @@ def _run_selected_step_with_transaction(
         def commit_prepared_postprocess(self, prepared):
             events.append(("scheduler_commit",))
             if scheduler_commit_error is not None:
-                prepared.state = "commit_failed"
+                prepared.state = (
+                    "rollback_failed"
+                    if isinstance(
+                        scheduler_commit_error,
+                        SchedulerPostprocessRollbackError,
+                    )
+                    else "commit_failed"
+                )
                 raise scheduler_commit_error
             sequence.token_ids.extend((11, 12, 13))
             sequence.finished = finished
@@ -2535,13 +2601,19 @@ def test_residency_publication_order_wraps_allocator_and_scheduler():
 
     step(engine)
 
-    assert events == [
+    journal_event = events[6]
+    assert journal_event[0] == "scheduler_journal_extend"
+    assert len(journal_event[1]) == 1
+    assert journal_event[1][0].transaction is not None
+    assert events[:6] == [
         ("flush",),
         ("residency_prepare",),
         ("verifier", 41),
         ("scheduler_prepare",),
         ("kv_prepare",),
         ("residency_precommit",),
+    ]
+    assert events[7:] == [
         ("kv_commit",),
         ("scheduler_commit",),
         ("residency_seal",),
@@ -2692,6 +2764,44 @@ def test_step_rolls_back_committed_kv_when_scheduler_commit_fails():
     assert sequence.completion_token_ids == []
     assert transaction.state == "rolled_back"
     assert prepared_runtime.state == "rolled_back"
+    assert events[-3:] == [
+        ("kv_commit",),
+        ("scheduler_commit",),
+        ("runtime_rollback",),
+    ]
+
+
+def test_step_poisons_runtime_when_scheduler_journal_rollback_fails():
+    error = SchedulerPostprocessRollbackError(
+        RuntimeError("scheduler mutation failed"),
+        RuntimeError("journal restore failed"),
+    )
+    (
+        step,
+        engine,
+        sequence,
+        transaction,
+        prepared_runtime,
+        events,
+    ) = _run_selected_step_with_transaction(
+        scheduler_commit_error=error,
+    )
+
+    with pytest.raises(
+        SchedulerPostprocessRollbackError,
+        match="scheduler postprocess rollback failed",
+    ):
+        step(engine)
+
+    assert sequence.completion_token_ids == []
+    assert transaction.state == "rolled_back"
+    assert prepared_runtime.state == "rolled_back"
+    assert engine.speculative_runtime_poisoned is True
+    assert (
+        engine.speculative_runtime_poison_reason
+        == "scheduler postprocess rollback failed: "
+        "journal restore failed"
+    )
     assert events[-3:] == [
         ("kv_commit",),
         ("scheduler_commit",),

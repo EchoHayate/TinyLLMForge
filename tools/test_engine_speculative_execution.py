@@ -62,6 +62,26 @@ from tinyvllm.speculative.batch_runtime import (
 from tinyvllm.speculative.verifier import SpecVerifyPlan
 
 
+class SpeculativeKVCommitRollbackError(RuntimeError):
+    def __init__(self, commit_error, rollback_error):
+        super().__init__(
+            "speculative KV commit rollback failed: "
+            f"{rollback_error}"
+        )
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+
+class SchedulerPostprocessRollbackError(RuntimeError):
+    def __init__(self, commit_error, rollback_error):
+        super().__init__(
+            "scheduler postprocess rollback failed: "
+            f"{rollback_error}"
+        )
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+
 def _load_engine_helper(name, namespace):
     tree = ast.parse(
         open(_LLM_ENGINE_PATH).read(),
@@ -140,6 +160,17 @@ def _publication_helper(events, *, fail=None, finalize_rows=True):
     )
     transaction = SimpleNamespace(state="materialized")
     plan = SimpleNamespace(transaction=transaction)
+
+    class Journal:
+        def extend_speculative_kv_plans(self, scheduler, plans):
+            assert scheduler is engine.scheduler
+            assert plans == (plan,)
+            events.append("scheduler_journal_extended")
+
+    prepared_scheduler = SimpleNamespace(
+        state="prepared",
+        snapshot=Journal(),
+    )
     engine = SimpleNamespace(
         model_runner=object(),
         scheduler=SimpleNamespace(
@@ -247,6 +278,12 @@ def _publication_helper(events, *, fail=None, finalize_rows=True):
                     args,
                 )[0]
             ),
+            "SpeculativeKVCommitRollbackError": (
+                SpeculativeKVCommitRollbackError
+            ),
+            "SchedulerPostprocessRollbackError": (
+                SchedulerPostprocessRollbackError
+            ),
         },
     )
     runtime = SimpleNamespace(
@@ -256,7 +293,14 @@ def _publication_helper(events, *, fail=None, finalize_rows=True):
             else None
         )
     )
-    return helper, engine, runtime, prepared, plan
+    return (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    )
 
 
 def test_two_phase_publication_orders_proposal_lifecycle_exactly():
@@ -264,7 +308,14 @@ def test_two_phase_publication_orders_proposal_lifecycle_exactly():
         "verify_complete",
         "target_commit_plans_prepared",
     ]
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events)
     )
 
@@ -273,13 +324,14 @@ def test_two_phase_publication_orders_proposal_lifecycle_exactly():
         runtime,
         prepared,
         (plan,),
-        object(),
+        prepared_scheduler,
     )
 
     assert events == [
         "verify_complete",
         "target_commit_plans_prepared",
         "proposal_finalize_prepared",
+        "scheduler_journal_extended",
         "target_kv_committed",
         "scheduler_committed",
         "proposal_finalize_committed",
@@ -288,7 +340,14 @@ def test_two_phase_publication_orders_proposal_lifecycle_exactly():
 
 def test_publication_timeline_phases_wrap_existing_operation_order():
     events = []
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events)
     )
 
@@ -309,13 +368,14 @@ def test_publication_timeline_phases_wrap_existing_operation_order():
         runtime,
         prepared,
         (plan,),
-        object(),
+        prepared_scheduler,
     )
 
     assert events == [
         ("phase_start", "proposal_lifecycle_finalize_prepare"),
         "proposal_finalize_prepared",
         ("phase_end", "proposal_lifecycle_finalize_prepare"),
+        "scheduler_journal_extended",
         ("phase_start", "proposal_kv_prepare_commit"),
         "target_kv_committed",
         ("phase_end", "proposal_kv_prepare_commit"),
@@ -332,7 +392,14 @@ def test_publication_timeline_phases_wrap_existing_operation_order():
 
 def test_disabled_recorder_publication_does_not_request_phase_contexts():
     events = []
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events)
     )
     recorder = EngineStepTimelineRecorder(enabled=False)
@@ -351,11 +418,12 @@ def test_disabled_recorder_publication_does_not_request_phase_contexts():
         runtime,
         prepared,
         (plan,),
-        object(),
+        prepared_scheduler,
     )
 
     assert events == [
         "proposal_finalize_prepared",
+        "scheduler_journal_extended",
         "target_kv_committed",
         "scheduler_committed",
         "proposal_finalize_committed",
@@ -365,7 +433,14 @@ def test_disabled_recorder_publication_does_not_request_phase_contexts():
 
 def test_publication_records_transactional_commit_timing():
     events = []
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events)
     )
     clock = iter((10.0, 10.007))
@@ -375,7 +450,7 @@ def test_publication_records_transactional_commit_timing():
         runtime,
         prepared,
         (plan,),
-        object(),
+        prepared_scheduler,
         clock=lambda: next(clock),
     )
 
@@ -389,7 +464,14 @@ def test_publication_records_transactional_commit_timing():
 @pytest.mark.parametrize("failure", ("target", "scheduler"))
 def test_prepublication_failure_rolls_back_proposal_ticket(failure):
     events = []
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events, fail=failure)
     )
 
@@ -399,7 +481,7 @@ def test_prepublication_failure_rolls_back_proposal_ticket(failure):
             runtime,
             prepared,
             (plan,),
-            object(),
+            prepared_scheduler,
         )
 
     assert events[-1] == "proposal_finalize_rolled_back"
@@ -409,7 +491,14 @@ def test_prepublication_failure_rolls_back_proposal_ticket(failure):
 
 def test_postpublication_finalize_failure_poisoned_without_retry():
     events = []
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events, fail="proposal_commit")
     )
 
@@ -419,7 +508,7 @@ def test_postpublication_finalize_failure_poisoned_without_retry():
             runtime,
             prepared,
             (plan,),
-            object(),
+            prepared_scheduler,
         )
 
     assert prepared.state == "committed"
@@ -430,6 +519,7 @@ def test_postpublication_finalize_failure_poisoned_without_retry():
     )
     assert events == [
         "proposal_finalize_prepared",
+        "scheduler_journal_extended",
         "target_kv_committed",
         "scheduler_committed",
     ]
@@ -437,7 +527,14 @@ def test_postpublication_finalize_failure_poisoned_without_retry():
 
 def test_host_proposals_make_zero_lifecycle_calls():
     events = []
-    helper, engine, runtime, prepared, plan = (
+    (
+        helper,
+        engine,
+        runtime,
+        prepared,
+        plan,
+        prepared_scheduler,
+    ) = (
         _publication_helper(events, finalize_rows=False)
     )
 
@@ -446,10 +543,11 @@ def test_host_proposals_make_zero_lifecycle_calls():
         runtime,
         prepared,
         (plan,),
-        object(),
+        prepared_scheduler,
     )
 
     assert events == [
+        "scheduler_journal_extended",
         "target_kv_committed",
         "scheduler_committed",
     ]

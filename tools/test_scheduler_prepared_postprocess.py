@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -61,26 +62,30 @@ _load_module(
     "tinyvllm.engine.block_manager",
     "tinyvllm/engine/block_manager.py",
 )
-hybrid_state_module = types.ModuleType(
-    "tinyvllm.engine.hybrid_state"
+
+
+class _TorchDType:
+    def __init__(self, name, itemsize):
+        self.name = name
+        self.itemsize = itemsize
+
+    def __str__(self):
+        return f"torch.{self.name}"
+
+
+torch_module = types.ModuleType("torch")
+torch_module.float16 = _TorchDType("float16", 2)
+torch_module.bfloat16 = _TorchDType("bfloat16", 2)
+torch_module.float32 = _TorchDType("float32", 4)
+sys.modules.setdefault("torch", torch_module)
+hybrid_state_module = _load_module(
+    "tinyvllm.engine.hybrid_state",
+    "tinyvllm/engine/hybrid_state.py",
 )
-
-
-class _HybridStateLease:
-    pass
-
-
-class _HybridStateSlotAllocator:
-    pass
-
-
-hybrid_state_module.HybridStateLease = _HybridStateLease
-hybrid_state_module.HybridStateSlotAllocator = (
-    _HybridStateSlotAllocator
+_HybridStateLease = hybrid_state_module.HybridStateLease
+_HybridStateSlotAllocator = (
+    hybrid_state_module.HybridStateSlotAllocator
 )
-sys.modules[
-    "tinyvllm.engine.hybrid_state"
-] = hybrid_state_module
 _load_module(
     "tinyvllm.engine.speculative_selection",
     "tinyvllm/engine/speculative_selection.py",
@@ -105,6 +110,29 @@ PreparedSchedulerPostprocess = (
 ScheduledOutputRow = scheduler_module.ScheduledOutputRow
 Scheduler = scheduler_module.Scheduler
 Sequence.block_size = 2
+
+
+class _IndexableNonIterableBlocks:
+    def __init__(self, values):
+        self._values = list(values)
+        self.index_reads = []
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            raise AssertionError("block slices are not allowed")
+        self.index_reads.append(index)
+        return self._values[index]
+
+    def __iter__(self):
+        raise AssertionError("full block iteration is not allowed")
+
+
+class _NonSearchableFreeBlocks(deque):
+    def __contains__(self, _value):
+        raise AssertionError("free block membership scans are not allowed")
 
 
 def _config():
@@ -190,7 +218,7 @@ def _scheduled_prefill_sequence(
 
 
 def _snapshot(scheduler, sequences):
-    return {
+    snapshot = {
         "tokens": {
             sequence.seq_id: tuple(sequence.token_ids)
             for sequence in sequences
@@ -234,7 +262,24 @@ def _snapshot(scheduler, sequences):
             scheduler.decode_progress_ns_by_seq_id
         ),
         "slo": dict(scheduler._last_slo_postprocess),
+        "prefill_notified": frozenset(
+            scheduler._prefill_commit_notified_request_ids
+        ),
+        "prefill_hook_error": (
+            scheduler._prefill_commit_hook_error
+        ),
     }
+    allocator = scheduler.hybrid_state_allocator
+    if allocator is not None:
+        snapshot["hybrid"] = {
+            "free_slots": tuple(allocator._free_slots),
+            "generations": tuple(allocator._generations),
+            "owners": dict(allocator._owners),
+            "request_leases": dict(
+                allocator._request_leases
+            ),
+        }
+    return snapshot
 
 
 def test_scheduler_exposes_prepared_postprocess_api():
@@ -290,6 +335,74 @@ def test_prepare_is_non_mutating_for_selected_and_ordinary_decode_rows():
         ordinary.seq_id,
     )
     assert _snapshot(scheduler, (selected, ordinary)) == before
+
+
+def test_prepare_postprocess_does_not_iterate_all_blocks():
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "num_kvcache_blocks": 4096,
+            }
+        )
+    )
+    sequence = _running_sequence(scheduler, [1, 2])
+    guarded = _IndexableNonIterableBlocks(
+        scheduler.block_manager.blocks
+    )
+    scheduler.block_manager.blocks = guarded
+
+    prepared = scheduler.prepare_postprocess(
+        (sequence,),
+        (
+            ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11,),
+                speculative=False,
+            ),
+        ),
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+    assert set(guarded.index_reads) <= set(sequence.block_table)
+    assert prepared.snapshot.touched_block_count == len(
+        sequence.block_table
+    )
+
+
+def test_prepare_postprocess_does_not_scan_free_blocks():
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "num_kvcache_blocks": 4096,
+            }
+        )
+    )
+    sequence = _running_sequence(scheduler, [1, 2])
+    scheduler.block_manager.free_block_ids = (
+        _NonSearchableFreeBlocks(
+            scheduler.block_manager.free_block_ids
+        )
+    )
+
+    prepared = scheduler.prepare_postprocess(
+        (sequence,),
+        (
+            ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11,),
+                speculative=False,
+            ),
+        ),
+    )
+
+    assert prepared.snapshot.touched_block_count == len(
+        sequence.block_table
+    )
 
 
 @pytest.mark.parametrize(
@@ -565,6 +678,221 @@ def test_commit_failure_restores_all_prior_row_mutations(monkeypatch):
     assert _snapshot(scheduler, (first, second)) == before
 
 
+def test_commit_failure_restores_hybrid_release(monkeypatch):
+    allocator = _HybridStateSlotAllocator(capacity=4)
+    scheduler = Scheduler(
+        _config(),
+        hybrid_state_allocator=allocator,
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=4,
+    )
+    lease = allocator.allocate(sequence.seq_id)
+    sequence.hybrid_state_slot_id = lease.slot_id
+    sequence.hybrid_state_generation = lease.generation
+    before = _snapshot(scheduler, (sequence,))
+    prepared = scheduler.prepare_postprocess(
+        (sequence,),
+        (
+            ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(99,),
+                speculative=False,
+            ),
+        ),
+    )
+
+    def fail_after_release(*_args, **_kwargs):
+        raise RuntimeError("injected post-release failure")
+
+    monkeypatch.setattr(
+        scheduler,
+        "_remove_finished_progress",
+        fail_after_release,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected post-release failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert _snapshot(scheduler, (sequence,)) == before
+    assert allocator.lease_for_request(sequence.seq_id) == lease
+
+
+def test_commit_failure_restores_multiple_hybrid_releases(
+    monkeypatch,
+):
+    allocator = _HybridStateSlotAllocator(capacity=4)
+    scheduler = Scheduler(
+        _config(),
+        hybrid_state_allocator=allocator,
+    )
+    first = _running_sequence(scheduler, [1, 2])
+    second = _running_sequence(scheduler, [3, 4])
+    first_lease = allocator.allocate(first.seq_id)
+    second_lease = allocator.allocate(second.seq_id)
+    for sequence, lease in (
+        (first, first_lease),
+        (second, second_lease),
+    ):
+        sequence.hybrid_state_slot_id = lease.slot_id
+        sequence.hybrid_state_generation = lease.generation
+    before = _snapshot(scheduler, (first, second))
+    prepared = scheduler.prepare_postprocess(
+        (first, second),
+        (
+            ScheduledOutputRow(
+                sequence_id=first.seq_id,
+                output_tokens=(99,),
+                speculative=False,
+            ),
+            ScheduledOutputRow(
+                sequence_id=second.seq_id,
+                output_tokens=(99,),
+                speculative=False,
+            ),
+        ),
+    )
+    original_remove = scheduler._remove_finished_progress
+
+    def fail_after_second_release(
+        sequence,
+        removed_entries,
+    ):
+        if sequence is second:
+            raise RuntimeError(
+                "injected second hybrid release failure"
+            )
+        return original_remove(sequence, removed_entries)
+
+    monkeypatch.setattr(
+        scheduler,
+        "_remove_finished_progress",
+        fail_after_second_release,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected second hybrid release failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert _snapshot(scheduler, (first, second)) == before
+    assert allocator.lease_for_request(first.seq_id) == first_lease
+    assert allocator.lease_for_request(second.seq_id) == second_lease
+
+
+def test_prefill_hook_failure_restores_scheduler_state(
+    monkeypatch,
+):
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "max_num_prefill_tokens_per_step": 2,
+            }
+        )
+    )
+    sequence = _scheduled_prefill_sequence(
+        scheduler,
+        [1, 2],
+        chunk_end=2,
+        final=True,
+        do_sample=False,
+    )
+    before = _snapshot(scheduler, (sequence,))
+
+    def fail_hook(_sequence):
+        raise RuntimeError("prefill hook failed")
+
+    scheduler.install_prefill_commit_hook(fail_hook)
+    prepared = scheduler.prepare_postprocess(
+        (sequence,),
+        (
+            ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(),
+                speculative=False,
+            ),
+        ),
+        is_prefill=True,
+        do_sample=False,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="prefill hook failed",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    expected = dict(before)
+    expected["prefill_hook_error"] = (
+        "RuntimeError: prefill hook failed"
+    )
+    assert _snapshot(scheduler, (sequence,)) == expected
+
+
+def test_scheduler_journal_rollback_failure_is_terminal(
+    monkeypatch,
+):
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(scheduler, [1, 2])
+    prepared = scheduler.prepare_postprocess(
+        (sequence,),
+        (
+            ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11,),
+                speculative=False,
+            ),
+        ),
+    )
+    original_rollback = prepared.snapshot.rollback
+
+    def fail_rollback(owner):
+        prepared.snapshot.state = "rollback_failed"
+        raise RuntimeError("injected journal rollback failure")
+
+    monkeypatch.setattr(
+        prepared.snapshot,
+        "rollback",
+        fail_rollback,
+    )
+
+    def fail_append(_sequence, _token_id):
+        raise RuntimeError("injected scheduler failure")
+
+    monkeypatch.setattr(Sequence, "append_token", fail_append)
+
+    with pytest.raises(
+        scheduler_module.SchedulerPostprocessRollbackError,
+        match="injected journal rollback failure",
+    ) as exc_info:
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "rollback_failed"
+    assert str(exc_info.value.commit_error) == (
+        "injected scheduler failure"
+    )
+    assert str(exc_info.value.rollback_error) == (
+        "injected journal rollback failure"
+    )
+    monkeypatch.setattr(
+        prepared.snapshot,
+        "rollback",
+        original_rollback,
+    )
+    with pytest.raises(RuntimeError, match="not active"):
+        scheduler.rollback_prepared_postprocess(prepared)
+
+
 def test_mixed_commit_handles_prefill_and_multi_token_decode():
     scheduler = Scheduler(
         SimpleNamespace(
@@ -628,6 +956,8 @@ def test_commit_failure_restores_state_before_external_kv_change(
 ):
     scheduler = Scheduler(_config())
     sequence = _running_sequence(scheduler, [1, 2])
+    extra_block_id = scheduler.block_manager.free_block_ids[0]
+    scheduler.block_manager._allocate_block(extra_block_id)
     before = _snapshot(scheduler, (sequence,))
     prepared = scheduler.prepare_postprocess(
         (sequence,),
@@ -639,8 +969,17 @@ def test_commit_failure_restores_state_before_external_kv_change(
             ),
         ),
     )
-    extra_block_id = scheduler.block_manager.free_block_ids[0]
-    scheduler.block_manager._allocate_block(extra_block_id)
+    prepared.snapshot.extend_speculative_kv_plans(
+        scheduler,
+        (
+            SimpleNamespace(
+                sequence_id=sequence.seq_id,
+                committed_block_ids=(extra_block_id,),
+                unused_block_ids=(),
+                publications=(),
+            ),
+        ),
+    )
     sequence.block_table.append(extra_block_id)
 
     def fail_append(_sequence, _token_id):

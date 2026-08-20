@@ -43,6 +43,506 @@ class PreparedSchedulerPostprocess:
     state: str = "prepared"
 
 
+class SchedulerPostprocessRollbackError(RuntimeError):
+    def __init__(self, commit_error, rollback_error):
+        super().__init__(
+            "scheduler postprocess rollback failed: "
+            f"{rollback_error}"
+        )
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+
+@dataclass(frozen=True)
+class _SchedulerBlockState:
+    ref_count: int
+    generation: int
+    block_hash: int
+    token_ids: tuple[int, ...]
+    was_used: bool
+
+
+@dataclass(frozen=True)
+class _SchedulerHashState:
+    primary_block_id: int | None
+    block_ids: frozenset[int] | None
+
+
+@dataclass
+class SchedulerPostprocessJournal:
+    sequence_states: tuple[tuple[Sequence, dict], ...]
+    waiting: tuple[Sequence, ...]
+    prefilling: tuple[Sequence, ...]
+    running: tuple[Sequence, ...]
+    blocks: dict[int, _SchedulerBlockState]
+    hashes: dict[int, _SchedulerHashState]
+    planned_block_tables: dict[int, tuple[int, ...]]
+    proposal_release_order: list[int]
+    hybrid_leases: dict[int, HybridStateLease]
+    hybrid_release_event_count: int
+    decode_progress: dict[int, tuple[bool, int | None]]
+    last_slo_postprocess: dict
+    prefill_notified: dict[int, bool]
+    prefill_hook_error: object
+    adaptive_mixed_state: str
+    adaptive_high_streak: int
+    adaptive_low_streak: int
+    adaptive_consecutive_mixed_steps: int
+    consecutive_prefill_chunks: int
+    slo_clock_invalid: bool
+    slo_clock_invalid_reason: object
+    last_slo_decision_now_ns: int | None
+    state: str = "active"
+
+    @property
+    def touched_block_count(self) -> int:
+        return len(self.blocks)
+
+    @classmethod
+    def capture(
+        cls,
+        scheduler,
+        seqs: tuple[Sequence, ...],
+    ):
+        journal = cls(
+            sequence_states=tuple(
+                (
+                    seq,
+                    {
+                        "token_ids": tuple(seq.token_ids),
+                        "last_token": seq.last_token,
+                        "num_tokens": seq.num_tokens,
+                        "status": seq.status,
+                        "block_table": tuple(seq.block_table),
+                        "num_cached_tokens": (
+                            seq.num_cached_tokens
+                        ),
+                        "num_computed_tokens": (
+                            seq.num_computed_tokens
+                        ),
+                        "prefill_chunk_start": (
+                            seq.prefill_chunk_start
+                        ),
+                        "prefill_chunk_end": (
+                            seq.prefill_chunk_end
+                        ),
+                        "prefill_chunk_final": (
+                            seq.prefill_chunk_final
+                        ),
+                        "step_is_decode": seq.step_is_decode,
+                        "step_do_sample": seq.step_do_sample,
+                        "hybrid_state_slot_id": (
+                            seq.hybrid_state_slot_id
+                        ),
+                        "hybrid_state_generation": (
+                            seq.hybrid_state_generation
+                        ),
+                    },
+                )
+                for seq in seqs
+            ),
+            waiting=tuple(scheduler.waiting),
+            prefilling=tuple(scheduler.prefilling),
+            running=tuple(scheduler.running),
+            blocks={},
+            hashes={},
+            planned_block_tables={
+                seq.seq_id: tuple(seq.block_table)
+                for seq in seqs
+            },
+            proposal_release_order=[],
+            hybrid_leases={},
+            hybrid_release_event_count=len(
+                scheduler._hybrid_state_release_events
+            ),
+            decode_progress={
+                seq.seq_id: (
+                    seq.seq_id
+                    in scheduler.decode_progress_ns_by_seq_id,
+                    scheduler.decode_progress_ns_by_seq_id.get(
+                        seq.seq_id
+                    ),
+                )
+                for seq in seqs
+            },
+            last_slo_postprocess=dict(
+                scheduler._last_slo_postprocess
+            ),
+            prefill_notified={
+                seq.seq_id: (
+                    seq.seq_id
+                    in scheduler
+                    ._prefill_commit_notified_request_ids
+                )
+                for seq in seqs
+            },
+            prefill_hook_error=(
+                scheduler._prefill_commit_hook_error
+            ),
+            adaptive_mixed_state=(
+                scheduler.adaptive_mixed_state
+            ),
+            adaptive_high_streak=(
+                scheduler.adaptive_high_streak
+            ),
+            adaptive_low_streak=scheduler.adaptive_low_streak,
+            adaptive_consecutive_mixed_steps=(
+                scheduler.adaptive_consecutive_mixed_steps
+            ),
+            consecutive_prefill_chunks=(
+                scheduler._consecutive_prefill_chunks
+            ),
+            slo_clock_invalid=scheduler.slo_clock_invalid,
+            slo_clock_invalid_reason=(
+                scheduler.slo_clock_invalid_reason
+            ),
+            last_slo_decision_now_ns=(
+                scheduler._last_slo_decision_now_ns
+            ),
+        )
+        for seq in seqs:
+            for block_id in seq.block_table:
+                journal._capture_block_if_absent(
+                    scheduler.block_manager,
+                    block_id,
+                )
+            journal._capture_sequence_publication_hashes(
+                scheduler.block_manager,
+                seq,
+            )
+        allocator = scheduler.hybrid_state_allocator
+        if allocator is not None:
+            for seq in seqs:
+                lease = allocator._request_leases.get(
+                    seq.seq_id
+                )
+                if lease is not None:
+                    journal.hybrid_leases[seq.seq_id] = lease
+        return journal
+
+    def _capture_hash_if_absent(
+        self,
+        block_manager,
+        block_hash: int,
+    ) -> None:
+        if block_hash == -1 or block_hash in self.hashes:
+            return
+        self.hashes[block_hash] = _SchedulerHashState(
+            primary_block_id=(
+                block_manager.hash_to_block_id.get(block_hash)
+            ),
+            block_ids=(
+                frozenset(
+                    block_manager.hash_to_block_ids[block_hash]
+                )
+                if block_hash
+                in block_manager.hash_to_block_ids
+                else None
+            ),
+        )
+
+    def _capture_block_if_absent(
+        self,
+        block_manager,
+        block_id: int,
+    ) -> None:
+        if block_id in self.blocks:
+            return
+        block = block_manager.blocks[block_id]
+        self.blocks[block_id] = _SchedulerBlockState(
+            ref_count=block.ref_count,
+            generation=block.generation,
+            block_hash=block.hash,
+            token_ids=tuple(block.token_ids),
+            was_used=block_id in block_manager.used_block_ids,
+        )
+        self._capture_hash_if_absent(
+            block_manager,
+            block.hash,
+        )
+
+    def _capture_sequence_publication_hashes(
+        self,
+        block_manager,
+        seq: Sequence,
+    ) -> None:
+        prefix_hash = -1
+        full_block_count = min(
+            len(seq.block_table),
+            len(seq) // block_manager.block_size,
+        )
+        for block_index in range(full_block_count):
+            token_ids = seq.block(block_index)
+            if len(token_ids) != block_manager.block_size:
+                break
+            prefix_hash = block_manager.compute_hash(
+                token_ids,
+                prefix_hash,
+            )
+            self._capture_hash_if_absent(
+                block_manager,
+                prefix_hash,
+            )
+
+    def extend_speculative_kv_plans(
+        self,
+        scheduler,
+        plans,
+    ) -> None:
+        if self.state != "active":
+            raise RuntimeError(
+                "scheduler postprocess journal is not active: "
+                f"{self.state}"
+            )
+        block_manager = scheduler.block_manager
+        for plan in plans:
+            publications = tuple(
+                getattr(plan, "publications", ())
+            )
+            for block_id in (
+                tuple(plan.committed_block_ids)
+                + tuple(plan.unused_block_ids)
+                + tuple(
+                    publication.block_id
+                    for publication in publications
+                )
+            ):
+                self._capture_block_if_absent(
+                    block_manager,
+                    block_id,
+                )
+            for publication in publications:
+                self._capture_hash_if_absent(
+                    block_manager,
+                    publication.block_hash,
+                )
+            self.proposal_release_order.extend(
+                plan.unused_block_ids
+            )
+            original_table = self.planned_block_tables.get(
+                plan.sequence_id,
+                (),
+            )
+            self.planned_block_tables[plan.sequence_id] = (
+                tuple(original_table)
+                + tuple(plan.committed_block_ids)
+            )
+
+    def _expected_released_block_ids(
+        self,
+        block_manager,
+    ) -> list[int]:
+        potential_order = list(self.proposal_release_order)
+        for sequence, _ in self.sequence_states:
+            potential_order.extend(reversed(
+                self.planned_block_tables[sequence.seq_id]
+            ))
+        remaining_ref_counts = {
+            block_id: state.ref_count
+            for block_id, state in self.blocks.items()
+        }
+        released = []
+        for block_id in potential_order:
+            state = self.blocks.get(block_id)
+            if state is None or not state.was_used:
+                continue
+            remaining_ref_counts[block_id] -= 1
+            if (
+                remaining_ref_counts[block_id] == 0
+                and block_id
+                not in block_manager.used_block_ids
+            ):
+                released.append(block_id)
+        return released
+
+    def rollback(self, scheduler) -> None:
+        if self.state != "active":
+            raise RuntimeError(
+                "scheduler postprocess journal is not active: "
+                f"{self.state}"
+            )
+        try:
+            while (
+                len(scheduler._hybrid_state_release_events)
+                > self.hybrid_release_event_count
+            ):
+                scheduler._hybrid_state_release_events.pop()
+            if (
+                len(scheduler._hybrid_state_release_events)
+                != self.hybrid_release_event_count
+            ):
+                raise RuntimeError(
+                    "hybrid release-event rollback length changed"
+                )
+            allocator = scheduler.hybrid_state_allocator
+            if allocator is not None:
+                for request_id, lease in reversed(
+                    tuple(self.hybrid_leases.items())
+                ):
+                    current = allocator._request_leases.get(
+                        request_id
+                    )
+                    if current == lease:
+                        continue
+                    if current is not None:
+                        raise RuntimeError(
+                            "hybrid request lease changed during "
+                            "rollback"
+                        )
+                    if (
+                        not allocator._free_slots
+                        or allocator._free_slots[-1]
+                        != lease.slot_id
+                    ):
+                        raise RuntimeError(
+                            "hybrid free-slot rollback order "
+                            "changed"
+                        )
+                    allocator._free_slots.pop()
+                    allocator._owners[lease.slot_id] = lease
+                    allocator._request_leases[request_id] = lease
+            block_manager = scheduler.block_manager
+            released_block_ids = (
+                self._expected_released_block_ids(
+                    block_manager
+                )
+            )
+            for block_id in reversed(released_block_ids):
+                if (
+                    not block_manager.free_block_ids
+                    or block_manager.free_block_ids[-1]
+                    != block_id
+                ):
+                    raise RuntimeError(
+                        "scheduler block free-list rollback "
+                        "order changed"
+                    )
+                block_manager.free_block_ids.pop()
+            for block_id, state in self.blocks.items():
+                if state.was_used:
+                    block_manager.used_block_ids.add(block_id)
+                else:
+                    block_manager.used_block_ids.discard(block_id)
+            for block_id, state in self.blocks.items():
+                block = block_manager.blocks[block_id]
+                block.ref_count = state.ref_count
+                block.generation = state.generation
+                block.hash = state.block_hash
+                block.token_ids = list(state.token_ids)
+            for block_hash, state in self.hashes.items():
+                if state.block_ids is None:
+                    block_manager.hash_to_block_ids.pop(
+                        block_hash,
+                        None,
+                    )
+                else:
+                    block_manager.hash_to_block_ids[block_hash] = set(
+                        state.block_ids
+                    )
+                if state.primary_block_id is None:
+                    block_manager.hash_to_block_id.pop(
+                        block_hash,
+                        None,
+                    )
+                else:
+                    block_manager.hash_to_block_id[block_hash] = (
+                        state.primary_block_id
+                    )
+            for seq, state in self.sequence_states:
+                seq.token_ids = list(state["token_ids"])
+                seq.last_token = state["last_token"]
+                seq.num_tokens = state["num_tokens"]
+                seq.status = state["status"]
+                seq.block_table = list(state["block_table"])
+                seq.num_cached_tokens = state[
+                    "num_cached_tokens"
+                ]
+                seq.num_computed_tokens = state[
+                    "num_computed_tokens"
+                ]
+                seq.prefill_chunk_start = state[
+                    "prefill_chunk_start"
+                ]
+                seq.prefill_chunk_end = state[
+                    "prefill_chunk_end"
+                ]
+                seq.prefill_chunk_final = state[
+                    "prefill_chunk_final"
+                ]
+                seq.step_is_decode = state["step_is_decode"]
+                seq.step_do_sample = state["step_do_sample"]
+                seq.hybrid_state_slot_id = state[
+                    "hybrid_state_slot_id"
+                ]
+                seq.hybrid_state_generation = state[
+                    "hybrid_state_generation"
+                ]
+            scheduler.waiting.clear()
+            scheduler.waiting.extend(self.waiting)
+            scheduler.prefilling.clear()
+            scheduler.prefilling.extend(self.prefilling)
+            scheduler.running.clear()
+            scheduler.running.extend(self.running)
+            for seq_id, (
+                was_present,
+                value,
+            ) in self.decode_progress.items():
+                if was_present:
+                    scheduler.decode_progress_ns_by_seq_id[
+                        seq_id
+                    ] = value
+                else:
+                    scheduler.decode_progress_ns_by_seq_id.pop(
+                        seq_id,
+                        None,
+                    )
+            scheduler._last_slo_postprocess = dict(
+                self.last_slo_postprocess
+            )
+            for seq_id, was_notified in (
+                self.prefill_notified.items()
+            ):
+                if was_notified:
+                    scheduler._prefill_commit_notified_request_ids.add(
+                        seq_id
+                    )
+                else:
+                    scheduler._prefill_commit_notified_request_ids.discard(
+                        seq_id
+                    )
+            scheduler._prefill_commit_hook_error = (
+                self.prefill_hook_error
+            )
+            scheduler.adaptive_mixed_state = (
+                self.adaptive_mixed_state
+            )
+            scheduler.adaptive_high_streak = (
+                self.adaptive_high_streak
+            )
+            scheduler.adaptive_low_streak = (
+                self.adaptive_low_streak
+            )
+            scheduler.adaptive_consecutive_mixed_steps = (
+                self.adaptive_consecutive_mixed_steps
+            )
+            scheduler._consecutive_prefill_chunks = (
+                self.consecutive_prefill_chunks
+            )
+            scheduler.slo_clock_invalid = (
+                self.slo_clock_invalid
+            )
+            scheduler.slo_clock_invalid_reason = (
+                self.slo_clock_invalid_reason
+            )
+            scheduler._last_slo_decision_now_ns = (
+                self.last_slo_decision_now_ns
+            )
+        except BaseException:
+            self.state = "rollback_failed"
+            raise
+        self.state = "rolled_back"
+
+
 def build_slo_chunk_ladder(
     max_chunk_tokens: int,
     min_chunk_tokens: int,
@@ -1423,7 +1923,10 @@ class Scheduler:
             batch_kind=batch_kind,
             decision_now_ns=decision_now_ns,
             step_end_ns=step_end_ns,
-            snapshot=self._capture_postprocess_snapshot(seqs),
+            snapshot=SchedulerPostprocessJournal.capture(
+                self,
+                seqs,
+            ),
         )
 
     def commit_prepared_postprocess(
@@ -1431,11 +1934,18 @@ class Scheduler:
         prepared: PreparedSchedulerPostprocess,
     ) -> None:
         self._require_active_prepared_postprocess(prepared)
+        journal = prepared.snapshot
+        if not isinstance(
+            journal,
+            SchedulerPostprocessJournal,
+        ):
+            raise ValueError(
+                "prepared Scheduler snapshot must be a "
+                "SchedulerPostprocessJournal"
+            )
         seqs = tuple(
             sequence
-            for sequence, _ in prepared.snapshot[
-                "sequence_states"
-            ]
+            for sequence, _ in journal.sequence_states
         )
         timestamp_valid = False
         try:
@@ -1527,19 +2037,25 @@ class Scheduler:
                 finished_progress_entries_removed,
             )
             self._maybe_reset_adaptive_mixed_controller()
-        except BaseException:
+        except BaseException as commit_error:
             prefill_hook_error = (
                 self._prefill_commit_hook_error
             )
-            self._restore_postprocess_snapshot(
-                prepared.snapshot
-            )
+            try:
+                journal.rollback(self)
+            except BaseException as rollback_error:
+                prepared.state = "rollback_failed"
+                raise SchedulerPostprocessRollbackError(
+                    commit_error,
+                    rollback_error,
+                ) from commit_error
             if prefill_hook_error is not None:
                 self._prefill_commit_hook_error = (
                     prefill_hook_error
                 )
             prepared.state = "commit_failed"
             raise
+        journal.state = "committed"
         prepared.state = "committed"
 
     def _apply_prepared_decode_row(
@@ -1677,7 +2193,16 @@ class Scheduler:
         prepared: PreparedSchedulerPostprocess,
     ) -> None:
         self._require_active_prepared_postprocess(prepared)
-        self._restore_postprocess_snapshot(prepared.snapshot)
+        journal = prepared.snapshot
+        if not isinstance(
+            journal,
+            SchedulerPostprocessJournal,
+        ):
+            raise ValueError(
+                "prepared Scheduler snapshot must be a "
+                "SchedulerPostprocessJournal"
+            )
+        journal.rollback(self)
         prepared.state = "rolled_back"
 
     @staticmethod
@@ -1696,249 +2221,6 @@ class Scheduler:
                 "prepared Scheduler postprocess is not active: "
                 f"{prepared.state}"
             )
-
-    def _capture_postprocess_snapshot(
-        self,
-        seqs: tuple[Sequence, ...],
-    ) -> dict:
-        block_manager = self.block_manager
-        allocator = self.hybrid_state_allocator
-        return {
-            "sequence_states": tuple(
-                (
-                    seq,
-                    {
-                        "token_ids": tuple(seq.token_ids),
-                        "last_token": seq.last_token,
-                        "num_tokens": seq.num_tokens,
-                        "status": seq.status,
-                        "block_table": tuple(seq.block_table),
-                        "num_cached_tokens": (
-                            seq.num_cached_tokens
-                        ),
-                        "num_computed_tokens": (
-                            seq.num_computed_tokens
-                        ),
-                        "prefill_chunk_start": (
-                            seq.prefill_chunk_start
-                        ),
-                        "prefill_chunk_end": (
-                            seq.prefill_chunk_end
-                        ),
-                        "prefill_chunk_final": (
-                            seq.prefill_chunk_final
-                        ),
-                        "step_is_decode": seq.step_is_decode,
-                        "step_do_sample": seq.step_do_sample,
-                        "hybrid_state_slot_id": (
-                            seq.hybrid_state_slot_id
-                        ),
-                        "hybrid_state_generation": (
-                            seq.hybrid_state_generation
-                        ),
-                    },
-                )
-                for seq in seqs
-            ),
-            "waiting": tuple(self.waiting),
-            "prefilling": tuple(self.prefilling),
-            "running": tuple(self.running),
-            "free_block_ids": tuple(
-                block_manager.free_block_ids
-            ),
-            "used_block_ids": frozenset(
-                block_manager.used_block_ids
-            ),
-            "blocks": tuple(
-                (
-                    block.ref_count,
-                    block.generation,
-                    block.hash,
-                    tuple(block.token_ids),
-                )
-                for block in block_manager.blocks
-            ),
-            "hash_to_block_id": dict(
-                block_manager.hash_to_block_id
-            ),
-            "hash_to_block_ids": {
-                block_hash: frozenset(block_ids)
-                for block_hash, block_ids
-                in block_manager.hash_to_block_ids.items()
-            },
-            "allocator": (
-                None
-                if allocator is None
-                else {
-                    "free_slots": tuple(
-                        allocator._free_slots
-                    ),
-                    "generations": tuple(
-                        allocator._generations
-                    ),
-                    "owners": dict(allocator._owners),
-                    "request_leases": dict(
-                        allocator._request_leases
-                    ),
-                }
-            ),
-            "release_events": tuple(
-                self._hybrid_state_release_events
-            ),
-            "decode_progress": dict(
-                self.decode_progress_ns_by_seq_id
-            ),
-            "last_slo_postprocess": dict(
-                self._last_slo_postprocess
-            ),
-            "prefill_notified": frozenset(
-                self._prefill_commit_notified_request_ids
-            ),
-            "prefill_hook_error": (
-                self._prefill_commit_hook_error
-            ),
-            "adaptive_mixed_state": self.adaptive_mixed_state,
-            "adaptive_high_streak": self.adaptive_high_streak,
-            "adaptive_low_streak": self.adaptive_low_streak,
-            "adaptive_consecutive_mixed_steps": (
-                self.adaptive_consecutive_mixed_steps
-            ),
-            "consecutive_prefill_chunks": (
-                self._consecutive_prefill_chunks
-            ),
-            "slo_clock_invalid": self.slo_clock_invalid,
-            "slo_clock_invalid_reason": (
-                self.slo_clock_invalid_reason
-            ),
-            "last_slo_decision_now_ns": (
-                self._last_slo_decision_now_ns
-            ),
-        }
-
-    def _restore_postprocess_snapshot(
-        self,
-        snapshot: dict,
-    ) -> None:
-        for seq, state in snapshot["sequence_states"]:
-            seq.token_ids = list(state["token_ids"])
-            seq.last_token = state["last_token"]
-            seq.num_tokens = state["num_tokens"]
-            seq.status = state["status"]
-            seq.block_table = list(state["block_table"])
-            seq.num_cached_tokens = state["num_cached_tokens"]
-            seq.num_computed_tokens = (
-                state["num_computed_tokens"]
-            )
-            seq.prefill_chunk_start = (
-                state["prefill_chunk_start"]
-            )
-            seq.prefill_chunk_end = state["prefill_chunk_end"]
-            seq.prefill_chunk_final = (
-                state["prefill_chunk_final"]
-            )
-            seq.step_is_decode = state["step_is_decode"]
-            seq.step_do_sample = state["step_do_sample"]
-            seq.hybrid_state_slot_id = (
-                state["hybrid_state_slot_id"]
-            )
-            seq.hybrid_state_generation = (
-                state["hybrid_state_generation"]
-            )
-        self.waiting.clear()
-        self.waiting.extend(snapshot["waiting"])
-        self.prefilling.clear()
-        self.prefilling.extend(snapshot["prefilling"])
-        self.running.clear()
-        self.running.extend(snapshot["running"])
-        block_manager = self.block_manager
-        block_manager.free_block_ids.clear()
-        block_manager.free_block_ids.extend(
-            snapshot["free_block_ids"]
-        )
-        block_manager.used_block_ids.clear()
-        block_manager.used_block_ids.update(
-            snapshot["used_block_ids"]
-        )
-        for block, state in zip(
-            block_manager.blocks,
-            snapshot["blocks"],
-        ):
-            (
-                block.ref_count,
-                block.generation,
-                block.hash,
-                token_ids,
-            ) = state
-            block.token_ids = list(token_ids)
-        block_manager.hash_to_block_id.clear()
-        block_manager.hash_to_block_id.update(
-            snapshot["hash_to_block_id"]
-        )
-        block_manager.hash_to_block_ids.clear()
-        block_manager.hash_to_block_ids.update({
-            block_hash: set(block_ids)
-            for block_hash, block_ids
-            in snapshot["hash_to_block_ids"].items()
-        })
-        allocator_state = snapshot["allocator"]
-        allocator = self.hybrid_state_allocator
-        if allocator_state is not None:
-            allocator._free_slots.clear()
-            allocator._free_slots.extend(
-                allocator_state["free_slots"]
-            )
-            allocator._generations[:] = (
-                allocator_state["generations"]
-            )
-            allocator._owners.clear()
-            allocator._owners.update(
-                allocator_state["owners"]
-            )
-            allocator._request_leases.clear()
-            allocator._request_leases.update(
-                allocator_state["request_leases"]
-            )
-        self._hybrid_state_release_events.clear()
-        self._hybrid_state_release_events.extend(
-            snapshot["release_events"]
-        )
-        self.decode_progress_ns_by_seq_id.clear()
-        self.decode_progress_ns_by_seq_id.update(
-            snapshot["decode_progress"]
-        )
-        self._last_slo_postprocess = dict(
-            snapshot["last_slo_postprocess"]
-        )
-        self._prefill_commit_notified_request_ids = set(
-            snapshot["prefill_notified"]
-        )
-        self._prefill_commit_hook_error = snapshot[
-            "prefill_hook_error"
-        ]
-        self.adaptive_mixed_state = snapshot[
-            "adaptive_mixed_state"
-        ]
-        self.adaptive_high_streak = snapshot[
-            "adaptive_high_streak"
-        ]
-        self.adaptive_low_streak = snapshot[
-            "adaptive_low_streak"
-        ]
-        self.adaptive_consecutive_mixed_steps = snapshot[
-            "adaptive_consecutive_mixed_steps"
-        ]
-        self._consecutive_prefill_chunks = snapshot[
-            "consecutive_prefill_chunks"
-        ]
-        self.slo_clock_invalid = snapshot[
-            "slo_clock_invalid"
-        ]
-        self.slo_clock_invalid_reason = snapshot[
-            "slo_clock_invalid_reason"
-        ]
-        self._last_slo_decision_now_ns = snapshot[
-            "last_slo_decision_now_ns"
-        ]
 
     def _publish_slo_postprocess(
         self,

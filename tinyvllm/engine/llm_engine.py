@@ -4,7 +4,14 @@ from tinyvllm.engine.model_runner import ModelRunner
 from tinyvllm.engine.h2d_slot_reuse_diagnostic import (
     H2D_SLOT_REUSE_SCHEMA,
 )
-from tinyvllm.engine.scheduler import Scheduler, ScheduledOutputRow
+from tinyvllm.engine.scheduler import (
+    Scheduler,
+    ScheduledOutputRow,
+    SchedulerPostprocessRollbackError,
+)
+from tinyvllm.engine.block_manager import (
+    SpeculativeKVCommitRollbackError,
+)
 from tinyvllm.engine.sequence import Sequence
 from tinyvllm.engine.speculative_execution import (
     build_engine_prepared_speculative_commit_rows,
@@ -268,6 +275,10 @@ def _commit_prepared_speculative_publication(
             prepared_runtime.side_state_state == "applied"
         )
         if kv_plans:
+            prepared_scheduler.snapshot.extend_speculative_kv_plans(
+                engine.scheduler,
+                kv_plans,
+            )
             with phase("proposal_kv_prepare_commit"):
                 (
                     engine.scheduler.block_manager
@@ -284,6 +295,15 @@ def _commit_prepared_speculative_publication(
                     plan.transaction.state = "materialized"
             raise
     except BaseException as error:
+        if isinstance(
+            error,
+            (
+                SpeculativeKVCommitRollbackError,
+                SchedulerPostprocessRollbackError,
+            ),
+        ):
+            engine.speculative_runtime_poisoned = True
+            engine.speculative_runtime_poison_reason = str(error)
         for plan in kv_plans:
             if plan.transaction.state == "committed":
                 plan.transaction.state = "materialized"
