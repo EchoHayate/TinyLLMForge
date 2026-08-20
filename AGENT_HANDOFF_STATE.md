@@ -49386,3 +49386,121 @@ Do not claim that this proves Python GC was the original cause, fixes the
 separate `speculative_prepare` worker/CUDA anomaly, or improves TPOT. Those
 claims require the fresh same-protocol paired four-GPU gate with exact-token,
 transaction, four-rank, stationarity, TPOT, TTFT, and throughput verification.
+
+## 2026-08-20 source-version paired gate readiness and admission outcome
+
+The complete source-pair gate toolchain is committed and pushed:
+
+```text
+commit:
+  497421fd4f19199450577139c993113f42c15f62
+subject:
+  feat: add source-paired performance gate
+branch:
+  feat/kv-sparse-attention
+remote:
+  origin/feat/kv-sparse-attention
+```
+
+The implementation adds:
+
+- a pure baseline/candidate source-pair artifact builder;
+- an independent artifact/manifest verifier with exclusive receipts;
+- exact Git-object export without checkout or local patch;
+- 8-pair/16-member interleaved remote orchestration;
+- strict Kerberos and four-clean-GPU fail-fast admission;
+- child finalization followed by parent assembly, complete manifest, primary
+  verification, controller copy, controller verification, and receipt
+  comparison;
+- complete candidate source closure for the three production files.
+
+Fresh local authority:
+
+```text
+source-pair + command-timeline + CUDA-graph runner suites:
+  306 passed in 30.22s
+py_compile:
+  PASS
+tabnanny:
+  PASS
+git diff --check:
+  PASS
+```
+
+Review-driven fixes:
+
+```text
+epoch mapping order:
+  use unique embedded identity.epoch_index values 0..7
+
+parent manifest:
+  reject manifest/root/bound-path/inventory symlinks independently
+```
+
+Exact Git-object archive audit:
+
+```text
+baseline 596e724ea87966b2ab3b47cccda08c106f9084bb:
+  3,133,440 bytes
+  144 members
+  no source-pair production files
+  no unsafe link members
+
+candidate 497421fd4f19199450577139c993113f42c15f62:
+  3,225,600 bytes
+  147 members
+  all three source-pair production files
+  no unsafe link members
+```
+
+The real gate did not start. The first fresh tag,
+`20260820-bounded-journal-tpot-source-pair-r2`, returned exit code `2`:
+
+```json
+{"minimum_required_lifetime_seconds":5400,"reason":"local Kerberos payload is invalid","status":"INCONCLUSIVE_ENVIRONMENT"}
+```
+
+On Thursday, August 20, 2026:
+
+```text
+klist --json:
+  {"version":1}
+klist:
+  Cache not found
+klist -l:
+  no credential caches
+```
+
+No manual refresh was attempted. A current-Agent local monitor then used 120
+additional fresh immutable tags (`r3` through `r122`) at 60-second intervals
+from `2026-08-20T21:19:37+08:00` to
+`2026-08-20T23:19:54+08:00`. Every attempt stopped at the same local
+Kerberos fail-fast check. The monitor ended with:
+
+```text
+MONITOR_EXHAUSTED attempts=120
+```
+
+No SSH command, remote mutation, GPU query, worker launch, or unrelated
+process action occurred. Therefore:
+
+```text
+SOURCE_PAIR_GATE_IMPLEMENTATION=ESTABLISHED_LOCALLY
+SOURCE_PAIR_GATE_REMOTE_ADMISSION=INCONCLUSIVE_ENVIRONMENT_KERBEROS_CACHE_MISSING
+SOURCE_PAIR_GATE_FOUR_GPU_ADMISSION=NOT_REACHED
+SOURCE_PAIR_GATE_REAL_8_PAIR_CAMPAIGN=NOT_RUN
+SOURCE_PAIR_GATE_DUAL_VERIFICATION=NOT_RUN
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+TTFT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+THROUGHPUT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+All tags `r2` through `r122` are retired. Once the local
+`sitian@BYTEDANCE.COM` TGT has at least 5,400 seconds remaining, use a fresh
+tag. Reconfirm `HEAD == origin/feat/kv-sparse-attention`, run strict read-only
+admission, and immediately execute the campaign if exactly four clean GPUs
+are admitted. Further normal approval is not required. Continue to keep all
+remote task output beneath
+`/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.

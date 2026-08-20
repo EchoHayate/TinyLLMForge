@@ -2836,3 +2836,183 @@ output beneath
 pass dual verification for exact tokens, Proposal-KV transactions, four-rank
 correctness, stationarity, TPOT p95/median, TTFT p95, and throughput. Until
 that campaign completes, no performance benefit may be claimed.
+
+## 2026-08-20 Source-Version Paired Gate Readiness and Environment Result
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete artifact/evidence | Status |
+| --- | --- | --- |
+| Compare the pinned pre-journal baseline against the current candidate | baseline `596e724ea87966b2ab3b47cccda08c106f9084bb`; candidate `497421fd4f19199450577139c993113f42c15f62` | `ESTABLISHED` |
+| Export both sources from exact Git objects without a checkout or local patch | `export_git_revision_archive()`; live in-memory archive audit | `ESTABLISHED` |
+| Preserve the frozen eight-pair eager/graph and source order | `expected_source_pair_schedule()` and schedule contract tests | `ESTABLISHED_LOCALLY` |
+| Use 8 epochs, 40 measured repeats, and 160 request samples per source | source-pair constants, aggregation checks, and tests | `ESTABLISHED_LOCALLY` |
+| Bind exact output, Proposal-KV transaction, active-transaction, and four-rank correctness | `autoregressive_draft_source_pair_gate.py`; semantic-parity tests | `ESTABLISHED_LOCALLY` |
+| Compute request TPOT median/p95, TTFT p95, median batch throughput, regressions, and eager/graph stationarity | pure source-pair artifact builder and threshold/precedence tests | `ESTABLISHED_LOCALLY` |
+| Recompute the artifact independently and verify a complete parent manifest | `verify_autoregressive_draft_source_pair_gate.py`; tamper, incomplete-inventory, and symlink rejection tests | `ESTABLISHED_LOCALLY` |
+| Interleave all 16 child members, freeze before/after GPU inventory, finalize both children, then build the parent | `run_autoregressive_draft_source_pair_remote.py`; orchestration and parent-pipeline tests | `ESTABLISHED_LOCALLY` |
+| Keep every remote cache, scratch, log, receipt, manifest, and run beneath the Sitian task root | source-pair path checks plus inherited SSH TMP/pycache/XDG environment | `ESTABLISHED_LOCALLY` |
+| Include the three source-pair production files in the candidate source closure only | baseline archive: 144 members and no source-pair files; candidate archive: 147 members and all three files | `ESTABLISHED` |
+| Source-pair and reused command-timeline regression | `306 passed in 30.22s`; py_compile, tabnanny, and `git diff --check` passed | `PASS` |
+| Commit and push the complete toolchain | `497421f feat: add source-paired performance gate`; remote branch confirmed by `git ls-remote` | `PASS` |
+| Fail before remote mutation when local Kerberos authority is absent | exact preflight JSON returned exit code `2` with `local Kerberos payload is invalid` | `PASS` |
+| Admit exactly four clean GPUs | blocked before SSH by Kerberos fail-fast | `NOT_REACHED` |
+| Execute the 8-pair/16-member campaign | no remote destination or worker was created | `NOT_RUN` |
+| Produce child and parent manifests plus remote/local verifier receipts | campaign did not start | `NOT_RUN` |
+| Verify exact tokens, Proposal-KV transactions, four-rank correctness, and paired stationarity on real outputs | campaign did not start | `NOT_RUN` |
+| Candidate TPOT p95 `<=105.87 ms` and median `<=85.66 ms` | campaign did not start | `NOT_RUN` |
+| TTFT p95 and throughput regressions each `<=3%` | campaign did not start | `NOT_RUN` |
+
+### Source and local-verification authority
+
+The source-pair implementation was committed and pushed as:
+
+```text
+497421fd4f19199450577139c993113f42c15f62
+feat: add source-paired performance gate
+```
+
+The commit contains exactly:
+
+```text
+tools/autoregressive_draft_source_pair_gate.py
+tools/run_autoregressive_draft_command_timeline_remote.py
+tools/run_autoregressive_draft_source_pair_remote.py
+tools/test_autoregressive_draft_cuda_graph_gate.py
+tools/test_autoregressive_draft_source_pair_gate.py
+tools/verify_autoregressive_draft_source_pair_gate.py
+```
+
+It has exactly one trailer:
+
+```text
+Co-authored-by: TRAE CLI <noreply@bytedance.com>
+```
+
+Fresh pre-commit evidence:
+
+```text
+source-pair + command-timeline + CUDA-graph runner suites:
+  306 passed in 30.22s
+
+py_compile:
+  PASS
+
+tabnanny:
+  PASS
+
+git diff --check:
+  PASS
+```
+
+Two final review-driven RED-to-GREEN cases were preserved:
+
+```text
+test_source_pair_artifact_uses_embedded_epoch_index_not_mapping_order:
+  RED: baseline epoch schedule is invalid
+  GREEN: epoch mappings are indexed by unique embedded epoch_index 0..7
+
+test_source_pair_verifier_rejects_parent_manifest_symlink:
+  RED: verifier accepted an in-root symlink
+  GREEN: manifest, root, bound path components, and inventory reject symlinks
+```
+
+The exact-object archive audit produced:
+
+```text
+baseline:
+  revision: 596e724ea87966b2ab3b47cccda08c106f9084bb
+  bytes: 3,133,440
+  members: 144
+  source-pair production files: absent
+  unsafe link members: none
+
+candidate:
+  revision: 497421fd4f19199450577139c993113f42c15f62
+  bytes: 3,225,600
+  members: 147
+  source-pair production files: all three present
+  unsafe link members: none
+```
+
+Local HEAD, `origin/feat/kv-sparse-attention`, and the live remote ref all
+resolved to `497421fd4f19199450577139c993113f42c15f62`.
+
+### Strict admission result
+
+The first fresh preflight tag was:
+
+```text
+20260820-bounded-journal-tpot-source-pair-r2
+```
+
+It returned exit code `2` and:
+
+```json
+{"minimum_required_lifetime_seconds":5400,"reason":"local Kerberos payload is invalid","status":"INCONCLUSIVE_ENVIRONMENT"}
+```
+
+Read-only diagnosis on Thursday, August 20, 2026 confirmed:
+
+```text
+klist --json:
+  {"version":1}
+
+klist:
+  Cache not found
+
+klist -l:
+  no credential caches
+```
+
+No manual credential refresh was attempted. A current-Agent local monitor
+then used 120 further fresh immutable tags, from `r3` through `r122`, at
+60-second intervals. Every attempt returned the same Kerberos fail-fast
+result. The monitor ran from `2026-08-20T21:19:37+08:00` through
+`2026-08-20T23:19:54+08:00` and ended with:
+
+```text
+MONITOR_EXHAUSTED attempts=120
+```
+
+Because authentication failed before `_run_remote_command()`:
+
+- no SSH command was issued by the source-pair preflight;
+- no remote path was created or overwritten;
+- no GPU inventory was queried;
+- no worker or background experiment process was launched;
+- no unrelated process was signaled, adopted, paused, or modified;
+- no child or parent manifest/verifier receipt exists for a real campaign.
+
+All tags from `r2` through `r122` are retired and must not be reused. The next
+attempt requires a fresh tag after the local `sitian@BYTEDANCE.COM` TGT exists
+with at least 5,400 seconds remaining. Normal implementation/run approval is
+already waived; once that external condition is restored, the strict
+four-clean-GPU preflight and campaign may proceed automatically.
+
+### Reconciled classification
+
+```text
+SOURCE_PAIR_GATE_IMPLEMENTATION=ESTABLISHED_LOCALLY
+SOURCE_PAIR_GATE_DUAL_VERIFIER_CONTRACT=ESTABLISHED_LOCALLY
+SOURCE_PAIR_GATE_GIT_OBJECT_EXPORT=ESTABLISHED
+SOURCE_PAIR_GATE_CANDIDATE_COMMIT=497421fd4f19199450577139c993113f42c15f62
+SOURCE_PAIR_GATE_REMOTE_ADMISSION=INCONCLUSIVE_ENVIRONMENT_KERBEROS_CACHE_MISSING
+SOURCE_PAIR_GATE_FOUR_GPU_ADMISSION=NOT_REACHED
+SOURCE_PAIR_GATE_REAL_8_PAIR_CAMPAIGN=NOT_RUN
+SOURCE_PAIR_GATE_CHILD_MANIFESTS=NOT_CREATED
+SOURCE_PAIR_GATE_PARENT_MANIFEST=NOT_CREATED
+SOURCE_PAIR_GATE_DUAL_VERIFICATION=NOT_RUN
+SOURCE_PAIR_GATE_EXACT_CORRECTNESS=NOT_RUN
+SOURCE_PAIR_GATE_STATIONARITY=NOT_RUN
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+TTFT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+THROUGHPUT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+SOURCE_PAIR_GATE_CLASSIFICATION=INCONCLUSIVE_ENVIRONMENT
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+This is an environment result, not a correctness or performance failure. No
+performance benefit may be claimed from the local toolchain tests or the
+failed admission attempts.
