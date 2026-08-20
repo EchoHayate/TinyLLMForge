@@ -49100,3 +49100,153 @@ controller destination created=NO
 The remaining blocker is external GPU occupancy only. Re-run the same
 read-only preflight when a fourth GPU becomes fully idle and process-free.
 Do not run `execute` unless the result is `READY` with four clean GPUs.
+
+### 2026-08-20 Command-timeline r23 terminal reconciliation
+
+The GPU-occupancy blocker recorded immediately above is historical. The user
+separately authorized the real bundle, and the current Mac Agent monitored the
+strict admission gate and launched the approved fresh tag as soon as four
+fully clean GPUs were available.
+
+The implementation authority was committed and pushed before execution:
+
+```text
+branch:
+  feat/kv-sparse-attention
+source commit:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+```
+
+The immutable retry chronology is:
+
+```text
+r11  555fee9340ca1299d752815f4509f7466495a8d2
+     graph warmup counters invalid
+r12  f8d228784fe4528fa83c7b5de272f976665279a6
+     replay counters did not grow by the old expected +1
+r13  2fda1306e35ee42b0e5905c4059d321b069480ed
+     measured replay growth disproved the old +1 contract
+r14  f37b525c98247adb3eb844217854734540aee307
+     graph telemetry coverage incomplete
+r15  8066656364f4b07cbb4382513794cdf11808c40a
+     eager telemetry coverage incomplete
+r16  9a51b4c6dd402873b496ed087d94159ffd206991
+     two epochs; block-1 graph coverage incomplete
+r17  8734362eaedc60ee86433f1926785a19420e4181
+     two epochs; block-1 graph coverage incomplete
+r18  eab7bcce403010492969401eeef61ba426d10927
+     all eight inventories; no canonical result or manifest
+r19  72dfb18a0892cec86ec9019551fd6e01f718f2fd
+     exiting task-owned process observed as unowned
+r20  d42f257be81d793affddf251381ae8a554fbe360
+     all eight epochs; current-source reconciliation:
+     PAIRED_PROTOCOL_UNSTABLE
+r21  596e724ea87966b2ab3b47cccda08c106f9084bb
+     pre-epoch transport failure; empty status/
+r22  596e724ea87966b2ab3b47cccda08c106f9084bb
+     prepare transport failure; neither destination created
+r23  596e724ea87966b2ab3b47cccda08c106f9084bb
+     terminal complete authority
+```
+
+r21/r22 localized a transport-lifetime failure. The SSH configuration routes
+through `ProxyCommand ssh -qW %h:%p jump-proxy-hl`; detached target
+ControlMaster sockets disappeared between actions while the task-owned
+jump-host master remained healthy. The stable recovery kept a current-Agent
+foreground target ControlMaster over the jump socket. Five consecutive
+read-only probes passed before r23. No unrelated process was killed, signaled,
+paused, adopted, or modified.
+
+Terminal campaign:
+
+```text
+tag:
+  20260818-command-timeline-tp4-b4-q4-r23
+GPU indices:
+  2,4,5,6
+primary:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/runs/20260818-command-timeline-tp4-b4-q4-r23
+controller:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/controller-verification/20260818-command-timeline-tp4-b4-q4-r23
+epochs:
+  8/8
+measured repeats:
+  40/40
+complete raw four-GPU groups:
+  5945
+minimum complete in-interval groups per measured repeat:
+  6
+before/after inventories:
+  16/16 clean and frozen-set matching
+GPU sampler stderr:
+  empty for all eight epochs
+host sampler stderr:
+  empty for all eight epochs
+```
+
+Every complete group has all four expected UUIDs, 32 distinct
+`(GPU, query)` PIDs, and eight positive query durations per GPU row.
+
+Integrity and independent verification:
+
+```text
+artifact SHA-256:
+  2c934bf85a15daa74fe9c3ba28a3aaf03bda67f859b5f01e21d62c9e5347337d
+source inventory SHA-256:
+  822ba31d29f21bb3dbecf5b7103f2abefd78ca3056da41e7784cbfedd8cb4ef1
+raw-input inventory SHA-256:
+  3271fa601d1474061bd1bbf5cb746667baf191b31a2232213a1ceeaae364b506
+manifest SHA-256:
+  7c1332fa9de1639a0df50263dd8ae7906017f93835ccd9c223c0b61558e16d91
+verifier source SHA-256:
+  69d0769ed80da6c420464b317ffce09ec3a21efd6273f30203196461949e51eb
+source files bound:
+  136
+raw input files bound:
+  18
+primary manifest:
+  279/279 exact coverage; sha256sum -c PASS
+controller manifest:
+  279/279 exact coverage; sha256sum -c PASS
+```
+
+Primary and controller canonical artifacts are byte-identical. Their receipts
+are equal after excluding only `artifact_path`, `verification_location`, and
+`verified_at_utc`.
+
+Canonical terminal result:
+
+```text
+identity_correctness_passed=true
+timeline_conservation_passed=true
+stationarity_passed=false
+classification=PAIRED_PROTOCOL_UNSTABLE
+localized_boundary=null
+runtime_optimization_authorized=false
+performance_improvement_established=false
+phase_1_complete=false
+promotion_ready=false
+```
+
+Final claim boundary:
+
+```text
+COMMAND_TIMELINE_LOCAL_IMPLEMENTATION=ESTABLISHED
+COMMAND_TIMELINE_REMOTE_BUNDLE=COMPLETE
+COMMAND_TIMELINE_TELEMETRY=ESTABLISHED
+COMMAND_TIMELINE_DUAL_VERIFICATION=PASS
+BOUNDARY_LOCALIZED=NOT_ESTABLISHED
+RUNTIME_CLASSIFICATION=PAIRED_PROTOCOL_UNSTABLE
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+The command-timeline evidence campaign is closed. Do not start a runtime
+optimization from this result without a new approved design: stationarity
+failed and no boundary was localized. Continue to keep every generated remote
+output, cache, log, diagnostic, receipt, manifest, and task scratch beneath
+`/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`; do not
+write task output to `/`, `/tmp`, or `/private/tmp`, and do not modify
+`/data00/home/sitian/tllm/TinyLLMForge`.

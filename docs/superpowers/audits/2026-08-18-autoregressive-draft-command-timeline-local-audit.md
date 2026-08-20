@@ -241,7 +241,7 @@ result and exits with status `2`, without a traceback. The result included
 the pushed source commit, a READY Kerberos receipt above the 5400-second
 minimum, the untouched primary/controller paths, and an empty GPU selection.
 
-## Final Classification
+## Historical Pre-Authorization Classification
 
 ```text
 COMMAND_TIMELINE_LOCAL_IMPLEMENTATION=ESTABLISHED
@@ -256,3 +256,105 @@ PROMOTION=NOT_PROMOTABLE
 The next allowed action after commit and push is a separately authorized,
 never-before-used source-bound command-timeline bundle. It is not a runtime
 optimization and must not reuse or rewrite immutable schema-v2 `r3`.
+
+## 2026-08-20 Source-Bound Remote Completion Audit
+
+This section supersedes the historical pre-authorization classification above.
+The user separately authorized the real command-timeline bundle, and the Mac
+Agent monitored the strict GPU gate and automatically launched the already
+approved campaign when four fully clean GPUs were available.
+
+### Executive Matrix
+
+| Evidence layer | Terminal evidence | Classification |
+| --- | --- | --- |
+| Local implementation | Source commit `596e724ea87966b2ab3b47cccda08c106f9084bb`; fresh final affected suite `336 passed`; six changed Python files compile. | ESTABLISHED |
+| Four-GPU admission | r23 used indices `2,4,5,6`; 16/16 before/after inventories were clean and matched the frozen set. | PASS |
+| Remote bundle | Eight isolated epochs and 40/40 measured repeats completed. | COMPLETE |
+| Raw telemetry | 5,945 complete four-GPU groups; minimum six complete in-interval groups per measured repeat; four expected UUIDs, 32 distinct query PIDs, and eight positive query durations per GPU row. | ESTABLISHED |
+| Sampler health | GPU and host sampler stderr are empty for all eight epochs. | PASS |
+| Source/raw binding | 136 source files and 18 raw-input files are bound by their inventories and digests. | PASS |
+| Independent verification | Primary/controller canonical artifacts are byte-identical; normalized receipts are equal after the three formal location/time exclusions. | PASS |
+| Manifest integrity | Primary and controller each have exact `279/279` coverage and pass `sha256sum -c`. | PASS |
+| Identity correctness | Canonical verifier reports `identity_correctness_passed=true`. | PASS |
+| Timeline conservation | Canonical verifier reports `timeline_conservation_passed=true`. | PASS |
+| Stationarity | Canonical verifier reports `stationarity_passed=false`. | FAIL |
+| Boundary localization | Canonical verifier reports `localized_boundary=null`. | NOT ESTABLISHED |
+| Runtime optimization | Canonical verifier reports `runtime_optimization_authorized=false`. | NOT AUTHORIZED |
+| Performance improvement | Canonical verifier reports `performance_improvement_established=false`. | NOT ESTABLISHED |
+| Phase 1 / promotion | Canonical verifier reports `phase_1_complete=false` and `promotion_ready=false`. | NOT ACHIEVED / NOT PROMOTABLE |
+
+### Immutable Retry Reconciliation
+
+The remote campaign consumed fresh tags only:
+
+- r11-r15 successively exposed invalid graph counters and incomplete graph or
+  eager telemetry coverage;
+- r16-r17 completed two epochs each before block-1 graph coverage failed;
+- r18 completed all eight inventories but produced no canonical result or
+  manifest;
+- r19 observed an exiting task-owned process as unowned;
+- r20 completed all eight epochs, and current-source read-only reconciliation
+  classifies it as `PAIRED_PROTOCOL_UNSTABLE`;
+- r21 failed before epoch 0 during transport, before the remote inventory
+  entry point;
+- r22 failed during prepare transport and created neither destination;
+- r23 completed the terminal evidence chain.
+
+No failed or partial tag was reused. The r21/r22 transport problem was
+resolved by retaining a current-Agent foreground target ControlMaster over the
+healthy task-owned jump-host ControlMaster. Five consecutive read-only probes
+passed before r23. No unrelated process was killed, signaled, paused, adopted,
+or modified.
+
+### Terminal Authority and Integrity
+
+```text
+run tag:
+  20260818-command-timeline-tp4-b4-q4-r23
+source commit:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+primary:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/runs/20260818-command-timeline-tp4-b4-q4-r23
+controller:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/controller-verification/20260818-command-timeline-tp4-b4-q4-r23
+artifact SHA-256:
+  2c934bf85a15daa74fe9c3ba28a3aaf03bda67f859b5f01e21d62c9e5347337d
+source inventory SHA-256:
+  822ba31d29f21bb3dbecf5b7103f2abefd78ca3056da41e7784cbfedd8cb4ef1
+raw-input inventory SHA-256:
+  3271fa601d1474061bd1bbf5cb746667baf191b31a2232213a1ceeaae364b506
+manifest SHA-256:
+  7c1332fa9de1639a0df50263dd8ae7906017f93835ccd9c223c0b61558e16d91
+verifier source SHA-256:
+  69d0769ed80da6c420464b317ffce09ec3a21efd6273f30203196461949e51eb
+```
+
+All generated campaign outputs, caches, diagnostics, logs, receipts,
+manifests, and task scratch remain beneath:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+```
+
+The source repository at `/data00/home/sitian/tllm/TinyLLMForge` was not
+modified by the campaign.
+
+### Final Classification
+
+```text
+COMMAND_TIMELINE_LOCAL_IMPLEMENTATION=ESTABLISHED
+COMMAND_TIMELINE_REMOTE_BUNDLE=COMPLETE
+COMMAND_TIMELINE_TELEMETRY=ESTABLISHED
+COMMAND_TIMELINE_DUAL_VERIFICATION=PASS
+BOUNDARY_LOCALIZED=NOT_ESTABLISHED
+RUNTIME_CLASSIFICATION=PAIRED_PROTOCOL_UNSTABLE
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+The approved command-timeline evidence campaign is complete. Its terminal
+result does not authorize runtime optimization and does not establish a
+performance improvement, Phase 1 completion, or promotion readiness.

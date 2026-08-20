@@ -464,3 +464,36 @@ trailer and push `feat/kv-sparse-attention`.
 Separate local tests, remote tests, telemetry completeness, verifier results,
 manifest integrity, and runtime classification. Do not claim a runtime
 optimization result unless the final verified campaign establishes it.
+
+## 2026-08-20 Final Reconciliation
+
+The concurrent sampler was superseded after the campaign exposed that
+thread-level concurrency did not provide the required independent query
+execution evidence. The subsequent process-isolated and field-isolated plans
+preserved the strict four-GPU admission and raw-duration contracts.
+
+The immutable retry chain continued through r23. The terminal tag
+`20260818-command-timeline-tp4-b4-q4-r23` used source commit
+`596e724ea87966b2ab3b47cccda08c106f9084bb`, GPUs `2,4,5,6`, eight epochs,
+and 40 measured repeats. Its primary and controller artifacts are
+byte-identical; their receipts are equal after excluding only
+`artifact_path`, `verification_location`, and `verified_at_utc`; each manifest
+has exact `279/279` coverage and passes `sha256sum -c`.
+
+The final classification is intentionally split:
+
+```text
+COMMAND_TIMELINE_LOCAL_IMPLEMENTATION=ESTABLISHED
+COMMAND_TIMELINE_REMOTE_BUNDLE=COMPLETE
+COMMAND_TIMELINE_TELEMETRY=ESTABLISHED
+COMMAND_TIMELINE_DUAL_VERIFICATION=PASS
+BOUNDARY_LOCALIZED=NOT_ESTABLISHED
+RUNTIME_CLASSIFICATION=PAIRED_PROTOCOL_UNSTABLE
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Thus the campaign and evidence-integrity work completed, but no runtime
+optimization result was established.

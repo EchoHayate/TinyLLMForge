@@ -452,3 +452,24 @@ git push origin feat/kv-sparse-attention
 Expected: local and origin heads match; remote source remains bound to the
 implementation commit; unrelated untracked `artifacts/` and `experiments/`
 remain untouched.
+
+## 2026-08-20 Final Reconciliation
+
+The direct NVML sampler was an evidence-producing intermediate design. Later
+iterations retained its per-query duration telemetry but changed the execution
+architecture to concurrent, process-isolated, and field-isolated collection.
+The unchecked implementation steps above remain a historical plan record and
+are not the source of truth for the terminal campaign.
+
+Immutable tag `20260818-command-timeline-tp4-b4-q4-r23`, bound to
+`596e724ea87966b2ab3b47cccda08c106f9084bb`, completed all eight epochs and
+40 measured repeats. The retained raw telemetry contains 5,945 complete
+four-GPU groups. Every complete group contains the four expected UUIDs,
+32 distinct `(GPU, query)` process IDs, and eight positive query durations per
+GPU row; all epoch sampler stderr files are empty.
+
+The final verifier chain passed identity correctness and timeline
+conservation, but stationarity failed. The canonical runtime classification is
+`PAIRED_PROTOCOL_UNSTABLE`, with no localized boundary. Therefore direct-query
+latency evidence is established, while sampler optimization and performance
+improvement remain unauthorized and unestablished.

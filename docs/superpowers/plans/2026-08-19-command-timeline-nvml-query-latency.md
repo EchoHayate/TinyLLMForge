@@ -239,3 +239,25 @@ change is proposed.
 Do not classify runtime performance or authorize sampler optimization from the
 latency instrumentation alone. Use the evidence to write the next minimal
 optimization design, then continue with TDD and a new immutable run tag.
+
+## 2026-08-20 Final Reconciliation
+
+The query-latency instrumentation was retained through the later sampler
+architectures and is present in the terminal raw evidence. Immutable tag
+`20260818-command-timeline-tp4-b4-q4-r23` completed eight epochs and 40
+measured repeats from source
+`596e724ea87966b2ab3b47cccda08c106f9084bb`.
+
+Across 5,945 complete raw groups, every GPU row has eight positive query
+durations and every group has 32 distinct `(GPU, query)` process IDs. The
+minimum number of complete groups wholly inside any measured repeat is six,
+and sampler stderr is empty for every epoch. These facts establish that query
+latency is attached to strict raw telemetry rather than inferred from a
+coarse snapshot gap.
+
+The terminal verifier result still has
+`stationarity_passed=false`, `localized_boundary=null`, and
+`classification=PAIRED_PROTOCOL_UNSTABLE`. Consequently this plan's claim
+boundary remains in force: the latency evidence is diagnostic evidence only
+and does not authorize a runtime optimization or establish a performance
+improvement.

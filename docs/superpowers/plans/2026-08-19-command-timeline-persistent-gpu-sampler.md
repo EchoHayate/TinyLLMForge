@@ -634,3 +634,33 @@ git push origin feat/kv-sparse-attention
 
 Expected: local, remote source, and origin commits are reconciled; no
 unrelated path is staged or modified.
+
+## 2026-08-20 Final Reconciliation
+
+This plan records an intermediate sampler design. Its unchecked steps above
+must not be read as the terminal campaign state. Later TDD iterations replaced
+the persistent sampler with direct, concurrent, process-isolated, and finally
+field-isolated NVML collection while preserving the same admission,
+measurement, ownership, and artifact-integrity gates.
+
+The terminal authority is immutable tag
+`20260818-command-timeline-tp4-b4-q4-r23`, bound to source commit
+`596e724ea87966b2ab3b47cccda08c106f9084bb`. It completed eight isolated
+epochs and 40 measured repeats on GPU indices `2,4,5,6`. Both independent
+verification locations produced byte-identical canonical artifacts, normalized
+equal receipts, and manifests with exact `279/279` coverage.
+
+The persistent-sampler architecture itself is therefore historical, not the
+promoted implementation. The terminal result is:
+
+```text
+COMMAND_TIMELINE_REMOTE_BUNDLE=COMPLETE
+COMMAND_TIMELINE_TELEMETRY=ESTABLISHED
+COMMAND_TIMELINE_DUAL_VERIFICATION=PASS
+RUNTIME_CLASSIFICATION=PAIRED_PROTOCOL_UNSTABLE
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+```
+
+Campaign completeness establishes the diagnostic evidence chain. It does not
+establish a stable runtime boundary or a performance improvement.

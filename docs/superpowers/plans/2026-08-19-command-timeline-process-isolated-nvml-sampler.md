@@ -338,3 +338,34 @@ and claim boundaries.
 
 Rerun the complete local contract, `git diff --check`, local/origin parity,
 and exact documentation staging before the final push.
+
+## 2026-08-20 Final Reconciliation
+
+Process isolation was necessary but not sufficient: r17 completed only two
+epochs before block-1 graph telemetry coverage failed. The field-isolated
+32-process `(GPU, query)` generation matrix replaced this architecture while
+retaining process identity, positive per-query duration, empty-stderr, frozen
+GPU-set, and strict measured-interval coverage requirements.
+
+The immutable continuation was:
+
+- r18: all eight before/after inventories completed, but no canonical result
+  or manifest was produced;
+- r19: an exiting task-owned process was observed as unowned;
+- r20: all eight epochs completed; current-source read-only reconciliation
+  classifies the retained data as `PAIRED_PROTOCOL_UNSTABLE`;
+- r21: failed before epoch 0 during transport, with empty `status/`;
+- r22: failed during prepare transport and created neither destination;
+- r23: terminal complete authority.
+
+Tag `20260818-command-timeline-tp4-b4-q4-r23` is bound to
+`596e724ea87966b2ab3b47cccda08c106f9084bb` and completed eight epochs,
+40 measured repeats, dual verification, and exact manifests. It establishes
+the field-isolated telemetry architecture, not a runtime optimization:
+
+```text
+RUNTIME_CLASSIFICATION=PAIRED_PROTOCOL_UNSTABLE
+BOUNDARY_LOCALIZED=NOT_ESTABLISHED
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+```

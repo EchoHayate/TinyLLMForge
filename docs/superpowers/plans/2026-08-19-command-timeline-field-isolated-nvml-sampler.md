@@ -924,3 +924,140 @@ docs(command-timeline): reconcile field-isolated campaign
 
 with the required single trailer, then push
 `feat/kv-sparse-attention`.
+
+## 2026-08-20 Terminal Campaign Reconciliation
+
+The plan above is complete as an evidence campaign, but it did not establish a
+runtime optimization. All failed and partial tags remain immutable.
+
+### Immutable r11-r23 chronology
+
+| Tag | Source commit | Preserved outcome |
+| --- | --- | --- |
+| r11 | `555fee9340ca1299d752815f4509f7466495a8d2` | Graph warmup counters were invalid. |
+| r12 | `f8d228784fe4528fa83c7b5de272f976665279a6` | Replay counters did not grow by the old expected `+1`. |
+| r13 | `2fda1306e35ee42b0e5905c4059d321b069480ed` | Measured replay growth disproved the old `+1` contract. |
+| r14 | `f37b525c98247adb3eb844217854734540aee307` | Graph telemetry coverage was incomplete. |
+| r15 | `8066656364f4b07cbb4382513794cdf11808c40a` | Eager telemetry coverage was incomplete. |
+| r16 | `9a51b4c6dd402873b496ed087d94159ffd206991` | Two epochs completed; block-1 graph coverage was incomplete. |
+| r17 | `8734362eaedc60ee86433f1926785a19420e4181` | Two epochs completed; process isolation still left block-1 graph coverage incomplete. |
+| r18 | `eab7bcce403010492969401eeef61ba426d10927` | All eight before/after inventories completed, but no canonical result or manifest was produced. |
+| r19 | `72dfb18a0892cec86ec9019551fd6e01f718f2fd` | An exiting task-owned process was observed as unowned. |
+| r20 | `d42f257be81d793affddf251381ae8a554fbe360` | All eight epochs completed. Current-source read-only reconciliation excludes fresh-process capture duration from cross-epoch graph identity and classifies the retained data as `PAIRED_PROTOCOL_UNSTABLE`. |
+| r21 | `596e724ea87966b2ab3b47cccda08c106f9084bb` | READY preflight, then pre-epoch transport failure. Primary and partial controller directories exist, while empty `status/` localizes the failure before the remote inventory entry point. |
+| r22 | `596e724ea87966b2ab3b47cccda08c106f9084bb` | Prepare failed with `Connection closed by UNKNOWN port 65535`; neither destination was created. |
+| r23 | `596e724ea87966b2ab3b47cccda08c106f9084bb` | Terminal authority: eight epochs, 40 measured repeats, dual verification, exact manifests, and final classification. |
+
+r21 and r22 exposed a transport-lifetime issue, not a GPU-admission or
+measurement-contract failure. The SSH configuration uses
+`ProxyCommand ssh -qW %h:%p jump-proxy-hl`; detached target ControlMaster
+sockets disappeared between actions while the task-owned jump-host master
+remained healthy. A current-Agent foreground target ControlMaster layered over
+the jump socket passed five consecutive read-only probes before r23. No
+unrelated remote process was killed, signaled, paused, adopted, or modified.
+
+### Terminal r23 evidence
+
+```text
+run tag:
+  20260818-command-timeline-tp4-b4-q4-r23
+source commit:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+GPU indices:
+  2,4,5,6
+primary:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/runs/20260818-command-timeline-tp4-b4-q4-r23
+controller:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/controller-verification/20260818-command-timeline-tp4-b4-q4-r23
+epochs:
+  8/8
+measured repeats:
+  40/40
+complete raw four-GPU groups:
+  5945
+minimum complete in-interval groups in one measured repeat:
+  6
+before/after inventories:
+  16/16 clean and frozen-set matching
+sampler stderr:
+  empty for all eight epochs
+host sampler stderr:
+  empty for all eight epochs
+```
+
+Every complete raw group has the four expected GPU UUIDs, 32 distinct
+`(GPU, query)` process IDs, and eight positive query durations per GPU row.
+The verifier and inventory digests are:
+
+```text
+artifact SHA-256:
+  2c934bf85a15daa74fe9c3ba28a3aaf03bda67f859b5f01e21d62c9e5347337d
+source inventory SHA-256:
+  822ba31d29f21bb3dbecf5b7103f2abefd78ca3056da41e7784cbfedd8cb4ef1
+raw-input inventory SHA-256:
+  3271fa601d1474061bd1bbf5cb746667baf191b31a2232213a1ceeaae364b506
+manifest SHA-256:
+  7c1332fa9de1639a0df50263dd8ae7906017f93835ccd9c223c0b61558e16d91
+verifier source SHA-256:
+  69d0769ed80da6c420464b317ffce09ec3a21efd6273f30203196461949e51eb
+source files bound:
+  136
+raw input files bound:
+  18
+primary manifest:
+  279/279 exact coverage; sha256sum -c PASS
+controller manifest:
+  279/279 exact coverage; sha256sum -c PASS
+```
+
+Primary and controller canonical artifacts are byte-identical. Their receipts
+are equal after formally excluding only `artifact_path`,
+`verification_location`, and `verified_at_utc`.
+
+### Prompt-to-artifact checklist
+
+| Approved requirement | Preserved r23 artifact evidence | Result |
+| --- | --- | --- |
+| Four-clean-GPU admission | READY preflight selected only indices `2,4,5,6`; all 16 before/after inventories are clean and match the frozen set. | PASS |
+| Mac-owned READY-to-execute controller | The current Mac Agent retained the foreground target ControlMaster and launched the already-authorized fresh tag immediately after the stable probe gate. | PASS |
+| Strict per-repeat telemetry | All 40 measured repeats have complete in-interval groups; the minimum per repeat is six. | PASS |
+| Four UUIDs and 32 query PIDs | Every one of 5,945 complete groups has four expected UUIDs and 32 distinct `(GPU, query)` PIDs. | PASS |
+| Eight epochs and 40 repeats | r23 completed `8/8` epochs and `40/40` measured repeats. | PASS |
+| Dual verifier receipts | Primary and controller artifacts are byte-identical and normalized receipts are equal. | PASS |
+| Manifest coverage | Both manifests cover exactly `279/279` files and pass `sha256sum -c`. | PASS |
+| Remote path containment | Primary, controller, caches, diagnostics, receipts, and task scratch remain below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`. | PASS |
+| Immutable failed tags | r11-r22 remain preserved; r21 and r22 were not reused after transport failures. | PASS |
+| Commit and push state | Implementation commit `596e724ea87966b2ab3b47cccda08c106f9084bb` is the source bound by r23 and was pushed before execution. The reconciliation commit containing this checklist publishes the exact final documentation paths together. | PASS |
+
+### Canonical terminal result
+
+```text
+identity_correctness_passed=true
+timeline_conservation_passed=true
+stationarity_passed=false
+classification=PAIRED_PROTOCOL_UNSTABLE
+localized_boundary=null
+runtime_optimization_authorized=false
+performance_improvement_established=false
+phase_1_complete=false
+promotion_ready=false
+```
+
+The reconciled plan classification is:
+
+```text
+COMMAND_TIMELINE_LOCAL_IMPLEMENTATION=ESTABLISHED
+COMMAND_TIMELINE_REMOTE_BUNDLE=COMPLETE
+COMMAND_TIMELINE_TELEMETRY=ESTABLISHED
+COMMAND_TIMELINE_DUAL_VERIFICATION=PASS
+BOUNDARY_LOCALIZED=NOT_ESTABLISHED
+RUNTIME_CLASSIFICATION=PAIRED_PROTOCOL_UNSTABLE
+RUNTIME_OPTIMIZATION=NOT_AUTHORIZED
+PERFORMANCE_IMPROVEMENT=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+This closes the approved command-timeline evidence campaign. It does not
+authorize a sampler/runtime optimization, claim a localized boundary, or
+establish a performance improvement.
