@@ -1051,8 +1051,20 @@ Verify exactly two paths and one TRAE CLI trailer.
 ### Task 6: Execute the Fresh Source-Bound Paired Performance Gate
 
 **Files:**
-- Reuse: existing autoregressive-draft command-timeline runner and verifier
-  files discovered by exact-name search.
+- Modify:
+  `tools/run_autoregressive_draft_command_timeline_remote.py`
+- Create:
+  `tools/autoregressive_draft_source_pair_gate.py`
+- Create:
+  `tools/verify_autoregressive_draft_source_pair_gate.py`
+- Create:
+  `tools/run_autoregressive_draft_source_pair_remote.py`
+- Create:
+  `tools/test_autoregressive_draft_source_pair_gate.py`
+- Reuse:
+  `tools/autoregressive_draft_command_timeline_diagnostic.py`
+- Reuse:
+  `tools/verify_autoregressive_draft_command_timeline_diagnostic.py`
 - Create: fresh local receipt directory only under the repository's existing
   artifact convention if required by the runner.
 - Create remotely: a fresh immutable run directory only under
@@ -1064,6 +1076,9 @@ Verify exactly two paths and one TRAE CLI trailer.
 **Interfaces:**
 - Consumes: pinned r23 baseline source archive/bundle and the candidate source
   commit from Tasks 1-5.
+- Produces: two independently verified frozen command-timeline bundles, one
+  source-pair artifact, two source-pair verifier receipts, and one complete
+  source-pair manifest.
 - Produces: one of the approved terminal classifications:
   `GO_TPOT_TAIL_OPTIMIZATION`, `NO_GO_TPOT_P95`,
   `NO_GO_TPOT_MEDIAN`, `NO_GO_TTFT_REGRESSION`,
@@ -1071,7 +1086,103 @@ Verify exactly two paths and one TRAE CLI trailer.
   `INCONCLUSIVE_STATIONARITY`, `INCONCLUSIVE_ENVIRONMENT`, or
   `INCONCLUSIVE_ARTIFACT`.
 
-- [ ] **Step 1: Reconfirm campaign authority and source identity**
+- [ ] **Step 1: Add source-pair contract RED tests**
+
+Write focused tests that define:
+
+- exact eight-pair source order and the existing eight-epoch CUDA-mode order;
+- four baseline-first and four candidate-first pairs;
+- two of each source order inside eager and graph modes;
+- 40 measured repeats and 160 request samples per source;
+- exact output, Proposal-KV, transaction, and source identity comparison;
+- request-level TPOT median/p95 and TTFT p95;
+- median batch throughput and fresh-pair regression formulas;
+- eager and graph ratio stationarity;
+- terminal classification precedence; and
+- rejection of missing receipts, mismatched manifests, wrong revisions,
+  incomplete ranks, non-finite metrics, and verifier disagreement.
+
+Run the new test file and preserve failure because the source-pair modules do
+not yet exist.
+
+- [ ] **Step 2: Implement the pure source-pair artifact and verifier**
+
+`autoregressive_draft_source_pair_gate.py` must be dependency-light and pure:
+it loads the two verified command-timeline artifacts plus their normalized
+receipts and builds a canonical source-pair artifact. It must not launch a
+worker or mutate either source bundle.
+
+`verify_autoregressive_draft_source_pair_gate.py` independently reloads the
+bound artifacts, verifies their hashes/manifests/receipts, rebuilds the
+source-pair artifact, verifies the complete source-pair manifest when
+provided, and emits an exclusive receipt.
+
+Run the focused RED tests to GREEN before editing orchestration.
+
+- [ ] **Step 3: Add revision archive and orchestration RED tests**
+
+Extend the focused tests to require:
+
+- Git-object export for an arbitrary full 40-hex revision without a checkout;
+- no local patch applied to either frozen source;
+- baseline revision fixed to
+  `596e724ea87966b2ab3b47cccda08c106f9084bb`;
+- candidate revision equal to local HEAD and
+  `origin/feat/kv-sparse-attention`;
+- parent, baseline, candidate, primary-comparison, and
+  controller-comparison paths all below the Sitian task root;
+- no destination overwrite;
+- Kerberos TTL fail-fast before remote mutation;
+- strict exactly-four clean-GPU admission;
+- before/after frozen inventory around every pair member;
+- pair-member order matching the frozen source-pair schedule;
+- partial-copy preservation on failure without adopting or signalling
+  unrelated processes; and
+- source-bundle finalization before source-pair comparison.
+
+Run the focused tests and preserve the expected missing-orchestration
+failures.
+
+- [ ] **Step 4: Implement source-version paired orchestration**
+
+`run_autoregressive_draft_source_pair_remote.py` imports the established
+command-timeline runner and reuses its prepare, inventory, epoch, assemble,
+manifest, verifier, controller-copy, and receipt-comparison actions.
+
+It exports the baseline and candidate from exact Git revisions, prepares two
+immutable child tags, and interleaves corresponding epochs as:
+
+```text
+pair 0: eager  baseline -> candidate
+pair 1: graph  candidate -> baseline
+pair 2: graph  baseline -> candidate
+pair 3: eager  candidate -> baseline
+pair 4: graph  baseline -> candidate
+pair 5: eager  baseline -> candidate
+pair 6: eager  candidate -> baseline
+pair 7: graph  candidate -> baseline
+```
+
+Each child retains five measured repeats per epoch. After both child bundles
+pass their existing dual verification, the candidate frozen source builds and
+verifies the parent source-pair artifact in primary and controller locations.
+
+Add the three new source-pair files to the current candidate source archive
+inventory in
+`tools/run_autoregressive_draft_command_timeline_remote.py`. Baseline export
+continues to use the exact paths present in the pinned revision.
+
+All task-controlled cache, pycache, XDG, logs, receipts, manifests, and
+scratch paths remain below:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+```
+
+Run the focused orchestration tests to GREEN, then run the existing
+command-timeline runner, diagnostic, and verifier suites.
+
+- [ ] **Step 5: Reconfirm campaign authority and source identity**
 
 Before any remote launch, record:
 
@@ -1096,7 +1207,7 @@ must resolve to the preserved source behavior for:
 Do not create a worktree. Package baseline and candidate from exact source
 archives/bundles.
 
-- [ ] **Step 2: Run read-only remote admission**
+- [ ] **Step 6: Run read-only remote admission**
 
 Use the established remote preflight and require exactly four rows satisfying:
 
@@ -1109,7 +1220,7 @@ no compute processes
 Do not signal or adopt unrelated processes. If admission fails, preserve the
 receipt and classify `INCONCLUSIVE_ENVIRONMENT` with exit code `2`.
 
-- [ ] **Step 3: Launch one fresh immutable paired tag**
+- [ ] **Step 7: Launch one fresh immutable paired tag**
 
 Use a never-before-attempted tag and preserve:
 
@@ -1132,7 +1243,7 @@ stationarity requirement
 All environment variables that control cache, pycache, XDG, logs, and scratch
 must point below the Sitian task root before Python starts.
 
-- [ ] **Step 4: Verify correctness and performance independently**
+- [ ] **Step 8: Verify correctness and performance independently**
 
 Require:
 
@@ -1151,7 +1262,7 @@ Run both existing independent verifiers against the complete manifest. A
 missing row, mismatched source hash, incomplete rank, or verifier disagreement
 is `INCONCLUSIVE_ARTIFACT`, not a performance result.
 
-- [ ] **Step 5: Reconcile the final classification**
+- [ ] **Step 9: Reconcile the final classification**
 
 Update the audit and handoff with:
 
@@ -1168,7 +1279,7 @@ Update the audit and handoff with:
 Only `GO_TPOT_TAIL_OPTIMIZATION` permits the claim that this optimization
 reduced TPOT tail latency under the fixed gate.
 
-- [ ] **Step 6: Commit and push the final receipts and reconciliation**
+- [ ] **Step 10: Commit and push the final receipts and reconciliation**
 
 Use exact-path staging for the audit, handoff, manifest, verifier receipts,
 and any intentionally tracked compact result files. Do not stage raw unrelated

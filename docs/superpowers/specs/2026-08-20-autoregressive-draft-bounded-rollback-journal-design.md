@@ -382,6 +382,145 @@ source archive or preserved source bundle. No additional local worktree may
 be created. The candidate differs only by the bounded journal implementation
 and required tests.
 
+### Source-version pair protocol
+
+The existing command-timeline runner is a single-source bundle whose internal
+labels compare eager and graph positions. It is not, by itself, a
+baseline-source versus candidate-source gate. The bounded-journal authority
+therefore reuses two independently frozen command-timeline bundles and adds a
+thin source-pair orchestration and comparison layer. It does not change the
+worker, command-timeline schema, measured-path instrumentation, or model
+configuration.
+
+The two frozen revisions are:
+
+```text
+baseline:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+
+candidate:
+  the committed and pushed branch HEAD used for the campaign
+```
+
+Both sources are exported directly from Git objects. The gate must not create
+a checkout or worktree for either source. The source archives, manifests, and
+tree hashes are distinct, immutable inputs to the same parent run tag.
+
+Each source retains the existing eight-epoch mode schedule:
+
+```text
+epoch modes:
+  eager, graph, graph, eager, graph, eager, eager, graph
+
+measured repeats per epoch:
+  5
+
+measured repeats per source:
+  40
+
+request samples per source:
+  160
+```
+
+The parent orchestrator executes corresponding epochs as eight source pairs.
+Within each CUDA mode, baseline-first and candidate-first each occur twice.
+Across the complete gate, each source runs first four times and second four
+times:
+
+```text
+pair 0: eager  baseline -> candidate
+pair 1: graph  candidate -> baseline
+pair 2: graph  baseline -> candidate
+pair 3: eager  candidate -> baseline
+pair 4: graph  baseline -> candidate
+pair 5: eager  baseline -> candidate
+pair 6: eager  candidate -> baseline
+pair 7: graph  candidate -> baseline
+```
+
+Before and after every member, the existing frozen four-GPU inventory must
+still match exactly. Any external process, UUID change, threshold violation,
+worker failure, incomplete epoch, or transport failure terminates the parent
+campaign without running a replacement member under the same tag.
+
+Each source bundle must independently complete:
+
+```text
+canonical assembly
+pre-manifest verification
+complete checksum manifest
+archived remote verification
+no-overwrite controller copy
+controller verification
+normalized receipt equality
+```
+
+The source-pair comparator consumes only those verified immutable bundles. It
+binds both canonical artifact hashes, both source commits and tree hashes,
+both manifests, both normalized verifier receipts, the parent pair schedule,
+and the frozen GPU UUID set.
+
+For corresponding epoch and repeat identities, it requires exact equality of:
+
+- output token IDs;
+- prompt and request order;
+- proposal token rows and row lengths;
+- accepted token rows and accepted-prefix counts;
+- accepted/proposed totals and acceptance rate;
+- transaction digest; and
+- zero active transactions.
+
+It also requires both underlying command-timeline artifacts to retain exact
+four-rank identity correctness and timeline conservation.
+
+The candidate aggregate is computed from all 160 request samples:
+
+```text
+TPOT median and p95:
+  request-level tpot_ns
+
+TTFT p95:
+  request-level ttft_ns
+
+throughput:
+  median of the 40 measured batch token-throughput values
+```
+
+Regression uses the fresh paired baseline from the same campaign:
+
+```text
+TTFT p95 regression:
+  candidate_ttft_p95 / baseline_ttft_p95 - 1
+
+throughput regression:
+  1 - candidate_median_throughput / baseline_median_throughput
+```
+
+Paired stationarity requires all sixteen source epochs to pass the existing
+command-timeline stationarity checks. It also requires, separately for eager
+and graph pairs, both the candidate/baseline TPOT ratio and throughput ratio
+to have robust MAD divided by median `<= 0.10` and first-half versus
+second-half median drift `<= 0.15`. A zero or non-finite denominator is an
+artifact failure.
+
+The source-pair artifact has its own complete manifest and two independent
+verifier receipts. The verifier classification precedence is:
+
+```text
+INCONCLUSIVE_ARTIFACT
+NO_GO_CORRECTNESS
+INCONCLUSIVE_STATIONARITY
+NO_GO_TPOT_P95
+NO_GO_TPOT_MEDIAN
+NO_GO_TTFT_REGRESSION
+NO_GO_THROUGHPUT_REGRESSION
+GO_TPOT_TAIL_OPTIMIZATION
+```
+
+`INCONCLUSIVE_ENVIRONMENT` is produced by orchestration before a complete
+source-pair artifact exists. No historical r23 timing value may substitute
+for the fresh paired baseline in TTFT or throughput regression calculations.
+
 ## Acceptance and Claim Rules
 
 The optimization is accepted only when every fixed threshold in the Goal
