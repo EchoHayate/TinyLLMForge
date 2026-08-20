@@ -49250,3 +49250,139 @@ output, cache, log, diagnostic, receipt, manifest, and task scratch beneath
 `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`; do not
 write task output to `/`, `/tmp`, or `/private/tmp`, and do not modify
 `/data00/home/sitian/tllm/TinyLLMForge`.
+
+## 2026-08-20 bounded rollback journal implementation
+
+The approved TPOT-tail optimization replaced the two decode-critical
+full-capacity rollback snapshots with touched-state mutation journals.
+
+Committed and pushed implementation authority:
+
+```text
+design:
+  7076613 docs(performance): design bounded rollback journals
+plan:
+  5b29ad4 docs(performance): plan bounded rollback journals
+Proposal-KV journal:
+  8506673 perf: bound proposal KV rollback state
+scheduler/engine journal:
+  4463800 perf: bound scheduler rollback state
+branch:
+  feat/kv-sparse-attention
+remote:
+  origin/feat/kv-sparse-attention
+```
+
+Implementation boundary:
+
+- `BlockManager.commit_speculative_kv_commit_batch()` now snapshots only
+  plan-local blocks, publication hashes, participating sequence tables, and
+  transaction states.
+- `SchedulerPostprocessJournal` snapshots only scheduled sequences, their
+  touched blocks/hash buckets, bounded queue references, selected scalar
+  state, and scheduled hybrid leases.
+- the engine extends the scheduler journal with prepared Proposal-KV plans
+  before Proposal-KV publication;
+- Proposal-KV and scheduler rollback failures are typed terminal failures and
+  poison speculative runtime;
+- scheduler capture performs neither full block iteration nor free-deque
+  membership scans;
+- multiple hybrid lease releases are restored in exact reverse append order.
+
+Preserved RED evidence:
+
+```text
+Proposal-KV structural RED:
+  full block iteration raised:
+  AssertionError: full block iteration is not allowed
+
+scheduler structural RED:
+  the old full block tuple raised the same non-iteration guard
+
+engine fixture integration RED:
+  python3 -m pytest \
+    tools/test_engine_speculative_execution.py \
+    tools/test_engine_speculative_runtime.py -q
+  19 failed, 71 passed
+  root causes:
+    missing AST exception types
+    missing prepared_scheduler.snapshot journal interface
+
+free-deque complexity RED:
+  python3 -m pytest \
+    tools/test_scheduler_prepared_postprocess.py::\
+test_prepare_postprocess_does_not_scan_free_blocks -vv
+  1 failed
+  AssertionError: free block membership scans are not allowed
+
+multi-lease rollback RED:
+  python3 -m pytest \
+    tools/test_scheduler_prepared_postprocess.py::\
+test_commit_failure_restores_multiple_hybrid_releases -vv
+  1 failed
+  scheduler postprocess rollback failed:
+  hybrid free-slot rollback order changed
+```
+
+Fresh GREEN evidence before commit `4463800`:
+
+```text
+engine integration:
+  91 passed in 0.68s
+
+scheduler file:
+  22 passed in 0.32s
+
+focused transactional files:
+  157 passed in 0.99s
+
+dependency-light affected autoregressive-draft files:
+  834 passed in 37.46s
+
+py_compile:
+  PASS
+
+git diff --check:
+  PASS
+```
+
+The full affected collection also identified four torch-dependent files that
+cannot collect under the current Mac system Python because `torch` is not
+installed:
+
+```text
+tools/test_autoregressive_draft_executor.py
+tools/test_autoregressive_draft_model_runner_integration.py
+tools/test_autoregressive_draft_registration.py
+tools/test_autoregressive_draft_tp.py
+```
+
+This is an environment setup gap, not a pass or a functional test failure.
+
+Static review found only pre-existing full-capacity operations outside the
+new journals (`reserve_sequence_blocks`,
+`prepare_speculative_kv_transaction`, and explicit
+`clear_reusable_cache`) plus explicit shutdown-only `gc.collect()`. No new
+measured-path `.item()`, CUDA synchronization, production GC control,
+logging, profiling, acknowledgement, or fence was added.
+
+Current claim boundary:
+
+```text
+LOCAL_BOUNDED_JOURNAL_CORRECTNESS=ESTABLISHED
+PROPOSAL_KV_FULL_CAPACITY_ROLLBACK_SNAPSHOT=REMOVED
+SCHEDULER_FULL_CAPACITY_ROLLBACK_SNAPSHOT=REMOVED
+SCHEDULER_FREE_DEQUE_LINEAR_MEMBERSHIP_SCAN=REMOVED
+ROLLBACK_FAILURE_RUNTIME_POISONING=ESTABLISHED
+TORCH_DEPENDENT_LOCAL_COLLECTION=ENVIRONMENT_BLOCKED_NO_TORCH
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+TTFT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+THROUGHPUT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Do not claim that this proves Python GC was the original cause, fixes the
+separate `speculative_prepare` worker/CUDA anomaly, or improves TPOT. Those
+claims require the fresh same-protocol paired four-GPU gate with exact-token,
+transaction, four-rank, stationarity, TPOT, TTFT, and throughput verification.

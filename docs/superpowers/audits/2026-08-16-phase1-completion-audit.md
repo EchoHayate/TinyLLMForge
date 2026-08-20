@@ -2659,3 +2659,180 @@ real runtime and correctness authority. It does not close the broader Phase 1
 promotion gaps: the full learned 4K/16K/32K matrix, second learned structure,
 native-MTP controlled performance, broad transactional-KV symmetry, and
 complete eight-pair graph performance authority remain absent.
+
+## 2026-08-20 Bounded Rollback Journal Reconciliation
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete artifact/evidence | Status |
+| --- | --- | --- |
+| Remove Proposal-KV full-capacity rollback snapshot | `tinyvllm/engine/block_manager.py`; commit `8506673` | `ESTABLISHED` |
+| Remove scheduler full-capacity rollback snapshot | `tinyvllm/engine/scheduler.py`; commit `4463800` | `ESTABLISHED` |
+| Journal size scales with touched state | non-iterable 4096-block guards and touched-block-count assertions | `ESTABLISHED_LOCALLY` |
+| Avoid hidden O(capacity) free-deque membership | `test_prepare_postprocess_does_not_scan_free_blocks`; direct `used_block_ids` lookup | `ESTABLISHED_LOCALLY` |
+| Extend scheduler journal before Proposal-KV commit | engine event-order tests in both speculative engine files | `ESTABLISHED_LOCALLY` |
+| Preserve Proposal-KV atomic rollback | `tools/test_speculative_kv_transaction.py`; `44 passed` | `ESTABLISHED_LOCALLY` |
+| Preserve scheduler decode/prefill/completion rollback | `tools/test_scheduler_prepared_postprocess.py`; `22 passed` | `ESTABLISHED_LOCALLY` |
+| Preserve exact multi-lease release order | real `HybridStateSlotAllocator` fixture and two-lease failure injection | `ESTABLISHED_LOCALLY` |
+| Poison runtime on journal rollback failure | typed rollback errors and engine-level poisoning test | `ESTABLISHED_LOCALLY` |
+| Preserve engine publication/finalization ordering | `tools/test_engine_speculative_execution.py` and `tools/test_engine_speculative_runtime.py`; `91 passed` | `ESTABLISHED_LOCALLY` |
+| Broad dependency-light regression | 19 affected test files; `834 passed in 37.46s` | `ESTABLISHED_LOCALLY` |
+| Torch-dependent local regression | four files fail collection because Mac system Python has no `torch` | `ENVIRONMENT_BLOCKED` |
+| Syntax and whitespace validation | task-local `PYTHONPYCACHEPREFIX` py_compile; `git diff --check` | `PASS` |
+| No new measured-path sync/GC/logging/profiling | focused static scan and diff review | `PASS` |
+| Candidate TPOT p95 `<=105.87 ms` | fresh paired four-GPU candidate campaign | `NOT_RUN` |
+| Candidate TPOT median `<=85.66 ms` | fresh paired four-GPU candidate campaign | `NOT_RUN` |
+| TTFT p95 regression `<=3%` | fresh paired four-GPU candidate campaign | `NOT_RUN` |
+| Throughput regression `<=3%` | fresh paired four-GPU candidate campaign | `NOT_RUN` |
+| Exact tokens, Proposal-KV transactions, four-rank correctness, stationarity | dual-verifier candidate manifest | `NOT_RUN` |
+
+### Implementation authority
+
+```text
+7076613  docs(performance): design bounded rollback journals
+5b29ad4  docs(performance): plan bounded rollback journals
+8506673  perf: bound proposal KV rollback state
+4463800  perf: bound scheduler rollback state
+```
+
+All four commits are on and pushed to:
+
+```text
+origin/feat/kv-sparse-attention
+```
+
+### RED evidence
+
+The Proposal-KV structural guard failed the old implementation at its complete
+`self.blocks` traversal with:
+
+```text
+AssertionError: full block iteration is not allowed
+```
+
+The scheduler structural guard independently failed the old complete block
+tuple for the same reason.
+
+After production journal code was introduced but before AST fixtures were
+updated:
+
+```text
+python3 -m pytest \
+  tools/test_engine_speculative_execution.py \
+  tools/test_engine_speculative_runtime.py -q
+
+19 failed, 71 passed
+```
+
+The failures were interface-accurate: extracted engine helpers lacked
+`SpeculativeKVCommitRollbackError` and
+`SchedulerPostprocessRollbackError`, while fake prepared schedulers lacked
+`snapshot.extend_speculative_kv_plans(...)`.
+
+Two review-driven RED tests found and fixed additional bounded-journal
+defects:
+
+```text
+test_prepare_postprocess_does_not_scan_free_blocks:
+  AssertionError: free block membership scans are not allowed
+
+test_commit_failure_restores_multiple_hybrid_releases:
+  scheduler postprocess rollback failed:
+  hybrid free-slot rollback order changed
+```
+
+The first removed a hidden O(total KV capacity) `deque.__contains__` scan.
+The second changed hybrid lease restoration to exact reverse release order.
+
+### GREEN and static evidence
+
+Fresh pre-commit verification:
+
+```text
+Proposal-KV transaction file:
+  44 passed
+
+scheduler prepared-postprocess file:
+  22 passed in 0.32s
+
+engine speculative files:
+  91 passed in 0.68s
+
+four focused transactional files:
+  157 passed in 0.99s
+
+dependency-light affected autoregressive-draft suite:
+  834 passed in 37.46s
+
+py_compile:
+  PASS
+
+git diff --check:
+  PASS
+```
+
+The four torch-dependent files below remain uncollected under the current Mac
+system Python:
+
+```text
+tools/test_autoregressive_draft_executor.py
+tools/test_autoregressive_draft_model_runner_integration.py
+tools/test_autoregressive_draft_registration.py
+tools/test_autoregressive_draft_tp.py
+```
+
+Their `ModuleNotFoundError: No module named 'torch'` is classified as an
+environment setup gap. It is not counted as either GREEN or a code failure.
+
+The forbidden-copy scan still finds three pre-existing operations in
+`block_manager.py`: full free-list snapshots in the older sequence-reservation
+and speculative-transaction preparation paths, and full block iteration in
+explicit `clear_reusable_cache()`. None is inside the two replaced commit or
+scheduler journal paths. The only focused `gc.collect()` match is existing
+explicit engine shutdown cleanup. No new `.item()`, CUDA synchronization,
+measured-path GC control, logging, profiling, acknowledgement, or fence was
+introduced.
+
+### Executive matrix update
+
+| Dimension | Current evidence | Classification |
+| --- | --- | --- |
+| Proposal-KV rollback space/time scaling | plan-local touched blocks and hashes; structural guard | `LOCAL_ESTABLISHED` |
+| Scheduler rollback space/time scaling | scheduled/touched state only; block and free-deque guards | `LOCAL_ESTABLISHED` |
+| Proposal-KV atomicity | duplicate hashes, release order, injected failures | `LOCAL_ESTABLISHED` |
+| Scheduler atomicity | decode, completion, prefill, hooks, hybrid leases, multi-release order | `LOCAL_ESTABLISHED` |
+| Rollback failure handling | typed terminal errors and engine runtime poisoning | `LOCAL_ESTABLISHED` |
+| Full local dependency-light regression | 834 tests | `PASS` |
+| Full torch-dependent local regression | dependency absent | `ENVIRONMENT_BLOCKED_NO_TORCH` |
+| TPOT p95/median improvement | candidate paired campaign absent | `NOT_ESTABLISHED` |
+| TTFT and throughput protection | candidate paired campaign absent | `NOT_ESTABLISHED` |
+| Separate worker/CUDA anomaly | not targeted by this change | `NOT_ESTABLISHED` |
+| Python GC as original root cause | not directly measured | `NOT_ESTABLISHED` |
+
+### Reconciled classification
+
+```text
+LOCAL_BOUNDED_JOURNAL_CORRECTNESS=ESTABLISHED
+PROPOSAL_KV_FULL_CAPACITY_ROLLBACK_SNAPSHOT=REMOVED
+SCHEDULER_FULL_CAPACITY_ROLLBACK_SNAPSHOT=REMOVED
+SCHEDULER_FREE_DEQUE_LINEAR_MEMBERSHIP_SCAN=REMOVED
+MULTI_HYBRID_RELEASE_ROLLBACK_ORDER=ESTABLISHED
+ROLLBACK_FAILURE_RUNTIME_POISONING=ESTABLISHED
+CURRENT_HEAD_DEPENDENCY_LIGHT_BOUNDED_JOURNAL_REGRESSION=834_PASSED
+CURRENT_HEAD_TORCH_DEPENDENT_BOUNDED_JOURNAL_REGRESSION=ENVIRONMENT_BLOCKED_NO_TORCH
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+TTFT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+THROUGHPUT_NON_REGRESSION=NOT_ESTABLISHED_FOR_CANDIDATE
+SEPARATE_SPECULATIVE_PREPARE_WORKER_CUDA_ANOMALY=NOT_ESTABLISHED
+PYTHON_GC_CAUSALITY=NOT_ESTABLISHED
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+The next admissible evidence step is a fresh immutable same-protocol paired
+four-GPU campaign. It must use the strict admission rule, keep every remote
+output beneath
+`/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`, and
+pass dual verification for exact tokens, Proposal-KV transactions, four-rank
+correctness, stationarity, TPOT p95/median, TTFT p95, and throughput. Until
+that campaign completes, no performance benefit may be claimed.
