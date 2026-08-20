@@ -1458,6 +1458,9 @@ def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
         "tools/autoregressive_draft_host_semantic_diagnostic.py",
         "tools/autoregressive_draft_host_sampler.py",
         "tools/run_autoregressive_draft_command_timeline_remote.py",
+        "tools/autoregressive_draft_source_pair_gate.py",
+        "tools/verify_autoregressive_draft_source_pair_gate.py",
+        "tools/run_autoregressive_draft_source_pair_remote.py",
     }
 
 
