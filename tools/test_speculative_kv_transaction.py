@@ -39,7 +39,10 @@ xxhash_module = types.ModuleType("xxhash")
 xxhash_module.xxh64 = _FakeXXH64
 sys.modules.setdefault("xxhash", xxhash_module)
 
-from tinyvllm.engine.block_manager import BlockManager
+from tinyvllm.engine.block_manager import (
+    BlockManager,
+    SpeculativeKVCommitRollbackError,
+)
 from tinyvllm.engine.sequence import Sequence
 from tinyvllm.engine.spec_verify_exact_cuda_graph_cache import (
     SpecVerifyGraphReplayError,
@@ -63,6 +66,24 @@ def _restore_sequence_block_size():
         yield
     finally:
         Sequence.block_size = original
+
+
+class _IndexableNonIterableBlocks:
+    def __init__(self, values):
+        self._values = list(values)
+        self.index_reads = []
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            raise AssertionError("block slices are not allowed")
+        self.index_reads.append(index)
+        return self._values[index]
+
+    def __iter__(self):
+        raise AssertionError("full block iteration is not allowed")
 
 
 def _allocated_sequence(
@@ -728,6 +749,202 @@ def test_commit_speculative_kv_batch_is_token_free():
     )
     assert first_transaction.state == "committed"
     assert second_transaction.state == "committed"
+
+
+def test_commit_speculative_kv_batch_does_not_iterate_all_blocks():
+    manager = BlockManager(num_blocks=4096, block_size=4)
+    sequences = (
+        Sequence([1, 2, 3, 4]),
+        Sequence([9, 10, 11, 12]),
+    )
+    for sequence in sequences:
+        manager.allocate(sequence)
+    transactions = tuple(
+        _materialized_transaction(
+            manager,
+            sequence,
+            proposed_token_count=2,
+            materialized_token_count=1,
+        )
+        for sequence in sequences
+    )
+    plans = tuple(
+        manager.prepare_speculative_kv_commit(
+            transaction,
+            sequence,
+            accepted_tokens,
+        )
+        for transaction, sequence, accepted_tokens in zip(
+            transactions,
+            sequences,
+            ((5, 6), (13, 14)),
+        )
+    )
+    guarded = _IndexableNonIterableBlocks(manager.blocks)
+    manager.blocks = guarded
+
+    manager.commit_speculative_kv_commit_batch(plans)
+
+    authorized_block_ids = {
+        block_id
+        for plan in plans
+        for block_id in (
+            plan.transaction.original_block_table
+            + plan.transaction.reserved_block_ids
+            + tuple(
+                publication.block_id
+                for publication in plan.publications
+            )
+        )
+    }
+    assert set(guarded.index_reads) <= authorized_block_ids
+
+
+def test_commit_speculative_kv_batch_restores_published_hash_bucket(
+    monkeypatch,
+):
+    manager = BlockManager(num_blocks=32, block_size=4)
+    sequence = Sequence([1, 2, 3])
+    manager.allocate(sequence)
+    transaction = _materialized_transaction(
+        manager,
+        sequence,
+        proposed_token_count=2,
+        materialized_token_count=1,
+    )
+    plan = manager.prepare_speculative_kv_commit(
+        transaction,
+        sequence,
+        (4, 5),
+    )
+    publication = plan.publications[0]
+    duplicate_id = manager.free_block_ids[-1]
+    duplicate = manager.blocks[duplicate_id]
+    duplicate.update(
+        publication.block_hash,
+        list(publication.token_ids),
+    )
+    manager._register_cached_block(
+        duplicate_id,
+        publication.block_hash,
+        list(publication.token_ids),
+    )
+    allocator_before = _allocator_snapshot(manager)
+    table_before = tuple(sequence.block_table)
+    original_register = manager._register_cached_block
+
+    def publish_then_fail(block_id, block_hash, token_ids):
+        original_register(block_id, block_hash, token_ids)
+        if block_id == publication.block_id:
+            raise RuntimeError("injected publication failure")
+
+    monkeypatch.setattr(
+        manager,
+        "_register_cached_block",
+        publish_then_fail,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected publication failure",
+    ):
+        manager.commit_speculative_kv_commit_batch((plan,))
+
+    assert _allocator_snapshot(manager) == allocator_before
+    assert tuple(sequence.block_table) == table_before
+    assert transaction.state == "materialized"
+
+
+def test_commit_speculative_kv_batch_restores_unused_release_order(
+    monkeypatch,
+):
+    manager, sequence = _allocated_sequence(
+        [1, 2, 3, 4],
+        num_blocks=32,
+    )
+    transaction = _materialized_transaction(
+        manager,
+        sequence,
+        proposed_token_count=5,
+        materialized_token_count=4,
+    )
+    plan = manager.prepare_speculative_kv_commit(
+        transaction,
+        sequence,
+        (5,),
+    )
+    assert plan.unused_block_ids
+    allocator_before = _allocator_snapshot(manager)
+    table_before = tuple(sequence.block_table)
+    original_release = manager.release_reserved_blocks
+
+    def release_then_fail(block_ids):
+        original_release(block_ids)
+        raise RuntimeError("injected unused release failure")
+
+    monkeypatch.setattr(
+        manager,
+        "release_reserved_blocks",
+        release_then_fail,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected unused release failure",
+    ):
+        manager.commit_speculative_kv_commit_batch((plan,))
+
+    assert _allocator_snapshot(manager) == allocator_before
+    assert tuple(sequence.block_table) == table_before
+    assert transaction.state == "materialized"
+
+
+def test_commit_speculative_kv_batch_surfaces_rollback_failure(
+    monkeypatch,
+):
+    manager, sequence = _allocated_sequence(
+        [1, 2, 3, 4],
+        num_blocks=32,
+    )
+    transaction = _materialized_transaction(
+        manager,
+        sequence,
+        proposed_token_count=5,
+        materialized_token_count=4,
+    )
+    plan = manager.prepare_speculative_kv_commit(
+        transaction,
+        sequence,
+        (5,),
+    )
+    original_release = manager.release_reserved_blocks
+
+    def release_corrupt_order_then_fail(block_ids):
+        original_release(block_ids)
+        manager.free_block_ids.append(
+            manager.free_block_ids[0]
+        )
+        raise RuntimeError("injected commit failure")
+
+    monkeypatch.setattr(
+        manager,
+        "release_reserved_blocks",
+        release_corrupt_order_then_fail,
+    )
+
+    with pytest.raises(
+        SpeculativeKVCommitRollbackError,
+        match="free-list rollback order changed",
+    ) as exc_info:
+        manager.commit_speculative_kv_commit_batch((plan,))
+
+    assert str(exc_info.value.commit_error) == (
+        "injected commit failure"
+    )
+    assert str(exc_info.value.rollback_error) == (
+        "speculative KV free-list rollback order changed"
+    )
+    assert exc_info.value.__cause__ is exc_info.value.commit_error
 
 
 def test_commit_speculative_kv_batch_failure_restores_every_plan(

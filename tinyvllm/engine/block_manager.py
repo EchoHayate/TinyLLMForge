@@ -73,6 +73,179 @@ class SpeculativeKVCommitPlan:
     publications: tuple[SpeculativeKVCachePublication, ...]
 
 
+class SpeculativeKVCommitRollbackError(RuntimeError):
+    def __init__(self, commit_error, rollback_error):
+        super().__init__(
+            "speculative KV commit rollback failed: "
+            f"{rollback_error}"
+        )
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
+
+
+@dataclass(frozen=True)
+class _SpeculativeKVBlockState:
+    ref_count: int
+    generation: int
+    block_hash: int
+    token_ids: tuple[int, ...]
+    was_used: bool
+
+
+@dataclass(frozen=True)
+class _SpeculativeKVHashState:
+    primary_block_id: Optional[int]
+    block_ids: Optional[frozenset[int]]
+
+
+@dataclass
+class _SpeculativeKVCommitJournal:
+    sequence_tables: tuple[tuple[Sequence, tuple[int, ...]], ...]
+    transaction_states: tuple[
+        tuple[SpeculativeKVTransaction, str],
+        ...,
+    ]
+    blocks: dict[int, _SpeculativeKVBlockState]
+    hashes: dict[int, _SpeculativeKVHashState]
+    release_order: tuple[int, ...]
+    state: str = "active"
+
+    @classmethod
+    def capture(
+        cls,
+        manager,
+        plans: tuple[SpeculativeKVCommitPlan, ...],
+    ):
+        touched_block_ids = {
+            block_id
+            for plan in plans
+            for block_id in (
+                plan.committed_block_ids
+                + plan.unused_block_ids
+                + tuple(
+                    publication.block_id
+                    for publication in plan.publications
+                )
+            )
+        }
+        touched_hashes = {
+            publication.block_hash
+            for plan in plans
+            for publication in plan.publications
+        }
+        blocks = {}
+        for block_id in touched_block_ids:
+            block = manager.blocks[block_id]
+            blocks[block_id] = _SpeculativeKVBlockState(
+                ref_count=block.ref_count,
+                generation=block.generation,
+                block_hash=block.hash,
+                token_ids=tuple(block.token_ids),
+                was_used=block_id in manager.used_block_ids,
+            )
+            if block.hash != -1:
+                touched_hashes.add(block.hash)
+        hashes = {
+            block_hash: _SpeculativeKVHashState(
+                primary_block_id=manager.hash_to_block_id.get(
+                    block_hash
+                ),
+                block_ids=(
+                    frozenset(
+                        manager.hash_to_block_ids[block_hash]
+                    )
+                    if block_hash in manager.hash_to_block_ids
+                    else None
+                ),
+            )
+            for block_hash in touched_hashes
+        }
+        return cls(
+            sequence_tables=tuple(
+                (
+                    plan.sequence,
+                    tuple(plan.sequence.block_table),
+                )
+                for plan in plans
+            ),
+            transaction_states=tuple(
+                (
+                    plan.transaction,
+                    plan.transaction.state,
+                )
+                for plan in plans
+            ),
+            blocks=blocks,
+            hashes=hashes,
+            release_order=tuple(
+                block_id
+                for plan in plans
+                for block_id in plan.unused_block_ids
+            ),
+        )
+
+    def rollback(self, manager) -> None:
+        if self.state != "active":
+            raise RuntimeError(
+                "speculative KV commit journal is not active: "
+                f"{self.state}"
+            )
+        try:
+            for block_id in reversed(self.release_order):
+                state = self.blocks[block_id]
+                if (
+                    state.was_used
+                    and block_id not in manager.used_block_ids
+                ):
+                    if (
+                        not manager.free_block_ids
+                        or manager.free_block_ids[-1] != block_id
+                    ):
+                        raise RuntimeError(
+                            "speculative KV free-list rollback "
+                            "order changed"
+                        )
+                    manager.free_block_ids.pop()
+            for block_id, state in self.blocks.items():
+                if state.was_used:
+                    manager.used_block_ids.add(block_id)
+                else:
+                    manager.used_block_ids.discard(block_id)
+            for block_id, state in self.blocks.items():
+                block = manager.blocks[block_id]
+                block.ref_count = state.ref_count
+                block.generation = state.generation
+                block.hash = state.block_hash
+                block.token_ids = list(state.token_ids)
+            for block_hash, state in self.hashes.items():
+                if state.block_ids is None:
+                    manager.hash_to_block_ids.pop(
+                        block_hash,
+                        None,
+                    )
+                else:
+                    manager.hash_to_block_ids[block_hash] = set(
+                        state.block_ids
+                    )
+                if state.primary_block_id is None:
+                    manager.hash_to_block_id.pop(
+                        block_hash,
+                        None,
+                    )
+                else:
+                    manager.hash_to_block_id[block_hash] = (
+                        state.primary_block_id
+                    )
+            for sequence, block_table in self.sequence_tables:
+                sequence.block_table = list(block_table)
+            for transaction, state in self.transaction_states:
+                transaction.state = state
+        except BaseException:
+            self.state = "rollback_failed"
+            raise
+        self.state = "rolled_back"
+
+
 class Block:
     def __init__(self, block_id):           # 单个block块的属性
         self.block_id = block_id            # 块id
@@ -1496,67 +1669,23 @@ class BlockManager:
                 "speculative KV commit reserved blocks must be disjoint"
             )
 
-        free_before = tuple(self.free_block_ids)
-        used_before = set(self.used_block_ids)
-        block_snapshots = tuple(
-            (
-                block.ref_count,
-                block.generation,
-                block.hash,
-                list(block.token_ids),
-            )
-            for block in self.blocks
-        )
-        hash_to_block_id_before = dict(
-            self.hash_to_block_id
-        )
-        hash_to_block_ids_before = {
-            block_hash: set(block_ids)
-            for block_hash, block_ids
-            in self.hash_to_block_ids.items()
-        }
-        sequence_tables_before = tuple(
-            (
-                plan.sequence,
-                list(plan.sequence.block_table),
-            )
-            for plan in plans
-        )
-        transaction_states_before = tuple(
-            (
-                plan.transaction,
-                plan.transaction.state,
-            )
-            for plan in plans
+        journal = _SpeculativeKVCommitJournal.capture(
+            self,
+            plans,
         )
         try:
             for plan in plans:
                 self._apply_speculative_kv_commit_plan(plan)
-        except BaseException:
-            self.free_block_ids = deque(free_before)
-            self.used_block_ids = set(used_before)
-            self.hash_to_block_id = hash_to_block_id_before
-            self.hash_to_block_ids = hash_to_block_ids_before
-            for block, snapshot in zip(
-                self.blocks,
-                block_snapshots,
-            ):
-                (
-                    block.ref_count,
-                    block.generation,
-                    block.hash,
-                    token_ids,
-                ) = snapshot
-                block.token_ids = token_ids
-            for sequence, block_table in (
-                sequence_tables_before
-            ):
-                sequence.block_table = block_table
-            for transaction, state in (
-                transaction_states_before
-            ):
-                transaction.state = state
+        except BaseException as commit_error:
+            try:
+                journal.rollback(self)
+            except BaseException as rollback_error:
+                raise SpeculativeKVCommitRollbackError(
+                    commit_error,
+                    rollback_error,
+                ) from commit_error
             raise
+        journal.state = "committed"
 
     def commit_speculative_kv_transaction(
         self,
