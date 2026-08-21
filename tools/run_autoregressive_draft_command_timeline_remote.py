@@ -52,6 +52,7 @@ KERBEROS_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
 MAX_IDLE_MEMORY_USED_MIB = 1024
 MAX_IDLE_UTILIZATION_PERCENT = 5
 WORKER_TIMEOUT_SECONDS = 1800
+GPU_SAMPLER_INTERVAL_NS = 500_000_000
 RUN_TAG_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SOURCE_PATHS = (
     "tinyvllm/",
@@ -1937,6 +1938,7 @@ def _build_gpu_sampler_script() -> str:
         "NVML_CLOCK_SM=1",
         "NVML_CLOCK_MEM=2",
         "NVML_DEVICE_UUID_BUFFER_SIZE=80",
+        f"SAMPLE_INTERVAL_NS={GPU_SAMPLER_INTERVAL_NS}",
         "stop_requested=False",
         "def request_stop(_signum,_frame):",
         " global stop_requested",
@@ -2231,7 +2233,7 @@ def _build_gpu_sampler_script() -> str:
         "     'sampled_at_monotonic_ns':monotonic_ns,",
         "     'nvidia_timestamp':timestamp},",
         "     sort_keys=True,separators=(',',':')),flush=True)",
-        "  next_sample_ns+=200000000",
+        "  next_sample_ns+=SAMPLE_INTERVAL_NS",
         "  remaining_ns=next_sample_ns-time.monotonic_ns()",
         "  if remaining_ns>0:",
         "   time.sleep(remaining_ns/1000000000)",

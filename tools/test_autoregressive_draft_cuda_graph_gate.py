@@ -1933,6 +1933,18 @@ def _direct_nvml_sampler_command(
     ]
 
 
+def test_command_timeline_gpu_sampler_uses_500ms_cadence_constant():
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_gpu_sampler_cadence_test"
+    )
+
+    script = runner._build_gpu_sampler_script()
+
+    assert runner.GPU_SAMPLER_INTERVAL_NS == 500_000_000
+    assert "SAMPLE_INTERVAL_NS=500000000" in script
+    assert "next_sample_ns+=SAMPLE_INTERVAL_NS" in script
+
+
 def test_command_timeline_direct_nvml_sampler_emits_complete_snapshot(
     tmp_path,
 ):
