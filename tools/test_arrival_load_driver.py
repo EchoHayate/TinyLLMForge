@@ -214,6 +214,22 @@ class TokenMismatchEngine(FakeEngine):
         return outputs, num_tokens
 
 
+class NonFiniteMemoryEngine(FakeEngine):
+    def step(self):
+        outputs, num_tokens = super().step()
+        self.last_step_observation["memory"]["cuda_reserved_bytes"] = float(
+            "nan"
+        )
+        return outputs, num_tokens
+
+
+class NonFiniteTimestampEngine(FakeEngine):
+    def step(self):
+        outputs, num_tokens = super().step()
+        self.last_step_observation["step_end_ns"] = float("nan")
+        return outputs, num_tokens
+
+
 class P5FakeEngine(FakeEngine):
     def step(self):
         outputs, num_tokens = super().step()
@@ -284,8 +300,9 @@ def _request(
     request_id: str,
     arrival_offset_ns: int,
     requested_output_tokens: int,
+    **overrides,
 ):
-    return {
+    request = {
         "request_id": request_id,
         "scenario": "steady_moderate",
         "arrival_offset_ns": arrival_offset_ns,
@@ -298,6 +315,8 @@ def _request(
             "max_tokens": requested_output_tokens,
         },
     }
+    request.update(overrides)
+    return request
 
 
 def _workload():
@@ -560,6 +579,80 @@ def test_driver_rejects_duplicate_request_ids():
         assert "duplicate request_id" in result["error"]
 
 
+def test_driver_preserves_staged_lifecycle_dimensions():
+    with tempfile.TemporaryDirectory() as temporary:
+        output_dir = Path(temporary)
+        result = driver.run_case(
+            case_spec=_case_spec(),
+            workload_rows=[
+                _request(
+                    "warmup",
+                    0,
+                    1,
+                    warmup=True,
+                    phase="steady",
+                    service_time_bucket="short__short",
+                    starvation_deadline_ns=1_000,
+                ),
+            ],
+            engine_factory=FakeEngine,
+            clock_ns=IncrementingClock(),
+            output_dir=output_dir,
+        )
+        lifecycle = _jsonl(output_dir / "request_timeline.jsonl")
+
+    assert result["status"] == "PASS"
+    assert lifecycle[0]["warmup"] is True
+    assert lifecycle[0]["phase"] == "steady"
+    assert lifecycle[0]["service_time_bucket"] == "short__short"
+    assert lifecycle[0]["starvation_deadline_ns"] == 1_000
+
+
+def test_driver_fails_closed_on_non_finite_memory():
+    temporary, _, result = _run(NonFiniteMemoryEngine)
+    try:
+        assert result["status"] == "INCOMPLETE"
+        assert result["error_type"] == "malformed_step_observation"
+        assert "cuda_reserved_bytes" in result["error"]
+    finally:
+        temporary.cleanup()
+
+
+def test_driver_fails_closed_on_non_finite_token_timestamp():
+    temporary, _, result = _run(NonFiniteTimestampEngine)
+    try:
+        assert result["status"] == "INCOMPLETE"
+        assert result["error_type"] == "malformed_step_observation"
+        assert "step_end_ns" in result["error"]
+    finally:
+        temporary.cleanup()
+
+
+def test_driver_fails_closed_when_request_starves():
+    with tempfile.TemporaryDirectory() as temporary:
+        output_dir = Path(temporary)
+        result = driver.run_case(
+            case_spec=_case_spec(),
+            workload_rows=[
+                _request(
+                    "starved",
+                    0,
+                    1,
+                    warmup=False,
+                    phase="steady",
+                    service_time_bucket="short__short",
+                    starvation_deadline_ns=1,
+                ),
+            ],
+            engine_factory=FakeEngine,
+            clock_ns=IncrementingClock(),
+            output_dir=output_dir,
+        )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["error_type"] == "starved_request"
+
+
 def test_driver_jsonl_files_preserve_final_newline():
     temporary, output_dir, result = _run()
     try:
@@ -615,6 +708,10 @@ def main():
     test_driver_rejects_token_count_delta_mismatch()
     test_driver_rejects_malformed_manifest_order_before_engine_start()
     test_driver_rejects_duplicate_request_ids()
+    test_driver_preserves_staged_lifecycle_dimensions()
+    test_driver_fails_closed_on_non_finite_memory()
+    test_driver_fails_closed_on_non_finite_token_timestamp()
+    test_driver_fails_closed_when_request_starves()
     test_driver_jsonl_files_preserve_final_newline()
     test_memory_row_derives_kv_block_bytes_from_capacity()
     print("arrival load driver tests passed")

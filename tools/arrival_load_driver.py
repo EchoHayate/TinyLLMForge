@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -203,6 +204,31 @@ def _validate_workload(workload_rows: list[dict]):
                 "invalid_workload_manifest",
                 f"sampling max_tokens mismatch for {request_id}",
             )
+        if "warmup" in row and not isinstance(row["warmup"], bool):
+            raise DriverError(
+                "invalid_workload_manifest",
+                f"warmup must be boolean for {request_id}",
+            )
+        for field in ("phase", "service_time_bucket"):
+            if field in row and (
+                not isinstance(row[field], str) or not row[field]
+            ):
+                raise DriverError(
+                    "invalid_workload_manifest",
+                    f"{field} must be a non-empty string for {request_id}",
+                )
+        if "starvation_deadline_ns" in row:
+            starvation_deadline_ns = row["starvation_deadline_ns"]
+            if (
+                isinstance(starvation_deadline_ns, bool)
+                or not isinstance(starvation_deadline_ns, int)
+                or starvation_deadline_ns <= 0
+            ):
+                raise DriverError(
+                    "invalid_workload_manifest",
+                    "starvation_deadline_ns must be a positive integer "
+                    f"for {request_id}",
+                )
 
 
 def _sampling_params(request: dict):
@@ -237,6 +263,12 @@ def _initial_lifecycle(
         "requested_output_tokens": request[
             "requested_output_tokens"
         ],
+        "warmup": request.get("warmup", False),
+        "phase": request.get("phase"),
+        "service_time_bucket": request.get("service_time_bucket"),
+        "starvation_deadline_ns": request.get(
+            "starvation_deadline_ns"
+        ),
         "finish_reason": None,
         "error": None,
     }
@@ -266,6 +298,22 @@ def _memory_row(observation: dict, step_index: int, timestamp_ns: int):
             "malformed_step_observation",
             "step observation requires queue_after and memory",
         )
+    if not _is_int(timestamp_ns) or timestamp_ns < 0:
+        raise DriverError(
+            "malformed_step_observation",
+            "memory timestamp_ns must be a non-negative integer",
+        )
+    for field, value in memory.items():
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or value < 0
+        ):
+            raise DriverError(
+                "malformed_step_observation",
+                f"{field} must be finite and non-negative",
+            )
     block_fields = (
         "free_kv_blocks",
         "used_kv_blocks",
@@ -307,6 +355,15 @@ def _memory_row(observation: dict, step_index: int, timestamp_ns: int):
 
 def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_timestamp_ns(value, field: str) -> int:
+    if not _is_int(value) or value < 0:
+        raise DriverError(
+            "malformed_step_observation",
+            f"{field} must be a non-negative integer",
+        )
+    return value
 
 
 def _validate_int_list(observation: dict, field: str):
@@ -537,18 +594,20 @@ def run_case(
                 })
                 if case_spec["policy"] == "P5":
                     _validate_p5_observation(observation)
-                token_event_ns = observation.get(
+                token_event_ns = _validate_timestamp_ns(
+                    observation.get(
+                        "step_end_ns",
+                        driver_step_end_ns,
+                    ),
                     "step_end_ns",
+                )
+                memory_row = _memory_row(
+                    observation,
+                    step_index,
                     driver_step_end_ns,
                 )
                 scheduler_writer.append(observation)
-                memory_writer.append(
-                    _memory_row(
-                        observation,
-                        step_index,
-                        driver_step_end_ns,
-                    )
-                )
+                memory_writer.append(memory_row)
 
                 scheduled_rows = observation.get("scheduled")
                 if not isinstance(scheduled_rows, list):
@@ -674,6 +733,22 @@ def run_case(
             )
         for request_id in expected_request_ids:
             lifecycle = lifecycle_by_request[request_id]
+            starvation_deadline_ns = lifecycle.get(
+                "starvation_deadline_ns"
+            )
+            if (
+                starvation_deadline_ns is not None
+                and lifecycle["first_scheduled_ns"] is not None
+                and (
+                    lifecycle["first_scheduled_ns"]
+                    - lifecycle["scheduled_arrival_ns"]
+                    > starvation_deadline_ns
+                )
+            ):
+                raise DriverError(
+                    "starved_request",
+                    f"request exceeded starvation deadline: {request_id}",
+                )
             if (
                 lifecycle["first_scheduled_ns"] is None
                 or lifecycle["first_token_ns"] is None
