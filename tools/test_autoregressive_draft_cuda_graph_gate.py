@@ -55,6 +55,11 @@ COLLECTIVE_DIAGNOSTIC_PATH = (
     / "tools"
     / "diagnose_autoregressive_draft_tp4_cuda_graph_collective.py"
 )
+PROCESS_SAMPLER_PATH = (
+    ROOT
+    / "tools"
+    / "autoregressive_draft_process_sampler.py"
+)
 
 
 def _load_path(path, module_name):
@@ -1634,6 +1639,159 @@ def test_command_timeline_source_archive_can_stream_without_local_file(
     assert (extracted / "tinyvllm" / "kept.py").read_text(
         encoding="utf-8"
     ) == "STREAMED_SOURCE = True\n"
+
+
+def _build_process_sampler_proc_stat(
+    *,
+    pid,
+    state,
+    utime_ticks,
+    stime_ticks,
+    threads,
+    starttime_ticks,
+    processor,
+    delayacct_blkio_ticks,
+):
+    fields = ["0"] * 50
+    fields[0] = state
+    fields[11] = str(utime_ticks)
+    fields[12] = str(stime_ticks)
+    fields[17] = str(threads)
+    fields[19] = str(starttime_ticks)
+    fields[36] = str(processor)
+    fields[39] = str(delayacct_blkio_ticks)
+    return f"{pid} (worker rank (0)) {' '.join(fields)}\n"
+
+
+def _load_process_sampler(module_name):
+    return _load_path(PROCESS_SAMPLER_PATH, module_name)
+
+
+def test_process_sampler_parses_rank_bound_proc_snapshot():
+    sampler = _load_process_sampler(
+        "autoregressive_draft_process_sampler_parse_test"
+    )
+
+    sample = sampler.parse_process_sample(
+        binding={
+            "rank": 0,
+            "gpu_uuid": "GPU-0",
+            "pid": 101,
+            "starttime_ticks": 9001,
+        },
+        schedstat_text="100 200 3\n",
+        stat_text=_build_process_sampler_proc_stat(
+            pid=101,
+            state="S",
+            utime_ticks=11,
+            stime_ticks=7,
+            threads=4,
+            starttime_ticks=9001,
+            processor=12,
+            delayacct_blkio_ticks=5,
+        ),
+        status_text=(
+            "Name:\tpython\n"
+            "voluntary_ctxt_switches:\t8\n"
+            "nonvoluntary_ctxt_switches:\t2\n"
+        ),
+        wchan_text="futex_wait_queue\n",
+        unix_ns=123,
+        monotonic_ns=456,
+    )
+
+    assert sample == {
+        "schema_version": 1,
+        "status": "sample",
+        "unix_ns": 123,
+        "monotonic_ns": 456,
+        "rank": 0,
+        "gpu_uuid": "GPU-0",
+        "pid": 101,
+        "starttime_ticks": 9001,
+        "state": "S",
+        "last_cpu": 12,
+        "thread_count": 4,
+        "wchan": "futex_wait_queue",
+        "run_time_ns": 100,
+        "runqueue_wait_ns": 200,
+        "scheduler_timeslices": 3,
+        "utime_ticks": 11,
+        "stime_ticks": 7,
+        "delayacct_blkio_ticks": 5,
+        "voluntary_context_switches": 8,
+        "involuntary_context_switches": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    (
+        ("rank", 0, "duplicate rank"),
+        ("gpu_uuid", "GPU-0", "duplicate GPU UUID"),
+        ("pid", 101, "duplicate PID"),
+    ),
+)
+def test_process_sampler_rejects_duplicate_binding_identity(
+    field,
+    replacement,
+    message,
+):
+    sampler = _load_process_sampler(
+        f"autoregressive_draft_process_sampler_duplicate_{field}_test"
+    )
+    second = {
+        "rank": 1,
+        "gpu_uuid": "GPU-1",
+        "pid": 102,
+        "starttime_ticks": 9002,
+    }
+    second[field] = replacement
+
+    with pytest.raises(ValueError, match=message):
+        sampler.validate_bindings([
+            {
+                "rank": 0,
+                "gpu_uuid": "GPU-0",
+                "pid": 101,
+                "starttime_ticks": 9001,
+            },
+            second,
+        ])
+
+
+def test_process_sampler_rejects_pid_starttime_drift():
+    sampler = _load_process_sampler(
+        "autoregressive_draft_process_sampler_starttime_test"
+    )
+
+    with pytest.raises(ValueError, match="start time"):
+        sampler.parse_process_sample(
+            binding={
+                "rank": 0,
+                "gpu_uuid": "GPU-0",
+                "pid": 101,
+                "starttime_ticks": 9001,
+            },
+            schedstat_text="100 200 3\n",
+            stat_text=_build_process_sampler_proc_stat(
+                pid=101,
+                state="R",
+                utime_ticks=11,
+                stime_ticks=7,
+                threads=4,
+                starttime_ticks=9999,
+                processor=12,
+                delayacct_blkio_ticks=5,
+            ),
+            status_text=(
+                "voluntary_ctxt_switches:\t8\n"
+                "nonvoluntary_ctxt_switches:\t2\n"
+            ),
+            wchan_text="0\n",
+            unix_ns=123,
+            monotonic_ns=456,
+        )
 
 
 def test_command_timeline_epoch_samplers_capture_stderr_without_pipes(
