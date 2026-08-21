@@ -3,6 +3,7 @@
 Run: python3 tools/test_profile_prefix_cache.py
 """
 
+import json
 import os
 import sys
 from types import ModuleType
@@ -16,17 +17,24 @@ if _REPO_ROOT not in sys.path:
 
 from tools.profile_prefix_cache import (
     adjusted_ttft_ms,
+    append_jsonl,
     audit_artifact_payloads,
     audit_batch_artifact_payloads,
+    build_prefix_contract_bundle,
     build_manifest,
+    clear_reusable_cache_observation,
     clone_logits_for_capture,
     compare_logits,
+    decide_staged_prefix_gate,
     decide_gate,
     expected_reusable_tokens,
     expected_shared_reusable_tokens,
     make_token_prompt,
     materialize_captured_logits,
     parse_int_list,
+    prefix_case_shape,
+    prefix_cost_observation,
+    prefix_source_files,
     render_report,
     summarize_batch_result,
     schedule_and_run_prefill,
@@ -491,6 +499,278 @@ def test_summarize_batch_case_rows_reports_admission_and_accounting():
     assert summary["all_correct"] is True
 
 
+def test_summarize_case_rows_reports_p95_and_prefix_costs():
+    rows = [
+        {
+            "ttft_ms": value,
+            "query_tokens": 64,
+            "cached_tokens": 1024,
+            "correct": True,
+            "retained_reusable_blocks": 4,
+            "retained_logical_kv_bytes": 8192,
+            "cuda_peak_allocated_bytes": 100 + index,
+            "cuda_peak_reserved_bytes": 200 + index,
+            "cache_clear_host_ns": 200_000,
+        }
+        for index, value in enumerate((10, 11, 12, 13, 20, 21, 22))
+    ]
+
+    summary = summarize_case_rows(rows)
+
+    assert summary["median_ttft_ms"] == 13
+    assert summary["p95_ttft_ms"] == 22
+    assert summary["peak_retained_reusable_blocks"] == 4
+    assert summary["peak_retained_logical_kv_bytes"] == 8192
+    assert summary["peak_cuda_allocated_bytes"] == 106
+    assert summary["peak_cuda_reserved_bytes"] == 206
+    assert summary["median_cache_clear_host_ms"] == 0.2
+
+
+def test_summarize_batch_rows_reports_p95_and_prefix_costs():
+    rows = [
+        {
+            "batch_elapsed_ms": value,
+            "model_batches": 1,
+            "total_query_tokens": 512,
+            "total_cached_tokens": 8192,
+            "requests": 8,
+            "correct": True,
+            "retained_reusable_blocks": 32,
+            "retained_logical_kv_bytes": 65536,
+            "cuda_peak_allocated_bytes": 300 + index,
+            "cuda_peak_reserved_bytes": 400 + index,
+            "cache_clear_host_ns": 300_000,
+        }
+        for index, value in enumerate((30, 31, 32, 33, 40, 41, 42))
+    ]
+
+    summary = summarize_batch_case_rows(rows)
+
+    assert summary["median_batch_elapsed_ms"] == 33
+    assert summary["p95_batch_elapsed_ms"] == 42
+    assert summary["peak_retained_reusable_blocks"] == 32
+    assert summary["peak_retained_logical_kv_bytes"] == 65536
+    assert summary["peak_cuda_allocated_bytes"] == 306
+    assert summary["peak_cuda_reserved_bytes"] == 406
+    assert summary["median_cache_clear_host_ms"] == 0.3
+
+
+def test_prefix_cost_observation_uses_all_hashed_blocks():
+    class FakeBlock:
+        def __init__(self, block_hash):
+            self.hash = block_hash
+
+    class FakeBlockManager:
+        block_size = 256
+        blocks = [
+            FakeBlock(101),
+            FakeBlock(-1),
+            FakeBlock(202),
+            FakeBlock(-1),
+        ]
+
+    class FakeLLM:
+        scheduler = SimpleNamespace(block_manager=FakeBlockManager())
+        last_step_observation = {
+            "memory": {
+                "cuda_allocated_bytes": 100,
+                "cuda_reserved_bytes": 200,
+                "cuda_peak_allocated_bytes": 300,
+                "cuda_peak_reserved_bytes": 400,
+                "kv_capacity_bytes": 8000,
+            }
+        }
+
+        def capacity_snapshot(self):
+            return {
+                "num_kvcache_blocks": 4,
+                "block_size": 256,
+            }
+
+    observation = prefix_cost_observation(FakeLLM())
+
+    assert observation == {
+        "retained_reusable_blocks": 2,
+        "retained_logical_kv_bytes": 4000,
+        "cuda_allocated_bytes": 100,
+        "cuda_reserved_bytes": 200,
+        "cuda_peak_allocated_bytes": 300,
+        "cuda_peak_reserved_bytes": 400,
+        "kv_block_bytes": 2000,
+    }
+
+
+def test_prefix_cost_observation_supports_direct_model_runner_path():
+    class FakeBlock:
+        hash = 101
+
+    memory = {
+        "cuda_allocated_bytes": 10,
+        "cuda_reserved_bytes": 20,
+        "cuda_peak_allocated_bytes": 30,
+        "cuda_peak_reserved_bytes": 40,
+        "kv_capacity_bytes": 2000,
+    }
+    llm = SimpleNamespace(
+        scheduler=SimpleNamespace(
+            block_manager=SimpleNamespace(blocks=[FakeBlock()])
+        ),
+        last_step_observation=None,
+        model_runner=SimpleNamespace(
+            memory_snapshot=lambda: dict(memory)
+        ),
+        capacity_snapshot=lambda: {"num_kvcache_blocks": 2},
+    )
+
+    observation = prefix_cost_observation(llm)
+
+    assert observation["retained_reusable_blocks"] == 1
+    assert observation["retained_logical_kv_bytes"] == 1000
+    assert observation["cuda_peak_reserved_bytes"] == 40
+
+
+def test_clear_reusable_cache_observation_records_host_cost():
+    calls = []
+
+    class FakeBlockManager:
+        def clear_reusable_cache(self):
+            calls.append("clear")
+            return 3
+
+    ticks = iter((100, 160))
+    result = clear_reusable_cache_observation(
+        FakeBlockManager(),
+        clock_ns=lambda: next(ticks),
+    )
+
+    assert calls == ["clear"]
+    assert result == {
+        "cleared_reusable_blocks": 3,
+        "cache_clear_host_ns": 60,
+    }
+
+
+def test_append_jsonl_is_canonical_append_only_and_newline_terminated():
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "rows.jsonl"
+        append_jsonl(path, [{"b": 2, "a": 1}])
+        append_jsonl(path, [{"c": 3}])
+
+        assert path.read_text() == '{"a":1,"b":2}\n{"c":3}\n'
+        assert [
+            json.loads(line)
+            for line in path.read_text().splitlines()
+        ] == [{"a": 1, "b": 2}, {"c": 3}]
+
+
+def test_prefix_source_files_bind_staged_classifier_source():
+    assert (
+        "tools/staged_inference_benchmark_contract.py"
+        in prefix_source_files()
+    )
+
+
+def test_prefix_case_shape_uses_actual_batch_size():
+    assert prefix_case_shape(1024, batch_size=1) == "single-1024"
+    assert prefix_case_shape(1024, batch_size=4) == "batch4-1024"
+    assert prefix_case_shape(2048, batch_size=8) == "batch8-2048"
+
+
+def _staged_state(
+    *,
+    elapsed_ms,
+    cached_tokens,
+    query_tokens,
+    model_batches,
+    cuda_reserved=1000,
+):
+    return {
+        "samples": 7,
+        "median_elapsed_ms": elapsed_ms,
+        "p95_elapsed_ms": elapsed_ms,
+        "median_cached_prompt_tokens": cached_tokens,
+        "median_executed_query_tokens": query_tokens,
+        "median_model_batches": model_batches,
+        "peak_cuda_reserved_bytes": cuda_reserved,
+        "exact_outputs": True,
+        "logit_argmax_match": True,
+        "logit_max_abs": 0.0,
+        "logit_mean_abs": 0.0,
+    }
+
+
+def _staged_case(prefix_tokens, batch_size):
+    expected_cached = prefix_tokens * batch_size
+    cold_query = (prefix_tokens + 64) * batch_size
+    warm_query = 64 * batch_size
+    return {
+        "shared_prefix_tokens": prefix_tokens,
+        "suffix_tokens": 64,
+        "batch_size": batch_size,
+        "expected_reusable_tokens": expected_cached,
+        "cold": _staged_state(
+            elapsed_ms=100.0,
+            cached_tokens=0,
+            query_tokens=cold_query,
+            model_batches=1 if batch_size == 1 else 2,
+        ),
+        "warm": _staged_state(
+            elapsed_ms=75.0,
+            cached_tokens=expected_cached,
+            query_tokens=warm_query,
+            model_batches=1,
+            cuda_reserved=1040,
+        ),
+        "cache_cleared": _staged_state(
+            elapsed_ms=101.0,
+            cached_tokens=0,
+            query_tokens=cold_query,
+            model_batches=1 if batch_size == 1 else 2,
+        ),
+        "retained_reusable_blocks": expected_cached // 256,
+        "retained_logical_kv_bytes": expected_cached * 32,
+        "median_cache_clear_host_ms": 0.2,
+    }
+
+
+def test_prefix_contract_bundle_classifies_complete_and_missing_costs():
+    single_cases = [
+        _staged_case(prefix_tokens, 1)
+        for prefix_tokens in (256, 1024, 2048)
+    ]
+    batch_cases = [
+        _staged_case(prefix_tokens, 8)
+        for prefix_tokens in (1024, 2048)
+    ]
+    bundle = build_prefix_contract_bundle(
+        single_cases,
+        batch_cases,
+        artifact_complete=True,
+    )
+
+    result = decide_staged_prefix_gate(bundle)
+
+    assert result["classification"] == "PREFIX_CACHE_GO"
+    assert bundle["single"]["1024"]["warm"][
+        "median_cached_prompt_tokens"
+    ] == 1024
+    assert bundle["batch"]["2048"]["warm"][
+        "median_cached_prompt_tokens"
+    ] == 16384
+
+    del single_cases[1]["warm"]["peak_cuda_reserved_bytes"]
+    try:
+        build_prefix_contract_bundle(
+            single_cases,
+            batch_cases,
+            artifact_complete=True,
+        )
+    except ValueError as error:
+        assert "peak_cuda_reserved_bytes" in str(error)
+    else:
+        raise AssertionError("missing Prefix cost evidence must fail closed")
+
+
 def test_summarize_batch_result_compares_each_request_to_reference():
     class FakeTensor:
         def __init__(self, values):
@@ -909,6 +1189,15 @@ def main():
     test_schedule_and_run_prefill_batches_drains_all_requests()
     test_summarize_case_rows_reports_medians_and_correctness()
     test_summarize_batch_case_rows_reports_admission_and_accounting()
+    test_summarize_case_rows_reports_p95_and_prefix_costs()
+    test_summarize_batch_rows_reports_p95_and_prefix_costs()
+    test_prefix_cost_observation_uses_all_hashed_blocks()
+    test_prefix_cost_observation_supports_direct_model_runner_path()
+    test_clear_reusable_cache_observation_records_host_cost()
+    test_append_jsonl_is_canonical_append_only_and_newline_terminated()
+    test_prefix_source_files_bind_staged_classifier_source()
+    test_prefix_case_shape_uses_actual_batch_size()
+    test_prefix_contract_bundle_classifies_complete_and_missing_costs()
     test_summarize_batch_result_compares_each_request_to_reference()
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()
     test_decide_gate_rejects_any_correctness_failure_or_warm_regression()

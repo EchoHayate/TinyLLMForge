@@ -46,12 +46,113 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_json(payload) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def prefix_source_files() -> tuple[str, ...]:
+    return (
+        "tinyvllm/engine/block_manager.py",
+        "tinyvllm/engine/scheduler.py",
+        "tools/profile_prefix_cache.py",
+        "tools/test_profile_prefix_cache.py",
+        "tools/test_chunked_prefill.py",
+        "tools/staged_inference_benchmark_contract.py",
+        "tools/run_prefix_cache_gate_remote.sh",
+    )
+
+
+def prefix_case_shape(prefix_tokens: int, *, batch_size: int) -> str:
+    family = "single" if batch_size == 1 else f"batch{batch_size}"
+    return f"{family}-{prefix_tokens}"
+
+
 def build_manifest(repo_root: Path, source_files: list[str], args: dict) -> dict:
     return {
         "args": args,
         "source_sha256": {
             relative: sha256_file(repo_root / relative) for relative in source_files
         },
+    }
+
+
+def append_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(
+                json.dumps(
+                    row,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+                + "\n"
+            )
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _nearest_rank_percentile(values, percentile: float) -> float:
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        raise ValueError("percentile requires at least one value")
+    rank = max(1, int((percentile * len(ordered)) + 0.999999999999))
+    return ordered[min(rank, len(ordered)) - 1]
+
+
+def prefix_cost_observation(llm) -> dict:
+    block_manager = llm.scheduler.block_manager
+    retained_blocks = sum(
+        int(getattr(block, "hash", -1) != -1)
+        for block in block_manager.blocks
+    )
+    capacity = llm.capacity_snapshot()
+    num_kvcache_blocks = int(capacity["num_kvcache_blocks"])
+    if num_kvcache_blocks <= 0:
+        raise ValueError("num_kvcache_blocks must be positive")
+    last_step = llm.last_step_observation
+    if isinstance(last_step, dict) and isinstance(
+        last_step.get("memory"),
+        dict,
+    ):
+        memory = last_step["memory"]
+    else:
+        memory = llm.model_runner.memory_snapshot()
+    kv_block_bytes = int(memory["kv_capacity_bytes"]) // num_kvcache_blocks
+    return {
+        "retained_reusable_blocks": retained_blocks,
+        "retained_logical_kv_bytes": retained_blocks * kv_block_bytes,
+        "cuda_allocated_bytes": int(memory["cuda_allocated_bytes"]),
+        "cuda_reserved_bytes": int(memory["cuda_reserved_bytes"]),
+        "cuda_peak_allocated_bytes": int(
+            memory["cuda_peak_allocated_bytes"]
+        ),
+        "cuda_peak_reserved_bytes": int(
+            memory["cuda_peak_reserved_bytes"]
+        ),
+        "kv_block_bytes": kv_block_bytes,
+    }
+
+
+def clear_reusable_cache_observation(
+    block_manager,
+    clock_ns=time.perf_counter_ns,
+) -> dict:
+    started_ns = clock_ns()
+    cleared_blocks = int(block_manager.clear_reusable_cache())
+    elapsed_ns = clock_ns() - started_ns
+    return {
+        "cleared_reusable_blocks": cleared_blocks,
+        "cache_clear_host_ns": int(elapsed_ns),
     }
 
 
@@ -98,10 +199,14 @@ def compare_logits(reference, candidate) -> dict:
 
 
 def summarize_case_rows(rows: list[dict]) -> dict:
-    return {
+    summary = {
         "samples": len(rows),
         "median_ttft_ms": statistics.median(
             float(row["ttft_ms"]) for row in rows
+        ),
+        "p95_ttft_ms": _nearest_rank_percentile(
+            (row["ttft_ms"] for row in rows),
+            0.95,
         ),
         "min_ttft_ms": min(float(row["ttft_ms"]) for row in rows),
         "max_ttft_ms": max(float(row["ttft_ms"]) for row in rows),
@@ -113,13 +218,54 @@ def summarize_case_rows(rows: list[dict]) -> dict:
         ),
         "all_correct": all(bool(row["correct"]) for row in rows),
     }
+    if all("retained_reusable_blocks" in row for row in rows):
+        summary.update({
+            "peak_retained_reusable_blocks": max(
+                int(row["retained_reusable_blocks"]) for row in rows
+            ),
+            "peak_retained_logical_kv_bytes": max(
+                int(row["retained_logical_kv_bytes"]) for row in rows
+            ),
+            "peak_cuda_allocated_bytes": max(
+                int(row["cuda_peak_allocated_bytes"]) for row in rows
+            ),
+            "peak_cuda_reserved_bytes": max(
+                int(row["cuda_peak_reserved_bytes"]) for row in rows
+            ),
+            "median_cache_clear_host_ms": statistics.median(
+                int(row["cache_clear_host_ns"]) for row in rows
+            )
+            / 1_000_000.0,
+        })
+    logit_rows = [
+        row["logit_diff"]
+        for row in rows
+        if isinstance(row.get("logit_diff"), dict)
+    ]
+    if len(logit_rows) == len(rows):
+        summary.update({
+            "logit_argmax_match": all(
+                bool(row["argmax_match"]) for row in logit_rows
+            ),
+            "logit_max_abs": max(
+                float(row["max_abs"]) for row in logit_rows
+            ),
+            "logit_mean_abs": max(
+                float(row["mean_abs"]) for row in logit_rows
+            ),
+        })
+    return summary
 
 
 def summarize_batch_case_rows(rows: list[dict]) -> dict:
-    return {
+    summary = {
         "samples": len(rows),
         "median_batch_elapsed_ms": statistics.median(
             float(row["batch_elapsed_ms"]) for row in rows
+        ),
+        "p95_batch_elapsed_ms": _nearest_rank_percentile(
+            (row["batch_elapsed_ms"] for row in rows),
+            0.95,
         ),
         "min_batch_elapsed_ms": min(
             float(row["batch_elapsed_ms"]) for row in rows
@@ -141,6 +287,43 @@ def summarize_batch_case_rows(rows: list[dict]) -> dict:
         ),
         "all_correct": all(bool(row["correct"]) for row in rows),
     }
+    if all("retained_reusable_blocks" in row for row in rows):
+        summary.update({
+            "peak_retained_reusable_blocks": max(
+                int(row["retained_reusable_blocks"]) for row in rows
+            ),
+            "peak_retained_logical_kv_bytes": max(
+                int(row["retained_logical_kv_bytes"]) for row in rows
+            ),
+            "peak_cuda_allocated_bytes": max(
+                int(row["cuda_peak_allocated_bytes"]) for row in rows
+            ),
+            "peak_cuda_reserved_bytes": max(
+                int(row["cuda_peak_reserved_bytes"]) for row in rows
+            ),
+            "median_cache_clear_host_ms": statistics.median(
+                int(row["cache_clear_host_ns"]) for row in rows
+            )
+            / 1_000_000.0,
+        })
+    logit_rows = [
+        comparison
+        for row in rows
+        for comparison in row.get("logit_diffs", [])
+    ]
+    if logit_rows:
+        summary.update({
+            "logit_argmax_match": all(
+                bool(row["argmax_match"]) for row in logit_rows
+            ),
+            "logit_max_abs": max(
+                float(row["max_abs"]) for row in logit_rows
+            ),
+            "logit_mean_abs": max(
+                float(row["mean_abs"]) for row in logit_rows
+            ),
+        })
+    return summary
 
 
 def batch_row_accounting_correct(
@@ -239,6 +422,147 @@ def decide_gate(
                 f"{prefix} batch: warm elapsed improvement below 15%"
             )
     return {"decision": "NO_GO" if reasons else "GO", "reasons": reasons}
+
+
+def _prefix_contract_state(state: dict, *, batch: bool) -> dict:
+    if "median_elapsed_ms" in state:
+        normalized = dict(state)
+    else:
+        elapsed_key = (
+            "median_batch_elapsed_ms" if batch else "median_ttft_ms"
+        )
+        p95_key = "p95_batch_elapsed_ms" if batch else "p95_ttft_ms"
+        cached_key = (
+            "median_total_cached_tokens"
+            if batch
+            else "median_cached_tokens"
+        )
+        query_key = (
+            "median_total_query_tokens"
+            if batch
+            else "median_query_tokens"
+        )
+        normalized = {
+            "samples": state.get("samples"),
+            "median_elapsed_ms": state.get(elapsed_key),
+            "p95_elapsed_ms": state.get(p95_key),
+            "median_cached_prompt_tokens": state.get(cached_key),
+            "median_executed_query_tokens": state.get(query_key),
+            "median_model_batches": (
+                state.get("median_model_batches") if batch else 1
+            ),
+            "peak_cuda_reserved_bytes": state.get(
+                "peak_cuda_reserved_bytes"
+            ),
+            "exact_outputs": state.get("all_correct"),
+            "logit_argmax_match": state.get("logit_argmax_match"),
+            "logit_max_abs": state.get("logit_max_abs"),
+            "logit_mean_abs": state.get("logit_mean_abs"),
+        }
+    required = (
+        "samples",
+        "median_elapsed_ms",
+        "p95_elapsed_ms",
+        "median_cached_prompt_tokens",
+        "median_executed_query_tokens",
+        "median_model_batches",
+        "peak_cuda_reserved_bytes",
+        "exact_outputs",
+        "logit_argmax_match",
+        "logit_max_abs",
+        "logit_mean_abs",
+    )
+    missing = [field for field in required if normalized.get(field) is None]
+    if missing:
+        raise ValueError(
+            "missing Prefix state evidence: " + ", ".join(missing)
+        )
+    return normalized
+
+
+def _prefix_contract_case(case: dict, *, batch: bool) -> dict:
+    prefix_tokens = int(case["shared_prefix_tokens"])
+    batch_size = int(case.get("batch_size", 1))
+    if batch:
+        if "expected_reusable_tokens" in case:
+            expected_reusable = int(case["expected_reusable_tokens"])
+        else:
+            expected_reusable = (
+                int(case["expected_reusable_tokens_per_request"])
+                * batch_size
+            )
+    else:
+        expected_reusable = int(case["expected_reusable_tokens"])
+    states = {
+        state: _prefix_contract_state(case[state], batch=batch)
+        for state in ("cold", "warm", "cache_cleared")
+    }
+    retained_blocks = case.get("retained_reusable_blocks")
+    retained_bytes = case.get("retained_logical_kv_bytes")
+    clear_host_ms = case.get("median_cache_clear_host_ms")
+    if retained_blocks is None:
+        retained_blocks = max(
+            int(state.get("peak_retained_reusable_blocks", 0))
+            for state in case.values()
+            if isinstance(state, dict)
+        )
+    if retained_bytes is None:
+        retained_bytes = max(
+            int(state.get("peak_retained_logical_kv_bytes", 0))
+            for state in case.values()
+            if isinstance(state, dict)
+        )
+    if clear_host_ms is None:
+        clear_host_ms = max(
+            float(state.get("median_cache_clear_host_ms", 0.0))
+            for state in case.values()
+            if isinstance(state, dict)
+        )
+    return {
+        "prefix_tokens": prefix_tokens,
+        "suffix_tokens": int(case["suffix_tokens"]),
+        "batch_size": batch_size,
+        "expected_reusable_tokens": expected_reusable,
+        **states,
+        "retained_reusable_blocks": int(retained_blocks),
+        "retained_logical_kv_bytes": int(retained_bytes),
+        "median_cache_clear_host_ms": float(clear_host_ms),
+    }
+
+
+def build_prefix_contract_bundle(
+    single_cases: list[dict],
+    batch_cases: list[dict],
+    *,
+    artifact_complete: bool,
+) -> dict:
+    single = {
+        str(int(case["shared_prefix_tokens"])): _prefix_contract_case(
+            case,
+            batch=False,
+        )
+        for case in single_cases
+    }
+    batch = {
+        str(int(case["shared_prefix_tokens"])): _prefix_contract_case(
+            case,
+            batch=True,
+        )
+        for case in batch_cases
+    }
+    return {
+        "artifact_complete": bool(artifact_complete),
+        "single": single,
+        "batch": batch,
+    }
+
+
+def decide_staged_prefix_gate(bundle: dict) -> dict:
+    from tools.staged_inference_benchmark_contract import (
+        classify_prefix_bundle,
+    )
+
+    return classify_prefix_bundle(bundle)
 
 
 def audit_artifact_payloads(
@@ -965,6 +1289,9 @@ def summarize_batch_result(
         "cache_isolation_between_batches": bool(
             result.get("cache_isolation_between_batches", False)
         ),
+        "logit_diffs": comparisons,
+        "output_token_ids": list(result["token_ids"]),
+        "decoded_text": list(result["decoded"]),
         "correct": correct,
     }
 
@@ -994,17 +1321,20 @@ def run_performance_cases(
                 base_offset + 523,
             )
 
-            block_manager.clear_reusable_cache()
+            cold_clear = clear_reusable_cache_observation(block_manager)
             cold = schedule_and_run_prefill(llm, [consumer])
+            cold_cost = prefix_cost_observation(llm)
 
-            block_manager.clear_reusable_cache()
+            warm_clear = clear_reusable_cache_observation(block_manager)
             schedule_and_run_prefill(llm, [producer])
             warm = schedule_and_run_prefill(llm, [consumer])
+            warm_cost = prefix_cost_observation(llm)
 
-            block_manager.clear_reusable_cache()
+            clear_reusable_cache_observation(block_manager)
             schedule_and_run_prefill(llm, [producer])
-            block_manager.clear_reusable_cache()
+            cleared_clear = clear_reusable_cache_observation(block_manager)
             cleared = schedule_and_run_prefill(llm, [consumer])
+            cleared_cost = prefix_cost_observation(llm)
 
             if repetition < warmup_repetitions:
                 continue
@@ -1019,9 +1349,34 @@ def run_performance_cases(
                     measured_repetition,
                 ),
             ]
-            for row in rows:
+            for row, result, cost, clear_cost in zip(
+                rows,
+                (cold, warm, cleared),
+                (cold_cost, warm_cost, cleared_cost),
+                (cold_clear, warm_clear, cleared_clear),
+            ):
+                shape = prefix_case_shape(prefix_tokens, batch_size=1)
                 row["shared_prefix_tokens"] = prefix_tokens
                 row["suffix_tokens"] = suffix_tokens
+                row.update(cost)
+                row.update(clear_cost)
+                row.update({
+                    "schema_version": 2,
+                    "case_id": (
+                        f"{shape}__{row['state']}__"
+                        f"r{measured_repetition}"
+                    ),
+                    "shape": shape,
+                    "warmup": False,
+                    "prompt_token_ids_sha256": sha256_json(consumer),
+                    "output_token_ids": list(result["token_ids"]),
+                    "decoded_text": list(result["decoded"]),
+                    "ttft_ns": int(round(float(row["ttft_ms"]) * 1_000_000)),
+                    "model_batches": 1,
+                    "cached_prompt_tokens": int(row["cached_tokens"]),
+                    "executed_query_tokens": int(row["query_tokens"]),
+                    "logit": dict(row["logit_diff"]),
+                })
             case_rows.extend(rows)
             raw_rows.extend(rows)
 
@@ -1097,25 +1452,28 @@ def run_batch_performance_cases(
                     )
                 )
 
-            block_manager.clear_reusable_cache()
+            cold_clear = clear_reusable_cache_observation(block_manager)
             cold = schedule_and_run_prefill_batches(
                 llm,
                 prompts,
                 clear_cache_between_batches=True,
             )
+            cold_cost = prefix_cost_observation(llm)
 
-            block_manager.clear_reusable_cache()
+            warm_clear = clear_reusable_cache_observation(block_manager)
             schedule_and_run_prefill(llm, [producer])
             warm = schedule_and_run_prefill_batches(llm, prompts)
+            warm_cost = prefix_cost_observation(llm)
 
-            block_manager.clear_reusable_cache()
+            clear_reusable_cache_observation(block_manager)
             schedule_and_run_prefill(llm, [producer])
-            block_manager.clear_reusable_cache()
+            cleared_clear = clear_reusable_cache_observation(block_manager)
             cleared = schedule_and_run_prefill_batches(
                 llm,
                 prompts,
                 clear_cache_between_batches=True,
             )
+            cleared_cost = prefix_cost_observation(llm)
 
             if repetition < warmup_repetitions:
                 continue
@@ -1140,10 +1498,53 @@ def run_batch_performance_cases(
                     measured_repetition,
                 ),
             ]
-            for row in rows:
+            for row, cost, clear_cost in zip(
+                rows,
+                (cold_cost, warm_cost, cleared_cost),
+                (cold_clear, warm_clear, cleared_clear),
+            ):
+                shape = prefix_case_shape(
+                    prefix_tokens,
+                    batch_size=batch_size,
+                )
                 row["shared_prefix_tokens"] = prefix_tokens
                 row["suffix_tokens"] = suffix_tokens
                 row["batch_size"] = batch_size
+                row.update(cost)
+                row.update(clear_cost)
+                row.update({
+                    "schema_version": 2,
+                    "case_id": (
+                        f"{shape}__{row['state']}__"
+                        f"r{measured_repetition}"
+                    ),
+                    "shape": shape,
+                    "warmup": False,
+                    "prompt_token_ids_sha256": sha256_json(prompts),
+                    "ttft_ns": int(
+                        round(float(row["batch_elapsed_ms"]) * 1_000_000)
+                    ),
+                    "cached_prompt_tokens": int(
+                        row["total_cached_tokens"]
+                    ),
+                    "executed_query_tokens": int(
+                        row["total_query_tokens"]
+                    ),
+                    "logit": {
+                        "argmax_match": all(
+                            bool(item["argmax_match"])
+                            for item in row["logit_diffs"]
+                        ),
+                        "max_abs": max(
+                            float(item["max_abs"])
+                            for item in row["logit_diffs"]
+                        ),
+                        "mean_abs": max(
+                            float(item["mean_abs"])
+                            for item in row["logit_diffs"]
+                        ),
+                    },
+                })
                 row["correct"] = (
                     bool(row["correct"])
                     and batch_row_accounting_correct(
@@ -1326,14 +1727,7 @@ def run_profile(args) -> dict:
         )
     out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    source_files = [
-        "tinyvllm/engine/block_manager.py",
-        "tinyvllm/engine/scheduler.py",
-        "tools/profile_prefix_cache.py",
-        "tools/test_profile_prefix_cache.py",
-        "tools/test_chunked_prefill.py",
-        "tools/run_prefix_cache_gate_remote.sh",
-    ]
+    source_files = list(prefix_source_files())
     manifest = build_manifest(repo_root, source_files, vars(args))
     _write_json(out_dir / "manifest.json", manifest)
 
@@ -1392,11 +1786,84 @@ def run_profile(args) -> dict:
         "batch_performance_cases": batch_performance_cases,
         "decision": decision,
     }
+    prefix_bundle = build_prefix_contract_bundle(
+        performance_cases,
+        batch_performance_cases,
+        artifact_complete=(
+            args.mode == "full"
+            and bool(correctness_rows)
+            and all(bool(row["correct"]) for row in correctness_rows)
+        ),
+    )
+    staged_decision = decide_staged_prefix_gate(prefix_bundle)
+    summary["staged_contract_bundle"] = prefix_bundle
+    summary["staged_decision"] = staged_decision
     _write_json(out_dir / "correctness_rows.json", correctness_rows)
     _write_json(out_dir / "performance_rows.json", performance_rows)
     _write_json(
         out_dir / "batch_performance_rows.json",
         batch_performance_rows,
+    )
+    all_performance_rows = performance_rows + batch_performance_rows
+    append_jsonl(
+        out_dir / "prefix_correctness_rows.jsonl",
+        correctness_rows,
+    )
+    append_jsonl(
+        out_dir / "prefix_performance_rows.jsonl",
+        all_performance_rows,
+    )
+    append_jsonl(
+        out_dir / "prefix_cache_rows.jsonl",
+        [
+            {
+                key: row[key]
+                for key in (
+                    "schema_version",
+                    "case_id",
+                    "shape",
+                    "state",
+                    "repetition",
+                    "warmup",
+                    "cached_prompt_tokens",
+                    "executed_query_tokens",
+                    "retained_reusable_blocks",
+                    "retained_logical_kv_bytes",
+                    "kv_block_bytes",
+                    "cleared_reusable_blocks",
+                    "cache_clear_host_ns",
+                )
+            }
+            for row in all_performance_rows
+        ],
+    )
+    append_jsonl(
+        out_dir / "prefix_memory_rows.jsonl",
+        [
+            {
+                key: row[key]
+                for key in (
+                    "schema_version",
+                    "case_id",
+                    "shape",
+                    "state",
+                    "repetition",
+                    "cuda_allocated_bytes",
+                    "cuda_reserved_bytes",
+                    "cuda_peak_allocated_bytes",
+                    "cuda_peak_reserved_bytes",
+                    "retained_logical_kv_bytes",
+                )
+            }
+            for row in all_performance_rows
+        ],
+    )
+    _write_json(
+        out_dir / "prefix_primary_summary.json",
+        {
+            "bundle": prefix_bundle,
+            "decision": staged_decision,
+        },
     )
     _write_json(out_dir / "summary.json", summary)
     (out_dir / "report.md").write_text(
