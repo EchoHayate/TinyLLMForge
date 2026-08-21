@@ -49662,3 +49662,190 @@ command-timeline stationarity failure and then beat the `105.87 ms` absolute
 TPOT p95 gate in a new immutable source-bound campaign. Keep all future remote
 artifacts beneath
 `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.
+
+## 2026-08-21 500 ms sampler-cadence terminal result
+
+The measurement-pressure experiment is complete under immutable tag:
+
+```text
+20260821-sampler-500ms-tpot-source-pair-r1
+```
+
+Source and admission authority:
+
+```text
+baseline:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+candidate:
+  d1ebb8a19db5746c97ecf64b797e79b567f4fc7f
+candidate commit:
+  d1ebb8a perf(telemetry): reduce GPU sampler cadence
+branch and remote:
+  feat/kv-sparse-attention
+  origin/feat/kv-sparse-attention
+GPU indices:
+  2,3,5,6
+GPU UUIDs:
+  GPU-63c05907-407b-8240-07a0-f38872840867
+  GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d
+  GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8
+  GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31
+```
+
+The implementation changed only the GPU sampler cadence contract:
+
+```text
+GPU_SAMPLER_INTERVAL_NS = 500_000_000
+SAMPLE_INTERVAL_NS=500000000
+next_sample_ns+=SAMPLE_INTERVAL_NS
+```
+
+It preserved all eight NVML fields and all 32 field-isolated child processes.
+TDD evidence:
+
+```text
+RED:
+  focused cadence test failed because GPU_SAMPLER_INTERVAL_NS was absent
+GREEN:
+  focused 1 passed
+  sampler group 12 passed, 99 deselected
+  complete affected file 111 passed
+  final source-pair + command-timeline + CUDA-graph regression 329 passed
+  py_compile PASS
+  tabnanny PASS
+  git diff --check PASS
+```
+
+All 16 source-pair members completed, every before/after admission status was
+zero, correctness passed with zero mismatches, and the orchestrator returned
+`status=PASS`. The complete parent result nevertheless remains:
+
+```text
+classification:
+  INCONCLUSIVE_STATIONARITY
+performance_improvement_established:
+  false
+```
+
+Metrics:
+
+```text
+baseline TPOT p95:              126.145358 ms
+candidate TPOT p95:             122.992254 ms
+candidate absolute p95 limit:   105.870000 ms
+candidate over limit:            17.122254 ms
+
+baseline TPOT median:             82.8648070 ms
+candidate TPOT median:            78.2303015 ms
+
+baseline TTFT p95:               109.264879 ms
+candidate TTFT p95:              102.296520 ms
+TTFT change:                      -6.3775%
+
+baseline median throughput:       38.6934990901 tok/s
+candidate median throughput:      45.3954218693 tok/s
+throughput change:               +17.3205%
+```
+
+The cadence change reduced candidate query pressure:
+
+```text
+median generations per repeat:
+  7.5 -> 3
+per-field query observations:
+  23,808 -> 9,780
+reduction:
+  58.9214%
+```
+
+It did not remove the tail. The dominant candidate spikes moved into three
+eager measured-repeat-2 cases:
+
+```text
+b0-eager-first:
+  max TPOT 143.367945 ms
+  second step-4 run_spec_verify_batch CUDA 720.109863 ms
+b1-eager-second:
+  max TPOT 141.050387 ms
+  second step-4 run_spec_verify_batch CUDA 609.109131 ms
+b2-eager-second:
+  max TPOT 152.369227 ms
+  second step-4 run_spec_verify_batch CUDA 779.018738 ms
+```
+
+All three execute with active batch size `2`. Block 0 and block 2 overlap only
+ordinary approximately `22 ms` NVML query windows. Block 1 overlaps a long
+approximately `557 ms` query, but a normal approximately `53 ms` CUDA repeat
+also overlaps an approximately `245 ms` query. Reduced cadence therefore
+lowers total query volume but does not establish NVML query overlap as either
+necessary or sufficient for the CUDA tail.
+
+Candidate epoch TPOT stationarity passes throughout. Four candidate epochs
+still fail ACK-wait stationarity:
+
+```text
+b0-graph-second
+b1-graph-first
+b2-graph-first
+b3-eager-first
+```
+
+The baseline also remains command-timeline unstable, so the parent
+`all_sixteen_source_epochs_passed` field is false.
+
+Integrity:
+
+```text
+baseline child:
+  artifact 9fba430171e84dfab0b23146c69bc413ee8d18cf3b3b61b724cca0097eeccea1
+  manifest a548f11cfde99ceb4172754c7a329ef1b2617d1ca9ee17a46f1e9467901369a3
+  files 279
+  primary/controller verified true/true
+
+candidate child:
+  artifact 3223026c1b58b330aaf2ff08be4946cb67cc155ae5d3412cf665237675ad7737
+  manifest 9bcd902454b123da6307d6c7f8da549eabcf6bf190beb5241c246df233e936c5
+  files 282
+  primary/controller verified true/true
+
+parent:
+  artifact 9a67205bd12ea3bff3126ed053cd785c984fb26fc31b70f384661fbb7eb6b629
+  manifest 7572828ae628c34e43450b985ef266f1f304ecfc8bba97ac19dfd20e454fd610
+  files 10
+  primary/controller verified true/true
+```
+
+A fresh bytecode-disabled, no-receipt verifier command rebuilt all six views
+in memory after the orchestrator completed:
+
+```text
+baseline primary/controller:  verified=true/true
+candidate primary/controller: verified=true/true
+parent primary/controller:    verified=true/true
+```
+
+Canonical terminal result:
+
+```text
+GPU_SAMPLER_QUERY_PRESSURE_REDUCTION=PASS_58_9214_PERCENT
+SOURCE_PAIR_GATE_REAL_8_PAIR_CAMPAIGN=COMPLETE
+SOURCE_PAIR_GATE_EXACT_CORRECTNESS=PASS
+SOURCE_PAIR_GATE_DUAL_VERIFICATION=PASS
+SOURCE_PAIR_GATE_EAGER_GRAPH_RATIO_STATIONARITY=PASS
+SOURCE_PAIR_GATE_ALL_SIXTEEN_EPOCH_STATIONARITY=FAIL
+CANDIDATE_TPOT_MEDIAN_GATE=PASS
+CANDIDATE_TPOT_P95_GATE=FAIL_122_992254_MS_GT_105_87_MS
+TTFT_P95_NON_REGRESSION=PASS
+THROUGHPUT_NON_REGRESSION=PASS
+CADENCE_ONLY_CUDA_TAIL_CAUSALITY=NOT_ESTABLISHED
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+Do not repeat a cadence-only run. The next admissible optimization should
+target or causally isolate the eager repeat-2, engine-step-4, second
+`run_spec_verify_batch` CUDA path while preserving correctness, TTFT, and
+throughput. All remote output must remain beneath
+`/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.

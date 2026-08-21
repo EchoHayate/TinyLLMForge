@@ -3265,3 +3265,316 @@ No claim that the bounded-journal optimization established TPOT-tail benefit
 is admissible from r911. A future attempt must first address the underlying
 command-timeline stationarity failure and then beat the absolute TPOT p95
 limit under another fresh immutable, source-bound campaign.
+
+## 2026-08-21 500 ms GPU-Sampler Cadence Reconciliation
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete artifact/evidence | Status |
+| --- | --- | --- |
+| Change only the measurement cadence before touching the inference hot path | commit `d1ebb8a19db5746c97ecf64b797e79b567f4fc7f`; only the command-timeline runner and its test changed | `PASS` |
+| Preserve all eight NVML fields and 32 field-isolated query processes | generated sampler still uses four GPUs times eight query names; sampler regression group passed | `PASS` |
+| Make the cadence explicit and set it to 500 ms | `GPU_SAMPLER_INTERVAL_NS = 500_000_000`; generated script declares `SAMPLE_INTERVAL_NS=500000000` and increments by that name | `PASS` |
+| Demonstrate RED before production modification | focused test failed with `AttributeError` because `GPU_SAMPLER_INTERVAL_NS` did not exist | `PASS` |
+| Demonstrate focused and affected GREEN | focused `1 passed`; sampler group `12 passed, 99 deselected`; complete command-timeline/CUDA-graph test file `111 passed` | `PASS` |
+| Commit and push the exact candidate source used by the source-pair runner | local HEAD, `origin/feat/kv-sparse-attention`, and candidate source identity were `d1ebb8a19db5746c97ecf64b797e79b567f4fc7f` before admission | `PASS` |
+| Use a fresh immutable run tag | `20260821-sampler-500ms-tpot-source-pair-r1` | `PASS` |
+| Admit exactly four clean GPUs with the frozen thresholds | GPU indices `2,3,5,6`; the same four frozen UUIDs as r911; all 16 before/after admissions completed with status `0` | `PASS` |
+| Keep all generated remote files beneath the mounted Sitian task root | child, controller, parent, logs, telemetry, manifests, and receipts are beneath `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818` | `PASS` |
+| Run the full balanced 8-pair/16-member source schedule | orchestrator returned `status=PASS` with all 16 schedule members listed | `PASS` |
+| Preserve exact correctness and Proposal-KV/transaction parity | parent `correctness.passed=true`, `mismatch_count=0`, and `underlying_command_timeline_passed=true` | `PASS` |
+| Produce complete child manifests and verify primary/controller views | baseline manifest `279` files; candidate manifest `282` files; all four child views independently rebuilt with `verified=true` | `PASS` |
+| Produce and independently verify the parent artifact and manifest | parent manifest `10` files; primary/controller artifacts share hash `9a67205b...b629`; both fresh verifier runs returned `verified=true` | `PASS` |
+| Candidate TPOT median `<=85.66 ms` | `78.2303015 ms` | `PASS` |
+| Candidate TPOT p95 `<=105.87 ms` | `122.992254 ms`, which is `17.122254 ms` or `16.1729%` above the absolute limit | `FAIL` |
+| TTFT p95 regression `<=3%` | candidate `102.296520 ms` versus baseline `109.264879 ms`, a `6.3775%` improvement | `PASS` |
+| Throughput regression `<=3%` | candidate `45.3954218693 tok/s` versus baseline `38.6934990901 tok/s`, a `17.3205%` improvement | `PASS` |
+| Eager and graph source-ratio stationarity | all eager/graph TPOT and throughput ratio checks pass | `PASS` |
+| All sixteen underlying child epochs pass command-timeline stationarity | parent `all_sixteen_source_epochs_passed=false`; four candidate epochs fail only ACK-wait stationarity and the baseline also remains unstable | `FAIL` |
+| Establish that reduced sampling pressure removes the observed CUDA tail | candidate generation median fell from `7.5` to `3` per repeat and query cells fell `58.9214%`, but three eager repeat-2 CUDA verify spikes remained | `FAIL` |
+| Emit a terminal claim that respects all gate precedence | `INCONCLUSIVE_STATIONARITY`; `performance_improvement_established=false`; no TPOT-tail benefit claim | `PASS` |
+| Update the canonical audit and handoff with the terminal result | this reconciliation and the matching EOF handoff section | `PASS` |
+
+### Candidate and admission authority
+
+```text
+candidate commit:
+  d1ebb8a19db5746c97ecf64b797e79b567f4fc7f
+subject:
+  perf(telemetry): reduce GPU sampler cadence
+branch:
+  feat/kv-sparse-attention
+remote:
+  origin/feat/kv-sparse-attention
+
+run tag:
+  20260821-sampler-500ms-tpot-source-pair-r1
+
+baseline:
+  596e724ea87966b2ab3b47cccda08c106f9084bb
+candidate:
+  d1ebb8a19db5746c97ecf64b797e79b567f4fc7f
+
+GPU indices:
+  2,3,5,6
+GPU UUIDs:
+  GPU-63c05907-407b-8240-07a0-f38872840867
+  GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d
+  GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8
+  GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31
+```
+
+The read-only preflight on Friday, August 21, 2026 returned `READY`. The local
+`sitian@BYTEDANCE.COM` TGT had `32,628` seconds remaining, and all six remote
+destinations were absent before the run. The orchestrator then completed all
+16 pair members and returned `status=PASS`. No unrelated process was
+signaled, adopted, paused, killed, or modified.
+
+### TDD and local verification
+
+The new contract requires both the Python module and the generated remote
+sampler to expose the cadence by name:
+
+```text
+GPU_SAMPLER_INTERVAL_NS = 500_000_000
+SAMPLE_INTERVAL_NS=500000000
+next_sample_ns+=SAMPLE_INTERVAL_NS
+```
+
+Focused RED:
+
+```text
+test_command_timeline_gpu_sampler_uses_500ms_cadence_constant
+  AttributeError:
+  module ... has no attribute 'GPU_SAMPLER_INTERVAL_NS'
+```
+
+GREEN evidence:
+
+```text
+focused cadence contract:
+  1 passed in 0.12s
+
+sampler lifecycle/schema/isolation group:
+  12 passed, 99 deselected in 4.17s
+
+complete affected test file:
+  111 passed in 7.87s
+
+final source-pair + command-timeline + CUDA-graph regression:
+  329 passed in 32.57s
+
+py_compile:
+  PASS
+tabnanny:
+  PASS
+git diff --check:
+  PASS
+```
+
+The candidate source commit was pushed before remote admission because the
+source-pair runner exports exact Git objects and requires
+`HEAD == origin/feat/kv-sparse-attention`.
+
+### Gate metrics
+
+```text
+baseline:
+  TPOT p95:                 126.145358 ms
+  TPOT median:               82.8648070 ms
+  TTFT p95:                 109.264879 ms
+  median batch throughput:   38.6934990901 tok/s
+
+candidate:
+  TPOT p95:                 122.992254 ms
+  TPOT median:               78.2303015 ms
+  TTFT p95:                 102.296520 ms
+  median batch throughput:   45.3954218693 tok/s
+
+paired direction:
+  TPOT p95:                  -2.4996%
+  TPOT median:               -5.5929%
+  TTFT p95:                  -6.3775%
+  throughput:               +17.3205%
+
+absolute candidate TPOT p95 limit:
+  105.870000 ms
+candidate excess:
+   17.122254 ms
+   16.1729%
+```
+
+Correctness passes with zero mismatches. The candidate median, TTFT, and
+throughput gates pass, and the eager/graph source-ratio stationarity checks
+pass. The candidate p95 absolute gate fails by a materially larger margin
+than r911, and the required all-sixteen-epoch stationarity gate remains false.
+
+The four candidate command-timeline epoch failures are:
+
+```text
+b0-graph-second:
+  ACK-wait stationarity only
+b1-graph-first:
+  ACK-wait stationarity only
+b2-graph-first:
+  ACK-wait stationarity only
+b3-eager-first:
+  ACK-wait stationarity only
+```
+
+Candidate TPOT stationarity itself passes in every epoch. This does not
+override the source-pair contract, which requires every underlying
+command-timeline epoch to pass its full stationarity admission.
+
+### Sampler-pressure result and CUDA-tail localization
+
+The cadence change materially reduced query volume:
+
+```text
+r911 candidate:
+  generations per repeat median: 7.5
+  generations per repeat p95:   12
+  per-field query observations: 23,808
+
+500 ms candidate:
+  generations per repeat median: 3
+  generations per repeat p95:    5
+  per-field query observations:  9,780
+
+query-observation reduction:
+  58.9214%
+```
+
+It did not remove the eager CUDA tail. The three new dominant outliers all
+occur in measured repeat `2`, at engine step `4`, in the second
+`run_spec_verify_batch`, with active batch size `2`:
+
+```text
+b0-eager-first:
+  max request TPOT: 143.367945 ms
+  CUDA event:       720.109863 ms
+
+b1-eager-second:
+  max request TPOT: 141.050387 ms
+  CUDA event:       609.109131 ms
+
+b2-eager-second:
+  max request TPOT: 152.369227 ms
+  CUDA event:       779.018738 ms
+
+b3-eager-first repeat 2:
+  max request TPOT:  99.562413 ms
+  CUDA event:        52.808011 ms
+```
+
+The slow block-0 and block-2 CUDA intervals overlap only ordinary
+approximately `22 ms` NVML query windows. Block 1 overlaps one approximately
+`557 ms` query window, but a normal approximately `53 ms` CUDA repeat also
+overlaps an approximately `245 ms` query window. Therefore NVML pressure may
+still amplify the environment, but query overlap is neither necessary nor
+sufficient for the three repeat-2 CUDA spikes. The evidence does not support
+another cadence-only optimization.
+
+The lower-frequency candidate also retained severe per-call NVML latency:
+
+```text
+clock_throttle_reasons:
+  p95 266.612797 ms
+  p99 449.242361 ms
+  max 729.581606 ms
+
+other fields:
+  p95 approximately 65-111 ms
+  p99 approximately 195-306 ms
+```
+
+This is lower total query pressure, not a repair of the driver-level long
+calls.
+
+### Manifest and fresh six-view verifier authority
+
+```text
+baseline child:
+  artifact: 9fba430171e84dfab0b23146c69bc413ee8d18cf3b3b61b724cca0097eeccea1
+  manifest: a548f11cfde99ceb4172754c7a329ef1b2617d1ca9ee17a46f1e9467901369a3
+  manifest files: 279
+  primary/controller verified: true/true
+
+candidate child:
+  artifact: 3223026c1b58b330aaf2ff08be4946cb67cc155ae5d3412cf665237675ad7737
+  manifest: 9bcd902454b123da6307d6c7f8da549eabcf6bf190beb5241c246df233e936c5
+  manifest files: 282
+  primary/controller verified: true/true
+
+parent:
+  artifact: 9a67205bd12ea3bff3126ed053cd785c984fb26fc31b70f384661fbb7eb6b629
+  manifest: 7572828ae628c34e43450b985ef266f1f304ecfc8bba97ac19dfd20e454fd610
+  manifest files: 10
+  primary/controller verified: true/true
+```
+
+After the orchestrator completed, a separate bytecode-disabled command
+recomputed all six views without passing `--receipt`:
+
+```text
+baseline primary:     verified=true
+baseline controller:  verified=true
+candidate primary:    verified=true
+candidate controller: verified=true
+parent primary:       verified=true
+parent controller:    verified=true
+```
+
+Both parent views produced the same artifact, baseline-artifact,
+candidate-artifact, manifest, and verifier-source hashes. No verifier run
+wrote a new receipt, cache, manifest, or artifact.
+
+### Executive matrix update
+
+| Dimension | Current evidence | Classification |
+| --- | --- | --- |
+| Explicit 500 ms sampler cadence | committed named constant plus generated-script contract | `ESTABLISHED` |
+| Query-pressure reduction | median generations `7.5 -> 3`; observations reduced `58.9214%` | `PASS` |
+| Real four-GPU source-bound execution | 8 pairs, 16 members, 80 measured repeats, 320 request samples | `COMPLETE` |
+| Exact correctness and transaction parity | zero mismatches | `PASS` |
+| Child and parent integrity | six fresh verifier recomputations and complete manifests | `PASS` |
+| Candidate TPOT median | `78.2303015 ms <= 85.66 ms` | `PASS` |
+| Candidate TPOT p95 | `122.992254 ms > 105.87 ms` | `FAIL_ABSOLUTE_LIMIT` |
+| TTFT protection | `6.3775%` improvement | `PASS` |
+| Throughput protection | `17.3205%` improvement | `PASS` |
+| Eager/graph paired-ratio stationarity | all ratio checks pass | `PASS` |
+| All sixteen child epoch stationarity | false | `FAIL` |
+| Cadence-only explanation of CUDA spikes | ordinary-query overlaps coexist with severe spikes; long-query overlaps coexist with normal CUDA | `NOT_ESTABLISHED` |
+| TPOT-tail benefit claim | mandatory p95 and stationarity gates are not jointly green | `NOT_ESTABLISHED` |
+
+### Final classification
+
+```text
+GPU_SAMPLER_500MS_IMPLEMENTATION=ESTABLISHED
+GPU_SAMPLER_QUERY_PRESSURE_REDUCTION=PASS_58_9214_PERCENT
+SOURCE_PAIR_GATE_CANDIDATE_COMMIT=d1ebb8a19db5746c97ecf64b797e79b567f4fc7f
+SOURCE_PAIR_GATE_FOUR_GPU_ADMISSION=PASS
+SOURCE_PAIR_GATE_REAL_8_PAIR_CAMPAIGN=COMPLETE
+SOURCE_PAIR_GATE_CHILD_MANIFESTS=PASS
+SOURCE_PAIR_GATE_PARENT_MANIFEST=PASS
+SOURCE_PAIR_GATE_DUAL_VERIFICATION=PASS
+SOURCE_PAIR_GATE_EXACT_CORRECTNESS=PASS
+SOURCE_PAIR_GATE_EAGER_GRAPH_RATIO_STATIONARITY=PASS
+SOURCE_PAIR_GATE_ALL_SIXTEEN_EPOCH_STATIONARITY=FAIL
+CANDIDATE_TPOT_MEDIAN_GATE=PASS
+CANDIDATE_TPOT_P95_GATE=FAIL_122_992254_MS_GT_105_87_MS
+TTFT_P95_NON_REGRESSION=PASS
+THROUGHPUT_NON_REGRESSION=PASS
+CADENCE_ONLY_CUDA_TAIL_CAUSALITY=NOT_ESTABLISHED
+TPOT_TAIL_BENEFIT=NOT_ESTABLISHED
+SOURCE_PAIR_GATE_CLASSIFICATION=INCONCLUSIVE_STATIONARITY
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+The 500 ms measurement-cadence experiment is terminal and should not be
+repeated under another tag without a new causal change. The next optimization
+must target the repeat-2, engine-step-4, second-spec-verify CUDA execution path
+or introduce a stronger causal isolation experiment; it must not claim that
+NVML cadence alone explains the observed tail.
