@@ -27,6 +27,7 @@ if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
 
 from autoregressive_draft_cuda_graph_gate import build_worker_command
+from autoregressive_draft_process_sampler import parse_proc_stat
 
 
 REMOTE_TARGET = "sitian@10.232.195.203"
@@ -73,6 +74,7 @@ SOURCE_PATHS = (
     "tools/autoregressive_draft_instability_telemetry.py",
     "tools/autoregressive_draft_host_semantic_diagnostic.py",
     "tools/autoregressive_draft_host_sampler.py",
+    "tools/autoregressive_draft_process_sampler.py",
     "tools/run_autoregressive_draft_command_timeline_remote.py",
 )
 RECEIPT_LOCATION_FIELDS = frozenset({
@@ -1848,6 +1850,7 @@ def _monitor_owned_worker(
     *,
     process_group_id: int,
     gpu_uuids: list[str],
+    on_binding=None,
     timeout_seconds: int = WORKER_TIMEOUT_SECONDS,
     monotonic=time.monotonic,
     sleep=time.sleep,
@@ -1858,6 +1861,8 @@ def _monitor_owned_worker(
         or timeout_seconds <= 0
     ):
         raise ValueError("worker timeout is invalid")
+    if on_binding is not None and not callable(on_binding):
+        raise ValueError("worker binding callback is invalid")
     deadline = monotonic() + timeout_seconds
     observed_owned = {process.pid}
     binding = None
@@ -1885,11 +1890,17 @@ def _monitor_owned_worker(
                 for row in selected_rows
             )
         ):
-            binding = validate_owned_gpu_processes(
+            current_binding = validate_owned_gpu_processes(
                 selected_rows,
                 owned_pids=observed_owned,
                 gpu_uuids=gpu_uuids,
             )
+            if binding is None:
+                binding = current_binding
+                if on_binding is not None:
+                    on_binding(binding, set(observed_owned))
+            elif current_binding != binding:
+                raise ValueError("TP4 GPU process binding changed")
         sleep(0.2)
     returncode = process.wait(timeout=30)
     if binding is None:
@@ -2324,6 +2335,85 @@ def _start_epoch_samplers(
     return processes, handles
 
 
+def _start_process_sampler(
+    *,
+    gpu_process_binding: dict[str, int],
+    gpu_uuids: list[str],
+    process_path: Path,
+    source_root: str,
+    proc_root: Path = Path("/proc"),
+) -> tuple[subprocess.Popen, list[object], list[dict]]:
+    expected_uuids = tuple(gpu_uuids)
+    if (
+        len(expected_uuids) != 4
+        or len(set(expected_uuids)) != 4
+        or not isinstance(gpu_process_binding, dict)
+        or set(gpu_process_binding) != set(expected_uuids)
+    ):
+        raise ValueError("TP4 GPU process binding is invalid")
+    bindings = []
+    for rank, gpu_uuid in enumerate(expected_uuids):
+        pid = gpu_process_binding[gpu_uuid]
+        if (
+            isinstance(pid, bool)
+            or not isinstance(pid, int)
+            or pid <= 0
+        ):
+            raise ValueError("TP4 GPU process binding is invalid")
+        try:
+            stat_text = (
+                proc_root / str(pid) / "stat"
+            ).read_text(encoding="utf-8")
+        except OSError as error:
+            raise ValueError(
+                "TP4 GPU process identity is unreadable"
+            ) from error
+        stat_row = parse_proc_stat(stat_text)
+        if stat_row["pid"] != pid:
+            raise ValueError("TP4 GPU process identity changed")
+        bindings.append({
+            "rank": rank,
+            "gpu_uuid": gpu_uuid,
+            "pid": pid,
+            "starttime_ticks": stat_row["starttime_ticks"],
+        })
+    if len({row["pid"] for row in bindings}) != 4:
+        raise ValueError("TP4 GPU process binding is duplicated")
+
+    stderr_path = process_path.with_name(
+        f"{process_path.name}.stderr"
+    )
+    handles = [
+        process_path.open("xb"),
+        stderr_path.open("xb"),
+    ]
+    try:
+        process = subprocess.Popen(
+            [
+                REMOTE_PYTHON,
+                (
+                    f"{source_root}/tools/"
+                    "autoregressive_draft_process_sampler.py"
+                ),
+                "--interval-seconds",
+                "0.01",
+                "--bindings-json",
+                json.dumps(
+                    bindings,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ],
+            stdout=handles[0],
+            stderr=handles[1],
+        )
+    except BaseException:
+        for handle in handles:
+            handle.close()
+        raise
+    return process, handles, bindings
+
+
 def _load_json_lines(path: Path, *, name: str) -> list[dict]:
     rows = []
     try:
@@ -2341,6 +2431,190 @@ def _load_json_lines(path: Path, *, name: str) -> list[dict]:
     if not rows:
         raise ValueError(f"{name} is empty")
     return rows
+
+
+def _verify_process_telemetry(
+    *,
+    worker: dict,
+    process_path: Path,
+    stderr_path: Path,
+    gpu_process_binding: dict[str, int],
+    gpu_uuids: list[str],
+) -> None:
+    try:
+        stderr = stderr_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(
+            "process sampler stderr is unreadable"
+        ) from error
+    if stderr:
+        raise ValueError("process sampler stderr is not empty")
+    rows = _load_json_lines(
+        process_path,
+        name="process telemetry",
+    )
+    expected_uuids = tuple(gpu_uuids)
+    if (
+        len(expected_uuids) != 4
+        or len(set(expected_uuids)) != 4
+        or not isinstance(gpu_process_binding, dict)
+        or set(gpu_process_binding) != set(expected_uuids)
+    ):
+        raise ValueError("process telemetry binding is invalid")
+    expected_by_rank = {
+        rank: (gpu_uuid, gpu_process_binding[gpu_uuid])
+        for rank, gpu_uuid in enumerate(expected_uuids)
+    }
+    expected_pids = {
+        pid for _gpu_uuid, pid in expected_by_rank.values()
+    }
+    if (
+        len(expected_pids) != 4
+        or any(
+            isinstance(pid, bool)
+            or not isinstance(pid, int)
+            or pid <= 0
+            for pid in expected_pids
+        )
+    ):
+        raise ValueError("process telemetry binding is invalid")
+
+    integer_fields = (
+        "unix_ns",
+        "monotonic_ns",
+        "rank",
+        "pid",
+        "starttime_ticks",
+    )
+    counter_fields = (
+        "run_time_ns",
+        "runqueue_wait_ns",
+        "scheduler_timeslices",
+        "utime_ticks",
+        "stime_ticks",
+        "delayacct_blkio_ticks",
+        "voluntary_context_switches",
+        "involuntary_context_switches",
+    )
+    starttime_by_rank = {}
+    previous_by_rank = {}
+    terminal_ranks = set()
+    sample_rows = []
+    observed_ranks = set()
+    for row in rows:
+        if row.get("schema_version") != 1:
+            raise ValueError(
+                "process telemetry schema version is invalid"
+            )
+        status = row.get("status")
+        if status not in {"sample", "exited"}:
+            raise ValueError("process telemetry status is invalid")
+        for field in integer_fields:
+            value = row.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"process telemetry {field} is invalid"
+                )
+        rank = row["rank"]
+        if rank not in expected_by_rank:
+            raise ValueError("process telemetry rank is invalid")
+        expected_uuid, expected_pid = expected_by_rank[rank]
+        pid = row["pid"]
+        if pid not in expected_pids:
+            raise ValueError("process telemetry names an unowned PID")
+        if (
+            row.get("gpu_uuid") != expected_uuid
+            or pid != expected_pid
+        ):
+            raise ValueError(
+                "process telemetry process identity changed"
+            )
+        observed_ranks.add(rank)
+        starttime = row["starttime_ticks"]
+        previous_starttime = starttime_by_rank.setdefault(
+            rank,
+            starttime,
+        )
+        if starttime != previous_starttime:
+            raise ValueError("process start time changed")
+        if status == "exited":
+            terminal_ranks.add(rank)
+            continue
+        if rank in terminal_ranks:
+            raise ValueError(
+                "process telemetry resumed after terminal status"
+            )
+        for field in counter_fields:
+            value = row.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"process telemetry {field} is invalid"
+                )
+        previous = previous_by_rank.get(rank)
+        if previous is not None:
+            if row["monotonic_ns"] < previous["monotonic_ns"]:
+                raise ValueError(
+                    "process telemetry timestamp decreased"
+                )
+            for field in counter_fields:
+                if row[field] < previous[field]:
+                    raise ValueError(
+                        f"process telemetry counter decreased: {field}"
+                    )
+        previous_by_rank[rank] = row
+        sample_rows.append(row)
+    if observed_ranks != set(expected_by_rank):
+        raise ValueError("process telemetry binding is incomplete")
+
+    if not isinstance(worker, dict):
+        raise ValueError("worker process telemetry input is invalid")
+    warmup = worker.get("warmup_runs")
+    measured = worker.get("measured_runs")
+    if (
+        not isinstance(warmup, list)
+        or len(warmup) != 1
+        or not isinstance(measured, list)
+        or len(measured) != 5
+    ):
+        raise ValueError(
+            "worker process telemetry campaign is invalid"
+        )
+    for run in [*warmup, *measured]:
+        interval = run.get("campaign_interval")
+        if not isinstance(interval, dict):
+            raise ValueError(
+                "worker process telemetry interval is missing"
+            )
+        start = interval.get("started_at_unix_ns")
+        finish = interval.get("finished_at_unix_ns")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(finish, bool)
+            or not isinstance(finish, int)
+            or start <= 0
+            or finish <= start
+        ):
+            raise ValueError(
+                "worker process telemetry interval is invalid"
+            )
+        covered_ranks = {
+            row["rank"]
+            for row in sample_rows
+            if start <= row["unix_ns"] <= finish
+        }
+        if covered_ranks != set(expected_by_rank):
+            raise ValueError(
+                "process telemetry coverage is incomplete"
+            )
 
 
 def _monotonic_timestamps(value: object) -> list[int]:
@@ -2665,6 +2939,9 @@ def _remote_epoch(arguments: list[str]) -> int:
     invariant_stderr_path = worker_dir / f"{mode}.invariant.stderr.log"
     gpu_telemetry_path = telemetry_dir / f"{mode}.gpu.jsonl"
     host_telemetry_path = telemetry_dir / f"{mode}.host.jsonl"
+    process_telemetry_path = (
+        telemetry_dir / f"{mode}.process.jsonl"
+    )
     command = build_epoch_worker_command(
         source_root=str(source_root),
         output_path=str(raw_path),
@@ -2675,6 +2952,7 @@ def _remote_epoch(arguments: list[str]) -> int:
     )
     samplers = []
     sampler_handles = []
+    process_sampler_bindings = None
     worker = None
     worker_process_group_id = None
     try:
@@ -2705,13 +2983,32 @@ def _remote_epoch(arguments: list[str]) -> int:
                 encoding="utf-8",
             ) as pid_handle:
                 pid_handle.write(f"{worker.pid}\n")
+
+            def start_process_sampler(binding, _owned_pids):
+                nonlocal process_sampler_bindings
+                (
+                    process_sampler,
+                    process_handles,
+                    process_sampler_bindings,
+                ) = _start_process_sampler(
+                    gpu_process_binding=binding,
+                    gpu_uuids=gpu_uuids,
+                    process_path=process_telemetry_path,
+                    source_root=str(source_root),
+                )
+                samplers.append(process_sampler)
+                sampler_handles.extend(process_handles)
+
             returncode, gpu_process_binding, owned_worker_pids = (
                 _monitor_owned_worker(
                     worker,
                     process_group_id=worker_process_group_id,
                     gpu_uuids=gpu_uuids,
+                    on_binding=start_process_sampler,
                 )
             )
+            if process_sampler_bindings is None:
+                raise ValueError("process sampler was not started")
             (worker_dir / f"{mode}.owned-pids").write_text(
                 "\n".join(str(pid) for pid in sorted({
                     *(process.pid for process in samplers),
@@ -2737,6 +3034,15 @@ def _remote_epoch(arguments: list[str]) -> int:
             handle.close()
         samplers = []
         sampler_handles = []
+        _verify_process_telemetry(
+            worker=raw,
+            process_path=process_telemetry_path,
+            stderr_path=process_telemetry_path.with_name(
+                f"{process_telemetry_path.name}.stderr"
+            ),
+            gpu_process_binding=gpu_process_binding,
+            gpu_uuids=gpu_uuids,
+        )
         raw = _attach_epoch_telemetry(
             raw,
             gpu_path=gpu_telemetry_path,
@@ -2827,6 +3133,15 @@ def _raw_input_files(primary: Path) -> dict[str, dict[str, str]]:
         inventory[f"telemetry:{epoch_key}"] = {
             "path": telemetry_relative,
             "sha256": _sha256_path(primary / telemetry_relative),
+        }
+        process_telemetry_relative = (
+            f"telemetry/{block}/{mode}.process.jsonl"
+        )
+        inventory[f"process_telemetry:{epoch_key}"] = {
+            "path": process_telemetry_relative,
+            "sha256": _sha256_path(
+                primary / process_telemetry_relative
+            ),
         }
     return inventory
 

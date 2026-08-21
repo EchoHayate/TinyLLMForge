@@ -1462,6 +1462,7 @@ def test_command_timeline_source_archive_is_exact_and_safe(tmp_path):
         "tools/autoregressive_draft_instability_telemetry.py",
         "tools/autoregressive_draft_host_semantic_diagnostic.py",
         "tools/autoregressive_draft_host_sampler.py",
+        "tools/autoregressive_draft_process_sampler.py",
         "tools/run_autoregressive_draft_command_timeline_remote.py",
         "tools/autoregressive_draft_source_pair_gate.py",
         "tools/verify_autoregressive_draft_source_pair_gate.py",
@@ -2973,6 +2974,66 @@ def test_command_timeline_worker_monitor_accepts_stale_gpu_snapshot_at_exit(
     assert observed_owned == {5000, *gpu_pids}
 
 
+def test_command_timeline_worker_monitor_starts_process_sampler_once(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_process_sampler_start_test"
+    )
+    gpu_uuids = [f"GPU-{index}" for index in range(4)]
+    gpu_pids = [5171, 5172, 5173, 5174]
+    callbacks = []
+
+    class FakeProcess:
+        pid = 5000
+
+        def __init__(self):
+            self.polls = iter((None, None, 0))
+
+        def poll(self):
+            return next(self.polls)
+
+        def wait(self, timeout):
+            assert timeout == 30
+            return 0
+
+    monkeypatch.setattr(
+        runner,
+        "_remote_gpu_rows",
+        lambda: [
+            {
+                "index": index,
+                "uuid": uuid,
+                "compute_processes": [{"pid": pid}],
+            }
+            for index, (uuid, pid) in enumerate(zip(gpu_uuids, gpu_pids))
+        ],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_owned_process_group_pids",
+        lambda process_group_id: {5000, *gpu_pids},
+    )
+
+    returncode, binding, observed_owned = runner._monitor_owned_worker(
+        FakeProcess(),
+        process_group_id=5000,
+        gpu_uuids=gpu_uuids,
+        on_binding=lambda current, owned: callbacks.append(
+            (dict(current), set(owned))
+        ),
+        monotonic=iter((0, 1, 2)).__next__,
+        sleep=lambda _seconds: None,
+    )
+
+    assert returncode == 0
+    assert binding == dict(zip(gpu_uuids, gpu_pids))
+    assert observed_owned == {5000, *gpu_pids}
+    assert callbacks == [
+        (dict(zip(gpu_uuids, gpu_pids)), {5000, *gpu_pids})
+    ]
+
+
 def test_command_timeline_worker_monitor_still_rejects_external_gpu_pid(
     monkeypatch,
 ):
@@ -3014,6 +3075,466 @@ def test_command_timeline_worker_monitor_still_rejects_external_gpu_pid(
             monotonic=iter((0, 1)).__next__,
             sleep=lambda _seconds: None,
         )
+
+
+def _process_telemetry_fixture(tmp_path):
+    gpu_uuids = [f"GPU-{rank}" for rank in range(4)]
+    gpu_process_binding = {
+        gpu_uuid: 6100 + rank
+        for rank, gpu_uuid in enumerate(gpu_uuids)
+    }
+    base = 1_800_000_000_000_000_000
+    runs = []
+    for repeat in range(6):
+        start = base + repeat * 1_000_000
+        runs.append({
+            "command_timeline_repeat_index": repeat,
+            "campaign_interval": {
+                "started_at_unix_ns": start,
+                "finished_at_unix_ns": start + 900_000,
+            },
+        })
+    rows = []
+    for repeat, run in enumerate(runs):
+        sampled_at = (
+            run["campaign_interval"]["started_at_unix_ns"]
+            + 100_000
+        )
+        for rank, gpu_uuid in enumerate(gpu_uuids):
+            rows.append({
+                "schema_version": 1,
+                "status": "sample",
+                "unix_ns": sampled_at,
+                "monotonic_ns": repeat * 1_000_000 + rank,
+                "rank": rank,
+                "gpu_uuid": gpu_uuid,
+                "pid": gpu_process_binding[gpu_uuid],
+                "starttime_ticks": 7000 + rank,
+                "state": "R",
+                "last_cpu": rank,
+                "thread_count": 8,
+                "wchan": "0",
+                "run_time_ns": repeat * 1000 + rank,
+                "runqueue_wait_ns": repeat * 100 + rank,
+                "scheduler_timeslices": repeat * 10 + rank,
+                "utime_ticks": repeat * 20 + rank,
+                "stime_ticks": repeat * 5 + rank,
+                "delayacct_blkio_ticks": repeat + rank,
+                "voluntary_context_switches": repeat * 3 + rank,
+                "involuntary_context_switches": repeat * 2 + rank,
+            })
+    process_path = tmp_path / "eager.process.jsonl"
+    process_path.write_text(
+        "".join(
+            json.dumps(row, sort_keys=True) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    stderr_path = tmp_path / "eager.process.jsonl.stderr"
+    stderr_path.write_text("", encoding="utf-8")
+    return {
+        "worker": {
+            "warmup_runs": [runs[0]],
+            "measured_runs": runs[1:],
+        },
+        "process_path": process_path,
+        "stderr_path": stderr_path,
+        "gpu_process_binding": gpu_process_binding,
+        "gpu_uuids": gpu_uuids,
+        "rows": rows,
+    }
+
+
+def test_command_timeline_process_telemetry_accepts_complete_coverage(
+    tmp_path,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_process_telemetry_pass_test"
+    )
+    fixture = _process_telemetry_fixture(tmp_path)
+
+    assert runner._verify_process_telemetry(
+        worker=fixture["worker"],
+        process_path=fixture["process_path"],
+        stderr_path=fixture["stderr_path"],
+        gpu_process_binding=fixture["gpu_process_binding"],
+        gpu_uuids=fixture["gpu_uuids"],
+    ) is None
+
+
+def test_command_timeline_process_sampler_uses_rank_order_and_file_handles(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_process_sampler_launch_test"
+    )
+    gpu_uuids = [f"GPU-{rank}" for rank in range(4)]
+    binding = {
+        gpu_uuid: 6200 + rank
+        for rank, gpu_uuid in enumerate(gpu_uuids)
+    }
+    proc_root = tmp_path / "proc"
+    for rank, gpu_uuid in enumerate(gpu_uuids):
+        pid = binding[gpu_uuid]
+        process_root = proc_root / str(pid)
+        process_root.mkdir(parents=True)
+        (process_root / "stat").write_text(
+            _build_process_sampler_proc_stat(
+                pid=pid,
+                state="R",
+                utime_ticks=1,
+                stime_ticks=2,
+                threads=8,
+                starttime_ticks=7000 + rank,
+                processor=rank,
+                delayacct_blkio_ticks=0,
+            ),
+            encoding="utf-8",
+        )
+    popen_calls = []
+
+    class FakeProcess:
+        pid = 8000
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append((command, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    process_path = tmp_path / "eager.process.jsonl"
+
+    process, handles, bindings = runner._start_process_sampler(
+        gpu_process_binding=binding,
+        gpu_uuids=gpu_uuids,
+        process_path=process_path,
+        source_root="/frozen/source",
+        proc_root=proc_root,
+    )
+
+    try:
+        assert process.pid == 8000
+        assert bindings == [
+            {
+                "rank": rank,
+                "gpu_uuid": gpu_uuid,
+                "pid": 6200 + rank,
+                "starttime_ticks": 7000 + rank,
+            }
+            for rank, gpu_uuid in enumerate(gpu_uuids)
+        ]
+        assert len(popen_calls) == 1
+        command, kwargs = popen_calls[0]
+        assert command[:2] == [
+            runner.REMOTE_PYTHON,
+            (
+                "/frozen/source/tools/"
+                "autoregressive_draft_process_sampler.py"
+            ),
+        ]
+        assert command[2:4] == ["--interval-seconds", "0.01"]
+        assert command[4] == "--bindings-json"
+        assert json.loads(command[5]) == bindings
+        assert kwargs["stdout"] is handles[0]
+        assert kwargs["stderr"] is handles[1]
+        assert kwargs.get("stdout") is not subprocess.PIPE
+        assert kwargs.get("stderr") is not subprocess.PIPE
+    finally:
+        for handle in handles:
+            handle.close()
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    (
+        ("nonempty_stderr", "stderr is not empty"),
+        ("missing_rank_coverage", "coverage is incomplete"),
+        ("pid_drift", "process identity"),
+        ("starttime_drift", "process start time"),
+        ("counter_decrease", "counter decreased"),
+        ("unowned_pid", "unowned PID"),
+    ),
+)
+def test_command_timeline_process_telemetry_rejects_invalid_evidence(
+    tmp_path,
+    case,
+    message,
+):
+    runner = _load_command_timeline_runner(
+        f"command_timeline_runner_process_telemetry_{case}_test"
+    )
+    fixture = _process_telemetry_fixture(tmp_path)
+    if case == "nonempty_stderr":
+        fixture["stderr_path"].write_text(
+            "unexpected sampler output\n",
+            encoding="utf-8",
+        )
+    elif case == "missing_rank_coverage":
+        interval = fixture["worker"]["measured_runs"][2][
+            "campaign_interval"
+        ]
+        fixture["rows"] = [
+            row
+            for row in fixture["rows"]
+            if not (
+                row["rank"] == 3
+                and interval["started_at_unix_ns"]
+                <= row["unix_ns"]
+                <= interval["finished_at_unix_ns"]
+            )
+        ]
+    elif case == "pid_drift":
+        fixture["rows"][4]["pid"] += 1
+    elif case == "starttime_drift":
+        fixture["rows"][4]["starttime_ticks"] += 1
+    elif case == "counter_decrease":
+        fixture["rows"][8]["runqueue_wait_ns"] = 0
+    elif case == "unowned_pid":
+        fixture["rows"][0]["pid"] = 9999
+    else:
+        raise AssertionError(f"unknown case: {case}")
+    if case != "nonempty_stderr":
+        fixture["process_path"].write_text(
+            "".join(
+                json.dumps(row, sort_keys=True) + "\n"
+                for row in fixture["rows"]
+            ),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(ValueError, match=message):
+        runner._verify_process_telemetry(
+            worker=fixture["worker"],
+            process_path=fixture["process_path"],
+            stderr_path=fixture["stderr_path"],
+            gpu_process_binding=fixture["gpu_process_binding"],
+            gpu_uuids=fixture["gpu_uuids"],
+        )
+
+
+def test_command_timeline_remote_epoch_runs_process_sampler_lifecycle(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_process_sampler_epoch_test"
+    )
+    primary = tmp_path / "run"
+    (primary / "source").mkdir(parents=True)
+    (primary / "metadata.json").write_text(
+        json.dumps({
+            "provenance": {
+                "source_commit": "a" * 40,
+                "source_tree_sha256": "b" * 64,
+            },
+        }),
+        encoding="utf-8",
+    )
+    raw_path = primary / "workers" / "block-0" / "eager.raw.json"
+    events = []
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+    def fake_start_epoch_samplers(
+        *,
+        gpu_indices,
+        gpu_uuids,
+        gpu_path,
+        host_path,
+        source_root,
+    ):
+        del gpu_indices, gpu_uuids, source_root
+        handles = [
+            gpu_path.open("xb"),
+            host_path.open("xb"),
+            gpu_path.with_name(f"{gpu_path.name}.stderr").open("xb"),
+            host_path.with_name(f"{host_path.name}.stderr").open("xb"),
+        ]
+        return [FakeProcess(7001), FakeProcess(7002)], handles
+
+    def fake_monitor(
+        worker,
+        *,
+        process_group_id,
+        gpu_uuids,
+        on_binding,
+    ):
+        assert worker.pid == 5000
+        assert process_group_id == 5000
+        binding = {
+            gpu_uuid: 6100 + rank
+            for rank, gpu_uuid in enumerate(gpu_uuids)
+        }
+        on_binding(binding, {5000, *binding.values()})
+        raw_path.write_text(
+            json.dumps({"tokenizer_identifier": "tokenizer"}),
+            encoding="utf-8",
+        )
+        return 0, binding, {5000, *binding.values()}
+
+    def fake_start_process_sampler(**kwargs):
+        events.append(("start", kwargs))
+        process_path = kwargs["process_path"]
+        handles = [
+            process_path.open("xb"),
+            process_path.with_name(
+                f"{process_path.name}.stderr"
+            ).open("xb"),
+        ]
+        bindings = [
+            {
+                "rank": rank,
+                "gpu_uuid": gpu_uuid,
+                "pid": kwargs["gpu_process_binding"][gpu_uuid],
+                "starttime_ticks": 7000 + rank,
+            }
+            for rank, gpu_uuid in enumerate(kwargs["gpu_uuids"])
+        ]
+        return FakeProcess(7003), handles, bindings
+
+    def fake_verify_process_telemetry(**kwargs):
+        events.append(("verify", kwargs))
+
+    monkeypatch.setattr(
+        runner,
+        "primary_run_path",
+        lambda _tag: str(primary),
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_epoch_worker_command",
+        lambda **_kwargs: ["worker"],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_start_epoch_samplers",
+        fake_start_epoch_samplers,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_launch_owned_worker",
+        lambda *_args, **_kwargs: FakeProcess(5000),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_monitor_owned_worker",
+        fake_monitor,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_start_process_sampler",
+        fake_start_process_sampler,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_verify_process_telemetry",
+        fake_verify_process_telemetry,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_terminate_and_reap",
+        lambda processes: events.append(
+            ("reap", [process.pid for process in processes])
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_terminate_owned_process_group",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_attach_epoch_telemetry",
+        lambda raw, **_kwargs: raw,
+    )
+    monkeypatch.setattr(
+        runner,
+        "augment_worker_payload",
+        lambda raw, **_kwargs: raw,
+    )
+    monkeypatch.setattr(
+        runner,
+        "derive_telemetry_sidecar",
+        lambda _epoch_key, _worker: {"schema_version": 1},
+    )
+
+    result = runner._remote_epoch([
+        "process_sampler_epoch",
+        "0",
+        "eager",
+        "first",
+        json.dumps([0, 1, 2, 3]),
+        json.dumps([f"GPU-{rank}" for rank in range(4)]),
+        "target",
+        "draft",
+    ])
+
+    assert result == 0
+    starts = [payload for event, payload in events if event == "start"]
+    verifies = [
+        payload for event, payload in events if event == "verify"
+    ]
+    assert len(starts) == 1
+    assert len(verifies) == 1
+    expected_process_path = (
+        primary / "telemetry" / "block-0" / "eager.process.jsonl"
+    )
+    assert starts[0]["process_path"] == expected_process_path
+    assert verifies[0]["process_path"] == expected_process_path
+    assert verifies[0]["gpu_process_binding"] == {
+        f"GPU-{rank}": 6100 + rank
+        for rank in range(4)
+    }
+    owned_pids = {
+        int(line)
+        for line in (
+            primary / "workers" / "block-0" / "eager.owned-pids"
+        ).read_text(encoding="utf-8").splitlines()
+    }
+    assert owned_pids == {
+        5000,
+        6100,
+        6101,
+        6102,
+        6103,
+        7001,
+        7002,
+        7003,
+    }
+    assert any(
+        event == "reap" and 7003 in payload
+        for event, payload in events
+    )
+
+
+def test_command_timeline_raw_input_inventory_includes_process_telemetry(
+    monkeypatch,
+):
+    runner = _load_command_timeline_runner(
+        "command_timeline_runner_process_manifest_test"
+    )
+    monkeypatch.setattr(
+        runner,
+        "_sha256_path",
+        lambda path: f"sha256:{path.name}",
+    )
+
+    inventory = runner._raw_input_files(Path("/frozen/run"))
+
+    assert inventory[
+        "process_telemetry:b0-eager-first"
+    ] == {
+        "path": "telemetry/block-0/eager.process.jsonl",
+        "sha256": "sha256:eager.process.jsonl",
+    }
+    assert len([
+        key
+        for key in inventory
+        if key.startswith("process_telemetry:")
+    ]) == 8
 
 
 def test_command_timeline_cleanup_signals_group_after_leader_exit(
