@@ -13,6 +13,10 @@ from tinyvllm.engine.block_manager import (
     SpeculativeKVCommitRollbackError,
 )
 from tinyvllm.engine.sequence import Sequence
+from tinyvllm.engine.exact_greedy_decode_burst import (
+    ExactGreedyDecodeBurstFallback,
+    validate_exact_greedy_decode_burst_result,
+)
 from tinyvllm.engine.speculative_execution import (
     build_engine_prepared_speculative_commit_rows,
     build_engine_speculative_partition,
@@ -3492,7 +3496,13 @@ class LLMEngine:
     def clear_reusable_prefix_cache(self):
         return self.scheduler.block_manager.clear_reusable_cache()
 
-    def step(self):     #decode阶段：每次step生成新的token加到seq后面
+    def step(
+        self,
+        *,
+        completion_only: bool = False,
+    ):     #decode阶段：每次step生成新的token加到seq后面
+        if not isinstance(completion_only, bool):
+            raise ValueError("completion_only must be a bool")
         step_timeline = getattr(
             self,
             "engine_step_timeline",
@@ -3640,6 +3650,18 @@ class LLMEngine:
             speculative_first_target_callback_count = 0
             speculative_fixed_q_group_count = 0
             speculative_runtime_timing_ms = {}
+            exact_burst_attempted = False
+            exact_burst_accepted = False
+            exact_burst_width = 0
+            exact_burst_lease_identity = None
+            exact_burst_result_identity = None
+            exact_burst_graph_identity = None
+            exact_burst_replay_count = 0
+            exact_burst_token_d2h_calls = 0
+            exact_burst_sampled_logit_d2h_calls = 0
+            exact_burst_host_visible_gap_ns = 0
+            exact_burst_fallback_reason = None
+            exact_burst_committed = False
             if partition.selected_sequences:
                 model_runner_config = getattr(
                     self.model_runner,
@@ -4192,6 +4214,203 @@ class LLMEngine:
                         raise
                 token_ids = ()
             else:
+                model_runner_config = getattr(
+                    self.model_runner,
+                    "config",
+                    None,
+                )
+                exact_burst_enabled = bool(
+                    getattr(
+                        model_runner_config,
+                        "exact_greedy_decode_burst",
+                        False,
+                    )
+                )
+                exact_burst_candidate = (
+                    exact_burst_enabled
+                    and completion_only
+                    and bool(seqs)
+                    and not is_prefill
+                    and bool(do_sample)
+                    and batch_kind is None
+                )
+                exact_burst_lease = None
+                if exact_burst_candidate:
+                    scheduler_burst_summary_before = (
+                        self.scheduler
+                        .exact_greedy_decode_burst_summary()
+                    )
+                    capability = (
+                        self.model_runner
+                        .exact_greedy_decode_burst_capability()
+                    )
+                    exact_burst_attempted = True
+                    exact_burst_lease = (
+                        self.scheduler
+                        .prepare_exact_greedy_decode_burst(
+                            tuple(seqs),
+                            schedule_generation=(
+                                self.scheduler.schedule_generation
+                            ),
+                            graph_generation=int(
+                                capability["graph_generation"]
+                            ),
+                            enabled=exact_burst_enabled,
+                            configured_width=int(
+                                model_runner_config
+                                .exact_greedy_decode_burst_tokens
+                            ),
+                            is_prefill=bool(is_prefill),
+                            do_sample=bool(do_sample),
+                            batch_kind=batch_kind,
+                            completion_only=completion_only,
+                            tensor_parallel_size=int(
+                                self.model_runner.world_size
+                            ),
+                            rank=int(self.model_runner.rank),
+                            graph_available=bool(
+                                capability["available"]
+                            ),
+                            incompatible_modes=(),
+                            quarantined=(
+                                capability.get(
+                                    "fallback_reason"
+                                )
+                                == "quarantined"
+                            ),
+                        )
+                    )
+                    if exact_burst_lease is None:
+                        scheduler_burst_summary = (
+                            self.scheduler
+                            .exact_greedy_decode_burst_summary()
+                        )
+                        fallback_counts = scheduler_burst_summary.get(
+                            "fallback_counts",
+                            {},
+                        )
+                        previous_fallback_counts = (
+                            scheduler_burst_summary_before.get(
+                                "fallback_counts",
+                                {},
+                            )
+                        )
+                        new_fallback_reasons = tuple(
+                            reason
+                            for reason, count
+                            in fallback_counts.items()
+                            if count
+                            > previous_fallback_counts.get(
+                                reason,
+                                0,
+                            )
+                        )
+                        if len(new_fallback_reasons) == 1:
+                            exact_burst_fallback_reason = (
+                                new_fallback_reasons[0]
+                            )
+                    else:
+                        exact_burst_accepted = True
+                        exact_burst_width = int(
+                            exact_burst_lease
+                            .authorized_token_count
+                        )
+                        exact_burst_lease_identity = (
+                            exact_burst_lease.identity_sha256
+                        )
+                        try:
+                            with step_phase(
+                                "ordinary_or_first_target_dispatch"
+                            ):
+                                burst_result = self.model_runner.call(
+                                    "run_exact_greedy_decode_burst",
+                                    tuple(seqs),
+                                    exact_burst_lease,
+                                )
+                            if isinstance(
+                                burst_result,
+                                ExactGreedyDecodeBurstFallback,
+                            ):
+                                exact_burst_fallback_reason = (
+                                    burst_result.fallback_reason
+                                )
+                                self.scheduler.cancel_exact_greedy_decode_burst(
+                                    exact_burst_lease,
+                                    burst_result.fallback_reason,
+                                )
+                            else:
+                                validate_exact_greedy_decode_burst_result(
+                                    exact_burst_lease,
+                                    burst_result,
+                                )
+                                step_end_ns = self._clock_ns()
+                                exact_burst_host_visible_gap_ns = max(
+                                    0,
+                                    step_end_ns - decision_now_ns,
+                                )
+                                prepared_burst = (
+                                    self.scheduler
+                                    .prepare_exact_greedy_decode_burst_commit(
+                                        tuple(seqs),
+                                        exact_burst_lease,
+                                        burst_result,
+                                        host_visible_gap_ns=(
+                                            exact_burst_host_visible_gap_ns
+                                        ),
+                                        decision_now_ns=(
+                                            decision_now_ns
+                                        ),
+                                        step_end_ns=step_end_ns,
+                                    )
+                                )
+                                self.scheduler.commit_prepared_postprocess(
+                                    prepared_burst
+                                )
+                                exact_burst_result_identity = (
+                                    burst_result
+                                    .lease_identity_sha256
+                                )
+                                exact_burst_graph_identity = (
+                                    burst_result
+                                    .graph_identity_sha256
+                                )
+                                exact_burst_replay_count = int(
+                                    burst_result.replay_count
+                                )
+                                exact_burst_token_d2h_calls = int(
+                                    burst_result.token_d2h_calls
+                                )
+                                exact_burst_sampled_logit_d2h_calls = int(
+                                    burst_result
+                                    .sampled_logit_d2h_calls
+                                )
+                                num_tokens = -exact_burst_replay_count
+                                exact_burst_committed = True
+                                token_ids = ()
+                        except BaseException as error:
+                            stats = getattr(
+                                self.model_runner,
+                                "exact_greedy_decode_burst_stats",
+                                None,
+                            )
+                            quarantine = getattr(
+                                stats,
+                                "quarantine",
+                                None,
+                            )
+                            if quarantine is not None:
+                                quarantine(
+                                    "engine_failure:"
+                                    + type(error).__name__
+                                )
+                            try:
+                                self.scheduler.fail_exact_greedy_decode_burst(
+                                    exact_burst_lease,
+                                    terminal=True,
+                                )
+                            except BaseException:
+                                pass
+                            raise
                 ordinary_identity_rows = (
                     kv_block_identity_rows_for(seqs)
                 )
@@ -4200,57 +4419,59 @@ class LLMEngine:
                     "drain_hybrid_state_release_events",
                     None,
                 )
-                released_leases = (
-                    drain_releases()
-                    if drain_releases is not None
-                    else ()
-                )
-                try:
-                    if released_leases or ordinary_identity_rows:
-                        with step_phase(
-                            "ordinary_or_first_target_dispatch"
-                        ):
-                            token_ids = self.model_runner.call(
-                                "run",
-                                seqs,
-                                is_prefill,
-                                do_sample,
-                                batch_kind,
-                                released_leases,
-                                ordinary_identity_rows,
-                            )
-                    else:
-                        with step_phase(
-                            "ordinary_or_first_target_dispatch"
-                        ):
-                            token_ids = self.model_runner.call(
-                                "run",
-                                seqs,
-                                is_prefill,
-                                do_sample,
-                                batch_kind,
-                            )
-                except BaseException:
-                    restore_releases = getattr(
-                        self.scheduler,
-                        "restore_hybrid_state_release_events",
-                        None,
+                if not exact_burst_committed:
+                    released_leases = (
+                        drain_releases()
+                        if drain_releases is not None
+                        else ()
                     )
-                    if restore_releases is not None:
-                        restore_releases(released_leases)
-                    raise
-                step_end_ns = self._clock_ns()
+                    try:
+                        if released_leases or ordinary_identity_rows:
+                            with step_phase(
+                                "ordinary_or_first_target_dispatch"
+                            ):
+                                token_ids = self.model_runner.call(
+                                    "run",
+                                    seqs,
+                                    is_prefill,
+                                    do_sample,
+                                    batch_kind,
+                                    released_leases,
+                                    ordinary_identity_rows,
+                                )
+                        else:
+                            with step_phase(
+                                "ordinary_or_first_target_dispatch"
+                            ):
+                                token_ids = self.model_runner.call(
+                                    "run",
+                                    seqs,
+                                    is_prefill,
+                                    do_sample,
+                                    batch_kind,
+                                )
+                    except BaseException:
+                        restore_releases = getattr(
+                            self.scheduler,
+                            "restore_hybrid_state_release_events",
+                            None,
+                        )
+                        if restore_releases is not None:
+                            restore_releases(released_leases)
+                        raise
+                    step_end_ns = self._clock_ns()
             if not partition.selected_sequences:
-                with step_phase("ordinary_scheduler_postprocess"):
-                    self.scheduler.postprocess(
-                        seqs,
-                        token_ids,
-                        is_prefill,
-                        do_sample,
-                        batch_kind,
-                        decision_now_ns=decision_now_ns,
-                        step_end_ns=step_end_ns,
-                    )
+                if not exact_burst_committed:
+                    with step_phase("ordinary_scheduler_postprocess"):
+                        self.scheduler.postprocess(
+                            seqs,
+                            token_ids,
+                            is_prefill,
+                            do_sample,
+                            batch_kind,
+                            decision_now_ns=decision_now_ns,
+                            step_end_ns=step_end_ns,
+                        )
                 lifecycle = (
                     None
                     if runtime is None
@@ -4341,6 +4562,16 @@ class LLMEngine:
                 for seq in seqs
             }
             timing_observation = self.scheduler.last_slo_observation()
+            scheduler_burst_summary = getattr(
+                self.scheduler,
+                "exact_greedy_decode_burst_summary",
+                lambda: {},
+            )()
+            model_runner_burst_summary = getattr(
+                self.model_runner,
+                "exact_greedy_decode_burst_summary",
+                lambda: {},
+            )()
             self.last_step_observation = {
                 "policy_branch": self.scheduler.last_policy_branch,
                 "batch_kind": batch_kind,
@@ -4388,6 +4619,50 @@ class LLMEngine:
                 ),
                 "speculative_runtime_timing_ms": (
                     speculative_runtime_timing_ms
+                ),
+                "exact_greedy_decode_burst_attempted": (
+                    exact_burst_attempted
+                ),
+                "exact_greedy_decode_burst_accepted": (
+                    exact_burst_accepted
+                ),
+                "exact_greedy_decode_burst_width": exact_burst_width,
+                "exact_greedy_decode_burst_lease_identity_sha256": (
+                    exact_burst_lease_identity
+                ),
+                "exact_greedy_decode_burst_result_identity_sha256": (
+                    exact_burst_result_identity
+                ),
+                "exact_greedy_decode_burst_graph_identity_sha256": (
+                    exact_burst_graph_identity
+                ),
+                "exact_greedy_decode_burst_replay_count": (
+                    exact_burst_replay_count
+                ),
+                "exact_greedy_decode_burst_token_d2h_calls": (
+                    exact_burst_token_d2h_calls
+                ),
+                "exact_greedy_decode_burst_sampled_logit_d2h_calls": (
+                    exact_burst_sampled_logit_d2h_calls
+                ),
+                "exact_greedy_decode_burst_host_visible_gap_ns": (
+                    exact_burst_host_visible_gap_ns
+                ),
+                "exact_greedy_decode_burst_fallback_reason": (
+                    exact_burst_fallback_reason
+                ),
+                "exact_greedy_decode_burst_quarantine_reason": (
+                    model_runner_burst_summary.get(
+                        "quarantine_reason"
+                    )
+                ),
+                "exact_greedy_decode_burst_pending_lease_count": (
+                    int(
+                        scheduler_burst_summary.get(
+                            "pending_leases",
+                            0,
+                        )
+                    )
                 ),
                 "memory": self.model_runner.memory_snapshot(),
                 **timing_observation,
@@ -4494,7 +4769,9 @@ class LLMEngine:
         prefill_throughput = decode_throughput = 0.0
         while not self.is_finished():           #根据waiting和running队列是否为空判断
             t = perf_counter()                  #纳秒级别的高精度时间（自计算机启动经过的时间）
-            output, num_tokens = self.step()
+            output, num_tokens = self.step(
+                completion_only=True
+            )
             if use_tqdm:
                 # prefill
                 if num_tokens > 0:
