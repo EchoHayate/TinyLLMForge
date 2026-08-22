@@ -4062,18 +4062,78 @@ def test_spec_verify_scratch_capacity_covers_worst_row_offset_without_padding():
 
 
 def test_decode_and_spec_verify_scratch_partitions_are_disjoint():
-    decode_ids, spec_verify_ids = (
+    decode_ids, spec_verify_ids, burst_ids = (
         model_runner.partition_exact_graph_scratch_block_ids(
             visible_blocks=92,
             decode_scratch_blocks=4,
             spec_verify_scratch_blocks=4,
+            exact_greedy_burst_scratch_blocks=1,
         )
     )
 
     assert decode_ids == (92, 93, 94, 95)
     assert spec_verify_ids == (96, 97, 98, 99)
+    assert burst_ids == (100,)
     assert set(decode_ids).isdisjoint(spec_verify_ids)
-    assert min(decode_ids + spec_verify_ids) >= 92
+    assert set(decode_ids).isdisjoint(burst_ids)
+    assert set(spec_verify_ids).isdisjoint(burst_ids)
+    assert min(decode_ids + spec_verify_ids + burst_ids) >= 92
+
+
+def test_exact_burst_capacity_adds_one_scheduler_invisible_block():
+    assert model_runner.resolve_exact_graph_kv_capacity(
+        auto_blocks=101,
+        requested_visible_blocks=92,
+        feature_enabled=True,
+        scratch_blocks=9,
+    ) == (92, 101)
+    decode_ids, spec_verify_ids, burst_ids = (
+        model_runner.partition_exact_graph_scratch_block_ids(
+            visible_blocks=92,
+            decode_scratch_blocks=4,
+            spec_verify_scratch_blocks=4,
+            exact_greedy_burst_scratch_blocks=1,
+        )
+    )
+    assert max(range(92)) < min(
+        decode_ids + spec_verify_ids + burst_ids
+    )
+    assert burst_ids[0] > max(decode_ids + spec_verify_ids)
+
+
+def test_exact_burst_scratch_is_reported_by_capacity_snapshot():
+    runner = make_runner(exact_greedy_decode_burst=True)
+    runner.config.num_kvcache_blocks = 92
+    runner._physical_num_kvcache_blocks = 101
+    runner._exact_graph_scratch_block_ids = (92, 93, 94, 95)
+    runner._spec_verify_capture_scratch_block_ids = (
+        96,
+        97,
+        98,
+        99,
+    )
+    runner._exact_greedy_burst_scratch_block_ids = (100,)
+
+    snapshot = runner.capacity_snapshot()
+
+    assert snapshot["num_kvcache_blocks"] == 92
+    assert snapshot["physical_num_kvcache_blocks"] == 101
+    assert snapshot["exact_graph_scratch_block_ids"] == [
+        92,
+        93,
+        94,
+        95,
+    ]
+    assert snapshot["spec_verify_capture_scratch_block_ids"] == [
+        96,
+        97,
+        98,
+        99,
+    ]
+    assert snapshot[
+        "exact_greedy_burst_scratch_block_ids"
+    ] == [100]
+    assert 100 not in range(snapshot["num_kvcache_blocks"])
 
 
 def test_scratch_blocks_are_above_scheduler_visible_range():
@@ -4980,6 +5040,44 @@ def test_graph_resident_greedy_tail_config_is_fail_closed():
             )
 
 
+def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
+    Config = _load_real_config_class()
+    fields = Config.__dataclass_fields__
+    assert fields["exact_greedy_decode_burst"].default is False
+    assert fields["exact_greedy_decode_burst_tokens"].default == 4
+    with tempfile.TemporaryDirectory() as model:
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst=invalid,
+                )
+        for invalid in (False, True, 1, 9, 4.0, None):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_tokens must "
+                    "be an integer in \\[2, 8\\]$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_tokens=invalid,
+                )
+        enabled = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_tokens=8,
+        )
+    assert enabled.exact_greedy_decode_burst is True
+    assert enabled.exact_greedy_decode_burst_tokens == 8
+
+
 class _GreedyFastPathLogits:
     def __init__(self, values, *, shape=None):
         self.values = tuple(tuple(row) for row in values)
@@ -5669,6 +5767,8 @@ def main():
         test_exact_graph_capacity_reserves_scheduler_invisible_scratch,
         test_spec_verify_scratch_capacity_covers_worst_row_offset_without_padding,
         test_decode_and_spec_verify_scratch_partitions_are_disjoint,
+        test_exact_burst_capacity_adds_one_scheduler_invisible_block,
+        test_exact_burst_scratch_is_reported_by_capacity_snapshot,
         test_scratch_blocks_are_above_scheduler_visible_range,
         test_feature_enabled_startup_captures_only_batch_one,
         test_feature_disabled_startup_inventory_is_unchanged,
@@ -5683,6 +5783,7 @@ def main():
         test_run_records_selected_rank_zero_sampling_logits_before_sampler,
         test_zero_temperature_greedy_fast_path_config_is_fail_closed,
         test_graph_resident_greedy_tail_config_is_fail_closed,
+        test_exact_greedy_decode_burst_config_is_strict_and_default_off,
         test_greedy_fast_path_uses_exact_float32_argmax,
         test_greedy_fast_path_fallbacks_preserve_legacy_sampler,
         test_graph_tail_capture_binds_batch_one_static_output,

@@ -930,11 +930,20 @@ def partition_exact_graph_scratch_block_ids(
     visible_blocks: int,
     decode_scratch_blocks: int,
     spec_verify_scratch_blocks: int,
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    exact_greedy_burst_scratch_blocks: int = 0,
+) -> tuple[
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+]:
     for name, value in (
         ("visible_blocks", visible_blocks),
         ("decode_scratch_blocks", decode_scratch_blocks),
         ("spec_verify_scratch_blocks", spec_verify_scratch_blocks),
+        (
+            "exact_greedy_burst_scratch_blocks",
+            exact_greedy_burst_scratch_blocks,
+        ),
     ):
         if (
             isinstance(value, bool)
@@ -946,9 +955,15 @@ def partition_exact_graph_scratch_block_ids(
             )
     decode_end = visible_blocks + decode_scratch_blocks
     spec_verify_end = decode_end + spec_verify_scratch_blocks
+    exact_greedy_burst_end = (
+        spec_verify_end + exact_greedy_burst_scratch_blocks
+    )
     return (
         tuple(range(visible_blocks, decode_end)),
         tuple(range(decode_end, spec_verify_end)),
+        tuple(
+            range(spec_verify_end, exact_greedy_burst_end)
+        ),
     )
 
 
@@ -5067,6 +5082,7 @@ class ModelRunner:
             self._physical_num_kvcache_blocks = gpu_nb
             self._exact_graph_scratch_block_ids = ()
             self._spec_verify_capture_scratch_block_ids = ()
+            self._exact_greedy_burst_scratch_block_ids = ()
             self.spec_verify_capture_scratch_pool = None
         else:
             decode_scratch_blocks = (
@@ -5087,9 +5103,17 @@ class ModelRunner:
                 if config.spec_verify_cuda_graphs
                 else 0
             )
+            exact_greedy_burst_scratch_blocks = int(
+                getattr(
+                    config,
+                    "exact_greedy_decode_burst",
+                    False,
+                )
+            )
             total_scratch_blocks = (
                 decode_scratch_blocks
                 + spec_verify_scratch_blocks
+                + exact_greedy_burst_scratch_blocks
             )
             visible_blocks, physical_blocks = (
                 resolve_exact_graph_kv_capacity(
@@ -5104,11 +5128,15 @@ class ModelRunner:
             (
                 self._exact_graph_scratch_block_ids,
                 self._spec_verify_capture_scratch_block_ids,
+                self._exact_greedy_burst_scratch_block_ids,
             ) = partition_exact_graph_scratch_block_ids(
                 visible_blocks=visible_blocks,
                 decode_scratch_blocks=decode_scratch_blocks,
                 spec_verify_scratch_blocks=(
                     spec_verify_scratch_blocks
+                ),
+                exact_greedy_burst_scratch_blocks=(
+                    exact_greedy_burst_scratch_blocks
                 ),
             )
             self.spec_verify_capture_scratch_pool = (
@@ -5186,6 +5214,25 @@ class ModelRunner:
                     module.k_min = self.kv_summary[0, layer_id]
                     module.k_max = self.kv_summary[1, layer_id]
                 layer_id += 1
+
+    def capacity_snapshot(self) -> dict[str, object]:
+        return {
+            "num_kvcache_blocks": int(
+                self.config.num_kvcache_blocks
+            ),
+            "physical_num_kvcache_blocks": int(
+                self._physical_num_kvcache_blocks
+            ),
+            "exact_graph_scratch_block_ids": list(
+                self._exact_graph_scratch_block_ids
+            ),
+            "spec_verify_capture_scratch_block_ids": list(
+                self._spec_verify_capture_scratch_block_ids
+            ),
+            "exact_greedy_burst_scratch_block_ids": list(
+                self._exact_greedy_burst_scratch_block_ids
+            ),
+        }
 
     def _exact_graph_scratch_slots(
         self,

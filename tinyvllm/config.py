@@ -37,6 +37,8 @@ class Config:
     replay_aware_decode_metadata: bool = False
     zero_temperature_greedy_fast_path: bool = False
     graph_resident_greedy_tail: bool = False
+    exact_greedy_decode_burst: bool = False
+    exact_greedy_decode_burst_tokens: int = 4
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
     multi_sequence_cuda_graph_min_observations: int = 3
@@ -203,6 +205,27 @@ class Config:
         ):
             raise ValueError(
                 "graph_resident_greedy_tail must be a bool"
+            )
+        if not isinstance(
+            self.exact_greedy_decode_burst,
+            bool,
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst must be a bool"
+            )
+        if (
+            isinstance(self.exact_greedy_decode_burst_tokens, bool)
+            or not isinstance(
+                self.exact_greedy_decode_burst_tokens,
+                int,
+            )
+            or not (
+                2 <= self.exact_greedy_decode_burst_tokens <= 8
+            )
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst_tokens must be an "
+                "integer in [2, 8]"
             )
         allowlist = self.multi_sequence_cuda_graph_batch_allowlist
         assert isinstance(allowlist, (tuple, list))
