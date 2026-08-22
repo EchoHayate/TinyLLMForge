@@ -744,6 +744,15 @@ def test_deterministic_tar_has_stable_regular_file_metadata():
         assert all(member.isfile() for member in members)
         assert all(member.mtime == 0 for member in members)
         assert all(member.uid == 0 and member.gid == 0 for member in members)
+        unprefixed = remote.build_deterministic_tar(root, prefix=None)
+        with tarfile.open(
+            fileobj=io.BytesIO(unprefixed),
+            mode="r:",
+        ) as archive:
+            assert [member.name for member in archive.getmembers()] == [
+                "b.txt",
+                "nested/a.txt",
+            ]
 
 
 def test_deterministic_tar_rejects_symlinks():
@@ -1215,6 +1224,51 @@ def test_remote_execution_is_detached_then_polled():
     assert len(calls) == 3
     source = Path(remote.__file__).read_text(encoding="utf-8")
     assert "start_new_session=True" in source
+
+
+def test_remote_execution_retries_transient_poll_failure():
+    spec = {
+        "run_tag": "detached-transient-r1",
+        "remote_paths": remote.remote_paths("detached-transient-r1"),
+    }
+    responses = iter([
+        _completed(json.dumps({
+            "schema_version": 1,
+            "status": "STARTED",
+            "pid": 12345,
+        })),
+        _completed(
+            returncode=255,
+            stderr="Connection closed by UNKNOWN port 65535",
+        ),
+        _completed(json.dumps({
+            "schema_version": 1,
+            "done": True,
+            "alive": False,
+            "result": {
+                "schema_version": 1,
+                "status": "PASS",
+                "run_tag": "detached-transient-r1",
+            },
+        })),
+    ])
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return next(responses)
+
+    ticks = iter([0.0, 1.0, 2.0])
+    result = remote.launch_remote_execution(
+        spec=spec,
+        command_runner=runner,
+        sleep=lambda _: None,
+        monotonic=lambda: next(ticks),
+        timeout_seconds=10,
+    )
+
+    assert result["status"] == "PASS"
+    assert len(calls) == 3
 
 
 def test_orchestration_error_still_downloads_partial_artifacts():

@@ -43,6 +43,7 @@ RUN_TAG_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 MINIMUM_REMOTE_FREE_BYTES = 20 * 1024 * 1024 * 1024
 MINIMUM_KERBEROS_LIFETIME_SECONDS = 5400
+MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 
 def _canonical_json(value: object) -> str:
@@ -1234,7 +1235,7 @@ def prepare_execution_payload(
     (evidence_root / "source_snapshot.tar").write_bytes(
         build_deterministic_tar(
             source_evidence_root / "source",
-            prefix="source",
+            prefix=None,
         )
     )
     for filename in ("source.patch", "source_evidence.json"):
@@ -1601,6 +1602,7 @@ def launch_remote_execution(
         " 'done':result is not None,'alive':alive,'result':result},",
         " sort_keys=True,separators=(',',':')))",
     ))
+    consecutive_poll_failures = 0
     while True:
         if monotonic() >= deadline:
             raise TimeoutError(
@@ -1610,7 +1612,16 @@ def launch_remote_execution(
             f"{REMOTE_PYTHON} -c {shlex.quote(poll_script)}",
             command_runner=command_runner,
         )
-        _require_success(poll, "detached remote execution poll")
+        if poll.returncode != 0:
+            consecutive_poll_failures += 1
+            if consecutive_poll_failures >= MAX_CONSECUTIVE_POLL_FAILURES:
+                _require_success(
+                    poll,
+                    "detached remote execution poll",
+                )
+            sleep(5)
+            continue
+        consecutive_poll_failures = 0
         try:
             status = json.loads(poll.stdout)
         except (TypeError, json.JSONDecodeError) as error:
@@ -1688,20 +1699,22 @@ def create_runtime_directories(environment: dict[str, str]) -> None:
 def build_deterministic_tar(
     source_root: Path,
     *,
-    prefix: str,
+    prefix: str | None,
 ) -> bytes:
     root = Path(source_root)
     if not root.is_dir():
         raise ValueError("archive source root is invalid")
-    prefix_path = PurePosixPath(prefix)
-    if (
-        not isinstance(prefix, str)
-        or not prefix
-        or prefix_path.is_absolute()
-        or any(part in ("", ".", "..") for part in prefix_path.parts)
-        or prefix_path.as_posix() != prefix
-    ):
-        raise ValueError("archive prefix is invalid")
+    prefix_path = None
+    if prefix is not None:
+        prefix_path = PurePosixPath(prefix)
+        if (
+            not isinstance(prefix, str)
+            or not prefix
+            or prefix_path.is_absolute()
+            or any(part in ("", ".", "..") for part in prefix_path.parts)
+            or prefix_path.as_posix() != prefix
+        ):
+            raise ValueError("archive prefix is invalid")
     files = []
     for path in root.rglob("*"):
         if path.is_symlink():
@@ -1721,7 +1734,11 @@ def build_deterministic_tar(
             relative = path.relative_to(root).as_posix()
             payload = path.read_bytes()
             info = tarfile.TarInfo(
-                name=f"{prefix_path.as_posix()}/{relative}"
+                name=(
+                    relative
+                    if prefix_path is None
+                    else f"{prefix_path.as_posix()}/{relative}"
+                )
             )
             info.size = len(payload)
             info.mode = 0o644
