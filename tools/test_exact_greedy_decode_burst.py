@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from contextlib import contextmanager
 from pathlib import Path
 import sys
 
@@ -27,6 +28,10 @@ SPEC.loader.exec_module(module)
 ExactGreedyDecodeBurstCaptureReceipt = (
     module.ExactGreedyDecodeBurstCaptureReceipt
 )
+ExactGreedyDecodeBurstFallback = (
+    module.ExactGreedyDecodeBurstFallback
+)
+ExactGreedyDecodeBurstGraph = module.ExactGreedyDecodeBurstGraph
 ExactGreedyDecodeBurstLease = module.ExactGreedyDecodeBurstLease
 ExactGreedyDecodeBurstResult = module.ExactGreedyDecodeBurstResult
 ExactGreedyDecodeBurstStats = module.ExactGreedyDecodeBurstStats
@@ -39,6 +44,408 @@ build_exact_greedy_decode_burst_lease = (
 validate_exact_greedy_decode_burst_result = (
     module.validate_exact_greedy_decode_burst_result
 )
+
+
+class _BurstTensor:
+    _next_ptr = 10_000
+
+    def __init__(
+        self,
+        values,
+        *,
+        label,
+        events,
+        dtype="int64",
+        device="cuda:0",
+        element_size=8,
+    ):
+        self.values = values
+        self.label = label
+        self.events = events
+        self.dtype = dtype
+        self.device = device
+        self._element_size = element_size
+        self._data_ptr = _BurstTensor._next_ptr
+        _BurstTensor._next_ptr += 1_000
+        self.fail_tolist = False
+        self.tolist_calls = 0
+
+    @property
+    def shape(self):
+        if isinstance(self.values, list):
+            if self.values and isinstance(self.values[0], list):
+                return (len(self.values), len(self.values[0]))
+            return (len(self.values),)
+        return ()
+
+    def stride(self):
+        if len(self.shape) == 2:
+            return (self.shape[1], 1)
+        if len(self.shape) == 1:
+            return (1,)
+        return ()
+
+    def storage_offset(self):
+        return 0
+
+    def data_ptr(self):
+        return self._data_ptr
+
+    def numel(self):
+        total = 1
+        for dimension in self.shape:
+            total *= dimension
+        return total
+
+    def element_size(self):
+        return self._element_size
+
+    def size(self, dim=None):
+        if dim is None:
+            return self.shape
+        return self.shape[dim]
+
+    def fill_(self, value):
+        self.events.append((self.label, "fill_", value))
+        if isinstance(self.values, list):
+            if self.values and isinstance(self.values[0], list):
+                self.values = [
+                    [value for _ in row]
+                    for row in self.values
+                ]
+            else:
+                self.values = [value for _ in self.values]
+        else:
+            self.values = value
+        return self
+
+    def zero_(self):
+        return self.fill_(0)
+
+    def copy_(self, other):
+        value = getattr(other, "values", other)
+        if isinstance(value, list):
+            value = [
+                list(row) if isinstance(row, list) else row
+                for row in value
+            ]
+        self.values = value
+        self.events.append((self.label, "copy_", value))
+        return self
+
+    def add_(self, value):
+        observed = getattr(value, "values", value)
+        self.events.append((self.label, "add_", observed))
+        if isinstance(self.values, list):
+            if self.values and isinstance(self.values[0], list):
+                self.values = [
+                    [
+                        item + increment
+                        for item, increment in zip(row, delta)
+                    ]
+                    for row, delta in zip(self.values, observed)
+                ]
+            else:
+                self.values = [
+                    item + value for item in self.values
+                ]
+        else:
+            self.values += value
+        return self
+
+    def eq(self, other):
+        scalar = (
+            other.values[0]
+            if isinstance(other.values, list)
+            else other.values
+        )
+        self.events.append((self.label, "eq", scalar))
+        return _BurstTensor(
+            [int(value == scalar) for value in self.values],
+            label="sample_mask",
+            events=self.events,
+            dtype="bool",
+            element_size=1,
+        )
+
+    def __mul__(self, other):
+        left = self.values
+        right = other.values
+        if left and isinstance(left[0], list):
+            left_rows = left
+        else:
+            left_rows = [[value] for value in left]
+        if right and isinstance(right[0], list):
+            right_row = right[0]
+        else:
+            right_row = right
+        values = [
+            [row[0] * value for value in right_row]
+            for row in left_rows
+        ]
+        self.events.append((self.label, "mul", other.label))
+        return _BurstTensor(
+            values,
+            label="masked_logits",
+            events=self.events,
+            dtype=other.dtype,
+            element_size=other.element_size(),
+        )
+
+    def view(self, *shape):
+        self.events.append((self.label, "view", shape))
+        return self
+
+    def index_copy_(self, dim, index, source):
+        self.events.append(
+            (
+                self.label,
+                "index_copy_",
+                dim,
+                getattr(index, "values", index),
+                getattr(source, "values", source),
+            )
+        )
+        destination = int(
+            index.values[0]
+            if isinstance(index.values, list)
+            else index.values
+        )
+        source_value = (
+            source.values[0]
+            if isinstance(source.values, list)
+            else source.values
+        )
+        self.values[destination] = source_value
+        return self
+
+    def to(self, dtype):
+        self.events.append((self.label, "to", dtype))
+        return _BurstTensor(
+            (
+                [list(row) for row in self.values]
+                if self.values
+                and isinstance(self.values[0], list)
+                else list(self.values)
+            ),
+            label="float_logits",
+            events=self.events,
+            dtype=str(dtype),
+            element_size=4,
+        )
+
+    def argmax(self, *, dim):
+        self.events.append((self.label, "argmax", dim))
+        rows = self.values
+        if rows and not isinstance(rows[0], list):
+            rows = [rows]
+        values = [
+            max(range(len(row)), key=row.__getitem__)
+            for row in rows
+        ]
+        return _BurstTensor(
+            values,
+            label="next_token",
+            events=self.events,
+        )
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            result = _BurstTensor(
+                self.values[index],
+                label=self.label + "_slice",
+                events=self.events,
+                dtype=self.dtype,
+                device=self.device,
+                element_size=self._element_size,
+            )
+            result.fail_tolist = self.fail_tolist
+            result._source = self
+            return result
+        return self.values[index]
+
+    def tolist(self):
+        source = getattr(self, "_source", self)
+        source.tolist_calls += 1
+        if source.fail_tolist:
+            raise RuntimeError("final D2H failed")
+        if isinstance(self.values, list):
+            return [
+                list(row) if isinstance(row, list) else row
+                for row in self.values
+            ]
+        return self.values
+
+
+class _BurstGraph:
+    def __init__(self):
+        self.replay_calls = 0
+        self.replay_error_at = None
+        self.on_replay = None
+
+    def replay(self):
+        self.replay_calls += 1
+        if self.replay_error_at == self.replay_calls:
+            raise RuntimeError(f"replay {self.replay_calls} failed")
+        if self.on_replay is not None:
+            self.on_replay(self.replay_calls - 1)
+
+    def pool(self):
+        return "dedicated-pool"
+
+
+def _graph_fixture(
+    *,
+    correctness_trace=False,
+    live_kv_changed=False,
+):
+    events = []
+    tensors = {
+        "input_token": _BurstTensor(
+            [0], label="input_token", events=events
+        ),
+        "position": _BurstTensor(
+            [0], label="position", events=events
+        ),
+        "context_length": _BurstTensor(
+            [0], label="context_length", events=events
+        ),
+        "slot_mapping": _BurstTensor(
+            [0],
+            label="slot_mapping",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        ),
+        "block_table": _BurstTensor(
+            [[-1, -1]],
+            label="block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        ),
+        "token_history": _BurstTensor(
+            [-1] * 8,
+            label="token_history",
+            events=events,
+        ),
+        "history_index": _BurstTensor(
+            [0], label="history_index", events=events
+        ),
+    }
+    if correctness_trace:
+        tensors["sampled_logits"] = _BurstTensor(
+            [[0.0] * 5 for _ in range(3)],
+            label="sampled_logits",
+            events=events,
+            dtype="float32",
+            element_size=4,
+        )
+        tensors["sample_ordinals"] = _BurstTensor(
+            [0, 2, -1],
+            label="sample_ordinals",
+            events=events,
+        )
+    graphs = []
+    phase = {"value": "outside"}
+    next_tokens = iter((1, 2))
+
+    def model(input_token, position):
+        events.append(
+            (
+                phase["value"],
+                "model",
+                tuple(input_token.values),
+                tuple(position.values),
+            )
+        )
+        return _BurstTensor(
+            [[7.0]],
+            label="hidden",
+            events=events,
+            dtype="bfloat16",
+            element_size=2,
+        )
+
+    def compute_logits(hidden):
+        del hidden
+        token = next(next_tokens)
+        events.append((phase["value"], "compute_logits"))
+        row = [0.0] * 5
+        row[token] = 9.0
+        return _BurstTensor(
+            [row],
+            label="logits",
+            events=events,
+            dtype="bfloat16",
+            element_size=2,
+        )
+
+    def graph_factory():
+        graph = _BurstGraph()
+        graphs.append(graph)
+        return graph
+
+    @contextmanager
+    def capture_context_factory(graph, pool):
+        assert graph is graphs[-1]
+        assert pool == "pool-17"
+        phase["value"] = "capture"
+        events.append(("capture", "enter"))
+        try:
+            yield
+        finally:
+            events.append(("capture", "exit"))
+            phase["value"] = "outside"
+
+    context_slots = []
+
+    def set_decode_context(**kwargs):
+        context_slots.append(
+            tuple(kwargs["slot_mapping"].values)
+        )
+        events.append((phase["value"], "set_context"))
+
+    live_snapshots = iter(
+        (
+            b"live-kv",
+            b"mutated-live-kv"
+            if live_kv_changed
+            else b"live-kv",
+        )
+    )
+    memory_samples = iter(((100, 200), (140, 260)))
+    clock_samples = iter((1_000, 1_900))
+    stats = ExactGreedyDecodeBurstStats()
+
+    graph = ExactGreedyDecodeBurstGraph.capture(
+        tensors=tensors,
+        model=model,
+        compute_logits=compute_logits,
+        float32_dtype="float32",
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+        scratch_block_id=9,
+        block_size=256,
+        graph_pool="pool-17",
+        graph_factory=graph_factory,
+        capture_context_factory=capture_context_factory,
+        synchronize=lambda: events.append(("cuda", "sync")),
+        memory_snapshot=lambda: next(memory_samples),
+        clock_ns=lambda: next(clock_samples),
+        set_decode_context=set_decode_context,
+        reset_context=lambda: events.append(
+            (phase["value"], "reset_context")
+        ),
+        live_kv_snapshot=lambda: next(live_snapshots),
+        correctness_trace=correctness_trace,
+        sampled_logit_ordinals=(0, 2)
+        if correctness_trace
+        else (),
+        stats=stats,
+    )
+    return graph, tensors, graphs[0], events, context_slots
 
 
 def _assert_raises(error_type, message, callback):
@@ -448,6 +855,374 @@ def test_contract_is_model_agnostic_and_supports_second_caller() -> None:
     ).tokens == (101, 102)
 
 
+def test_complete_step_capture_orders_body_and_uses_private_scratch() -> None:
+    graph, tensors, _fake_graph, events, context_slots = (
+        _graph_fixture()
+    )
+
+    expected_body = [
+        "model",
+        "compute_logits",
+        "to",
+        "argmax",
+        "index_copy_",
+        "copy_",
+        "add_",
+        "add_",
+        "add_",
+        "add_",
+    ]
+    body = [
+        event[1]
+        for event in events
+        if len(event) > 1
+        and event[1] in set(expected_body)
+    ]
+    assert body == expected_body + expected_body
+
+    assert context_slots == [(9 * 256,), (9 * 256,)]
+    assert tensors["input_token"].values == [-1]
+    assert tensors["position"].values == [-1]
+    assert tensors["context_length"].values == [-1]
+    assert tensors["slot_mapping"].values == [-1]
+    assert tensors["block_table"].values == [[-1, -1]]
+    assert tensors["token_history"].values == [-1] * 8
+    assert tensors["history_index"].values == [0]
+    summary = graph.summary()
+    assert summary["capture_receipts"][0][
+        "capture_duration_ns"
+    ] == 900
+    assert summary["capture_receipts"][0][
+        "allocated_delta_bytes"
+    ] == 40
+    assert summary["capture_receipts"][0][
+        "reserved_delta_bytes"
+    ] == 60
+    assert summary["capture_receipts"][0][
+        "scratch_block_count"
+    ] == 1
+
+
+def test_replay_runs_exact_count_then_one_token_d2h() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture()
+    lease = _lease()
+
+    def replay_step(ordinal):
+        token = 20 + ordinal
+        tensors["token_history"].values[ordinal] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    block_table = _BurstTensor(
+        [[7, -1]],
+        label="live_block_table",
+        events=[],
+        dtype="int32",
+        element_size=4,
+    )
+
+    result = graph.replay(
+        lease=lease,
+        initial_token=19,
+        block_table=block_table,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+
+    assert result.tokens == (20, 21, 22, 23)
+    assert result.replay_count == 4
+    assert result.final_input_token == 23
+    assert result.final_position == 256
+    assert result.final_context_length == 257
+    assert result.final_physical_slot == 2048
+    assert fake_graph.replay_calls == 4
+    assert tensors["token_history"].tolist_calls == 1
+    assert result.token_d2h_calls == 1
+    assert result.sampled_logit_d2h_calls == 0
+    summary = graph.summary()
+    assert summary["target_model_forwards"] == 4
+    assert summary["graph_replays"] == 4
+    assert summary["intermediate_token_d2h_calls"] == 0
+    assert summary["final_token_d2h_calls"] == 1
+
+
+def test_pre_replay_drift_returns_typed_fallback_without_replay() -> None:
+    graph, _tensors, fake_graph, _events, _slots = _graph_fixture()
+    fallback = graph.replay(
+        lease=_lease(),
+        initial_token=19,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=[],
+            dtype="int32",
+            element_size=4,
+        ),
+        graph_generation=5,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+
+    assert isinstance(fallback, ExactGreedyDecodeBurstFallback)
+    assert fallback.fallback_reason == "graph_generation_drift"
+    assert fallback.replay_count == 0
+    assert fake_graph.replay_calls == 0
+
+
+def test_pre_replay_capacity_and_block_boundary_fail_closed() -> None:
+    graph, _tensors, fake_graph, _events, _slots = _graph_fixture()
+    oversized = build_exact_greedy_decode_burst_lease(
+        sequence_id=17,
+        schedule_generation=9,
+        graph_generation=4,
+        requested_token_count=9,
+        authorized_token_count=9,
+        initial_completion_count=3,
+        initial_sequence_length=1,
+        block_table_identity=((7, 2),),
+        write_block_id=7,
+        write_block_generation=2,
+        first_write_position=0,
+        last_write_position=8,
+        first_physical_slot=1792,
+        last_physical_slot=1800,
+        remaining_output_tokens=9,
+        completion_only=True,
+    )
+    crossing = build_exact_greedy_decode_burst_lease(
+        sequence_id=17,
+        schedule_generation=9,
+        graph_generation=4,
+        requested_token_count=4,
+        authorized_token_count=4,
+        initial_completion_count=3,
+        initial_sequence_length=15,
+        block_table_identity=((7, 2),),
+        write_block_id=7,
+        write_block_generation=2,
+        first_write_position=14,
+        last_write_position=17,
+        first_physical_slot=2046,
+        last_physical_slot=2049,
+        remaining_output_tokens=4,
+        completion_only=True,
+    )
+    block_table = _BurstTensor(
+        [[7, -1]],
+        label="live_block_table",
+        events=[],
+        dtype="int32",
+        element_size=4,
+    )
+
+    assert graph.replay(
+        lease=oversized,
+        initial_token=19,
+        block_table=block_table,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    ).fallback_reason == "history_capacity_exceeded"
+    assert graph.replay(
+        lease=crossing,
+        initial_token=19,
+        block_table=block_table,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    ).fallback_reason == "physical_block_boundary_crossed"
+    assert fake_graph.replay_calls == 0
+
+
+def test_post_replay_failures_quarantine_and_never_retry() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture()
+    fake_graph.replay_error_at = 2
+    block_table = _BurstTensor(
+        [[7, -1]],
+        label="live_block_table",
+        events=[],
+        dtype="int32",
+        element_size=4,
+    )
+
+    _assert_raises(
+        RuntimeError,
+        "replay 2 failed",
+        lambda: graph.replay(
+            lease=_lease(),
+            initial_token=19,
+            block_table=block_table,
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+        ),
+    )
+    assert fake_graph.replay_calls == 2
+    assert graph.summary()["quarantine_reason"] == (
+        "replay_failure:RuntimeError"
+    )
+    assert graph.summary()["graph_replays"] == 1
+
+    fake_graph.replay_error_at = None
+    fallback = graph.replay(
+        lease=_lease(),
+        initial_token=19,
+        block_table=block_table,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert isinstance(fallback, ExactGreedyDecodeBurstFallback)
+    assert fallback.fallback_reason == "quarantined"
+    assert fake_graph.replay_calls == 2
+    assert tensors["token_history"].tolist_calls == 0
+
+
+def test_final_d2h_failure_quarantines_after_all_replays() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture()
+
+    def replay_step(ordinal):
+        tensors["token_history"].values[ordinal] = ordinal + 30
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    tensors["token_history"].fail_tolist = True
+
+    _assert_raises(
+        RuntimeError,
+        "final D2H failed",
+        lambda: graph.replay(
+            lease=_lease(),
+            initial_token=29,
+            block_table=_BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=[],
+                dtype="int32",
+                element_size=4,
+            ),
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+        ),
+    )
+    assert fake_graph.replay_calls == 4
+    assert graph.summary()["quarantine_reason"] == (
+        "final_token_d2h_failure:RuntimeError"
+    )
+    assert graph.summary()["final_token_d2h_calls"] == 0
+
+
+def test_correctness_graph_samples_declared_logits_with_one_d2h() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+        correctness_trace=True
+    )
+
+    def replay_step(ordinal):
+        token = 40 + ordinal
+        tensors["token_history"].values[ordinal] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+        if ordinal == 0:
+            tensors["sampled_logits"].values[0] = [
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+            ]
+        elif ordinal == 2:
+            tensors["sampled_logits"].values[1] = [
+                5.0,
+                4.0,
+                3.0,
+                2.0,
+                1.0,
+            ]
+
+    fake_graph.on_replay = replay_step
+    result = graph.replay(
+        lease=_lease(),
+        initial_token=39,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=[],
+            dtype="int32",
+            element_size=4,
+        ),
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+
+    assert result.sampled_logits == (
+        (0, (1.0, 2.0, 3.0, 4.0, 5.0)),
+        (2, (5.0, 4.0, 3.0, 2.0, 1.0)),
+    )
+    assert result.sampled_logit_d2h_calls == 1
+    assert tensors["sampled_logits"].tolist_calls == 1
+    assert graph.capability()["correctness_trace"] is True
+    assert graph.capability()["sampled_logit_ordinals"] == [0, 2]
+
+
+def test_capture_rejects_any_live_kv_mutation() -> None:
+    _assert_raises(
+        RuntimeError,
+        "exact burst capture mutated live KV",
+        lambda: _graph_fixture(live_kv_changed=True),
+    )
+
+
+def test_result_construction_failure_quarantines_original_error() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture()
+
+    def replay_step(ordinal):
+        tensors["token_history"].values[ordinal] = ordinal + 50
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    original = module.ExactGreedyDecodeBurstResult
+
+    def fail_result(**_kwargs):
+        raise LookupError("result construction failed")
+
+    module.ExactGreedyDecodeBurstResult = fail_result
+    try:
+        _assert_raises(
+            LookupError,
+            "result construction failed",
+            lambda: graph.replay(
+                lease=_lease(),
+                initial_token=49,
+                block_table=_BurstTensor(
+                    [[7, -1]],
+                    label="live_block_table",
+                    events=[],
+                    dtype="int32",
+                    element_size=4,
+                ),
+                graph_generation=4,
+                rank=0,
+                tensor_parallel_size=1,
+            ),
+        )
+    finally:
+        module.ExactGreedyDecodeBurstResult = original
+    assert graph.summary()["quarantine_reason"] == (
+        "result_construction_failure:LookupError"
+    )
+    assert fake_graph.replay_calls == 4
+
+
 def main() -> None:
     test_policy_clips_to_budget_and_current_block()
     test_boundary_width_one_falls_back_before_replay()
@@ -457,6 +1232,15 @@ def main() -> None:
     test_correctness_trace_is_bounded_and_ordered()
     test_stats_track_benefit_cost_and_terminal_state()
     test_contract_is_model_agnostic_and_supports_second_caller()
+    test_complete_step_capture_orders_body_and_uses_private_scratch()
+    test_replay_runs_exact_count_then_one_token_d2h()
+    test_pre_replay_drift_returns_typed_fallback_without_replay()
+    test_pre_replay_capacity_and_block_boundary_fail_closed()
+    test_post_replay_failures_quarantine_and_never_retry()
+    test_final_d2h_failure_quarantines_after_all_replays()
+    test_correctness_graph_samples_declared_logits_with_one_d2h()
+    test_capture_rejects_any_live_kv_mutation()
+    test_result_construction_failure_quarantines_original_error()
     print("exact greedy decode burst tests passed")
 
 

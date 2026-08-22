@@ -460,6 +460,26 @@ class ExactGreedyDecodeBurstResult:
     ] = ()
 
 
+@dataclass(frozen=True)
+class ExactGreedyDecodeBurstFallback:
+    fallback_reason: str
+    replay_count: int = 0
+
+    def __post_init__(self) -> None:
+        _require_reason(
+            self.fallback_reason,
+            "fallback reason",
+        )
+        _require_non_negative_int(
+            self.replay_count,
+            "replay_count",
+        )
+        if self.replay_count:
+            raise ValueError(
+                "burst fallback cannot follow a graph replay"
+            )
+
+
 def validate_exact_greedy_decode_burst_result(
     lease: ExactGreedyDecodeBurstLease,
     result: ExactGreedyDecodeBurstResult,
@@ -816,3 +836,684 @@ class ExactGreedyDecodeBurstStats:
             if isinstance(value, int):
                 _require_non_negative_int(value, name)
         return payload
+
+
+def _tensor_identity_payload(tensor, name: str) -> dict[str, object]:
+    try:
+        data_ptr = tensor.data_ptr()
+        shape = tuple(tensor.shape)
+        stride = tuple(tensor.stride())
+        storage_offset = tensor.storage_offset()
+    except (AttributeError, TypeError) as error:
+        raise ValueError(
+            f"{name} must expose tensor storage identity"
+        ) from error
+    _require_non_negative_int(data_ptr, f"{name} data pointer")
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+        for value in shape
+    ):
+        raise ValueError(
+            f"{name} shape must contain non-negative integers"
+        )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        for value in stride
+    ):
+        raise ValueError(f"{name} stride must contain integers")
+    _require_non_negative_int(
+        storage_offset,
+        f"{name} storage offset",
+    )
+    return {
+        "data_ptr": data_ptr,
+        "shape": list(shape),
+        "stride": list(stride),
+        "storage_offset": storage_offset,
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+    }
+
+
+def _tensor_bytes(tensor, name: str) -> int:
+    try:
+        numel = tensor.numel()
+        element_size = tensor.element_size()
+    except (AttributeError, TypeError) as error:
+        raise ValueError(
+            f"{name} must expose numel() and element_size()"
+        ) from error
+    _require_non_negative_int(numel, f"{name} numel")
+    _require_non_negative_int(
+        element_size,
+        f"{name} element_size",
+    )
+    return numel * element_size
+
+
+class ExactGreedyDecodeBurstGraph:
+    """Own one exact complete-step graph and its static device state."""
+
+    _REQUIRED_TENSORS = (
+        "input_token",
+        "position",
+        "context_length",
+        "slot_mapping",
+        "block_table",
+        "token_history",
+        "history_index",
+    )
+
+    def __init__(
+        self,
+        *,
+        graph,
+        graph_pool,
+        tensors: dict[str, object],
+        retained_outputs: tuple[object, ...],
+        receipt: ExactGreedyDecodeBurstCaptureReceipt,
+        tensor_identities: dict[str, dict[str, object]],
+        rank: int,
+        tensor_parallel_size: int,
+        block_size: int,
+        scratch_block_id: int,
+        correctness_trace: bool,
+        sampled_logit_ordinals: tuple[int, ...],
+        stats: ExactGreedyDecodeBurstStats,
+    ):
+        self.graph = graph
+        self.graph_pool = graph_pool
+        self.tensors = tensors
+        self.retained_outputs = retained_outputs
+        self.receipt = receipt
+        self.tensor_identities = tensor_identities
+        self.rank = rank
+        self.tensor_parallel_size = tensor_parallel_size
+        self.block_size = block_size
+        self.scratch_block_id = scratch_block_id
+        self.correctness_trace = correctness_trace
+        self.sampled_logit_ordinals = sampled_logit_ordinals
+        self.stats = stats
+
+    @staticmethod
+    def _set_block_table_first_value(tensor, value: int) -> None:
+        tensor[0][0] = value
+
+    @classmethod
+    def _reset_static_state(
+        cls,
+        tensors: dict[str, object],
+        *,
+        scratch_block_id: Optional[int],
+        block_size: int,
+    ) -> None:
+        sentinel = -1
+        for name in (
+            "input_token",
+            "position",
+            "context_length",
+            "slot_mapping",
+            "block_table",
+            "token_history",
+        ):
+            tensors[name].fill_(sentinel)
+        tensors["history_index"].zero_()
+        if "sampled_logits" in tensors:
+            tensors["sampled_logits"].zero_()
+        if scratch_block_id is not None:
+            tensors["input_token"].zero_()
+            tensors["position"].zero_()
+            tensors["context_length"].fill_(1)
+            tensors["slot_mapping"].fill_(
+                scratch_block_id * block_size
+            )
+            cls._set_block_table_first_value(
+                tensors["block_table"],
+                scratch_block_id,
+            )
+
+    @staticmethod
+    def _run_complete_step(
+        *,
+        tensors: dict[str, object],
+        model,
+        compute_logits,
+        float32_dtype,
+        correctness_trace: bool,
+    ) -> tuple[object, ...]:
+        hidden = model(
+            tensors["input_token"],
+            tensors["position"],
+        )
+        logits = compute_logits(hidden)
+        float_logits = logits.to(float32_dtype)
+        next_token = float_logits.argmax(dim=-1)
+        if correctness_trace:
+            mask = (
+                tensors["sample_ordinals"]
+                .eq(tensors["history_index"])
+                .to(float32_dtype)
+                .view(-1, 1)
+            )
+            tensors["sampled_logits"].add_(
+                mask * float_logits
+            )
+        tensors["token_history"].index_copy_(
+            0,
+            tensors["history_index"].view(1),
+            next_token,
+        )
+        tensors["input_token"].copy_(next_token)
+        tensors["position"].add_(1)
+        tensors["context_length"].add_(1)
+        tensors["slot_mapping"].add_(1)
+        tensors["history_index"].add_(1)
+        return hidden, logits, float_logits, next_token
+
+    @classmethod
+    def capture(
+        cls,
+        *,
+        tensors: dict[str, object],
+        model,
+        compute_logits,
+        float32_dtype,
+        graph_generation: int,
+        rank: int,
+        tensor_parallel_size: int,
+        scratch_block_id: int,
+        block_size: int,
+        graph_pool,
+        graph_factory,
+        capture_context_factory,
+        synchronize,
+        memory_snapshot,
+        clock_ns,
+        set_decode_context,
+        reset_context,
+        live_kv_snapshot,
+        correctness_trace: bool = False,
+        sampled_logit_ordinals: tuple[int, ...] = (),
+        stats: Optional[ExactGreedyDecodeBurstStats] = None,
+    ) -> "ExactGreedyDecodeBurstGraph":
+        if not isinstance(tensors, dict):
+            raise ValueError("tensors must be a dict")
+        missing = [
+            name
+            for name in cls._REQUIRED_TENSORS
+            if name not in tensors
+        ]
+        if missing:
+            raise ValueError(
+                "missing burst static tensor: " + missing[0]
+            )
+        _require_positive_int(
+            graph_generation,
+            "graph_generation",
+        )
+        _require_non_negative_int(rank, "rank")
+        _require_positive_int(
+            tensor_parallel_size,
+            "tensor_parallel_size",
+        )
+        _require_non_negative_int(
+            scratch_block_id,
+            "scratch_block_id",
+        )
+        _require_positive_int(block_size, "block_size")
+        _require_bool(correctness_trace, "correctness_trace")
+        sampled_logit_ordinals = _validate_integer_tuple(
+            sampled_logit_ordinals,
+            "sampled_logit_ordinals",
+        )
+        if len(sampled_logit_ordinals) > 3:
+            raise ValueError(
+                "sampled_logit_ordinals exceeds capacity three"
+            )
+        if tuple(sorted(set(sampled_logit_ordinals))) != (
+            sampled_logit_ordinals
+        ):
+            raise ValueError(
+                "sampled_logit_ordinals must be strictly increasing"
+            )
+        if any(value >= 8 for value in sampled_logit_ordinals):
+            raise ValueError(
+                "sampled_logit_ordinals must be below eight"
+            )
+        if correctness_trace:
+            for name in ("sampled_logits", "sample_ordinals"):
+                if name not in tensors:
+                    raise ValueError(
+                        "missing burst static tensor: " + name
+                    )
+        elif sampled_logit_ordinals:
+            raise ValueError(
+                "production burst cannot sample logits"
+            )
+        for value, name in (
+            (model, "model"),
+            (compute_logits, "compute_logits"),
+            (graph_factory, "graph_factory"),
+            (
+                capture_context_factory,
+                "capture_context_factory",
+            ),
+            (synchronize, "synchronize"),
+            (memory_snapshot, "memory_snapshot"),
+            (clock_ns, "clock_ns"),
+            (set_decode_context, "set_decode_context"),
+            (reset_context, "reset_context"),
+            (live_kv_snapshot, "live_kv_snapshot"),
+        ):
+            if not callable(value):
+                raise ValueError(f"{name} must be callable")
+        if stats is None:
+            stats = ExactGreedyDecodeBurstStats()
+        if not isinstance(stats, ExactGreedyDecodeBurstStats):
+            raise ValueError(
+                "stats must be ExactGreedyDecodeBurstStats"
+            )
+
+        tensor_identities = {
+            name: _tensor_identity_payload(tensor, name)
+            for name, tensor in sorted(tensors.items())
+        }
+        identity_payload = {
+            "graph_generation": graph_generation,
+            "rank": rank,
+            "tensor_parallel_size": tensor_parallel_size,
+            "block_size": block_size,
+            "scratch_block_id": scratch_block_id,
+            "correctness_trace": correctness_trace,
+            "sampled_logit_ordinals": list(
+                sampled_logit_ordinals
+            ),
+            "tensors": tensor_identities,
+        }
+        graph_identity_sha256 = hashlib.sha256(
+            json.dumps(
+                identity_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+        live_before = live_kv_snapshot()
+        synchronize()
+        before_allocated, before_reserved = memory_snapshot()
+        _require_non_negative_int(
+            before_allocated,
+            "allocated memory snapshot",
+        )
+        _require_non_negative_int(
+            before_reserved,
+            "reserved memory snapshot",
+        )
+
+        def prepare_capture_state() -> None:
+            cls._reset_static_state(
+                tensors,
+                scratch_block_id=scratch_block_id,
+                block_size=block_size,
+            )
+            set_decode_context(
+                slot_mapping=tensors["slot_mapping"],
+                context_length=tensors["context_length"],
+                block_table=tensors["block_table"],
+            )
+
+        try:
+            prepare_capture_state()
+            cls._run_complete_step(
+                tensors=tensors,
+                model=model,
+                compute_logits=compute_logits,
+                float32_dtype=float32_dtype,
+                correctness_trace=correctness_trace,
+            )
+            synchronize()
+            reset_context()
+
+            prepare_capture_state()
+            graph = graph_factory()
+            start_ns = clock_ns()
+            _require_non_negative_int(
+                start_ns,
+                "capture start time",
+            )
+            with capture_context_factory(graph, graph_pool):
+                retained_outputs = cls._run_complete_step(
+                    tensors=tensors,
+                    model=model,
+                    compute_logits=compute_logits,
+                    float32_dtype=float32_dtype,
+                    correctness_trace=correctness_trace,
+                )
+            synchronize()
+            end_ns = clock_ns()
+            _require_non_negative_int(
+                end_ns,
+                "capture end time",
+            )
+            if end_ns < start_ns:
+                raise ValueError(
+                    "capture end time precedes start time"
+                )
+            after_allocated, after_reserved = memory_snapshot()
+            _require_non_negative_int(
+                after_allocated,
+                "allocated memory snapshot",
+            )
+            _require_non_negative_int(
+                after_reserved,
+                "reserved memory snapshot",
+            )
+        finally:
+            reset_context()
+            cls._reset_static_state(
+                tensors,
+                scratch_block_id=None,
+                block_size=block_size,
+            )
+
+        if live_kv_snapshot() != live_before:
+            raise RuntimeError(
+                "exact burst capture mutated live KV"
+            )
+        retained_static_bytes = sum(
+            _tensor_bytes(tensor, name)
+            for name, tensor in tensors.items()
+        ) + sum(
+            _tensor_bytes(tensor, "retained output")
+            for tensor in retained_outputs
+        )
+        receipt = ExactGreedyDecodeBurstCaptureReceipt(
+            graph_identity_sha256=graph_identity_sha256,
+            graph_generation=graph_generation,
+            capture_duration_ns=end_ns - start_ns,
+            allocated_delta_bytes=max(
+                0,
+                after_allocated - before_allocated,
+            ),
+            reserved_delta_bytes=max(
+                0,
+                after_reserved - before_reserved,
+            ),
+            retained_static_bytes=retained_static_bytes,
+            scratch_block_count=1,
+            correctness_trace=correctness_trace,
+        )
+        stats.record_capture(receipt)
+        return cls(
+            graph=graph,
+            graph_pool=graph_pool,
+            tensors=tensors,
+            retained_outputs=retained_outputs,
+            receipt=receipt,
+            tensor_identities=tensor_identities,
+            rank=rank,
+            tensor_parallel_size=tensor_parallel_size,
+            block_size=block_size,
+            scratch_block_id=scratch_block_id,
+            correctness_trace=correctness_trace,
+            sampled_logit_ordinals=sampled_logit_ordinals,
+            stats=stats,
+        )
+
+    def _pre_replay_fallback(
+        self,
+        *,
+        lease,
+        block_table,
+        graph_generation: int,
+        rank: int,
+        tensor_parallel_size: int,
+        expected_graph_identity_sha256: Optional[str],
+    ) -> Optional[str]:
+        if self.stats.quarantine_reason is not None:
+            return "quarantined"
+        if not isinstance(lease, ExactGreedyDecodeBurstLease):
+            return "lease_type_invalid"
+        if graph_generation != self.receipt.graph_generation:
+            return "graph_generation_drift"
+        if lease.graph_generation != graph_generation:
+            return "lease_graph_generation_drift"
+        if rank != self.rank:
+            return "rank_drift"
+        if tensor_parallel_size != self.tensor_parallel_size:
+            return "tensor_parallel_size_drift"
+        if (
+            expected_graph_identity_sha256 is not None
+            and expected_graph_identity_sha256
+            != self.receipt.graph_identity_sha256
+        ):
+            return "graph_identity_drift"
+        try:
+            current_identities = {
+                name: _tensor_identity_payload(tensor, name)
+                for name, tensor in sorted(
+                    self.tensors.items()
+                )
+            }
+        except ValueError:
+            return "source_identity_invalid"
+        if current_identities != self.tensor_identities:
+            return "source_identity_drift"
+        history_capacity = int(
+            self.tensors["token_history"].shape[0]
+        )
+        if lease.authorized_token_count > history_capacity:
+            return "history_capacity_exceeded"
+        if (
+            lease.first_physical_slot // self.block_size
+            != lease.last_physical_slot // self.block_size
+        ):
+            return "physical_block_boundary_crossed"
+        if (
+            lease.first_physical_slot // self.block_size
+            != lease.write_block_id
+        ):
+            return "physical_block_identity_drift"
+        try:
+            block_table_shape = tuple(block_table.shape)
+        except (AttributeError, TypeError):
+            return "block_table_invalid"
+        static_shape = tuple(self.tensors["block_table"].shape)
+        if (
+            len(block_table_shape) != 2
+            or block_table_shape[0] != 1
+            or block_table_shape[1] > static_shape[1]
+        ):
+            return "block_table_width_unsupported"
+        return None
+
+    def replay(
+        self,
+        *,
+        lease,
+        initial_token: int,
+        block_table,
+        graph_generation: int,
+        rank: int,
+        tensor_parallel_size: int,
+        expected_graph_identity_sha256: Optional[str] = None,
+    ) -> ExactGreedyDecodeBurstResult | ExactGreedyDecodeBurstFallback:
+        reason = self._pre_replay_fallback(
+            lease=lease,
+            block_table=block_table,
+            graph_generation=graph_generation,
+            rank=rank,
+            tensor_parallel_size=tensor_parallel_size,
+            expected_graph_identity_sha256=(
+                expected_graph_identity_sha256
+            ),
+        )
+        if reason is not None:
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+        if (
+            isinstance(initial_token, bool)
+            or not isinstance(initial_token, int)
+            or initial_token < 0
+        ):
+            self.stats.record_fallback("initial_token_invalid")
+            return ExactGreedyDecodeBurstFallback(
+                "initial_token_invalid"
+            )
+
+        tensors = self.tensors
+        try:
+            cls = type(self)
+            cls._reset_static_state(
+                tensors,
+                scratch_block_id=None,
+                block_size=self.block_size,
+            )
+            tensors["input_token"].fill_(initial_token)
+            tensors["position"].fill_(
+                lease.first_write_position
+            )
+            tensors["context_length"].fill_(
+                lease.initial_sequence_length
+            )
+            tensors["slot_mapping"].fill_(
+                lease.first_physical_slot
+            )
+            tensors["block_table"].copy_(block_table)
+        except Exception:
+            self.stats.record_fallback("static_state_bind_failure")
+            return ExactGreedyDecodeBurstFallback(
+                "static_state_bind_failure"
+            )
+
+        completed_replays = 0
+        try:
+            for _ in range(lease.authorized_token_count):
+                self.graph.replay()
+                completed_replays += 1
+                self.stats.record_replays(1)
+        except Exception as error:
+            self.stats.quarantine(
+                "replay_failure:" + type(error).__name__
+            )
+            raise
+
+        try:
+            token_values = tensors["token_history"][
+                :lease.authorized_token_count
+            ].tolist()
+            tokens = tuple(int(value) for value in token_values)
+        except Exception as error:
+            self.stats.quarantine(
+                "final_token_d2h_failure:"
+                + type(error).__name__
+            )
+            raise
+        self.stats.record_final_token_d2h(
+            token_count=len(tokens),
+            byte_count=(
+                len(tokens)
+                * tensors["token_history"].element_size()
+            ),
+        )
+
+        sampled_logits = ()
+        sampled_logit_d2h_calls = 0
+        if self.correctness_trace:
+            active_ordinals = tuple(
+                ordinal
+                for ordinal in self.sampled_logit_ordinals
+                if ordinal < lease.authorized_token_count
+            )
+            if active_ordinals:
+                try:
+                    rows = tensors["sampled_logits"][
+                        :len(active_ordinals)
+                    ].tolist()
+                    sampled_logits = tuple(
+                        (
+                            ordinal,
+                            tuple(float(value) for value in row),
+                        )
+                        for ordinal, row in zip(
+                            active_ordinals,
+                            rows,
+                        )
+                    )
+                except Exception as error:
+                    self.stats.quarantine(
+                        "sampled_logit_d2h_failure:"
+                        + type(error).__name__
+                    )
+                    raise
+                sampled_logit_d2h_calls = 1
+                self.stats.record_sampled_logit_d2h()
+
+        try:
+            result = ExactGreedyDecodeBurstResult(
+                lease_identity_sha256=lease.identity_sha256,
+                tokens=tokens,
+                replay_count=completed_replays,
+                final_input_token=tokens[-1],
+                final_position=(
+                    lease.first_write_position
+                    + completed_replays
+                ),
+                final_context_length=(
+                    lease.initial_sequence_length
+                    + completed_replays
+                ),
+                final_physical_slot=(
+                    lease.first_physical_slot
+                    + completed_replays
+                ),
+                graph_identity_sha256=(
+                    self.receipt.graph_identity_sha256
+                ),
+                token_d2h_calls=1,
+                sampled_logit_d2h_calls=(
+                    sampled_logit_d2h_calls
+                ),
+                sampled_logits=sampled_logits,
+            )
+            return validate_exact_greedy_decode_burst_result(
+                lease,
+                result,
+                correctness_trace=self.correctness_trace,
+            )
+        except Exception as error:
+            self.stats.quarantine(
+                "result_construction_failure:"
+                + type(error).__name__
+            )
+            raise
+
+    def capability(self) -> dict[str, object]:
+        reason = self.stats.quarantine_reason
+        return {
+            "available": reason is None,
+            "graph_identity_sha256": (
+                self.receipt.graph_identity_sha256
+            ),
+            "graph_generation": self.receipt.graph_generation,
+            "rank": self.rank,
+            "tensor_parallel_size": self.tensor_parallel_size,
+            "block_size": self.block_size,
+            "block_table_width": int(
+                self.tensors["block_table"].shape[1]
+            ),
+            "history_capacity": int(
+                self.tensors["token_history"].shape[0]
+            ),
+            "correctness_trace": self.correctness_trace,
+            "sampled_logit_ordinals": list(
+                self.sampled_logit_ordinals
+            ),
+            "quarantine_reason": reason,
+        }
+
+    def summary(self) -> dict[str, object]:
+        return self.stats.summary()

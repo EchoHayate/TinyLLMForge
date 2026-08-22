@@ -101,6 +101,12 @@ _GRAPH_RESIDENT_GREEDY_TAIL_PATH = os.path.join(
     "engine",
     "graph_resident_greedy_tail.py",
 )
+_EXACT_GREEDY_DECODE_BURST_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "exact_greedy_decode_burst.py",
+)
 _SPLIT_POLICY_PATH = os.path.join(
     _REPO_ROOT,
     "tinyvllm",
@@ -350,6 +356,10 @@ def _load_model_runner_module():
     _load_source_module(
         "tinyvllm.engine.graph_resident_greedy_tail",
         _GRAPH_RESIDENT_GREEDY_TAIL_PATH,
+    )
+    _load_source_module(
+        "tinyvllm.engine.exact_greedy_decode_burst",
+        _EXACT_GREEDY_DECODE_BURST_PATH,
     )
     if "tinyvllm.engine.model_runner_command_ack" not in sys.modules:
         _load_source_module(
@@ -705,6 +715,8 @@ def make_runner(**overrides):
         "replay_aware_decode_metadata": False,
         "zero_temperature_greedy_fast_path": False,
         "graph_resident_greedy_tail": False,
+        "exact_greedy_decode_burst": False,
+        "exact_greedy_decode_burst_tokens": 4,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "spec_verify_cuda_graphs": False,
@@ -742,6 +754,14 @@ def make_runner(**overrides):
     runner.graph_resident_greedy_tail = None
     runner.graph_resident_greedy_tail_stats = (
         graph_tail_module.GraphResidentGreedyTailStats()
+    )
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner.exact_greedy_decode_burst_graph = None
+    runner.exact_greedy_decode_burst_correctness_graph = None
+    runner.exact_greedy_decode_burst_stats = (
+        burst_module.ExactGreedyDecodeBurstStats()
     )
     runner._ordinary_graph_generation = 0
     runner.qwen35_recurrent_capture_session = None
@@ -4136,6 +4156,281 @@ def test_exact_burst_scratch_is_reported_by_capacity_snapshot():
     assert 100 not in range(snapshot["num_kvcache_blocks"])
 
 
+def test_exact_burst_capability_is_fail_closed_and_json_safe():
+    runner = make_runner()
+    assert runner.exact_greedy_decode_burst_capability() == {
+        "available": False,
+        "fallback_reason": "disabled",
+        "graph_identity_sha256": None,
+        "graph_generation": 0,
+        "correctness_trace": False,
+    }
+
+    runner.config.exact_greedy_decode_burst = True
+    assert runner.exact_greedy_decode_burst_capability()[
+        "fallback_reason"
+    ] == "capture_unavailable"
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "a" * 64,
+                "graph_generation": 7,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    capability = runner.exact_greedy_decode_burst_capability()
+    json.dumps(capability, allow_nan=False)
+    assert capability == {
+        "available": True,
+        "fallback_reason": None,
+        "graph_identity_sha256": "a" * 64,
+        "graph_generation": 7,
+        "correctness_trace": False,
+    }
+
+
+def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(exact_greedy_decode_burst=True)
+    calls = []
+    expected = object()
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **kwargs):
+            calls.append(kwargs)
+            return expected
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=4,
+        authorized_token_count=2,
+        initial_completion_count=1,
+        initial_sequence_length=2,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=1,
+        last_write_position=2,
+        first_physical_slot=1281,
+        last_physical_slot=1282,
+        remaining_output_tokens=2,
+        completion_only=True,
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        last_token=31,
+        block_table=[5],
+    )
+
+    result = runner.run_exact_greedy_decode_burst(
+        (seq,),
+        lease,
+    )
+
+    assert result is expected
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["lease"] is lease
+    assert call["initial_token"] == 31
+    assert call["block_table"].values == [[5, -1, -1, -1]]
+    assert call["graph_generation"] == 4
+    assert call["rank"] == 0
+    assert call["tensor_parallel_size"] == 1
+    assert call["expected_graph_identity_sha256"] == "b" * 64
+
+
+def test_model_runner_exact_burst_rejects_wrong_sequence_before_graph():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(exact_greedy_decode_burst=True)
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **_kwargs):
+            raise AssertionError("invalid sequence reached graph replay")
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=4,
+        authorized_token_count=2,
+        initial_completion_count=1,
+        initial_sequence_length=2,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=1,
+        last_write_position=2,
+        first_physical_slot=1281,
+        last_physical_slot=1282,
+        remaining_output_tokens=2,
+        completion_only=True,
+    )
+
+    fallback = runner.run_exact_greedy_decode_burst(
+        (
+            SimpleNamespace(
+                seq_id=8,
+                last_token=31,
+                block_table=[5],
+            ),
+        ),
+        lease,
+    )
+    assert type(fallback).__name__ == (
+        "ExactGreedyDecodeBurstFallback"
+    )
+    assert fallback.fallback_reason == "sequence_identity_drift"
+    assert fallback.replay_count == 0
+
+
+def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
+    runner = make_runner(exact_greedy_decode_burst=True)
+    runner.config.max_model_len = 512
+    runner.config.num_kvcache_blocks = 100
+    runner.config.hf_config = SimpleNamespace(vocab_size=32)
+    runner._ordinary_graph_generation = 6
+    runner._exact_greedy_burst_scratch_block_ids = (100,)
+    runner.model = SimpleNamespace(
+        compute_logits=lambda hidden: hidden,
+    )
+    observed = {}
+    marker = object()
+
+    class StaticTensor(FakeCaptureTensor):
+        def __init__(self, shape, *, dtype):
+            super().__init__(shape)
+            self.dtype = dtype
+            self.device = "cuda:0"
+
+    class KVView(StaticTensor):
+        def data_ptr(self):
+            return 1234
+
+        def stride(self):
+            return (1, 1, 1)
+
+        def storage_offset(self):
+            return 0
+
+    class KVCache:
+        def __getitem__(self, _index):
+            return KVView((2, 1, 100), dtype="float16")
+
+    runner.kv_cache = KVCache()
+    original_graph = model_runner.ExactGreedyDecodeBurstGraph
+    original_full = getattr(model_runner.torch, "full", None)
+    original_zeros = getattr(model_runner.torch, "zeros", None)
+    original_cuda = model_runner.torch.cuda
+
+    class FakeBurstGraph:
+        @classmethod
+        def capture(cls, **kwargs):
+            observed.update(kwargs)
+            assert kwargs["live_kv_snapshot"]() == (
+                1234,
+                (2, 1, 100),
+                (1, 1, 1),
+                0,
+            )
+            return marker
+
+    model_runner.ExactGreedyDecodeBurstGraph = FakeBurstGraph
+    model_runner.torch.full = (
+        lambda shape, _value, dtype: StaticTensor(
+            shape,
+            dtype=dtype,
+        )
+    )
+    model_runner.torch.zeros = (
+        lambda shape, dtype: StaticTensor(
+            shape,
+            dtype=dtype,
+        )
+    )
+    model_runner.torch.cuda = SimpleNamespace(
+        graph_pool_handle=lambda: "private-pool",
+        CUDAGraph=lambda: object(),
+        graph=lambda graph, pool=None: (graph, pool),
+        synchronize=lambda: None,
+        memory_allocated=lambda: 0,
+        memory_reserved=lambda: 0,
+    )
+    try:
+        result = runner._capture_exact_greedy_decode_burst()
+    finally:
+        model_runner.ExactGreedyDecodeBurstGraph = original_graph
+        if original_full is None:
+            delattr(model_runner.torch, "full")
+        else:
+            model_runner.torch.full = original_full
+        if original_zeros is None:
+            delattr(model_runner.torch, "zeros")
+        else:
+            model_runner.torch.zeros = original_zeros
+        model_runner.torch.cuda = original_cuda
+
+    assert result is marker
+    assert runner.exact_greedy_decode_burst_graph is marker
+    assert observed["graph_pool"] == "private-pool"
+    assert observed["graph_generation"] == 6
+    assert observed["scratch_block_id"] == 100
+    assert observed["block_size"] == 256
+    assert observed["correctness_trace"] is False
+    assert observed["sampled_logit_ordinals"] == ()
+    assert observed["tensors"]["input_token"].shape == (1,)
+    assert observed["tensors"]["block_table"].shape == (1, 2)
+    assert observed["tensors"]["token_history"].shape == (8,)
+    assert "sampled_logits" not in observed["tensors"]
+
+
 def test_scratch_blocks_are_above_scheduler_visible_range():
     runner = make_runner()
     runner.config.num_kvcache_blocks = 92
@@ -4243,6 +4538,21 @@ def test_graph_tail_capture_binds_batch_one_static_output():
     assert observed["graph_generation"] == 1
     assert observed["rank"] == 0
     assert observed["stats"] is runner.graph_resident_greedy_tail_stats
+
+
+def test_capture_cudagraph_initializes_exact_burst_after_generation():
+    runner = _make_capture_runner(feature_enabled=False)
+    runner.config.exact_greedy_decode_burst = True
+    observed = []
+    runner._capture_exact_greedy_decode_burst = (
+        lambda: observed.append(
+            runner._ordinary_graph_generation
+        )
+    )
+
+    runner.capture_cudagraph()
+
+    assert observed == [1]
 
 
 def _graph_tail_decode_runner(*, temperature=0.0):
@@ -5769,6 +6079,10 @@ def main():
         test_decode_and_spec_verify_scratch_partitions_are_disjoint,
         test_exact_burst_capacity_adds_one_scheduler_invisible_block,
         test_exact_burst_scratch_is_reported_by_capacity_snapshot,
+        test_exact_burst_capability_is_fail_closed_and_json_safe,
+        test_model_runner_exact_burst_delegates_once_with_padded_block_table,
+        test_model_runner_exact_burst_rejects_wrong_sequence_before_graph,
+        test_model_runner_exact_burst_capture_owns_static_state_and_pool,
         test_scratch_blocks_are_above_scheduler_visible_range,
         test_feature_enabled_startup_captures_only_batch_one,
         test_feature_disabled_startup_inventory_is_unchanged,
@@ -5787,6 +6101,7 @@ def main():
         test_greedy_fast_path_uses_exact_float32_argmax,
         test_greedy_fast_path_fallbacks_preserve_legacy_sampler,
         test_graph_tail_capture_binds_batch_one_static_output,
+        test_capture_cudagraph_initializes_exact_burst_after_generation,
         test_graph_tail_decides_before_transformer_replay_and_skips_logits,
         test_graph_tail_ineligible_step_preserves_external_logits_path,
         test_graph_tail_replay_failure_never_falls_back_or_replays_twice,

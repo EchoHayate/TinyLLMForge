@@ -71,6 +71,12 @@ from tinyvllm.engine.graph_resident_greedy_tail import (
     GraphResidentGreedyTailStats,
     decide_graph_resident_greedy_tail,
 )
+from tinyvllm.engine.exact_greedy_decode_burst import (
+    ExactGreedyDecodeBurstFallback,
+    ExactGreedyDecodeBurstGraph,
+    ExactGreedyDecodeBurstLease,
+    ExactGreedyDecodeBurstStats,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket import (
     Qwen35HybridPrefixRestoreParticipant,
 )
@@ -2222,6 +2228,11 @@ class ModelRunner:
         self.graph_resident_greedy_tail = None
         self.graph_resident_greedy_tail_stats = (
             GraphResidentGreedyTailStats()
+        )
+        self.exact_greedy_decode_burst_graph = None
+        self.exact_greedy_decode_burst_correctness_graph = None
+        self.exact_greedy_decode_burst_stats = (
+            ExactGreedyDecodeBurstStats()
         )
         self._ordinary_graph_generation = 0
         self._record_step_logits = False
@@ -8868,6 +8879,333 @@ class ModelRunner:
     def graph_resident_greedy_tail_summary(self) -> dict:
         return self.graph_resident_greedy_tail_stats.summary()
 
+    def exact_greedy_decode_burst_summary(self) -> dict:
+        return self.exact_greedy_decode_burst_stats.summary()
+
+    @staticmethod
+    def _exact_greedy_decode_burst_fallback(
+        stats,
+        reason: str,
+    ) -> ExactGreedyDecodeBurstFallback:
+        stats.record_fallback(reason)
+        return ExactGreedyDecodeBurstFallback(reason)
+
+    def exact_greedy_decode_burst_capability(
+        self,
+        *,
+        correctness_trace: bool = False,
+    ) -> dict[str, object]:
+        graph = (
+            self.exact_greedy_decode_burst_correctness_graph
+            if correctness_trace
+            else self.exact_greedy_decode_burst_graph
+        )
+        reason = None
+        if not self.config.exact_greedy_decode_burst:
+            reason = "disabled"
+        elif self.enforce_eager:
+            reason = "enforce_eager"
+        elif self.world_size != 1:
+            reason = "tensor_parallel_unsupported"
+        elif self.rank != 0:
+            reason = "non_root_rank"
+        elif self.config.kv_offload_mvp0:
+            reason = "kv_offload_active"
+        elif self.config.cpu_offload:
+            reason = "cpu_offload_active"
+        elif self.config.kv_quant_bits == 4:
+            reason = "kv_quantized_eager"
+        elif self.config.quest_top_k_blocks > 0:
+            reason = "quest_active"
+        elif self.config.am_compact_blocks > 0:
+            reason = "compact_attention_active"
+        elif graph is None:
+            reason = "capture_unavailable"
+        if reason is not None:
+            return {
+                "available": False,
+                "fallback_reason": reason,
+                "graph_identity_sha256": None,
+                "graph_generation": int(
+                    self._ordinary_graph_generation
+                ),
+                "correctness_trace": correctness_trace,
+            }
+        capability = graph.capability()
+        quarantine_reason = capability.get(
+            "quarantine_reason"
+        )
+        if not capability["available"]:
+            reason = (
+                "quarantined"
+                if quarantine_reason is not None
+                else "capture_unavailable"
+            )
+        return {
+            "available": bool(capability["available"]),
+            "fallback_reason": reason,
+            "graph_identity_sha256": capability[
+                "graph_identity_sha256"
+            ],
+            "graph_generation": int(
+                capability["graph_generation"]
+            ),
+            "correctness_trace": bool(
+                capability["correctness_trace"]
+            ),
+        }
+
+    def run_exact_greedy_decode_burst(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: ExactGreedyDecodeBurstLease,
+        *,
+        correctness_trace: bool = False,
+    ):
+        graph = (
+            self.exact_greedy_decode_burst_correctness_graph
+            if correctness_trace
+            else self.exact_greedy_decode_burst_graph
+        )
+        capability = self.exact_greedy_decode_burst_capability(
+            correctness_trace=correctness_trace,
+        )
+        if not capability["available"] or graph is None:
+            return self._exact_greedy_decode_burst_fallback(
+                self.exact_greedy_decode_burst_stats,
+                capability["fallback_reason"]
+                or "capture_unavailable",
+            )
+        if not isinstance(seqs, tuple) or len(seqs) != 1:
+            return self._exact_greedy_decode_burst_fallback(
+                self.exact_greedy_decode_burst_stats,
+                "sequence_count_unsupported",
+            )
+        seq = seqs[0]
+        if int(seq.seq_id) != lease.sequence_id:
+            return self._exact_greedy_decode_burst_fallback(
+                self.exact_greedy_decode_burst_stats,
+                "sequence_identity_drift",
+            )
+        block_ids = tuple(
+            int(block_id) for block_id in seq.block_table
+        )
+        leased_block_ids = tuple(
+            block_id
+            for block_id, _generation
+            in lease.block_table_identity
+        )
+        if block_ids != leased_block_ids:
+            return self._exact_greedy_decode_burst_fallback(
+                self.exact_greedy_decode_burst_stats,
+                "block_table_identity_drift",
+            )
+        graph_capability = graph.capability()
+        block_table_width = int(
+            graph_capability["block_table_width"]
+        )
+        if len(block_ids) > block_table_width:
+            return self._exact_greedy_decode_burst_fallback(
+                self.exact_greedy_decode_burst_stats,
+                "block_table_width_unsupported",
+            )
+        padded_block_table = [
+            list(block_ids)
+            + [-1] * (block_table_width - len(block_ids))
+        ]
+        block_table = self.prepare_block_tables_from_rows(
+            padded_block_table,
+            "exact_greedy_burst_block_table",
+        )
+        return graph.replay(
+            lease=lease,
+            initial_token=int(seq.last_token),
+            block_table=block_table,
+            graph_generation=int(
+                capability["graph_generation"]
+            ),
+            rank=self.rank,
+            tensor_parallel_size=self.world_size,
+            expected_graph_identity_sha256=capability[
+                "graph_identity_sha256"
+            ],
+        )
+
+    def _capture_exact_greedy_decode_burst(
+        self,
+        *,
+        correctness_trace: bool = False,
+        sampled_logit_ordinals: tuple[int, ...] = (),
+    ):
+        target_attribute = (
+            "exact_greedy_decode_burst_correctness_graph"
+            if correctness_trace
+            else "exact_greedy_decode_burst_graph"
+        )
+        setattr(self, target_attribute, None)
+        if not self.config.exact_greedy_decode_burst:
+            return None
+        if self.world_size != 1:
+            self.exact_greedy_decode_burst_stats.record_fallback(
+                "capture_tensor_parallel_unsupported"
+            )
+            return None
+        if self.rank != 0:
+            self.exact_greedy_decode_burst_stats.record_fallback(
+                "capture_non_root_rank"
+            )
+            return None
+        if len(self._exact_greedy_burst_scratch_block_ids) != 1:
+            self.exact_greedy_decode_burst_stats.record_fallback(
+                "capture_scratch_unavailable"
+            )
+            return None
+        max_num_blocks = (
+            self.config.max_model_len + self.block_size - 1
+        ) // self.block_size
+        history_capacity = 8
+        tensors = {
+            "input_token": torch.full(
+                (1,),
+                -1,
+                dtype=torch.int64,
+            ),
+            "position": torch.full(
+                (1,),
+                -1,
+                dtype=torch.int64,
+            ),
+            "context_length": torch.full(
+                (1,),
+                -1,
+                dtype=torch.int32,
+            ),
+            "slot_mapping": torch.full(
+                (1,),
+                -1,
+                dtype=torch.int32,
+            ),
+            "block_table": torch.full(
+                (1, max_num_blocks),
+                -1,
+                dtype=torch.int32,
+            ),
+            "token_history": torch.full(
+                (history_capacity,),
+                -1,
+                dtype=torch.int64,
+            ),
+            "history_index": torch.zeros(
+                (1,),
+                dtype=torch.int64,
+            ),
+        }
+        if correctness_trace:
+            sample_capacity = 3
+            vocab_size = int(self.config.hf_config.vocab_size)
+            tensors["sampled_logits"] = torch.zeros(
+                (sample_capacity, vocab_size),
+                dtype=torch.float32,
+            )
+            tensors["sample_ordinals"] = torch.full(
+                (sample_capacity,),
+                -1,
+                dtype=torch.int64,
+            )
+            if sampled_logit_ordinals:
+                tensors["sample_ordinals"][
+                    :len(sampled_logit_ordinals)
+                ] = torch.tensor(
+                    sampled_logit_ordinals,
+                    dtype=torch.int64,
+                    device=tensors["sample_ordinals"].device,
+                )
+        scratch_block_id = int(
+            self._exact_greedy_burst_scratch_block_ids[0]
+        )
+        graph_pool = torch.cuda.graph_pool_handle()
+        visible_blocks = int(self.config.num_kvcache_blocks)
+
+        def set_burst_context(
+            *,
+            slot_mapping,
+            context_length,
+            block_table,
+        ):
+            set_context(
+                False,
+                slot_mapping=slot_mapping,
+                context_lens=context_length,
+                block_tables=block_table,
+            )
+
+        def live_kv_identity():
+            visible_kv = self.kv_cache[
+                :,
+                :,
+                :visible_blocks,
+            ]
+            return (
+                int(visible_kv.data_ptr()),
+                tuple(visible_kv.shape),
+                tuple(visible_kv.stride()),
+                int(visible_kv.storage_offset()),
+            )
+
+        try:
+            graph = ExactGreedyDecodeBurstGraph.capture(
+                tensors=tensors,
+                model=self.model,
+                compute_logits=self.model.compute_logits,
+                float32_dtype=torch.float32,
+                graph_generation=(
+                    self._ordinary_graph_generation
+                ),
+                rank=self.rank,
+                tensor_parallel_size=self.world_size,
+                scratch_block_id=scratch_block_id,
+                block_size=self.block_size,
+                graph_pool=graph_pool,
+                graph_factory=torch.cuda.CUDAGraph,
+                capture_context_factory=(
+                    lambda graph, pool: torch.cuda.graph(
+                        graph,
+                        pool=pool,
+                    )
+                ),
+                synchronize=torch.cuda.synchronize,
+                memory_snapshot=lambda: (
+                    int(torch.cuda.memory_allocated()),
+                    int(torch.cuda.memory_reserved()),
+                ),
+                clock_ns=time.perf_counter_ns,
+                set_decode_context=set_burst_context,
+                reset_context=reset_context,
+                live_kv_snapshot=live_kv_identity,
+                correctness_trace=correctness_trace,
+                sampled_logit_ordinals=(
+                    sampled_logit_ordinals
+                ),
+                stats=self.exact_greedy_decode_burst_stats,
+            )
+        except Exception as error:
+            self.exact_greedy_decode_burst_stats.record_fallback(
+                "capture_failure:" + type(error).__name__
+            )
+            setattr(self, target_attribute, None)
+            return None
+        setattr(self, target_attribute, graph)
+        return graph
+
+    def capture_exact_greedy_decode_burst_correctness_graph(
+        self,
+        sampled_logit_ordinals: tuple[int, ...],
+    ):
+        return self._capture_exact_greedy_decode_burst(
+            correctness_trace=True,
+            sampled_logit_ordinals=sampled_logit_ordinals,
+        )
+
     def _capture_graph_resident_greedy_tail(self) -> None:
         self.graph_resident_greedy_tail = None
         if not self.config.graph_resident_greedy_tail:
@@ -9876,3 +10214,4 @@ class ModelRunner:
         )
         self._ordinary_graph_generation += 1
         self._capture_graph_resident_greedy_tail()
+        self._capture_exact_greedy_decode_burst()
