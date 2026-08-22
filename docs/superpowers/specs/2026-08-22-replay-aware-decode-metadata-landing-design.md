@@ -27,9 +27,9 @@ token:
 3. Copy each pageable tensor into a reusable pinned-host buffer.
 4. Allocate a new CUDA tensor for each metadata field through `.cuda()`.
 5. Copy those temporary CUDA tensors into captured CUDA Graph buffers.
-6. Clear every captured input and output buffer with `zero_()`, including
-   regions that the selected graph cannot read and output storage that the
-   graph overwrites completely.
+6. Clear every captured input buffer with `zero_()`, including regions that
+   the selected graph cannot read. Output storage is already correctly
+   excluded from this clear.
 
 For batch-1 decode, all live scalar fields are overwritten each step.
 `context_lens` bounds the valid block-table prefix, and the graph overwrites
@@ -136,8 +136,11 @@ the runner:
 1. copies pinned input IDs, positions, slot mappings, and context lengths
    directly into the corresponding active graph slices;
 2. copies only the valid block-table prefix into the active graph row;
-3. does not clear graph outputs because replay overwrites the active output;
-4. does not clear inactive graph rows because an exact batch-1 graph has none;
+3. retains the existing behavior of not clearing graph outputs because replay
+   overwrites the active output;
+4. does not clear graph inputs or inactive graph rows because every readable
+   batch-1 input element is overwritten and an exact batch-1 graph has no
+   inactive row;
 5. replays the graph on the same stream after the copies.
 
 The selected graph size must equal the active batch size. A padded graph is not
