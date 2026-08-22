@@ -52,6 +52,8 @@ SOURCE_FILES = (
     "tools/test_replay_aware_decode_metadata_gate.py",
     "tools/replay_aware_decode_metadata_verify.py",
     "tools/test_replay_aware_decode_metadata_verify.py",
+    "tools/run_replay_aware_decode_metadata_remote.py",
+    "tools/test_run_replay_aware_decode_metadata_remote.py",
 )
 
 
