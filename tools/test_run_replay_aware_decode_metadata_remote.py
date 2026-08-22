@@ -302,6 +302,42 @@ def test_failed_chunked_download_preserves_partial_evidence():
         )
 
 
+def test_committed_archive_is_limited_to_runtime_source_closure():
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout=b"archive",
+            stderr=b"",
+        )
+
+    payload = remote.committed_archive(
+        Path("/repo"),
+        "a" * 40,
+        command_runner=runner,
+    )
+
+    assert payload == b"archive"
+    assert remote.COMMITTED_ARCHIVE_PATHS == (
+        "tinyvllm",
+        "tools",
+    )
+    assert calls[0][0] == [
+        "git",
+        "archive",
+        "--format=tar",
+        "a" * 40,
+        "tinyvllm",
+        "tools",
+    ]
+    assert "artifacts" not in calls[0][0]
+    assert "experiments" not in calls[0][0]
+    assert "docs" not in calls[0][0]
+
+
 def test_controller_source_has_no_destructive_gpu_commands():
     source = Path(remote.__file__).read_text(
         encoding="utf-8"
@@ -325,6 +361,7 @@ def main() -> None:
     test_download_inventory_requires_terminal_bundle()
     test_remote_preflight_uses_pinned_python()
     test_failed_chunked_download_preserves_partial_evidence()
+    test_committed_archive_is_limited_to_runtime_source_closure()
     test_controller_source_has_no_destructive_gpu_commands()
     print("replay-aware metadata remote tests passed")
 

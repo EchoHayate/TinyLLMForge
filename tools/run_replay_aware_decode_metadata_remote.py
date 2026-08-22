@@ -37,6 +37,10 @@ LOCAL_ARTIFACT_ROOT = (
 MINIMUM_REMOTE_FREE_BYTES = 20 * 1024**3
 MINIMUM_KERBEROS_LIFETIME_SECONDS = 5_400
 MAX_CONSECUTIVE_POLL_FAILURES = 3
+COMMITTED_ARCHIVE_PATHS = (
+    "tinyvllm",
+    "tools",
+)
 REQUIRED_PRIMARY_FILES = (
     "case_rows.jsonl",
     "source_manifest.json",
@@ -215,16 +219,19 @@ def _wait_for_clean_gpu(
         time.sleep(poll_interval_seconds)
 
 
-def _committed_archive(
+def committed_archive(
     repo_root: Path,
     source_commit: str,
+    *,
+    command_runner=subprocess.run,
 ) -> bytes:
-    result = subprocess.run(
+    result = command_runner(
         [
             "git",
             "archive",
             "--format=tar",
             source_commit,
+            *COMMITTED_ARCHIVE_PATHS,
         ],
         cwd=repo_root,
         capture_output=True,
@@ -663,7 +670,7 @@ def run_controller(args) -> dict:
         timeout_seconds=args.max_wait_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
     )
-    archive = _committed_archive(
+    archive = committed_archive(
         REPO_ROOT,
         source_commit,
     )

@@ -5068,7 +5068,7 @@ def main():
         test_replay_aware_decode_preparation_fails_closed_when_disabled,
         test_prelanded_single_sequence_replay_skips_copy_and_zero,
         test_exact_graph_capacity_reserves_scheduler_invisible_scratch,
-        test_spec_verify_scratch_capacity_uses_exact_q_without_padding,
+        test_spec_verify_scratch_capacity_covers_worst_row_offset_without_padding,
         test_decode_and_spec_verify_scratch_partitions_are_disjoint,
         test_scratch_blocks_are_above_scheduler_visible_range,
         test_feature_enabled_startup_captures_only_batch_one,
