@@ -50235,3 +50235,161 @@ The next optimization candidate is a zero-temperature greedy-sampling fast
 path that preserves float32 argmax semantics while skipping temperature H2D,
 softmax, Gumbel generation, division, and the second argmax. No implementation
 or performance claim exists for that candidate yet.
+
+## 2026-08-22 graph-resident greedy-tail terminal handoff
+
+This EOF section supersedes the preceding replay-aware metadata handoff where
+the current optimization status overlaps. The independently motivated
+Graph-Resident Greedy Tail was implemented default-disabled and evaluated with
+the frozen Qwen3-0.6B three-arm Stage-1 gate.
+
+```text
+design commit:
+  7e0b7eb
+implementation plan commit:
+  3a9d29c
+mechanism and gate source commit:
+  5df92444a5543a6cd042b7615812b7c7d9015fa7
+run tag:
+  20260822-qwen3-06b-graph-greedy-tail-r2
+classification:
+  NO_GO_LEGACY_TPOT_MEDIAN
+independent verification:
+  PASS
+comparison SHA256:
+  9b5ac3c02dd93b388043bc5518db77f93cac4564601e77e7bafc200f681e3f1a
+manifest SHA256:
+  2ac5587c02639d70f35ad1d01734f0314a87bc375b0f813e057c51329754f86a
+worker exit:
+  0
+performance rows:
+  45 / 45
+correctness rows:
+  27 / 27
+manifest entries:
+  34
+```
+
+The source-bound controller admitted GPU 2,
+`GPU-63c05907-407b-8240-07a0-f38872840867`, as an NVIDIA A100 80GB PCIe
+with 0 MiB used, 0% utilization, and no compute processes. The same UUID and
+strict-clean state passed the second admission immediately before launch.
+Kerberos had 34,336 seconds remaining against a 5,400-second minimum. The
+approved remote root had 1,691,401,760,768 free bytes.
+
+All task data remained under:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  graph-resident-greedy-tail/
+```
+
+Canonical local evidence:
+
+```text
+artifacts/graph_resident_greedy_tail/
+  20260822-qwen3-06b-graph-greedy-tail-r2/
+```
+
+Canonical remote evidence:
+
+```text
+staging:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  graph-resident-greedy-tail/staging/
+  20260822-qwen3-06b-graph-greedy-tail-r2
+primary:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  graph-resident-greedy-tail/runs/
+  20260822-qwen3-06b-graph-greedy-tail-r2
+controller:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  graph-resident-greedy-tail/controller-verification/
+  20260822-qwen3-06b-graph-greedy-tail-r2
+```
+
+Correctness and path authority:
+
+```text
+exact output-token IDs:                 PASS
+exact decoded-text hashes:              PASS
+logit pair count:                       27
+logit maximum absolute difference:      0.0
+logit aggregate mean absolute diff:     0.0
+argmax equality:                        PASS
+graph decode replay inventory:          1,905 / 1,905
+final token D2H inventory:              1,905 / 1,905
+external compute_logits calls avoided:  1,905
+external float32 conversions avoided:   1,905
+external argmax calls avoided:          1,905
+```
+
+Benefit versus legacy:
+
+```text
+median TPOT improvement:
+  short   2.583740%
+  medium  2.204092%
+  long    2.287896%
+  aggregate 2.282515%
+p95 TPOT improvement:
+  short   2.529970%
+  medium  1.927148%
+  long    1.683326%
+  aggregate 1.409071%
+aggregate p99 TPOT improvement:          1.985126%
+aggregate E2E improvement:               1.335947%
+aggregate throughput improvement:        1.335947%
+aggregate TTFT regression:               1.811383%
+5%-median winning buckets:               0 / 3
+```
+
+Incremental result versus the already implemented host-greedy arm:
+
+```text
+aggregate median TPOT:                   regression 1.455072%
+aggregate p95 TPOT:                      regression 1.217059%
+aggregate p99 TPOT:                      regression 0.997322%
+aggregate E2E:                           regression 1.470144%
+aggregate throughput:                    regression 1.470144%
+aggregate TTFT:                          regression 0.813576%
+```
+
+Cost:
+
+```text
+capture duration:
+  minimum 0.904841 s
+  median  6.677061 s
+  maximum 13.270761 s
+capture allocated delta:                 1,824,256 bytes
+capture reserved delta:                  2,097,152 bytes
+retained static bytes:                   911,624 bytes
+aggregate peak-reserved regression:      0.004983%
+```
+
+The mechanism is numerically exact and the protected regression limits pass,
+but it misses every required 5% legacy bucket-median win, misses the 5%
+aggregate legacy P95 target, and regresses the host-greedy median rather than
+improving it by 2%. The fixed-precedence terminal classification is therefore
+`NO_GO_LEGACY_TPOT_MEDIAN`.
+
+The feature remains default-disabled. Qwen3-8B was not run because Stage 1 is
+ineligible. No performance claim or promotion is authorized. The earlier r1
+tag remains immutable partial evidence of a preflight-only missing-`pytest`
+failure; no benchmark worker was launched for r1. Commit `5df9244` made the
+pure contract preflight dependency-light, after which r2 completed.
+
+```text
+GRAPH_RESIDENT_GREEDY_TAIL_STAGE1=NO_GO_LEGACY_TPOT_MEDIAN
+GRAPH_RESIDENT_GREEDY_TAIL_CORRECTNESS=PASS_EXACT
+GRAPH_RESIDENT_GREEDY_TAIL_GRAPH_REPLAY=PASS_1905_OF_1905
+GRAPH_RESIDENT_GREEDY_TAIL_INCREMENTAL_VS_HOST=REGRESSION_1_455072_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_DEFAULT_ENABLED=false
+GRAPH_RESIDENT_GREEDY_TAIL_QWEN3_8B=NOT_RUN_INELIGIBLE
+GRAPH_RESIDENT_GREEDY_TAIL_PROMOTION=NOT_PROMOTABLE
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```

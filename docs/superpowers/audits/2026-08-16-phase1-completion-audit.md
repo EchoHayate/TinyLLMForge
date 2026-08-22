@@ -2480,6 +2480,152 @@ PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
 
+## 2026-08-22 Graph-Resident Greedy Tail Reconciliation
+
+This reconciliation records the complete Graph-Resident Greedy Tail evidence.
+The compact EOF authority below supersedes earlier terminal summaries where
+they overlap. This section covers the
+default-disabled Graph-Resident Greedy Tail implementation and the immutable
+Qwen3-0.6B three-arm Stage-1 run
+`20260822-qwen3-06b-graph-greedy-tail-r2`.
+
+### Prompt-to-artifact completion checklist
+
+| Requirement | Concrete evidence | Status |
+| --- | --- | --- |
+| Derive an original optimization from an observed inference hot path | `docs/superpowers/specs/2026-08-22-graph-resident-greedy-tail-design.md` identifies batch-1 greedy LM-head, float32 conversion, and argmax work outside the existing transformer graph. Design commit `7e0b7eb`. | `COMPLETE` |
+| Freeze architecture, failure semantics, benchmark, benefit, and cost before implementation | `docs/superpowers/plans/2026-08-22-graph-resident-greedy-tail.md`, commit `3a9d29c`, defines the model-agnostic mechanism, three arms, 45 performance rows, 27 correctness rows, thresholds, and promotion boundary. | `COMPLETE` |
+| Keep mechanism model-agnostic and default-disabled | `tinyvllm/engine/graph_resident_greedy_tail.py`, `tinyvllm/config.py`, and `tools/test_graph_resident_greedy_tail.py`; `graph_resident_greedy_tail=False`. | `COMPLETE` |
+| Decide eligibility before transformer replay and never retry after current-step KV mutation | `tinyvllm/engine/model_runner.py` and `tools/test_model_runner_spec_verify.py` cover pre-replay eligibility, explicit replay result, quarantine, and no post-replay fallback. | `COMPLETE` |
+| Capture exactly LM-head, float32 conversion, and argmax against stable transformer output | `GraphResidentGreedyTail.capture()` and its fake-graph lifecycle tests; source identity includes pointer, shape, stride, offset, dtype, and device. | `COMPLETE` |
+| Preserve host scheduler ownership with exactly one final token D2H per decode step | Every graph-greedy performance row records 127 replays and 127 final token D2H calls; aggregate is 1,905/1,905. | `COMPLETE` |
+| Compare legacy, host-greedy, and graph-greedy under the same model and workload | `primary/workload_manifest.json` and `primary/case_rows.jsonl`: Qwen3-0.6B, TP1, batch 1, temperature 0, 128 generated tokens, 2 warmups, 5 repetitions, prompt lengths 256/2048/8192, 45/45 rows. | `COMPLETE` |
+| Prove exact outputs and bounded logits | `primary/correctness_rows.jsonl` plus 27 manifest-bound float32 sidecars: output IDs/text exact, `max_abs=0.0`, aggregate `mean_abs=0.0`, all argmax equal. | `COMPLETE` |
+| Report TPOT, TTFT, E2E, throughput, and CUDA memory against both baselines | `primary/comparison.json` reconstructs per-bucket and aggregate median/P95/P99 TPOT, TTFT, E2E, throughput, allocated memory, and reserved memory. | `COMPLETE` |
+| Report optimization cost with benefit | `primary/comparison.json`: capture 0.904841/6.677061/13.270761 s min/median/max, 1,824,256 allocated bytes, 2,097,152 reserved bytes, and 911,624 retained static bytes. | `COMPLETE` |
+| Enforce source-bound, strict-clean, mounted-root-only remote execution | `controller/preflight.json`: source `5df92444a5543a6cd042b7615812b7c7d9015fa7`; GPU 2 UUID `GPU-63c05907-407b-8240-07a0-f38872840867` passed both admissions at 0 MiB, 0%, no process; every path is under the approved `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818` root. | `COMPLETE` |
+| Fail fast on Kerberos and remote prerequisites | `controller/preflight.json`: 34,336 seconds remaining versus 5,400 required; remote Python/model/root checks pass; approved root reports 1,691,401,760,768 free bytes. | `COMPLETE` |
+| Run dependency-light plus Torch-dependent remote preflight | `tools/run_graph_resident_greedy_tail_remote.py` executes all eight frozen tests under `set -eu`; worker launch after preflight and `controller/completion.json` with exit 0 prove the chain completed. Commit `5df9244` removes the r1 missing-`pytest` blocker. | `COMPLETE` |
+| Preserve immutable failed and successful run tags | r1 remains partial preflight evidence; r2 used a new tag and has separate staging, primary, controller, and local destinations. | `COMPLETE` |
+| Produce manifest-bound evidence and an independent reconstruction | `primary/manifest.sha256` contains 34 artifacts; producer and independent verifier agree on classification and comparison SHA-256. Local reruns also pass. | `COMPLETE` |
+| Apply the frozen promotion boundary | Classification is `NO_GO_LEGACY_TPOT_MEDIAN`; feature remains disabled, Qwen3-8B is not run, and no README performance claim is added. | `COMPLETE` |
+
+### Source and execution authority
+
+```text
+design commit:
+  7e0b7eb
+implementation plan commit:
+  3a9d29c
+mechanism and gate source commit:
+  5df92444a5543a6cd042b7615812b7c7d9015fa7
+run tag:
+  20260822-qwen3-06b-graph-greedy-tail-r2
+remote worker exit:
+  0
+selected GPU:
+  index 2
+  GPU-63c05907-407b-8240-07a0-f38872840867
+  NVIDIA A100 80GB PCIe
+producer classification:
+  NO_GO_LEGACY_TPOT_MEDIAN
+independent verification:
+  PASS
+comparison SHA256:
+  9b5ac3c02dd93b388043bc5518db77f93cac4564601e77e7bafc200f681e3f1a
+manifest SHA256:
+  2ac5587c02639d70f35ad1d01734f0314a87bc375b0f813e057c51329754f86a
+```
+
+Canonical local evidence:
+
+```text
+artifacts/graph_resident_greedy_tail/
+  20260822-qwen3-06b-graph-greedy-tail-r2/
+```
+
+Canonical remote evidence is confined to:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  graph-resident-greedy-tail/
+```
+
+### Correctness and lifecycle result
+
+```text
+performance rows:                         45 / 45
+correctness rows:                         27 / 27
+manifest entries:                         34
+exact output-token IDs:                   PASS
+exact decoded-text hashes:                PASS
+logit maximum absolute difference:        0.0
+logit aggregate mean absolute difference: 0.0
+argmax equality:                          PASS
+graph-tail replay count:                  1,905 / 1,905
+final token D2H count:                    1,905 / 1,905
+avoided external compute_logits calls:    1,905
+avoided external float32 conversions:     1,905
+avoided external argmax calls:            1,905
+```
+
+### Benefit and cost
+
+Against legacy, graph-greedy improves median TPOT by 2.583740% short,
+2.204092% medium, and 2.287896% long; aggregate improvement is 2.282515%.
+Aggregate P95 improves 1.409071% and aggregate P99 improves 1.985126%.
+Aggregate E2E and throughput improve 1.335947%, while aggregate TTFT regresses
+1.811383%. All protected regressions remain inside their frozen limits.
+
+Against host-greedy, graph-greedy regresses aggregate median TPOT by
+1.455072%, P95 by 1.217059%, P99 by 0.997322%, E2E and throughput by
+1.470144%, and TTFT by 0.813576%. No bucket breaches the allowed 2% TPOT
+regression guard, but the required 2% aggregate median improvement is absent.
+
+The one-time and retained costs are:
+
+```text
+capture duration minimum:  0.904841 s
+capture duration median:   6.677061 s
+capture duration maximum: 13.270761 s
+allocated delta:           1,824,256 bytes
+reserved delta:            2,097,152 bytes
+retained static bytes:       911,624 bytes
+aggregate peak-reserved regression versus legacy: 0.004983%
+```
+
+### Classification and boundary
+
+The output and lifecycle contracts pass, but none of the three buckets meets
+the required 5% median TPOT improvement against legacy, aggregate legacy P95
+improves only 1.409071% instead of 5%, and graph-greedy does not provide the
+required 2% aggregate incremental gain over host-greedy. Fixed precedence
+therefore yields:
+
+```text
+GRAPH_RESIDENT_GREEDY_TAIL_RUN=20260822-qwen3-06b-graph-greedy-tail-r2
+GRAPH_RESIDENT_GREEDY_TAIL_SOURCE_COMMIT=5df92444a5543a6cd042b7615812b7c7d9015fa7
+GRAPH_RESIDENT_GREEDY_TAIL_CLASSIFICATION=NO_GO_LEGACY_TPOT_MEDIAN
+GRAPH_RESIDENT_GREEDY_TAIL_INDEPENDENT_VERIFICATION=PASS
+GRAPH_RESIDENT_GREEDY_TAIL_COMPARISON_SHA256=9b5ac3c02dd93b388043bc5518db77f93cac4564601e77e7bafc200f681e3f1a
+GRAPH_RESIDENT_GREEDY_TAIL_MANIFEST_SHA256=2ac5587c02639d70f35ad1d01734f0314a87bc375b0f813e057c51329754f86a
+GRAPH_RESIDENT_GREEDY_TAIL_CORRECTNESS=PASS_EXACT
+GRAPH_RESIDENT_GREEDY_TAIL_REPLAY=PASS_1905_OF_1905
+GRAPH_RESIDENT_GREEDY_TAIL_LEGACY_MEDIAN_WINNING_BUCKETS=0_OF_3
+GRAPH_RESIDENT_GREEDY_TAIL_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_2_282515_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_AGGREGATE_P95_TPOT=IMPROVEMENT_1_409071_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_INCREMENTAL_VS_HOST=REGRESSION_1_455072_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_CAPTURE_MEDIAN_SECONDS=6_677061
+GRAPH_RESIDENT_GREEDY_TAIL_RETAINED_BYTES=911624
+GRAPH_RESIDENT_GREEDY_TAIL_DEFAULT_ENABLED=false
+GRAPH_RESIDENT_GREEDY_TAIL_QWEN3_8B=NOT_RUN_INELIGIBLE
+GRAPH_RESIDENT_GREEDY_TAIL_PROMOTION=NOT_PROMOTABLE
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
 ## Final Classification
 
 ```text
@@ -3909,28 +4055,30 @@ PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
 
-## 2026-08-22 latest reconciliation authority
+## 2026-08-22 latest reconciliation authority: Graph-Resident Greedy Tail
 
 This EOF block is the latest authority for the Phase-1 matrix. The detailed
-prompt-to-artifact checklist appears in
-`2026-08-22 Replay-Aware Decode Metadata Landing Reconciliation` above.
+prompt-to-artifact checklist and benefit/cost reconciliation appear in
+`2026-08-22 Graph-Resident Greedy Tail Reconciliation` above.
 
 ```text
-REPLAY_AWARE_METADATA_RUN=20260822-qwen3-06b-replay-meta-r7
-REPLAY_AWARE_METADATA_SOURCE_COMMIT=34ba33e66acafd789201d4acb25316661fed90c6
-REPLAY_AWARE_METADATA_CLASSIFICATION=NO_GO_TPOT_MEDIAN
-REPLAY_AWARE_METADATA_INDEPENDENT_VERIFICATION=PASS
-REPLAY_AWARE_METADATA_COMPARISON_SHA256=2900aaedf52b97b27d9ed3105f832ad50767ff1e500d327401a9838811729da4
-REPLAY_AWARE_METADATA_MANIFEST_SHA256=af8067edad1609f336eba9688c5e40ff024a15dba6deb0cb91e71097821951f8
-REPLAY_AWARE_METADATA_EXACT_OUTPUTS=PASS_15_OF_15
-REPLAY_AWARE_METADATA_OPTIMIZED_PATH=PASS_127_OF_127_ALL_ON_ROWS
-REPLAY_AWARE_METADATA_MEDIAN_WINNING_BUCKETS=0_OF_3
-REPLAY_AWARE_METADATA_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_2_544992_PERCENT
-REPLAY_AWARE_METADATA_AGGREGATE_P95_TPOT=REGRESSION_1_041964_PERCENT
-REPLAY_AWARE_METADATA_PINNED_PEAK_BYTES=1792
-REPLAY_AWARE_METADATA_DEFAULT_ENABLED=false
-REPLAY_AWARE_METADATA_QWEN3_8B=NOT_RUN_INELIGIBLE
-REPLAY_AWARE_METADATA_PROMOTION=NOT_PROMOTABLE
+GRAPH_RESIDENT_GREEDY_TAIL_RUN=20260822-qwen3-06b-graph-greedy-tail-r2
+GRAPH_RESIDENT_GREEDY_TAIL_SOURCE_COMMIT=5df92444a5543a6cd042b7615812b7c7d9015fa7
+GRAPH_RESIDENT_GREEDY_TAIL_CLASSIFICATION=NO_GO_LEGACY_TPOT_MEDIAN
+GRAPH_RESIDENT_GREEDY_TAIL_INDEPENDENT_VERIFICATION=PASS
+GRAPH_RESIDENT_GREEDY_TAIL_COMPARISON_SHA256=9b5ac3c02dd93b388043bc5518db77f93cac4564601e77e7bafc200f681e3f1a
+GRAPH_RESIDENT_GREEDY_TAIL_MANIFEST_SHA256=2ac5587c02639d70f35ad1d01734f0314a87bc375b0f813e057c51329754f86a
+GRAPH_RESIDENT_GREEDY_TAIL_CORRECTNESS=PASS_EXACT
+GRAPH_RESIDENT_GREEDY_TAIL_REPLAY=PASS_1905_OF_1905
+GRAPH_RESIDENT_GREEDY_TAIL_LEGACY_MEDIAN_WINNING_BUCKETS=0_OF_3
+GRAPH_RESIDENT_GREEDY_TAIL_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_2_282515_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_AGGREGATE_P95_TPOT=IMPROVEMENT_1_409071_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_INCREMENTAL_VS_HOST=REGRESSION_1_455072_PERCENT
+GRAPH_RESIDENT_GREEDY_TAIL_CAPTURE_MEDIAN_SECONDS=6_677061
+GRAPH_RESIDENT_GREEDY_TAIL_RETAINED_BYTES=911624
+GRAPH_RESIDENT_GREEDY_TAIL_DEFAULT_ENABLED=false
+GRAPH_RESIDENT_GREEDY_TAIL_QWEN3_8B=NOT_RUN_INELIGIBLE
+GRAPH_RESIDENT_GREEDY_TAIL_PROMOTION=NOT_PROMOTABLE
 
 PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
 PHASE_1=NOT_ACHIEVED
