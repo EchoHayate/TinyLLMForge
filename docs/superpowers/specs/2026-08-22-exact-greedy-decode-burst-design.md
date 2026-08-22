@@ -157,6 +157,13 @@ advance Scheduler state, or rebuild decode metadata between them.
 The generic component does not inspect model type, checkpoint, tokenizer,
 prompt text, EOS identity, or workload labels.
 
+The hardware gate may request a separate correctness-only capture variant
+with a fixed device-side logit-sampling mask. That variant copies only the
+declared replay ordinals into a retained float32 logit-history tensor and
+materializes the selected rows after the burst. It performs no intermediate
+host synchronization. Correctness-only rows are excluded from performance
+aggregation, capture-cost comparison, and promotion metrics.
+
 ### 2. Complete-step graph
 
 The existing ordinary batch-1 graph captures only the transformer and
@@ -274,6 +281,11 @@ The lease is rejected unless all of these are true:
 Every failed condition uses the existing one-token path before any current
 step KV mutation.
 
+The production entrypoint rejects ordinary per-step logit recording. The
+gate-only correctness entrypoint is a distinct, explicitly labeled path with
+fixed sample ordinals and its own graph identity; it cannot be enabled by the
+public generation configuration.
+
 ### 4. ModelRunner execution
 
 For an accepted lease:
@@ -293,6 +305,10 @@ The implementation must prove:
 - no graph-external LM-head, float32 argmax, or ordinary sampler calls;
 - the final static input and metadata represent the next unexecuted step;
 - no second model execution for any committed token.
+
+The gate-only correctness variant may additionally perform one final D2H for
+its bounded sampled-logit tensor. That transfer is recorded separately and
+is never counted as a production-path token transfer or performance sample.
 
 ### 5. Engine and Scheduler commit
 
@@ -552,6 +568,13 @@ Retain:
 - Scheduler lease/commit/failure inventory;
 - source/workload manifests;
 - producer and independent-verifier receipts.
+
+Correctness/logit collection and performance timing use separate fresh
+ModelRunner instances. Performance rows must report the production graph
+identity with correctness tracing disabled. Correctness rows must report the
+gate-only trace graph identity, selected replay ordinals, and exactly one
+post-burst sampled-logit D2H operation when a burst contains a requested
+sample point.
 
 ## Deterministic Candidate Selection
 
