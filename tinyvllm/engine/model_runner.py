@@ -9030,6 +9030,7 @@ class ModelRunner:
             ],
         )
 
+    @torch.inference_mode()
     def run_exact_greedy_decode_burst(
         self,
         seqs: tuple[Sequence, ...],

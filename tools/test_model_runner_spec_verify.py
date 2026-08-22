@@ -4282,6 +4282,26 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
     assert call["expected_graph_identity_sha256"] == "b" * 64
 
 
+def test_model_runner_exact_burst_replay_enters_inference_mode():
+    tree = ast.parse(open(_MODEL_RUNNER_PATH).read())
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_exact_greedy_decode_burst"
+    )
+    decorators = [
+        ast.unparse(node) for node in method.decorator_list
+    ]
+    assert "torch.inference_mode()" in decorators
+
+
 def test_model_runner_exact_burst_rejects_wrong_sequence_before_graph():
     burst_module = sys.modules[
         "tinyvllm.engine.exact_greedy_decode_burst"
@@ -6094,6 +6114,7 @@ def main():
         test_exact_burst_scratch_is_reported_by_capacity_snapshot,
         test_exact_burst_capability_is_fail_closed_and_json_safe,
         test_model_runner_exact_burst_delegates_once_with_padded_block_table,
+        test_model_runner_exact_burst_replay_enters_inference_mode,
         test_model_runner_exact_burst_rejects_wrong_sequence_before_graph,
         test_model_runner_exact_burst_capture_owns_static_state_and_pool,
         test_scratch_blocks_are_above_scheduler_visible_range,
