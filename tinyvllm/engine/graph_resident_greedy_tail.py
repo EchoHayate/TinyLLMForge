@@ -260,6 +260,227 @@ class GraphResidentGreedyTailStats:
         }
 
 
+def _tensor_bytes(tensor, name: str) -> int:
+    try:
+        numel = tensor.numel()
+        element_size = tensor.element_size()
+    except (AttributeError, TypeError) as error:
+        raise ValueError(
+            f"{name} must expose numel() and element_size()"
+        ) from error
+    _require_non_negative_int(numel, f"{name} numel")
+    _require_non_negative_int(
+        element_size,
+        f"{name} element_size",
+    )
+    return numel * element_size
+
+
+class GraphResidentGreedyTail:
+    """Own one captured logits-to-token graph and its static outputs."""
+
+    def __init__(
+        self,
+        *,
+        graph,
+        logits,
+        float_logits,
+        token_ids,
+        receipt: GraphResidentGreedyTailCaptureReceipt,
+        stats: GraphResidentGreedyTailStats,
+    ):
+        self.graph = graph
+        self.logits = logits
+        self.float_logits = float_logits
+        self.token_ids = token_ids
+        self.receipt = receipt
+        self.stats = stats
+        self._token_d2h_pending = False
+
+    @classmethod
+    def capture(
+        cls,
+        *,
+        static_hidden,
+        compute_logits,
+        float32_dtype,
+        graph_generation: int,
+        rank: int,
+        graph_factory,
+        capture_context_factory,
+        synchronize,
+        memory_snapshot,
+        clock_ns,
+        stats: Optional[GraphResidentGreedyTailStats] = None,
+    ) -> "GraphResidentGreedyTail":
+        source_identity = tensor_identity(static_hidden)
+        _require_positive_int(
+            graph_generation,
+            "graph_generation",
+        )
+        _require_non_negative_int(rank, "rank")
+        for value, name in (
+            (compute_logits, "compute_logits"),
+            (graph_factory, "graph_factory"),
+            (
+                capture_context_factory,
+                "capture_context_factory",
+            ),
+            (synchronize, "synchronize"),
+            (memory_snapshot, "memory_snapshot"),
+            (clock_ns, "clock_ns"),
+        ):
+            if not callable(value):
+                raise ValueError(f"{name} must be callable")
+        if stats is None:
+            stats = GraphResidentGreedyTailStats()
+        if not isinstance(stats, GraphResidentGreedyTailStats):
+            raise ValueError(
+                "stats must be GraphResidentGreedyTailStats"
+            )
+
+        synchronize()
+        before_allocated, before_reserved = memory_snapshot()
+        _require_non_negative_int(
+            before_allocated,
+            "allocated memory snapshot",
+        )
+        _require_non_negative_int(
+            before_reserved,
+            "reserved memory snapshot",
+        )
+
+        warmup_logits = compute_logits(static_hidden[:1])
+        warmup_float_logits = warmup_logits.to(float32_dtype)
+        warmup_float_logits.argmax(dim=-1)
+        synchronize()
+
+        graph = graph_factory()
+        start_ns = clock_ns()
+        _require_non_negative_int(start_ns, "capture start time")
+        with capture_context_factory(graph):
+            logits = compute_logits(static_hidden[:1])
+            float_logits = logits.to(float32_dtype)
+            token_ids = float_logits.argmax(dim=-1)
+        synchronize()
+        end_ns = clock_ns()
+        _require_non_negative_int(end_ns, "capture end time")
+        if end_ns < start_ns:
+            raise ValueError(
+                "capture end time precedes start time"
+            )
+        after_allocated, after_reserved = memory_snapshot()
+        _require_non_negative_int(
+            after_allocated,
+            "allocated memory snapshot",
+        )
+        _require_non_negative_int(
+            after_reserved,
+            "reserved memory snapshot",
+        )
+        receipt = GraphResidentGreedyTailCaptureReceipt(
+            source_identity=source_identity,
+            graph_generation=graph_generation,
+            rank=rank,
+            capture_duration_ns=end_ns - start_ns,
+            allocated_delta_bytes=max(
+                0,
+                after_allocated - before_allocated,
+            ),
+            reserved_delta_bytes=max(
+                0,
+                after_reserved - before_reserved,
+            ),
+            retained_logits_bytes=_tensor_bytes(
+                logits,
+                "logits",
+            ),
+            retained_float32_bytes=_tensor_bytes(
+                float_logits,
+                "float logits",
+            ),
+            retained_token_bytes=_tensor_bytes(
+                token_ids,
+                "token ids",
+            ),
+        )
+        stats.record_capture(receipt)
+        return cls(
+            graph=graph,
+            logits=logits,
+            float_logits=float_logits,
+            token_ids=token_ids,
+            receipt=receipt,
+            stats=stats,
+        )
+
+    def matches(
+        self,
+        *,
+        static_hidden,
+        graph_generation: int,
+        rank: int,
+    ) -> bool:
+        try:
+            identity = tensor_identity(static_hidden)
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return (
+            identity == self.receipt.source_identity
+            and graph_generation
+            == self.receipt.graph_generation
+            and rank == self.receipt.rank
+        )
+
+    def replay(
+        self,
+        *,
+        static_hidden,
+        graph_generation: int,
+        rank: int,
+    ) -> GraphResidentGreedyTailReplay:
+        if self.stats.quarantine_reason is not None:
+            raise RuntimeError(
+                "graph-resident greedy tail is quarantined: "
+                f"{self.stats.quarantine_reason}"
+            )
+        if graph_generation != self.receipt.graph_generation:
+            raise RuntimeError("graph generation drift")
+        if rank != self.receipt.rank:
+            raise RuntimeError("rank drift")
+        if tensor_identity(
+            static_hidden
+        ) != self.receipt.source_identity:
+            raise RuntimeError("source identity drift")
+        if self._token_d2h_pending:
+            raise RuntimeError(
+                "previous replay token D2H is pending"
+            )
+        try:
+            self.graph.replay()
+        except Exception as error:
+            self.stats.quarantine(
+                "replay_failure:"
+                + type(error).__name__
+            )
+            raise
+        self.stats.record_replay()
+        self._token_d2h_pending = True
+        return GraphResidentGreedyTailReplay(
+            logits=self.logits,
+            token_ids=self.token_ids,
+        )
+
+    def mark_token_d2h(self) -> None:
+        if not self._token_d2h_pending:
+            raise RuntimeError("no replay token D2H is pending")
+        self.stats.record_token_d2h()
+        self._token_d2h_pending = False
+
+    def summary(self) -> dict[str, object]:
+        return self.stats.summary()
+
+
 def decide_graph_resident_greedy_tail(
     *,
     enabled: bool,
