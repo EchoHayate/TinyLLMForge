@@ -539,11 +539,6 @@ def _poll_worker(
         raise ValueError("remote worker PID is invalid")
     consecutive_failures = 0
     while True:
-        validate_kerberos(
-            minimum_lifetime_seconds=(
-                MINIMUM_KERBEROS_LIFETIME_SECONDS
-            )
-        )
         script = "\n".join((
             "import json,pathlib",
             (
@@ -788,11 +783,6 @@ def run_controller(args) -> dict:
             "remote benchmark worker failed with exit code "
             f"{exitcode}"
         )
-    validate_kerberos(
-        minimum_lifetime_seconds=(
-            MINIMUM_KERBEROS_LIFETIME_SECONDS
-        )
-    )
     _run_remote_gates(
         source=source,
         primary=paths["primary"],
@@ -811,11 +801,6 @@ def run_controller(args) -> dict:
     _write_remote_completion(
         controller=paths["controller"],
         receipt=completion,
-    )
-    validate_kerberos(
-        minimum_lifetime_seconds=(
-            MINIMUM_KERBEROS_LIFETIME_SECONDS
-        )
     )
     downloaded = _download_terminal_bundle(
         paths=paths,

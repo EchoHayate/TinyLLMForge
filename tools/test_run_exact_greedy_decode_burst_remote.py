@@ -348,6 +348,147 @@ def test_worker_poll_fails_if_wrapper_disappears_before_exit_receipt() -> None:
     assert "/proc/321" in calls[0]
 
 
+def test_worker_poll_does_not_reapply_launch_kerberos_threshold() -> None:
+    calls = []
+    original_run_remote = remote.base._run_remote
+    original_validate_kerberos = remote.validate_kerberos
+    remote.base._run_remote = lambda command: (
+        calls.append(command)
+        or subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({
+                "state": "finished",
+                "exitcode": 0,
+            }),
+            stderr="",
+        )
+    )
+
+    def reject_launch_threshold(**_kwargs):
+        raise AssertionError(
+            "worker polling reapplied the launch Kerberos threshold"
+        )
+
+    remote.validate_kerberos = reject_launch_threshold
+    try:
+        assert remote._poll_worker(
+            controller="/approved/controller/fresh-tag",
+            worker_pid=321,
+            poll_interval_seconds=1,
+        ) == 0
+    finally:
+        remote.base._run_remote = original_run_remote
+        remote.validate_kerberos = original_validate_kerberos
+    assert len(calls) == 1
+    assert "/proc/321" in calls[0]
+
+
+def test_controller_applies_strict_kerberos_only_before_launch() -> None:
+    selected = _gpu_row(2)
+    kerberos_calls = []
+    patches = {
+        "validate_kerberos": remote.validate_kerberos,
+        "_probe_remote_requirements": remote._probe_remote_requirements,
+        "_wait_for_clean_gpu": remote._wait_for_clean_gpu,
+        "committed_archive": remote.committed_archive,
+        "_upload_source_archive": remote._upload_source_archive,
+        "_run_remote_preflight": remote._run_remote_preflight,
+        "validate_selected_gpu_still_clean":
+            remote.validate_selected_gpu_still_clean,
+        "_create_controller_dir": remote._create_controller_dir,
+        "_launch_worker": remote._launch_worker,
+        "_poll_worker": remote._poll_worker,
+        "_run_remote_gates": remote._run_remote_gates,
+        "_write_remote_completion": remote._write_remote_completion,
+        "_download_terminal_bundle": remote._download_terminal_bundle,
+        "require_pushed_head": remote.base.require_pushed_head,
+        "require_remote_destinations_absent":
+            remote.base.require_remote_destinations_absent,
+        "query_remote_gpu_rows": remote.base.query_remote_gpu_rows,
+    }
+
+    def launch_only_kerberos(**_kwargs):
+        kerberos_calls.append(True)
+        if len(kerberos_calls) > 2:
+            raise AssertionError(
+                "controller reapplied the launch Kerberos threshold"
+            )
+        return {"status": "PASS"}
+
+    remote.validate_kerberos = launch_only_kerberos
+    remote.base.require_pushed_head = lambda _root: "a" * 40
+    remote._probe_remote_requirements = lambda: {"status": "PASS"}
+    remote.base.require_remote_destinations_absent = lambda _paths: None
+    remote._wait_for_clean_gpu = lambda **_kwargs: ([selected], selected)
+    remote.committed_archive = lambda *_args, **_kwargs: b"archive"
+    remote._upload_source_archive = (
+        lambda **_kwargs: "/approved/staging/source"
+    )
+    remote._run_remote_preflight = lambda **_kwargs: None
+    remote.base.query_remote_gpu_rows = lambda: [selected]
+    remote.validate_selected_gpu_still_clean = (
+        lambda chosen, _rows: chosen
+    )
+    remote._create_controller_dir = lambda *_args, **_kwargs: None
+    remote._launch_worker = lambda **_kwargs: 321
+    remote._poll_worker = lambda **_kwargs: 0
+    remote._run_remote_gates = lambda **_kwargs: None
+    remote._write_remote_completion = lambda **_kwargs: None
+    remote._download_terminal_bundle = lambda **_kwargs: {
+        "local_verification": {"status": "PASS"},
+    }
+    try:
+        with TemporaryDirectory() as temporary:
+            result = remote.run_controller(remote.parse_args([
+                "--run-tag",
+                "fresh-controller-tag",
+                "--source-commit",
+                "a" * 40,
+                "--local-artifact-root",
+                temporary,
+            ]))
+    finally:
+        remote.validate_kerberos = patches["validate_kerberos"]
+        remote._probe_remote_requirements = patches[
+            "_probe_remote_requirements"
+        ]
+        remote._wait_for_clean_gpu = patches["_wait_for_clean_gpu"]
+        remote.committed_archive = patches["committed_archive"]
+        remote._upload_source_archive = patches[
+            "_upload_source_archive"
+        ]
+        remote._run_remote_preflight = patches[
+            "_run_remote_preflight"
+        ]
+        remote.validate_selected_gpu_still_clean = patches[
+            "validate_selected_gpu_still_clean"
+        ]
+        remote._create_controller_dir = patches[
+            "_create_controller_dir"
+        ]
+        remote._launch_worker = patches["_launch_worker"]
+        remote._poll_worker = patches["_poll_worker"]
+        remote._run_remote_gates = patches["_run_remote_gates"]
+        remote._write_remote_completion = patches[
+            "_write_remote_completion"
+        ]
+        remote._download_terminal_bundle = patches[
+            "_download_terminal_bundle"
+        ]
+        remote.base.require_pushed_head = patches[
+            "require_pushed_head"
+        ]
+        remote.base.require_remote_destinations_absent = patches[
+            "require_remote_destinations_absent"
+        ]
+        remote.base.query_remote_gpu_rows = patches[
+            "query_remote_gpu_rows"
+        ]
+    assert len(kerberos_calls) == 2
+    assert result["status"] == "COMPLETE"
+
+
 def test_dependency_light_preflight_runs_without_site_packages() -> None:
     expected_markers = {
         "tools/test_exact_greedy_decode_burst.py":
@@ -483,6 +624,8 @@ def main() -> None:
     test_archive_preflight_and_worker_are_source_bound()
     test_remote_gates_keep_selected_gpu_and_never_construct_kill()
     test_worker_poll_fails_if_wrapper_disappears_before_exit_receipt()
+    test_worker_poll_does_not_reapply_launch_kerberos_threshold()
+    test_controller_applies_strict_kerberos_only_before_launch()
     test_dependency_light_preflight_runs_without_site_packages()
     test_terminal_inventory_requires_all_manifest_files()
     test_remote_and_local_verifier_receipts_must_match()
