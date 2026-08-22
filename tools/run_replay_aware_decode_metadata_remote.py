@@ -290,8 +290,10 @@ def _run_remote_preflight(
     remote = (
         "set -eu; "
         f"cd {shlex.quote(source)}; "
-        f"export CUDA_VISIBLE_DEVICES={gpu_index}; "
-        f"export PYTHONPATH={shlex.quote(source)}; "
+        + remote_runtime_prelude(
+            source=source,
+            gpu_index=gpu_index,
+        )
         + "; ".join(commands)
     )
     _run_remote_checked(
@@ -310,6 +312,57 @@ def preflight_commands() -> tuple[str, ...]:
         ),
         f"{python} tools/test_chunked_prefill.py",
         f"{python} tools/test_profile_prefix_cache.py",
+    )
+
+
+def remote_runtime_prelude(
+    *,
+    source: str,
+    gpu_index: int,
+) -> str:
+    if (
+        not isinstance(source, str)
+        or not source.startswith(APPROVED_ROOT + "/")
+        or not source.endswith("/source")
+    ):
+        raise ValueError("remote source path is invalid")
+    if (
+        isinstance(gpu_index, bool)
+        or not isinstance(gpu_index, int)
+        or gpu_index < 0
+    ):
+        raise ValueError("GPU index is invalid")
+    runtime = source.rsplit("/", 1)[0] + "/runtime"
+    directories = {
+        "TMPDIR": runtime + "/tmp",
+        "TMP": runtime + "/tmp",
+        "TEMP": runtime + "/tmp",
+        "PYTHONPYCACHEPREFIX": runtime + "/pycache",
+        "XDG_CACHE_HOME": runtime + "/xdg",
+        "HF_HOME": runtime + "/hf-home",
+        "TORCH_EXTENSIONS_DIR": runtime + "/torch-extensions",
+    }
+    mkdir_paths = sorted(set(directories.values()))
+    exports = {
+        **directories,
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "CUDA_VISIBLE_DEVICES": str(gpu_index),
+        "PYTHONPATH": source,
+    }
+    return (
+        "umask 077; mkdir -p "
+        + " ".join(shlex.quote(path) for path in mkdir_paths)
+        + "; "
+        + " ".join(
+            "export "
+            + name
+            + "="
+            + shlex.quote(value)
+            + ";"
+            for name, value in exports.items()
+        )
+        + " "
     )
 
 
@@ -379,9 +432,11 @@ def _launch_worker(
     inner = (
         "set +e; "
         f"cd {shlex.quote(source)}; "
-        f"export CUDA_VISIBLE_DEVICES={gpu_index}; "
-        f"export PYTHONPATH={shlex.quote(source)}; "
-        f"{worker_command}; "
+        + remote_runtime_prelude(
+            source=source,
+            gpu_index=gpu_index,
+        )
+        + f"{worker_command}; "
         "code=$?; "
         f"printf '%s\\n' \"$code\" > "
         f"{shlex.quote(controller + '/remote_exitcode')}"

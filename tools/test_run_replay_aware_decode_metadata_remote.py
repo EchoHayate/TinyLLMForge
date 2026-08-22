@@ -244,6 +244,59 @@ def test_remote_preflight_uses_pinned_python():
     )
 
 
+def test_remote_execution_disables_user_site_for_preflight_and_worker():
+    commands = []
+    original = remote._run_remote_checked
+    remote._run_remote_checked = (
+        lambda command, **_kwargs: (
+            commands.append(command)
+            or subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="123\n",
+                stderr="",
+            )
+        )
+    )
+    source = (
+        remote.APPROVED_ROOT
+        + "/replay-aware-decode-metadata/staging/tag/source"
+    )
+    controller = (
+        remote.APPROVED_ROOT
+        + "/replay-aware-decode-metadata/"
+        "controller-verification/tag"
+    )
+    primary = (
+        remote.APPROVED_ROOT
+        + "/replay-aware-decode-metadata/runs/tag"
+    )
+    try:
+        remote._run_remote_preflight(
+            source=source,
+            gpu_index=2,
+        )
+        assert remote._launch_worker(
+            source=source,
+            primary=primary,
+            controller=controller,
+            run_tag="tag",
+            source_commit="a" * 40,
+            gpu_index=2,
+        ) == 123
+    finally:
+        remote._run_remote_checked = original
+
+    assert len(commands) == 2
+    for command in commands:
+        assert "export PYTHONNOUSERSITE=1" in command
+        assert "export PYTHONDONTWRITEBYTECODE=1" in command
+        assert (
+            remote.APPROVED_ROOT
+            + "/replay-aware-decode-metadata/staging/tag/runtime"
+        ) in command
+
+
 def test_failed_chunked_download_preserves_partial_evidence():
     with TemporaryDirectory() as tmp:
         destination = Path(tmp) / "download"
@@ -370,6 +423,7 @@ def main() -> None:
     test_remote_requirement_receipt_requires_python_and_model()
     test_download_inventory_requires_terminal_bundle()
     test_remote_preflight_uses_pinned_python()
+    test_remote_execution_disables_user_site_for_preflight_and_worker()
     test_failed_chunked_download_preserves_partial_evidence()
     test_committed_archive_is_limited_to_runtime_source_closure()
     test_controller_source_has_no_destructive_gpu_commands()
