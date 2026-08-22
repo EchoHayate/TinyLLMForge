@@ -671,10 +671,19 @@ def test_runtime_environment_stays_under_run_root():
         "PYTHONPYCACHEPREFIX": primary + "/pycache",
         "HF_HOME": primary + "/hf-home",
         "TORCH_EXTENSIONS_DIR": primary + "/torch-extensions",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     assert all(
-        value.startswith(primary + "/")
-        for value in environment.values()
+        environment[name].startswith(primary + "/")
+        for name in (
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "PYTHONPYCACHEPREFIX",
+            "HF_HOME",
+            "TORCH_EXTENSIONS_DIR",
+        )
     )
 
 

@@ -1654,6 +1654,8 @@ def remote_runtime_environment(primary_run: str) -> dict[str, str]:
         "PYTHONPYCACHEPREFIX": primary_run + "/pycache",
         "HF_HOME": primary_run + "/hf-home",
         "TORCH_EXTENSIONS_DIR": primary_run + "/torch-extensions",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
