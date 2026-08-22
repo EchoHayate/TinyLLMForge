@@ -797,6 +797,7 @@ def test_prefix_memory_rows_preserve_frozen_identity_fields():
         "state": "cold",
         "repetition": 0,
         "warmup": False,
+        "batch_size": 1,
         "cuda_allocated_bytes": 100,
         "cuda_reserved_bytes": 200,
         "cuda_peak_allocated_bytes": 300,
