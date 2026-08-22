@@ -561,6 +561,30 @@ def build_prefix_contract_bundle(
     return bundle
 
 
+def build_prefix_memory_rows(
+    performance_rows: list[dict],
+) -> list[dict]:
+    return [
+        {
+            key: row[key]
+            for key in (
+                "schema_version",
+                "case_id",
+                "shape",
+                "state",
+                "repetition",
+                "warmup",
+                "cuda_allocated_bytes",
+                "cuda_reserved_bytes",
+                "cuda_peak_allocated_bytes",
+                "cuda_peak_reserved_bytes",
+                "retained_logical_kv_bytes",
+            )
+        }
+        for row in performance_rows
+    ]
+
+
 def decide_staged_prefix_gate(bundle: dict) -> dict:
     from tools.staged_inference_benchmark_contract import (
         classify_prefix_bundle,
@@ -1874,24 +1898,7 @@ def run_profile(args) -> dict:
     )
     append_jsonl(
         out_dir / "prefix_memory_rows.jsonl",
-        [
-            {
-                key: row[key]
-                for key in (
-                    "schema_version",
-                    "case_id",
-                    "shape",
-                    "state",
-                    "repetition",
-                    "cuda_allocated_bytes",
-                    "cuda_reserved_bytes",
-                    "cuda_peak_allocated_bytes",
-                    "cuda_peak_reserved_bytes",
-                    "retained_logical_kv_bytes",
-                )
-            }
-            for row in all_performance_rows
-        ],
+        build_prefix_memory_rows(all_performance_rows),
     )
     _write_json(
         out_dir / "prefix_primary_summary.json",

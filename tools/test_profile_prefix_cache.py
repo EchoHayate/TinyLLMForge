@@ -20,6 +20,7 @@ from tools.profile_prefix_cache import (
     append_jsonl,
     audit_artifact_payloads,
     audit_batch_artifact_payloads,
+    build_prefix_memory_rows,
     build_prefix_contract_bundle,
     build_manifest,
     clear_reusable_cache_observation,
@@ -788,6 +789,26 @@ def test_prefix_contract_bundle_classifies_complete_and_missing_costs():
         raise AssertionError("missing Prefix cost evidence must fail closed")
 
 
+def test_prefix_memory_rows_preserve_frozen_identity_fields():
+    performance_row = {
+        "schema_version": 2,
+        "case_id": "single-256__cold__r0",
+        "shape": "single-256",
+        "state": "cold",
+        "repetition": 0,
+        "warmup": False,
+        "cuda_allocated_bytes": 100,
+        "cuda_reserved_bytes": 200,
+        "cuda_peak_allocated_bytes": 300,
+        "cuda_peak_reserved_bytes": 400,
+        "retained_logical_kv_bytes": 500,
+    }
+
+    assert build_prefix_memory_rows([performance_row]) == [
+        performance_row
+    ]
+
+
 def test_summarize_batch_result_compares_each_request_to_reference():
     class FakeTensor:
         def __init__(self, values):
@@ -1215,6 +1236,7 @@ def main():
     test_prefix_source_files_bind_staged_classifier_source()
     test_prefix_case_shape_uses_actual_batch_size()
     test_prefix_contract_bundle_classifies_complete_and_missing_costs()
+    test_prefix_memory_rows_preserve_frozen_identity_fields()
     test_summarize_batch_result_compares_each_request_to_reference()
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()
     test_decide_gate_rejects_any_correctness_failure_or_warm_regression()
