@@ -1234,7 +1234,7 @@ def test_llm_engine_step_records_observation_without_changing_return_value():
         "exact_greedy_decode_burst_replay_count": 0,
         "exact_greedy_decode_burst_token_d2h_calls": 0,
         "exact_greedy_decode_burst_sampled_logit_d2h_calls": 0,
-        "exact_greedy_decode_burst_sampled_logits": [],
+        "exact_greedy_decode_burst_sampled_logits": (),
         "exact_greedy_decode_burst_correctness_trace": False,
         "exact_greedy_decode_burst_host_visible_gap_ns": 0,
         "exact_greedy_decode_burst_fallback_reason": None,
