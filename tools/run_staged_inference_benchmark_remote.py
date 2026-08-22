@@ -1426,8 +1426,7 @@ def _remote_execute_from_spec(spec_path: Path) -> dict:
             environment_evidence=environment_evidence,
             promotion=spec["promotion"],
         )
-        for path in spec["runtime_environment"].values():
-            Path(path).mkdir(parents=True, exist_ok=True)
+        create_runtime_directories(spec["runtime_environment"])
         for filename in (
             "source_snapshot.tar",
             "source.patch",
@@ -1640,23 +1639,50 @@ def launch_remote_execution(
 
 
 def remote_runtime_environment(primary_run: str) -> dict[str, str]:
+    primary_prefix = APPROVED_ROOT + "/staged-benchmark/runs/"
     if (
         not isinstance(primary_run, str)
-        or not primary_run.startswith(
-            APPROVED_ROOT + "/staged-benchmark/runs/"
-        )
+        or not primary_run.startswith(primary_prefix)
     ):
         raise ValueError("primary run path is invalid")
+    run_tag = primary_run[len(primary_prefix):]
+    if not run_tag or "/" in run_tag:
+        raise ValueError("primary run path is invalid")
+    runtime_root = (
+        APPROVED_ROOT
+        + "/staged-benchmark/staging/"
+        + run_tag
+        + "/runtime"
+    )
     return {
-        "TMPDIR": primary_run + "/tmp",
-        "TEMP": primary_run + "/tmp",
-        "TMP": primary_run + "/tmp",
-        "PYTHONPYCACHEPREFIX": primary_run + "/pycache",
-        "HF_HOME": primary_run + "/hf-home",
-        "TORCH_EXTENSIONS_DIR": primary_run + "/torch-extensions",
+        "TMPDIR": runtime_root + "/tmp",
+        "TEMP": runtime_root + "/tmp",
+        "TMP": runtime_root + "/tmp",
+        "PYTHONPYCACHEPREFIX": runtime_root + "/pycache",
+        "HF_HOME": runtime_root + "/hf-home",
+        "TORCH_EXTENSIONS_DIR": runtime_root + "/torch-extensions",
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+
+
+def create_runtime_directories(environment: dict[str, str]) -> None:
+    if not isinstance(environment, dict):
+        raise ValueError("runtime environment is invalid")
+    for name in (
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "PYTHONPYCACHEPREFIX",
+        "HF_HOME",
+        "TORCH_EXTENSIONS_DIR",
+    ):
+        path = environment.get(name)
+        if not isinstance(path, str) or not path:
+            raise ValueError(
+                f"runtime directory environment is invalid: {name}"
+            )
+        Path(path).mkdir(parents=True, exist_ok=True)
 
 
 def build_deterministic_tar(

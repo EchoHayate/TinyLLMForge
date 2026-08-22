@@ -661,21 +661,23 @@ def test_remote_destination_preflight_rejects_any_existing_path():
         raise AssertionError("existing immutable run path was accepted")
 
 
-def test_runtime_environment_stays_under_run_root():
-    primary = remote.remote_paths("env-r1")["primary"]
+def test_runtime_environment_keeps_ephemeral_files_out_of_primary_artifacts():
+    paths = remote.remote_paths("env-r1")
+    primary = paths["primary"]
+    runtime_root = paths["staging"] + "/runtime"
     environment = remote.remote_runtime_environment(primary)
     assert environment == {
-        "TMPDIR": primary + "/tmp",
-        "TEMP": primary + "/tmp",
-        "TMP": primary + "/tmp",
-        "PYTHONPYCACHEPREFIX": primary + "/pycache",
-        "HF_HOME": primary + "/hf-home",
-        "TORCH_EXTENSIONS_DIR": primary + "/torch-extensions",
+        "TMPDIR": runtime_root + "/tmp",
+        "TEMP": runtime_root + "/tmp",
+        "TMP": runtime_root + "/tmp",
+        "PYTHONPYCACHEPREFIX": runtime_root + "/pycache",
+        "HF_HOME": runtime_root + "/hf-home",
+        "TORCH_EXTENSIONS_DIR": runtime_root + "/torch-extensions",
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
     assert all(
-        environment[name].startswith(primary + "/")
+        environment[name].startswith(runtime_root + "/")
         for name in (
             "TMPDIR",
             "TEMP",
@@ -685,6 +687,27 @@ def test_runtime_environment_stays_under_run_root():
             "TORCH_EXTENSIONS_DIR",
         )
     )
+
+
+def test_create_runtime_directories_ignores_non_path_environment_flags():
+    with TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        environment = {
+            "TMPDIR": str(root / "tmp"),
+            "TEMP": str(root / "tmp"),
+            "TMP": str(root / "tmp"),
+            "PYTHONPYCACHEPREFIX": str(root / "pycache"),
+            "HF_HOME": str(root / "hf-home"),
+            "TORCH_EXTENSIONS_DIR": str(root / "torch-extensions"),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        remote.create_runtime_directories(environment)
+        assert (root / "tmp").is_dir()
+        assert (root / "pycache").is_dir()
+        assert (root / "hf-home").is_dir()
+        assert (root / "torch-extensions").is_dir()
+        assert not (root / "1").exists()
 
 
 def test_download_ranges_are_bounded_and_complete():
