@@ -36,12 +36,7 @@ OWNED_SOURCE_ROOTS = (
     "tools/test_staged_inference_benchmark_contract.py",
     "tools/test_staged_inference_benchmark_gate.py",
     "tools/test_staged_inference_benchmark_worker.py",
-    "tinyvllm/config.py",
-    "tinyvllm/engine/block_manager.py",
-    "tinyvllm/engine/llm_engine.py",
-    "tinyvllm/engine/model_runner.py",
-    "tinyvllm/engine/scheduler.py",
-    "tinyvllm/models/qwen3.py",
+    "tinyvllm",
 )
 IGNORED_UNTRACKED_PREFIXES = (
     "artifacts",

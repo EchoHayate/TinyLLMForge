@@ -27,12 +27,7 @@ OWNED_SOURCE_ROOTS = (
     "tools/test_staged_inference_benchmark_contract.py",
     "tools/test_staged_inference_benchmark_gate.py",
     "tools/test_staged_inference_benchmark_worker.py",
-    "tinyvllm/config.py",
-    "tinyvllm/engine/block_manager.py",
-    "tinyvllm/engine/llm_engine.py",
-    "tinyvllm/engine/model_runner.py",
-    "tinyvllm/engine/scheduler.py",
-    "tinyvllm/models/qwen3.py",
+    "tinyvllm",
 )
 PREFIX_STATES = ("cold", "warm", "cache_cleared")
 PREFIX_PROFILE_POLICY = {
@@ -391,13 +386,26 @@ def _verify_source(run_dir: Path, manifest: dict) -> None:
             or not relative
             or Path(relative).is_absolute()
             or ".." in Path(relative).parts
-            or relative not in OWNED_SOURCE_ROOTS
+            or not any(
+                relative == root or relative.startswith(root + "/")
+                for root in OWNED_SOURCE_ROOTS
+            )
         ):
             raise ValueError("invalid source file path")
         _nonnegative_int(record.get("size_bytes"), "source file size")
         _validate_sha256(record.get("sha256"), "source file hash")
         expected_paths.append(relative)
-    if expected_paths != list(OWNED_SOURCE_ROOTS):
+    if (
+        expected_paths != sorted(expected_paths)
+        or len(expected_paths) != len(set(expected_paths))
+        or any(
+            not any(
+                path == root or path.startswith(root + "/")
+                for path in expected_paths
+            )
+            for root in OWNED_SOURCE_ROOTS
+        )
+    ):
         raise ValueError("source path set mismatch")
     with TemporaryDirectory() as temporary:
         source_root = Path(temporary) / "source"

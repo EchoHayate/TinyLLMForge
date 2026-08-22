@@ -81,7 +81,15 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 def _source_fixture(root: Path) -> tuple[dict, Path, Path]:
     source_root = root / "source-fixture"
     records = []
-    for ordinal, relative in enumerate(gate.OWNED_SOURCE_ROOTS):
+    source_paths = sorted([
+        (
+            f"{owned_root}/__init__.py"
+            if owned_root == "tinyvllm"
+            else owned_root
+        )
+        for owned_root in gate.OWNED_SOURCE_ROOTS
+    ])
+    for ordinal, relative in enumerate(source_paths):
         path = source_root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = f"synthetic source {ordinal}: {relative}\n".encode()

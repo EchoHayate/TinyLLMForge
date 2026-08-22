@@ -22,6 +22,14 @@ from tools import staged_inference_benchmark_contract as contract
 from tools import staged_inference_benchmark_gate as gate
 
 
+def test_owned_source_roots_capture_complete_tinyvllm_package():
+    assert "tinyvllm" in gate.OWNED_SOURCE_ROOTS
+    assert not any(
+        root.startswith("tinyvllm/")
+        for root in gate.OWNED_SOURCE_ROOTS
+    )
+
+
 def _source_evidence() -> dict:
     return {
         "schema_version": 1,
@@ -1039,6 +1047,7 @@ def test_qwen8_promotion_binds_two_verified_stage1_summaries():
 
 
 def main():
+    test_owned_source_roots_capture_complete_tinyvllm_package()
     test_initialize_binds_source_environment_workload_and_policy()
     test_existing_run_tag_is_never_overwritten()
     test_initialize_rejects_unbound_source_or_model_tier()

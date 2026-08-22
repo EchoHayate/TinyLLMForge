@@ -44,6 +44,10 @@ def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess:
 def _source_repo() -> tuple[tempfile.TemporaryDirectory, Path]:
     temporary = tempfile.TemporaryDirectory()
     root = Path(temporary.name)
+    (root / ".gitignore").write_text(
+        "__pycache__/\n",
+        encoding="utf-8",
+    )
     (root / "tinyvllm").mkdir()
     (root / "tinyvllm" / "__init__.py").write_text(
         "VALUE = 1\n",
@@ -183,6 +187,24 @@ def test_generic_source_evidence_rejects_untracked_owned_file():
         _cleanup_repo(temporary, root)
 
 
+def test_generic_source_evidence_excludes_ignored_files_under_owned_root():
+    temporary, root = _source_repo()
+    try:
+        cache = root / "tinyvllm" / "__pycache__" / "module.pyc"
+        cache.parent.mkdir()
+        cache.write_bytes(b"ignored bytecode")
+        evidence = _build(root, root / "snapshot")
+        assert [
+            record["path"] for record in evidence["files"]
+        ] == [
+            "tinyvllm/__init__.py",
+            "tools/profile_ngram_commit.py",
+            "tools/speculation_router_gate.py",
+        ]
+    finally:
+        _cleanup_repo(temporary, root)
+
+
 def test_generic_snapshot_rejects_patch_and_file_tampering():
     temporary, root = _source_repo()
     try:
@@ -238,6 +260,7 @@ def main():
     test_generic_source_evidence_reconstructs_dirty_tree()
     test_generic_source_evidence_ignores_only_configured_artifacts()
     test_generic_source_evidence_rejects_untracked_owned_file()
+    test_generic_source_evidence_excludes_ignored_files_under_owned_root()
     test_generic_snapshot_rejects_patch_and_file_tampering()
     test_generic_source_evidence_is_json_serializable()
     print("source audit tests passed")

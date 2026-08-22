@@ -72,7 +72,15 @@ def expand_owned_source_paths(
 ) -> tuple[str, ...]:
     del ignored_untracked_prefixes
     repo_root = repo_root.resolve()
-    paths = []
+    if len(owned_roots) != len(set(owned_roots)):
+        raise ValueError("owned source roots overlap")
+    for index, owned_root in enumerate(owned_roots):
+        for other in owned_roots[index + 1:]:
+            if (
+                owned_root.startswith(other + "/")
+                or other.startswith(owned_root + "/")
+            ):
+                raise ValueError("owned source roots overlap")
     for owned_root in owned_roots:
         root = repo_root / owned_root
         if not root.exists():
@@ -83,25 +91,24 @@ def expand_owned_source_paths(
             raise ValueError(
                 f"owned source path is a symlink: {owned_root}"
             )
-        candidates = root.rglob("*") if root.is_dir() else (root,)
-        for candidate in candidates:
-            if candidate.is_symlink():
-                raise ValueError(
-                    "owned source contains a symlink: "
-                    f"{candidate.relative_to(repo_root).as_posix()}"
-                )
-            if candidate.is_file():
-                paths.append(
-                    candidate.relative_to(repo_root).as_posix()
-                )
-            elif candidate.exists() and not candidate.is_dir():
-                raise ValueError(
-                    "owned source contains a non-regular path: "
-                    f"{candidate.relative_to(repo_root).as_posix()}"
-                )
-    if len(paths) != len(set(paths)):
-        raise ValueError("owned source roots overlap")
-    return tuple(sorted(paths))
+    paths = sorted(_git_path_set(
+        repo_root,
+        "ls-files",
+        "-z",
+        "--",
+        *owned_roots,
+    ))
+    for relative_path in paths:
+        candidate = repo_root / relative_path
+        if candidate.is_symlink():
+            raise ValueError(
+                f"owned source path is a symlink: {relative_path}"
+            )
+        if not candidate.is_file():
+            raise ValueError(
+                f"source path is not a regular file: {relative_path}"
+            )
+    return tuple(paths)
 
 
 def hash_source_tree(
