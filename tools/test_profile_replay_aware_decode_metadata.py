@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 import os
+from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -15,6 +17,8 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from tools.profile_replay_aware_decode_metadata import (
+    SOURCE_FILES,
+    _source_manifest,
     context_cases,
     nearest_rank_percentile,
     policy_order,
@@ -145,6 +149,29 @@ def test_summarize_rows_rejects_duplicate_policy_identity():
         summarize_rows([first, duplicate])
 
 
+def test_source_manifest_does_not_require_git_metadata():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for relative in SOURCE_FILES:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"fixture source for {relative}\n",
+                encoding="utf-8",
+            )
+
+        manifest = _source_manifest(
+            repo_root=root,
+            source_commit="a" * 40,
+            run_tag="immutable-test-tag",
+        )
+
+        assert manifest["source_commit"] == "a" * 40
+        assert set(manifest["source_sha256"]) == set(
+            SOURCE_FILES
+        )
+
+
 def main() -> None:
     test_worker_contract_helpers_are_deterministic()
     test_summarize_rows_accepts_exact_complete_pair()
@@ -152,6 +179,7 @@ def main() -> None:
     test_summarize_rows_rejects_missing_optimized_steps()
     test_summarize_rows_rejects_missing_cost_field()
     test_summarize_rows_rejects_duplicate_policy_identity()
+    test_source_manifest_does_not_require_git_metadata()
     print("replay-aware metadata profile tests passed")
 
 

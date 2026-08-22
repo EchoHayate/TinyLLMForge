@@ -10,7 +10,6 @@ import math
 import os
 from pathlib import Path
 import statistics
-import subprocess
 import time
 
 
@@ -49,6 +48,10 @@ SOURCE_FILES = (
     "tinyvllm/engine/model_runner.py",
     "tools/profile_replay_aware_decode_metadata.py",
     "tools/test_profile_replay_aware_decode_metadata.py",
+    "tools/replay_aware_decode_metadata_gate.py",
+    "tools/test_replay_aware_decode_metadata_gate.py",
+    "tools/replay_aware_decode_metadata_verify.py",
+    "tools/test_replay_aware_decode_metadata_verify.py",
 )
 
 
@@ -172,11 +175,10 @@ def _require_finite_non_negative(value, name: str) -> float:
     return float(value)
 
 
-def _validate_landing_summary(
+def _validate_landing_summary_shape(
     summary,
     *,
     policy: str,
-    expected_decode_steps: int,
 ) -> dict:
     if not isinstance(summary, dict):
         raise ValueError(
@@ -214,15 +216,6 @@ def _validate_landing_summary(
     normalized["fallback_counts"] = dict(
         sorted(fallback_counts.items())
     )
-    if policy == "on" and (
-        normalized["eligible_steps"]
-        != expected_decode_steps
-        or normalized["optimized_steps"]
-        != expected_decode_steps
-    ):
-        raise ValueError(
-            "optimized decode step inventory mismatch"
-        )
     if policy == "off" and (
         normalized["eligible_steps"] != 0
         or normalized["optimized_steps"] != 0
@@ -233,7 +226,33 @@ def _validate_landing_summary(
     return normalized
 
 
-def validate_case_row(row) -> dict:
+def _validate_landing_summary(
+    summary,
+    *,
+    policy: str,
+    expected_decode_steps: int,
+) -> dict:
+    normalized = _validate_landing_summary_shape(
+        summary,
+        policy=policy,
+    )
+    if policy == "on" and (
+        normalized["eligible_steps"]
+        != expected_decode_steps
+        or normalized["optimized_steps"]
+        != expected_decode_steps
+    ):
+        raise ValueError(
+            "optimized decode step inventory mismatch"
+        )
+    return normalized
+
+
+def validate_case_row(
+    row,
+    *,
+    require_complete_optimized_path: bool = True,
+) -> dict:
     if not isinstance(row, dict):
         raise ValueError("case row must be an object")
     required = {
@@ -369,13 +388,21 @@ def validate_case_row(row) -> dict:
         )
     normalized = dict(row)
     normalized["repetition"] = repetition
-    normalized["landing_summary"] = (
-        _validate_landing_summary(
-            row["landing_summary"],
-            policy=policy,
-            expected_decode_steps=expected_decode_steps,
+    if require_complete_optimized_path:
+        normalized["landing_summary"] = (
+            _validate_landing_summary(
+                row["landing_summary"],
+                policy=policy,
+                expected_decode_steps=expected_decode_steps,
+            )
         )
-    )
+    else:
+        normalized["landing_summary"] = (
+            _validate_landing_summary_shape(
+                row["landing_summary"],
+                policy=policy,
+            )
+        )
     return normalized
 
 
@@ -830,17 +857,6 @@ def _source_manifest(
     source_commit: str,
     run_tag: str,
 ) -> dict:
-    git_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_root,
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout.strip()
-    if git_head != source_commit:
-        raise RuntimeError(
-            "source commit does not match checked-out HEAD"
-        )
     return {
         "schema_version": SOURCE_SCHEMA_VERSION,
         "run_tag": run_tag,
