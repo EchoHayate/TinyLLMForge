@@ -173,6 +173,24 @@ def test_remote_preflight_uses_required_pinned_tests() -> None:
     } == {command.split()[-1] for command in commands}
 
 
+def test_model_runner_preflight_runs_without_pytest_installed() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            os.fspath(
+                REPO_ROOT / "tools" / "test_model_runner_spec_verify.py"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "model runner spec_verify tests passed" in result.stdout
+
+
 def test_runtime_environment_is_isolated_below_staging() -> None:
     source = (
         remote.APPROVED_ROOT
@@ -288,6 +306,7 @@ def main() -> None:
     test_source_commit_must_equal_pushed_head()
     test_source_archive_is_limited_to_runtime_and_tools()
     test_remote_preflight_uses_required_pinned_tests()
+    test_model_runner_preflight_runs_without_pytest_installed()
     test_runtime_environment_is_isolated_below_staging()
     test_worker_launch_is_source_bound_and_uses_new_worker()
     test_terminal_inventory_requires_all_primary_files()

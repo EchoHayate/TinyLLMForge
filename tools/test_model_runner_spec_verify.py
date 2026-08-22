@@ -9,13 +9,60 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import types
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:
+    if __name__ != "__main__":
+        raise
+
+    class _Raises:
+        def __init__(self, expected, *, match=None):
+            self.expected = expected
+            self.match = match
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exception_type, exception, _traceback):
+            if exception_type is None:
+                raise AssertionError(
+                    f"did not raise {self.expected!r}"
+                )
+            if not issubclass(exception_type, self.expected):
+                return False
+            if (
+                self.match is not None
+                and re.search(self.match, str(exception)) is None
+            ):
+                raise AssertionError(
+                    f"{exception!r} does not match {self.match!r}"
+                )
+            return True
+
+    class _Mark:
+        @staticmethod
+        def parametrize(*_args, **_kwargs):
+            return lambda function: function
+
+    class _PytestCompat:
+        mark = _Mark()
+
+        @staticmethod
+        def raises(expected, *, match=None):
+            return _Raises(expected, match=match)
+
+        @staticmethod
+        def skip(reason):
+            raise RuntimeError(f"skipped: {reason}")
+
+    pytest = _PytestCompat()
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
