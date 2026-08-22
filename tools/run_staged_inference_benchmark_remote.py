@@ -36,6 +36,8 @@ MODEL_PATHS = {
     "qwen3-8b": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
 }
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 LOCAL_ARTIFACT_ROOT = REPO_ROOT / "artifacts" / "staged_inference_benchmark"
 RUN_TAG_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024

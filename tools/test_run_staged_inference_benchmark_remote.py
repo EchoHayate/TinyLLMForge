@@ -85,6 +85,25 @@ def test_remote_paths_are_all_below_approved_root():
         assert "/data00/home/sitian/tllm/TinyLLMForge" not in path
 
 
+def test_direct_script_entrypoint_adds_repo_root_to_sys_path():
+    code = "\n".join((
+        "import runpy",
+        (
+            "runpy.run_path("
+            f"{str(Path(remote.__file__).resolve())!r})"
+        ),
+        "import tools.staged_inference_benchmark_gate",
+    ))
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_run_tag_rejects_paths_and_noncanonical_text():
     for value in (
         "",
