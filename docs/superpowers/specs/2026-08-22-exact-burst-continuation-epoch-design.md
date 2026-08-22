@@ -40,8 +40,8 @@ position. The next engine step nevertheless performs a full setup:
 
 The frozen Stage-1 workload uses a KV block size of 256 and generates 128
 tokens. For its aligned prompts, the decode tail remains in one writable
-block epoch. A K4 request therefore has one cold bind followed by approximately
-31 opportunities to reuse already-correct device state.
+block epoch. A K4 request therefore has one cold bind followed by 31
+opportunities to reuse already-correct device state.
 
 This is different from replay-aware metadata landing. That optimization
 reduced ordinary per-token staging but still rebuilt every step from host
