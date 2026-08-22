@@ -226,6 +226,19 @@ def test_archive_preflight_and_worker_are_source_bound() -> None:
         "tools/test_chunked_prefill.py",
     }
     assert required == {command.split()[-1] for command in commands}
+    pytest_commands = {
+        command.split()[-1]: command
+        for command in commands
+        if "-m pytest -q" in command
+    }
+    assert set(pytest_commands) == {
+        "tools/test_scheduler_prepared_postprocess.py",
+        "tools/test_llm_engine_exact_greedy_decode_burst.py",
+    }
+    assert all(
+        remote.REMOTE_PYTEST_SITE in command
+        for command in pytest_commands.values()
+    )
 
     captured = []
     original = remote._run_remote_checked

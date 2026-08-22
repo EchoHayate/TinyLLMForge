@@ -30,6 +30,7 @@ TASK_REMOTE_ROOT = (
 REMOTE_PYTHON = base.REMOTE_PYTHON
 REMOTE_HOST = base.REMOTE_HOST
 MODEL_PATH = base.MODEL_PATHS["qwen3-0.6b"]
+REMOTE_PYTEST_SITE = "/data00/home/sitian/pytest-site"
 LOCAL_ARTIFACT_ROOT = (
     REPO_ROOT / "artifacts" / "exact_greedy_decode_burst"
 )
@@ -337,14 +338,22 @@ def preflight_commands() -> tuple[str, ...]:
         "tools/test_exact_greedy_decode_burst_gate.py",
         "tools/test_exact_greedy_decode_burst_verify.py",
     )
-    torch_dependent = (
+    pytest_dependent = (
         "tools/test_scheduler_prepared_postprocess.py",
         "tools/test_llm_engine_exact_greedy_decode_burst.py",
+    )
+    torch_dependent = (
         "tools/test_multi_sequence_cuda_graph_gate.py",
         "tools/test_chunked_prefill.py",
     )
+    pytest_path = (
+        f"{shlex.quote(REMOTE_PYTEST_SITE)}:\"$PYTHONPATH\""
+    )
     return tuple(
         f"{python} -S {script}" for script in dependency_light
+    ) + tuple(
+        f"PYTHONPATH={pytest_path} {python} -m pytest -q {script}"
+        for script in pytest_dependent
     ) + tuple(
         f"{python} {script}" for script in torch_dependent
     )
