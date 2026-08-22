@@ -3578,3 +3578,198 @@ repeated under another tag without a new causal change. The next optimization
 must target the repeat-2, engine-step-4, second-spec-verify CUDA execution path
 or introduce a stronger causal isolation experiment; it must not claim that
 NVML cadence alone explains the observed tail.
+
+## 2026-08-22 Qwen3-0.6B Staged Prefix/Chunked Gate Reconciliation
+
+This EOF reconciliation supersedes the earlier loaded-evidence status only for
+the Prefix Cache and Chunked Prefill objective rows. It does not turn either
+negative Stage-1 result into a broader Phase-1 promotion claim.
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete artifact/evidence | Verdict |
+| --- | --- | --- |
+| Authoritative checkout and branch | `/Users/bytedance/Desktop/TinyLLMForge` resolves to `/Users/bytedance/dev/TinyLLMForge`; branch `feat/kv-sparse-attention` tracks `origin/feat/kv-sparse-attention` | `PASS` |
+| Immutable source-bound Prefix run | `artifacts/staged_inference_benchmark/20260822-qwen3-06b-prefix-task6-r12-controller/primary/run_manifest.json`; source commit `79d21dbab5f8d966ff4c2c490651d7341b0ec685`; empty source patch | `PASS` |
+| Immutable source-bound Chunked run | `artifacts/staged_inference_benchmark/20260822-qwen3-06b-chunked-task6-r14-controller/primary/run_manifest.json`; source commit `bec81707107e2cc6d0466f16edcb267bd134739c`; empty source patch | `PASS` |
+| Approved remote storage root | execution and controller receipts bind both runs below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818` | `PASS` |
+| Strict clean-GPU admission | both preflight receipts are `READY` and select A100 GPU index 2 / UUID `GPU-63c05907-407b-8240-07a0-f38872840867` | `PASS` |
+| Frozen Qwen3-0.6B checkpoint | both manifests identify `/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B` and model-config SHA256 `660db3b73d788119c04535e48cf9be5f55bc3100841a718637ae695b442f27dd` | `PASS` |
+| Prefix frozen matrix | one aggregate worker covers all required single/batch, cold/warm/cache-cleared shapes, two warmups, and seven measured repetitions | `PASS` structurally |
+| Prefix exact outputs/logits and targeted cases | `primary/case_rows.jsonl`, `request_timeline.jsonl`, and all three summaries agree; `repeat_513` and warm shape families fail | `FAIL` |
+| Prefix benefit plus cost | summary records minimum batch improvement `66.5827321453%`, minimum primary improvement `5.6329613577%`, 448 MiB retained logical KV, 16 retained blocks, zero CUDA-reserved regression, and `0.7719476888%` worst protected regression | `RECORDED_NOT_PROMOTABLE` |
+| Prefix primary finalization | 35 primary files; summary SHA256 `d08ecad6bbf706fa52dd19fc7b7f9402b87457f60109676c87fa5cdd0e7adad2`; manifest SHA256 `f894471b3f4f781a4fab5da8d0cd906c58f746b09fcd2b386139df7acbc98c1e` | `PASS` |
+| Prefix independent verification layers | primary receipt, remote controller receipt, downloaded controller verifier, local verifier, and receipt comparison all pass and agree on `PREFIX_CACHE_INCOMPLETE_OR_INCORRECT`; local receipt comparison SHA256 `c8597bfddbc95a610ff5a41b5d041fb6c12a7e55c1087cbba011fe9dfe42f11d` | `PASS` |
+| Chunked frozen workload and policy matrix | 5 OFF plus 5 FAIR_CHUNKED cases; each case retains 8 warmup and 96 measured requests with the frozen 58/24/14 short/medium/long shape | `PASS` structurally |
+| Chunked lifecycle completeness | all ten cases complete 104/104 requests with zero dropped, rejected, truncated, or unfinished requests | `PASS` |
+| Chunked starvation threshold | every OFF repetition has 0 starved requests; every FAIR_CHUNKED repetition has 86/96 measured requests above the 30-second deadline | `FAIL` |
+| Chunked exact-output parity | every paired repetition has the same 18/96 OFF/FAIR output mismatches; producer and independent verifier reconcile outputs before persisting/comparing case rows | `FAIL` |
+| Chunked benefit plus cost | 0/5 favorable repetitions; short p99 TTFT improvement `-132.5013178605%`; worst protected regression `129.2204031011%`; peak CUDA reserved memory approximately `12.048%` lower | `RECORDED_NOT_PROMOTABLE` |
+| Chunked primary finalization | 157 primary files; summary SHA256 `2fd016ea0dcd8e2ff014349696f3d7e0d927f60be1bb4a2e7e3b202ea6325be5`; manifest SHA256 `e62b456468e27014cee8df3c1200bf5892599187ed392ea3608ea0a884ab499f` | `PASS` |
+| Chunked independent verification layers | primary receipt, remote controller receipt, downloaded controller verifier, local verifier, and receipt comparison all pass and agree on `FAIR_CHUNKED_INCOMPLETE`; local receipt comparison SHA256 `b4be75a5cd81010500043b291de382112bcf463afa56b135c69add044fcd8073` | `PASS` |
+| Negative-run preservation and evidence-pipeline fixes | Chunked r12 preserves complete starvation evidence; r13 preserves the verifier-order mismatch; commits `27a7573e749aa3e33553a3ddab80625bba2a84ca` and `bec81707107e2cc6d0466f16edcb267bd134739c` fix those pipeline defects without changing thresholds | `PASS` |
+| Deterministic Stage-2 selection | direct `select_stage2_winner()` evaluation returns `{"winner": null, "reason": "no Stage-1 gate is eligible"}` | `PASS` |
+| Qwen3-8B claim boundary | no Stage-2 preflight or run was launched because neither Stage-1 gate is GO | `PASS` |
+| README publication boundary | `README.md` is unchanged because no independently verified GO exists | `PASS` |
+| Active TP4 schedstat diagnostic status | latest retained r4 controller ended at `2026-08-22T01:19:43+08:00` after attempt 173 with `status=FAILED`, `failed_epoch=block-0:eager:first`, zero completed epochs, and no surviving controller PID | `TERMINAL_FAILED_NOT_AUTHORITY` |
+| Fresh dependency-light closeout | eight staged benchmark/source-audit scripts and relevant `py_compile` pass on current HEAD | `PASS` |
+| Torch-dependent Chunked scheduler suite | `tools/test_chunked_prefill.py` stops during import with `ModuleNotFoundError: No module named 'torch'` under macOS system Python | `ENVIRONMENT_BLOCKED`, neither PASS nor semantic FAIL |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Hash-based full-block Prefix Cache | A source-bound loaded Qwen3-0.6B gate completed all finalization and independent-verification layers. Batch TTFT direction is positive and retained logical KV is measured, but `repeat_513`, every warm shape family, and the 1024/2048 single-request threshold fail. | `LOADED_GATE_COMPLETE_NEGATIVE_INCORRECT` |
+| Chunked Prefill fairness | A source-bound loaded Qwen3-0.6B 5-pair mixed-arrival gate completed all ten cases. FAIR_CHUNKED saves about 12.048% peak reserved CUDA memory, but has 86/96 starved measured requests per repetition, 18/96 paired output mismatches, 0/5 favorable repetitions, and a 132.5013% short-p99 TTFT regression. | `LOADED_GATE_COMPLETE_NEGATIVE_INCORRECT_AND_REGRESSED` |
+| Stage-1 evidence pipeline | Primary finalizer, remote independent verifier, controller verifier, local verifier, manifests, hashes, and receipt comparisons agree for both final bundles. | `ESTABLISHED` |
+| Qwen3-8B Stage 2 | Frozen selection returns `winner: null` because neither Stage-1 gate is eligible. | `NOT_RUN_INELIGIBLE` |
+| Publishable performance benefit | No correctness-preserving Stage-1 GO and no 8B authority exist. | `NOT_ESTABLISHED` |
+
+### Prefix evidence
+
+The Prefix gate ran on one admitted NVIDIA A100 80GB PCIe and retained:
+
+```text
+run tag:
+  20260822-qwen3-06b-prefix-task6-r12
+classification:
+  PREFIX_CACHE_INCOMPLETE_OR_INCORRECT
+source commit:
+  79d21dbab5f8d966ff4c2c490651d7341b0ec685
+primary/controller/local summary:
+  d08ecad6bbf706fa52dd19fc7b7f9402b87457f60109676c87fa5cdd0e7adad2
+manifest:
+  f894471b3f4f781a4fab5da8d0cd906c58f746b09fcd2b386139df7acbc98c1e
+local receipt comparison:
+  c8597bfddbc95a610ff5a41b5d041fb6c12a7e55c1087cbba011fe9dfe42f11d
+files:
+  35 primary, 5 controller
+```
+
+The `cold` and `cache_cleared` measured rows are all correct. Warm reuse is
+not: only 15/35 warm measured rows are marked correct. Single-request warm
+rows retain matching argmax in the sampled failures but exceed the frozen
+`max_abs <= 0.25` or `mean_abs <= 0.05` logit tolerances; both batch warm
+families also contain output/logit failures. The targeted `repeat_513` case
+fails independently.
+
+The benefit/cost fields are still useful diagnostic evidence:
+
+```text
+minimum batch TTFT improvement:              0.665827321453
+minimum primary single-request improvement: 0.056329613577
+maximum retained logical KV bytes:           469762048
+maximum retained reusable blocks:            16
+maximum CUDA reserved regression:            0.0
+worst protected-metric regression:           0.007719476888
+```
+
+They do not support saying the Prefix Cache is an optimization because the
+correctness gate fails and the two primary 1024/2048 single-request
+improvements are below 20%.
+
+### Chunked evidence
+
+The final Chunked gate used the fresh post-fix r14 tag on the same physical
+A100:
+
+```text
+run tag:
+  20260822-qwen3-06b-chunked-task6-r14
+classification:
+  FAIR_CHUNKED_INCOMPLETE
+source commit:
+  bec81707107e2cc6d0466f16edcb267bd134739c
+primary/controller/local summary:
+  2fd016ea0dcd8e2ff014349696f3d7e0d927f60be1bb4a2e7e3b202ea6325be5
+manifest:
+  e62b456468e27014cee8df3c1200bf5892599187ed392ea3608ea0a884ab499f
+local receipt comparison:
+  b4be75a5cd81010500043b291de382112bcf463afa56b135c69add044fcd8073
+files:
+  157 primary, 5 controller
+```
+
+All ten cases completed 104/104 requests. The OFF cases are lifecycle-clean
+with zero starvation. Every FAIR_CHUNKED case is complete but records 86
+starved measured requests. Planned-arrival-to-first-schedule delay reaches
+`55.5460-56.0869 s` under FAIR_CHUNKED versus `23.3683-25.4484 s` under OFF;
+actual-admission wait reaches `33.5082-34.1685 s` versus
+`0.7612-0.7740 s`.
+
+Exact-output reconciliation finds 18/96 mismatched measured requests in every
+paired repetition, with the same request IDs repeated across all five pairs.
+That independently explains why both members of each reconciled pair have
+`exact_outputs=false`; it is distinct from FAIR_CHUNKED-only starvation.
+
+Benefit plus cost:
+
+```text
+favorable repetitions:                    0 / 5
+short p99 TTFT improvement:               -1.325013178605
+worst protected-metric regression:         1.292204031011
+maximum CUDA reserved-memory regression:  -0.120479779974
+```
+
+Thus bounded fair chunking reduces peak reserved CUDA memory by approximately
+12.048% in this workload, but regresses short-request p99 TTFT by 132.5013%,
+fails every completion/throughput protection family, starves most measured
+requests, and changes outputs. The result is not promotable.
+
+### Fresh local verification
+
+One bytecode-disabled current-HEAD run passed:
+
+```text
+tools/test_source_audit.py
+tools/test_staged_inference_benchmark_contract.py
+tools/test_profile_prefix_cache.py
+tools/test_arrival_load_driver.py
+tools/test_staged_inference_benchmark_worker.py
+tools/test_staged_inference_benchmark_gate.py
+tools/test_staged_inference_benchmark_verify.py
+tools/test_run_staged_inference_benchmark_remote.py
+relevant py_compile
+```
+
+The separate Torch-dependent `tools/test_chunked_prefill.py` collection
+remains blocked in the macOS system Python by
+`ModuleNotFoundError: No module named 'torch'`.
+
+### Final classification
+
+```text
+QWEN3_06B_PREFIX_STAGE1_RUN=20260822-qwen3-06b-prefix-task6-r12
+QWEN3_06B_PREFIX_STAGE1_CLASSIFICATION=PREFIX_CACHE_INCOMPLETE_OR_INCORRECT
+QWEN3_06B_PREFIX_STAGE1_STRUCTURAL_EVIDENCE=COMPLETE
+QWEN3_06B_PREFIX_STAGE1_CORRECTNESS=FAIL
+QWEN3_06B_PREFIX_STAGE1_PERFORMANCE=FAIL_PRIMARY_1024_2048
+
+QWEN3_06B_CHUNKED_STAGE1_RUN=20260822-qwen3-06b-chunked-task6-r14
+QWEN3_06B_CHUNKED_STAGE1_CLASSIFICATION=FAIR_CHUNKED_INCOMPLETE
+QWEN3_06B_CHUNKED_STAGE1_STRUCTURAL_EVIDENCE=COMPLETE
+QWEN3_06B_CHUNKED_STAGE1_LIFECYCLE_COMPLETION=104_OF_104_ALL_CASES
+QWEN3_06B_CHUNKED_STAGE1_STARVATION=FAIL_86_OF_96_FAIR_EACH_REPETITION
+QWEN3_06B_CHUNKED_STAGE1_EXACT_OUTPUTS=FAIL_18_OF_96_EACH_REPETITION
+QWEN3_06B_CHUNKED_STAGE1_FAVORABLE_REPETITIONS=0_OF_5
+QWEN3_06B_CHUNKED_STAGE1_SHORT_P99_TTFT=REGRESSION_132_5013_PERCENT
+QWEN3_06B_CHUNKED_STAGE1_PEAK_CUDA_RESERVED=IMPROVEMENT_12_048_PERCENT
+
+STAGED_BENCHMARK_PRIMARY_FINALIZATION=PASS
+STAGED_BENCHMARK_REMOTE_INDEPENDENT_VERIFICATION=PASS
+STAGED_BENCHMARK_CONTROLLER_VERIFICATION=PASS
+STAGED_BENCHMARK_LOCAL_VERIFICATION=PASS
+STAGED_BENCHMARK_MANIFEST_AND_RECEIPT_BINDING=PASS
+
+STAGE1_ELIGIBLE_GATE_COUNT=0
+STAGE2_WINNER=null
+STAGE2_REASON=no Stage-1 gate is eligible
+QWEN3_8B_STAGE2=NOT_RUN_INELIGIBLE
+README_PERFORMANCE_CLAIM=UNCHANGED
+TP4_SCHEDSTAT_DIAGNOSTIC=TERMINAL_FAILED_ZERO_COMPLETED_EPOCHS
+TP4_SCHEDSTAT_MONITOR_ACTIVE=false
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```

@@ -49849,3 +49849,237 @@ target or causally isolate the eager repeat-2, engine-step-4, second
 `run_spec_verify_batch` CUDA path while preserving correctness, TTFT, and
 throughput. All remote output must remain beneath
 `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818`.
+
+## 2026-08-22 Qwen3-0.6B staged Prefix/Chunked terminal gates
+
+The approved staged-inference benchmark campaign is complete at Stage 1.
+Both final Qwen3-0.6B gates are source-bound and independently reproducible,
+but neither is eligible for promotion. Therefore the deterministic Stage-2
+selection is:
+
+```json
+{
+  "reason": "no Stage-1 gate is eligible",
+  "winner": null
+}
+```
+
+No Qwen3-8B preflight or execution was launched, and `README.md` was not
+changed.
+
+### Evidence-pipeline corrections
+
+Two genuine evidence-pipeline defects were found by preserved negative runs
+and fixed without relaxing any correctness, starvation, or performance
+threshold:
+
+```text
+27a7573e749aa3e33553a3ddab80625bba2a84ca
+  complete starved-request lifecycle evidence remains a successful worker
+  process result so the matrix and independent verifier can classify it;
+  producer and verifier independently reconstruct exact starvation counts
+
+bec81707107e2cc6d0466f16edcb267bd134739c
+  independent verification performs OFF/FAIR exact-output reconciliation
+  before comparing persisted case rows
+```
+
+The preserved Chunked r12 bundle exposed the first defect. The preserved r13
+bundle completed the matrix and exposed the verifier-ordering defect with
+`ValueError: chunked case rows mismatch`. The fresh r14 tag is the terminal
+post-fix authority.
+
+### Prefix Cache Stage 1
+
+Canonical local bundle:
+
+```text
+artifacts/staged_inference_benchmark/
+  20260822-qwen3-06b-prefix-task6-r12-controller/
+```
+
+Source and identity:
+
+```text
+run tag:
+  20260822-qwen3-06b-prefix-task6-r12
+source commit:
+  79d21dbab5f8d966ff4c2c490651d7341b0ec685
+source tree:
+  4757c203a34377d2cc9bb7064c3ba60f44b3e2cc7c91dc74de04dbb08c663d1c
+policy:
+  69ae8dfa223da8f506a3f33ea1eb9b0aa6f22dba8e5ed1b7168ced0f8253bf48
+workload:
+  973a22b01e0632f05d05a96b64bdff2b9337a26ebd0877a0cd5d37ccee52905d
+GPU:
+  index 2, NVIDIA A100 80GB PCIe,
+  GPU-63c05907-407b-8240-07a0-f38872840867
+```
+
+The orchestrator, primary finalizer, remote independent verifier, controller
+verifier, and local verifier all completed successfully and agree on:
+
+```text
+classification:
+  PREFIX_CACHE_INCOMPLETE_OR_INCORRECT
+primary/controller/local summary SHA256:
+  d08ecad6bbf706fa52dd19fc7b7f9402b87457f60109676c87fa5cdd0e7adad2
+run manifest SHA256:
+  f894471b3f4f781a4fab5da8d0cd906c58f746b09fcd2b386139df7acbc98c1e
+local receipt comparison SHA256:
+  c8597bfddbc95a610ff5a41b5d041fb6c12a7e55c1087cbba011fe9dfe42f11d
+download:
+  35 primary files, 5 controller files
+```
+
+The artifact is structurally complete. It is not a correctness or performance
+GO:
+
+- targeted `repeat_513` correctness failed;
+- every warm shape family has at least one output/logit failure:
+  `single-256`, `single-1024`, `single-2048`, `batch8-1024`, and
+  `batch8-2048`;
+- the `single-1024` and `single-2048` warm median TTFT improvements are below
+  the required 20%.
+
+Benefit plus cost, reported without promotion:
+
+```text
+minimum batch TTFT improvement:             66.5827321453%
+minimum primary single-request improvement: 5.6329613577%
+maximum retained logical KV:                469,762,048 bytes (448 MiB)
+maximum retained reusable blocks:           16
+maximum CUDA reserved regression:            0.0000000000%
+worst protected-metric regression:           0.7719476888%
+```
+
+This is loaded evidence that hash-based full-block reuse can reduce TTFT in
+some shapes, but correctness failures and insufficient 1024/2048
+single-request improvement prohibit an optimization claim.
+
+### Chunked Prefill Stage 1
+
+Canonical local bundle:
+
+```text
+artifacts/staged_inference_benchmark/
+  20260822-qwen3-06b-chunked-task6-r14-controller/
+```
+
+Source and identity:
+
+```text
+run tag:
+  20260822-qwen3-06b-chunked-task6-r14
+source commit:
+  bec81707107e2cc6d0466f16edcb267bd134739c
+source tree:
+  b935b15e82d1ef5b65e694a271a2d5525b188188995716ab2f16ca21a1cecdc4
+policy:
+  ebb7f1e87bbe7db2db24fcb1ff77972a27bfdce96701f8eb065c51a963b43380
+workload:
+  cf0d5e5c3ddf92a5b355875bd6f4d140500f1b22456f67dbbaef981bd23f8af4
+GPU:
+  index 2, NVIDIA A100 80GB PCIe,
+  GPU-63c05907-407b-8240-07a0-f38872840867
+```
+
+All ten cases completed and the orchestrator, primary finalizer, remote
+independent verifier, controller verifier, and local verifier all agree on:
+
+```text
+classification:
+  FAIR_CHUNKED_INCOMPLETE
+primary/controller/local summary SHA256:
+  2fd016ea0dcd8e2ff014349696f3d7e0d927f60be1bb4a2e7e3b202ea6325be5
+run manifest SHA256:
+  e62b456468e27014cee8df3c1200bf5892599187ed392ea3608ea0a884ab499f
+local receipt comparison SHA256:
+  b4be75a5cd81010500043b291de382112bcf463afa56b135c69add044fcd8073
+download:
+  157 primary files, 5 controller files
+```
+
+This classification is a complete negative result, not an interrupted run:
+
+```text
+per OFF repetition:
+  completed requests: 104 / 104
+  measured requests:   96
+  starved requests:     0
+
+per FAIR_CHUNKED repetition:
+  completed requests: 104 / 104
+  measured requests:   96
+  starved requests:    86
+
+per paired repetition:
+  exact-output mismatches: 18 / 96
+
+maximum planned-arrival-to-first-schedule delay:
+  OFF:          23.3683-25.4484 s
+  FAIR_CHUNKED: 55.5460-56.0869 s
+
+maximum actual-admission-to-first-schedule wait:
+  OFF:           0.7612-0.7740 s
+  FAIR_CHUNKED: 33.5082-34.1685 s
+```
+
+Benefit plus cost:
+
+```text
+favorable repetitions:                    0 / 5
+short-request p99 TTFT improvement:       -132.5013178605%
+worst protected-metric regression:        129.2204031011%
+maximum CUDA reserved-memory regression:  -12.0479779974%
+```
+
+The negative CUDA-reserved regression means FAIR_CHUNKED used approximately
+12.048% less peak reserved memory. That memory benefit does not compensate for
+repeatable output mismatches, starvation, roughly 2.325x short-request p99
+TTFT, and failed completion/throughput protections.
+
+### Fresh local closeout verification
+
+The following current-HEAD scripts all passed in one bytecode-disabled run:
+
+```text
+tools/test_source_audit.py
+tools/test_staged_inference_benchmark_contract.py
+tools/test_profile_prefix_cache.py
+tools/test_arrival_load_driver.py
+tools/test_staged_inference_benchmark_worker.py
+tools/test_staged_inference_benchmark_gate.py
+tools/test_staged_inference_benchmark_verify.py
+tools/test_run_staged_inference_benchmark_remote.py
+relevant py_compile
+```
+
+`tools/test_chunked_prefill.py` remains unavailable under the macOS system
+Python because importing `tinyvllm.engine.hybrid_state` raises
+`ModuleNotFoundError: No module named 'torch'`. This is an environment/setup
+gap, not a semantic pass or fail.
+
+The separate TP4 schedstat diagnostic is not active. Its latest retained
+controller, `20260821-tp4-schedstat-tail-r4-controller`, ended on 2026-08-22
+at `01:19:43+08:00` after attempt 173 with `status=FAILED`,
+`failed_epoch=block-0:eager:first`, and zero completed epochs. The recorded
+controller PID is no longer present. This artifact is diagnostic failure
+evidence only and contributes no correctness or performance authority.
+
+Canonical terminal state:
+
+```text
+QWEN3_06B_PREFIX_STAGE1=PREFIX_CACHE_INCOMPLETE_OR_INCORRECT
+QWEN3_06B_CHUNKED_STAGE1=FAIR_CHUNKED_INCOMPLETE
+STAGE1_ELIGIBLE_GATE_COUNT=0
+STAGE2_WINNER=null
+STAGE2_REASON=no Stage-1 gate is eligible
+QWEN3_8B_STAGE2=NOT_RUN_INELIGIBLE
+README_PERFORMANCE_CLAIM=UNCHANGED
+TP4_SCHEDSTAT_DIAGNOSTIC=TERMINAL_FAILED_ZERO_COMPLETED_EPOCHS
+TP4_SCHEDSTAT_MONITOR_ACTIVE=false
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
