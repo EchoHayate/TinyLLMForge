@@ -240,12 +240,7 @@ def _validate_digest(value, name: str, lengths=(64,)) -> str:
     return value
 
 
-def _validate_summary(
-    summary,
-    *,
-    policy: str,
-    expected_steps: int,
-) -> dict:
+def _validate_summary_shape(summary) -> dict:
     if not isinstance(summary, dict):
         raise ValueError(
             "greedy fast-path summary must be an object"
@@ -283,6 +278,16 @@ def _validate_summary(
     normalized["fallback_counts"] = dict(
         sorted(fallback_counts.items())
     )
+    return normalized
+
+
+def _validate_summary(
+    summary,
+    *,
+    policy: str,
+    expected_steps: int,
+) -> dict:
+    normalized = _validate_summary_shape(summary)
     optimized = normalized["optimized_steps"]
     eligible = normalized["eligible_steps"]
     if policy == "on":
@@ -310,7 +315,11 @@ def _validate_summary(
     return normalized
 
 
-def validate_case_row(row) -> dict:
+def validate_case_row(
+    row,
+    *,
+    require_complete_optimized_path: bool = True,
+) -> dict:
     if not isinstance(row, dict):
         raise ValueError("case row must be an object")
     required = {
@@ -409,16 +418,37 @@ def validate_case_row(row) -> dict:
         _require_finite_non_negative(row[field], field)
     normalized = dict(row)
     normalized["repetition"] = repetition
-    normalized["greedy_fast_path_summary"] = _validate_summary(
-        row["greedy_fast_path_summary"],
-        policy=policy,
-        expected_steps=generated_tokens,
-    )
+    if require_complete_optimized_path:
+        normalized["greedy_fast_path_summary"] = (
+            _validate_summary(
+                row["greedy_fast_path_summary"],
+                policy=policy,
+                expected_steps=generated_tokens,
+            )
+        )
+    else:
+        normalized["greedy_fast_path_summary"] = (
+            _validate_summary_shape(
+                row["greedy_fast_path_summary"]
+            )
+        )
     return normalized
 
 
-def summarize_rows(rows: list[dict]) -> dict:
-    validated = [validate_case_row(row) for row in rows]
+def summarize_rows(
+    rows: list[dict],
+    *,
+    require_complete_optimized_path: bool = True,
+) -> dict:
+    validated = [
+        validate_case_row(
+            row,
+            require_complete_optimized_path=(
+                require_complete_optimized_path
+            ),
+        )
+        for row in rows
+    ]
     if not validated:
         raise ValueError("at least one case row is required")
     identities = {}
@@ -468,7 +498,19 @@ def summarize_rows(rows: list[dict]) -> dict:
         "row_count": len(validated),
         "pair_count": len(pairs),
         "all_outputs_exact": True,
-        "all_on_steps_optimized": True,
+        "all_on_steps_optimized": all(
+            row["greedy_fast_path_summary"][
+                "eligible_steps"
+            ] == row["generated_tokens"]
+            and row["greedy_fast_path_summary"][
+                "optimized_steps"
+            ] == row["generated_tokens"]
+            and not row["greedy_fast_path_summary"][
+                "fallback_counts"
+            ]
+            for row in validated
+            if row["policy"] == "on"
+        ),
         "pairs": pairs,
     }
 
