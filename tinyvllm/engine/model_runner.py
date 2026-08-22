@@ -9086,40 +9086,48 @@ class ModelRunner:
             self.config.max_model_len + self.block_size - 1
         ) // self.block_size
         history_capacity = 8
+        static_device = self.kv_cache.device
         tensors = {
             "input_token": torch.full(
                 (1,),
                 -1,
                 dtype=torch.int64,
+                device=static_device,
             ),
             "position": torch.full(
                 (1,),
                 -1,
                 dtype=torch.int64,
+                device=static_device,
             ),
             "context_length": torch.full(
                 (1,),
                 -1,
                 dtype=torch.int32,
+                device=static_device,
             ),
             "slot_mapping": torch.full(
                 (1,),
                 -1,
                 dtype=torch.int32,
+                device=static_device,
             ),
             "block_table": torch.full(
                 (1, max_num_blocks),
                 -1,
                 dtype=torch.int32,
+                device=static_device,
             ),
             "token_history": torch.full(
                 (history_capacity,),
                 -1,
                 dtype=torch.int64,
+                device=static_device,
             ),
             "history_index": torch.zeros(
                 (1,),
                 dtype=torch.int64,
+                device=static_device,
             ),
         }
         if correctness_trace:
@@ -9128,11 +9136,13 @@ class ModelRunner:
             tensors["sampled_logits"] = torch.zeros(
                 (sample_capacity, vocab_size),
                 dtype=torch.float32,
+                device=static_device,
             )
             tensors["sample_ordinals"] = torch.full(
                 (sample_capacity,),
                 -1,
                 dtype=torch.int64,
+                device=static_device,
             )
             if sampled_logit_ordinals:
                 tensors["sample_ordinals"][

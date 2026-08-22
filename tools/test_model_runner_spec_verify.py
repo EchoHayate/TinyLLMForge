@@ -4375,6 +4375,7 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
         compute_logits=lambda hidden: hidden,
     )
     observed = {}
+    allocation_devices = []
     marker = object()
 
     class StaticTensor(FakeCaptureTensor):
@@ -4394,6 +4395,8 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
             return 0
 
     class KVCache:
+        device = "cuda:0"
+
         def __getitem__(self, _index):
             return KVView((2, 1, 100), dtype="float16")
 
@@ -4417,16 +4420,22 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
 
     model_runner.ExactGreedyDecodeBurstGraph = FakeBurstGraph
     model_runner.torch.full = (
-        lambda shape, _value, dtype: StaticTensor(
-            shape,
-            dtype=dtype,
-        )
+        lambda shape, _value, dtype, device=None: (
+            allocation_devices.append(device),
+            StaticTensor(
+                shape,
+                dtype=dtype,
+            ),
+        )[1]
     )
     model_runner.torch.zeros = (
-        lambda shape, dtype: StaticTensor(
-            shape,
-            dtype=dtype,
-        )
+        lambda shape, dtype, device=None: (
+            allocation_devices.append(device),
+            StaticTensor(
+                shape,
+                dtype=dtype,
+            ),
+        )[1]
     )
     model_runner.torch.cuda = SimpleNamespace(
         graph_pool_handle=lambda: "private-pool",
@@ -4438,6 +4447,22 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     )
     try:
         result = runner._capture_exact_greedy_decode_burst()
+        production_observed = dict(observed)
+        production_allocation_devices = list(
+            allocation_devices
+        )
+        observed.clear()
+        allocation_devices.clear()
+        correctness_result = (
+            runner._capture_exact_greedy_decode_burst(
+                correctness_trace=True,
+                sampled_logit_ordinals=(0,),
+            )
+        )
+        correctness_observed = dict(observed)
+        correctness_allocation_devices = list(
+            allocation_devices
+        )
     finally:
         model_runner.ExactGreedyDecodeBurstGraph = original_graph
         if original_full is None:
@@ -4452,16 +4477,31 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
 
     assert result is marker
     assert runner.exact_greedy_decode_burst_graph is marker
-    assert observed["graph_pool"] == "private-pool"
-    assert observed["graph_generation"] == 6
-    assert observed["scratch_block_id"] == 100
-    assert observed["block_size"] == 256
-    assert observed["correctness_trace"] is False
-    assert observed["sampled_logit_ordinals"] == ()
-    assert observed["tensors"]["input_token"].shape == (1,)
-    assert observed["tensors"]["block_table"].shape == (1, 2)
-    assert observed["tensors"]["token_history"].shape == (8,)
-    assert "sampled_logits" not in observed["tensors"]
+    assert production_observed["graph_pool"] == "private-pool"
+    assert production_observed["graph_generation"] == 6
+    assert production_observed["scratch_block_id"] == 100
+    assert production_observed["block_size"] == 256
+    assert production_observed["correctness_trace"] is False
+    assert production_observed["sampled_logit_ordinals"] == ()
+    assert production_observed["tensors"]["input_token"].shape == (1,)
+    assert production_observed["tensors"]["block_table"].shape == (1, 2)
+    assert production_observed["tensors"]["token_history"].shape == (8,)
+    assert production_allocation_devices == ["cuda:0"] * 7
+    assert correctness_observed["correctness_trace"] is True
+    assert correctness_observed["sampled_logit_ordinals"] == (0,)
+    assert correctness_observed["tensors"]["sampled_logits"].shape == (
+        3,
+        32,
+    )
+    assert correctness_observed["tensors"]["sample_ordinals"].shape == (
+        3,
+    )
+    assert correctness_allocation_devices == ["cuda:0"] * 9
+    assert correctness_result is marker
+    assert (
+        runner.exact_greedy_decode_burst_correctness_graph
+        is marker
+    )
 
 
 def test_scratch_blocks_are_above_scheduler_visible_range():
