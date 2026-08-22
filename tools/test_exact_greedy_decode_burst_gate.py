@@ -898,6 +898,21 @@ def test_producer_writes_complete_manifest_and_rejects_bad_evidence() -> None:
 
     with TemporaryDirectory() as temporary:
         run_dir, repo_root = write_fixture_bundle(Path(temporary))
+        workload_path = run_dir / "workload_manifest.json"
+        workload = json.loads(
+            workload_path.read_text(encoding="utf-8")
+        )
+        workload["model"] = (
+            "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B"
+        )
+        _write_json(workload_path, workload)
+        assert produce_gate(
+            run_dir,
+            repo_root=repo_root,
+        )["classification"] == "GO_EXACT_GREEDY_DECODE_BURST"
+
+    with TemporaryDirectory() as temporary:
+        run_dir, repo_root = write_fixture_bundle(Path(temporary))
         rows = make_fixture_rows()
         rows[0]["ttft_ns"] = math.nan
         raw = "".join(

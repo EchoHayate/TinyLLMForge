@@ -37,6 +37,7 @@ POLICIES = (
     "decode_burst_k8",
 )
 BURST_POLICIES = ("decode_burst_k4", "decode_burst_k8")
+STAGE1_MODEL_BASENAMES = ("Qwen3-0.6B", "Qwen3-0___6B")
 POINTS = (
     "prefill-final",
     "decode-first",
@@ -1379,7 +1380,7 @@ def _validate_workload(workload) -> None:
     model = workload.get("model")
     if (
         not isinstance(model, str)
-        or Path(model).name != "Qwen3-0.6B"
+        or Path(model).name not in STAGE1_MODEL_BASENAMES
     ):
         raise ValueError("workload manifest mismatch: model")
     utilization = workload.get("gpu_memory_utilization")

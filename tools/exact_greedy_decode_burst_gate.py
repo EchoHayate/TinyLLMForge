@@ -44,6 +44,7 @@ PRIMARY_ARTIFACTS = (
     "gate.json",
 )
 BURST_POLICIES = ("decode_burst_k4", "decode_burst_k8")
+STAGE1_MODEL_BASENAMES = ("Qwen3-0.6B", "Qwen3-0___6B")
 EXPECTED_ROWS = 60
 EXPECTED_CORRECTNESS_ROWS = 48
 LOGIT_MAX_ABS_LIMIT = 0.25
@@ -907,7 +908,7 @@ def _validate_workload_manifest(manifest) -> None:
     model = manifest.get("model")
     if (
         not isinstance(model, str)
-        or Path(model).name != "Qwen3-0.6B"
+        or Path(model).name not in STAGE1_MODEL_BASENAMES
     ):
         raise ValueError("workload manifest mismatch: model")
     utilization = manifest.get("gpu_memory_utilization")
