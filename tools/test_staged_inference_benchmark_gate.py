@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools import staged_inference_benchmark_contract as contract
 from tools import staged_inference_benchmark_gate as gate
+from tools import profile_prefix_cache
 
 
 def test_owned_source_roots_capture_complete_tinyvllm_package():
@@ -27,6 +28,18 @@ def test_owned_source_roots_capture_complete_tinyvllm_package():
     assert not any(
         root.startswith("tinyvllm/")
         for root in gate.OWNED_SOURCE_ROOTS
+    )
+
+
+def test_owned_source_roots_capture_prefix_profile_source_manifest():
+    packaged_paths = set(
+        gate.source_audit.expand_owned_source_paths(
+            REPO_ROOT,
+            gate.OWNED_SOURCE_ROOTS,
+        )
+    )
+    assert set(profile_prefix_cache.prefix_source_files()).issubset(
+        packaged_paths
     )
 
 
@@ -1048,6 +1061,7 @@ def test_qwen8_promotion_binds_two_verified_stage1_summaries():
 
 def main():
     test_owned_source_roots_capture_complete_tinyvllm_package()
+    test_owned_source_roots_capture_prefix_profile_source_manifest()
     test_initialize_binds_source_environment_workload_and_policy()
     test_existing_run_tag_is_never_overwritten()
     test_initialize_rejects_unbound_source_or_model_tier()

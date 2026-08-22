@@ -27,11 +27,13 @@ import staged_inference_benchmark_contract as contract
 OWNED_SOURCE_ROOTS = (
     "tools/arrival_load_driver.py",
     "tools/profile_prefix_cache.py",
+    "tools/run_prefix_cache_gate_remote.sh",
     "tools/source_audit.py",
     "tools/staged_inference_benchmark_contract.py",
     "tools/staged_inference_benchmark_gate.py",
     "tools/staged_inference_benchmark_worker.py",
     "tools/test_arrival_load_driver.py",
+    "tools/test_chunked_prefill.py",
     "tools/test_profile_prefix_cache.py",
     "tools/test_staged_inference_benchmark_contract.py",
     "tools/test_staged_inference_benchmark_gate.py",
