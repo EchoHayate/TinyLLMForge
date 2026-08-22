@@ -789,6 +789,30 @@ def test_prefix_contract_bundle_classifies_complete_and_missing_costs():
         raise AssertionError("missing Prefix cost evidence must fail closed")
 
 
+def test_prefix_contract_bundle_uses_serialized_nanosecond_precision():
+    single_cases = [
+        _staged_case(prefix_tokens, 1)
+        for prefix_tokens in (256, 1024, 2048)
+    ]
+    batch_cases = [
+        _staged_case(prefix_tokens, 8)
+        for prefix_tokens in (1024, 2048)
+    ]
+    single_cases[0]["cold"]["median_elapsed_ms"] = 31.296205054037273
+    single_cases[0]["cold"]["p95_elapsed_ms"] = 31.46212698984891
+
+    bundle = build_prefix_contract_bundle(
+        single_cases,
+        batch_cases,
+        artifact_complete=True,
+    )
+
+    assert bundle["single"]["256"]["cold"]["median_elapsed_ms"] == (
+        31.296205
+    )
+    assert bundle["single"]["256"]["cold"]["p95_elapsed_ms"] == 31.462127
+
+
 def test_prefix_memory_rows_preserve_frozen_identity_fields():
     performance_row = {
         "schema_version": 2,
@@ -1237,6 +1261,7 @@ def main():
     test_prefix_source_files_bind_staged_classifier_source()
     test_prefix_case_shape_uses_actual_batch_size()
     test_prefix_contract_bundle_classifies_complete_and_missing_costs()
+    test_prefix_contract_bundle_uses_serialized_nanosecond_precision()
     test_prefix_memory_rows_preserve_frozen_identity_fields()
     test_summarize_batch_result_compares_each_request_to_reference()
     test_decide_gate_requires_correctness_and_two_large_prefix_wins()

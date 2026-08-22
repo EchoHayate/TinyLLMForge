@@ -477,6 +477,11 @@ def _prefix_contract_state(state: dict, *, batch: bool) -> dict:
         raise ValueError(
             "missing Prefix state evidence: " + ", ".join(missing)
         )
+    for field in ("median_elapsed_ms", "p95_elapsed_ms"):
+        normalized[field] = (
+            int(round(float(normalized[field]) * 1_000_000))
+            / 1_000_000.0
+        )
     return normalized
 
 
