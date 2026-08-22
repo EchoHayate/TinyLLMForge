@@ -290,6 +290,11 @@ def test_ownership_sampling_closes_child_creation_race():
     assert owned == {123, 456}
 
 
+def test_proc_stat_parser_handles_process_names_with_spaces():
+    stat = "456 (Python worker thread) S 123 456 456 0 -1"
+    assert remote._proc_stat_process_group(stat) == 456
+
+
 def test_owned_process_group_cleanup_escalates_until_group_is_empty():
     signals = []
     inventories = iter([{456}, set()])

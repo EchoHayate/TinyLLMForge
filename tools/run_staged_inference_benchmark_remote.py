@@ -592,6 +592,14 @@ def _query_gpu_rows_local() -> list[dict]:
     return sorted(rows, key=lambda row: row["index"])
 
 
+def _proc_stat_process_group(stat: str) -> int:
+    _, separator, suffix = stat.rpartition(")")
+    fields = suffix.split()
+    if not separator or len(fields) < 3:
+        raise ValueError("process stat row is invalid")
+    return int(fields[2])
+
+
 def _owned_process_group_pids(process_group_id: int) -> set[int]:
     owned = set()
     proc = Path("/proc")
@@ -601,10 +609,10 @@ def _owned_process_group_pids(process_group_id: int) -> set[int]:
         if not entry.name.isdigit():
             continue
         try:
-            fields = (entry / "stat").read_text().split()
+            stat = (entry / "stat").read_text()
         except (FileNotFoundError, PermissionError, ProcessLookupError):
             continue
-        if len(fields) > 4 and int(fields[4]) == process_group_id:
+        if _proc_stat_process_group(stat) == process_group_id:
             owned.add(int(entry.name))
     return owned
 
