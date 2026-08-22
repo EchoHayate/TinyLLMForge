@@ -95,6 +95,12 @@ _GREEDY_SAMPLING_FAST_PATH = os.path.join(
     "engine",
     "greedy_sampling_fast_path.py",
 )
+_GRAPH_RESIDENT_GREEDY_TAIL_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "graph_resident_greedy_tail.py",
+)
 _SPLIT_POLICY_PATH = os.path.join(
     _REPO_ROOT,
     "tinyvllm",
@@ -341,6 +347,10 @@ def _load_model_runner_module():
         "tinyvllm.engine.greedy_sampling_fast_path",
         _GREEDY_SAMPLING_FAST_PATH,
     )
+    _load_source_module(
+        "tinyvllm.engine.graph_resident_greedy_tail",
+        _GRAPH_RESIDENT_GREEDY_TAIL_PATH,
+    )
     if "tinyvllm.engine.model_runner_command_ack" not in sys.modules:
         _load_source_module(
             "tinyvllm.engine.model_runner_command_ack",
@@ -553,6 +563,12 @@ def _load_model_runner_module():
 
 model_runner, context = _load_model_runner_module()
 ModelRunner = model_runner.ModelRunner
+graph_tail_module = sys.modules[
+    "tinyvllm.engine.graph_resident_greedy_tail"
+]
+GraphResidentGreedyTailReplay = (
+    graph_tail_module.GraphResidentGreedyTailReplay
+)
 verifier = sys.modules["tinyvllm.speculative.verifier"]
 SpecVerifyTraceRecorder = sys.modules[
     "tinyvllm.engine.spec_verify_trace"
@@ -688,6 +704,7 @@ def make_runner(**overrides):
         "cpu_offload": False,
         "replay_aware_decode_metadata": False,
         "zero_temperature_greedy_fast_path": False,
+        "graph_resident_greedy_tail": False,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "spec_verify_cuda_graphs": False,
@@ -719,6 +736,14 @@ def make_runner(**overrides):
     runner.greedy_sampling_fast_path_stats = (
         greedy_module.GreedySamplingFastPathStats()
     )
+    graph_tail_module = sys.modules[
+        "tinyvllm.engine.graph_resident_greedy_tail"
+    ]
+    runner.graph_resident_greedy_tail = None
+    runner.graph_resident_greedy_tail_stats = (
+        graph_tail_module.GraphResidentGreedyTailStats()
+    )
+    runner._ordinary_graph_generation = 0
     runner.qwen35_recurrent_capture_session = None
     runner._spec_verify_trace = SpecVerifyTraceRecorder(
         rank=runner.rank,
@@ -4078,6 +4103,9 @@ def _make_capture_runner(*, feature_enabled):
             del input_ids, positions
             return FakeCaptureTensor((8, 16))
 
+        def compute_logits(self, hidden):
+            return hidden
+
     class FakeGraph:
         def replay(self):
             pass
@@ -4103,6 +4131,8 @@ def _make_capture_runner(*, feature_enabled):
         lambda graph, pool=None: FakeGraphContext()
     )
     model_runner.torch.cuda.synchronize = lambda: None
+    model_runner.torch.cuda.memory_allocated = lambda: 0
+    model_runner.torch.cuda.memory_reserved = lambda: 0
     return runner
 
 
@@ -4117,6 +4147,193 @@ def test_feature_disabled_startup_inventory_is_unchanged():
     runner = _make_capture_runner(feature_enabled=False)
     runner.capture_cudagraph()
     assert runner.graph_bs[:4] == [1, 2, 4, 8]
+
+
+def test_graph_tail_capture_binds_batch_one_static_output():
+    runner = _make_capture_runner(feature_enabled=False)
+    runner.config.graph_resident_greedy_tail = True
+    observed = {}
+    marker = object()
+    original = getattr(
+        model_runner,
+        "GraphResidentGreedyTail",
+        None,
+    )
+
+    class FakeTail:
+        @classmethod
+        def capture(cls, **kwargs):
+            observed.update(kwargs)
+            return marker
+
+    model_runner.GraphResidentGreedyTail = FakeTail
+    try:
+        runner.capture_cudagraph()
+    finally:
+        if original is None:
+            delattr(model_runner, "GraphResidentGreedyTail")
+        else:
+            model_runner.GraphResidentGreedyTail = original
+
+    assert runner._ordinary_graph_generation == 1
+    assert runner.graph_resident_greedy_tail is marker
+    assert observed["static_hidden"] is runner.graph_vars["outputs"]
+    assert observed["compute_logits"] == runner.model.compute_logits
+    assert observed["float32_dtype"] == model_runner.torch.float32
+    assert observed["graph_generation"] == 1
+    assert observed["rank"] == 0
+    assert observed["stats"] is runner.graph_resident_greedy_tail_stats
+
+
+def _graph_tail_decode_runner(*, temperature=0.0):
+    calls = []
+
+    class FakeModel:
+        def __call__(self, input_ids, positions, input_embeds=None):
+            raise AssertionError(
+                "ordinary decode should replay the transformer graph"
+            )
+
+        def compute_logits(self, hidden):
+            calls.append(("external_logits", hidden.values))
+            return hidden
+
+    class FakeGraph:
+        def replay(self):
+            calls.append(("transformer_replay", None))
+
+    class FakeTail:
+        def __init__(self):
+            self.replay_calls = 0
+
+        def matches(self, **kwargs):
+            calls.append(
+                (
+                    "tail_matches",
+                    kwargs["graph_generation"],
+                    kwargs["rank"],
+                )
+            )
+            return True
+
+        def replay(self, **kwargs):
+            self.replay_calls += 1
+            calls.append(
+                (
+                    "tail_replay",
+                    kwargs["graph_generation"],
+                    kwargs["rank"],
+                )
+            )
+            return GraphResidentGreedyTailReplay(
+                logits=_TraceTensor([[0.0, 9.0, 1.0]]),
+                token_ids=SimpleNamespace(tolist=lambda: [1]),
+            )
+
+    runner = make_runner(
+        zero_temperature_greedy_fast_path=True,
+        graph_resident_greedy_tail=True,
+    )
+    runner.model = FakeModel()
+    runner.graphs = {1: FakeGraph()}
+    runner.graph_bs = [1]
+    runner.graph_vars = {
+        "input_ids": FakeGraphBuffer([0]),
+        "positions": FakeGraphBuffer([0]),
+        "slot_mapping": FakeGraphBuffer([0]),
+        "context_lens": FakeGraphBuffer([0]),
+        "block_tables": FakeGraphBuffer([[0]]),
+        "outputs": FakeGraphBuffer([[7]]),
+    }
+    runner._ordinary_graph_generation = 3
+    runner.graph_resident_greedy_tail = FakeTail()
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([4]),
+        context_lens=FakeTensor([65]),
+        block_tables=FakeTensor([[0]]),
+    )
+    return runner, calls, temperature
+
+
+def test_graph_tail_decides_before_transformer_replay_and_skips_logits():
+    runner, calls, temperature = _graph_tail_decode_runner()
+
+    result = runner.run_model(
+        FakeTensor([10]),
+        FakeTensor([64]),
+        is_prefill=False,
+        graph_tail_temperatures=(temperature,),
+        graph_tail_do_sample=True,
+        graph_tail_batch_kind=None,
+    )
+
+    assert isinstance(result, GraphResidentGreedyTailReplay)
+    assert calls == [
+        ("tail_matches", 3, 0),
+        ("transformer_replay", None),
+        ("tail_replay", 3, 0),
+    ]
+
+
+def test_graph_tail_ineligible_step_preserves_external_logits_path():
+    runner, calls, _temperature = _graph_tail_decode_runner(
+        temperature=0.7,
+    )
+
+    result = runner.run_model(
+        FakeTensor([10]),
+        FakeTensor([64]),
+        is_prefill=False,
+        graph_tail_temperatures=(0.7,),
+        graph_tail_do_sample=True,
+        graph_tail_batch_kind=None,
+    )
+
+    assert result.values == [[7]]
+    assert calls == [
+        ("tail_matches", 3, 0),
+        ("transformer_replay", None),
+        ("external_logits", [[7]]),
+    ]
+    assert runner.graph_resident_greedy_tail_stats.summary()[
+        "fallback_counts"
+    ] == {"nonzero_temperature": 1}
+
+
+def test_graph_tail_replay_failure_never_falls_back_or_replays_twice():
+    runner, calls, temperature = _graph_tail_decode_runner()
+
+    def fail_replay(**kwargs):
+        calls.append(
+            (
+                "tail_replay_failure",
+                kwargs["graph_generation"],
+                kwargs["rank"],
+            )
+        )
+        raise RuntimeError("tail replay failed")
+
+    runner.graph_resident_greedy_tail.replay = fail_replay
+    try:
+        runner.run_model(
+            FakeTensor([10]),
+            FakeTensor([64]),
+            is_prefill=False,
+            graph_tail_temperatures=(temperature,),
+            graph_tail_do_sample=True,
+            graph_tail_batch_kind=None,
+        )
+    except RuntimeError as error:
+        assert str(error) == "tail replay failed"
+    else:
+        raise AssertionError("tail replay failure did not propagate")
+
+    assert calls == [
+        ("tail_matches", 3, 0),
+        ("transformer_replay", None),
+        ("tail_replay_failure", 3, 0),
+    ]
 
 
 def test_exact_graph_identity_and_static_byte_estimate_are_exact():
@@ -4739,6 +4956,30 @@ def test_zero_temperature_greedy_fast_path_config_is_fail_closed():
             )
 
 
+def test_graph_resident_greedy_tail_config_is_fail_closed():
+    Config = _load_real_config_class()
+    assert (
+        Config.__dataclass_fields__[
+            "graph_resident_greedy_tail"
+        ].default
+        is False
+    )
+    with tempfile.TemporaryDirectory() as model:
+        try:
+            Config(
+                model=model,
+                graph_resident_greedy_tail=1,
+            )
+        except ValueError as error:
+            assert str(error) == (
+                "graph_resident_greedy_tail must be a bool"
+            )
+        else:
+            raise AssertionError(
+                "non-boolean graph-tail control was accepted"
+            )
+
+
 class _GreedyFastPathLogits:
     def __init__(self, values, *, shape=None):
         self.values = tuple(tuple(row) for row in values)
@@ -4898,6 +5139,83 @@ def test_greedy_fast_path_fallbacks_preserve_legacy_sampler():
             ]
             == {reason: 1}
         )
+
+
+def test_run_model_step_consumes_graph_tail_result_once():
+    runner = make_runner(
+        zero_temperature_greedy_fast_path=True,
+        graph_resident_greedy_tail=True,
+    )
+    runner._record_step_logits = True
+    runner.prepare_decode = lambda _seqs: (
+        _TraceTensor([11]),
+        _TraceTensor([32767]),
+    )
+    runner._kv_offload_before_forward = lambda: None
+    runner._kv_offload_after_forward = lambda: None
+    logits = _TraceTensor([
+        [0.0, 1.0, 9.0, 3.0],
+    ])
+    token_d2h_calls = []
+
+    class TokenTensor:
+        def __init__(self):
+            self.tolist_calls = 0
+
+        def tolist(self):
+            self.tolist_calls += 1
+            return [2]
+
+    token_tensor = TokenTensor()
+    observed_kwargs = {}
+
+    def run_model(*_args, **kwargs):
+        observed_kwargs.update(kwargs)
+        return GraphResidentGreedyTailReplay(
+            logits=logits,
+            token_ids=token_tensor,
+        )
+
+    runner.run_model = run_model
+    runner.graph_resident_greedy_tail = SimpleNamespace(
+        mark_token_d2h=lambda: token_d2h_calls.append("d2h")
+    )
+    runner._sample_tokens_with_optional_greedy_fast_path = (
+        lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(
+                AssertionError(
+                    "graph-tail result reached the host sampler"
+                )
+            )
+        )
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        temperature=0.0,
+        hybrid_state_slot_id=-1,
+        hybrid_state_generation=0,
+        last_token=11,
+        num_tokens=32768,
+        num_completion_tokens=0,
+        block_table=list(range(128)),
+    )
+
+    token_ids = runner._run_model_step(
+        [seq],
+        is_prefill=False,
+    )
+
+    assert token_ids == [2]
+    assert token_tensor.tolist_calls == 1
+    assert token_d2h_calls == ["d2h"]
+    assert observed_kwargs[
+        "graph_tail_temperatures"
+    ] == (0.0,)
+    assert observed_kwargs["graph_tail_do_sample"] is True
+    assert observed_kwargs["graph_tail_batch_kind"] is None
+    recorded = runner.last_step_logits()
+    assert recorded is not None
+    assert recorded.values == logits.values
 
 
 def test_run_model_step_records_ordinary_decode_without_changing_sample():
@@ -5364,8 +5682,14 @@ def main():
         test_run_hashes_canonical_sorted_sequence_ids_before_dispatch,
         test_run_records_selected_rank_zero_sampling_logits_before_sampler,
         test_zero_temperature_greedy_fast_path_config_is_fail_closed,
+        test_graph_resident_greedy_tail_config_is_fail_closed,
         test_greedy_fast_path_uses_exact_float32_argmax,
         test_greedy_fast_path_fallbacks_preserve_legacy_sampler,
+        test_graph_tail_capture_binds_batch_one_static_output,
+        test_graph_tail_decides_before_transformer_replay_and_skips_logits,
+        test_graph_tail_ineligible_step_preserves_external_logits_path,
+        test_graph_tail_replay_failure_never_falls_back_or_replays_twice,
+        test_run_model_step_consumes_graph_tail_result_once,
         test_run_clears_recorded_logits_when_sampling_is_disabled,
         test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,

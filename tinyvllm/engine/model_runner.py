@@ -65,6 +65,12 @@ from tinyvllm.engine.greedy_sampling_fast_path import (
     GreedySamplingFastPathStats,
     decide_greedy_sampling_fast_path,
 )
+from tinyvllm.engine.graph_resident_greedy_tail import (
+    GraphResidentGreedyTail,
+    GraphResidentGreedyTailReplay,
+    GraphResidentGreedyTailStats,
+    decide_graph_resident_greedy_tail,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket import (
     Qwen35HybridPrefixRestoreParticipant,
 )
@@ -2198,6 +2204,11 @@ class ModelRunner:
         self.greedy_sampling_fast_path_stats = (
             GreedySamplingFastPathStats()
         )
+        self.graph_resident_greedy_tail = None
+        self.graph_resident_greedy_tail_stats = (
+            GraphResidentGreedyTailStats()
+        )
+        self._ordinary_graph_generation = 0
         self._record_step_logits = False
         self._last_step_logits_cpu: torch.Tensor | None = None
         self._spec_verify_trace = SpecVerifyTraceRecorder(
@@ -8807,6 +8818,60 @@ class ModelRunner:
     def zero_temperature_greedy_fast_path_summary(self) -> dict:
         return self.greedy_sampling_fast_path_stats.summary()
 
+    def graph_resident_greedy_tail_summary(self) -> dict:
+        return self.graph_resident_greedy_tail_stats.summary()
+
+    def _capture_graph_resident_greedy_tail(self) -> None:
+        self.graph_resident_greedy_tail = None
+        if not self.config.graph_resident_greedy_tail:
+            return
+        if self.world_size != 1:
+            self.graph_resident_greedy_tail_stats.record_fallback(
+                "capture_tensor_parallel_unsupported"
+            )
+            return
+        if self.rank != 0:
+            self.graph_resident_greedy_tail_stats.record_fallback(
+                "capture_non_root_rank"
+            )
+            return
+        if 1 not in self.graphs:
+            self.graph_resident_greedy_tail_stats.record_fallback(
+                "capture_batch_one_graph_unavailable"
+            )
+            return
+        static_hidden = self.graph_vars["outputs"][:1]
+        try:
+            self.graph_resident_greedy_tail = (
+                GraphResidentGreedyTail.capture(
+                    static_hidden=static_hidden,
+                    compute_logits=self.model.compute_logits,
+                    float32_dtype=torch.float32,
+                    graph_generation=(
+                        self._ordinary_graph_generation
+                    ),
+                    rank=self.rank,
+                    graph_factory=torch.cuda.CUDAGraph,
+                    capture_context_factory=(
+                        lambda graph: torch.cuda.graph(graph)
+                    ),
+                    synchronize=torch.cuda.synchronize,
+                    memory_snapshot=lambda: (
+                        int(torch.cuda.memory_allocated()),
+                        int(torch.cuda.memory_reserved()),
+                    ),
+                    clock_ns=time.perf_counter_ns,
+                    stats=(
+                        self.graph_resident_greedy_tail_stats
+                    ),
+                )
+            )
+        except Exception as error:
+            self.graph_resident_greedy_tail_stats.record_fallback(
+                "capture_failure:" + type(error).__name__
+            )
+            self.graph_resident_greedy_tail = None
+
     def _sample_tokens_with_optional_greedy_fast_path(
         self,
         logits,
@@ -8866,6 +8931,9 @@ class ModelRunner:
         prepare_qwen35_state: bool = False,
         initial_qwen35_candidates=None,
         capture_qwen35_prefix_states: bool = False,
+        graph_tail_temperatures: tuple[object, ...] | None = None,
+        graph_tail_do_sample: bool = False,
+        graph_tail_batch_kind: str | None = None,
     ):
         mode = execution_mode or get_context().mode
         if mode == "spec_verify" and is_prefill:
@@ -9104,6 +9172,86 @@ class ModelRunner:
             hasattr(self, name)
             for name in ("graphs", "graph_bs", "graph_vars")
         )
+        graph_tail_decision = None
+        graph_tail_source = None
+        if graph_tail_temperatures is not None:
+            active_batch_size = int(input_ids.size(0))
+            selected_graph_batch_size = active_batch_size
+            if not legacy_graph_state_absent:
+                selected_graph_batch_size = next(
+                    (
+                        value
+                        for value in self.graph_bs
+                        if value >= active_batch_size
+                    ),
+                    active_batch_size,
+                )
+                if selected_graph_batch_size == 1:
+                    graph_tail_source = (
+                        self.graph_vars["outputs"][:1]
+                    )
+            incompatible_modes = tuple(
+                reason
+                for active, reason in (
+                    (spec_verify_active, "spec_verify"),
+                    (quest_active, "quest"),
+                    (am_active, "am_compact"),
+                    (c4_active, "kv_quantized_eager"),
+                    (offload_active, "cpu_offload"),
+                    (kv_offload_active, "kv_offload"),
+                    (
+                        legacy_graph_state_absent,
+                        "legacy_graph_state_absent",
+                    ),
+                )
+                if active
+            )
+            graph_tail = self.graph_resident_greedy_tail
+            source_matches = bool(
+                graph_tail is not None
+                and graph_tail_source is not None
+                and graph_tail.matches(
+                    static_hidden=graph_tail_source,
+                    graph_generation=(
+                        self._ordinary_graph_generation
+                    ),
+                    rank=self.rank,
+                )
+            )
+            graph_tail_decision = (
+                decide_graph_resident_greedy_tail(
+                    enabled=(
+                        self.config.graph_resident_greedy_tail
+                    ),
+                    rank=self.rank,
+                    tensor_parallel_size=self.world_size,
+                    is_prefill=is_prefill,
+                    enforce_eager=self.enforce_eager,
+                    batch_kind=graph_tail_batch_kind,
+                    active_batch_size=active_batch_size,
+                    selected_graph_batch_size=(
+                        selected_graph_batch_size
+                    ),
+                    do_sample=graph_tail_do_sample,
+                    temperatures=graph_tail_temperatures,
+                    input_embeds_present=(
+                        input_embeds is not None
+                    ),
+                    return_hidden=return_hidden,
+                    incompatible_modes=incompatible_modes,
+                    capture_available=graph_tail is not None,
+                    quarantined=(
+                        self.graph_resident_greedy_tail_stats
+                        .quarantine_reason
+                        is not None
+                    ),
+                    source_matches=source_matches,
+                )
+            )
+            if not graph_tail_decision.optimized:
+                self.graph_resident_greedy_tail_stats.record_fallback(
+                    graph_tail_decision.fallback_reason
+                )
         if input_ids.size(0) > 1:
             context = get_context()
             reason = self._multi_sequence_graph_incompatible_reason(
@@ -9325,6 +9473,17 @@ class ModelRunner:
                 graph.replay()
             finally:
                 self._replay_aware_decode_prelanded = False
+            if (
+                graph_tail_decision is not None
+                and graph_tail_decision.optimized
+            ):
+                return self.graph_resident_greedy_tail.replay(
+                    static_hidden=graph_tail_source,
+                    graph_generation=(
+                        self._ordinary_graph_generation
+                    ),
+                    rank=self.rank,
+                )
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
 
@@ -9404,12 +9563,37 @@ class ModelRunner:
                 target_hidden,
                 batch_kind=batch_kind,
             )
+            graph_tail_token_ids = None
         else:
-            logits = self.run_model(
+            graph_tail_kwargs = {}
+            if (
+                not is_prefill
+                and self.config.graph_resident_greedy_tail
+            ):
+                graph_tail_kwargs = {
+                    "graph_tail_temperatures": (
+                        tuple(seq.temperature for seq in seqs)
+                        if do_sample
+                        else ()
+                    ),
+                    "graph_tail_do_sample": do_sample,
+                    "graph_tail_batch_kind": batch_kind,
+                }
+            model_result = self.run_model(
                 input_ids,
                 positions,
                 is_prefill,
+                **graph_tail_kwargs,
             )
+            if isinstance(
+                model_result,
+                GraphResidentGreedyTailReplay,
+            ):
+                logits = model_result.logits
+                graph_tail_token_ids = model_result.token_ids
+            else:
+                logits = model_result
+                graph_tail_token_ids = None
         self._capture_qwen35_recurrent_source_state(
             seqs,
             is_prefill=is_prefill,
@@ -9467,13 +9651,17 @@ class ModelRunner:
                 self._last_step_logits_cpu = logits.detach().float().cpu()
             else:
                 self._last_step_logits_cpu = None
-            token_ids = (
-                self._sample_tokens_with_optional_greedy_fast_path(
-                    logits,
-                    sample_seqs,
-                    batch_kind=batch_kind,
+            if graph_tail_token_ids is not None:
+                token_ids = graph_tail_token_ids.tolist()
+                self.graph_resident_greedy_tail.mark_token_d2h()
+            else:
+                token_ids = (
+                    self._sample_tokens_with_optional_greedy_fast_path(
+                        logits,
+                        sample_seqs,
+                        batch_kind=batch_kind,
+                    )
                 )
-            )
         else:
             self._last_step_logits_cpu = None
             token_ids = None
@@ -9639,3 +9827,5 @@ class ModelRunner:
             block_tables=block_tables,
             outputs=outputs
         )
+        self._ordinary_graph_generation += 1
+        self._capture_graph_resident_greedy_tail()

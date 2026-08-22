@@ -36,6 +36,7 @@ class Config:
     enforce_eager: bool = False                         # True表示以即时执行模式推理，用于debug   false表示启用cuda graph  cuda graph开启后减少kernal launch时间 可用于吞吐量测试
     replay_aware_decode_metadata: bool = False
     zero_temperature_greedy_fast_path: bool = False
+    graph_resident_greedy_tail: bool = False
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
     multi_sequence_cuda_graph_min_observations: int = 3
@@ -195,6 +196,13 @@ class Config:
         ):
             raise ValueError(
                 "zero_temperature_greedy_fast_path must be a bool"
+            )
+        if not isinstance(
+            self.graph_resident_greedy_tail,
+            bool,
+        ):
+            raise ValueError(
+                "graph_resident_greedy_tail must be a bool"
             )
         allowlist = self.multi_sequence_cuda_graph_batch_allowlist
         assert isinstance(allowlist, (tuple, list))
