@@ -62,6 +62,10 @@ _load_module(
     "tinyvllm.engine.block_manager",
     "tinyvllm/engine/block_manager.py",
 )
+exact_burst_module = _load_module(
+    "tinyvllm.engine.exact_greedy_decode_burst",
+    "tinyvllm/engine/exact_greedy_decode_burst.py",
+)
 
 
 class _TorchDType:
@@ -109,6 +113,9 @@ PreparedSchedulerPostprocess = (
 )
 ScheduledOutputRow = scheduler_module.ScheduledOutputRow
 Scheduler = scheduler_module.Scheduler
+ExactGreedyDecodeBurstResult = (
+    exact_burst_module.ExactGreedyDecodeBurstResult
+)
 Sequence.block_size = 2
 
 
@@ -215,6 +222,52 @@ def _scheduled_prefill_sequence(
     sequence.step_do_sample = do_sample
     sequence.status = SequenceStatus.WAITING
     return sequence
+
+
+def _prepare_exact_burst_lease(
+    scheduler,
+    sequence,
+    *,
+    configured_width=4,
+    graph_generation=7,
+):
+    scheduler.schedule_generation = 1
+    return scheduler.prepare_exact_greedy_decode_burst(
+        (sequence,),
+        schedule_generation=1,
+        graph_generation=graph_generation,
+        enabled=True,
+        configured_width=configured_width,
+        is_prefill=False,
+        do_sample=True,
+        batch_kind=None,
+        completion_only=True,
+        tensor_parallel_size=1,
+        rank=0,
+        graph_available=True,
+        incompatible_modes=(),
+    )
+
+
+def _exact_burst_result(lease, tokens):
+    return ExactGreedyDecodeBurstResult(
+        lease_identity_sha256=lease.identity_sha256,
+        tokens=tuple(tokens),
+        replay_count=len(tokens),
+        final_input_token=tokens[-1],
+        final_position=(
+            lease.first_write_position + len(tokens)
+        ),
+        final_context_length=(
+            lease.initial_sequence_length + len(tokens)
+        ),
+        final_physical_slot=(
+            lease.last_physical_slot + 1
+        ),
+        graph_identity_sha256="a" * 64,
+        token_d2h_calls=1,
+        sampled_logit_d2h_calls=0,
+    )
 
 
 def _snapshot(scheduler, sequences):
@@ -543,6 +596,530 @@ def test_prepare_rejects_budget_overflow_and_tokens_after_eos():
                 ),
             ),
         )
+
+
+def test_exact_burst_row_shape_is_distinct_from_ordinary_and_speculative():
+    ordinary = ScheduledOutputRow(
+        sequence_id=1,
+        output_tokens=(7,),
+        speculative=False,
+    )
+    exact = ScheduledOutputRow(
+        sequence_id=1,
+        output_tokens=(7, 8, 9, 10),
+        speculative=False,
+        exact_burst=True,
+    )
+    speculative = ScheduledOutputRow(
+        sequence_id=1,
+        output_tokens=(7, 8),
+        speculative=True,
+        accepted_draft_tokens=(7,),
+    )
+
+    assert ordinary.exact_burst is False
+    assert exact.exact_burst is True
+    assert speculative.exact_burst is False
+
+
+@pytest.mark.parametrize(
+    ("row_factory", "message"),
+    (
+        (
+            lambda sequence: ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11,),
+                speculative=False,
+                exact_burst=True,
+            ),
+            "at least two tokens",
+        ),
+        (
+            lambda sequence: ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11, 12),
+                speculative=True,
+                exact_burst=True,
+            ),
+            "cannot be speculative",
+        ),
+        (
+            lambda sequence: ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11, 12),
+                speculative=False,
+                accepted_draft_tokens=(11,),
+                exact_burst=True,
+            ),
+            "accepted draft tokens",
+        ),
+        (
+            lambda sequence: ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11, 12),
+                speculative=False,
+                exact_burst=True,
+            ),
+            "active lease",
+        ),
+    ),
+)
+def test_prepare_rejects_invalid_exact_burst_rows(
+    row_factory,
+    message,
+):
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        ignore_eos=True,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        scheduler.prepare_postprocess(
+            (sequence,),
+            (row_factory(sequence),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_width"),
+    (
+        ((1,), 4),
+        ((1, 2), 3),
+        ((1, 2, 3), 2),
+        ((1, 2, 3, 4), None),
+    ),
+)
+def test_exact_burst_lease_clips_at_physical_block_boundary(
+    monkeypatch,
+    prompt,
+    expected_width,
+):
+    monkeypatch.setattr(Sequence, "block_size", 4)
+    config = SimpleNamespace(
+        **{
+            **vars(_config()),
+            "kvcache_block_size": 4,
+        }
+    )
+    scheduler = Scheduler(config)
+    sequence = _running_sequence(
+        scheduler,
+        prompt,
+        max_tokens=8,
+        ignore_eos=True,
+    )
+
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=4,
+    )
+
+    if expected_width is None:
+        assert lease is None
+        summary = scheduler.exact_greedy_decode_burst_summary()
+        assert summary["pending_leases"] == 0
+        assert summary["fallback_counts"] == {
+            "authorized_width_below_two": 1,
+        }
+        return
+    assert lease.authorized_token_count == expected_width
+    assert lease.first_write_position == len(prompt) - 1
+    assert lease.last_write_position == (
+        len(prompt) + expected_width - 2
+    )
+    assert lease.first_physical_slot == (
+        lease.write_block_id * 4 + len(prompt) - 1
+    )
+    assert lease.last_physical_slot == (
+        lease.first_physical_slot + expected_width - 1
+    )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 1
+
+
+def test_exact_burst_lease_rejects_wrong_sequence_and_stale_generation():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+    result = _exact_burst_result(lease, (11, 12))
+    other = Sequence(
+        [9],
+        SamplingParams(
+            temperature=0.0,
+            max_tokens=8,
+            ignore_eos=True,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="sequence ID"):
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (other,),
+            lease,
+            result,
+        )
+
+    scheduler.schedule_generation += 1
+    with pytest.raises(ValueError, match="stale"):
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            lease,
+            result,
+        )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 1
+
+
+def test_exact_burst_row_rejects_wrong_lease_token_count():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+
+    with pytest.raises(ValueError, match="token count"):
+        scheduler.prepare_postprocess(
+            (sequence,),
+            (
+                ScheduledOutputRow(
+                    sequence_id=sequence.seq_id,
+                    output_tokens=(11, 12, 13),
+                    speculative=False,
+                    exact_burst=True,
+                ),
+            ),
+        )
+
+    scheduler.cancel_exact_greedy_decode_burst(
+        lease,
+        "test_cleanup",
+    )
+
+
+def test_exact_burst_row_cannot_commit_without_validated_result():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+    before = _snapshot(scheduler, (sequence,))
+    prepared = scheduler.prepare_postprocess(
+        (sequence,),
+        (
+            ScheduledOutputRow(
+                sequence_id=sequence.seq_id,
+                output_tokens=(11, 12),
+                speculative=False,
+                exact_burst=True,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="validated result"):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "prepared"
+    assert _snapshot(scheduler, (sequence,)) == before
+    scheduler.cancel_exact_greedy_decode_burst(
+        lease,
+        "test_cleanup",
+    )
+
+
+def test_exact_burst_commit_rejects_stale_block_identity():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+    result = _exact_burst_result(lease, (11, 12))
+    scheduler.block_manager.blocks[
+        lease.write_block_id
+    ].generation += 1
+
+    with pytest.raises(RuntimeError, match="block identity is stale"):
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            lease,
+            result,
+        )
+
+    scheduler.fail_exact_greedy_decode_burst(
+        lease,
+        terminal=True,
+    )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 0
+
+
+def test_exact_burst_commit_rechecks_lease_before_mutating():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+    result = _exact_burst_result(lease, (11, 12))
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+    before = _snapshot(scheduler, (sequence,))
+    scheduler.schedule_generation += 1
+
+    with pytest.raises(ValueError, match="stale"):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "prepared"
+    assert _snapshot(scheduler, (sequence,)) == before
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 1
+    scheduler.fail_exact_greedy_decode_burst(
+        lease,
+        terminal=True,
+    )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 0
+
+
+def test_cancel_exact_burst_requires_identical_pending_lease():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+    mismatched = _prepare_mismatched_lease(lease)
+
+    with pytest.raises(ValueError, match="pending lease"):
+        scheduler.cancel_exact_greedy_decode_burst(
+            mismatched,
+            "pre_replay_fallback",
+        )
+
+    scheduler.cancel_exact_greedy_decode_burst(
+        lease,
+        "pre_replay_fallback",
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["pending_leases"] == 0
+    assert summary["fallback_counts"] == {
+        "pre_replay_fallback": 1,
+    }
+
+
+def _prepare_mismatched_lease(lease):
+    values = dict(vars(lease))
+    values["identity_sha256"] = "b" * 64
+    return type(lease)(**values)
+
+
+def test_exact_burst_commit_appends_in_order_and_publishes_materialized_block(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 4)
+    config = SimpleNamespace(
+        **{
+            **vars(_config()),
+            "kvcache_block_size": 4,
+        }
+    )
+    scheduler = Scheduler(config)
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=4,
+    )
+    result = _exact_burst_result(
+        lease,
+        (11, 12, 13, 14),
+    )
+
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+        host_visible_gap_ns=123,
+    )
+    scheduler.commit_prepared_postprocess(prepared)
+
+    assert sequence.completion_token_ids == [11, 12, 13, 14]
+    first_block = scheduler.block_manager.blocks[
+        sequence.block_table[0]
+    ]
+    assert first_block.token_ids == [1, 11, 12, 13]
+    assert first_block.hash != -1
+    assert scheduler.block_manager.hash_to_block_id[
+        first_block.hash
+    ] == first_block.block_id
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["commits"] == 1
+    assert summary["committed_tokens"] == 4
+    assert summary["maximum_host_visible_gap_ns"] == 123
+    assert summary["pending_leases"] == 0
+
+
+def test_exact_burst_completion_releases_request_storage_once(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 4)
+    config = SimpleNamespace(
+        **{
+            **vars(_config()),
+            "kvcache_block_size": 4,
+        }
+    )
+    scheduler = Scheduler(config)
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        max_tokens=4,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(scheduler, sequence)
+    result = _exact_burst_result(
+        lease,
+        (11, 12, 13, 14),
+    )
+    release_count = 0
+    original_release = scheduler._release_request_storage
+
+    def count_release(value):
+        nonlocal release_count
+        release_count += 1
+        return original_release(value)
+
+    monkeypatch.setattr(
+        scheduler,
+        "_release_request_storage",
+        count_release,
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    scheduler.commit_prepared_postprocess(prepared)
+
+    assert release_count == 1
+    assert sequence.status == SequenceStatus.FINISHED
+    assert sequence.block_table == []
+    assert tuple(scheduler.running) == ()
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 0
+
+
+def test_exact_burst_commit_rollback_restores_hashes_and_keeps_lease(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 4)
+    config = SimpleNamespace(
+        **{
+            **vars(_config()),
+            "kvcache_block_size": 4,
+        }
+    )
+    scheduler = Scheduler(config)
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(scheduler, sequence)
+    result = _exact_burst_result(
+        lease,
+        (11, 12, 13, 14),
+    )
+    before = _snapshot(scheduler, (sequence,))
+    original_publish = (
+        scheduler.block_manager.publish_full_blocks
+    )
+
+    def publish_then_fail(*args, **kwargs):
+        original_publish(*args, **kwargs)
+        raise RuntimeError("injected exact burst publish failure")
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_full_blocks",
+        publish_then_fail,
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected exact burst publish failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert _snapshot(scheduler, (sequence,)) == before
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 1
+    scheduler.fail_exact_greedy_decode_burst(
+        lease,
+        terminal=True,
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["failures"] == 1
+    assert summary["pending_leases"] == 0
 
 
 def test_commit_appends_selected_tokens_once_and_requeues_rows():

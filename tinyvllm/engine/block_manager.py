@@ -303,6 +303,37 @@ class BlockManager:
             identities.append((block_id, block.generation))
         return tuple(identities)
 
+    def validate_block_identities(
+        self,
+        identities: tuple[tuple[int, int], ...],
+    ) -> None:
+        if not isinstance(identities, tuple) or not identities:
+            raise ValueError(
+                "block identities must be a non-empty tuple"
+            )
+        block_ids = []
+        for identity in identities:
+            if (
+                not isinstance(identity, tuple)
+                or len(identity) != 2
+            ):
+                raise ValueError(
+                    "block identity rows must be pairs"
+                )
+            block_id, generation = identity
+            if (
+                isinstance(generation, bool)
+                or not isinstance(generation, int)
+                or generation < 0
+            ):
+                raise ValueError(
+                    "block generation must be a non-negative integer"
+                )
+            block_ids.append(block_id)
+        current = self.block_identities(tuple(block_ids))
+        if current != identities:
+            raise RuntimeError("block identity is stale")
+
 #block只有占满的时候 才会计算hash
     # 以整数形式，返回计算出的哈希值
     @classmethod                           # 对标c++中的static, 第一个参数为类本身，cls, class self

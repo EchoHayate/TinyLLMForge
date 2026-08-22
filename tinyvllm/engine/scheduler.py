@@ -7,6 +7,14 @@ from types import MappingProxyType
 from tinyvllm.config import Config
 from tinyvllm.engine.sequence import Sequence, SequenceStatus
 from tinyvllm.engine.block_manager import BlockManager
+from tinyvllm.engine.exact_greedy_decode_burst import (
+    ExactGreedyDecodeBurstLease,
+    ExactGreedyDecodeBurstResult,
+    ExactGreedyDecodeBurstStats,
+    build_exact_greedy_decode_burst_decision,
+    build_exact_greedy_decode_burst_lease,
+    validate_exact_greedy_decode_burst_result,
+)
 from tinyvllm.engine.hybrid_state import (
     HybridStateLease,
     HybridStateSlotAllocator,
@@ -28,6 +36,7 @@ class ScheduledOutputRow:
     output_tokens: tuple[int, ...]
     speculative: bool
     accepted_draft_tokens: tuple[int, ...] = ()
+    exact_burst: bool = False
 
 
 @dataclass
@@ -40,6 +49,10 @@ class PreparedSchedulerPostprocess:
     decision_now_ns: int | None
     step_end_ns: int | None
     snapshot: object
+    exact_burst_lease: ExactGreedyDecodeBurstLease | None = None
+    exact_burst_result: ExactGreedyDecodeBurstResult | None = None
+    exact_burst_correctness_trace: bool = False
+    exact_burst_host_visible_gap_ns: int = 0
     state: str = "prepared"
 
 
@@ -273,6 +286,38 @@ class SchedulerPostprocessJournal:
         )
         for block_index in range(full_block_count):
             token_ids = seq.block(block_index)
+            if len(token_ids) != block_manager.block_size:
+                break
+            prefix_hash = block_manager.compute_hash(
+                token_ids,
+                prefix_hash,
+            )
+            self._capture_hash_if_absent(
+                block_manager,
+                prefix_hash,
+            )
+
+    def capture_exact_burst_publication_hashes(
+        self,
+        block_manager,
+        seq: Sequence,
+        output_tokens: tuple[int, ...],
+        *,
+        materialized_tokens: int,
+    ) -> None:
+        future_tokens = tuple(seq.token_ids) + output_tokens
+        prefix_hash = -1
+        full_block_count = min(
+            len(seq.block_table),
+            materialized_tokens // block_manager.block_size,
+        )
+        for block_index in range(full_block_count):
+            start = block_index * block_manager.block_size
+            token_ids = list(
+                future_tokens[
+                    start:start + block_manager.block_size
+                ]
+            )
             if len(token_ids) != block_manager.block_size:
                 break
             prefix_hash = block_manager.compute_hash(
@@ -652,6 +697,10 @@ class Scheduler:
         self._speculative_selection_installed = False
         self.schedule_generation = 0
         self.last_speculative_selection = None
+        self._exact_greedy_decode_burst_pending_lease = None
+        self._exact_greedy_decode_burst_stats = (
+            ExactGreedyDecodeBurstStats()
+        )
         self.last_slo_decision = MappingProxyType({})
         self._last_slo_postprocess: dict = {}
         self.decode_progress_ns_by_seq_id: dict[int, int] = {}
@@ -922,6 +971,290 @@ class Scheduler:
         raise RuntimeError(
             "speculative selection config is already installed"
         )
+
+    def prepare_exact_greedy_decode_burst(
+        self,
+        seqs: tuple[Sequence, ...],
+        *,
+        schedule_generation: int,
+        graph_generation: int,
+        enabled: bool,
+        configured_width: int,
+        is_prefill: bool,
+        do_sample: bool,
+        batch_kind: str | None,
+        completion_only: bool,
+        tensor_parallel_size: int,
+        rank: int,
+        graph_available: bool,
+        incompatible_modes: tuple[str, ...],
+        quarantined: bool = False,
+    ) -> ExactGreedyDecodeBurstLease | None:
+        if not isinstance(seqs, tuple):
+            raise ValueError(
+                "exact burst sequences must be a tuple"
+            )
+        if schedule_generation != self.schedule_generation:
+            raise ValueError(
+                "exact burst schedule generation is stale"
+            )
+        self._exact_greedy_decode_burst_stats.record_attempt()
+        sequence = seqs[0] if len(seqs) == 1 else None
+        remaining_output_tokens = (
+            max(
+                0,
+                int(sequence.max_tokens)
+                - int(sequence.num_completion_tokens),
+            )
+            if sequence is not None
+            else 0
+        )
+        decision = build_exact_greedy_decode_burst_decision(
+            enabled=enabled,
+            configured_width=configured_width,
+            remaining_output_tokens=remaining_output_tokens,
+            initial_sequence_length=(
+                len(sequence) if sequence is not None else 1
+            ),
+            block_size=self.block_manager.block_size,
+            sequence_count=len(seqs),
+            waiting_count=len(self.waiting),
+            prefilling_count=len(self.prefilling),
+            is_prefill=is_prefill,
+            do_sample=do_sample,
+            batch_kind=batch_kind,
+            temperatures=tuple(
+                sequence.temperature for sequence in seqs
+            ),
+            ignore_eos=tuple(
+                sequence.ignore_eos for sequence in seqs
+            ),
+            completion_only=completion_only,
+            tensor_parallel_size=tensor_parallel_size,
+            rank=rank,
+            graph_available=graph_available,
+            incompatible_modes=incompatible_modes,
+            pending_lease=(
+                self._exact_greedy_decode_burst_pending_lease
+                is not None
+            ),
+            quarantined=quarantined,
+        )
+        if not decision.optimized:
+            self._exact_greedy_decode_burst_stats.record_fallback(
+                decision.fallback_reason
+            )
+            return None
+        if sequence.status != SequenceStatus.RUNNING:
+            self._exact_greedy_decode_burst_stats.record_fallback(
+                "sequence_not_running"
+            )
+            return None
+        block_table_identity = self.block_manager.block_identities(
+            tuple(sequence.block_table)
+        )
+        first_write_position = decision.first_write_position
+        write_block_index = (
+            first_write_position // self.block_manager.block_size
+        )
+        if write_block_index >= len(sequence.block_table):
+            raise RuntimeError(
+                "exact burst write block is unavailable"
+            )
+        write_block_id = sequence.block_table[write_block_index]
+        write_block_generation = self.block_manager.blocks[
+            write_block_id
+        ].generation
+        write_offset = (
+            first_write_position % self.block_manager.block_size
+        )
+        first_physical_slot = (
+            write_block_id * self.block_manager.block_size
+            + write_offset
+        )
+        lease = build_exact_greedy_decode_burst_lease(
+            sequence_id=sequence.seq_id,
+            schedule_generation=schedule_generation,
+            graph_generation=graph_generation,
+            requested_token_count=configured_width,
+            authorized_token_count=(
+                decision.authorized_token_count
+            ),
+            initial_completion_count=(
+                sequence.num_completion_tokens
+            ),
+            initial_sequence_length=len(sequence),
+            block_table_identity=block_table_identity,
+            write_block_id=write_block_id,
+            write_block_generation=write_block_generation,
+            first_write_position=first_write_position,
+            last_write_position=decision.last_write_position,
+            first_physical_slot=first_physical_slot,
+            last_physical_slot=(
+                first_physical_slot
+                + decision.authorized_token_count
+                - 1
+            ),
+            remaining_output_tokens=remaining_output_tokens,
+            completion_only=completion_only,
+        )
+        self._exact_greedy_decode_burst_pending_lease = lease
+        self._exact_greedy_decode_burst_stats.record_acceptance(
+            requested_token_count=configured_width,
+            authorized_token_count=(
+                decision.authorized_token_count
+            ),
+            output_budget_clipped=(
+                decision.output_budget_clipped
+            ),
+            block_boundary_clipped=(
+                decision.block_boundary_clipped
+            ),
+        )
+        return lease
+
+    def _validate_pending_exact_greedy_decode_burst(
+        self,
+        lease: ExactGreedyDecodeBurstLease,
+        sequence: Sequence | None = None,
+        *,
+        require_current_generation: bool = True,
+    ) -> None:
+        if not isinstance(lease, ExactGreedyDecodeBurstLease):
+            raise ValueError(
+                "exact burst lease has an invalid type"
+            )
+        pending = self._exact_greedy_decode_burst_pending_lease
+        if pending is None or pending != lease:
+            raise ValueError(
+                "exact burst lease does not match the pending lease"
+            )
+        if (
+            require_current_generation
+            and lease.schedule_generation != self.schedule_generation
+        ):
+            raise ValueError("exact burst lease is stale")
+        if sequence is None:
+            return
+        if sequence.seq_id != lease.sequence_id:
+            raise ValueError(
+                "exact burst lease sequence ID mismatch"
+            )
+        if len(sequence) != lease.initial_sequence_length:
+            raise ValueError(
+                "exact burst sequence length changed"
+            )
+        if (
+            sequence.num_completion_tokens
+            != lease.initial_completion_count
+        ):
+            raise ValueError(
+                "exact burst completion count changed"
+            )
+        self.block_manager.validate_block_identities(
+            lease.block_table_identity
+        )
+        if tuple(sequence.block_table) != tuple(
+            block_id
+            for block_id, _ in lease.block_table_identity
+        ):
+            raise ValueError(
+                "exact burst sequence block table changed"
+            )
+
+    def cancel_exact_greedy_decode_burst(
+        self,
+        lease: ExactGreedyDecodeBurstLease,
+        reason: str,
+    ) -> None:
+        self._validate_pending_exact_greedy_decode_burst(
+            lease,
+            require_current_generation=False,
+        )
+        self._exact_greedy_decode_burst_stats.cancel_pending(
+            reason
+        )
+        self._exact_greedy_decode_burst_pending_lease = None
+
+    def fail_exact_greedy_decode_burst(
+        self,
+        lease: ExactGreedyDecodeBurstLease,
+        *,
+        terminal: bool,
+    ) -> None:
+        self._validate_pending_exact_greedy_decode_burst(
+            lease,
+            require_current_generation=False,
+        )
+        self._exact_greedy_decode_burst_stats.record_failure(
+            terminal=terminal
+        )
+        if terminal:
+            self._exact_greedy_decode_burst_pending_lease = None
+
+    def prepare_exact_greedy_decode_burst_commit(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: ExactGreedyDecodeBurstLease,
+        result: ExactGreedyDecodeBurstResult,
+        *,
+        correctness_trace: bool = False,
+        host_visible_gap_ns: int = 0,
+        decision_now_ns: int | None = None,
+        step_end_ns: int | None = None,
+    ) -> PreparedSchedulerPostprocess:
+        if not isinstance(seqs, tuple) or len(seqs) != 1:
+            raise ValueError(
+                "exact burst commit requires one sequence"
+            )
+        sequence = seqs[0]
+        self._validate_pending_exact_greedy_decode_burst(
+            lease,
+            sequence,
+        )
+        validate_exact_greedy_decode_burst_result(
+            lease,
+            result,
+            correctness_trace=correctness_trace,
+        )
+        if (
+            isinstance(host_visible_gap_ns, bool)
+            or not isinstance(host_visible_gap_ns, int)
+            or host_visible_gap_ns < 0
+        ):
+            raise ValueError(
+                "host_visible_gap_ns must be a non-negative integer"
+            )
+        prepared = self.prepare_postprocess(
+            seqs,
+            (
+                ScheduledOutputRow(
+                    sequence_id=sequence.seq_id,
+                    output_tokens=result.tokens,
+                    speculative=False,
+                    exact_burst=True,
+                ),
+            ),
+            is_prefill=False,
+            do_sample=True,
+            batch_kind=None,
+            decision_now_ns=decision_now_ns,
+            step_end_ns=step_end_ns,
+        )
+        prepared.exact_burst_lease = lease
+        prepared.exact_burst_result = result
+        prepared.exact_burst_correctness_trace = (
+            correctness_trace
+        )
+        prepared.exact_burst_host_visible_gap_ns = (
+            host_visible_gap_ns
+        )
+        return prepared
+
+    def exact_greedy_decode_burst_summary(
+        self,
+    ) -> dict[str, object]:
+        return self._exact_greedy_decode_burst_stats.summary()
 
     def _publish_slo_decision(self, values: dict) -> None:
         self.last_slo_decision = MappingProxyType(dict(values))
@@ -1831,6 +2164,10 @@ class Scheduler:
                 raise ValueError(
                     "postprocess speculative flag must be a bool"
                 )
+            if not isinstance(row.exact_burst, bool):
+                raise ValueError(
+                    "postprocess exact burst flag must be a bool"
+                )
             for token_values, name in (
                 (row.output_tokens, "output_tokens"),
                 (
@@ -1869,7 +2206,47 @@ class Scheduler:
                 if batch_kind == "mixed"
                 else do_sample
             )
-            if row.speculative:
+            if row.exact_burst:
+                if row.speculative:
+                    raise ValueError(
+                        "exact burst output cannot be speculative"
+                    )
+                if len(row.output_tokens) < 2:
+                    raise ValueError(
+                        "exact burst output must contain at least two tokens"
+                    )
+                if row.accepted_draft_tokens:
+                    raise ValueError(
+                        "exact burst output cannot contain "
+                        "accepted draft tokens"
+                    )
+                if not row_is_decode or not row_do_sample:
+                    raise ValueError(
+                        "exact burst output requires decode sampling"
+                    )
+                if seq.status != SequenceStatus.RUNNING:
+                    raise ValueError(
+                        "exact burst output requires a running sequence"
+                    )
+                lease = (
+                    self._exact_greedy_decode_burst_pending_lease
+                )
+                if lease is None:
+                    raise ValueError(
+                        "exact burst output requires an active lease"
+                    )
+                self._validate_pending_exact_greedy_decode_burst(
+                    lease,
+                    seq,
+                )
+                if (
+                    len(row.output_tokens)
+                    != lease.authorized_token_count
+                ):
+                    raise ValueError(
+                        "exact burst token count does not match lease"
+                    )
+            elif row.speculative:
                 if not row_is_decode or not row_do_sample:
                     raise ValueError(
                         "speculative output requires decode sampling"
@@ -1915,6 +2292,30 @@ class Scheduler:
                     raise ValueError(
                         "output tokens appear after effective EOS"
                     )
+        journal = SchedulerPostprocessJournal.capture(
+            self,
+            seqs,
+        )
+        exact_rows = tuple(
+            (seq, row)
+            for seq, row in zip(seqs, rows)
+            if row.exact_burst
+        )
+        if exact_rows:
+            if len(exact_rows) != 1 or len(rows) != 1:
+                raise ValueError(
+                    "exact burst output requires a single-row batch"
+                )
+            sequence, row = exact_rows[0]
+            lease = self._exact_greedy_decode_burst_pending_lease
+            journal.capture_exact_burst_publication_hashes(
+                self.block_manager,
+                sequence,
+                row.output_tokens,
+                materialized_tokens=(
+                    lease.last_write_position + 1
+                ),
+            )
         return PreparedSchedulerPostprocess(
             scheduled_sequence_ids=scheduled_sequence_ids,
             rows=rows,
@@ -1923,9 +2324,11 @@ class Scheduler:
             batch_kind=batch_kind,
             decision_now_ns=decision_now_ns,
             step_end_ns=step_end_ns,
-            snapshot=SchedulerPostprocessJournal.capture(
-                self,
-                seqs,
+            snapshot=journal,
+            exact_burst_lease=(
+                self._exact_greedy_decode_burst_pending_lease
+                if exact_rows
+                else None
             ),
         )
 
@@ -1947,6 +2350,26 @@ class Scheduler:
             sequence
             for sequence, _ in journal.sequence_states
         )
+        if prepared.exact_burst_lease is not None:
+            if len(seqs) != 1:
+                raise ValueError(
+                    "exact burst commit requires one sequence"
+                )
+            if prepared.exact_burst_result is None:
+                raise ValueError(
+                    "exact burst commit requires a validated result"
+                )
+            self._validate_pending_exact_greedy_decode_burst(
+                prepared.exact_burst_lease,
+                seqs[0],
+            )
+            validate_exact_greedy_decode_burst_result(
+                prepared.exact_burst_lease,
+                prepared.exact_burst_result,
+                correctness_trace=(
+                    prepared.exact_burst_correctness_trace
+                ),
+            )
         timestamp_valid = False
         try:
             timestamps_present = (
@@ -2057,6 +2480,31 @@ class Scheduler:
             raise
         journal.state = "committed"
         prepared.state = "committed"
+        if prepared.exact_burst_lease is not None:
+            result = prepared.exact_burst_result
+            if result is not None:
+                self._exact_greedy_decode_burst_stats.record_replays(
+                    result.replay_count
+                )
+                self._exact_greedy_decode_burst_stats.record_final_token_d2h(
+                    token_count=len(result.tokens),
+                    byte_count=len(result.tokens) * 8,
+                )
+                if result.sampled_logit_d2h_calls:
+                    self._exact_greedy_decode_burst_stats.record_sampled_logit_d2h()
+            self._exact_greedy_decode_burst_stats.record_commit(
+                token_count=len(
+                    next(
+                        row.output_tokens
+                        for row in prepared.rows
+                        if row.exact_burst
+                    )
+                ),
+                host_visible_gap_ns=(
+                    prepared.exact_burst_host_visible_gap_ns
+                ),
+            )
+            self._exact_greedy_decode_burst_pending_lease = None
 
     def _apply_prepared_decode_row(
         self,
@@ -2070,6 +2518,17 @@ class Scheduler:
     ) -> None:
         for token_id in row.output_tokens:
             seq.append_token(token_id)
+        if row.exact_burst:
+            lease = self._exact_greedy_decode_burst_pending_lease
+            self._validate_pending_exact_greedy_decode_burst(
+                lease
+            )
+            self.block_manager.publish_full_blocks(
+                seq,
+                materialized_tokens=(
+                    lease.last_write_position + 1
+                ),
+            )
         self._record_decode_progress(
             seq,
             step_end_ns,
