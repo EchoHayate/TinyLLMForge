@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
 import types
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -35,6 +36,17 @@ _MODEL_RUNNER_PATH = os.path.join(
     "tinyvllm",
     "engine",
     "model_runner.py",
+)
+_CONFIG_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "config.py",
+)
+_GREEDY_SAMPLING_FAST_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "greedy_sampling_fast_path.py",
 )
 _SPLIT_POLICY_PATH = os.path.join(
     _REPO_ROOT,
@@ -277,6 +289,10 @@ def _load_model_runner_module():
     _load_source_module(
         "tinyvllm.engine.spec_verify_exact_cuda_graph_cache",
         _SPEC_VERIFY_EXACT_CACHE_PATH,
+    )
+    _load_source_module(
+        "tinyvllm.engine.greedy_sampling_fast_path",
+        _GREEDY_SAMPLING_FAST_PATH,
     )
     if "tinyvllm.engine.model_runner_command_ack" not in sys.modules:
         _load_source_module(
@@ -624,6 +640,7 @@ def make_runner(**overrides):
         "chunked_prefill_mixed_batch": False,
         "cpu_offload": False,
         "replay_aware_decode_metadata": False,
+        "zero_temperature_greedy_fast_path": False,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "spec_verify_cuda_graphs": False,
@@ -649,6 +666,12 @@ def make_runner(**overrides):
     runner._cuda_graph_step_id = 0
     runner._cuda_graph_request_ids_hash = "request-hash"
     runner.decode_internal_profiler = SimpleNamespace()
+    greedy_module = sys.modules[
+        "tinyvllm.engine.greedy_sampling_fast_path"
+    ]
+    runner.greedy_sampling_fast_path_stats = (
+        greedy_module.GreedySamplingFastPathStats()
+    )
     runner.qwen35_recurrent_capture_session = None
     runner._spec_verify_trace = SpecVerifyTraceRecorder(
         rank=runner.rank,
@@ -4619,6 +4642,217 @@ def test_run_records_selected_rank_zero_sampling_logits_before_sampler():
     ]
 
 
+def _load_real_config_class():
+    module_name = "tinyvllm_config_greedy_fast_path_under_test"
+    fake_transformers = types.ModuleType("transformers")
+
+    class FakeAutoConfig:
+        @staticmethod
+        def from_pretrained(model):
+            del model
+            return SimpleNamespace(
+                max_position_embeddings=4096,
+                num_hidden_layers=4,
+            )
+
+    fake_transformers.AutoConfig = FakeAutoConfig
+    original_transformers = sys.modules.get("transformers")
+    try:
+        sys.modules["transformers"] = fake_transformers
+        return _load_source_module(module_name, _CONFIG_PATH).Config
+    finally:
+        if original_transformers is None:
+            sys.modules.pop("transformers", None)
+        else:
+            sys.modules["transformers"] = original_transformers
+        sys.modules.pop(module_name, None)
+
+
+def test_zero_temperature_greedy_fast_path_config_is_fail_closed():
+    Config = _load_real_config_class()
+    assert (
+        Config.__dataclass_fields__[
+            "zero_temperature_greedy_fast_path"
+        ].default
+        is False
+    )
+    with tempfile.TemporaryDirectory() as model:
+        try:
+            Config(
+                model=model,
+                zero_temperature_greedy_fast_path=1,
+            )
+        except ValueError as error:
+            assert str(error) == (
+                "zero_temperature_greedy_fast_path must be a bool"
+            )
+        else:
+            raise AssertionError(
+                "non-boolean greedy fast-path control was accepted"
+            )
+
+
+class _GreedyFastPathLogits:
+    def __init__(self, values, *, shape=None):
+        self.values = tuple(tuple(row) for row in values)
+        self.shape = (
+            tuple(shape)
+            if shape is not None
+            else (len(self.values), len(self.values[0]))
+        )
+        self.trace = []
+
+    def to(self, dtype):
+        self.trace.append(("to", dtype))
+        return self
+
+    def argmax(self, dim):
+        self.trace.append(("argmax", dim))
+        tokens = [
+            max(range(len(row)), key=row.__getitem__)
+            for row in self.values
+        ]
+        return SimpleNamespace(
+            tolist=lambda: self.trace.append(("tolist", None))
+            or tokens
+        )
+
+
+def test_greedy_fast_path_uses_exact_float32_argmax():
+    runner = make_runner(
+        zero_temperature_greedy_fast_path=True,
+    )
+    prepare_calls = []
+    sampler_calls = []
+    runner.prepare_sample = (
+        lambda seqs: prepare_calls.append(tuple(seqs))
+    )
+    runner.sampler = (
+        lambda logits, temperatures: sampler_calls.append(
+            (logits, temperatures)
+        )
+    )
+    logits = _GreedyFastPathLogits([[1.0, 4.0, 2.0]])
+    original_values = logits.values
+
+    token_ids = (
+        runner._sample_tokens_with_optional_greedy_fast_path(
+            logits,
+            [SimpleNamespace(temperature=0.0)],
+            batch_kind=None,
+        )
+    )
+
+    assert token_ids == [1]
+    assert logits.values == original_values
+    assert logits.trace == [
+        ("to", model_runner.torch.float32),
+        ("argmax", -1),
+        ("tolist", None),
+    ]
+    assert prepare_calls == []
+    assert sampler_calls == []
+    assert runner.zero_temperature_greedy_fast_path_summary() == {
+        "eligible_steps": 1,
+        "optimized_steps": 1,
+        "avoided_temperature_h2d_bytes": 4,
+        "avoided_softmax_calls": 1,
+        "avoided_gumbel_rng_calls": 1,
+        "avoided_stochastic_divisions": 2,
+        "avoided_stochastic_argmax_calls": 1,
+        "avoided_where_calls": 1,
+        "fallback_counts": {},
+    }
+
+
+def test_greedy_fast_path_fallbacks_preserve_legacy_sampler():
+    cases = (
+        (False, 0, (0.0,), None, (1, 3), "disabled"),
+        (True, 1, (0.0,), None, (1, 3), "non_root_rank"),
+        (
+            True,
+            0,
+            (0.0, 0.0),
+            None,
+            (2, 3),
+            "batch_size_unsupported",
+        ),
+        (
+            True,
+            0,
+            (0.0,),
+            "mixed",
+            (1, 3),
+            "mixed_batch_unsupported",
+        ),
+        (
+            True,
+            0,
+            (0.7,),
+            None,
+            (1, 3),
+            "nonzero_temperature",
+        ),
+        (
+            True,
+            0,
+            (0.0,),
+            None,
+            (3,),
+            "logits_shape_unsupported",
+        ),
+    )
+    for enabled, rank, temperatures, batch_kind, shape, reason in cases:
+        runner = make_runner(
+            zero_temperature_greedy_fast_path=enabled,
+        )
+        runner.rank = rank
+        calls = []
+        prepared = object()
+        runner.prepare_sample = (
+            lambda seqs: calls.append(("prepare", tuple(seqs)))
+            or prepared
+        )
+        runner.sampler = (
+            lambda selected, observed_temperatures:
+                calls.append(
+                    (
+                        "sampler",
+                        selected,
+                        observed_temperatures,
+                    )
+                )
+                or SimpleNamespace(tolist=lambda: [9] * len(temperatures))
+        )
+        logits = _GreedyFastPathLogits(
+            [[1.0, 2.0, 3.0]] * max(1, len(temperatures)),
+            shape=shape,
+        )
+        seqs = [
+            SimpleNamespace(temperature=value)
+            for value in temperatures
+        ]
+
+        assert (
+            runner._sample_tokens_with_optional_greedy_fast_path(
+                logits,
+                seqs,
+                batch_kind=batch_kind,
+            )
+            == [9] * len(temperatures)
+        )
+        assert [call[0] for call in calls] == [
+            "prepare",
+            "sampler",
+        ]
+        assert (
+            runner.zero_temperature_greedy_fast_path_summary()[
+                "fallback_counts"
+            ]
+            == {reason: 1}
+        )
+
+
 def test_run_model_step_records_ordinary_decode_without_changing_sample():
     runner = _trace_ready_runner()
     runner.enable_spec_verify_trace_recording(True)
@@ -5082,6 +5316,9 @@ def main():
         test_every_fallback_reason_and_graph_hit_use_closed_event_schema,
         test_run_hashes_canonical_sorted_sequence_ids_before_dispatch,
         test_run_records_selected_rank_zero_sampling_logits_before_sampler,
+        test_zero_temperature_greedy_fast_path_config_is_fail_closed,
+        test_greedy_fast_path_uses_exact_float32_argmax,
+        test_greedy_fast_path_fallbacks_preserve_legacy_sampler,
         test_run_clears_recorded_logits_when_sampling_is_disabled,
         test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,

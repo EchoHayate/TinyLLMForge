@@ -61,6 +61,10 @@ from tinyvllm.engine.decode_metadata_landing import (
     ReplayAwareDecodeMetadataArena,
     build_decode_metadata_plan,
 )
+from tinyvllm.engine.greedy_sampling_fast_path import (
+    GreedySamplingFastPathStats,
+    decide_greedy_sampling_fast_path,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket import (
     Qwen35HybridPrefixRestoreParticipant,
 )
@@ -2191,6 +2195,9 @@ class ModelRunner:
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)
         self.sampler =  Sampler()
+        self.greedy_sampling_fast_path_stats = (
+            GreedySamplingFastPathStats()
+        )
         self._record_step_logits = False
         self._last_step_logits_cpu: torch.Tensor | None = None
         self._spec_verify_trace = SpecVerifyTraceRecorder(
@@ -8797,6 +8804,46 @@ class ModelRunner:
         #操作系统可将其 “分页” 到磁盘       |     被 “锁定” 在物理内存中，不允许换出到磁盘,
         # （swap） ，释放物理内存给其他进程 |     
 
+    def zero_temperature_greedy_fast_path_summary(self) -> dict:
+        return self.greedy_sampling_fast_path_stats.summary()
+
+    def _sample_tokens_with_optional_greedy_fast_path(
+        self,
+        logits,
+        sample_seqs,
+        *,
+        batch_kind,
+    ) -> list[int]:
+        if not self.config.zero_temperature_greedy_fast_path:
+            self.greedy_sampling_fast_path_stats.record_fallback(
+                "disabled"
+            )
+            temperatures = self.prepare_sample(sample_seqs)
+            return self.sampler(logits, temperatures).tolist()
+        decision = decide_greedy_sampling_fast_path(
+            enabled=True,
+            rank=self.rank,
+            temperatures=tuple(
+                seq.temperature for seq in sample_seqs
+            ),
+            batch_kind=batch_kind,
+            logits_shape=tuple(logits.shape),
+        )
+        if decision.optimized:
+            self.greedy_sampling_fast_path_stats.record_optimized(
+                len(sample_seqs)
+            )
+            return (
+                logits.to(torch.float32)
+                .argmax(dim=-1)
+                .tolist()
+            )
+        self.greedy_sampling_fast_path_stats.record_fallback(
+            decision.fallback_reason
+        )
+        temperatures = self.prepare_sample(sample_seqs)
+        return self.sampler(logits, temperatures).tolist()
+
     def _select_sample_rows(self, logits: torch.Tensor, seqs: list[Sequence],
                             batch_kind: str | None) -> tuple[torch.Tensor, list[Sequence]]:
         if batch_kind != "mixed":
@@ -9420,8 +9467,13 @@ class ModelRunner:
                 self._last_step_logits_cpu = logits.detach().float().cpu()
             else:
                 self._last_step_logits_cpu = None
-            temperatures = self.prepare_sample(sample_seqs)    #只有主进程做采样
-            token_ids = self.sampler(logits, temperatures).tolist()
+            token_ids = (
+                self._sample_tokens_with_optional_greedy_fast_path(
+                    logits,
+                    sample_seqs,
+                    batch_kind=batch_kind,
+                )
+            )
         else:
             self._last_step_logits_cpu = None
             token_ids = None
