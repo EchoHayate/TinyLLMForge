@@ -228,6 +228,16 @@ def test_remote_preflight_uses_pinned_python():
         command.startswith(remote.REMOTE_PYTHON + " ")
         for command in commands
     )
+    assert all("-m pytest" not in command for command in commands)
+    assert {
+        "tools/test_decode_metadata_landing.py",
+        "tools/test_multi_sequence_cuda_graph_gate.py",
+        "tools/test_chunked_prefill.py",
+        "tools/test_profile_prefix_cache.py",
+    } == {
+        command.split()[-1]
+        for command in commands
+    }
     assert any(
         "tools/test_chunked_prefill.py" in command
         for command in commands

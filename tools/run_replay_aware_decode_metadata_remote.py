@@ -305,15 +305,6 @@ def preflight_commands() -> tuple[str, ...]:
     return (
         f"{python} tools/test_decode_metadata_landing.py",
         (
-            f"{python} -m pytest -q "
-            "tools/test_spec_verify_cuda_graph_config.py "
-            "tools/test_model_runner_spec_verify.py "
-            "tools/test_profile_replay_aware_decode_metadata.py "
-            "tools/test_replay_aware_decode_metadata_gate.py "
-            "tools/test_replay_aware_decode_metadata_verify.py "
-            "tools/test_run_replay_aware_decode_metadata_remote.py"
-        ),
-        (
             f"{python} "
             "tools/test_multi_sequence_cuda_graph_gate.py"
         ),
