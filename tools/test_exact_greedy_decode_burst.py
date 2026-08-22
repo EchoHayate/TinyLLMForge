@@ -68,6 +68,7 @@ class _BurstTensor:
         self._data_ptr = _BurstTensor._next_ptr
         _BurstTensor._next_ptr += 1_000
         self.fail_tolist = False
+        self.fail_copy = False
         self.tolist_calls = 0
 
     @property
@@ -123,6 +124,8 @@ class _BurstTensor:
         return self.fill_(0)
 
     def copy_(self, other):
+        if self.fail_copy:
+            raise RuntimeError("copy failed")
         value = getattr(other, "values", other)
         if isinstance(value, list):
             value = [
@@ -1057,6 +1060,30 @@ def test_pre_replay_capacity_and_block_boundary_fail_closed() -> None:
     assert fake_graph.replay_calls == 0
 
 
+def test_pre_replay_block_table_bind_failure_is_specific() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture()
+    tensors["block_table"].fail_copy = True
+
+    fallback = graph.replay(
+        lease=_lease(),
+        initial_token=19,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=[],
+            dtype="int32",
+            element_size=4,
+        ),
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+
+    assert isinstance(fallback, ExactGreedyDecodeBurstFallback)
+    assert fallback.fallback_reason == "block_table_bind_failure"
+    assert fake_graph.replay_calls == 0
+
+
 def test_post_replay_failures_quarantine_and_never_retry() -> None:
     graph, tensors, fake_graph, _events, _slots = _graph_fixture()
     fake_graph.replay_error_at = 2
@@ -1255,6 +1282,7 @@ def main() -> None:
     test_replay_runs_exact_count_then_one_token_d2h()
     test_pre_replay_drift_returns_typed_fallback_without_replay()
     test_pre_replay_capacity_and_block_boundary_fail_closed()
+    test_pre_replay_block_table_bind_failure_is_specific()
     test_post_replay_failures_quarantine_and_never_retry()
     test_final_d2h_failure_quarantines_after_all_replays()
     test_correctness_graph_samples_declared_logits_with_one_d2h()

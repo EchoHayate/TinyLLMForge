@@ -1383,21 +1383,29 @@ class ExactGreedyDecodeBurstGraph:
                 scratch_block_id=None,
                 block_size=self.block_size,
             )
-            tensors["input_token"].fill_(initial_token)
-            tensors["position"].fill_(
-                lease.first_write_position
+        except Exception:
+            self.stats.record_fallback("static_state_reset_failure")
+            return ExactGreedyDecodeBurstFallback(
+                "static_state_reset_failure"
             )
-            tensors["context_length"].fill_(
-                lease.initial_sequence_length
-            )
-            tensors["slot_mapping"].fill_(
-                lease.first_physical_slot
-            )
+        for name, value in (
+            ("input_token", initial_token),
+            ("position", lease.first_write_position),
+            ("context_length", lease.initial_sequence_length),
+            ("slot_mapping", lease.first_physical_slot),
+        ):
+            try:
+                tensors[name].fill_(value)
+            except Exception:
+                reason = f"{name}_bind_failure"
+                self.stats.record_fallback(reason)
+                return ExactGreedyDecodeBurstFallback(reason)
+        try:
             tensors["block_table"].copy_(block_table)
         except Exception:
-            self.stats.record_fallback("static_state_bind_failure")
+            self.stats.record_fallback("block_table_bind_failure")
             return ExactGreedyDecodeBurstFallback(
-                "static_state_bind_failure"
+                "block_table_bind_failure"
             )
 
         completed_replays = 0
