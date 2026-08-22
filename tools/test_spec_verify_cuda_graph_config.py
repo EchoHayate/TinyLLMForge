@@ -130,9 +130,23 @@ def test_decode_graph_defaults_and_validator_remain_unchanged():
     with tempfile.TemporaryDirectory() as model:
         config = Config(model=model)
         assert config.multi_sequence_cuda_graphs is False
+        assert config.replay_aware_decode_metadata is False
         assert config.multi_sequence_cuda_graph_batch_allowlist == (2, 4, 8)
         with pytest.raises(AssertionError):
             Config(
                 model=model,
                 multi_sequence_cuda_graph_batch_allowlist=(1, 2),
+            )
+
+
+def test_replay_aware_decode_metadata_rejects_non_boolean_values():
+    Config = load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        with pytest.raises(
+            ValueError,
+            match="replay_aware_decode_metadata must be a bool",
+        ):
+            Config(
+                model=model,
+                replay_aware_decode_metadata=1,
             )

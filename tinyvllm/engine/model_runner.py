@@ -57,6 +57,10 @@ from tinyvllm.engine.decode_internal_profiler import (
     DecodeInternalProfiler,
     run_profiled_step,
 )
+from tinyvllm.engine.decode_metadata_landing import (
+    ReplayAwareDecodeMetadataArena,
+    build_decode_metadata_plan,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket import (
     Qwen35HybridPrefixRestoreParticipant,
 )
@@ -2229,6 +2233,10 @@ class ModelRunner:
         # prepare_prefill / prepare_decode 用的 pinned host buffer 池：按 (name, dtype) 复用，
         # 容量按需向上扩；避免每步 torch.tensor(list, pin_memory=True).cuda() 触发 host alloc + pin
         self._pinned_buf_cache: dict[tuple[str, torch.dtype], torch.Tensor] = {}
+        self.replay_aware_decode_metadata_arena = (
+            ReplayAwareDecodeMetadataArena(torch)
+        )
+        self._replay_aware_decode_prelanded = False
         self.kv_offload: KVOffloadMVP0 | None = None
         self._kv_offload_pending_dirty_blocks: list[int] = []
         self.speculative_proposal_executors = (
@@ -6828,6 +6836,81 @@ class ModelRunner:
     def prepare_block_tables_from_rows(self, rows: list[list[int]], name: str = "block_tables"):
         return self._list_to_cuda_2d(rows, name, torch.int32)
 
+    def replay_aware_decode_metadata_summary(self) -> dict:
+        return self.replay_aware_decode_metadata_arena.summary()
+
+    def _prepare_replay_aware_decode(
+        self,
+        seqs: list[Sequence],
+    ):
+        self._replay_aware_decode_prelanded = False
+        if not self.config.replay_aware_decode_metadata:
+            return None
+        fallback_reason = None
+        if len(seqs) != 1:
+            fallback_reason = "active_batch_size_unsupported"
+        elif self.enforce_eager:
+            fallback_reason = "enforce_eager"
+        elif self.config.kv_offload_mvp0 or self.kv_offload is not None:
+            fallback_reason = "kv_offload_active"
+        elif self.config.quest_top_k_blocks > 0:
+            fallback_reason = "quest_active"
+        elif self.config.am_compact_blocks > 0:
+            fallback_reason = "compact_attention_active"
+        elif self.config.kv_quant_bits == 4:
+            fallback_reason = "kv_quantized_eager"
+        elif self.config.cpu_offload:
+            fallback_reason = "cpu_offload_active"
+        elif self.config.kv_cartridge_blocks > 0:
+            fallback_reason = "kv_cartridge_active"
+        elif not all(
+            hasattr(self, name)
+            for name in ("graphs", "graph_bs", "graph_vars")
+        ):
+            fallback_reason = "legacy_graph_state_absent"
+        else:
+            try:
+                graph_batch_size = next(
+                    size for size in self.graph_bs
+                    if size >= len(seqs)
+                )
+            except StopIteration:
+                fallback_reason = "graph_batch_size_absent"
+            else:
+                if (
+                    graph_batch_size != 1
+                    or graph_batch_size not in self.graphs
+                ):
+                    fallback_reason = (
+                        "graph_batch_size_mismatch"
+                    )
+        if fallback_reason is not None:
+            self.replay_aware_decode_metadata_arena.record_fallback(
+                fallback_reason
+            )
+            return None
+
+        plan = build_decode_metadata_plan(
+            seqs,
+            self.block_size,
+        )
+        result = self.replay_aware_decode_metadata_arena.land(
+            plan,
+            self.graph_vars,
+            graph_batch_size=graph_batch_size,
+        )
+        if not result.optimized:
+            return None
+        self._kv_offload_pending_dirty_blocks = []
+        set_context(
+            False,
+            slot_mapping=result.slot_mapping,
+            context_lens=result.context_lens,
+            block_tables=result.block_tables,
+        )
+        self._replay_aware_decode_prelanded = True
+        return result.input_ids, result.positions
+
     def _validate_spec_verify_transaction_authorization(
         self,
         *,
@@ -9163,17 +9246,38 @@ class ModelRunner:
         else:           #静态执行  graph replay
             bs = input_ids.size(0)
             context = get_context()
-            graph = self.graphs[next (x for x in self.graph_bs if x >= bs)]
+            graph_bs = next (x for x in self.graph_bs if x >= bs)
+            graph = self.graphs[graph_bs]
             graph_vars = self.graph_vars
-            for k, v in graph_vars.items():
-                if k != "outputs":
-                    v.zero_()
-            graph_vars["input_ids"][:bs] = input_ids
-            graph_vars["positions"][:bs] = positions
-            graph_vars["slot_mapping"][:bs] = context.slot_mapping
-            graph_vars["context_lens"][:bs] = context.context_lens
-            graph_vars["block_tables"][:bs, :context.block_tables.size(1)] = context.block_tables
-            graph.replay()
+            prelanded = bool(
+                getattr(
+                    self,
+                    "_replay_aware_decode_prelanded",
+                    False,
+                )
+            )
+            if prelanded:
+                if bs != 1 or graph_bs != 1:
+                    self._replay_aware_decode_prelanded = False
+                    raise RuntimeError(
+                        "prelanded decode graph identity drift"
+                    )
+            else:
+                for k, v in graph_vars.items():
+                    if k != "outputs":
+                        v.zero_()
+                graph_vars["input_ids"][:bs] = input_ids
+                graph_vars["positions"][:bs] = positions
+                graph_vars["slot_mapping"][:bs] = context.slot_mapping
+                graph_vars["context_lens"][:bs] = context.context_lens
+                graph_vars["block_tables"][
+                    :bs,
+                    :context.block_tables.size(1),
+                ] = context.block_tables
+            try:
+                graph.replay()
+            finally:
+                self._replay_aware_decode_prelanded = False
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
 
@@ -9225,7 +9329,19 @@ class ModelRunner:
         if batch_kind == "mixed":
             input_ids, positions = self.prepare_mixed(seqs)
         else:
-            input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+            prepared_decode = (
+                self._prepare_replay_aware_decode(seqs)
+                if not is_prefill
+                else None
+            )
+            if prepared_decode is not None:
+                input_ids, positions = prepared_decode
+            else:
+                input_ids, positions = (
+                    self.prepare_prefill(seqs)
+                    if is_prefill
+                    else self.prepare_decode(seqs)
+                )
         self._kv_offload_before_forward()
         if observe_proposal_prefill:
             outputs = self.run_model(

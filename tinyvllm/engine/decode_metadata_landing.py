@@ -115,6 +115,9 @@ class ReplayAwareDecodeMetadataArena:
             fallback_reason=reason,
         )
 
+    def record_fallback(self, reason: str) -> None:
+        self._fallback(reason)
+
     @staticmethod
     def _shape(tensor) -> tuple[int, ...]:
         return tuple(int(value) for value in tensor.size())

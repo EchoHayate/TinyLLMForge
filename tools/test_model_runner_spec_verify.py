@@ -623,6 +623,7 @@ def make_runner(**overrides):
         "kv_cartridge_min_seq_len": 0,
         "chunked_prefill_mixed_batch": False,
         "cpu_offload": False,
+        "replay_aware_decode_metadata": False,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "spec_verify_cuda_graphs": False,
@@ -3667,6 +3668,246 @@ def test_single_sequence_decode_still_replays_cuda_graph():
     ]
 
 
+def test_replay_aware_decode_summary_delegates_to_arena():
+    runner = make_runner()
+    runner.replay_aware_decode_metadata_arena = SimpleNamespace(
+        summary=lambda: {
+            "eligible_steps": 3,
+            "optimized_steps": 2,
+        }
+    )
+
+    assert runner.replay_aware_decode_metadata_summary() == {
+        "eligible_steps": 3,
+        "optimized_steps": 2,
+    }
+
+
+def test_replay_aware_decode_preparation_lands_exact_batch_one():
+    calls = []
+
+    class FakeArena:
+        def land(self, plan, graph_vars, *, graph_batch_size):
+            calls.append(
+                (
+                    tuple(plan.input_ids),
+                    tuple(plan.positions),
+                    tuple(plan.block_table_rows),
+                    graph_vars,
+                    graph_batch_size,
+                )
+            )
+            return SimpleNamespace(
+                optimized=True,
+                fallback_reason=None,
+                input_ids=FakeTensor([12]),
+                positions=FakeTensor([2]),
+                slot_mapping=FakeTensor([7 * 256 + 2]),
+                context_lens=FakeTensor([3]),
+                block_tables=FakeTensor([[7]]),
+            )
+
+    runner = make_runner(
+        replay_aware_decode_metadata=True,
+    )
+    runner.graph_bs = [1]
+    runner.graphs = {1: object()}
+    runner.graph_vars = {
+        "input_ids": FakeGraphBuffer([0]),
+        "positions": FakeGraphBuffer([0]),
+        "slot_mapping": FakeGraphBuffer([0]),
+        "context_lens": FakeGraphBuffer([0]),
+        "block_tables": FakeGraphBuffer([[0]]),
+        "outputs": FakeGraphBuffer([[7]]),
+    }
+    runner.replay_aware_decode_metadata_arena = FakeArena()
+    runner._replay_aware_decode_prelanded = False
+    sequence = DecodeSequence(
+        [10, 11, 12],
+        block_table=[7],
+    )
+
+    prepared = runner._prepare_replay_aware_decode(
+        [sequence]
+    )
+
+    assert prepared[0].values == [12]
+    assert prepared[1].values == [2]
+    assert runner._replay_aware_decode_prelanded is True
+    assert calls == [
+        (
+            (12,),
+            (2,),
+            ((7,),),
+            runner.graph_vars,
+            1,
+        )
+    ]
+    active = context.get_context()
+    assert active.slot_mapping.values == [7 * 256 + 2]
+    assert active.context_lens.values == [3]
+    assert active.block_tables.values == [[7]]
+
+
+def test_replay_aware_decode_preparation_fails_closed_when_disabled():
+    runner = make_runner(
+        replay_aware_decode_metadata=False,
+    )
+    runner._replay_aware_decode_prelanded = True
+    runner.replay_aware_decode_metadata_arena = SimpleNamespace(
+        land=lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(
+                AssertionError("disabled path reached arena")
+            )
+        )
+    )
+
+    assert runner._prepare_replay_aware_decode(
+        [DecodeSequence([10, 11], block_table=[2])]
+    ) is None
+    assert runner._replay_aware_decode_prelanded is False
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_reason"),
+    [
+        ("batch_two", "active_batch_size_unsupported"),
+        ("eager", "enforce_eager"),
+        ("kv_offload", "kv_offload_active"),
+        ("quest", "quest_active"),
+        ("compact_attention", "compact_attention_active"),
+        ("kv_quantized", "kv_quantized_eager"),
+        ("cpu_offload", "cpu_offload_active"),
+        ("kv_cartridge", "kv_cartridge_active"),
+        ("graph_state_absent", "legacy_graph_state_absent"),
+        ("graph_size_mismatch", "graph_batch_size_mismatch"),
+    ],
+)
+def test_replay_aware_decode_preparation_fails_closed_for_unsupported_paths(
+    case,
+    expected_reason,
+):
+    fallback_reasons = []
+
+    class RecordingArena:
+        def record_fallback(self, reason):
+            fallback_reasons.append(reason)
+
+        def land(self, *_args, **_kwargs):
+            raise AssertionError(
+                "unsupported path reached metadata landing"
+            )
+
+    runner = make_runner(
+        replay_aware_decode_metadata=True,
+    )
+    runner.graph_bs = [1]
+    runner.graphs = {1: object()}
+    runner.graph_vars = {
+        "input_ids": FakeGraphBuffer([0]),
+        "positions": FakeGraphBuffer([0]),
+        "slot_mapping": FakeGraphBuffer([0]),
+        "context_lens": FakeGraphBuffer([0]),
+        "block_tables": FakeGraphBuffer([[0]]),
+        "outputs": FakeGraphBuffer([[7]]),
+    }
+    runner.replay_aware_decode_metadata_arena = RecordingArena()
+    runner._replay_aware_decode_prelanded = True
+    sequences = [
+        DecodeSequence([10, 11], block_table=[2])
+    ]
+
+    if case == "batch_two":
+        sequences.append(
+            DecodeSequence([20, 21], block_table=[3])
+        )
+    elif case == "eager":
+        runner.enforce_eager = True
+    elif case == "kv_offload":
+        runner.config.kv_offload_mvp0 = True
+    elif case == "quest":
+        runner.config.quest_top_k_blocks = 1
+    elif case == "compact_attention":
+        runner.config.am_compact_blocks = 1
+    elif case == "kv_quantized":
+        runner.config.kv_quant_bits = 4
+    elif case == "cpu_offload":
+        runner.config.cpu_offload = True
+    elif case == "kv_cartridge":
+        runner.config.kv_cartridge_blocks = 1
+    elif case == "graph_state_absent":
+        del runner.graph_vars
+    elif case == "graph_size_mismatch":
+        runner.graph_bs = [2]
+        runner.graphs = {2: object()}
+
+    assert runner._prepare_replay_aware_decode(
+        sequences
+    ) is None
+    assert runner._replay_aware_decode_prelanded is False
+    assert fallback_reasons == [expected_reason]
+
+
+def test_prelanded_single_sequence_replay_skips_copy_and_zero():
+    calls = []
+
+    class FakeModel:
+        def __call__(self, input_ids, positions, input_embeds=None):
+            raise AssertionError(
+                "prelanded decode should replay the CUDA graph"
+            )
+
+        def compute_logits(self, hidden):
+            calls.append(("logits", hidden.values))
+            return hidden
+
+    class FakeGraph:
+        def replay(self):
+            calls.append(("replay", None))
+
+    runner = make_runner(
+        replay_aware_decode_metadata=True,
+    )
+    runner.model = FakeModel()
+    runner.graphs = {1: FakeGraph()}
+    runner.graph_bs = [1]
+    runner.graph_vars = {
+        "input_ids": FakeGraphBuffer([10]),
+        "positions": FakeGraphBuffer([64]),
+        "slot_mapping": FakeGraphBuffer([4]),
+        "context_lens": FakeGraphBuffer([65]),
+        "block_tables": FakeGraphBuffer([[0]]),
+        "outputs": FakeGraphBuffer([[7]]),
+    }
+    runner._replay_aware_decode_prelanded = True
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([4]),
+        context_lens=FakeTensor([65]),
+        block_tables=FakeTensor([[0]]),
+    )
+
+    logits = runner.run_model(
+        FakeTensor([10]),
+        FakeTensor([64]),
+        is_prefill=False,
+    )
+
+    assert logits.values == [[7]]
+    assert calls == [
+        ("replay", None),
+        ("logits", [[7]]),
+    ]
+    assert all(
+        value.zero_calls == 0
+        for value in runner.graph_vars.values()
+    )
+    assert all(
+        value.assignments == []
+        for value in runner.graph_vars.values()
+    )
+
+
 def test_exact_graph_capacity_reserves_scheduler_invisible_scratch():
     assert model_runner.resolve_exact_graph_kv_capacity(
         auto_blocks=100,
@@ -4822,6 +5063,10 @@ def main():
         test_multi_sequence_decode_uses_eager_instead_of_cuda_graph,
         test_single_sequence_decode_uses_eager_when_legacy_graph_state_is_absent,
         test_single_sequence_decode_still_replays_cuda_graph,
+        test_replay_aware_decode_summary_delegates_to_arena,
+        test_replay_aware_decode_preparation_lands_exact_batch_one,
+        test_replay_aware_decode_preparation_fails_closed_when_disabled,
+        test_prelanded_single_sequence_replay_skips_copy_and_zero,
         test_exact_graph_capacity_reserves_scheduler_invisible_scratch,
         test_spec_verify_scratch_capacity_uses_exact_q_without_padding,
         test_decode_and_spec_verify_scratch_partitions_are_disjoint,

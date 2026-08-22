@@ -371,6 +371,17 @@ def test_arena_falls_back_before_writing_for_small_block_table():
     )
 
 
+def test_arena_records_external_fallback_reason():
+    arena = ReplayAwareDecodeMetadataArena(FakeTorch())
+
+    arena.record_fallback("feature_disabled")
+    arena.record_fallback("feature_disabled")
+
+    assert arena.summary()["fallback_counts"] == {
+        "feature_disabled": 2
+    }
+
+
 def main() -> None:
     test_build_decode_metadata_plan_preserves_readable_rows()
     test_build_decode_metadata_plan_pads_rows_deterministically()
@@ -378,6 +389,7 @@ def main() -> None:
     test_arena_reuses_capacity_and_accounts_exact_cost()
     test_arena_falls_back_before_writing_for_inexact_graph()
     test_arena_falls_back_before_writing_for_small_block_table()
+    test_arena_records_external_fallback_reason()
     print("decode metadata landing tests passed")
 
 
