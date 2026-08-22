@@ -284,7 +284,11 @@ def write_complete_prefix_bundle(
     return run_dir
 
 
-def write_complete_chunked_bundle(root: Path) -> Path:
+def write_complete_chunked_bundle(
+    root: Path,
+    *,
+    mismatched_outputs: bool = False,
+) -> Path:
     run_dir = root / "chunked-run"
     source, source_root, patch_path = _source_fixture(
         root / "chunked-source"
@@ -298,7 +302,18 @@ def write_complete_chunked_bundle(root: Path) -> Path:
         environment_evidence=_stage1_environment(gate_name="chunked"),
     )
     _attach_source_snapshot(run_dir, source_root, patch_path)
-    fixtures._populate_chunked_outputs(run_dir, manifest)
+    mismatched_case_id = None
+    if mismatched_outputs:
+        mismatched_case_id = next(
+            case_id
+            for case_id in manifest["case_order"]
+            if case_id == "fair_chunked__r0"
+        )
+    fixtures._populate_chunked_outputs(
+        run_dir,
+        manifest,
+        mismatched_output_case_id=mismatched_case_id,
+    )
     for ordinal, case_id in enumerate(manifest["case_order"]):
         process_path = run_dir / "cases" / case_id / "process.json"
         process = _read_json(process_path)
@@ -736,6 +751,27 @@ def test_verifier_rebuilds_complete_chunked_bundle():
         assert result["classification"] == "FAIR_CHUNKED_GO"
 
 
+def test_verifier_rebuilds_complete_output_mismatch_evidence():
+    with TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        run_dir = write_complete_chunked_bundle(
+            root,
+            mismatched_outputs=True,
+        )
+
+        result = verifier.verify_run(
+            run_dir,
+            root / "chunked-mismatch-controller",
+        )
+
+        assert result["classification"] == "FAIR_CHUNKED_INCOMPLETE"
+        assert result["structural_failures"] == []
+        assert result["correctness_failures"] == [
+            "r0 FAIR_CHUNKED: lifecycle or output failure",
+            "r0 OFF: lifecycle or output failure",
+        ]
+
+
 def test_verifier_rebuilds_complete_starvation_evidence():
     workload = gate.contract.build_chunked_workload()
     case = gate.contract.build_chunked_case_matrix(
@@ -948,6 +984,7 @@ def main():
     test_source_snapshot_size_mismatch_is_rejected_before_extraction()
     test_verifier_rebuilds_complete_prefix_bundle()
     test_verifier_rebuilds_complete_chunked_bundle()
+    test_verifier_rebuilds_complete_output_mismatch_evidence()
     test_verifier_rebuilds_complete_starvation_evidence()
     test_verifier_classifies_complete_incorrect_prefix_evidence()
     test_verifier_thresholds_match_the_frozen_contract()

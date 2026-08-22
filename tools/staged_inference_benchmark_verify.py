@@ -1803,8 +1803,6 @@ def _verify_chunked(
     for filename, expected_rows in merged.items():
         if _load_jsonl(root / filename) != expected_rows:
             raise ValueError(f"chunked merged raw mismatch: {filename}")
-    if _load_jsonl(root / "case_rows.jsonl") != case_rows:
-        raise ValueError("chunked case rows mismatch")
     repetitions = []
     for repetition in range(5):
         policies = metrics_by_repetition.get(repetition, {})
@@ -1818,6 +1816,8 @@ def _verify_chunked(
             "repetition": repetition,
             **policies,
         })
+    if _load_jsonl(root / "case_rows.jsonl") != case_rows:
+        raise ValueError("chunked case rows mismatch")
     return _classify_chunked({
         "artifact_complete": True,
         "repetitions": repetitions,

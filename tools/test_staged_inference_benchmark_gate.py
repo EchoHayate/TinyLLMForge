@@ -920,6 +920,7 @@ def _populate_chunked_outputs(
     duplicate_measured_id: bool = False,
     starved_case_id: str | None = None,
     starved_count: int = 0,
+    mismatched_output_case_id: str | None = None,
 ) -> None:
     workload = contract.build_chunked_workload()
     for case_id in manifest["case_order"]:
@@ -946,6 +947,8 @@ def _populate_chunked_outputs(
                     for index in range(len(row["output_token_ids"]))
                 ]
                 row["completion_ns"] = row["token_timestamps_ns"][-1]
+        if case_id == mismatched_output_case_id:
+            timeline[8]["output_token_ids"][0] += 1
         if duplicate_measured_id:
             timeline[8]["request_id"] = timeline[9]["request_id"]
         _write_jsonl(
