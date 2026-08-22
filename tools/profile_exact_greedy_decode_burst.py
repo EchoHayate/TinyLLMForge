@@ -679,7 +679,16 @@ def validate_case_row(row) -> dict:
         or len(row["decode_cuda_ns"])
         != expected_decode_profile_steps
     ):
-        raise ValueError("decode profile inventory mismatch")
+        raise ValueError(
+            "decode profile inventory mismatch: "
+            f"policy={policy}, "
+            f"expected_steps={expected_decode_profile_steps}, "
+            f"host_steps={len(row['decode_host_ns'])}, "
+            f"cuda_steps={len(row['decode_cuda_ns'])}, "
+            f"commits={summary['commits']}, "
+            f"attempts={summary['attempts']}, "
+            f"fallbacks={summary['fallback_counts']}"
+        )
     receipt = (
         summary["capture_receipts"][0]
         if summary["capture_receipts"]

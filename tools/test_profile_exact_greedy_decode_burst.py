@@ -459,7 +459,12 @@ def test_case_row_preserves_benefit_cost_and_inventory() -> None:
     missing_decode_profile["decode_cuda_ns"] = []
     with pytest.raises(
         ValueError,
-        match="decode profile inventory",
+        match=(
+            "decode profile inventory mismatch: "
+            "policy=decode_burst_k8, expected_steps=16, "
+            "host_steps=0, cuda_steps=0, "
+            "commits=16, attempts=16, fallbacks=\\{\\}"
+        ),
     ):
         validate_case_row(missing_decode_profile)
 
