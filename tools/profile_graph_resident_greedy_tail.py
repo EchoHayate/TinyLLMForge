@@ -468,7 +468,11 @@ def _cost_from_graph_summary(summary: dict) -> dict[str, int]:
     }
 
 
-def validate_case_row(row) -> dict:
+def validate_case_row(
+    row,
+    *,
+    require_complete_optimized_path: bool = True,
+) -> dict:
     if not isinstance(row, dict):
         raise ValueError("case row must be an object")
     required = {
@@ -574,16 +578,24 @@ def validate_case_row(row) -> dict:
         *GRAPH_COST_FIELDS,
     ):
         _require_finite_non_negative(row[field], field)
-    greedy_summary = _validate_greedy_summary(
-        row["greedy_fast_path_summary"],
-        policy=policy,
-        generated_tokens=generated_tokens,
-    )
-    graph_summary = _validate_graph_summary(
-        row["graph_resident_greedy_tail_summary"],
-        policy=policy,
-        generated_tokens=generated_tokens,
-    )
+    if require_complete_optimized_path:
+        greedy_summary = _validate_greedy_summary(
+            row["greedy_fast_path_summary"],
+            policy=policy,
+            generated_tokens=generated_tokens,
+        )
+        graph_summary = _validate_graph_summary(
+            row["graph_resident_greedy_tail_summary"],
+            policy=policy,
+            generated_tokens=generated_tokens,
+        )
+    else:
+        greedy_summary = _validate_greedy_summary_shape(
+            row["greedy_fast_path_summary"]
+        )
+        graph_summary = _validate_graph_summary_shape(
+            row["graph_resident_greedy_tail_summary"]
+        )
     expected_cost = _cost_from_graph_summary(graph_summary)
     for field, expected in expected_cost.items():
         if row[field] != expected:
