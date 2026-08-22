@@ -2345,6 +2345,141 @@ PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
 
+## 2026-08-22 Replay-Aware Decode Metadata Landing Reconciliation
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete evidence | Result |
+| --- | --- | --- |
+| One repository-specific decode optimization | `docs/superpowers/specs/2026-08-22-replay-aware-decode-metadata-landing-design.md`; `tinyvllm/engine/decode_metadata_landing.py`; `tinyvllm/engine/model_runner.py` | `PASS` |
+| Default-disabled and fail-closed | `Config.replay_aware_decode_metadata=False`; focused runner tests cover disabled and ten unsupported paths | `PASS` |
+| Real CUDA inference-tensor writes occur inside inference mode | commit `34ba33e66acafd789201d4acb25316661fed90c6`; `test_arena_copies_into_graph_inputs_under_inference_mode` | `PASS` |
+| Immutable source-bound Stage-1 run | local `artifacts/replay_aware_decode_metadata/20260822-qwen3-06b-replay-meta-r7/`; source commit `34ba33e66acafd789201d4acb25316661fed90c6` | `PASS` |
+| Approved remote storage only | controller preflight records staging, primary, and controller paths exclusively below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818` | `PASS` |
+| Strict clean-GPU admission | controller preflight selects A100 GPU 2 / UUID `GPU-63c05907-407b-8240-07a0-f38872840867` at 0 MiB, 0%, no compute process | `PASS` |
+| Frozen workload | `workload_manifest.json`: Qwen3-0.6B, batch 1, prompt lengths 256/2048/8192, 128 generated tokens, 2 warmups, 5 measured repetitions, alternating OFF/ON | `PASS` |
+| Complete measured matrix | `case_rows.jsonl` contains exactly 30 rows and `summary.json` contains 15 pairs | `PASS` |
+| Exact output parity | all 15 pairs have identical token IDs and decoded-text SHA256 values | `PASS` |
+| Optimized path coverage | every ON row records exactly 127 optimized steps and every OFF row records zero | `PASS` |
+| Median TPOT gate | short `3.0616%`, medium `2.4033%`, long `-1.0387%`; required at least two buckets at `>=5%` | `FAIL_0_OF_3` |
+| Aggregate p95 TPOT gate | aggregate p95 changes from `4.794696 ms` to `4.844655 ms`, a `1.0420%` regression; required `>=5%` improvement | `FAIL` |
+| Per-bucket TPOT regression protection | worst median regression is long `1.0387%`; worst p95 regression is long `1.1707%`; both within 3% | `PASS` |
+| TTFT, E2E, throughput, and CUDA-reserved protections | aggregate TTFT improves `2.4983%`, E2E improves `2.1618%`, throughput improves `2.1618%`, and CUDA reserved is unchanged; all per-bucket regressions remain within frozen limits | `PASS` |
+| Benefit plus cost | `comparison.json` records all latency/throughput/memory metrics; peak pinned capacity is 1,792 bytes, with zero measured growth/allocation after warmup | `PASS` |
+| Exact avoided/staged work accounting | each ON row avoids 635 temporary CUDA tensors; staged H2D and avoided blanket-zero bytes are 4,064 / 7,620 / 19,812 for short / medium / long | `PASS` |
+| Producer gate | `gate.json` classifies `NO_GO_TPOT_MEDIAN` with comparison digest `2900aaedf52b97b27d9ed3105f832ad50767ff1e500d327401a9838811729da4` | `PASS` |
+| Independent verifier | `independent-verification.json` returns `PASS`, reconstructs `NO_GO_TPOT_MEDIAN`, and agrees on comparison digest | `PASS` |
+| Primary manifest | `manifest.sha256` digest is `af8067edad1609f336eba9688c5e40ff024a15dba6deb0cb91e71097821951f8` and binds all six primary artifacts | `PASS` |
+| Qwen3-8B boundary | Stage 1 is not GO, so no Qwen3-8B run was launched and no 8B claim is made | `PASS` |
+| Promotion boundary | feature remains default-disabled; no README performance claim is added | `PASS` |
+
+### Final Stage-1 evidence
+
+The final immutable run is:
+
+```text
+run tag:
+  20260822-qwen3-06b-replay-meta-r7
+source commit:
+  34ba33e66acafd789201d4acb25316661fed90c6
+worker exit:
+  0
+producer classification:
+  NO_GO_TPOT_MEDIAN
+independent classification:
+  NO_GO_TPOT_MEDIAN
+independent status:
+  PASS
+comparison SHA256:
+  2900aaedf52b97b27d9ed3105f832ad50767ff1e500d327401a9838811729da4
+manifest SHA256:
+  af8067edad1609f336eba9688c5e40ff024a15dba6deb0cb91e71097821951f8
+```
+
+Per-bucket benefit and cost:
+
+```text
+short:
+  median TPOT improvement:   3.0615520883%
+  p95 TPOT improvement:      3.0851525340%
+  p99 TPOT improvement:      2.1735261283%
+  TTFT regression:           0.9027719231%
+  E2E improvement:           2.8912208197%
+  throughput improvement:    2.8912208197%
+  CUDA reserved improvement: 0.4498875281%
+  staged H2D / avoided zero: 4,064 bytes per ON row
+
+medium:
+  median TPOT improvement:   2.4032731101%
+  p95 TPOT improvement:      2.4217519348%
+  p99 TPOT improvement:      2.5928925583%
+  TTFT improvement:          2.4983349893%
+  E2E improvement:           2.1618101944%
+  throughput improvement:    2.1618101944%
+  CUDA reserved improvement: 0.4539332568%
+  staged H2D / avoided zero: 7,620 bytes per ON row
+
+long:
+  median TPOT regression:    1.0387454806%
+  p95 TPOT regression:       1.1706651419%
+  p99 TPOT regression:       5.4598545215%
+  TTFT regression:           0.3866964466%
+  E2E regression:            0.7103936090%
+  throughput regression:     0.7103936090%
+  CUDA reserved regression:  0.0000000000%
+  staged H2D / avoided zero: 19,812 bytes per ON row
+
+aggregate:
+  median TPOT improvement:   2.5449923384%
+  p95 TPOT regression:       1.0419638701%
+  p99 TPOT regression:       1.5539595271%
+  TTFT improvement:          2.4983349893%
+  E2E improvement:           2.1618101944%
+  throughput improvement:    2.1618101944%
+  CUDA reserved regression:  0.0000000000%
+```
+
+The path is mechanically correct and bounded: exact outputs pass, every
+eligible decode step is optimized, no measured arena growth or allocation
+occurs after warmup, and peak pinned capacity is 1,792 bytes. It does not
+establish a performance optimization. Zero context buckets meet the 5%
+median requirement, aggregate p95 regresses, and the long bucket regresses at
+median, p95, and p99. Therefore the flag stays default-disabled and Stage 2
+is ineligible.
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Replay-aware decode metadata landing | Exact and fully exercised on Qwen3-0.6B batch-1 legacy CUDA Graph decode, but only 2.5450% aggregate median TPOT benefit and 1.0420% aggregate p95 regression | `LOADED_GATE_COMPLETE_NEGATIVE_PERFORMANCE` |
+| Correctness and path integrity | 15/15 exact token/text pairs and 127/127 optimized ON steps in every row | `ESTABLISHED` |
+| Resource cost | 1,792-byte peak pinned arena, zero post-warmup growth/allocation, no aggregate CUDA-reserved regression | `ESTABLISHED_BOUNDED` |
+| Independent evidence | Producer and independent verifier agree on classification and comparison digest; manifest binds all primary files | `ESTABLISHED` |
+| Qwen3-8B | Stage-1 gate is NO-GO | `NOT_RUN_INELIGIBLE` |
+| Publishable replay-aware metadata benefit | Frozen median and aggregate-p95 performance gates fail | `NOT_ESTABLISHED` |
+
+### Final classification
+
+```text
+REPLAY_AWARE_METADATA_RUN=20260822-qwen3-06b-replay-meta-r7
+REPLAY_AWARE_METADATA_SOURCE_COMMIT=34ba33e66acafd789201d4acb25316661fed90c6
+REPLAY_AWARE_METADATA_CLASSIFICATION=NO_GO_TPOT_MEDIAN
+REPLAY_AWARE_METADATA_INDEPENDENT_VERIFICATION=PASS
+REPLAY_AWARE_METADATA_EXACT_OUTPUTS=PASS_15_OF_15
+REPLAY_AWARE_METADATA_OPTIMIZED_PATH=PASS_127_OF_127_ALL_ON_ROWS
+REPLAY_AWARE_METADATA_MEDIAN_WINNING_BUCKETS=0_OF_3
+REPLAY_AWARE_METADATA_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_2_544992_PERCENT
+REPLAY_AWARE_METADATA_AGGREGATE_P95_TPOT=REGRESSION_1_041964_PERCENT
+REPLAY_AWARE_METADATA_PINNED_PEAK_BYTES=1792
+REPLAY_AWARE_METADATA_DEFAULT_ENABLED=false
+REPLAY_AWARE_METADATA_QWEN3_8B=NOT_RUN_INELIGIBLE
+REPLAY_AWARE_METADATA_PROMOTION=NOT_PROMOTABLE
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
 ## Final Classification
 
 ```text
@@ -3770,6 +3905,34 @@ TP4_SCHEDSTAT_DIAGNOSTIC=TERMINAL_FAILED_ZERO_COMPLETED_EPOCHS
 TP4_SCHEDSTAT_MONITOR_ACTIVE=false
 PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
 
+PHASE_1=NOT_ACHIEVED
+PROMOTION=NOT_PROMOTABLE
+```
+
+## 2026-08-22 latest reconciliation authority
+
+This EOF block is the latest authority for the Phase-1 matrix. The detailed
+prompt-to-artifact checklist appears in
+`2026-08-22 Replay-Aware Decode Metadata Landing Reconciliation` above.
+
+```text
+REPLAY_AWARE_METADATA_RUN=20260822-qwen3-06b-replay-meta-r7
+REPLAY_AWARE_METADATA_SOURCE_COMMIT=34ba33e66acafd789201d4acb25316661fed90c6
+REPLAY_AWARE_METADATA_CLASSIFICATION=NO_GO_TPOT_MEDIAN
+REPLAY_AWARE_METADATA_INDEPENDENT_VERIFICATION=PASS
+REPLAY_AWARE_METADATA_COMPARISON_SHA256=2900aaedf52b97b27d9ed3105f832ad50767ff1e500d327401a9838811729da4
+REPLAY_AWARE_METADATA_MANIFEST_SHA256=af8067edad1609f336eba9688c5e40ff024a15dba6deb0cb91e71097821951f8
+REPLAY_AWARE_METADATA_EXACT_OUTPUTS=PASS_15_OF_15
+REPLAY_AWARE_METADATA_OPTIMIZED_PATH=PASS_127_OF_127_ALL_ON_ROWS
+REPLAY_AWARE_METADATA_MEDIAN_WINNING_BUCKETS=0_OF_3
+REPLAY_AWARE_METADATA_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_2_544992_PERCENT
+REPLAY_AWARE_METADATA_AGGREGATE_P95_TPOT=REGRESSION_1_041964_PERCENT
+REPLAY_AWARE_METADATA_PINNED_PEAK_BYTES=1792
+REPLAY_AWARE_METADATA_DEFAULT_ENABLED=false
+REPLAY_AWARE_METADATA_QWEN3_8B=NOT_RUN_INELIGIBLE
+REPLAY_AWARE_METADATA_PROMOTION=NOT_PROMOTABLE
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```

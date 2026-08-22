@@ -82,6 +82,114 @@ PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
 
+## 2026-08-22 replay-aware decode metadata Stage 1 terminal result
+
+The repository-specific candidate replaced the ordinary batch-1 legacy CUDA
+Graph decode metadata construction path with bounded pinned-host staging and
+direct writes into the exact graph input slices. The feature remains
+default-disabled behind:
+
+```text
+Config.replay_aware_decode_metadata = False
+```
+
+The final source-bound run used:
+
+```text
+run tag:
+  20260822-qwen3-06b-replay-meta-r7
+source commit:
+  34ba33e66acafd789201d4acb25316661fed90c6
+model:
+  /data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B
+GPU:
+  index 2, NVIDIA A100 80GB PCIe,
+  GPU-63c05907-407b-8240-07a0-f38872840867
+admission:
+  0 MiB used, 0% utilization, no compute process
+local bundle:
+  artifacts/replay_aware_decode_metadata/
+    20260822-qwen3-06b-replay-meta-r7/
+remote root:
+  /data00/home/sitian/tinyllmforge-workspaces/
+    command-timeline-20260818/replay-aware-decode-metadata/
+```
+
+The controller completed all 30 measured rows and exited zero. Producer and
+independent reconstruction agree:
+
+```text
+classification:
+  NO_GO_TPOT_MEDIAN
+comparison SHA256:
+  2900aaedf52b97b27d9ed3105f832ad50767ff1e500d327401a9838811729da4
+manifest SHA256:
+  af8067edad1609f336eba9688c5e40ff024a15dba6deb0cb91e71097821951f8
+independent verifier:
+  PASS
+```
+
+Correctness and execution-path evidence are complete:
+
+```text
+measured rows:                  30 / 30
+paired comparisons:            15 / 15
+exact token-ID pairs:          15 / 15
+exact decoded-text hash pairs: 15 / 15
+ON optimized decode steps:     127 / 127 in every ON row
+OFF optimized decode steps:      0 / 127 in every OFF row
+```
+
+Benefit plus cost:
+
+```text
+                              median TPOT   p95 TPOT    p99 TPOT
+short (256-token prompt):       +3.0616%     +3.0852%    +2.1735%
+medium (2048-token prompt):     +2.4033%     +2.4218%    +2.5929%
+long (8192-token prompt):       -1.0387%     -1.1707%    -5.4599%
+aggregate:                      +2.5450%     -1.0420%    -1.5540%
+
+aggregate TTFT:                 +2.4983%
+aggregate E2E:                  +2.1618%
+aggregate throughput:           +2.1618%
+aggregate CUDA reserved:         0.0000%
+peak pinned-host capacity:      1,792 bytes
+measured arena growths:         0 after warmup
+measured arena allocations:     0 after warmup
+avoided temporary CUDA tensors: 635 per ON row
+staged H2D / avoided zero bytes:
+  short:   4,064 bytes per ON row
+  medium:  7,620 bytes per ON row
+  long:   19,812 bytes per ON row
+```
+
+Positive percentages above denote improvement; negative percentages denote
+regression. All protected TTFT, E2E, throughput, and CUDA-reserved limits
+pass. The candidate nevertheless fails its primary promotion rule because
+zero of three context buckets reaches the required 5% median TPOT
+improvement, and aggregate p95 TPOT regresses by 1.0420% instead of improving
+by at least 5%.
+
+The implementation is retained as an opt-in diagnostic path, remains
+default-disabled, and is not a publishable performance optimization.
+Qwen3-8B was not run because the Qwen3-0.6B Stage-1 gate is not GO.
+
+Canonical terminal state:
+
+```text
+REPLAY_AWARE_METADATA_RUN=20260822-qwen3-06b-replay-meta-r7
+REPLAY_AWARE_METADATA_CLASSIFICATION=NO_GO_TPOT_MEDIAN
+REPLAY_AWARE_METADATA_EXACT_OUTPUTS=PASS_15_OF_15
+REPLAY_AWARE_METADATA_OPTIMIZED_PATH=PASS_127_OF_127_ALL_ON_ROWS
+REPLAY_AWARE_METADATA_WINNING_BUCKETS=0_OF_3
+REPLAY_AWARE_METADATA_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_2_5450_PERCENT
+REPLAY_AWARE_METADATA_AGGREGATE_P95_TPOT=REGRESSION_1_0420_PERCENT
+REPLAY_AWARE_METADATA_PINNED_PEAK_BYTES=1792
+REPLAY_AWARE_METADATA_DEFAULT_ENABLED=false
+REPLAY_AWARE_METADATA_QWEN3_8B=NOT_RUN_INELIGIBLE
+REPLAY_AWARE_METADATA_PROMOTION=NOT_PROMOTABLE
+```
+
 在当前授权边界下不新增 TP1 bundle/verifier/launcher。下一项 promotion-relevant
 工作仍是另行授权的 loaded Qwen3 draft + Qwen3.5 target TP1 campaign，随后才是
 TP4 source-bound authority 和 controlled performance。
@@ -50083,3 +50191,47 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-22 latest authoritative handoff
+
+This EOF section supersedes earlier terminal summaries where they overlap.
+The most recent completed optimization campaign is the replay-aware decode
+metadata Stage-1 run:
+
+```text
+run tag:
+  20260822-qwen3-06b-replay-meta-r7
+source commit:
+  34ba33e66acafd789201d4acb25316661fed90c6
+classification:
+  NO_GO_TPOT_MEDIAN
+independent verification:
+  PASS
+comparison SHA256:
+  2900aaedf52b97b27d9ed3105f832ad50767ff1e500d327401a9838811729da4
+manifest SHA256:
+  af8067edad1609f336eba9688c5e40ff024a15dba6deb0cb91e71097821951f8
+exact outputs:
+  PASS, 15 / 15 pairs
+optimized path:
+  PASS, 127 / 127 decode steps in every ON row
+median TPOT improvement:
+  short 3.0616%, medium 2.4033%, long -1.0387%, aggregate 2.5450%
+aggregate p95 TPOT:
+  regression 1.0420%
+peak pinned capacity:
+  1,792 bytes
+default enabled:
+  false
+Qwen3-8B:
+  NOT_RUN_INELIGIBLE
+promotion:
+  NOT_PROMOTABLE
+```
+
+Canonical local evidence is under
+`artifacts/replay_aware_decode_metadata/20260822-qwen3-06b-replay-meta-r7/`.
+The next optimization candidate is a zero-temperature greedy-sampling fast
+path that preserves float32 argmax semantics while skipping temperature H2D,
+softmax, Gumbel generation, division, and the second argmax. No implementation
+or performance claim exists for that candidate yet.
