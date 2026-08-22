@@ -290,11 +290,12 @@ class ReplayAwareDecodeMetadataArena:
             "context_lens": context_lens_host,
             "block_tables": block_tables_host,
         }
-        for name, destination in destinations.items():
-            destination.copy_(
-                sources[name],
-                non_blocking=True,
-            )
+        with self._torch.inference_mode():
+            for name, destination in destinations.items():
+                destination.copy_(
+                    sources[name],
+                    non_blocking=True,
+                )
 
         self._stats.optimized_steps += 1
         self._stats.avoided_temporary_cuda_tensors += 5

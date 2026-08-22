@@ -117,6 +117,14 @@ class FakeDestinationView:
         self.index = index
 
     def copy_(self, source, non_blocking=False):
+        if (
+            self.tensor.torch_module is not None
+            and self.tensor.torch_module.inference_mode_depth
+            <= 0
+        ):
+            raise RuntimeError(
+                "device copy must run inside inference mode"
+            )
         self.tensor.writes.append(
             (
                 self.index,
@@ -128,9 +136,16 @@ class FakeDestinationView:
 
 
 class FakeDeviceTensor:
-    def __init__(self, shape, element_size):
+    def __init__(
+        self,
+        shape,
+        element_size,
+        *,
+        torch_module=None,
+    ):
         self.shape = tuple(shape)
         self._element_size = element_size
+        self.torch_module = torch_module
         self.writes = []
         self.zero_calls = 0
 
@@ -160,6 +175,22 @@ class FakeTorch:
     def __init__(self):
         self.empty_calls = []
         self.tensor_calls = 0
+        self.inference_mode_depth = 0
+        self.inference_mode_entries = 0
+
+    class _InferenceMode:
+        def __init__(self, owner):
+            self.owner = owner
+
+        def __enter__(self):
+            self.owner.inference_mode_depth += 1
+            self.owner.inference_mode_entries += 1
+
+        def __exit__(self, *_args):
+            self.owner.inference_mode_depth -= 1
+
+    def inference_mode(self):
+        return self._InferenceMode(self)
 
     def empty(
         self,
@@ -181,17 +212,42 @@ class FakeTorch:
         )
 
 
-def make_graph_vars(block_table_width=8):
+def make_graph_vars(
+    block_table_width=8,
+    *,
+    torch_module=None,
+):
     return {
-        "input_ids": FakeDeviceTensor((1,), 8),
-        "positions": FakeDeviceTensor((1,), 8),
-        "slot_mapping": FakeDeviceTensor((1,), 4),
-        "context_lens": FakeDeviceTensor((1,), 4),
+        "input_ids": FakeDeviceTensor(
+            (1,),
+            8,
+            torch_module=torch_module,
+        ),
+        "positions": FakeDeviceTensor(
+            (1,),
+            8,
+            torch_module=torch_module,
+        ),
+        "slot_mapping": FakeDeviceTensor(
+            (1,),
+            4,
+            torch_module=torch_module,
+        ),
+        "context_lens": FakeDeviceTensor(
+            (1,),
+            4,
+            torch_module=torch_module,
+        ),
         "block_tables": FakeDeviceTensor(
             (1, block_table_width),
             4,
+            torch_module=torch_module,
         ),
-        "outputs": FakeDeviceTensor((1, 32), 2),
+        "outputs": FakeDeviceTensor(
+            (1, 32),
+            2,
+            torch_module=torch_module,
+        ),
     }
 
 
@@ -290,6 +346,28 @@ def test_arena_lands_only_readable_batch_one_metadata():
     assert result.block_tables is not None
 
 
+def test_arena_copies_into_graph_inputs_under_inference_mode():
+    torch_module = FakeTorch()
+    arena = ReplayAwareDecodeMetadataArena(torch_module)
+    plan = build_decode_metadata_plan(
+        [FakeSequence(17, 513, [4, 8, 15], 256)],
+        256,
+    )
+    graph_vars = make_graph_vars(
+        torch_module=torch_module,
+    )
+
+    result = arena.land(
+        plan,
+        graph_vars,
+        graph_batch_size=1,
+    )
+
+    assert result.optimized is True
+    assert torch_module.inference_mode_entries == 1
+    assert torch_module.inference_mode_depth == 0
+
+
 def test_arena_reuses_capacity_and_accounts_exact_cost():
     torch_module = FakeTorch()
     arena = ReplayAwareDecodeMetadataArena(torch_module)
@@ -386,6 +464,7 @@ def main() -> None:
     test_build_decode_metadata_plan_preserves_readable_rows()
     test_build_decode_metadata_plan_pads_rows_deterministically()
     test_arena_lands_only_readable_batch_one_metadata()
+    test_arena_copies_into_graph_inputs_under_inference_mode()
     test_arena_reuses_capacity_and_accounts_exact_cost()
     test_arena_falls_back_before_writing_for_inexact_graph()
     test_arena_falls_back_before_writing_for_small_block_table()
