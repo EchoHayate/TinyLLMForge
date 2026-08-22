@@ -20,6 +20,7 @@ if _REPO_ROOT not in sys.path:
 from tools.profile_replay_aware_decode_metadata import (
     SOURCE_FILES,
     _construct_llm,
+    _single_rank_profile,
     _source_manifest,
     context_cases,
     nearest_rank_percentile,
@@ -126,6 +127,31 @@ def test_construct_llm_reserves_the_full_prompt_and_decode_length():
     assert calls[0][1]["max_num_batched_tokens"] == 8_320
 
 
+def test_single_rank_profile_reads_the_engine_result_envelope():
+    rank = {
+        "rank": 0,
+        "steps": [{"is_decode": True}],
+        "collectives": [],
+    }
+    payload = {
+        "enabled": True,
+        "rank_inventory": [0],
+        "ranks": [rank],
+    }
+
+    assert _single_rank_profile(payload) is rank
+
+    with pytest.raises(
+        RuntimeError,
+        match="tensor parallel size one",
+    ):
+        _single_rank_profile({
+            **payload,
+            "rank_inventory": [0, 1],
+            "ranks": [rank, {**rank, "rank": 1}],
+        })
+
+
 def test_summarize_rows_accepts_exact_complete_pair():
     summary = summarize_rows([_row("off"), _row("on")])
 
@@ -213,6 +239,7 @@ def main() -> None:
     test_worker_contract_helpers_are_deterministic()
     test_source_manifest_includes_remote_transport_dependency()
     test_construct_llm_reserves_the_full_prompt_and_decode_length()
+    test_single_rank_profile_reads_the_engine_result_envelope()
     test_summarize_rows_accepts_exact_complete_pair()
     test_summarize_rows_rejects_output_token_mismatch()
     test_summarize_rows_rejects_missing_optimized_steps()

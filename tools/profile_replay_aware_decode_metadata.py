@@ -628,17 +628,15 @@ def _run_request(
     decode_host_ns = []
     decode_cuda_ns = []
     if profile_label is not None:
-        profiles = llm.finalize_decode_internal_profile(
-            already_synchronized=True,
-            timeout_s=60.0,
-        )
-        if len(profiles) != 1:
-            raise RuntimeError(
-                "Stage-1 worker requires tensor parallel size one"
+        profile = _single_rank_profile(
+            llm.finalize_decode_internal_profile(
+                already_synchronized=True,
+                timeout_s=60.0,
             )
+        )
         decode_steps = [
             row
-            for row in profiles[0]["steps"]
+            for row in profile["steps"]
             if row["is_decode"]
         ]
         decode_steps.sort(
@@ -689,6 +687,22 @@ def _aggregate_memory(rows: tuple[dict, ...]) -> dict:
             for row in rows
         ),
     }
+
+
+def _single_rank_profile(payload: dict) -> dict:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("enabled") is not True
+        or payload.get("rank_inventory") != [0]
+        or not isinstance(payload.get("ranks"), list)
+        or len(payload["ranks"]) != 1
+        or not isinstance(payload["ranks"][0], dict)
+        or payload["ranks"][0].get("rank") != 0
+    ):
+        raise RuntimeError(
+            "Stage-1 worker requires tensor parallel size one"
+        )
+    return payload["ranks"][0]
 
 
 def _construct_llm(
