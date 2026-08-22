@@ -3500,9 +3500,34 @@ class LLMEngine:
         self,
         *,
         completion_only: bool = False,
+        exact_burst_gate_width: int | None = None,
+        exact_burst_correctness_trace: bool = False,
     ):     #decode阶段：每次step生成新的token加到seq后面
         if not isinstance(completion_only, bool):
             raise ValueError("completion_only must be a bool")
+        if exact_burst_gate_width is not None and (
+            isinstance(exact_burst_gate_width, bool)
+            or not isinstance(exact_burst_gate_width, int)
+            or exact_burst_gate_width != 1
+        ):
+            raise ValueError(
+                "exact_burst_gate_width must be one or None"
+            )
+        if not isinstance(
+            exact_burst_correctness_trace,
+            bool,
+        ):
+            raise ValueError(
+                "exact_burst_correctness_trace must be a bool"
+            )
+        if (
+            exact_burst_gate_width is not None
+            or exact_burst_correctness_trace
+        ) and not completion_only:
+            raise ValueError(
+                "exact burst gate controls require completion-only "
+                "authority"
+            )
         step_timeline = getattr(
             self,
             "engine_step_timeline",
@@ -3659,6 +3684,7 @@ class LLMEngine:
             exact_burst_replay_count = 0
             exact_burst_token_d2h_calls = 0
             exact_burst_sampled_logit_d2h_calls = 0
+            exact_burst_sampled_logits = ()
             exact_burst_host_visible_gap_ns = 0
             exact_burst_fallback_reason = None
             exact_burst_committed = False
@@ -4226,6 +4252,20 @@ class LLMEngine:
                         False,
                     )
                 )
+                exact_burst_gate_only = (
+                    exact_burst_gate_width is not None
+                )
+                exact_burst_configured_width = (
+                    exact_burst_gate_width
+                    if exact_burst_gate_only
+                    else int(
+                        getattr(
+                            model_runner_config,
+                            "exact_greedy_decode_burst_tokens",
+                            4,
+                        )
+                    )
+                )
                 exact_burst_candidate = (
                     exact_burst_enabled
                     and completion_only
@@ -4242,7 +4282,11 @@ class LLMEngine:
                     )
                     capability = (
                         self.model_runner
-                        .exact_greedy_decode_burst_capability()
+                        .exact_greedy_decode_burst_capability(
+                            correctness_trace=(
+                                exact_burst_correctness_trace
+                            )
+                        )
                     )
                     exact_burst_attempted = True
                     exact_burst_lease = (
@@ -4256,9 +4300,8 @@ class LLMEngine:
                                 capability["graph_generation"]
                             ),
                             enabled=exact_burst_enabled,
-                            configured_width=int(
-                                model_runner_config
-                                .exact_greedy_decode_burst_tokens
+                            configured_width=(
+                                exact_burst_configured_width
                             ),
                             is_prefill=bool(is_prefill),
                             do_sample=bool(do_sample),
@@ -4277,6 +4320,9 @@ class LLMEngine:
                                     "fallback_reason"
                                 )
                                 == "quarantined"
+                            ),
+                            allow_single_token_gate=(
+                                exact_burst_gate_only
                             ),
                         )
                     )
@@ -4326,6 +4372,7 @@ class LLMEngine:
                                     "run_exact_greedy_decode_burst",
                                     tuple(seqs),
                                     exact_burst_lease,
+                                    exact_burst_correctness_trace,
                                 )
                             if isinstance(
                                 burst_result,
@@ -4342,6 +4389,9 @@ class LLMEngine:
                                 validate_exact_greedy_decode_burst_result(
                                     exact_burst_lease,
                                     burst_result,
+                                    correctness_trace=(
+                                        exact_burst_correctness_trace
+                                    ),
                                 )
                                 step_end_ns = self._clock_ns()
                                 exact_burst_host_visible_gap_ns = max(
@@ -4354,6 +4404,12 @@ class LLMEngine:
                                         tuple(seqs),
                                         exact_burst_lease,
                                         burst_result,
+                                        correctness_trace=(
+                                            exact_burst_correctness_trace
+                                        ),
+                                        gate_only_single_token=(
+                                            exact_burst_gate_only
+                                        ),
                                         host_visible_gap_ns=(
                                             exact_burst_host_visible_gap_ns
                                         ),
@@ -4383,6 +4439,9 @@ class LLMEngine:
                                 exact_burst_sampled_logit_d2h_calls = int(
                                     burst_result
                                     .sampled_logit_d2h_calls
+                                )
+                                exact_burst_sampled_logits = (
+                                    burst_result.sampled_logits
                                 )
                                 num_tokens = -exact_burst_replay_count
                                 exact_burst_committed = True
@@ -4644,6 +4703,12 @@ class LLMEngine:
                 ),
                 "exact_greedy_decode_burst_sampled_logit_d2h_calls": (
                     exact_burst_sampled_logit_d2h_calls
+                ),
+                "exact_greedy_decode_burst_sampled_logits": (
+                    exact_burst_sampled_logits
+                ),
+                "exact_greedy_decode_burst_correctness_trace": (
+                    exact_burst_correctness_trace
                 ),
                 "exact_greedy_decode_burst_host_visible_gap_ns": (
                     exact_burst_host_visible_gap_ns

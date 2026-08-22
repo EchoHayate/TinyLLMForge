@@ -538,6 +538,24 @@ def test_boundary_width_one_falls_back_before_replay() -> None:
     assert decision.fallback_reason == "authorized_width_below_two"
 
 
+def test_gate_only_width_one_is_explicit_and_never_implicit() -> None:
+    kwargs = _eligible_kwargs()
+    kwargs["configured_width"] = 1
+    _assert_raises(
+        ValueError,
+        "configured_width must be an integer in [2, 8]",
+        lambda: build_exact_greedy_decode_burst_decision(**kwargs),
+    )
+
+    decision = build_exact_greedy_decode_burst_decision(
+        **kwargs,
+        allow_single_token_gate=True,
+    )
+    assert decision.optimized is True
+    assert decision.authorized_token_count == 1
+    assert decision.fallback_reason is None
+
+
 def test_fallback_reasons_have_stable_precedence() -> None:
     cases = (
         ("enabled", False, "disabled"),
@@ -1226,6 +1244,7 @@ def test_result_construction_failure_quarantines_original_error() -> None:
 def main() -> None:
     test_policy_clips_to_budget_and_current_block()
     test_boundary_width_one_falls_back_before_replay()
+    test_gate_only_width_one_is_explicit_and_never_implicit()
     test_fallback_reasons_have_stable_precedence()
     test_invalid_policy_inputs_fail_closed()
     test_lease_identity_is_canonical_and_result_is_exact()

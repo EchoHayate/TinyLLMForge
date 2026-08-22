@@ -135,14 +135,25 @@ def build_exact_greedy_decode_burst_decision(
     incompatible_modes: tuple[str, ...],
     pending_lease: bool,
     quarantined: bool,
+    allow_single_token_gate: bool = False,
 ) -> ExactGreedyDecodeBurstDecision:
     _require_bool(enabled, "enabled")
+    _require_bool(
+        allow_single_token_gate,
+        "allow_single_token_gate",
+    )
+    minimum_width = 1 if allow_single_token_gate else 2
     if (
         isinstance(configured_width, bool)
         or not isinstance(configured_width, int)
-        or configured_width < 2
+        or configured_width < minimum_width
         or configured_width > 8
     ):
+        if allow_single_token_gate:
+            raise ValueError(
+                "configured_width must be an integer in [1, 8] "
+                "for the gate-only entrypoint"
+            )
         raise ValueError(
             "configured_width must be an integer in [2, 8]"
         )
@@ -265,9 +276,9 @@ def build_exact_greedy_decode_burst_decision(
         reason = "lease_pending"
     elif quarantined:
         reason = "quarantined"
-    elif remaining_output_tokens < 2:
+    elif remaining_output_tokens < minimum_width:
         reason = "insufficient_output_budget"
-    elif authorized < 2:
+    elif authorized < minimum_width:
         reason = "authorized_width_below_two"
 
     return ExactGreedyDecodeBurstDecision(

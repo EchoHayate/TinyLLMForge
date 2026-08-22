@@ -225,7 +225,13 @@ def _lease(*, width=3):
     )
 
 
-def _result(lease, *, tokens=(41, 42, 43), identity=None):
+def _result(
+    lease,
+    *,
+    tokens=(41, 42, 43),
+    identity=None,
+    sampled_logits=(),
+):
     return ExactGreedyDecodeBurstResult(
         lease_identity_sha256=(
             lease.identity_sha256 if identity is None else identity
@@ -242,7 +248,8 @@ def _result(lease, *, tokens=(41, 42, 43), identity=None):
         ),
         graph_identity_sha256="a" * 64,
         token_d2h_calls=1,
-        sampled_logit_d2h_calls=0,
+        sampled_logit_d2h_calls=int(bool(sampled_logits)),
+        sampled_logits=sampled_logits,
     )
 
 
@@ -417,14 +424,18 @@ class _ModelRunner:
         self.events = []
         self.quarantine_reason = None
 
-    def exact_greedy_decode_burst_capability(self):
-        self.events.append(("capability",))
+    def exact_greedy_decode_burst_capability(
+        self,
+        *,
+        correctness_trace=False,
+    ):
+        self.events.append(("capability", correctness_trace))
         return {
             "available": True,
             "fallback_reason": None,
             "graph_identity_sha256": "a" * 64,
             "graph_generation": 13,
-            "correctness_trace": False,
+            "correctness_trace": correctness_trace,
         }
 
     def run_exact_greedy_decode_burst(self, seqs, lease):
@@ -434,8 +445,19 @@ class _ModelRunner:
 
     def call(self, method_name, *args):
         if method_name == "run_exact_greedy_decode_burst":
-            seqs, lease = args
-            self.events.append(("burst", tuple(seqs), lease))
+            if len(args) == 2:
+                seqs, lease = args
+                correctness_trace = False
+            else:
+                seqs, lease, correctness_trace = args
+            self.events.append(
+                (
+                    "burst",
+                    tuple(seqs),
+                    lease,
+                    correctness_trace,
+                )
+            )
             if isinstance(self.outcome, BaseException):
                 self.quarantine_reason = (
                     "replay_failure:" + type(self.outcome).__name__
@@ -851,6 +873,55 @@ def test_success_observation_exposes_exact_burst_identity_and_cost():
         "exact_greedy_decode_burst_pending_lease_count"
     ] == 0
     assert scheduler.host_visible_gap_ns == 20
+
+
+def test_gate_only_k1_correctness_trace_is_explicitly_propagated():
+    lease = _lease(width=1)
+    sampled_logits = ((0, (1.0, 3.0, 2.0)),)
+    result = _result(
+        lease,
+        tokens=(41,),
+        sampled_logits=sampled_logits,
+    )
+    engine, sequence, scheduler, model_runner, step = _engine(
+        result,
+        lease=lease,
+    )
+    sequence.max_tokens = 1
+
+    outputs, num_tokens = step(
+        engine,
+        completion_only=True,
+        exact_burst_gate_width=1,
+        exact_burst_correctness_trace=True,
+    )
+
+    assert outputs == [(7, [41])]
+    assert num_tokens == -1
+    lease_event = next(
+        event for event in scheduler.events if event[0] == "lease"
+    )
+    assert lease_event[2]["configured_width"] == 1
+    assert lease_event[2]["allow_single_token_gate"] is True
+    assert ("capability", True) in model_runner.events
+    assert any(
+        event[0] == "burst" and event[3] is True
+        for event in model_runner.events
+    )
+    commit_event = next(
+        event
+        for event in scheduler.events
+        if event[0] == "prepare_commit"
+    )
+    assert commit_event[4]["correctness_trace"] is True
+    assert commit_event[4]["gate_only_single_token"] is True
+    observation = engine.last_step_observation
+    assert observation[
+        "exact_greedy_decode_burst_sampled_logits"
+    ] == sampled_logits
+    assert observation[
+        "exact_greedy_decode_burst_correctness_trace"
+    ] is True
 
 
 if __name__ == "__main__":

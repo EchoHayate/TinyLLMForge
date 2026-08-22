@@ -230,6 +230,7 @@ def _prepare_exact_burst_lease(
     *,
     configured_width=4,
     graph_generation=7,
+    allow_single_token_gate=False,
 ):
     scheduler.schedule_generation = 1
     return scheduler.prepare_exact_greedy_decode_burst(
@@ -246,6 +247,7 @@ def _prepare_exact_burst_lease(
         rank=0,
         graph_available=True,
         incompatible_modes=(),
+        allow_single_token_gate=allow_single_token_gate,
     )
 
 
@@ -620,6 +622,48 @@ def test_exact_burst_row_shape_is_distinct_from_ordinary_and_speculative():
     assert ordinary.exact_burst is False
     assert exact.exact_burst is True
     assert speculative.exact_burst is False
+
+
+def test_gate_only_single_replay_uses_distinct_exact_row_and_commits():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=1,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=1,
+        allow_single_token_gate=True,
+    )
+    assert lease.authorized_token_count == 1
+    result = _exact_burst_result(lease, (11,))
+
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+        gate_only_single_token=True,
+    )
+    assert prepared.rows == (
+        ScheduledOutputRow(
+            sequence_id=sequence.seq_id,
+            output_tokens=(11,),
+            speculative=False,
+            exact_burst=True,
+            exact_burst_gate_only=True,
+        ),
+    )
+
+    scheduler.commit_prepared_postprocess(prepared)
+
+    assert sequence.completion_token_ids == [11]
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["commits"] == 1
+    assert summary["committed_tokens"] == 1
+    assert summary["pending_leases"] == 0
 
 
 @pytest.mark.parametrize(

@@ -8955,11 +8955,10 @@ class ModelRunner:
             ),
         }
 
-    def run_exact_greedy_decode_burst(
+    def _run_exact_greedy_decode_burst(
         self,
         seqs: tuple[Sequence, ...],
         lease: ExactGreedyDecodeBurstLease,
-        *,
         correctness_trace: bool = False,
     ):
         graph = (
@@ -9029,6 +9028,28 @@ class ModelRunner:
             expected_graph_identity_sha256=capability[
                 "graph_identity_sha256"
             ],
+        )
+
+    def run_exact_greedy_decode_burst(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: ExactGreedyDecodeBurstLease,
+        correctness_trace: bool = False,
+    ):
+        return run_profiled_step(
+            self.decode_internal_profiler,
+            batch_kind="exact_greedy_decode_burst",
+            is_decode=True,
+            active_sequence_count=len(seqs),
+            request_set_sha256=_profile_request_set_sha256(
+                seq.seq_id for seq in seqs
+            ),
+            dispatch="cuda_graph",
+            call=lambda: self._run_exact_greedy_decode_burst(
+                seqs,
+                lease,
+                correctness_trace,
+            ),
         )
 
     def _capture_exact_greedy_decode_burst(

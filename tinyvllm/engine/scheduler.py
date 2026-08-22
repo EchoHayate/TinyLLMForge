@@ -37,6 +37,7 @@ class ScheduledOutputRow:
     speculative: bool
     accepted_draft_tokens: tuple[int, ...] = ()
     exact_burst: bool = False
+    exact_burst_gate_only: bool = False
 
 
 @dataclass
@@ -989,6 +990,7 @@ class Scheduler:
         graph_available: bool,
         incompatible_modes: tuple[str, ...],
         quarantined: bool = False,
+        allow_single_token_gate: bool = False,
     ) -> ExactGreedyDecodeBurstLease | None:
         if not isinstance(seqs, tuple):
             raise ValueError(
@@ -1039,6 +1041,7 @@ class Scheduler:
                 is not None
             ),
             quarantined=quarantined,
+            allow_single_token_gate=allow_single_token_gate,
         )
         if not decision.optimized:
             self._exact_greedy_decode_burst_stats.record_fallback(
@@ -1199,6 +1202,7 @@ class Scheduler:
         result: ExactGreedyDecodeBurstResult,
         *,
         correctness_trace: bool = False,
+        gate_only_single_token: bool = False,
         host_visible_gap_ns: int = 0,
         decision_now_ns: int | None = None,
         step_end_ns: int | None = None,
@@ -1217,6 +1221,16 @@ class Scheduler:
             result,
             correctness_trace=correctness_trace,
         )
+        if not isinstance(gate_only_single_token, bool):
+            raise ValueError(
+                "gate_only_single_token must be a bool"
+            )
+        if gate_only_single_token != (
+            lease.authorized_token_count == 1
+        ):
+            raise ValueError(
+                "gate-only single-token mode does not match lease"
+            )
         if (
             isinstance(host_visible_gap_ns, bool)
             or not isinstance(host_visible_gap_ns, int)
@@ -1233,6 +1247,9 @@ class Scheduler:
                     output_tokens=result.tokens,
                     speculative=False,
                     exact_burst=True,
+                    exact_burst_gate_only=(
+                        gate_only_single_token
+                    ),
                 ),
             ),
             is_prefill=False,
@@ -2168,6 +2185,15 @@ class Scheduler:
                 raise ValueError(
                     "postprocess exact burst flag must be a bool"
                 )
+            if not isinstance(row.exact_burst_gate_only, bool):
+                raise ValueError(
+                    "postprocess exact burst gate-only flag "
+                    "must be a bool"
+                )
+            if row.exact_burst_gate_only and not row.exact_burst:
+                raise ValueError(
+                    "gate-only exact burst flag requires exact burst"
+                )
             for token_values, name in (
                 (row.output_tokens, "output_tokens"),
                 (
@@ -2211,7 +2237,10 @@ class Scheduler:
                     raise ValueError(
                         "exact burst output cannot be speculative"
                     )
-                if len(row.output_tokens) < 2:
+                minimum_tokens = (
+                    1 if row.exact_burst_gate_only else 2
+                )
+                if len(row.output_tokens) < minimum_tokens:
                     raise ValueError(
                         "exact burst output must contain at least two tokens"
                     )

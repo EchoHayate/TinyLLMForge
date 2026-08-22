@@ -4252,12 +4252,25 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
         block_table=[5],
     )
 
-    result = runner.run_exact_greedy_decode_burst(
-        (seq,),
-        lease,
-    )
+    steps, original = _capture_profile_steps()
+    try:
+        result = runner.run_exact_greedy_decode_burst(
+            (seq,),
+            lease,
+        )
+    finally:
+        model_runner.run_profiled_step = original
 
     assert result is expected
+    assert steps == [{
+        "batch_kind": "exact_greedy_decode_burst",
+        "is_decode": True,
+        "active_sequence_count": 1,
+        "request_set_sha256": _profile_request_set_sha256(
+            (7,)
+        ),
+        "dispatch": "cuda_graph",
+    }]
     assert len(calls) == 1
     call = calls[0]
     assert call["lease"] is lease
