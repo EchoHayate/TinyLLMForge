@@ -111,6 +111,7 @@ It owns:
 
 - one dedicated CUDA Graph;
 - the retained logits tensor produced during capture;
+- the graph-private float32 conversion storage;
 - the retained one-element token tensor;
 - capture and replay counters;
 - capture duration and memory deltas;
@@ -123,6 +124,11 @@ The graph body is exactly:
 logits = compute_logits(static_hidden[:1])
 token_ids = logits.to(torch.float32).argmax(dim=-1)
 ```
+
+The tail uses a dedicated CUDA Graph memory pool. It must not share the
+transformer graphs' pool because the existing pool contains mutually
+exclusive batch-size captures whose capture order is not the runtime replay
+order of the transformer-plus-tail pair.
 
 The mechanism does not inspect model type, tokenizer, request text, or
 checkpoint name.
@@ -246,7 +252,7 @@ Expose a runner summary containing:
 - source-hidden identity and graph generation;
 - capture duration;
 - allocated and reserved memory deltas;
-- retained logits and token tensor bytes;
+- retained logits, float32 intermediate, and token tensor bytes;
 - avoided external `compute_logits`, float32-conversion, and argmax calls;
 - final token D2H count.
 
