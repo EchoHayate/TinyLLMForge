@@ -9229,6 +9229,7 @@ class ModelRunner:
         setattr(self, target_attribute, graph)
         return graph
 
+    @torch.inference_mode()
     def capture_exact_greedy_decode_burst_correctness_graph(
         self,
         sampled_logit_ordinals: tuple[int, ...],
