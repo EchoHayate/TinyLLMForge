@@ -535,6 +535,7 @@ def build_prefix_contract_bundle(
     batch_cases: list[dict],
     *,
     artifact_complete: bool,
+    correctness_failures: list[str] | None = None,
 ) -> dict:
     single = {
         str(int(case["shared_prefix_tokens"])): _prefix_contract_case(
@@ -550,11 +551,14 @@ def build_prefix_contract_bundle(
         )
         for case in batch_cases
     }
-    return {
+    bundle = {
         "artifact_complete": bool(artifact_complete),
         "single": single,
         "batch": batch,
     }
+    if correctness_failures:
+        bundle["correctness_failures"] = sorted(correctness_failures)
+    return bundle
 
 
 def decide_staged_prefix_gate(bundle: dict) -> dict:
@@ -1786,14 +1790,45 @@ def run_profile(args) -> dict:
         "batch_performance_cases": batch_performance_cases,
         "decision": decision,
     }
+    expected_correctness_cases = {
+        "cpu_collision_and_lifecycle_preflight",
+        "repeat_255",
+        "repeat_256",
+        "repeat_257",
+        "repeat_512",
+        "repeat_513",
+        "same_batch_p_q_p_first",
+        "same_batch_p_q_p_middle",
+        "same_batch_p_q_p",
+        "shared_prefix_different_suffix",
+        "cache_cleared",
+    }
+    observed_correctness_cases = [
+        row.get("case")
+        for row in correctness_rows
+        if isinstance(row, dict)
+    ]
+    correctness_complete = (
+        len(observed_correctness_cases) == len(expected_correctness_cases)
+        and set(observed_correctness_cases) == expected_correctness_cases
+        and all(
+            isinstance(row.get("correct"), bool)
+            for row in correctness_rows
+        )
+    )
+    correctness_failures = [
+        f"{row['case']}: targeted correctness check failed"
+        for row in correctness_rows
+        if row.get("correct") is False
+    ]
     prefix_bundle = build_prefix_contract_bundle(
         performance_cases,
         batch_performance_cases,
         artifact_complete=(
             args.mode == "full"
-            and bool(correctness_rows)
-            and all(bool(row["correct"]) for row in correctness_rows)
+            and correctness_complete
         ),
+        correctness_failures=correctness_failures,
     )
     staged_decision = decide_staged_prefix_gate(prefix_bundle)
     summary["staged_contract_bundle"] = prefix_bundle

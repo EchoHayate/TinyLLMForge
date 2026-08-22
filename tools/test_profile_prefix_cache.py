@@ -758,6 +758,23 @@ def test_prefix_contract_bundle_classifies_complete_and_missing_costs():
         "median_cached_prompt_tokens"
     ] == 16384
 
+    incorrect_bundle = build_prefix_contract_bundle(
+        single_cases,
+        batch_cases,
+        artifact_complete=True,
+        correctness_failures=[
+            "repeat_513: targeted correctness check failed"
+        ],
+    )
+    incorrect = decide_staged_prefix_gate(incorrect_bundle)
+    assert incorrect["classification"] == (
+        "PREFIX_CACHE_INCOMPLETE_OR_INCORRECT"
+    )
+    assert incorrect["structural_failures"] == []
+    assert incorrect["correctness_failures"] == [
+        "repeat_513: targeted correctness check failed"
+    ]
+
     del single_cases[1]["warm"]["peak_cuda_reserved_bytes"]
     try:
         build_prefix_contract_bundle(

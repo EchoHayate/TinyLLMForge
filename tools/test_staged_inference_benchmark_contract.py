@@ -311,6 +311,23 @@ def test_prefix_classification_separates_go_no_go_and_incorrect():
     assert result["structural_failures"]
 
 
+def test_prefix_classification_preserves_targeted_correctness_failures():
+    bundle = _complete_prefix_bundle()
+    bundle["correctness_failures"] = [
+        "repeat_513: targeted correctness check failed"
+    ]
+
+    result = contract.classify_prefix_bundle(bundle)
+
+    assert result["classification"] == (
+        "PREFIX_CACHE_INCOMPLETE_OR_INCORRECT"
+    )
+    assert result["structural_failures"] == []
+    assert result["correctness_failures"] == [
+        "repeat_513: targeted correctness check failed"
+    ]
+
+
 def test_prefix_classification_enforces_accounting_and_protected_costs():
     bundle = _complete_prefix_bundle()
     bundle["batch"]["1024"]["warm"]["median_model_batches"] = 2
@@ -439,6 +456,7 @@ def main():
     test_chunked_workload_has_exact_frozen_shape()
     test_chunked_case_matrix_is_paired_and_alternates_order()
     test_prefix_classification_separates_go_no_go_and_incorrect()
+    test_prefix_classification_preserves_targeted_correctness_failures()
     test_prefix_classification_enforces_accounting_and_protected_costs()
     test_chunked_classification_requires_four_favorable_repetitions()
     test_chunked_classification_enforces_correctness_and_guards()

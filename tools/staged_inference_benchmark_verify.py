@@ -935,7 +935,7 @@ def _validate_prefix_logit_diff(
         raise ValueError(f"{label} does not prove output equivalence")
 
 
-def _validate_prefix_correctness(rows: list[dict]) -> None:
+def _validate_prefix_correctness(rows: list[dict]) -> list[str]:
     by_case = {row.get("case"): row for row in rows}
     if (
         len(by_case) != len(rows)
@@ -947,7 +947,7 @@ def _validate_prefix_correctness(rows: list[dict]) -> None:
     if (
         preflight.get("state") != "preflight"
         or preflight.get("returncode") != 0
-        or preflight.get("correct") is not True
+        or not isinstance(preflight.get("correct"), bool)
         or not isinstance(command, list)
         or not command
         or any(not isinstance(part, str) or not part for part in command)
@@ -992,9 +992,10 @@ def _validate_prefix_correctness(rows: list[dict]) -> None:
     }
     for case, expected in expected_rows.items():
         row = by_case[case]
+        correct = row.get("correct")
         if (
             any(row.get(field) != value for field, value in expected.items())
-            or row.get("correct") is not True
+            or not isinstance(correct, bool)
             or not isinstance(row.get("decoded"), str)
         ):
             raise ValueError(f"Prefix correctness row is invalid: {case}")
@@ -1002,7 +1003,7 @@ def _validate_prefix_correctness(rows: list[dict]) -> None:
         _validate_prefix_logit_diff(
             row.get("logit_diff"),
             f"{case} logit diff",
-            require_match=True,
+            require_match=correct,
         )
     distinct = by_case["same_batch_p_q_p"].get("batch_q_logit_diff")
     _validate_prefix_logit_diff(
@@ -1015,11 +1016,16 @@ def _validate_prefix_correctness(rows: list[dict]) -> None:
         "same-batch P/Q max_abs",
     ) <= 0.0:
         raise ValueError("same-batch P/Q prompts are not distinct")
+    return [
+        f"{row['case']}: targeted correctness check failed"
+        for row in rows
+        if row["correct"] is False
+    ]
 
 
 def _rebuild_prefix_bundle(merged: dict[str, list[dict]]) -> dict:
     correctness = merged["request_timeline.jsonl"]
-    _validate_prefix_correctness(correctness)
+    correctness_failures = _validate_prefix_correctness(correctness)
     expected_identities = {
         (shape, state, repetition)
         for shape in (
@@ -1108,11 +1114,14 @@ def _rebuild_prefix_bundle(merged: dict[str, list[dict]]) -> dict:
             "retained_logical_kv_bytes": retained_bytes,
             "median_cache_clear_host_ms": clear_ms,
         }
-    return {
+    bundle = {
         "artifact_complete": True,
         "single": families["single"],
         "batch": families["batch"],
     }
+    if correctness_failures:
+        bundle["correctness_failures"] = sorted(correctness_failures)
+    return bundle
 
 
 def _classify_prefix(raw: dict) -> dict:
@@ -1122,6 +1131,20 @@ def _classify_prefix(raw: dict) -> dict:
     shapes = []
     if raw.get("artifact_complete") is not True:
         structural.append("prefix artifacts are incomplete")
+    targeted_failures = raw.get("correctness_failures", [])
+    if (
+        not isinstance(targeted_failures, list)
+        or any(
+            not isinstance(failure, str) or not failure
+            for failure in targeted_failures
+        )
+        or len(set(targeted_failures)) != len(targeted_failures)
+    ):
+        structural.append(
+            "prefix targeted correctness failures are malformed"
+        )
+    else:
+        correctness.extend(targeted_failures)
     for family, expected in (
         ("single", ("256", "1024", "2048")),
         ("batch", ("1024", "2048")),

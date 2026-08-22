@@ -291,13 +291,27 @@ def _populate_prefix_output(
     *,
     empty_raw_filename: str | None = None,
     drop_correctness_case: str | None = None,
+    incorrect_correctness_case: str | None = None,
     raw_warm_ttft_matches_cold: bool = False,
 ) -> None:
     case_id = manifest["case_order"][0]
     case_dir = run_dir / "cases" / case_id
     output_dir = case_dir / "output"
     output_dir.mkdir(parents=True)
+    raw_artifacts = _prefix_raw_artifacts()
+    if incorrect_correctness_case is not None:
+        matching_rows = [
+            row
+            for row in raw_artifacts["prefix_correctness_rows.jsonl"]
+            if row.get("case") == incorrect_correctness_case
+        ]
+        assert len(matching_rows) == 1
+        matching_rows[0]["correct"] = False
     prefix_bundle = _complete_prefix_bundle()
+    if incorrect_correctness_case is not None:
+        prefix_bundle["correctness_failures"] = [
+            f"{incorrect_correctness_case}: targeted correctness check failed"
+        ]
     _write_json(
         output_dir / "summary.json",
         {
@@ -307,7 +321,7 @@ def _populate_prefix_output(
             ),
         },
     )
-    for filename, rows in _prefix_raw_artifacts().items():
+    for filename, rows in raw_artifacts.items():
         if (
             filename == "prefix_performance_rows.jsonl"
             and raw_warm_ttft_matches_cold
@@ -740,6 +754,64 @@ def test_finalize_prefix_rejects_incomplete_correctness_matrix():
             )
 
 
+def test_finalize_prefix_classifies_complete_incorrect_evidence():
+    with TemporaryDirectory() as temporary:
+        run_dir = Path(temporary) / "run"
+        manifest = gate.initialize_run(
+            run_dir=run_dir,
+            run_tag="qwen3-06b-prefix-incorrect-correctness",
+            gate_name="prefix",
+            model_tier="qwen3-0.6b",
+            source_evidence=_source_evidence(),
+            environment_evidence=_environment_evidence(),
+        )
+        _populate_prefix_output(
+            run_dir,
+            manifest,
+            incorrect_correctness_case="repeat_513",
+        )
+
+        summary = gate.finalize_run(run_dir)
+
+        assert summary["classification"] == (
+            "PREFIX_CACHE_INCOMPLETE_OR_INCORRECT"
+        )
+        assert summary["structural_failures"] == []
+        assert summary["correctness_failures"] == [
+            "repeat_513: targeted correctness check failed"
+        ]
+
+
+def test_prefix_correctness_completeness_rejects_bad_rows():
+    mapping = {
+        "request_timeline.jsonl": "prefix_correctness_rows.jsonl",
+        "scheduler_trace.jsonl": "prefix_performance_rows.jsonl",
+        "cache_trace.jsonl": "prefix_cache_rows.jsonl",
+        "memory_trace.jsonl": "prefix_memory_rows.jsonl",
+    }
+    for mutate in (
+        lambda rows: rows.append(dict(rows[0])),
+        lambda rows: rows[0].update({"correct": 1}),
+        lambda rows: rows[0].update({"case": "unexpected_case"}),
+    ):
+        raw = _prefix_raw_artifacts()
+        mutate(raw["prefix_correctness_rows.jsonl"])
+        merged = {
+            destination: raw[source]
+            for destination, source in mapping.items()
+        }
+
+        try:
+            gate._validate_prefix_raw_artifacts(merged)
+        except ValueError as error:
+            assert "complete correctness evidence" in str(error)
+        else:
+            raise AssertionError(
+                "duplicate, malformed, or unknown correctness rows "
+                "must fail closed"
+            )
+
+
 def test_finalize_prefix_rejects_summary_that_disagrees_with_raw_rows():
     with TemporaryDirectory() as temporary:
         run_dir = Path(temporary) / "run"
@@ -1070,6 +1142,8 @@ def main():
     test_finalize_prefix_writes_complete_hashed_primary_bundle()
     test_finalize_prefix_rejects_empty_raw_artifact()
     test_finalize_prefix_rejects_incomplete_correctness_matrix()
+    test_finalize_prefix_classifies_complete_incorrect_evidence()
+    test_prefix_correctness_completeness_rejects_bad_rows()
     test_finalize_prefix_rejects_summary_that_disagrees_with_raw_rows()
     test_finalize_prefix_rejects_workload_tamper()
     test_finalize_chunked_rebuilds_paired_metrics_and_raw_order()

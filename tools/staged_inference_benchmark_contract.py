@@ -280,6 +280,20 @@ def classify_prefix_bundle(raw: dict) -> dict:
     performance_failures = []
     if not isinstance(raw, dict) or raw.get("artifact_complete") is not True:
         structural_failures.append("prefix artifacts are incomplete")
+    targeted_failures = raw.get("correctness_failures", [])
+    if (
+        not isinstance(targeted_failures, list)
+        or any(
+            not isinstance(failure, str) or not failure
+            for failure in targeted_failures
+        )
+        or len(set(targeted_failures)) != len(targeted_failures)
+    ):
+        structural_failures.append(
+            "prefix targeted correctness failures are malformed"
+        )
+    else:
+        correctness_failures.extend(targeted_failures)
     try:
         shapes = _prefix_shapes(raw)
     except (TypeError, ValueError) as error:

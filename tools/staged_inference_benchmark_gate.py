@@ -874,6 +874,7 @@ def _rebuild_prefix_bundle(
     merged: dict[str, list[dict]],
     *,
     artifact_complete: bool,
+    correctness_failures: list[str] | None = None,
 ) -> dict:
     performance = merged["scheduler_trace.jsonl"]
     cache_by_identity = {
@@ -935,11 +936,14 @@ def _rebuild_prefix_bundle(
             "retained_logical_kv_bytes": retained_bytes,
             "median_cache_clear_host_ms": clear_host_ms,
         }
-    return {
+    bundle = {
         "artifact_complete": artifact_complete,
         "single": families["single"],
         "batch": families["batch"],
     }
+    if correctness_failures:
+        bundle["correctness_failures"] = sorted(correctness_failures)
+    return bundle
 
 
 def _validate_prefix_raw_artifacts(
@@ -967,11 +971,19 @@ def _validate_prefix_raw_artifacts(
     if (
         len(observed_correctness_cases) != len(expected_correctness_cases)
         or set(observed_correctness_cases) != expected_correctness_cases
-        or any(row.get("correct") is not True for row in correctness)
+        or any(
+            not isinstance(row.get("correct"), bool)
+            for row in correctness
+        )
     ):
         raise ValueError(
             "prefix raw artifacts lack complete correctness evidence"
         )
+    correctness_failures = [
+        f"{row['case']}: targeted correctness check failed"
+        for row in correctness
+        if row["correct"] is False
+    ]
     expected = {
         (shape, state, repetition)
         for shape in (
@@ -1006,6 +1018,7 @@ def _validate_prefix_raw_artifacts(
     return _rebuild_prefix_bundle(
         merged,
         artifact_complete=True,
+        correctness_failures=correctness_failures,
     )
 
 

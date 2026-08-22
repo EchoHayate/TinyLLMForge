@@ -227,7 +227,11 @@ def _prefix_correctness_rows() -> list[dict]:
     return rows
 
 
-def write_complete_prefix_bundle(root: Path) -> Path:
+def write_complete_prefix_bundle(
+    root: Path,
+    *,
+    incorrect_correctness_case: str | None = None,
+) -> Path:
     run_dir = root / "prefix-run"
     source, source_root, patch_path = _source_fixture(
         root / "prefix-source"
@@ -241,15 +245,34 @@ def write_complete_prefix_bundle(root: Path) -> Path:
         environment_evidence=_stage1_environment(gate_name="prefix"),
     )
     _attach_source_snapshot(run_dir, source_root, patch_path)
-    fixtures._populate_prefix_output(run_dir, manifest)
+    fixtures._populate_prefix_output(
+        run_dir,
+        manifest,
+        incorrect_correctness_case=incorrect_correctness_case,
+    )
     case_id = manifest["case_order"][0]
+    correctness_rows = _prefix_correctness_rows()
+    if incorrect_correctness_case is not None:
+        matching_rows = [
+            row
+            for row in correctness_rows
+            if row.get("case") == incorrect_correctness_case
+        ]
+        assert len(matching_rows) == 1
+        matching_rows[0]["correct"] = False
+        if "logit_diff" in matching_rows[0]:
+            matching_rows[0]["logit_diff"].update({
+                "max_abs": 0.375,
+                "mean_abs": 0.06396400183439255,
+                "within_tolerance": False,
+            })
     _write_jsonl(
         run_dir
         / "cases"
         / case_id
         / "output"
         / "prefix_correctness_rows.jsonl",
-        _prefix_correctness_rows(),
+        correctness_rows,
     )
     process_path = (
         run_dir / "cases" / case_id / "process.json"
@@ -713,6 +736,28 @@ def test_verifier_rebuilds_complete_chunked_bundle():
         assert result["classification"] == "FAIR_CHUNKED_GO"
 
 
+def test_verifier_classifies_complete_incorrect_prefix_evidence():
+    with TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        run_dir = write_complete_prefix_bundle(
+            root,
+            incorrect_correctness_case="repeat_513",
+        )
+
+        result = verifier.verify_run(
+            run_dir,
+            root / "prefix-controller",
+        )
+
+        assert result["classification"] == (
+            "PREFIX_CACHE_INCOMPLETE_OR_INCORRECT"
+        )
+        assert result["structural_failures"] == []
+        assert result["correctness_failures"] == [
+            "repeat_513: targeted correctness check failed"
+        ]
+
+
 def test_verifier_thresholds_match_the_frozen_contract():
     prefix = fixtures._complete_prefix_bundle()
     for prefix_tokens in ("1024", "2048"):
@@ -862,6 +907,7 @@ def main():
     test_source_snapshot_size_mismatch_is_rejected_before_extraction()
     test_verifier_rebuilds_complete_prefix_bundle()
     test_verifier_rebuilds_complete_chunked_bundle()
+    test_verifier_classifies_complete_incorrect_prefix_evidence()
     test_verifier_thresholds_match_the_frozen_contract()
     test_verifier_rejects_unrehashed_artifact_tamper()
     test_verifier_fails_closed_on_rehashed_tamper()
