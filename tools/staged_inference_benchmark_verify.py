@@ -1461,14 +1461,31 @@ def _chunked_case_metrics(
         )
         for row in memory
     )
+    starved = sum(
+        row["first_scheduled_ns"] - row["scheduled_arrival_ns"]
+        > row["starvation_deadline_ns"]
+        for row in complete
+    )
+    result_error = case_result.get("error_type")
+    valid_pass = (
+        case_result.get("status") == "PASS"
+        and result_error is None
+        and case_result.get("error") is None
+        and starved == 0
+    )
+    valid_starvation = (
+        case_result.get("status") == "INCOMPLETE"
+        and result_error == "starved_request"
+        and isinstance(case_result.get("error"), str)
+        and bool(case_result["error"])
+        and starved > 0
+    )
     if (
         case_result.get("case_id") != case["case_id"]
-        or case_result.get("status") != "PASS"
-        or case_result.get("error_type") is not None
-        or case_result.get("error") is not None
         or case_result.get("request_count") != len(workload)
         or case_result.get("completed_request_count") != len(workload)
         or case_result.get("step_count") != len(memory)
+        or not (valid_pass or valid_starvation)
     ):
         raise ValueError("chunked case result mismatch")
     return {
@@ -1498,7 +1515,7 @@ def _chunked_case_metrics(
         "rejected_requests": 0,
         "truncated_requests": 0,
         "unfinished_requests": max(0, 96 - len(complete)),
-        "starved_requests": 0,
+        "starved_requests": starved,
     }, outputs
 
 

@@ -344,6 +344,25 @@ def test_worker_cli_binds_frozen_chunked_workload_jsonl():
     )
 
 
+def test_worker_exit_code_accepts_complete_starvation_evidence():
+    result = {
+        "status": "INCOMPLETE",
+        "error_type": "starved_request",
+        "request_count": 104,
+        "completed_request_count": 104,
+        "lifecycle_requests": 104,
+    }
+    assert worker._worker_exit_code(result) == 0
+    assert worker._worker_exit_code({
+        **result,
+        "completed_request_count": 103,
+    }) == 1
+    assert worker._worker_exit_code({
+        **result,
+        "error_type": "drain_timeout",
+    }) == 1
+
+
 def main():
     test_chunked_worker_passes_only_frozen_policy_fields()
     test_worker_keeps_warmup_lifecycle_but_excludes_warmup_metrics()
@@ -352,6 +371,7 @@ def main():
     test_chunked_worker_fails_closed_on_missing_token_timestamps()
     test_prefix_worker_delegates_to_existing_profiler()
     test_worker_cli_binds_frozen_chunked_workload_jsonl()
+    test_worker_exit_code_accepts_complete_starvation_evidence()
     print("staged inference benchmark worker tests passed")
 
 

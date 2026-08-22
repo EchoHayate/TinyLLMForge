@@ -648,9 +648,12 @@ def test_driver_fails_closed_when_request_starves():
             clock_ns=IncrementingClock(),
             output_dir=output_dir,
         )
+        lifecycle = _jsonl(output_dir / "request_timeline.jsonl")
 
     assert result["status"] == "INCOMPLETE"
     assert result["error_type"] == "starved_request"
+    assert result["completed_request_count"] == 1
+    assert lifecycle[0]["error"] is None
 
 
 def test_driver_jsonl_files_preserve_final_newline():

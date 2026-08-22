@@ -290,6 +290,17 @@ def _lookup_request_id(
     return request_id_by_seq[seq_id]
 
 
+def _lifecycle_is_complete(lifecycle: dict) -> bool:
+    return (
+        lifecycle.get("first_scheduled_ns") is not None
+        and lifecycle.get("first_token_ns") is not None
+        and lifecycle.get("completion_ns") is not None
+        and lifecycle.get("finish_reason") == "length"
+        and len(lifecycle.get("output_token_ids", []))
+        == lifecycle.get("requested_output_tokens")
+    )
+
+
 def _memory_row(observation: dict, step_index: int, timestamp_ns: int):
     queue_after = observation.get("queue_after")
     memory = observation.get("memory")
@@ -731,6 +742,10 @@ def run_case(
                 "request_set_mismatch",
                 "not every manifest request has one lifecycle record",
             )
+        result["completed_request_count"] = sum(
+            _lifecycle_is_complete(lifecycle_by_request[request_id])
+            for request_id in expected_request_ids
+        )
         for request_id in expected_request_ids:
             lifecycle = lifecycle_by_request[request_id]
             starvation_deadline_ns = lifecycle.get(
@@ -749,21 +764,11 @@ def run_case(
                     "starved_request",
                     f"request exceeded starvation deadline: {request_id}",
                 )
-            if (
-                lifecycle["first_scheduled_ns"] is None
-                or lifecycle["first_token_ns"] is None
-                or lifecycle["completion_ns"] is None
-                or lifecycle["finish_reason"] != "length"
-                or len(lifecycle["output_token_ids"])
-                != lifecycle["requested_output_tokens"]
-            ):
+            if not _lifecycle_is_complete(lifecycle):
                 raise DriverError(
                     "incomplete_request",
                     f"incomplete lifecycle for {request_id}",
                 )
-        result["completed_request_count"] = len(
-            expected_request_ids
-        )
         result["status"] = "PASS"
         exitcode = 0
     except DriverError as exc:
@@ -797,7 +802,10 @@ def run_case(
             ):
                 request_id = request.get("request_id")
                 lifecycle = lifecycle_by_request.get(request_id)
-                if lifecycle is not None:
+                if (
+                    lifecycle is not None
+                    and not _lifecycle_is_complete(lifecycle)
+                ):
                     lifecycle["error"] = result["error"]
         if isinstance(workload_rows, list):
             for request in workload_rows:

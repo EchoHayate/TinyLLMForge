@@ -1163,6 +1163,35 @@ def _chunked_case_metrics(
     result_error = case_result.get("error_type")
     expected_measured = 96
     unfinished = expected_measured - len(complete_rows)
+    starved = sum(
+        row.get("starvation_deadline_ns") is not None
+        and (
+            row["first_scheduled_ns"] - row["scheduled_arrival_ns"]
+            > row["starvation_deadline_ns"]
+        )
+        for row in complete_rows
+    )
+    valid_pass = (
+        case_result.get("status") == "PASS"
+        and result_error is None
+        and case_result.get("error") is None
+        and starved == 0
+    )
+    valid_starvation = (
+        case_result.get("status") == "INCOMPLETE"
+        and result_error == "starved_request"
+        and isinstance(case_result.get("error"), str)
+        and bool(case_result["error"])
+        and starved > 0
+    )
+    if (
+        case_result.get("case_id") != case["case_id"]
+        or case_result.get("request_count") != len(workload)
+        or case_result.get("completed_request_count") != len(workload)
+        or case_result.get("step_count") != len(memory)
+        or not (valid_pass or valid_starvation)
+    ):
+        raise ValueError("chunked case result mismatch")
     metrics = {
         "case_id": case["case_id"],
         "policy": case["policy"],
@@ -1195,10 +1224,7 @@ def _chunked_case_metrics(
             for row in memory
         ),
         "exact_outputs": True,
-        "complete_lifecycle": (
-            case_result.get("status") == "PASS"
-            and len(complete_rows) == expected_measured
-        ),
+        "complete_lifecycle": len(complete_rows) == expected_measured,
         "dropped_requests": max(
             0,
             expected_measured - len(measured),
@@ -1211,7 +1237,7 @@ def _chunked_case_metrics(
             for row in measured
         ),
         "unfinished_requests": max(0, unfinished),
-        "starved_requests": int(result_error == "starved_request"),
+        "starved_requests": starved,
     }
     return metrics, by_request
 

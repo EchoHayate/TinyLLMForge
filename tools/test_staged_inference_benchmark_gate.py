@@ -918,6 +918,8 @@ def _populate_chunked_outputs(
     manifest: dict,
     *,
     duplicate_measured_id: bool = False,
+    starved_case_id: str | None = None,
+    starved_count: int = 0,
 ) -> None:
     workload = contract.build_chunked_workload()
     for case_id in manifest["case_order"]:
@@ -931,6 +933,19 @@ def _populate_chunked_outputs(
             workload,
             policy=case["policy"],
         )
+        if case_id == starved_case_id:
+            for row in timeline[8:8 + starved_count]:
+                row["first_scheduled_ns"] = (
+                    row["scheduled_arrival_ns"]
+                    + row["starvation_deadline_ns"]
+                    + 1
+                )
+                row["first_token_ns"] = row["first_scheduled_ns"] + 10
+                row["token_timestamps_ns"] = [
+                    row["first_token_ns"] + index * 100
+                    for index in range(len(row["output_token_ids"]))
+                ]
+                row["completion_ns"] = row["token_timestamps_ns"][-1]
         if duplicate_measured_id:
             timeline[8]["request_id"] = timeline[9]["request_id"]
         _write_jsonl(
@@ -952,9 +967,24 @@ def _populate_chunked_outputs(
             output_dir / "case_result.json",
             {
                 "case_id": case_id,
-                "status": "PASS",
-                "error_type": None,
+                "status": (
+                    "INCOMPLETE"
+                    if case_id == starved_case_id
+                    else "PASS"
+                ),
+                "error_type": (
+                    "starved_request"
+                    if case_id == starved_case_id
+                    else None
+                ),
+                "error": (
+                    "request exceeded starvation deadline"
+                    if case_id == starved_case_id
+                    else None
+                ),
+                "request_count": 104,
                 "completed_request_count": 104,
+                "step_count": 1,
             },
         )
         _write_json(
@@ -1009,6 +1039,48 @@ def test_finalize_chunked_rebuilds_paired_metrics_and_raw_order():
             for repetition in range(5)
             for policy in ("OFF", "FAIR_CHUNKED")
         }
+
+
+def test_finalize_chunked_preserves_complete_starvation_evidence():
+    with TemporaryDirectory() as temporary:
+        run_dir = Path(temporary) / "run"
+        manifest = gate.initialize_run(
+            run_dir=run_dir,
+            run_tag="qwen3-06b-chunked-starved-r1",
+            gate_name="chunked",
+            model_tier="qwen3-0.6b",
+            source_evidence=_source_evidence(),
+            environment_evidence=_environment_evidence(
+                gate_name="chunked"
+            ),
+        )
+        starved_case_id = next(
+            case_id
+            for case_id in manifest["case_order"]
+            if case_id.startswith("fair_chunked__")
+        )
+        _populate_chunked_outputs(
+            run_dir,
+            manifest,
+            starved_case_id=starved_case_id,
+            starved_count=2,
+        )
+
+        summary = gate.finalize_run(run_dir)
+        case_rows = [
+            json.loads(line)
+            for line in (
+                run_dir / "case_rows.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        starved_row = next(
+            row for row in case_rows
+            if row["case_id"] == starved_case_id
+        )
+
+    assert summary["classification"] == "FAIR_CHUNKED_INCOMPLETE"
+    assert starved_row["complete_lifecycle"] is True
+    assert starved_row["starved_requests"] == 2
 
 
 def test_finalize_chunked_rejects_duplicate_measured_request_id():
@@ -1147,6 +1219,7 @@ def main():
     test_finalize_prefix_rejects_summary_that_disagrees_with_raw_rows()
     test_finalize_prefix_rejects_workload_tamper()
     test_finalize_chunked_rebuilds_paired_metrics_and_raw_order()
+    test_finalize_chunked_preserves_complete_starvation_evidence()
     test_finalize_chunked_rejects_duplicate_measured_request_id()
     test_qwen8_promotion_binds_two_verified_stage1_summaries()
     print("staged inference benchmark gate tests passed")

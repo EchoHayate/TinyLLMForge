@@ -276,6 +276,22 @@ def _parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def _worker_exit_code(result: dict) -> int:
+    if result.get("status") == "PASS":
+        return 0
+    request_count = result.get("request_count")
+    if (
+        result.get("error_type") == "starved_request"
+        and isinstance(request_count, int)
+        and not isinstance(request_count, bool)
+        and request_count > 0
+        and result.get("completed_request_count") == request_count
+        and result.get("lifecycle_requests") == request_count
+    ):
+        return 0
+    return 1
+
+
 def main(argv=None) -> int:
     args = _parse_args(argv)
     result = run_worker(
@@ -288,7 +304,7 @@ def main(argv=None) -> int:
     sys.stdout.write(
         json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n"
     )
-    return 0 if result.get("status") == "PASS" else 1
+    return _worker_exit_code(result)
 
 
 if __name__ == "__main__":

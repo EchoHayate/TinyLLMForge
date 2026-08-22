@@ -736,6 +736,47 @@ def test_verifier_rebuilds_complete_chunked_bundle():
         assert result["classification"] == "FAIR_CHUNKED_GO"
 
 
+def test_verifier_rebuilds_complete_starvation_evidence():
+    workload = gate.contract.build_chunked_workload()
+    case = gate.contract.build_chunked_case_matrix(
+        model_tier="qwen3-0.6b"
+    )[1]
+    timeline = fixtures._chunked_timeline(
+        workload,
+        policy=case["policy"],
+    )
+    for row in timeline[8:10]:
+        row["first_scheduled_ns"] = (
+            row["scheduled_arrival_ns"]
+            + row["starvation_deadline_ns"]
+            + 1
+        )
+        row["first_token_ns"] = row["first_scheduled_ns"] + 10
+        row["token_timestamps_ns"] = [
+            row["first_token_ns"] + index * 100
+            for index in range(len(row["output_token_ids"]))
+        ]
+        row["completion_ns"] = row["token_timestamps_ns"][-1]
+    metrics, _ = verifier._chunked_case_metrics(
+        case,
+        timeline,
+        workload,
+        [{"cuda_peak_reserved_bytes": 1_000}],
+        {
+            "case_id": case["case_id"],
+            "status": "INCOMPLETE",
+            "error_type": "starved_request",
+            "error": "request exceeded starvation deadline",
+            "request_count": 104,
+            "completed_request_count": 104,
+            "step_count": 1,
+        },
+    )
+
+    assert metrics["complete_lifecycle"] is True
+    assert metrics["starved_requests"] == 2
+
+
 def test_verifier_classifies_complete_incorrect_prefix_evidence():
     with TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -907,6 +948,7 @@ def main():
     test_source_snapshot_size_mismatch_is_rejected_before_extraction()
     test_verifier_rebuilds_complete_prefix_bundle()
     test_verifier_rebuilds_complete_chunked_bundle()
+    test_verifier_rebuilds_complete_starvation_evidence()
     test_verifier_classifies_complete_incorrect_prefix_evidence()
     test_verifier_thresholds_match_the_frozen_contract()
     test_verifier_rejects_unrehashed_artifact_tamper()
