@@ -7,10 +7,43 @@ from copy import deepcopy
 import math
 import os
 from pathlib import Path
+import re
 import sys
 from tempfile import TemporaryDirectory
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:
+    class _Raises:
+        def __init__(self, expected, *, match=None):
+            self.expected = expected
+            self.match = match
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exception_type, exception, _traceback):
+            if exception_type is None:
+                raise AssertionError(
+                    f"did not raise {self.expected!r}"
+                )
+            if not issubclass(exception_type, self.expected):
+                return False
+            if (
+                self.match is not None
+                and re.search(self.match, str(exception)) is None
+            ):
+                raise AssertionError(
+                    f"{exception!r} does not match {self.match!r}"
+                )
+            return True
+
+    class _PytestCompat:
+        @staticmethod
+        def raises(expected, *, match=None):
+            return _Raises(expected, match=match)
+
+    pytest = _PytestCompat()
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

@@ -314,26 +314,26 @@ def preflight_commands() -> tuple[str, ...]:
     python = shlex.quote(REMOTE_PYTHON)
     return (
         (
-            f"{python} "
+            f"{python} -S "
             "tools/test_graph_resident_greedy_tail.py"
         ),
-        f"{python} tools/test_greedy_sampling_fast_path.py",
-        f"{python} tools/test_model_runner_spec_verify.py",
+        f"{python} -S tools/test_greedy_sampling_fast_path.py",
+        f"{python} -S tools/test_model_runner_spec_verify.py",
         (
             f"{python} "
             "tools/test_multi_sequence_cuda_graph_gate.py"
         ),
         f"{python} tools/test_chunked_prefill.py",
         (
-            f"{python} "
+            f"{python} -S "
             "tools/test_profile_graph_resident_greedy_tail.py"
         ),
         (
-            f"{python} "
+            f"{python} -S "
             "tools/test_graph_resident_greedy_tail_gate.py"
         ),
         (
-            f"{python} "
+            f"{python} -S "
             "tools/test_graph_resident_greedy_tail_verify.py"
         ),
     )

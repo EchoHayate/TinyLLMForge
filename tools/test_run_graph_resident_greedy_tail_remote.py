@@ -7,12 +7,45 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
 from zoneinfo import ZoneInfo
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:
+    class _Raises:
+        def __init__(self, expected, *, match=None):
+            self.expected = expected
+            self.match = match
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exception_type, exception, _traceback):
+            if exception_type is None:
+                raise AssertionError(
+                    f"did not raise {self.expected!r}"
+                )
+            if not issubclass(exception_type, self.expected):
+                return False
+            if (
+                self.match is not None
+                and re.search(self.match, str(exception)) is None
+            ):
+                raise AssertionError(
+                    f"{exception!r} does not match {self.match!r}"
+                )
+            return True
+
+    class _PytestCompat:
+        @staticmethod
+        def raises(expected, *, match=None):
+            return _Raises(expected, match=match)
+
+    pytest = _PytestCompat()
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -193,11 +226,7 @@ def test_source_archive_is_limited_to_runtime_and_tools() -> None:
 
 def test_remote_preflight_uses_all_required_tests() -> None:
     commands = remote.preflight_commands()
-    assert all(
-        command.startswith(remote.REMOTE_PYTHON + " ")
-        for command in commands
-    )
-    assert {
+    required_tests = {
         "tools/test_graph_resident_greedy_tail.py",
         "tools/test_greedy_sampling_fast_path.py",
         "tools/test_model_runner_spec_verify.py",
@@ -206,30 +235,59 @@ def test_remote_preflight_uses_all_required_tests() -> None:
         "tools/test_profile_graph_resident_greedy_tail.py",
         "tools/test_graph_resident_greedy_tail_gate.py",
         "tools/test_graph_resident_greedy_tail_verify.py",
-    } == {command.split()[-1] for command in commands}
+    }
+    assert required_tests == {
+        command.split()[-1] for command in commands
+    }
+    dependency_light = {
+        "tools/test_graph_resident_greedy_tail.py",
+        "tools/test_greedy_sampling_fast_path.py",
+        "tools/test_model_runner_spec_verify.py",
+        "tools/test_profile_graph_resident_greedy_tail.py",
+        "tools/test_graph_resident_greedy_tail_gate.py",
+        "tools/test_graph_resident_greedy_tail_verify.py",
+    }
+    for command in commands:
+        script = command.split()[-1]
+        expected_prefix = (
+            remote.REMOTE_PYTHON + " -S "
+            if script in dependency_light
+            else remote.REMOTE_PYTHON + " "
+        )
+        assert command.startswith(expected_prefix)
 
 
-def test_model_runner_preflight_runs_without_pytest_installed() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            os.fspath(
-                REPO_ROOT
-                / "tools"
-                / "test_model_runner_spec_verify.py"
-            ),
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert (
-        "model runner spec_verify tests passed"
-        in result.stdout
-    )
+def test_dependency_light_preflight_runs_without_site_packages() -> None:
+    expected_markers = {
+        "tools/test_graph_resident_greedy_tail.py":
+            "graph-resident greedy tail tests passed",
+        "tools/test_greedy_sampling_fast_path.py":
+            "greedy sampling fast path tests passed",
+        "tools/test_model_runner_spec_verify.py":
+            "model runner spec_verify tests passed",
+        "tools/test_profile_graph_resident_greedy_tail.py":
+            "graph-resident greedy-tail profile tests passed",
+        "tools/test_graph_resident_greedy_tail_gate.py":
+            "graph-resident greedy-tail gate tests passed",
+        "tools/test_graph_resident_greedy_tail_verify.py":
+            "graph-resident greedy-tail verifier tests passed",
+    }
+    for script, marker in expected_markers.items():
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-S",
+                os.fspath(REPO_ROOT / script),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            script + "\n" + result.stderr
+        )
+        assert marker in result.stdout
 
 
 def test_runtime_environment_is_isolated_below_staging() -> None:
@@ -363,7 +421,7 @@ def main() -> None:
     test_source_commit_must_equal_pushed_head()
     test_source_archive_is_limited_to_runtime_and_tools()
     test_remote_preflight_uses_all_required_tests()
-    test_model_runner_preflight_runs_without_pytest_installed()
+    test_dependency_light_preflight_runs_without_site_packages()
     test_runtime_environment_is_isolated_below_staging()
     test_worker_launch_is_source_bound_and_uses_new_worker()
     test_terminal_inventory_requires_manifest_listed_files()
