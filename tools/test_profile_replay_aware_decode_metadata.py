@@ -89,6 +89,13 @@ def test_worker_contract_helpers_are_deterministic():
     ) == 5
 
 
+def test_source_manifest_includes_remote_transport_dependency():
+    assert {
+        "tools/run_staged_inference_benchmark_remote.py",
+        "tools/test_run_staged_inference_benchmark_remote.py",
+    }.issubset(SOURCE_FILES)
+
+
 def test_summarize_rows_accepts_exact_complete_pair():
     summary = summarize_rows([_row("off"), _row("on")])
 
@@ -174,6 +181,7 @@ def test_source_manifest_does_not_require_git_metadata():
 
 def main() -> None:
     test_worker_contract_helpers_are_deterministic()
+    test_source_manifest_includes_remote_transport_dependency()
     test_summarize_rows_accepts_exact_complete_pair()
     test_summarize_rows_rejects_output_token_mismatch()
     test_summarize_rows_rejects_missing_optimized_steps()

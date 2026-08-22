@@ -401,12 +401,16 @@ def require_pushed_head(
 def _ssh_command(remote_command: str) -> list[str]:
     if not isinstance(remote_command, str) or not remote_command:
         raise ValueError("remote command is invalid")
+    control_path = os.environ.get(
+        "TINYLLMFORGE_SSH_CONTROL_PATH",
+        "none",
+    )
     return [
         "ssh",
         "-o",
         "ControlMaster=no",
         "-o",
-        "ControlPath=none",
+        f"ControlPath={control_path}",
         "-o",
         "BatchMode=yes",
         "-o",

@@ -54,6 +54,8 @@ SOURCE_FILES = (
     "tools/test_replay_aware_decode_metadata_verify.py",
     "tools/run_replay_aware_decode_metadata_remote.py",
     "tools/test_run_replay_aware_decode_metadata_remote.py",
+    "tools/run_staged_inference_benchmark_remote.py",
+    "tools/test_run_staged_inference_benchmark_remote.py",
 )
 
 

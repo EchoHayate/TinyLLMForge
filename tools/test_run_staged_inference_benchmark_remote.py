@@ -104,6 +104,23 @@ def test_direct_script_entrypoint_adds_repo_root_to_sys_path():
     assert result.returncode == 0, result.stderr
 
 
+def test_ssh_command_supports_an_explicit_control_socket():
+    variable = "TINYLLMFORGE_SSH_CONTROL_PATH"
+    previous = os.environ.get(variable)
+    os.environ[variable] = "/tmp/tinyllmforge-test-master.sock"
+    try:
+        command = remote._ssh_command("printf connected")
+    finally:
+        if previous is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous
+
+    assert "ControlMaster=no" in command
+    assert "ControlPath=/tmp/tinyllmforge-test-master.sock" in command
+    assert "ControlPath=none" not in command
+
+
 def test_run_tag_rejects_paths_and_noncanonical_text():
     for value in (
         "",
