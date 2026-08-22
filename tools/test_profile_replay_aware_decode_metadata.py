@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ if _REPO_ROOT not in sys.path:
 
 from tools.profile_replay_aware_decode_metadata import (
     SOURCE_FILES,
+    _construct_llm,
     _source_manifest,
     context_cases,
     nearest_rank_percentile,
@@ -94,6 +96,34 @@ def test_source_manifest_includes_remote_transport_dependency():
         "tools/run_staged_inference_benchmark_remote.py",
         "tools/test_run_staged_inference_benchmark_remote.py",
     }.issubset(SOURCE_FILES)
+
+
+def test_construct_llm_reserves_the_full_prompt_and_decode_length():
+    calls = []
+    original = sys.modules.get("tinyvllm")
+    sys.modules["tinyvllm"] = SimpleNamespace(
+        LLM=lambda model, **kwargs: (
+            calls.append((model, kwargs))
+            or "llm"
+        )
+    )
+    try:
+        result = _construct_llm(
+            model="/model",
+            prompt_tokens=8_192,
+            generated_tokens=128,
+            gpu_memory_utilization=0.5,
+            enabled=True,
+        )
+    finally:
+        if original is None:
+            sys.modules.pop("tinyvllm", None)
+        else:
+            sys.modules["tinyvllm"] = original
+
+    assert result == "llm"
+    assert calls[0][1]["max_model_len"] == 8_320
+    assert calls[0][1]["max_num_batched_tokens"] == 8_320
 
 
 def test_summarize_rows_accepts_exact_complete_pair():
@@ -182,6 +212,7 @@ def test_source_manifest_does_not_require_git_metadata():
 def main() -> None:
     test_worker_contract_helpers_are_deterministic()
     test_source_manifest_includes_remote_transport_dependency()
+    test_construct_llm_reserves_the_full_prompt_and_decode_length()
     test_summarize_rows_accepts_exact_complete_pair()
     test_summarize_rows_rejects_output_token_mismatch()
     test_summarize_rows_rejects_missing_optimized_steps()

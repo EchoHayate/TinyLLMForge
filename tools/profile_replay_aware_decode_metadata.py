@@ -703,7 +703,9 @@ def _construct_llm(
 
     return LLM(
         model,
-        max_num_batched_tokens=prompt_tokens,
+        max_num_batched_tokens=(
+            prompt_tokens + generated_tokens
+        ),
         max_num_seqs=1,
         max_model_len=prompt_tokens + generated_tokens,
         gpu_memory_utilization=gpu_memory_utilization,
