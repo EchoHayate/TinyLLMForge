@@ -55,6 +55,8 @@ SOURCE_FILES = (
     "tools/test_zero_temperature_greedy_fast_path_verify.py",
     "tools/run_zero_temperature_greedy_fast_path_remote.py",
     "tools/test_run_zero_temperature_greedy_fast_path_remote.py",
+    "tools/run_staged_inference_benchmark_remote.py",
+    "tools/test_run_staged_inference_benchmark_remote.py",
 )
 
 
