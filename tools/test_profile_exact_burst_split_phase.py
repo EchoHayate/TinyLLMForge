@@ -76,7 +76,7 @@ def _burst_summary(
     tail = 7 if split else 0
     summary = {
         "attempts": commits + tail,
-        "acceptances": commits + tail,
+        "acceptances": commits + max(0, tail - 1),
         "target_model_forwards": (
             split_commits * 8 if split else (127 if enabled else 0)
         ),
@@ -102,8 +102,12 @@ def _burst_summary(
             if correctness_trace
             else 0
         ),
-        "output_budget_clipped": tail if split else int(enabled),
-        "block_boundary_clipped": int(enabled),
+        "output_budget_clipped": (
+            max(0, tail - 1) if split else int(enabled)
+        ),
+        "block_boundary_clipped": (
+            0 if split else int(enabled)
+        ),
         "commits": commits,
         "committed_tokens": (
             split_commits * 8 if split else (127 if enabled else 0)
@@ -128,12 +132,17 @@ def _burst_summary(
             3_000_000 if enabled else 0
         ),
         "requested_width_histogram": (
-            {str(width): commits + tail} if enabled else {}
+            (
+                {str(width): commits + max(0, tail - 1)}
+                if split
+                else {str(width): commits}
+            )
+            if enabled
+            else {}
         ),
         "authorized_width_histogram": (
             (
                 {
-                    "1": 1,
                     "2": 1,
                     "3": 1,
                     "4": 1,
@@ -149,7 +158,16 @@ def _burst_summary(
             else {}
         ),
         "fallback_counts": (
-            {"split_phase_requires_k8": tail} if split else {}
+            (
+                {
+                    "insufficient_output_budget": 1,
+                    "split_phase_requires_k8": max(0, tail - 1),
+                }
+                if tail
+                else {}
+            )
+            if split
+            else {}
         ),
         "split_phase_failure_counts": {},
         "quarantine_reason": None,
@@ -519,6 +537,35 @@ def test_case_validation_binds_phase_and_counter_inventory() -> None:
     ] == 15
     assert len(row["decode_host_ns"]) == 29
 
+
+def test_case_validation_accepts_scheduler_owned_single_token_tail() -> None:
+    row = _case_row("decode_burst_k8_split_phase")
+    summary = row["exact_greedy_decode_burst_summary"]
+
+    validated = validate_case_row(row)
+
+    assert validated["exact_greedy_decode_burst_summary"][
+        "fallback_counts"
+    ] == {
+        "insufficient_output_budget": 1,
+        "split_phase_requires_k8": 6,
+    }
+
+    invalid = deepcopy(row)
+    invalid["exact_greedy_decode_burst_summary"][
+        "fallback_counts"
+    ] = {"split_phase_requires_k8": 7}
+    try:
+        validate_case_row(invalid)
+    except ValueError as error:
+        assert str(error) == (
+            "split phase ordinary-tail inventory mismatch"
+        )
+    else:
+        raise AssertionError(
+            "scheduler-owned single-token tail was misclassified"
+        )
+
     invalid = deepcopy(row)
     invalid["split_phase_inventory"][
         "unexpected_scheduler_calls"
@@ -593,6 +640,7 @@ def main() -> None:
     test_runtime_configuration_enables_split_only_for_split_arm()
     test_phase_observations_require_ordered_exact_pairs()
     test_case_validation_binds_phase_and_counter_inventory()
+    test_case_validation_accepts_scheduler_owned_single_token_tail()
     test_correctness_rows_bind_split_graph_and_ordinary_tail()
     print("exact burst split-phase profile tests passed")
 

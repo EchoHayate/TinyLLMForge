@@ -367,10 +367,18 @@ def _validate_burst_summary(
     if normalized["split_phase_failure_counts"]:
         raise ValueError("split phase failure inventory is nonzero")
     tail_tokens = 127 - normalized["committed_tokens"]
-    if tail_tokens < 0 or normalized["fallback_counts"] != (
-        {"split_phase_requires_k8": tail_tokens}
-        if tail_tokens
-        else {}
+    accepted_tail_leases = max(0, tail_tokens - 1)
+    expected_fallback_counts = {}
+    if accepted_tail_leases:
+        expected_fallback_counts["split_phase_requires_k8"] = (
+            accepted_tail_leases
+        )
+    if tail_tokens:
+        expected_fallback_counts["insufficient_output_budget"] = 1
+    if (
+        tail_tokens < 0
+        or normalized["fallback_counts"]
+        != expected_fallback_counts
     ):
         raise ValueError("split phase ordinary-tail inventory mismatch")
     return normalized

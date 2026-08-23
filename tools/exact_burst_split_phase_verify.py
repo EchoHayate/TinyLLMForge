@@ -392,33 +392,39 @@ def _validate_summary(
     if split:
         commits = summary["commits"]
         tail = 127 - summary["committed_tokens"]
+        accepted_tail_leases = max(0, tail - 1)
+        expected_fallback_counts = {}
+        if accepted_tail_leases:
+            expected_fallback_counts["split_phase_requires_k8"] = (
+                accepted_tail_leases
+            )
+        if tail:
+            expected_fallback_counts["insufficient_output_budget"] = 1
+        expected_authorized_widths = {
+            str(width): 1
+            for width in range(2, tail + 1)
+        }
+        expected_authorized_widths["8"] = commits
         exact = all((
             commits == 15,
             summary["attempts"] == commits + tail,
-            summary["acceptances"] == commits + tail,
+            summary["acceptances"]
+            == commits + accepted_tail_leases,
             summary["target_model_forwards"] == commits * 8,
             summary["graph_replays"] == commits * 8,
             summary["committed_tokens"] == commits * 8,
             summary["intermediate_token_d2h_calls"] == 0,
             summary["final_token_d2h_calls"] == 0,
             summary["final_token_d2h_bytes"] == 0,
-            summary["output_budget_clipped"] == tail,
-            summary["block_boundary_clipped"] == 1,
+            summary["output_budget_clipped"]
+            == accepted_tail_leases,
+            summary["block_boundary_clipped"] == 0,
             summary["requested_width_histogram"]
-            == {"8": commits + tail},
+            == {"8": commits + accepted_tail_leases},
             summary["authorized_width_histogram"]
-            == {
-                "1": 1,
-                "2": 1,
-                "3": 1,
-                "4": 1,
-                "5": 1,
-                "6": 1,
-                "7": 1,
-                "8": commits,
-            },
+            == expected_authorized_widths,
             summary["fallback_counts"]
-            == {"split_phase_requires_k8": tail},
+            == expected_fallback_counts,
             not summary["split_phase_failure_counts"],
             summary["failures"] == 0,
             summary["quarantines"] == 0,
