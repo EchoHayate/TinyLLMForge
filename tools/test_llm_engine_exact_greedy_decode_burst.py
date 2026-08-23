@@ -388,6 +388,7 @@ def _split_result(
     prefix_tokens=(41, 42, 43, 44),
     suffix_tokens=(45, 46, 47, 48),
     fail_phase=None,
+    sampled_logits=(),
 ):
     prefix_ticket, suffix_ticket = (
         build_exact_burst_publication_tickets(
@@ -424,6 +425,8 @@ def _split_result(
         replay_count=8,
         prefix=transfer(prefix_ticket, prefix_tokens),
         suffix=transfer(suffix_ticket, suffix_tokens),
+        sampled_logit_d2h_calls=int(bool(sampled_logits)),
+        sampled_logits=sampled_logits,
     )
 
 
@@ -897,6 +900,42 @@ def test_split_phase_publishes_prefix_then_drains_suffix_before_schedule():
     assert suffix_observation["phase_token_count"] == 4
     assert suffix_observation["pending_suffix"] is False
     assert suffix_observation["scheduler_schedule_calls"] == 0
+
+
+def test_split_phase_prefix_observation_exposes_correctness_logits():
+    events = []
+    lease = _lease(width=8)
+    sampled_logits = ((0, (1.0, 3.0, 2.0)),)
+    result = _split_result(
+        lease,
+        events,
+        sampled_logits=sampled_logits,
+    )
+    engine, sequence, _scheduler, _model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        configured_width=8,
+        events=events,
+    )
+    sequence.max_tokens = 8
+
+    step(
+        engine,
+        completion_only=True,
+        exact_burst_correctness_trace=True,
+    )
+
+    observation = engine.last_step_observation
+    assert observation[
+        "exact_greedy_decode_burst_sampled_logits"
+    ] == sampled_logits
+    assert observation[
+        "exact_greedy_decode_burst_sampled_logit_d2h_calls"
+    ] == 1
+    assert observation[
+        "exact_greedy_decode_burst_correctness_trace"
+    ] is True
 
 
 def test_split_phase_prefix_wait_failure_is_terminal_and_gpu_safe():

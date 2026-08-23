@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
+from numbers import Real
 from typing import Optional
 
 
@@ -287,6 +289,11 @@ class ExactGreedyDecodeBurstSplitResult:
     replay_count: int
     prefix: ExactBurstPhaseTransfer
     suffix: ExactBurstPhaseTransfer
+    sampled_logit_d2h_calls: int = 0
+    sampled_logits: tuple[
+        tuple[int, tuple[float, ...]],
+        ...,
+    ] = ()
 
     def __post_init__(self) -> None:
         _require_digest(
@@ -441,6 +448,12 @@ class ExactBurstSplitPhaseMailboxBackend:
         replay_count: int,
         prefix: ExactBurstPhaseTransfer,
         suffix: ExactBurstPhaseTransfer,
+        sampled_logit_d2h_calls: int = 0,
+        sampled_logits: tuple[
+            tuple[int, tuple[float, ...]],
+            ...,
+        ] = (),
+        correctness_trace: bool = False,
     ) -> ExactGreedyDecodeBurstSplitResult:
         result = ExactGreedyDecodeBurstSplitResult(
             parent_lease_identity_sha256=(
@@ -450,6 +463,8 @@ class ExactBurstSplitPhaseMailboxBackend:
             replay_count=replay_count,
             prefix=prefix,
             suffix=suffix,
+            sampled_logit_d2h_calls=sampled_logit_d2h_calls,
+            sampled_logits=sampled_logits,
         )
         return validate_exact_burst_split_result(
             result,
@@ -459,6 +474,7 @@ class ExactBurstSplitPhaseMailboxBackend:
             expected_graph_identity_sha256=(
                 graph_identity_sha256
             ),
+            correctness_trace=correctness_trace,
         )
 
     def abort_transaction(self, mailbox_generation: int) -> None:
@@ -507,6 +523,7 @@ def validate_exact_burst_split_result(
     *,
     expected_parent_lease_identity_sha256: str,
     expected_graph_identity_sha256: str,
+    correctness_trace: bool = False,
 ) -> ExactGreedyDecodeBurstSplitResult:
     if not isinstance(
         result,
@@ -537,6 +554,60 @@ def validate_exact_burst_split_result(
         raise ValueError(
             "split result replay_count must equal 8"
         )
+    if not isinstance(correctness_trace, bool):
+        raise ValueError("correctness_trace must be a bool")
+    _require_non_negative_int(
+        result.sampled_logit_d2h_calls,
+        "sampled_logit_d2h_calls",
+    )
+    if not isinstance(result.sampled_logits, tuple):
+        raise ValueError("sampled_logits must be a tuple")
+    previous_ordinal = -1
+    for row in result.sampled_logits:
+        if not isinstance(row, tuple) or len(row) != 2:
+            raise ValueError(
+                "sampled logit rows must be ordinal/value pairs"
+            )
+        ordinal, values = row
+        _require_non_negative_int(
+            ordinal,
+            "sampled logit ordinal",
+        )
+        if ordinal >= result.replay_count:
+            raise ValueError(
+                "sampled logit ordinal exceeds split replay range"
+            )
+        if ordinal <= previous_ordinal:
+            raise ValueError(
+                "sampled logit ordinals must be strictly increasing"
+            )
+        if (
+            not isinstance(values, tuple)
+            or not values
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not math.isfinite(float(value))
+                for value in values
+            )
+        ):
+            raise ValueError(
+                "sampled logits must contain finite values"
+            )
+        previous_ordinal = ordinal
+    if not correctness_trace:
+        if result.sampled_logits:
+            raise ValueError(
+                "production split burst cannot return sampled logits"
+            )
+        if result.sampled_logit_d2h_calls:
+            raise ValueError(
+                "production split burst cannot transfer sampled logits"
+            )
+    elif result.sampled_logit_d2h_calls != int(
+        bool(result.sampled_logits)
+    ):
+        raise ValueError("sampled logit D2H count mismatch")
     prefix = result.prefix
     suffix = result.suffix
     if prefix.ticket.phase != "prefix":
@@ -610,6 +681,7 @@ class ExactBurstSplitPhaseTransaction:
         *,
         parent_lease_identity_sha256: str,
         result: ExactGreedyDecodeBurstSplitResult,
+        correctness_trace: bool = False,
     ) -> "ExactBurstSplitPhaseTransaction":
         validate_exact_burst_split_result(
             result,
@@ -619,6 +691,7 @@ class ExactBurstSplitPhaseTransaction:
             expected_graph_identity_sha256=(
                 result.graph_identity_sha256
             ),
+            correctness_trace=correctness_trace,
         )
         return cls(
             parent_lease_identity_sha256=(

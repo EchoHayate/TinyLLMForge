@@ -4636,6 +4636,9 @@ class LLMEngine:
                                                 "graph_identity_sha256"
                                             ]
                                         ),
+                                        correctness_trace=(
+                                            exact_burst_correctness_trace
+                                        ),
                                     )
                                 )
                                 split_transaction = (
@@ -4645,6 +4648,9 @@ class LLMEngine:
                                             .identity_sha256
                                         ),
                                         result=split_result,
+                                        correctness_trace=(
+                                            exact_burst_correctness_trace
+                                        ),
                                     )
                                 )
                                 expected_tickets = (
@@ -4775,6 +4781,13 @@ class LLMEngine:
                                     split_result.replay_count
                                 )
                                 exact_burst_token_d2h_calls = 2
+                                exact_burst_sampled_logit_d2h_calls = (
+                                    split_result
+                                    .sampled_logit_d2h_calls
+                                )
+                                exact_burst_sampled_logits = (
+                                    split_result.sampled_logits
+                                )
                                 exact_burst_host_visible_gap_ns = max(
                                     0,
                                     prefix_ready_ns

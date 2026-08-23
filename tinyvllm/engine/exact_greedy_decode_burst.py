@@ -2131,6 +2131,31 @@ class ExactGreedyDecodeBurstGraph:
                 token_slice=tensors["token_history"][4:8],
                 mailbox_generation=generation,
             )
+            sampled_logits = ()
+            sampled_logit_d2h_calls = 0
+            if self.correctness_trace:
+                active_rows = tuple(
+                    (row_index, ordinal)
+                    for row_index, ordinal
+                    in enumerate(self.sampled_logit_ordinals)
+                    if 0 <= ordinal < completed_replays
+                )
+                if active_rows:
+                    rows = tensors["sampled_logits"][
+                        :len(self.sampled_logit_ordinals)
+                    ].tolist()
+                    sampled_logits = tuple(
+                        (
+                            ordinal,
+                            tuple(
+                                float(value)
+                                for value in rows[row_index]
+                            ),
+                        )
+                        for row_index, ordinal in active_rows
+                    )
+                    sampled_logit_d2h_calls = 1
+                    self.stats.record_sampled_logit_d2h()
             return mailbox_backend.build_result(
                 parent_lease_identity_sha256=(
                     lease.identity_sha256
@@ -2141,6 +2166,11 @@ class ExactGreedyDecodeBurstGraph:
                 replay_count=completed_replays,
                 prefix=prefix,
                 suffix=suffix,
+                sampled_logit_d2h_calls=(
+                    sampled_logit_d2h_calls
+                ),
+                sampled_logits=sampled_logits,
+                correctness_trace=self.correctness_trace,
             )
         except Exception as error:
             reason = "split_phase_failure:" + type(error).__name__

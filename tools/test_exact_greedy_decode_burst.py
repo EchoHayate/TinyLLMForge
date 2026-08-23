@@ -816,7 +816,12 @@ class _SplitBackend:
         replay_count,
         prefix,
         suffix,
+        sampled_logit_d2h_calls=0,
+        sampled_logits=(),
+        correctness_trace=False,
     ):
+        assert isinstance(correctness_trace, bool)
+        assert not sampled_logits or correctness_trace
         return self._result_type(
             parent_lease_identity_sha256=(
                 parent_lease_identity_sha256
@@ -825,6 +830,8 @@ class _SplitBackend:
             replay_count=replay_count,
             prefix=prefix,
             suffix=suffix,
+            sampled_logit_d2h_calls=sampled_logit_d2h_calls,
+            sampled_logits=sampled_logits,
         )
 
 
@@ -2308,6 +2315,59 @@ def test_split_phase_replay_enqueues_prefix_after_four_and_suffix_after_eight():
     assert result.replay_count == 8
     assert result.prefix.wait_tokens() == (50, 51, 52, 53)
     assert result.suffix.wait_tokens() == (54, 55, 56, 57)
+    assert tensors["token_history"].tolist_calls == 0
+
+
+def test_split_phase_correctness_trace_returns_only_sampled_logits():
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+        correctness_trace=True,
+        history_capacity=8,
+        sampled_logit_ordinals=(0, 7),
+    )
+
+    def replay_step(ordinal):
+        tensors["token_history"].values[ordinal] = ordinal + 70
+        tensors["history_index"].values[0] += 1
+        if ordinal == 0:
+            tensors["sampled_logits"].values[0] = [
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+            ]
+        if ordinal == 7:
+            tensors["sampled_logits"].values[1] = [
+                5.0,
+                4.0,
+                3.0,
+                2.0,
+                1.0,
+            ]
+
+    fake_graph.on_replay = replay_step
+    result = graph.replay_split_phase(
+        lease=_k8_lease(),
+        initial_token=69,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=[],
+            dtype="int32",
+            element_size=4,
+        ),
+        mailbox_backend=_SplitBackend(fake_graph),
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+
+    assert result.sampled_logits == (
+        (0, (1.0, 2.0, 3.0, 4.0, 5.0)),
+        (7, (5.0, 4.0, 3.0, 2.0, 1.0)),
+    )
+    assert result.sampled_logit_d2h_calls == 1
+    assert tensors["sampled_logits"].tolist_calls == 1
     assert tensors["token_history"].tolist_calls == 0
 
 

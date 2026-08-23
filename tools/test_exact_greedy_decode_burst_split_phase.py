@@ -165,7 +165,11 @@ def _transfer(ticket, generation, values):
     )
 
 
-def _result():
+def _result(
+    *,
+    sampled_logits=(),
+    sampled_logit_d2h_calls=0,
+):
     prefix, suffix = _tickets()
     return ExactGreedyDecodeBurstSplitResult(
         parent_lease_identity_sha256="a" * 64,
@@ -173,6 +177,8 @@ def _result():
         replay_count=8,
         prefix=_transfer(prefix, 1, (10, 11, 12, 13)),
         suffix=_transfer(suffix, 1, (14, 15, 16, 17)),
+        sampled_logit_d2h_calls=sampled_logit_d2h_calls,
+        sampled_logits=sampled_logits,
     )
 
 
@@ -261,6 +267,7 @@ def test_split_result_inventory_is_exact():
         result,
         expected_parent_lease_identity_sha256="a" * 64,
         expected_graph_identity_sha256="b" * 64,
+        correctness_trace=False,
     ) is result
 
     invalid_cases = (
@@ -330,9 +337,73 @@ def test_split_result_inventory_is_exact():
                         "a" * 64
                     ),
                     expected_graph_identity_sha256="b" * 64,
+                    correctness_trace=False,
                 )
             ),
         )
+
+
+def test_split_result_correctness_logits_are_bounded_and_explicit():
+    result = _result(
+        sampled_logit_d2h_calls=1,
+        sampled_logits=(
+            (0, (1.0, 2.0, 3.0)),
+            (7, (3.0, 2.0, 1.0)),
+        ),
+    )
+    assert validate_exact_burst_split_result(
+        result,
+        expected_parent_lease_identity_sha256="a" * 64,
+        expected_graph_identity_sha256="b" * 64,
+        correctness_trace=True,
+    ) is result
+
+    for candidate, message in (
+        (
+            replace(result, sampled_logit_d2h_calls=0),
+            "sampled logit D2H count mismatch",
+        ),
+        (
+            replace(
+                result,
+                sampled_logits=(
+                    (0, (1.0,)),
+                    (0, (2.0,)),
+                ),
+            ),
+            "sampled logit ordinals must be strictly increasing",
+        ),
+        (
+            replace(
+                result,
+                sampled_logits=((0, (float("nan"),)),),
+            ),
+            "sampled logits must contain finite values",
+        ),
+    ):
+        _assert_raises(
+            ValueError,
+            message,
+            lambda candidate=candidate: (
+                validate_exact_burst_split_result(
+                    candidate,
+                    expected_parent_lease_identity_sha256="a" * 64,
+                    expected_graph_identity_sha256="b" * 64,
+                    correctness_trace=True,
+                )
+            ),
+        )
+
+    _assert_raises(
+        ValueError,
+        "production split burst cannot return sampled logits",
+        lambda: validate_exact_burst_split_result(
+            result,
+            expected_parent_lease_identity_sha256="a" * 64,
+            expected_graph_identity_sha256="b" * 64,
+            correctness_trace=False,
+        ),
+    )
 
 
 def test_phase_transfer_waits_once_and_returns_exact_tokens():
@@ -491,6 +562,7 @@ def main() -> None:
     test_publication_tickets_are_contiguous_exhaustive_and_stable()
     test_ticket_builder_rejects_non_k8_and_non_k4_shapes()
     test_split_result_inventory_is_exact()
+    test_split_result_correctness_logits_are_bounded_and_explicit()
     test_phase_transfer_waits_once_and_returns_exact_tokens()
     test_transaction_requires_monotonic_ordered_transitions()
     test_transaction_failure_phase_is_explicit()
