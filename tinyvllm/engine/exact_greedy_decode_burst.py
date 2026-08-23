@@ -793,6 +793,16 @@ class ExactGreedyDecodeBurstStats:
     quarantines: int = 0
     pending_leases: int = 0
     maximum_host_visible_gap_ns: int = 0
+    continuation_attempts: int = 0
+    continuation_hits: int = 0
+    cold_binds: int = 0
+    continuation_tokens: int = 0
+    continuation_bursts: int = 0
+    skipped_static_reset_operations: int = 0
+    skipped_scalar_bind_operations: int = 0
+    skipped_block_table_constructions: int = 0
+    skipped_block_table_copy_calls: int = 0
+    skipped_block_table_bytes: int = 0
     requested_width_histogram: dict[int, int] = field(
         default_factory=dict
     )
@@ -800,6 +810,12 @@ class ExactGreedyDecodeBurstStats:
         default_factory=dict
     )
     fallback_counts: dict[str, int] = field(default_factory=dict)
+    continuation_miss_counts: dict[str, int] = field(
+        default_factory=dict
+    )
+    continuation_invalidation_counts: dict[str, int] = field(
+        default_factory=dict
+    )
     quarantine_reason: Optional[str] = None
     capture_receipts: list[
         ExactGreedyDecodeBurstCaptureReceipt
@@ -889,6 +905,58 @@ class ExactGreedyDecodeBurstStats:
     def record_sampled_logit_d2h(self) -> None:
         self.sampled_logit_d2h_calls += 1
 
+    def record_continuation_attempt(self) -> None:
+        self.continuation_attempts += 1
+
+    def record_cold_bind(self) -> None:
+        self.cold_binds += 1
+
+    def record_continuation_hit(
+        self,
+        *,
+        token_count: int,
+        skipped_block_table_bytes: int,
+    ) -> None:
+        _require_positive_int(token_count, "token_count")
+        _require_non_negative_int(
+            skipped_block_table_bytes,
+            "skipped_block_table_bytes",
+        )
+        self.continuation_hits += 1
+        self.continuation_tokens += token_count
+        self.continuation_bursts += 1
+        self.skipped_static_reset_operations += 7
+        self.skipped_scalar_bind_operations += 5
+        self.skipped_block_table_constructions += 1
+        self.skipped_block_table_copy_calls += 1
+        self.skipped_block_table_bytes += (
+            skipped_block_table_bytes
+        )
+
+    def record_continuation_miss(self, reason: str) -> None:
+        reason = _require_reason(
+            reason,
+            "continuation miss reason",
+        )
+        self.continuation_miss_counts[reason] = (
+            self.continuation_miss_counts.get(reason, 0) + 1
+        )
+
+    def record_continuation_invalidation(
+        self,
+        reason: str,
+    ) -> None:
+        reason = _require_reason(
+            reason,
+            "continuation invalidation reason",
+        )
+        if self.quarantine_reason is not None:
+            return
+        self.continuation_invalidation_counts[reason] = (
+            self.continuation_invalidation_counts.get(reason, 0)
+            + 1
+        )
+
     def record_commit(
         self,
         *,
@@ -954,6 +1022,26 @@ class ExactGreedyDecodeBurstStats:
             "maximum_host_visible_gap_ns": (
                 self.maximum_host_visible_gap_ns
             ),
+            "continuation_attempts": self.continuation_attempts,
+            "continuation_hits": self.continuation_hits,
+            "cold_binds": self.cold_binds,
+            "continuation_tokens": self.continuation_tokens,
+            "continuation_bursts": self.continuation_bursts,
+            "skipped_static_reset_operations": (
+                self.skipped_static_reset_operations
+            ),
+            "skipped_scalar_bind_operations": (
+                self.skipped_scalar_bind_operations
+            ),
+            "skipped_block_table_constructions": (
+                self.skipped_block_table_constructions
+            ),
+            "skipped_block_table_copy_calls": (
+                self.skipped_block_table_copy_calls
+            ),
+            "skipped_block_table_bytes": (
+                self.skipped_block_table_bytes
+            ),
             "requested_width_histogram": {
                 str(key): value
                 for key, value in sorted(
@@ -968,6 +1056,14 @@ class ExactGreedyDecodeBurstStats:
             },
             "fallback_counts": dict(
                 sorted(self.fallback_counts.items())
+            ),
+            "continuation_miss_counts": dict(
+                sorted(self.continuation_miss_counts.items())
+            ),
+            "continuation_invalidation_counts": dict(
+                sorted(
+                    self.continuation_invalidation_counts.items()
+                )
             ),
             "quarantine_reason": self.quarantine_reason,
             "capture_receipts": [

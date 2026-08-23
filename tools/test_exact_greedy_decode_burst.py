@@ -1064,6 +1064,85 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
     ] == 1
 
 
+def test_stats_track_continuation_benefit_and_cost() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    for _ in range(3):
+        stats.record_continuation_attempt()
+    stats.record_cold_bind()
+    stats.record_continuation_hit(
+        token_count=4,
+        skipped_block_table_bytes=32,
+    )
+    stats.record_continuation_hit(
+        token_count=4,
+        skipped_block_table_bytes=32,
+    )
+    stats.record_continuation_miss("position_drift")
+    stats.record_continuation_invalidation(
+        "engine_failure:RuntimeError"
+    )
+
+    summary = stats.summary()
+    assert summary["continuation_attempts"] == 3
+    assert summary["continuation_hits"] == 2
+    assert summary["cold_binds"] == 1
+    assert summary["continuation_miss_counts"] == {
+        "position_drift": 1,
+    }
+    assert summary["continuation_invalidation_counts"] == {
+        "engine_failure:RuntimeError": 1,
+    }
+    assert summary["continuation_tokens"] == 8
+    assert summary["continuation_bursts"] == 2
+    assert summary["skipped_static_reset_operations"] == 14
+    assert summary["skipped_scalar_bind_operations"] == 10
+    assert summary["skipped_block_table_constructions"] == 2
+    assert summary["skipped_block_table_copy_calls"] == 2
+    assert summary["skipped_block_table_bytes"] == 64
+
+    for callback, message in (
+        (
+            lambda: stats.record_continuation_miss(""),
+            "continuation miss reason must be a non-empty string",
+        ),
+        (
+            lambda: stats.record_continuation_invalidation(""),
+            (
+                "continuation invalidation reason must be a "
+                "non-empty string"
+            ),
+        ),
+        (
+            lambda: stats.record_continuation_hit(
+                token_count=True,
+                skipped_block_table_bytes=0,
+            ),
+            "token_count must be a positive integer",
+        ),
+        (
+            lambda: stats.record_continuation_hit(
+                token_count=1,
+                skipped_block_table_bytes=-1,
+            ),
+            (
+                "skipped_block_table_bytes must be a "
+                "non-negative integer"
+            ),
+        ),
+    ):
+        _assert_raises(ValueError, message, callback)
+
+    stats.quarantine("replay_failure:RuntimeError")
+    stats.record_continuation_invalidation(
+        "replay_failure:RuntimeError"
+    )
+    assert stats.summary()[
+        "continuation_invalidation_counts"
+    ] == {
+        "engine_failure:RuntimeError": 1,
+    }
+
+
 def test_contract_is_model_agnostic_and_supports_second_caller() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     for forbidden in (
@@ -1517,6 +1596,7 @@ def main() -> None:
     test_continuation_rejects_invalid_scalar_contracts()
     test_correctness_trace_is_bounded_and_ordered()
     test_stats_track_benefit_cost_and_terminal_state()
+    test_stats_track_continuation_benefit_and_cost()
     test_contract_is_model_agnostic_and_supports_second_caller()
     test_complete_step_capture_orders_body_and_uses_private_scratch()
     test_replay_runs_exact_count_then_one_token_d2h()
