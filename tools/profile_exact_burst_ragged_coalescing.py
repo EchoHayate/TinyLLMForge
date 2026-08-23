@@ -18,6 +18,7 @@ _ORIGINAL_SPLIT_SAMPLED_LOCAL_ORDINALS = (
 _ORIGINAL_EXPECTED_SELECTED_REPLAY_ORDINAL = (
     _base._expected_selected_replay_ordinal
 )
+_ORIGINAL_BUILD_WORKLOAD_MANIFEST = _base.build_workload_manifest
 
 CASE_SCHEMA_VERSION = "exact-burst-ragged-coalescing.case.v1"
 CORRECTNESS_SCHEMA_VERSION = (
@@ -201,6 +202,7 @@ def _activate_contract() -> None:
     )
     _base._sampled_local_ordinals = _sampled_local_ordinals
     _base.run_correctness_probe = _split.run_correctness_probe
+    _base.build_workload_manifest = build_workload_manifest
     _split.correctness_trace_for_step = (
         correctness_trace_for_step
     )
@@ -209,8 +211,6 @@ def _activate_contract() -> None:
     )
     _split._sampled_local_ordinals = _sampled_local_ordinals
 
-
-_activate_contract()
 
 policy_order = _base.policy_order
 performance_identities = _base.performance_identities
@@ -230,10 +230,13 @@ run_case = _base.run_case
 
 
 def build_workload_manifest(**kwargs) -> dict:
-    manifest = _base.build_workload_manifest(**kwargs)
+    manifest = _ORIGINAL_BUILD_WORKLOAD_MANIFEST(**kwargs)
     manifest["performance_row_count"] = 45
     manifest["correctness_row_count"] = 36
     return manifest
+
+
+_activate_contract()
 
 
 def source_manifest(

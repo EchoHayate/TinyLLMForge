@@ -38,6 +38,7 @@ from tools.profile_exact_burst_ragged_coalescing import (
     validate_correctness_rows,
     write_float32_sidecar,
 )
+from tools import profile_exact_burst_ragged_coalescing as _profile
 from tools.test_profile_exact_burst_split_phase import (
     _case_row as _split_case_row,
     _correctness_row as _split_correctness_row,
@@ -121,6 +122,18 @@ def test_frozen_matrix_and_source_inventory() -> None:
     manifest = build_workload_manifest(
         model="/models/Qwen3-0.6B",
         run_tag="ragged-profile-fixture",
+        source_commit="a" * 40,
+        gpu_memory_utilization=0.5,
+        environment={"fixture": True},
+    )
+    assert manifest["performance_row_count"] == 45
+    assert manifest["correctness_row_count"] == 36
+
+
+def test_delegated_base_main_uses_ragged_workload_manifest_builder() -> None:
+    manifest = _profile._base.build_workload_manifest(
+        model="/models/Qwen3-0.6B",
+        run_tag="ragged-delegated-main-fixture",
         source_commit="a" * 40,
         gpu_memory_utilization=0.5,
         environment={"fixture": True},
@@ -301,6 +314,7 @@ def test_correctness_rows_bind_ragged_tail_local_ordinal() -> None:
 
 def main() -> None:
     test_frozen_matrix_and_source_inventory()
+    test_delegated_base_main_uses_ragged_workload_manifest_builder()
     test_candidate_row_binds_k8_plus_k4_k3_inventory()
     test_candidate_runtime_and_correctness_trace_are_explicit()
     test_correctness_rows_bind_ragged_tail_local_ordinal()
