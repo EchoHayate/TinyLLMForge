@@ -214,6 +214,23 @@ def correctness_uses_burst_trace(policy: str) -> bool:
         raise ValueError("policy is invalid") from error
 
 
+def correctness_point_uses_burst_trace(
+    policy: str,
+    sampling_point: str,
+) -> bool:
+    if sampling_point not in SAMPLING_POINTS:
+        raise ValueError("sampling point is invalid")
+    return (
+        correctness_uses_burst_trace(policy)
+        and sampling_point != "prefill-final"
+        and sampling_point
+        not in POLICY_CONFIGS[policy].get(
+            "ordinary_tail_sampling_points",
+            (),
+        )
+    )
+
+
 def correctness_trace_for_step(
     policy: str,
     *,
@@ -501,7 +518,10 @@ def _validate_burst_summary(
         correctness_trace
         and enabled
         and normalized["sampled_logit_d2h_calls"]
-        != len(SAMPLING_POINTS) - 1
+        != POLICY_CONFIGS[policy].get(
+            "correctness_sampled_logit_d2h_calls",
+            len(SAMPLING_POINTS) - 1,
+        )
     ):
         raise ValueError(
             "correctness sampled-logit D2H inventory mismatch"
@@ -669,7 +689,18 @@ def validate_case_row(row) -> dict:
             "summary host-visible gap does not match measured request"
         )
     expected_decode_profile_steps = (
-        summary["commits"]
+        (
+            summary["attempts"]
+            + (
+                expected_decode_tokens
+                - summary["committed_tokens"]
+            )
+            if config.get(
+                "profile_ordinary_tail_after_full_bursts",
+                False,
+            )
+            else summary["commits"]
+        )
         if config["enabled"]
         else expected_decode_tokens
     )
@@ -861,9 +892,9 @@ def validate_correctness_rows(
                 "correctness row must use gate-only correctness trace"
             )
         point = row["sampling_point"]
-        burst_decode_sample = (
-            correctness_uses_burst_trace(policy)
-            and point != "prefill-final"
+        burst_decode_sample = correctness_point_uses_burst_trace(
+            policy,
+            point,
         )
         graph_identity = row.get(
             "trace_graph_identity_sha256"
@@ -1338,7 +1369,7 @@ def run_case(
         )
         samples = measured["amortized_tpot_samples_ns"]
         e2e_seconds = measured["e2e_ns"] / 1_000_000_000
-        return validate_case_row({
+        row = {
             "schema_version": CASE_SCHEMA_VERSION,
             "run_tag": run_tag,
             "source_commit": source_commit,
@@ -1378,7 +1409,12 @@ def run_case(
             **_capture_cost(summary),
             "correctness_trace": False,
             "exact_greedy_decode_burst_summary": summary,
-        })
+        }
+        if "split_phase_inventory" in measured:
+            row["split_phase_inventory"] = measured[
+                "split_phase_inventory"
+            ]
+        return validate_case_row(row)
     finally:
         llm.exit()
 
