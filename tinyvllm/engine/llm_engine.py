@@ -4447,6 +4447,19 @@ class LLMEngine:
                                 exact_burst_committed = True
                                 token_ids = ()
                         except BaseException as error:
+                            invalidator = getattr(
+                                self.model_runner,
+                                (
+                                    "invalidate_exact_greedy_decode_"
+                                    "burst_continuation"
+                                ),
+                                None,
+                            )
+                            if invalidator is not None:
+                                invalidator(
+                                    "engine_failure:"
+                                    + type(error).__name__
+                                )
                             stats = getattr(
                                 self.model_runner,
                                 "exact_greedy_decode_burst_stats",

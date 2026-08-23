@@ -716,6 +716,7 @@ def make_runner(**overrides):
         "zero_temperature_greedy_fast_path": False,
         "graph_resident_greedy_tail": False,
         "exact_greedy_decode_burst": False,
+        "exact_greedy_decode_burst_continuation": False,
         "exact_greedy_decode_burst_tokens": 4,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
@@ -4205,7 +4206,14 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
     ]
     runner = make_runner(exact_greedy_decode_burst=True)
     calls = []
+    materializations = []
     expected = object()
+
+    def prepare_block_tables(rows, name="block_tables"):
+        materializations.append((rows, name))
+        return FakeTensor([list(row) for row in rows])
+
+    runner.prepare_block_tables_from_rows = prepare_block_tables
 
     class FakeGraph:
         def capability(self):
@@ -4224,6 +4232,9 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
             }
 
         def replay(self, **kwargs):
+            assert materializations == []
+            block_table = kwargs["block_table_factory"]()
+            assert block_table.values == [[5, -1, -1, -1]]
             calls.append(kwargs)
             return expected
 
@@ -4275,11 +4286,92 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
     call = calls[0]
     assert call["lease"] is lease
     assert call["initial_token"] == 31
-    assert call["block_table"].values == [[5, -1, -1, -1]]
+    assert call["block_table"] is None
+    assert callable(call["block_table_factory"])
+    assert call["continuation_enabled"] is False
+    assert materializations == [(
+        [[5, -1, -1, -1]],
+        "exact_greedy_burst_block_table",
+    )]
     assert call["graph_generation"] == 4
     assert call["rank"] == 0
     assert call["tensor_parallel_size"] == 1
     assert call["expected_graph_identity_sha256"] == "b" * 64
+
+
+def test_model_runner_exact_burst_materializes_only_in_lazy_factory():
+    tree = ast.parse(open(_MODEL_RUNNER_PATH).read())
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_exact_greedy_decode_burst"
+    )
+    materializers = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "prepare_block_tables_from_rows"
+    ]
+    assert len(materializers) == 1
+    parent_by_node = {
+        child: parent
+        for parent in ast.walk(method)
+        for child in ast.iter_child_nodes(parent)
+    }
+    current = materializers[0]
+    while current in parent_by_node:
+        current = parent_by_node[current]
+        if isinstance(current, ast.FunctionDef):
+            assert current.name == "materialize_block_table"
+            break
+    else:
+        raise AssertionError(
+            "block table materialization is not lazy"
+        )
+    replay_call = next(
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replay"
+    )
+    keywords = {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in replay_call.keywords
+    }
+    assert keywords["block_table_factory"] == (
+        "materialize_block_table"
+    )
+    assert keywords["continuation_enabled"] == (
+        "self.config.exact_greedy_decode_burst_continuation"
+    )
+
+
+def test_model_runner_invalidates_both_burst_graphs():
+    runner = make_runner(exact_greedy_decode_burst=True)
+    calls = []
+
+    class FakeGraph:
+        def invalidate_continuation(self, reason):
+            calls.append(reason)
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    runner.exact_greedy_decode_burst_correctness_graph = FakeGraph()
+    runner.invalidate_exact_greedy_decode_burst_continuation(
+        "engine_failure:RuntimeError"
+    )
+    assert calls == [
+        "engine_failure:RuntimeError",
+        "engine_failure:RuntimeError",
+    ]
 
 
 def test_model_runner_exact_burst_replay_enters_inference_mode():
@@ -4506,7 +4598,9 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     assert production_observed["sampled_logit_ordinals"] == ()
     assert production_observed["tensors"]["input_token"].shape == (1,)
     assert production_observed["tensors"]["block_table"].shape == (1, 2)
-    assert production_observed["tensors"]["token_history"].shape == (8,)
+    assert production_observed["tensors"]["token_history"].shape == (
+        256,
+    )
     assert production_allocation_devices == ["cuda:0"] * 7
     assert correctness_observed["correctness_trace"] is True
     assert correctness_observed["sampled_logit_ordinals"] == (0,)
@@ -5448,6 +5542,10 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
     Config = _load_real_config_class()
     fields = Config.__dataclass_fields__
     assert fields["exact_greedy_decode_burst"].default is False
+    assert (
+        fields["exact_greedy_decode_burst_continuation"].default
+        is False
+    )
     assert fields["exact_greedy_decode_burst_tokens"].default == 4
     with tempfile.TemporaryDirectory() as model:
         for invalid in (0, 1, None, "true"):
@@ -5460,6 +5558,18 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 Config(
                     model=model,
                     exact_greedy_decode_burst=invalid,
+                )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_continuation "
+                    "must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_continuation=invalid,
                 )
         for invalid in (False, True, 1, 9, 4.0, None):
             with pytest.raises(
@@ -5476,9 +5586,11 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         enabled = Config(
             model=model,
             exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_continuation=True,
             exact_greedy_decode_burst_tokens=8,
         )
     assert enabled.exact_greedy_decode_burst is True
+    assert enabled.exact_greedy_decode_burst_continuation is True
     assert enabled.exact_greedy_decode_burst_tokens == 8
 
 
@@ -6175,6 +6287,8 @@ def main():
         test_exact_burst_scratch_is_reported_by_capacity_snapshot,
         test_exact_burst_capability_is_fail_closed_and_json_safe,
         test_model_runner_exact_burst_delegates_once_with_padded_block_table,
+        test_model_runner_exact_burst_materializes_only_in_lazy_factory,
+        test_model_runner_invalidates_both_burst_graphs,
         test_model_runner_exact_burst_replay_enters_inference_mode,
         test_model_runner_exact_burst_correctness_capture_enters_inference_mode,
         test_model_runner_exact_burst_rejects_wrong_sequence_before_graph,

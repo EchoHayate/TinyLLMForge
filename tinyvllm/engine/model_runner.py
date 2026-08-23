@@ -9012,14 +9012,22 @@ class ModelRunner:
             list(block_ids)
             + [-1] * (block_table_width - len(block_ids))
         ]
-        block_table = self.prepare_block_tables_from_rows(
-            padded_block_table,
-            "exact_greedy_burst_block_table",
-        )
+
+        def materialize_block_table():
+            return self.prepare_block_tables_from_rows(
+                padded_block_table,
+                "exact_greedy_burst_block_table",
+            )
+
         return graph.replay(
             lease=lease,
             initial_token=int(seq.last_token),
-            block_table=block_table,
+            block_table=None,
+            block_table_factory=materialize_block_table,
+            continuation_enabled=(
+                self.config
+                .exact_greedy_decode_burst_continuation
+            ),
             graph_generation=int(
                 capability["graph_generation"]
             ),
@@ -9029,6 +9037,20 @@ class ModelRunner:
                 "graph_identity_sha256"
             ],
         )
+
+    def invalidate_exact_greedy_decode_burst_continuation(
+        self,
+        reason: str,
+    ) -> None:
+        seen_graphs = set()
+        for graph in (
+            self.exact_greedy_decode_burst_graph,
+            self.exact_greedy_decode_burst_correctness_graph,
+        ):
+            if graph is None or id(graph) in seen_graphs:
+                continue
+            seen_graphs.add(id(graph))
+            graph.invalidate_continuation(reason)
 
     @torch.inference_mode()
     def run_exact_greedy_decode_burst(
@@ -9085,7 +9107,7 @@ class ModelRunner:
         max_num_blocks = (
             self.config.max_model_len + self.block_size - 1
         ) // self.block_size
-        history_capacity = 8
+        history_capacity = self.block_size
         static_device = self.kv_cache.device
         tensors = {
             "input_token": torch.full(

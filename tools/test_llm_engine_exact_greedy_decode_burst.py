@@ -476,6 +476,12 @@ class _ModelRunner:
             "quarantine_reason": self.quarantine_reason,
         }
 
+    def invalidate_exact_greedy_decode_burst_continuation(
+        self,
+        reason,
+    ):
+        self.events.append(("invalidate_continuation", reason))
+
     def memory_snapshot(self):
         return {"cuda_allocated_bytes": 123}
 
@@ -631,6 +637,10 @@ def test_post_replay_exception_is_terminal_and_never_falls_back():
         event[0] in {"ordinary", "cancel"}
         for event in model_runner.events + scheduler.events
     )
+    assert (
+        "invalidate_continuation",
+        "engine_failure:RuntimeError",
+    ) in model_runner.events
 
 
 @pytest.mark.parametrize(
