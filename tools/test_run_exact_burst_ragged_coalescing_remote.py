@@ -56,6 +56,9 @@ def test_paths_runtime_and_tags_are_strictly_confined() -> None:
     prelude = remote.remote_runtime_prelude(
         source=paths["staging"] + "/source",
         gpu_index=2,
+        dist_port=remote.dist_port_for_run_tag(
+            "20260823-qwen3-06b-ragged-r1"
+        ),
     )
     for variable in (
         "TMPDIR",
@@ -69,6 +72,16 @@ def test_paths_runtime_and_tags_are_strictly_confined() -> None:
         assert f"export {variable}=" in prelude
     assert paths["staging"] + "/runtime" in prelude
     assert "export CUDA_VISIBLE_DEVICES=2" in prelude
+    assert "export TINYVLLM_DIST_PORT=" in prelude
+    assert "export MASTER_PORT=" in prelude
+    first_port = remote.dist_port_for_run_tag(
+        "20260823-qwen3-06b-ragged-r1"
+    )
+    second_port = remote.dist_port_for_run_tag(
+        "20260823-qwen3-06b-ragged-r2"
+    )
+    assert 20_000 <= first_port < 50_000
+    assert first_port != second_port
     for forbidden in (
         "export TMPDIR=/tmp",
         "export TMP=/tmp",
@@ -243,11 +256,13 @@ def test_preflight_worker_gate_and_verifier_are_source_bound() -> None:
             run_tag="fresh-tag",
             source_commit="a" * 40,
             gpu_index=1,
+            dist_port=remote.dist_port_for_run_tag("fresh-tag"),
         )
         remote._run_remote_gates(
             source=paths["staging"] + "/source",
             primary=paths["primary"],
             gpu_index=1,
+            dist_port=remote.dist_port_for_run_tag("fresh-tag"),
         )
     finally:
         remote._run_remote_checked = original
@@ -265,6 +280,8 @@ def test_preflight_worker_gate_and_verifier_are_source_bound() -> None:
     )
     assert profiler < patch < gate < verifier
     assert "open('xb')" in joined
+    assert "export TINYVLLM_DIST_PORT=" in joined
+    assert "export MASTER_PORT=" in joined
     for required_arg in (
         "--generated-tokens 128",
         "--repetitions 5",
