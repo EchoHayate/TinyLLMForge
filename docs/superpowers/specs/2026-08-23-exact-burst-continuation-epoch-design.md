@@ -1,6 +1,6 @@
 # Exact Burst GPU-Resident Continuation Epoch Design
 
-**Date:** 2026-08-22
+**Date:** 2026-08-23
 **Status:** Approved under the standing autonomous-optimization authorization
 **Stage-1 model:** Qwen3-0.6B
 **Primary target:** exact greedy batch-1 decode TPOT with bounded host-visible

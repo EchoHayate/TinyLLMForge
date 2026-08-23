@@ -960,7 +960,7 @@ artifacts in this commit.
 **Files:**
 
 - Create locally under:
-  `artifacts/exact_burst_continuation_epoch/20260822-qwen3-06b-exact-burst-continuation-r1/`
+  `artifacts/exact_burst_continuation_epoch/20260823-qwen3-06b-exact-burst-continuation-r1/`
 - Modify:
   `docs/superpowers/audits/2026-08-16-phase1-completion-audit.md`
 - Modify: `AGENT_HANDOFF_STATE.md`
@@ -970,7 +970,7 @@ artifacts in this commit.
 Run:
 
 ```bash
-continuation_tag="20260822-qwen3-06b-exact-burst-continuation-r1"
+continuation_tag="20260823-qwen3-06b-exact-burst-continuation-r1"
 continuation_source_commit="$(git rev-parse HEAD)"
 python3 tools/run_exact_burst_continuation_epoch_remote.py \
   --run-tag "$continuation_tag" \
