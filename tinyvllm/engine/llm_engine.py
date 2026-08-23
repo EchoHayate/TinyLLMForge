@@ -4547,6 +4547,19 @@ class LLMEngine:
                                 )
                                 == "quarantined"
                             ),
+                            split_phase_enabled=(
+                                exact_burst_split_phase_enabled
+                            ),
+                            ragged_coalescing_enabled=bool(
+                                getattr(
+                                    model_runner_config,
+                                    (
+                                        "exact_greedy_decode_burst_"
+                                        "ragged_coalescing"
+                                    ),
+                                    False,
+                                )
+                            ),
                             allow_single_token_gate=(
                                 exact_burst_gate_only
                             ),

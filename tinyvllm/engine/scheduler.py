@@ -13,6 +13,7 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstStats,
     build_exact_greedy_decode_burst_decision,
     build_exact_greedy_decode_burst_lease,
+    select_exact_greedy_decode_burst_width,
     validate_exact_greedy_decode_burst_result,
 )
 from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
@@ -1001,6 +1002,8 @@ class Scheduler:
         incompatible_modes: tuple[str, ...],
         quarantined: bool = False,
         allow_single_token_gate: bool = False,
+        split_phase_enabled: bool = False,
+        ragged_coalescing_enabled: bool = False,
     ) -> ExactGreedyDecodeBurstLease | None:
         if not isinstance(seqs, tuple):
             raise ValueError(
@@ -1021,9 +1024,25 @@ class Scheduler:
             if sequence is not None
             else 0
         )
+        selected_width = (
+            configured_width
+            if allow_single_token_gate
+            else select_exact_greedy_decode_burst_width(
+                configured_width=configured_width,
+                remaining_output_tokens=remaining_output_tokens,
+                initial_sequence_length=(
+                    len(sequence) if sequence is not None else 1
+                ),
+                block_size=self.block_manager.block_size,
+                split_phase_enabled=split_phase_enabled,
+                ragged_coalescing_enabled=(
+                    ragged_coalescing_enabled
+                ),
+            )
+        )
         decision = build_exact_greedy_decode_burst_decision(
             enabled=enabled,
-            configured_width=configured_width,
+            configured_width=selected_width,
             remaining_output_tokens=remaining_output_tokens,
             initial_sequence_length=(
                 len(sequence) if sequence is not None else 1
@@ -1089,7 +1108,7 @@ class Scheduler:
             sequence_id=sequence.seq_id,
             schedule_generation=schedule_generation,
             graph_generation=graph_generation,
-            requested_token_count=configured_width,
+            requested_token_count=selected_width,
             authorized_token_count=(
                 decision.authorized_token_count
             ),
@@ -1114,7 +1133,7 @@ class Scheduler:
         self._exact_greedy_decode_burst_pending_lease = lease
         self._exact_greedy_decode_burst_split_phase = "enqueued"
         self._exact_greedy_decode_burst_stats.record_acceptance(
-            requested_token_count=configured_width,
+            requested_token_count=selected_width,
             authorized_token_count=(
                 decision.authorized_token_count
             ),

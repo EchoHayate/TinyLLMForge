@@ -245,6 +245,8 @@ def _prepare_exact_burst_lease(
     configured_width=4,
     graph_generation=7,
     allow_single_token_gate=False,
+    split_phase_enabled=False,
+    ragged_coalescing_enabled=False,
 ):
     scheduler.schedule_generation = 1
     return scheduler.prepare_exact_greedy_decode_burst(
@@ -262,6 +264,8 @@ def _prepare_exact_burst_lease(
         graph_available=True,
         incompatible_modes=(),
         allow_single_token_gate=allow_single_token_gate,
+        split_phase_enabled=split_phase_enabled,
+        ragged_coalescing_enabled=ragged_coalescing_enabled,
     )
 
 
@@ -283,6 +287,93 @@ def _exact_burst_result(lease, tokens):
         graph_identity_sha256="a" * 64,
         token_d2h_calls=1,
         sampled_logit_d2h_calls=0,
+    )
+
+
+def test_ragged_coalescing_issues_bounded_output_tail_leases(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    for remaining, expected_width in ((7, 4), (3, 3)):
+        scheduler = Scheduler(
+            SimpleNamespace(
+                **{
+                    **vars(_config()),
+                    "kvcache_block_size": 16,
+                }
+            )
+        )
+        sequence = _running_sequence(
+            scheduler,
+            [1, 2],
+            max_tokens=remaining,
+            ignore_eos=True,
+        )
+        lease = _prepare_exact_burst_lease(
+            scheduler,
+            sequence,
+            configured_width=8,
+            split_phase_enabled=True,
+            ragged_coalescing_enabled=True,
+        )
+        assert lease.requested_token_count == expected_width
+        assert lease.authorized_token_count == expected_width
+
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=1,
+        ignore_eos=True,
+    )
+    assert _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=True,
+    ) is None
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "fallback_counts"
+    ] == {"insufficient_output_budget": 1}
+
+
+def test_ragged_coalescing_issues_bounded_block_edge_lease(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        list(range(14)),
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=True,
+    )
+    assert lease.requested_token_count == 3
+    assert lease.authorized_token_count == 3
+    assert lease.last_physical_slot // 16 == (
+        lease.first_physical_slot // 16
     )
 
 

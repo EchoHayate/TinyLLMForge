@@ -660,6 +660,7 @@ class _ModelRunner:
         *,
         enabled=True,
         split_enabled=False,
+        ragged_enabled=False,
         configured_width=4,
         events=None,
     ):
@@ -668,6 +669,9 @@ class _ModelRunner:
             exact_greedy_decode_burst=enabled,
             exact_greedy_decode_burst_tokens=configured_width,
             exact_greedy_decode_burst_split_phase=split_enabled,
+            exact_greedy_decode_burst_ragged_coalescing=(
+                ragged_enabled
+            ),
         )
         self.events = [] if events is None else events
         self.quarantine_reason = None
@@ -760,6 +764,7 @@ def _engine(
     previous_fallback_counts=None,
     no_lease_reason="waiting_present",
     split_enabled=False,
+    ragged_enabled=False,
     configured_width=4,
     events=None,
     phase_commit_failure=None,
@@ -780,6 +785,7 @@ def _engine(
         outcome,
         enabled=enabled,
         split_enabled=split_enabled,
+        ragged_enabled=ragged_enabled,
         configured_width=configured_width,
         events=events,
     )
@@ -1469,6 +1475,27 @@ def test_gate_only_k1_correctness_trace_is_explicitly_propagated():
     assert observation[
         "exact_greedy_decode_burst_correctness_trace"
     ] is True
+
+
+def test_engine_propagates_ragged_width_authority_to_scheduler():
+    lease = _lease(width=4)
+    result = _result(lease, tokens=(41, 42, 43, 44))
+    engine, _sequence, scheduler, _model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        ragged_enabled=True,
+        configured_width=8,
+    )
+
+    step(engine, completion_only=True)
+
+    lease_event = next(
+        event for event in scheduler.events if event[0] == "lease"
+    )
+    assert lease_event[2]["configured_width"] == 8
+    assert lease_event[2]["split_phase_enabled"] is True
+    assert lease_event[2]["ragged_coalescing_enabled"] is True
 
 
 if __name__ == "__main__":
