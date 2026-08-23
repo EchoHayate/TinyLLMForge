@@ -9026,7 +9026,20 @@ class ModelRunner:
                 "exact_greedy_burst_block_table",
             )
 
-        if self.config.exact_greedy_decode_burst_split_phase:
+        if (
+            self.config.exact_greedy_decode_burst_split_phase
+            and (
+                not getattr(
+                    self.config,
+                    (
+                        "exact_greedy_decode_burst_"
+                        "ragged_coalescing"
+                    ),
+                    False,
+                )
+                or lease.authorized_token_count == 8
+            )
+        ):
             backend = (
                 self
                 .exact_greedy_decode_burst_split_phase_correctness_backend

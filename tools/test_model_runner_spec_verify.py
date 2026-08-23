@@ -718,6 +718,7 @@ def make_runner(**overrides):
         "exact_greedy_decode_burst": False,
         "exact_greedy_decode_burst_continuation": False,
         "exact_greedy_decode_burst_split_phase": False,
+        "exact_greedy_decode_burst_ragged_coalescing": False,
         "exact_greedy_decode_burst_tokens": 4,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
@@ -4390,6 +4391,153 @@ def test_model_runner_split_phase_delegates_to_k8_mailbox_backend():
     assert call["tensor_parallel_size"] == 1
     assert call["expected_graph_identity_sha256"] == "b" * 64
     assert steps[0]["dispatch"] == "cuda_graph"
+
+
+@pytest.mark.parametrize("width", (3, 4))
+def test_model_runner_ragged_split_lease_uses_one_phase_replay(
+    width,
+):
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_split_phase=True,
+        exact_greedy_decode_burst_ragged_coalescing=True,
+        exact_greedy_decode_burst_tokens=8,
+    )
+    calls = []
+    expected = object()
+    runner.exact_greedy_decode_burst_split_phase_backend = object()
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **kwargs):
+            calls.append(kwargs)
+            return expected
+
+        def replay_split_phase(self, **_kwargs):
+            raise AssertionError(
+                "ragged lease used K8 split replay"
+            )
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=width,
+        authorized_token_count=width,
+        initial_completion_count=1,
+        initial_sequence_length=249,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=248,
+        last_write_position=248 + width - 1,
+        first_physical_slot=5 * 256 + 248,
+        last_physical_slot=5 * 256 + 248 + width - 1,
+        remaining_output_tokens=width,
+        completion_only=True,
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        last_token=31,
+        block_table=[5],
+    )
+
+    result = runner.run_exact_greedy_decode_burst((seq,), lease)
+
+    assert result is expected
+    assert len(calls) == 1
+    assert calls[0]["lease"] is lease
+    assert calls[0]["continuation_enabled"] is False
+
+
+def test_model_runner_default_split_path_preserves_ragged_fallback():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_split_phase=True,
+        exact_greedy_decode_burst_ragged_coalescing=False,
+        exact_greedy_decode_burst_tokens=8,
+    )
+    calls = []
+    expected = object()
+    backend = object()
+    runner.exact_greedy_decode_burst_split_phase_backend = backend
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **_kwargs):
+            raise AssertionError(
+                "default-off split path changed behavior"
+            )
+
+        def replay_split_phase(self, **kwargs):
+            calls.append(kwargs)
+            return expected
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=8,
+        authorized_token_count=7,
+        initial_completion_count=1,
+        initial_sequence_length=249,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=248,
+        last_write_position=254,
+        first_physical_slot=5 * 256 + 248,
+        last_physical_slot=5 * 256 + 254,
+        remaining_output_tokens=7,
+        completion_only=True,
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        last_token=31,
+        block_table=[5],
+    )
+
+    result = runner.run_exact_greedy_decode_burst((seq,), lease)
+
+    assert result is expected
+    assert len(calls) == 1
+    assert calls[0]["mailbox_backend"] is backend
 
 
 def test_model_runner_split_phase_releases_or_aborts_owned_generation():
