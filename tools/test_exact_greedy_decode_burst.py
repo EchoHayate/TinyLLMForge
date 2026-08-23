@@ -1555,6 +1555,11 @@ def test_disabled_continuation_preserves_existing_event_order() -> None:
         if explicit_flag:
             kwargs["continuation_enabled"] = False
         result = graph.replay(**kwargs)
+        summary = graph.summary()
+        assert summary["continuation_attempts"] == 0
+        assert summary["continuation_hits"] == 0
+        assert summary["cold_binds"] == 0
+        assert summary["continuation_miss_counts"] == {}
         observed.append((result.tokens, tuple(events)))
 
     assert observed[0] == observed[1]

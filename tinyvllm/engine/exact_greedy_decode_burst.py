@@ -1722,7 +1722,8 @@ class ExactGreedyDecodeBurstGraph:
                 return ExactGreedyDecodeBurstFallback(
                     "block_table_bind_failure"
                 )
-            self.stats.record_cold_bind()
+            if continuation_enabled:
+                self.stats.record_cold_bind()
 
         completed_replays = 0
         try:
