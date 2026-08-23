@@ -747,6 +747,33 @@ def _continuation_lease(
     return build_exact_greedy_decode_burst_lease(**values)
 
 
+def _epoch_replay_lease(
+    *,
+    first_write_position: int,
+    first_physical_slot: int,
+) -> ExactGreedyDecodeBurstLease:
+    return build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=10,
+        graph_generation=4,
+        requested_token_count=4,
+        authorized_token_count=4,
+        initial_completion_count=(
+            first_write_position - 252
+        ),
+        initial_sequence_length=first_write_position + 1,
+        block_table_identity=((11, 4), (12, 1)),
+        write_block_id=12,
+        write_block_generation=1,
+        first_write_position=first_write_position,
+        last_write_position=first_write_position + 3,
+        first_physical_slot=first_physical_slot,
+        last_physical_slot=first_physical_slot + 3,
+        remaining_output_tokens=120,
+        completion_only=True,
+    )
+
+
 def _continuation_decision(
     *,
     receipt=None,
@@ -1289,6 +1316,305 @@ def test_replay_runs_exact_count_then_one_token_d2h() -> None:
     assert summary["final_token_d2h_calls"] == 1
 
 
+def test_replay_cold_binds_then_continues_resident_state() -> None:
+    graph, tensors, fake_graph, events, _slots = _graph_fixture()
+    events.clear()
+    factory_calls = []
+
+    def materialize_block_table():
+        factory_calls.append("called")
+        return _BurstTensor(
+            [[11, 12]],
+            label="live_block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        )
+
+    def replay_step(_ordinal):
+        history_index = tensors["history_index"].values[0]
+        token = 100 + history_index
+        tensors["token_history"].values[history_index] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    first = graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=260,
+            first_physical_slot=12 * 256 + 4,
+        ),
+        initial_token=99,
+        block_table=None,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    first_setup_events = tuple(
+        event
+        for event in events
+        if event[1] in {"fill_", "copy_"}
+    )
+    assert first.tokens == (100, 101, 102, 103)
+    assert factory_calls == ["called"]
+    assert first_setup_events
+
+    events.clear()
+    second = graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=264,
+            first_physical_slot=12 * 256 + 8,
+        ),
+        initial_token=103,
+        block_table=None,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert second.tokens == (104, 105, 106, 107)
+    assert factory_calls == ["called"]
+    assert not [
+        event
+        for event in events
+        if event[1] in {"fill_", "copy_"}
+    ]
+    summary = graph.summary()
+    assert summary["continuation_attempts"] == 2
+    assert summary["continuation_hits"] == 1
+    assert summary["cold_binds"] == 1
+    assert summary["continuation_miss_counts"] == {
+        "receipt_missing": 1,
+    }
+    assert summary["skipped_block_table_bytes"] == 8
+
+    events.clear()
+    mismatched = graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=269,
+            first_physical_slot=12 * 256 + 12,
+        ),
+        initial_token=107,
+        block_table=None,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert isinstance(mismatched, ExactGreedyDecodeBurstResult)
+    assert factory_calls == ["called", "called"]
+    assert any(
+        event[1] in {"fill_", "copy_"} for event in events
+    )
+    summary = graph.summary()
+    assert summary["continuation_miss_counts"] == {
+        "position_drift": 1,
+        "receipt_missing": 1,
+    }
+    assert summary["cold_binds"] == 2
+
+
+def test_continuation_factory_failure_precedes_replay() -> None:
+    graph, _tensors, fake_graph, _events, _slots = _graph_fixture()
+
+    def fail_factory():
+        raise RuntimeError("materialization failed")
+
+    fallback = graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=260,
+            first_physical_slot=12 * 256 + 4,
+        ),
+        initial_token=99,
+        block_table=None,
+        block_table_factory=fail_factory,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert isinstance(fallback, ExactGreedyDecodeBurstFallback)
+    assert (
+        fallback.fallback_reason
+        == "block_table_materialization_failure"
+    )
+    assert fake_graph.replay_calls == 0
+
+
+def test_explicit_continuation_invalidation_forces_cold_bind() -> None:
+    graph, tensors, fake_graph, events, _slots = _graph_fixture()
+    factory_calls = []
+
+    def materialize_block_table():
+        factory_calls.append("called")
+        return _BurstTensor(
+            [[11, 12]],
+            label="live_block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        )
+
+    def replay_step(_ordinal):
+        history_index = tensors["history_index"].values[0]
+        token = 200 + history_index
+        tensors["token_history"].values[history_index] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=260,
+            first_physical_slot=12 * 256 + 4,
+        ),
+        initial_token=199,
+        block_table=None,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    graph.invalidate_continuation(
+        "engine_failure:RuntimeError"
+    )
+    graph.invalidate_continuation(
+        "engine_failure:RuntimeError"
+    )
+    graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=264,
+            first_physical_slot=12 * 256 + 8,
+        ),
+        initial_token=203,
+        block_table=None,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert factory_calls == ["called", "called"]
+    assert graph.summary()[
+        "continuation_invalidation_counts"
+    ] == {
+        "engine_failure:RuntimeError": 1,
+    }
+
+
+def test_disabled_continuation_preserves_existing_event_order() -> None:
+    observed = []
+    for explicit_flag in (False, True):
+        graph, tensors, fake_graph, events, _slots = _graph_fixture()
+        events.clear()
+
+        def replay_step(_ordinal):
+            history_index = tensors["history_index"].values[0]
+            token = 300 + history_index
+            tensors["token_history"].values[history_index] = token
+            tensors["input_token"].values = [token]
+            tensors["position"].values[0] += 1
+            tensors["context_length"].values[0] += 1
+            tensors["slot_mapping"].values[0] += 1
+            tensors["history_index"].values[0] += 1
+
+        fake_graph.on_replay = replay_step
+        kwargs = {
+            "lease": _lease(),
+            "initial_token": 299,
+            "block_table": _BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=events,
+                dtype="int32",
+                element_size=4,
+            ),
+            "graph_generation": 4,
+            "rank": 0,
+            "tensor_parallel_size": 1,
+        }
+        if explicit_flag:
+            kwargs["continuation_enabled"] = False
+        result = graph.replay(**kwargs)
+        observed.append((result.tokens, tuple(events)))
+
+    assert observed[0] == observed[1]
+
+
+def test_continuation_replay_failure_invalidates_once() -> None:
+    graph, tensors, fake_graph, events, _slots = _graph_fixture()
+
+    def materialize_block_table():
+        return _BurstTensor(
+            [[11, 12]],
+            label="live_block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        )
+
+    def replay_step(_ordinal):
+        history_index = tensors["history_index"].values[0]
+        token = 400 + history_index
+        tensors["token_history"].values[history_index] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=260,
+            first_physical_slot=12 * 256 + 4,
+        ),
+        initial_token=399,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    fake_graph.replay_error_at = 5
+    _assert_raises(
+        RuntimeError,
+        "replay 5 failed",
+        lambda: graph.replay(
+            lease=_epoch_replay_lease(
+                first_write_position=264,
+                first_physical_slot=12 * 256 + 8,
+            ),
+            initial_token=403,
+            block_table_factory=materialize_block_table,
+            continuation_enabled=True,
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+        ),
+    )
+    graph.invalidate_continuation("replay_failure:RuntimeError")
+    assert graph.summary()["quarantine_reason"] == (
+        "replay_failure:RuntimeError"
+    )
+    assert graph.summary()[
+        "continuation_invalidation_counts"
+    ] == {
+        "replay_failure:RuntimeError": 1,
+    }
+
+
 def test_pre_replay_drift_returns_typed_fallback_without_replay() -> None:
     graph, _tensors, fake_graph, _events, _slots = _graph_fixture()
     fallback = graph.replay(
@@ -1600,6 +1926,11 @@ def main() -> None:
     test_contract_is_model_agnostic_and_supports_second_caller()
     test_complete_step_capture_orders_body_and_uses_private_scratch()
     test_replay_runs_exact_count_then_one_token_d2h()
+    test_replay_cold_binds_then_continues_resident_state()
+    test_continuation_factory_failure_precedes_replay()
+    test_explicit_continuation_invalidation_forces_cold_bind()
+    test_disabled_continuation_preserves_existing_event_order()
+    test_continuation_replay_failure_invalidates_once()
     test_pre_replay_drift_returns_typed_fallback_without_replay()
     test_pre_replay_capacity_and_block_boundary_fail_closed()
     test_pre_replay_block_table_bind_failure_is_specific()

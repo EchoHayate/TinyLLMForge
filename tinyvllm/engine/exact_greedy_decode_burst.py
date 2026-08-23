@@ -1176,6 +1176,9 @@ class ExactGreedyDecodeBurstGraph:
         self.correctness_trace = correctness_trace
         self.sampled_logit_ordinals = sampled_logit_ordinals
         self.stats = stats
+        self._continuation_receipt: Optional[
+            ExactGreedyDecodeBurstContinuationReceipt
+        ] = None
 
     @staticmethod
     def _set_block_table_first_value(tensor, value: int) -> None:
@@ -1506,7 +1509,6 @@ class ExactGreedyDecodeBurstGraph:
         self,
         *,
         lease,
-        block_table,
         graph_generation: int,
         rank: int,
         tensor_parallel_size: int,
@@ -1556,6 +1558,9 @@ class ExactGreedyDecodeBurstGraph:
             != lease.write_block_id
         ):
             return "physical_block_identity_drift"
+        return None
+
+    def _block_table_fallback(self, block_table) -> Optional[str]:
         try:
             block_table_shape = tuple(block_table.shape)
         except (AttributeError, TypeError):
@@ -1569,12 +1574,24 @@ class ExactGreedyDecodeBurstGraph:
             return "block_table_width_unsupported"
         return None
 
+    def invalidate_continuation(self, reason: str) -> None:
+        reason = _require_reason(
+            reason,
+            "continuation invalidation reason",
+        )
+        if self._continuation_receipt is None:
+            return
+        self._continuation_receipt = None
+        self.stats.record_continuation_invalidation(reason)
+
     def replay(
         self,
         *,
         lease,
         initial_token: int,
-        block_table,
+        block_table=None,
+        block_table_factory=None,
+        continuation_enabled: bool = False,
         graph_generation: int,
         rank: int,
         tensor_parallel_size: int,
@@ -1582,7 +1599,6 @@ class ExactGreedyDecodeBurstGraph:
     ) -> ExactGreedyDecodeBurstResult | ExactGreedyDecodeBurstFallback:
         reason = self._pre_replay_fallback(
             lease=lease,
-            block_table=block_table,
             graph_generation=graph_generation,
             rank=rank,
             tensor_parallel_size=tensor_parallel_size,
@@ -1604,37 +1620,102 @@ class ExactGreedyDecodeBurstGraph:
             )
 
         tensors = self.tensors
-        try:
-            cls = type(self)
-            cls._reset_static_state(
-                tensors,
-                scratch_block_id=None,
+        history_capacity = int(
+            tensors["token_history"].shape[0]
+        )
+        if continuation_enabled:
+            self.stats.record_continuation_attempt()
+            decision = decide_exact_greedy_decode_burst_continuation(
+                enabled=True,
+                receipt=self._continuation_receipt,
+                lease=lease,
+                initial_token=initial_token,
+                graph_generation=graph_generation,
+                history_capacity=history_capacity,
                 block_size=self.block_size,
             )
-        except Exception:
-            self.stats.record_fallback("static_state_reset_failure")
-            return ExactGreedyDecodeBurstFallback(
-                "static_state_reset_failure"
+        else:
+            decision = ExactGreedyDecodeBurstContinuationDecision(
+                continue_from_resident_state=False,
+                history_start=0,
+                miss_reason="disabled",
             )
-        for name, value in (
-            ("input_token", initial_token),
-            ("position", lease.first_write_position),
-            ("context_length", lease.initial_sequence_length),
-            ("slot_mapping", lease.first_physical_slot),
-        ):
-            try:
-                tensors[name].fill_(value)
-            except Exception:
-                reason = f"{name}_bind_failure"
+
+        history_start = decision.history_start
+        if decision.continue_from_resident_state:
+            self.stats.record_continuation_hit(
+                token_count=lease.authorized_token_count,
+                skipped_block_table_bytes=_tensor_bytes(
+                    tensors["block_table"],
+                    "block_table",
+                ),
+            )
+        else:
+            self._continuation_receipt = None
+            if continuation_enabled:
+                self.stats.record_continuation_miss(
+                    decision.miss_reason
+                )
+            if block_table_factory is not None:
+                if not callable(block_table_factory):
+                    self.stats.record_fallback(
+                        "block_table_factory_invalid"
+                    )
+                    return ExactGreedyDecodeBurstFallback(
+                        "block_table_factory_invalid"
+                    )
+                try:
+                    block_table = block_table_factory()
+                except Exception:
+                    self.stats.record_fallback(
+                        "block_table_materialization_failure"
+                    )
+                    return ExactGreedyDecodeBurstFallback(
+                        "block_table_materialization_failure"
+                    )
+            reason = self._block_table_fallback(block_table)
+            if reason is not None:
                 self.stats.record_fallback(reason)
                 return ExactGreedyDecodeBurstFallback(reason)
-        try:
-            tensors["block_table"].copy_(block_table)
-        except Exception:
-            self.stats.record_fallback("block_table_bind_failure")
-            return ExactGreedyDecodeBurstFallback(
-                "block_table_bind_failure"
-            )
+            try:
+                cls = type(self)
+                cls._reset_static_state(
+                    tensors,
+                    scratch_block_id=None,
+                    block_size=self.block_size,
+                )
+            except Exception:
+                self.stats.record_fallback(
+                    "static_state_reset_failure"
+                )
+                return ExactGreedyDecodeBurstFallback(
+                    "static_state_reset_failure"
+                )
+            for name, value in (
+                ("input_token", initial_token),
+                ("position", lease.first_write_position),
+                (
+                    "context_length",
+                    lease.initial_sequence_length,
+                ),
+                ("slot_mapping", lease.first_physical_slot),
+            ):
+                try:
+                    tensors[name].fill_(value)
+                except Exception:
+                    reason = f"{name}_bind_failure"
+                    self.stats.record_fallback(reason)
+                    return ExactGreedyDecodeBurstFallback(reason)
+            try:
+                tensors["block_table"].copy_(block_table)
+            except Exception:
+                self.stats.record_fallback(
+                    "block_table_bind_failure"
+                )
+                return ExactGreedyDecodeBurstFallback(
+                    "block_table_bind_failure"
+                )
+            self.stats.record_cold_bind()
 
         completed_replays = 0
         try:
@@ -1643,21 +1724,24 @@ class ExactGreedyDecodeBurstGraph:
                 completed_replays += 1
                 self.stats.record_replays(1)
         except Exception as error:
-            self.stats.quarantine(
-                "replay_failure:" + type(error).__name__
-            )
+            reason = "replay_failure:" + type(error).__name__
+            self.invalidate_continuation(reason)
+            self.stats.quarantine(reason)
             raise
 
         try:
             token_values = tensors["token_history"][
-                :lease.authorized_token_count
+                history_start:
+                history_start + lease.authorized_token_count
             ].tolist()
             tokens = tuple(int(value) for value in token_values)
         except Exception as error:
-            self.stats.quarantine(
+            reason = (
                 "final_token_d2h_failure:"
                 + type(error).__name__
             )
+            self.invalidate_continuation(reason)
+            self.stats.quarantine(reason)
             raise
         self.stats.record_final_token_d2h(
             token_count=len(tokens),
@@ -1691,10 +1775,12 @@ class ExactGreedyDecodeBurstGraph:
                         )
                     )
                 except Exception as error:
-                    self.stats.quarantine(
+                    reason = (
                         "sampled_logit_d2h_failure:"
                         + type(error).__name__
                     )
+                    self.invalidate_continuation(reason)
+                    self.stats.quarantine(reason)
                     raise
                 sampled_logit_d2h_calls = 1
                 self.stats.record_sampled_logit_d2h()
@@ -1726,16 +1812,48 @@ class ExactGreedyDecodeBurstGraph:
                 ),
                 sampled_logits=sampled_logits,
             )
-            return validate_exact_greedy_decode_burst_result(
+            validated = validate_exact_greedy_decode_burst_result(
                 lease,
                 result,
                 correctness_trace=self.correctness_trace,
             )
+            self._continuation_receipt = (
+                ExactGreedyDecodeBurstContinuationReceipt(
+                    sequence_id=lease.sequence_id,
+                    graph_generation=graph_generation,
+                    block_table_identity=(
+                        lease.block_table_identity
+                    ),
+                    write_block_id=lease.write_block_id,
+                    write_block_generation=(
+                        lease.write_block_generation
+                    ),
+                    next_input_token=tokens[-1],
+                    next_position=(
+                        lease.first_write_position
+                        + completed_replays
+                    ),
+                    next_context_length=(
+                        lease.initial_sequence_length
+                        + completed_replays
+                    ),
+                    next_physical_slot=(
+                        lease.first_physical_slot
+                        + completed_replays
+                    ),
+                    history_cursor=(
+                        history_start + completed_replays
+                    ),
+                )
+            )
+            return validated
         except Exception as error:
-            self.stats.quarantine(
+            reason = (
                 "result_construction_failure:"
                 + type(error).__name__
             )
+            self.invalidate_continuation(reason)
+            self.stats.quarantine(reason)
             raise
 
     def capability(self) -> dict[str, object]:
