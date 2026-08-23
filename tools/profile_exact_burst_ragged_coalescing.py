@@ -181,7 +181,6 @@ correctness_point_uses_burst_trace = (
     _base.correctness_point_uses_burst_trace
 )
 runtime_environment_manifest = _base.runtime_environment_manifest
-build_workload_manifest = _base.build_workload_manifest
 validate_correctness_rows = _base.validate_correctness_rows
 summarize_rows = _base.summarize_rows
 _construct_llm = _split._construct_llm
@@ -189,6 +188,13 @@ read_float32_sidecar = _base.read_float32_sidecar
 write_float32_sidecar = _base.write_float32_sidecar
 sha256_file = _base.sha256_file
 run_case = _base.run_case
+
+
+def build_workload_manifest(**kwargs) -> dict:
+    manifest = _base.build_workload_manifest(**kwargs)
+    manifest["performance_row_count"] = 45
+    manifest["correctness_row_count"] = 36
+    return manifest
 
 
 def source_manifest(

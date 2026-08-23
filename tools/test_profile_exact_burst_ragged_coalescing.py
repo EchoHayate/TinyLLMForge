@@ -25,6 +25,7 @@ from tools.profile_exact_burst_ragged_coalescing import (
     WORKLOAD_SCHEMA_VERSION,
     _construct_llm,
     _sampled_local_ordinals,
+    build_workload_manifest,
     correctness_trace_for_step,
     correctness_identities,
     performance_identities,
@@ -109,6 +110,15 @@ def test_frozen_matrix_and_source_inventory() -> None:
         "tools/exact_burst_ragged_coalescing_verify.py"
         in SOURCE_FILES
     )
+    manifest = build_workload_manifest(
+        model="/models/Qwen3-0.6B",
+        run_tag="ragged-profile-fixture",
+        source_commit="a" * 40,
+        gpu_memory_utilization=0.5,
+        environment={"fixture": True},
+    )
+    assert manifest["performance_row_count"] == 45
+    assert manifest["correctness_row_count"] == 36
 
 
 def test_candidate_row_binds_k8_plus_k4_k3_inventory() -> None:
