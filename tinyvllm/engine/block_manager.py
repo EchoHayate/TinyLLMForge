@@ -28,6 +28,23 @@ class SequenceBlockReservation:
     state: str = "reserved"
 
 
+@dataclass(frozen=True)
+class LeaseWriteBlockPublicationPlan:
+    will_publish: bool
+    block_table_index: int
+    block_id: int
+    block_generation: int
+    materialized_tokens: int
+    predecessor_block_id: Optional[int]
+    predecessor_hash: Optional[int]
+    planned_block_hash: Optional[int]
+    planned_block_token_ids: tuple[int, ...]
+    prior_block_hash: int
+    prior_block_token_ids: tuple[int, ...]
+    prior_primary_block_id: Optional[int]
+    prior_duplicate_block_ids: Optional[frozenset[int]]
+
+
 @dataclass
 class SpeculativeKVTransaction:
     sequence_id: int
@@ -1857,6 +1874,238 @@ class BlockManager:
             assert block.hash == -1
             block.ref_count = 0
             self._deallocate_block(block_id)
+
+    def plan_lease_write_block_publication(
+        self,
+        seq: Sequence,
+        *,
+        appended_tokens: tuple[int, ...],
+        block_table_index: int,
+        expected_block_id: int,
+        expected_generation: int,
+        materialized_tokens: int,
+        predecessor_hash: Optional[int],
+    ) -> LeaseWriteBlockPublicationPlan:
+        if not isinstance(seq, Sequence):
+            raise ValueError("seq must be a Sequence")
+        if not isinstance(appended_tokens, tuple):
+            raise ValueError("appended_tokens must be a tuple")
+        if any(
+            isinstance(token_id, bool)
+            or not isinstance(token_id, int)
+            for token_id in appended_tokens
+        ):
+            raise ValueError(
+                "appended_tokens must contain integers"
+            )
+        if (
+            isinstance(block_table_index, bool)
+            or not isinstance(block_table_index, int)
+            or block_table_index < 0
+            or block_table_index >= len(seq.block_table)
+        ):
+            raise ValueError(
+                "block_table_index is out of range"
+            )
+        if (
+            isinstance(materialized_tokens, bool)
+            or not isinstance(materialized_tokens, int)
+            or materialized_tokens < 0
+        ):
+            raise ValueError(
+                "materialized_tokens must be a non-negative integer"
+            )
+        if seq.block_table[block_table_index] != expected_block_id:
+            raise RuntimeError("write block identity is stale")
+        block = self.blocks[expected_block_id]
+        if (
+            block.generation != expected_generation
+            or expected_block_id not in self.used_block_ids
+            or block.ref_count <= 0
+        ):
+            raise RuntimeError("write block identity is stale")
+        block_end = (block_table_index + 1) * self.block_size
+        if materialized_tokens < block_end:
+            return LeaseWriteBlockPublicationPlan(
+                will_publish=False,
+                block_table_index=block_table_index,
+                block_id=expected_block_id,
+                block_generation=expected_generation,
+                materialized_tokens=materialized_tokens,
+                predecessor_block_id=None,
+                predecessor_hash=None,
+                planned_block_hash=None,
+                planned_block_token_ids=(),
+                prior_block_hash=block.hash,
+                prior_block_token_ids=tuple(block.token_ids),
+                prior_primary_block_id=None,
+                prior_duplicate_block_ids=None,
+            )
+        block_start = block_table_index * self.block_size
+        existing_end = min(len(seq.token_ids), block_end)
+        token_ids = (
+            tuple(seq.token_ids[block_start:existing_end])
+            + appended_tokens
+        )
+        materialized_in_block = max(
+            0,
+            min(materialized_tokens, block_end) - block_start,
+        )
+        token_ids = token_ids[:materialized_in_block]
+        if len(token_ids) != self.block_size:
+            return LeaseWriteBlockPublicationPlan(
+                will_publish=False,
+                block_table_index=block_table_index,
+                block_id=expected_block_id,
+                block_generation=expected_generation,
+                materialized_tokens=materialized_tokens,
+                predecessor_block_id=None,
+                predecessor_hash=None,
+                planned_block_hash=None,
+                planned_block_token_ids=token_ids,
+                prior_block_hash=block.hash,
+                prior_block_token_ids=tuple(block.token_ids),
+                prior_primary_block_id=None,
+                prior_duplicate_block_ids=None,
+            )
+        if block.hash != -1:
+            raise RuntimeError("write block is already published")
+        prefix = -1
+        predecessor_id = None
+        if block_table_index > 0:
+            predecessor_id = seq.block_table[
+                block_table_index - 1
+            ]
+            predecessor = self.blocks[predecessor_id]
+            if (
+                predecessor_hash is None
+                or predecessor.hash != predecessor_hash
+                or predecessor_hash == -1
+                or (
+                    self.hash_to_block_id.get(predecessor_hash)
+                    != predecessor_id
+                    and predecessor_id
+                    not in self.hash_to_block_ids.get(
+                        predecessor_hash,
+                        (),
+                    )
+                )
+            ):
+                raise RuntimeError(
+                    "predecessor hash authority is unavailable"
+                )
+            prefix = predecessor_hash
+        block_hash = self.compute_hash(list(token_ids), prefix)
+        prior_primary = self.hash_to_block_id.get(block_hash)
+        prior_duplicates = self.hash_to_block_ids.get(block_hash)
+        return LeaseWriteBlockPublicationPlan(
+            will_publish=True,
+            block_table_index=block_table_index,
+            block_id=expected_block_id,
+            block_generation=expected_generation,
+            materialized_tokens=materialized_tokens,
+            predecessor_block_id=predecessor_id,
+            predecessor_hash=(
+                predecessor_hash
+                if predecessor_id is not None
+                else None
+            ),
+            planned_block_hash=block_hash,
+            planned_block_token_ids=token_ids,
+            prior_block_hash=block.hash,
+            prior_block_token_ids=tuple(block.token_ids),
+            prior_primary_block_id=prior_primary,
+            prior_duplicate_block_ids=(
+                frozenset(prior_duplicates)
+                if prior_duplicates is not None
+                else None
+            ),
+        )
+
+    def publish_lease_write_block(
+        self,
+        seq: Sequence,
+        *,
+        plan: LeaseWriteBlockPublicationPlan,
+    ) -> bool:
+        if not isinstance(plan, LeaseWriteBlockPublicationPlan):
+            raise ValueError(
+                "plan must be LeaseWriteBlockPublicationPlan"
+            )
+        if (
+            plan.block_table_index < 0
+            or plan.block_table_index >= len(seq.block_table)
+            or seq.block_table[plan.block_table_index]
+            != plan.block_id
+        ):
+            raise RuntimeError("write block identity is stale")
+        block = self.blocks[plan.block_id]
+        if (
+            plan.block_id not in self.used_block_ids
+            or block.ref_count <= 0
+            or block.generation != plan.block_generation
+            or block.hash != plan.prior_block_hash
+            or tuple(block.token_ids) != plan.prior_block_token_ids
+        ):
+            raise RuntimeError(
+                "write block publication state drifted"
+            )
+        if not plan.will_publish:
+            return False
+        if plan.planned_block_hash is None:
+            raise RuntimeError(
+                "publishable plan is missing a block hash"
+            )
+        if plan.predecessor_block_id is not None:
+            predecessor = self.blocks[
+                plan.predecessor_block_id
+            ]
+            if (
+                predecessor.hash != plan.predecessor_hash
+                or (
+                    self.hash_to_block_id.get(
+                        plan.predecessor_hash
+                    )
+                    != plan.predecessor_block_id
+                    and plan.predecessor_block_id
+                    not in self.hash_to_block_ids.get(
+                        plan.predecessor_hash,
+                        (),
+                    )
+                )
+            ):
+                raise RuntimeError(
+                    "predecessor hash authority drifted"
+                )
+        current_primary = self.hash_to_block_id.get(
+            plan.planned_block_hash
+        )
+        current_duplicates = self.hash_to_block_ids.get(
+            plan.planned_block_hash
+        )
+        if (
+            current_primary != plan.prior_primary_block_id
+            or (
+                frozenset(current_duplicates)
+                if current_duplicates is not None
+                else None
+            )
+            != plan.prior_duplicate_block_ids
+        ):
+            raise RuntimeError(
+                "publication hash index authority drifted"
+            )
+        token_ids = tuple(seq.block(plan.block_table_index))
+        if token_ids != plan.planned_block_token_ids:
+            raise RuntimeError(
+                "write block tokens do not match publication plan"
+            )
+        self._register_cached_block(
+            plan.block_id,
+            plan.planned_block_hash,
+            list(plan.planned_block_token_ids),
+        )
+        return True
 
     def publish_full_blocks(self, seq: Sequence, materialized_tokens=None):
         """Publish prefix-cache hashes for all fully materialized blocks."""

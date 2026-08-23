@@ -290,6 +290,189 @@ def _exact_burst_result(lease, tokens):
     )
 
 
+def test_publish_lease_write_block_is_bounded_and_exact(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        list(range(12)),
+        max_tokens=32,
+        ignore_eos=True,
+    )
+    manager = scheduler.block_manager
+    block_index = len(sequence.block_table) - 1
+    block_id = sequence.block_table[block_index]
+    generation = manager.blocks[block_id].generation
+    appended_tokens = (101, 102, 103, 104)
+
+    partial = manager.plan_lease_write_block_publication(
+        sequence,
+        appended_tokens=appended_tokens,
+        block_table_index=block_index,
+        expected_block_id=block_id,
+        expected_generation=generation,
+        materialized_tokens=15,
+        predecessor_hash=None,
+    )
+    assert partial.will_publish is False
+    assert manager.publish_lease_write_block(
+        sequence,
+        plan=partial,
+    ) is False
+    assert manager.blocks[block_id].hash == -1
+
+    full = manager.plan_lease_write_block_publication(
+        sequence,
+        appended_tokens=appended_tokens,
+        block_table_index=block_index,
+        expected_block_id=block_id,
+        expected_generation=generation,
+        materialized_tokens=16,
+        predecessor_hash=None,
+    )
+    assert full.will_publish is True
+    assert full.block_id == block_id
+    assert full.prior_block_hash == -1
+    for token_id in appended_tokens:
+        sequence.append_token(token_id)
+    assert manager.publish_lease_write_block(
+        sequence,
+        plan=full,
+    ) is True
+    assert (
+        full.planned_block_hash
+        == manager.blocks[block_id].hash
+    )
+    assert manager.hash_to_block_id[
+        full.planned_block_hash
+    ] == block_id
+
+
+def test_plan_lease_write_block_rejects_stale_or_missing_authority(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        list(range(28)),
+        max_tokens=32,
+        ignore_eos=True,
+    )
+    manager = scheduler.block_manager
+    block_index = len(sequence.block_table) - 1
+    block_id = sequence.block_table[block_index]
+    generation = manager.blocks[block_id].generation
+    appended_tokens = (101, 102, 103, 104)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^write block identity is stale$",
+    ):
+        manager.plan_lease_write_block_publication(
+            sequence,
+            appended_tokens=appended_tokens,
+            block_table_index=block_index,
+            expected_block_id=block_id,
+            expected_generation=generation + 1,
+            materialized_tokens=32,
+            predecessor_hash=None,
+        )
+    with pytest.raises(
+        RuntimeError,
+        match="^predecessor hash authority is unavailable$",
+    ):
+        manager.plan_lease_write_block_publication(
+            sequence,
+            appended_tokens=appended_tokens,
+            block_table_index=block_index,
+            expected_block_id=block_id,
+            expected_generation=generation,
+            materialized_tokens=32,
+            predecessor_hash=None,
+        )
+
+
+def test_publish_lease_write_block_preserves_collision_authority(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        list(range(12)),
+        max_tokens=32,
+        ignore_eos=True,
+    )
+    manager = scheduler.block_manager
+    appended_tokens = (101, 102, 103, 104)
+    planned_tokens = tuple(sequence.token_ids) + appended_tokens
+    block_hash = manager.compute_hash(list(planned_tokens))
+    collision_ids = []
+    for _ in range(2):
+        collision_id = manager.free_block_ids[0]
+        manager._allocate_block(collision_id)
+        manager._register_cached_block(
+            collision_id,
+            block_hash,
+            list(planned_tokens),
+        )
+        collision_ids.append(collision_id)
+
+    block_index = len(sequence.block_table) - 1
+    block_id = sequence.block_table[block_index]
+    plan = manager.plan_lease_write_block_publication(
+        sequence,
+        appended_tokens=appended_tokens,
+        block_table_index=block_index,
+        expected_block_id=block_id,
+        expected_generation=(
+            manager.blocks[block_id].generation
+        ),
+        materialized_tokens=16,
+        predecessor_hash=None,
+    )
+    assert plan.prior_primary_block_id == collision_ids[-1]
+    assert plan.prior_duplicate_block_ids == frozenset(
+        collision_ids
+    )
+
+    for token_id in appended_tokens:
+        sequence.append_token(token_id)
+    assert manager.publish_lease_write_block(
+        sequence,
+        plan=plan,
+    ) is True
+    assert manager.hash_to_block_id[block_hash] == block_id
+    assert manager.hash_to_block_ids[block_hash] == {
+        *collision_ids,
+        block_id,
+    }
+
+
 def test_ragged_coalescing_issues_bounded_output_tail_leases(
     monkeypatch,
 ):
