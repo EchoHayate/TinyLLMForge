@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -28,6 +29,9 @@ SPEC.loader.exec_module(module)
 ExactGreedyDecodeBurstCaptureReceipt = (
     module.ExactGreedyDecodeBurstCaptureReceipt
 )
+ExactGreedyDecodeBurstContinuationReceipt = (
+    module.ExactGreedyDecodeBurstContinuationReceipt
+)
 ExactGreedyDecodeBurstFallback = (
     module.ExactGreedyDecodeBurstFallback
 )
@@ -40,6 +44,9 @@ build_exact_greedy_decode_burst_decision = (
 )
 build_exact_greedy_decode_burst_lease = (
     module.build_exact_greedy_decode_burst_lease
+)
+decide_exact_greedy_decode_burst_continuation = (
+    module.decide_exact_greedy_decode_burst_continuation
 )
 validate_exact_greedy_decode_burst_result = (
     module.validate_exact_greedy_decode_burst_result
@@ -696,6 +703,237 @@ def _lease() -> ExactGreedyDecodeBurstLease:
     )
 
 
+def _continuation_receipt(
+    **overrides,
+) -> ExactGreedyDecodeBurstContinuationReceipt:
+    values = {
+        "sequence_id": 7,
+        "graph_generation": 3,
+        "block_table_identity": ((11, 4), (12, 1)),
+        "write_block_id": 12,
+        "write_block_generation": 1,
+        "next_input_token": 99,
+        "next_position": 260,
+        "next_context_length": 261,
+        "next_physical_slot": 12 * 256 + 4,
+        "history_cursor": 4,
+    }
+    values.update(overrides)
+    return ExactGreedyDecodeBurstContinuationReceipt(**values)
+
+
+def _continuation_lease(
+    **overrides,
+) -> ExactGreedyDecodeBurstLease:
+    values = {
+        "sequence_id": 7,
+        "schedule_generation": 10,
+        "graph_generation": 3,
+        "requested_token_count": 4,
+        "authorized_token_count": 4,
+        "initial_completion_count": 8,
+        "initial_sequence_length": 261,
+        "block_table_identity": ((11, 4), (12, 1)),
+        "write_block_id": 12,
+        "write_block_generation": 1,
+        "first_write_position": 260,
+        "last_write_position": 263,
+        "first_physical_slot": 12 * 256 + 4,
+        "last_physical_slot": 12 * 256 + 7,
+        "remaining_output_tokens": 120,
+        "completion_only": True,
+    }
+    values.update(overrides)
+    return build_exact_greedy_decode_burst_lease(**values)
+
+
+def _continuation_decision(
+    *,
+    receipt=None,
+    lease=None,
+    enabled=True,
+    initial_token=99,
+    graph_generation=3,
+    history_capacity=256,
+    block_size=256,
+):
+    return decide_exact_greedy_decode_burst_continuation(
+        enabled=enabled,
+        receipt=(
+            _continuation_receipt()
+            if receipt is None
+            else receipt
+        ),
+        lease=_continuation_lease() if lease is None else lease,
+        initial_token=initial_token,
+        graph_generation=graph_generation,
+        history_capacity=history_capacity,
+        block_size=block_size,
+    )
+
+
+def test_continuation_requires_an_exact_receipt_match() -> None:
+    decision = _continuation_decision()
+    assert decision.continue_from_resident_state is True
+    assert decision.history_start == 4
+    assert decision.miss_reason is None
+
+    missing = decide_exact_greedy_decode_burst_continuation(
+        enabled=True,
+        receipt=None,
+        lease=_continuation_lease(),
+        initial_token=99,
+        graph_generation=3,
+        history_capacity=256,
+        block_size=256,
+    )
+    cases = (
+        (
+            "disabled",
+            _continuation_decision(enabled=False),
+        ),
+        ("receipt_missing", missing),
+        (
+            "sequence_identity_drift",
+            _continuation_decision(
+                lease=replace(
+                    _continuation_lease(),
+                    sequence_id=8,
+                )
+            ),
+        ),
+        (
+            "graph_generation_drift",
+            _continuation_decision(graph_generation=4),
+        ),
+        (
+            "block_table_identity_drift",
+            _continuation_decision(
+                lease=replace(
+                    _continuation_lease(),
+                    block_table_identity=((10, 4), (12, 1)),
+                )
+            ),
+        ),
+        (
+            "write_block_identity_drift",
+            _continuation_decision(
+                receipt=_continuation_receipt(
+                    write_block_generation=2,
+                )
+            ),
+        ),
+        (
+            "initial_token_drift",
+            _continuation_decision(initial_token=100),
+        ),
+        (
+            "position_drift",
+            _continuation_decision(
+                lease=replace(
+                    _continuation_lease(),
+                    first_write_position=261,
+                    last_write_position=264,
+                )
+            ),
+        ),
+        (
+            "context_length_drift",
+            _continuation_decision(
+                lease=replace(
+                    _continuation_lease(),
+                    initial_sequence_length=262,
+                )
+            ),
+        ),
+        (
+            "physical_slot_drift",
+            _continuation_decision(
+                lease=replace(
+                    _continuation_lease(),
+                    first_physical_slot=12 * 256 + 5,
+                    last_physical_slot=12 * 256 + 8,
+                )
+            ),
+        ),
+        (
+            "physical_block_boundary_crossed",
+            _continuation_decision(
+                receipt=_continuation_receipt(
+                    next_physical_slot=12 * 256 + 254,
+                ),
+                lease=replace(
+                    _continuation_lease(),
+                    first_physical_slot=12 * 256 + 254,
+                    last_physical_slot=13 * 256 + 1,
+                ),
+            ),
+        ),
+        (
+            "history_capacity_exceeded",
+            _continuation_decision(
+                receipt=_continuation_receipt(
+                    history_cursor=254,
+                )
+            ),
+        ),
+    )
+    for expected_reason, actual in cases:
+        assert actual.continue_from_resident_state is False
+        assert actual.history_start == 0
+        assert actual.miss_reason == expected_reason
+
+
+def test_continuation_rejects_invalid_scalar_contracts() -> None:
+    for field, value, message in (
+        (
+            "sequence_id",
+            True,
+            "sequence_id must be a non-negative integer",
+        ),
+        (
+            "history_cursor",
+            -1,
+            "history_cursor must be a non-negative integer",
+        ),
+    ):
+        _assert_raises(
+            ValueError,
+            message,
+            lambda field=field, value=value:
+                _continuation_receipt(**{field: value}),
+        )
+    for field, value, message in (
+        ("enabled", 1, "enabled must be a bool"),
+        (
+            "initial_token",
+            True,
+            "initial_token must be a non-negative integer",
+        ),
+        (
+            "graph_generation",
+            -1,
+            "graph_generation must be a non-negative integer",
+        ),
+        (
+            "history_capacity",
+            0,
+            "history_capacity must be a positive integer",
+        ),
+        (
+            "block_size",
+            False,
+            "block_size must be a positive integer",
+        ),
+    ):
+        kwargs = {field: value}
+        _assert_raises(
+            ValueError,
+            message,
+            lambda kwargs=kwargs: _continuation_decision(**kwargs),
+        )
+
+
 def _result(lease) -> ExactGreedyDecodeBurstResult:
     return ExactGreedyDecodeBurstResult(
         lease_identity_sha256=lease.identity_sha256,
@@ -1275,6 +1513,8 @@ def main() -> None:
     test_fallback_reasons_have_stable_precedence()
     test_invalid_policy_inputs_fail_closed()
     test_lease_identity_is_canonical_and_result_is_exact()
+    test_continuation_requires_an_exact_receipt_match()
+    test_continuation_rejects_invalid_scalar_contracts()
     test_correctness_trace_is_bounded_and_ordered()
     test_stats_track_benefit_cost_and_terminal_state()
     test_contract_is_model_agnostic_and_supports_second_caller()

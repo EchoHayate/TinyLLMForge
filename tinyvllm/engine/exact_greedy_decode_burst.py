@@ -313,6 +313,138 @@ class ExactGreedyDecodeBurstLease:
     identity_sha256: str
 
 
+@dataclass(frozen=True)
+class ExactGreedyDecodeBurstContinuationReceipt:
+    sequence_id: int
+    graph_generation: int
+    block_table_identity: tuple[tuple[int, int], ...]
+    write_block_id: int
+    write_block_generation: int
+    next_input_token: int
+    next_position: int
+    next_context_length: int
+    next_physical_slot: int
+    history_cursor: int
+
+    def __post_init__(self) -> None:
+        for name in (
+            "sequence_id",
+            "graph_generation",
+            "write_block_id",
+            "write_block_generation",
+            "next_input_token",
+            "next_position",
+            "next_context_length",
+            "next_physical_slot",
+            "history_cursor",
+        ):
+            _require_non_negative_int(getattr(self, name), name)
+        _validate_block_identity(self.block_table_identity)
+
+
+@dataclass(frozen=True)
+class ExactGreedyDecodeBurstContinuationDecision:
+    continue_from_resident_state: bool
+    history_start: int
+    miss_reason: Optional[str]
+
+
+def decide_exact_greedy_decode_burst_continuation(
+    *,
+    enabled: bool,
+    receipt: Optional[
+        ExactGreedyDecodeBurstContinuationReceipt
+    ],
+    lease: ExactGreedyDecodeBurstLease,
+    initial_token: int,
+    graph_generation: int,
+    history_capacity: int,
+    block_size: int,
+) -> ExactGreedyDecodeBurstContinuationDecision:
+    _require_bool(enabled, "enabled")
+    _require_non_negative_int(initial_token, "initial_token")
+    _require_non_negative_int(
+        graph_generation,
+        "graph_generation",
+    )
+    _require_positive_int(
+        history_capacity,
+        "history_capacity",
+    )
+    _require_positive_int(block_size, "block_size")
+    if not isinstance(lease, ExactGreedyDecodeBurstLease):
+        raise ValueError("lease has an invalid type")
+    if receipt is not None and not isinstance(
+        receipt,
+        ExactGreedyDecodeBurstContinuationReceipt,
+    ):
+        raise ValueError("continuation receipt has an invalid type")
+
+    reason = None
+    if not enabled:
+        reason = "disabled"
+    elif receipt is None:
+        reason = "receipt_missing"
+    elif receipt.sequence_id != lease.sequence_id:
+        reason = "sequence_identity_drift"
+    elif (
+        receipt.graph_generation != graph_generation
+        or lease.graph_generation != graph_generation
+    ):
+        reason = "graph_generation_drift"
+    elif (
+        receipt.block_table_identity
+        != lease.block_table_identity
+    ):
+        reason = "block_table_identity_drift"
+    elif (
+        receipt.write_block_id != lease.write_block_id
+        or receipt.write_block_generation
+        != lease.write_block_generation
+    ):
+        reason = "write_block_identity_drift"
+    elif receipt.next_input_token != initial_token:
+        reason = "initial_token_drift"
+    elif receipt.next_position != lease.first_write_position:
+        reason = "position_drift"
+    elif (
+        receipt.next_context_length
+        != lease.initial_sequence_length
+    ):
+        reason = "context_length_drift"
+    elif (
+        receipt.next_physical_slot
+        != lease.first_physical_slot
+    ):
+        reason = "physical_slot_drift"
+    elif (
+        lease.first_physical_slot // block_size
+        != (
+            lease.first_physical_slot
+            + lease.authorized_token_count
+            - 1
+        )
+        // block_size
+    ):
+        reason = "physical_block_boundary_crossed"
+    elif (
+        receipt.history_cursor
+        + lease.authorized_token_count
+        > history_capacity
+    ):
+        reason = "history_capacity_exceeded"
+
+    return ExactGreedyDecodeBurstContinuationDecision(
+        continue_from_resident_state=reason is None,
+        history_start=(
+            receipt.history_cursor
+            if reason is None and receipt is not None
+            else 0
+        ),
+        miss_reason=reason,
+    )
+
+
 def _lease_payload(**values) -> dict:
     return {
         "sequence_id": values["sequence_id"],
