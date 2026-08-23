@@ -39,6 +39,7 @@ class Config:
     graph_resident_greedy_tail: bool = False
     exact_greedy_decode_burst: bool = False
     exact_greedy_decode_burst_continuation: bool = False
+    exact_greedy_decode_burst_split_phase: bool = False
     exact_greedy_decode_burst_tokens: int = 4
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
@@ -222,6 +223,14 @@ class Config:
                 "exact_greedy_decode_burst_continuation "
                 "must be a bool"
             )
+        if not isinstance(
+            self.exact_greedy_decode_burst_split_phase,
+            bool,
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst_split_phase "
+                "must be a bool"
+            )
         if (
             isinstance(self.exact_greedy_decode_burst_tokens, bool)
             or not isinstance(
@@ -236,6 +245,17 @@ class Config:
                 "exact_greedy_decode_burst_tokens must be an "
                 "integer in [2, 8]"
             )
+        if self.exact_greedy_decode_burst_split_phase:
+            if not self.exact_greedy_decode_burst:
+                raise ValueError(
+                    "split phase requires exact_greedy_decode_burst"
+                )
+            if self.exact_greedy_decode_burst_tokens != 8:
+                raise ValueError("split phase requires K8")
+            if self.exact_greedy_decode_burst_continuation:
+                raise ValueError(
+                    "split phase cannot compose with continuation"
+                )
         allowlist = self.multi_sequence_cuda_graph_batch_allowlist
         assert isinstance(allowlist, (tuple, list))
         assert allowlist
