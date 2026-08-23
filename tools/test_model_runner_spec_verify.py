@@ -5851,6 +5851,12 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         ].default
         is False
     )
+    assert (
+        fields[
+            "exact_greedy_decode_burst_lease_local_delta_journal"
+        ].default
+        is False
+    )
     assert fields["exact_greedy_decode_burst_tokens"].default == 4
     with tempfile.TemporaryDirectory() as model:
         for invalid in (0, 1, None, "true"):
@@ -5899,6 +5905,20 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 Config(
                     model=model,
                     exact_greedy_decode_burst_ragged_coalescing=(
+                        invalid
+                    ),
+                )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_lease_local_"
+                    "delta_journal must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_lease_local_delta_journal=(
                         invalid
                     ),
                 )
@@ -5980,18 +6000,75 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 exact_greedy_decode_burst_tokens=4,
                 exact_greedy_decode_burst_ragged_coalescing=True,
             )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^lease-local delta journal requires "
+                "exact_greedy_decode_burst$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst_lease_local_delta_journal=(
+                    True
+                ),
+            )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^lease-local delta journal requires split phase$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_lease_local_delta_journal=(
+                    True
+                ),
+            )
+        with pytest.raises(
+            ValueError,
+            match="^lease-local delta journal requires K8$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_split_phase=True,
+                exact_greedy_decode_burst_tokens=4,
+                exact_greedy_decode_burst_lease_local_delta_journal=(
+                    True
+                ),
+            )
+        enabled_without_ragged = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_split_phase=True,
+            exact_greedy_decode_burst_tokens=8,
+            exact_greedy_decode_burst_lease_local_delta_journal=True,
+        )
         enabled = Config(
             model=model,
             exact_greedy_decode_burst=True,
             exact_greedy_decode_burst_split_phase=True,
             exact_greedy_decode_burst_tokens=8,
             exact_greedy_decode_burst_ragged_coalescing=True,
+            exact_greedy_decode_burst_lease_local_delta_journal=True,
         )
+    assert (
+        enabled_without_ragged
+        .exact_greedy_decode_burst_lease_local_delta_journal
+        is True
+    )
     assert enabled.exact_greedy_decode_burst is True
     assert enabled.exact_greedy_decode_burst_continuation is False
     assert enabled.exact_greedy_decode_burst_split_phase is True
     assert (
         enabled.exact_greedy_decode_burst_ragged_coalescing
+        is True
+    )
+    assert (
+        enabled.exact_greedy_decode_burst_lease_local_delta_journal
         is True
     )
     assert enabled.exact_greedy_decode_burst_tokens == 8

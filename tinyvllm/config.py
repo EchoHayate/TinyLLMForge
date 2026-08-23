@@ -41,6 +41,7 @@ class Config:
     exact_greedy_decode_burst_continuation: bool = False
     exact_greedy_decode_burst_split_phase: bool = False
     exact_greedy_decode_burst_ragged_coalescing: bool = False
+    exact_greedy_decode_burst_lease_local_delta_journal: bool = False
     exact_greedy_decode_burst_tokens: int = 4
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
@@ -240,6 +241,14 @@ class Config:
                 "exact_greedy_decode_burst_ragged_coalescing "
                 "must be a bool"
             )
+        if not isinstance(
+            self.exact_greedy_decode_burst_lease_local_delta_journal,
+            bool,
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst_lease_local_delta_journal "
+                "must be a bool"
+            )
         if (
             isinstance(self.exact_greedy_decode_burst_tokens, bool)
             or not isinstance(
@@ -266,6 +275,20 @@ class Config:
                 )
             if self.exact_greedy_decode_burst_tokens != 8:
                 raise ValueError("ragged coalescing requires K8")
+        if self.exact_greedy_decode_burst_lease_local_delta_journal:
+            if not self.exact_greedy_decode_burst:
+                raise ValueError(
+                    "lease-local delta journal requires "
+                    "exact_greedy_decode_burst"
+                )
+            if not self.exact_greedy_decode_burst_split_phase:
+                raise ValueError(
+                    "lease-local delta journal requires split phase"
+                )
+            if self.exact_greedy_decode_burst_tokens != 8:
+                raise ValueError(
+                    "lease-local delta journal requires K8"
+                )
         if self.exact_greedy_decode_burst_split_phase:
             if not self.exact_greedy_decode_burst:
                 raise ValueError(

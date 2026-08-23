@@ -864,6 +864,11 @@ class ExactGreedyDecodeBurstStats:
     skipped_block_table_constructions: int = 0
     skipped_block_table_copy_calls: int = 0
     skipped_block_table_bytes: int = 0
+    lease_local_delta_journal_attempts: int = 0
+    lease_local_delta_journal_captures: int = 0
+    lease_local_delta_journal_commits: int = 0
+    lease_local_delta_journal_rollbacks: int = 0
+    lease_local_delta_journal_published_blocks: int = 0
     requested_width_histogram: dict[int, int] = field(
         default_factory=dict
     )
@@ -880,6 +885,10 @@ class ExactGreedyDecodeBurstStats:
     split_phase_failure_counts: dict[str, int] = field(
         default_factory=dict
     )
+    lease_local_delta_journal_fallback_counts: dict[
+        str,
+        int,
+    ] = field(default_factory=dict)
     quarantine_reason: Optional[str] = None
     capture_receipts: list[
         ExactGreedyDecodeBurstCaptureReceipt
@@ -938,6 +947,46 @@ class ExactGreedyDecodeBurstStats:
         self.fallback_counts[reason] = (
             self.fallback_counts.get(reason, 0) + 1
         )
+
+    def record_lease_local_delta_journal_attempt(self) -> None:
+        self.lease_local_delta_journal_attempts += 1
+
+    def record_lease_local_delta_journal_capture(self) -> None:
+        self.lease_local_delta_journal_captures += 1
+
+    def record_lease_local_delta_journal_commit(
+        self,
+        *,
+        published_blocks: int,
+    ) -> None:
+        _require_non_negative_int(
+            published_blocks,
+            "published_blocks",
+        )
+        if published_blocks > 1:
+            raise ValueError(
+                "published_blocks must be at most one"
+            )
+        self.lease_local_delta_journal_commits += 1
+        self.lease_local_delta_journal_published_blocks += (
+            published_blocks
+        )
+
+    def record_lease_local_delta_journal_rollback(
+        self,
+    ) -> None:
+        self.lease_local_delta_journal_rollbacks += 1
+
+    def record_lease_local_delta_journal_fallback(
+        self,
+        reason: str,
+    ) -> None:
+        reason = _require_reason(
+            reason,
+            "lease-local delta journal fallback reason",
+        )
+        counts = self.lease_local_delta_journal_fallback_counts
+        counts[reason] = counts.get(reason, 0) + 1
 
     def record_capture(
         self,
@@ -1212,6 +1261,21 @@ class ExactGreedyDecodeBurstStats:
             "skipped_block_table_bytes": (
                 self.skipped_block_table_bytes
             ),
+            "lease_local_delta_journal_attempts": (
+                self.lease_local_delta_journal_attempts
+            ),
+            "lease_local_delta_journal_captures": (
+                self.lease_local_delta_journal_captures
+            ),
+            "lease_local_delta_journal_commits": (
+                self.lease_local_delta_journal_commits
+            ),
+            "lease_local_delta_journal_rollbacks": (
+                self.lease_local_delta_journal_rollbacks
+            ),
+            "lease_local_delta_journal_published_blocks": (
+                self.lease_local_delta_journal_published_blocks
+            ),
             "requested_width_histogram": {
                 str(key): value
                 for key, value in sorted(
@@ -1237,6 +1301,11 @@ class ExactGreedyDecodeBurstStats:
             ),
             "split_phase_failure_counts": dict(
                 sorted(self.split_phase_failure_counts.items())
+            ),
+            "lease_local_delta_journal_fallback_counts": dict(
+                sorted(
+                    self.lease_local_delta_journal_fallback_counts.items()
+                )
             ),
             "quarantine_reason": self.quarantine_reason,
             "capture_receipts": [

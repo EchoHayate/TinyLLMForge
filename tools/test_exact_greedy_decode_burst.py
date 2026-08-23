@@ -1354,6 +1354,54 @@ def test_stats_track_split_phase_benefit_cost_and_failures() -> None:
     }
 
 
+def test_stats_track_lease_local_delta_journal_lifecycle() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    stats.record_lease_local_delta_journal_attempt()
+    stats.record_lease_local_delta_journal_capture()
+    stats.record_lease_local_delta_journal_commit(
+        published_blocks=1,
+    )
+    stats.record_lease_local_delta_journal_rollback()
+    stats.record_lease_local_delta_journal_fallback(
+        "terminal_suffix",
+    )
+
+    summary = stats.summary()
+    assert summary["lease_local_delta_journal_attempts"] == 1
+    assert summary["lease_local_delta_journal_captures"] == 1
+    assert summary["lease_local_delta_journal_commits"] == 1
+    assert summary["lease_local_delta_journal_rollbacks"] == 1
+    assert (
+        summary["lease_local_delta_journal_published_blocks"]
+        == 1
+    )
+    assert summary[
+        "lease_local_delta_journal_fallback_counts"
+    ] == {"terminal_suffix": 1}
+
+    try:
+        stats.record_lease_local_delta_journal_commit(
+            published_blocks=2,
+        )
+    except ValueError as error:
+        assert str(error) == "published_blocks must be at most one"
+    else:
+        raise AssertionError(
+            "published_blocks greater than one was accepted"
+        )
+    try:
+        stats.record_lease_local_delta_journal_fallback("")
+    except ValueError as error:
+        assert str(error) == (
+            "lease-local delta journal fallback reason "
+            "must be a non-empty string"
+        )
+    else:
+        raise AssertionError(
+            "empty delta journal fallback reason was accepted"
+        )
+
+
 def test_stats_track_continuation_benefit_and_cost() -> None:
     stats = ExactGreedyDecodeBurstStats()
     for _ in range(3):
