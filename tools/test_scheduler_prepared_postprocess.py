@@ -180,6 +180,7 @@ def _config():
         eos=99,
         num_kvcache_blocks=32,
         kvcache_block_size=2,
+        exact_greedy_decode_burst_lease_local_delta_journal=False,
     )
 
 
@@ -610,6 +611,57 @@ def _exact_burst_split_result(
         sampled_logit_d2h_calls=sampled_logit_d2h_calls,
         sampled_logits=sampled_logits,
     )
+
+
+def _delta_split_phase_fixture(
+    monkeypatch,
+    *,
+    phase,
+    prompt_length,
+    max_tokens,
+    enabled=True,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+                (
+                    "exact_greedy_decode_burst_"
+                    "lease_local_delta_journal"
+                ): enabled if phase == "prefix" else False,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        list(range(1, prompt_length + 1)),
+        max_tokens=max_tokens,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        split_phase_enabled=True,
+    )
+    split_result = _exact_burst_split_result(lease)
+    if phase == "suffix":
+        prefix = (
+            scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+                (sequence,),
+                lease,
+                split_result,
+                phase="prefix",
+                tokens=split_result.prefix.wait_tokens(),
+            )
+        )
+        scheduler.commit_prepared_postprocess(prefix)
+        scheduler._exact_greedy_decode_burst_lease_local_delta_journal = (
+            enabled
+        )
+    return scheduler, sequence, lease, split_result
 
 
 def _snapshot(scheduler, sequences):
@@ -1529,6 +1581,156 @@ def test_split_phase_k8_commits_prefix_then_suffix_under_one_parent_lease(
     assert summary["commits"] == 1
     assert summary["committed_tokens"] == 8
     assert summary["pending_leases"] == 0
+
+
+@pytest.mark.parametrize(
+    ("phase", "prompt_length"),
+    (
+        ("prefix", 2),
+        ("suffix", 2),
+        ("suffix", 9),
+    ),
+)
+def test_delta_journal_selects_bounded_non_terminal_split_phases(
+    monkeypatch,
+    phase,
+    prompt_length,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase=phase,
+            prompt_length=prompt_length,
+            max_tokens=16,
+        )
+    )
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase=phase,
+            tokens=getattr(
+                split_result,
+                phase,
+            ).wait_tokens(),
+        )
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.ExactBurstPhaseDeltaJournal,
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_attempts"] == 1
+    assert summary["lease_local_delta_journal_captures"] == 1
+    assert summary[
+        "lease_local_delta_journal_fallback_counts"
+    ] == {}
+
+
+def test_delta_journal_disabled_and_terminal_suffix_fall_back(
+    monkeypatch,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="prefix",
+            prompt_length=2,
+            max_tokens=8,
+            enabled=False,
+        )
+    )
+    disabled = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=split_result.prefix.wait_tokens(),
+        )
+    )
+    assert isinstance(
+        disabled.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+
+    scheduler.commit_prepared_postprocess(disabled)
+    scheduler._exact_greedy_decode_burst_lease_local_delta_journal = (
+        True
+    )
+    terminal = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=split_result.suffix.wait_tokens(),
+        )
+    )
+    assert isinstance(
+        terminal.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_attempts"] == 1
+    assert summary[
+        "lease_local_delta_journal_fallback_counts"
+    ] == {"terminal_suffix": 1}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    (
+        ("published_write_block", "write_block_already_published"),
+        ("missing_predecessor", "predecessor_hash_unavailable"),
+    ),
+)
+def test_delta_journal_uncertain_publication_state_falls_back(
+    monkeypatch,
+    mutation,
+    expected_reason,
+):
+    prompt_length = 9 if mutation == "published_write_block" else 25
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="suffix",
+            prompt_length=prompt_length,
+            max_tokens=16,
+        )
+    )
+    manager = scheduler.block_manager
+    write_index = lease.first_write_position // manager.block_size
+    if mutation == "published_write_block":
+        manager._register_cached_block(
+            lease.write_block_id,
+            1234567,
+            sequence.block(write_index),
+        )
+    else:
+        predecessor_id = sequence.block_table[write_index - 1]
+        predecessor_hash = manager.blocks[predecessor_id].hash
+        manager.hash_to_block_id.pop(predecessor_hash, None)
+        manager.hash_to_block_ids.pop(predecessor_hash, None)
+
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=split_result.suffix.wait_tokens(),
+        )
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "lease_local_delta_journal_fallback_counts"
+    ] == {expected_reason: 1}
 
 
 def test_split_phase_correctness_trace_survives_scheduler_revalidation(

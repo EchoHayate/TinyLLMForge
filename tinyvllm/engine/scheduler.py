@@ -6,7 +6,10 @@ from types import MappingProxyType
 
 from tinyvllm.config import Config
 from tinyvllm.engine.sequence import Sequence, SequenceStatus
-from tinyvllm.engine.block_manager import BlockManager
+from tinyvllm.engine.block_manager import (
+    BlockManager,
+    LeaseWriteBlockPublicationPlan,
+)
 from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstLease,
     ExactGreedyDecodeBurstResult,
@@ -599,6 +602,100 @@ class SchedulerPostprocessJournal:
         self.state = "rolled_back"
 
 
+@dataclass
+class ExactBurstPhaseDeltaJournal:
+    sequence: Sequence
+    token_list: list[int]
+    original_length: int
+    original_last_token: int
+    original_num_tokens: int
+    original_status: SequenceStatus
+    expected_block_table_identity: tuple[tuple[int, int], ...]
+    waiting_length: int
+    prefilling_length: int
+    running_length: int
+    sequence_was_running: bool
+    decode_progress_present: bool
+    decode_progress_value: int | None
+    last_slo_postprocess: dict
+    adaptive_mixed_state: str
+    adaptive_high_streak: int
+    adaptive_low_streak: int
+    adaptive_consecutive_mixed_steps: int
+    consecutive_prefill_chunks: int
+    slo_clock_invalid: bool
+    slo_clock_invalid_reason: object
+    last_slo_decision_now_ns: int | None
+    publication_plan: LeaseWriteBlockPublicationPlan
+    publication_applied: bool = False
+    state: str = "active"
+
+    @property
+    def scheduled_sequences(self) -> tuple[Sequence, ...]:
+        return (self.sequence,)
+
+    @classmethod
+    def capture(
+        cls,
+        scheduler,
+        sequence: Sequence,
+        *,
+        expected_block_table_identity: tuple[
+            tuple[int, int],
+            ...,
+        ],
+        publication_plan: LeaseWriteBlockPublicationPlan,
+    ) -> "ExactBurstPhaseDeltaJournal":
+        progress_present = (
+            sequence.seq_id
+            in scheduler.decode_progress_ns_by_seq_id
+        )
+        return cls(
+            sequence=sequence,
+            token_list=sequence.token_ids,
+            original_length=len(sequence.token_ids),
+            original_last_token=sequence.last_token,
+            original_num_tokens=sequence.num_tokens,
+            original_status=sequence.status,
+            expected_block_table_identity=(
+                expected_block_table_identity
+            ),
+            waiting_length=len(scheduler.waiting),
+            prefilling_length=len(scheduler.prefilling),
+            running_length=len(scheduler.running),
+            sequence_was_running=(
+                len(scheduler.running) == 1
+                and scheduler.running[0] is sequence
+            ),
+            decode_progress_present=progress_present,
+            decode_progress_value=(
+                scheduler.decode_progress_ns_by_seq_id.get(
+                    sequence.seq_id
+                )
+            ),
+            last_slo_postprocess=dict(
+                scheduler._last_slo_postprocess
+            ),
+            adaptive_mixed_state=scheduler.adaptive_mixed_state,
+            adaptive_high_streak=scheduler.adaptive_high_streak,
+            adaptive_low_streak=scheduler.adaptive_low_streak,
+            adaptive_consecutive_mixed_steps=(
+                scheduler.adaptive_consecutive_mixed_steps
+            ),
+            consecutive_prefill_chunks=(
+                scheduler._consecutive_prefill_chunks
+            ),
+            slo_clock_invalid=scheduler.slo_clock_invalid,
+            slo_clock_invalid_reason=(
+                scheduler.slo_clock_invalid_reason
+            ),
+            last_slo_decision_now_ns=(
+                scheduler._last_slo_decision_now_ns
+            ),
+            publication_plan=publication_plan,
+        )
+
+
 def build_slo_chunk_ladder(
     max_chunk_tokens: int,
     min_chunk_tokens: int,
@@ -710,6 +807,18 @@ class Scheduler:
         self.last_speculative_selection = None
         self._exact_greedy_decode_burst_pending_lease = None
         self._exact_greedy_decode_burst_split_phase = "idle"
+        self._exact_greedy_decode_burst_lease_local_delta_journal = (
+            bool(
+                getattr(
+                    config,
+                    (
+                        "exact_greedy_decode_burst_"
+                        "lease_local_delta_journal"
+                    ),
+                    False,
+                )
+            )
+        )
         self._exact_greedy_decode_burst_stats = (
             ExactGreedyDecodeBurstStats()
         )
@@ -2320,6 +2429,155 @@ class Scheduler:
         )
         self.commit_prepared_postprocess(prepared)
 
+    def _select_exact_burst_phase_journal(
+        self,
+        seqs: tuple[Sequence, ...],
+        rows: tuple[ScheduledOutputRow, ...],
+        *,
+        is_prefill: bool,
+        do_sample: bool,
+        batch_kind: str | None,
+    ) -> (
+        SchedulerPostprocessJournal
+        | ExactBurstPhaseDeltaJournal
+    ):
+        row = rows[0] if len(rows) == 1 else None
+        if (
+            row is None
+            or len(seqs) != 1
+            or not row.exact_burst
+            or row.exact_burst_phase not in ("prefix", "suffix")
+        ):
+            return SchedulerPostprocessJournal.capture(
+                self,
+                seqs,
+            )
+        if (
+            not self
+            ._exact_greedy_decode_burst_lease_local_delta_journal
+        ):
+            return SchedulerPostprocessJournal.capture(
+                self,
+                seqs,
+            )
+        self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_attempt()
+        sequence = seqs[0]
+        lease = self._exact_greedy_decode_burst_pending_lease
+        reason = None
+        if (
+            is_prefill
+            or not do_sample
+            or batch_kind is not None
+            or lease is None
+            or lease.authorized_token_count != 8
+            or len(row.output_tokens) != 4
+            or sequence.status != SequenceStatus.RUNNING
+            or not sequence.ignore_eos
+        ):
+            reason = "unsupported_phase_shape"
+        elif (
+            row.exact_burst_phase == "suffix"
+            and sequence.num_completion_tokens + 4
+            >= sequence.max_tokens
+        ):
+            reason = "terminal_suffix"
+        write_block_index = (
+            lease.first_write_position
+            // self.block_manager.block_size
+            if reason is None
+            else -1
+        )
+        if reason is None and (
+            write_block_index >= len(sequence.block_table)
+            or sequence.block_table[write_block_index]
+            != lease.write_block_id
+        ):
+            reason = "write_block_position_mismatch"
+        block = (
+            self.block_manager.blocks[lease.write_block_id]
+            if reason is None
+            else None
+        )
+        if reason is None and block.hash != -1:
+            reason = "write_block_already_published"
+        materialized_tokens = (
+            lease.first_write_position + 4
+            if (
+                reason is None
+                and row.exact_burst_phase == "prefix"
+            )
+            else (
+                lease.last_write_position + 1
+                if reason is None
+                else 0
+            )
+        )
+        block_end = (
+            (write_block_index + 1)
+            * self.block_manager.block_size
+            if reason is None
+            else 0
+        )
+        predecessor_hash = None
+        if (
+            reason is None
+            and materialized_tokens >= block_end
+            and write_block_index > 0
+        ):
+            predecessor_id = sequence.block_table[
+                write_block_index - 1
+            ]
+            predecessor = self.block_manager.blocks[
+                predecessor_id
+            ]
+            predecessor_hash = predecessor.hash
+            if (
+                predecessor_hash == -1
+                or (
+                    self.block_manager.hash_to_block_id.get(
+                        predecessor_hash
+                    )
+                    != predecessor_id
+                    and predecessor_id
+                    not in self.block_manager.hash_to_block_ids.get(
+                        predecessor_hash,
+                        (),
+                    )
+                )
+            ):
+                reason = "predecessor_hash_unavailable"
+        if reason is not None:
+            self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_fallback(
+                reason
+            )
+            return SchedulerPostprocessJournal.capture(
+                self,
+                seqs,
+            )
+        publication_plan = (
+            self.block_manager.plan_lease_write_block_publication(
+                sequence,
+                appended_tokens=row.output_tokens,
+                block_table_index=write_block_index,
+                expected_block_id=lease.write_block_id,
+                expected_generation=(
+                    lease.write_block_generation
+                ),
+                materialized_tokens=materialized_tokens,
+                predecessor_hash=predecessor_hash,
+            )
+        )
+        journal = ExactBurstPhaseDeltaJournal.capture(
+            self,
+            sequence,
+            expected_block_table_identity=(
+                lease.block_table_identity
+            ),
+            publication_plan=publication_plan,
+        )
+        self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_capture()
+        return journal
+
     def prepare_postprocess(
         self,
         seqs: tuple[Sequence, ...],
@@ -2532,10 +2790,6 @@ class Scheduler:
                     raise ValueError(
                         "output tokens appear after effective EOS"
                     )
-        journal = SchedulerPostprocessJournal.capture(
-            self,
-            seqs,
-        )
         exact_rows = tuple(
             (seq, row)
             for seq, row in zip(seqs, rows)
@@ -2546,6 +2800,14 @@ class Scheduler:
                 raise ValueError(
                     "exact burst output requires a single-row batch"
                 )
+        journal = self._select_exact_burst_phase_journal(
+            seqs,
+            rows,
+            is_prefill=is_prefill,
+            do_sample=do_sample,
+            batch_kind=batch_kind,
+        )
+        if exact_rows:
             sequence, row = exact_rows[0]
             lease = self._exact_greedy_decode_burst_pending_lease
             materialized_tokens = (
@@ -2563,12 +2825,16 @@ class Scheduler:
                 materialized_tokens = (
                     transfer.ticket.last_write_position + 1
                 )
-            journal.capture_exact_burst_publication_hashes(
-                self.block_manager,
-                sequence,
-                row.output_tokens,
-                materialized_tokens=materialized_tokens,
-            )
+            if isinstance(
+                journal,
+                SchedulerPostprocessJournal,
+            ):
+                journal.capture_exact_burst_publication_hashes(
+                    self.block_manager,
+                    sequence,
+                    row.output_tokens,
+                    materialized_tokens=materialized_tokens,
+                )
         return PreparedSchedulerPostprocess(
             scheduled_sequence_ids=scheduled_sequence_ids,
             rows=rows,
