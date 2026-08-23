@@ -5697,6 +5697,12 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         fields["exact_greedy_decode_burst_split_phase"].default
         is False
     )
+    assert (
+        fields[
+            "exact_greedy_decode_burst_ragged_coalescing"
+        ].default
+        is False
+    )
     assert fields["exact_greedy_decode_burst_tokens"].default == 4
     with tempfile.TemporaryDirectory() as model:
         for invalid in (0, 1, None, "true"):
@@ -5733,6 +5739,20 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 Config(
                     model=model,
                     exact_greedy_decode_burst_split_phase=invalid,
+                )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_ragged_"
+                    "coalescing must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_ragged_coalescing=(
+                        invalid
+                    ),
                 )
         for invalid in (False, True, 1, 9, 4.0, None):
             with pytest.raises(
@@ -5780,15 +5800,52 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 exact_greedy_decode_burst_split_phase=True,
                 exact_greedy_decode_burst_tokens=8,
             )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^ragged coalescing requires "
+                "exact_greedy_decode_burst$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst_ragged_coalescing=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^ragged coalescing requires split phase$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_ragged_coalescing=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^ragged coalescing requires K8$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_split_phase=True,
+                exact_greedy_decode_burst_tokens=4,
+                exact_greedy_decode_burst_ragged_coalescing=True,
+            )
         enabled = Config(
             model=model,
             exact_greedy_decode_burst=True,
             exact_greedy_decode_burst_split_phase=True,
             exact_greedy_decode_burst_tokens=8,
+            exact_greedy_decode_burst_ragged_coalescing=True,
         )
     assert enabled.exact_greedy_decode_burst is True
     assert enabled.exact_greedy_decode_burst_continuation is False
     assert enabled.exact_greedy_decode_burst_split_phase is True
+    assert (
+        enabled.exact_greedy_decode_burst_ragged_coalescing
+        is True
+    )
     assert enabled.exact_greedy_decode_burst_tokens == 8
 
 
