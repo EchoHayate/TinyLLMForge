@@ -78,6 +78,9 @@ POLICY_CONFIGS = {
         "selectable": True,
         "entrypoint": "production",
         "profile_ordinary_tail_after_full_bursts": True,
+        "scheduler_only_fallback_reasons": (
+            "insufficient_output_budget",
+        ),
         "correctness_sampled_logit_d2h_calls": 2,
         "ordinary_tail_sampling_points": ("decode-final",),
     },
@@ -610,7 +613,17 @@ def _validate_performance_rows(rows: list[dict]) -> list[dict]:
             for value in values:
                 _non_negative_number(value, field)
         expected_profile_rows = (
-            29
+            (
+                summary["attempts"]
+                + (127 - summary["committed_tokens"])
+                - sum(
+                    summary["fallback_counts"].get(reason, 0)
+                    for reason in config.get(
+                        "scheduler_only_fallback_reasons",
+                        (),
+                    )
+                )
+            )
             if config["split"]
             else (
                 summary["commits"]

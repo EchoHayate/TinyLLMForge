@@ -216,7 +216,14 @@ def _case_row(policy: str) -> dict:
         _burst_summary(policy)["committed_tokens"]
     )
     decode_steps = (
-        commits + tail * 2
+        (
+            commits
+            + tail * 2
+            - _burst_summary(policy)["fallback_counts"].get(
+                "insufficient_output_budget",
+                0,
+            )
+        )
         if split
         else (commits if enabled else generated_tokens - 1)
     )
@@ -535,7 +542,7 @@ def test_case_validation_binds_phase_and_counter_inventory() -> None:
     assert row["exact_greedy_decode_burst_summary"][
         "prefix_commits"
     ] == 15
-    assert len(row["decode_host_ns"]) == 29
+    assert len(row["decode_host_ns"]) == 28
 
 
 def test_case_validation_accepts_scheduler_owned_single_token_tail() -> None:

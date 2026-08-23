@@ -695,6 +695,13 @@ def validate_case_row(row) -> dict:
                 expected_decode_tokens
                 - summary["committed_tokens"]
             )
+            - sum(
+                summary["fallback_counts"].get(reason, 0)
+                for reason in config.get(
+                    "scheduler_only_fallback_reasons",
+                    (),
+                )
+            )
             if config.get(
                 "profile_ordinary_tail_after_full_bursts",
                 False,

@@ -58,6 +58,9 @@ POLICY_CONFIGS = {
         "selectable": True,
         "entrypoint": "production",
         "profile_ordinary_tail_after_full_bursts": True,
+        "scheduler_only_fallback_reasons": (
+            "insufficient_output_budget",
+        ),
         "correctness_sampled_logit_d2h_calls": 2,
         "ordinary_tail_sampling_points": ("decode-final",),
     },
