@@ -29,6 +29,9 @@ SPEC.loader.exec_module(module)
 
 ExactBurstPhaseTransfer = module.ExactBurstPhaseTransfer
 ExactBurstPublicationTicket = module.ExactBurstPublicationTicket
+ExactBurstSplitPhaseMailboxBackend = (
+    module.ExactBurstSplitPhaseMailboxBackend
+)
 ExactBurstSplitPhaseTransaction = (
     module.ExactBurstSplitPhaseTransaction
 )
@@ -59,6 +62,71 @@ class _Mailbox:
     def tolist(self):
         self.tolist_calls += 1
         return list(self.values)
+
+
+class _CopyMailbox:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+        self.values = ()
+
+    def copy_(self, source, *, non_blocking):
+        self.events.append(
+            (
+                "copy",
+                self.label,
+                tuple(source.values),
+                non_blocking,
+            )
+        )
+        self.values = tuple(source.values)
+        return self
+
+    def tolist(self):
+        self.events.append(("tolist", self.label))
+        return list(self.values)
+
+
+class _TokenSlice:
+    def __init__(self, values):
+        self.values = tuple(values)
+
+
+class _Event:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+
+    def record(self, stream):
+        self.events.append(
+            ("record", self.label, stream.label)
+        )
+
+    def synchronize(self):
+        self.events.append(("synchronize", self.label))
+
+
+class _Stream:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+
+    def wait_event(self, event):
+        self.events.append(
+            ("wait_event", self.label, event.label)
+        )
+
+
+class _StreamContext:
+    def __init__(self, stream, events):
+        self.stream = stream
+        self.events = events
+
+    def __enter__(self):
+        self.events.append(("enter_stream", self.stream.label))
+
+    def __exit__(self, *_args):
+        self.events.append(("exit_stream", self.stream.label))
 
 
 def _assert_raises(
@@ -315,6 +383,100 @@ def test_transaction_failure_phase_is_explicit():
     assert post_prefix.failure_reason == "suffix_commit_failure"
 
 
+def test_mailbox_backend_orders_events_and_prevents_early_reuse():
+    events = []
+    compute_stream = _Stream("compute", events)
+    copy_stream = _Stream("copy", events)
+    prefix_mailbox = _CopyMailbox("prefix", events)
+    suffix_mailbox = _CopyMailbox("suffix", events)
+    backend = ExactBurstSplitPhaseMailboxBackend(
+        copy_stream=copy_stream,
+        prefix_mailbox=prefix_mailbox,
+        suffix_mailbox=suffix_mailbox,
+        event_factory=lambda label: _Event(label, events),
+        current_stream=lambda: compute_stream,
+        stream_context=lambda stream: _StreamContext(
+            stream,
+            events,
+        ),
+    )
+    prefix, suffix = _tickets()
+    generation = backend.begin_transaction()
+    prefix_transfer = backend.enqueue_phase(
+        ticket=prefix,
+        token_slice=_TokenSlice((10, 11, 12, 13)),
+        mailbox_generation=generation,
+    )
+    suffix_transfer = backend.enqueue_phase(
+        ticket=suffix,
+        token_slice=_TokenSlice((14, 15, 16, 17)),
+        mailbox_generation=generation,
+    )
+    assert events == [
+        ("record", "prefix_compute_done", "compute"),
+        ("wait_event", "copy", "prefix_compute_done"),
+        ("enter_stream", "copy"),
+        ("copy", "prefix", (10, 11, 12, 13), True),
+        ("record", "prefix_copy_done", "copy"),
+        ("exit_stream", "copy"),
+        ("record", "suffix_compute_done", "compute"),
+        ("wait_event", "copy", "suffix_compute_done"),
+        ("enter_stream", "copy"),
+        ("copy", "suffix", (14, 15, 16, 17), True),
+        ("record", "suffix_copy_done", "copy"),
+        ("exit_stream", "copy"),
+    ]
+    _assert_raises(
+        RuntimeError,
+        "split-phase mailboxes are already owned",
+        backend.begin_transaction,
+    )
+    assert prefix_transfer.wait_tokens() == (10, 11, 12, 13)
+    assert suffix_transfer.wait_tokens() == (14, 15, 16, 17)
+    backend.release_transaction(generation)
+    assert backend.begin_transaction() == generation + 1
+
+
+def test_mailbox_backend_requires_matching_generation_and_phase():
+    events = []
+    backend = ExactBurstSplitPhaseMailboxBackend(
+        copy_stream=_Stream("copy", events),
+        prefix_mailbox=_CopyMailbox("prefix", events),
+        suffix_mailbox=_CopyMailbox("suffix", events),
+        event_factory=lambda label: _Event(label, events),
+        current_stream=lambda: _Stream("compute", events),
+        stream_context=lambda stream: _StreamContext(
+            stream,
+            events,
+        ),
+    )
+    prefix, _suffix = _tickets()
+    generation = backend.begin_transaction()
+    _assert_raises(
+        ValueError,
+        "mailbox generation does not own the active transaction",
+        lambda: backend.enqueue_phase(
+            ticket=prefix,
+            token_slice=_TokenSlice((10, 11, 12, 13)),
+            mailbox_generation=generation + 1,
+        ),
+    )
+    backend.enqueue_phase(
+        ticket=prefix,
+        token_slice=_TokenSlice((10, 11, 12, 13)),
+        mailbox_generation=generation,
+    )
+    _assert_raises(
+        ValueError,
+        "prefix transfer was already enqueued",
+        lambda: backend.enqueue_phase(
+            ticket=prefix,
+            token_slice=_TokenSlice((10, 11, 12, 13)),
+            mailbox_generation=generation,
+        ),
+    )
+
+
 def main() -> None:
     test_publication_tickets_are_contiguous_exhaustive_and_stable()
     test_ticket_builder_rejects_non_k8_and_non_k4_shapes()
@@ -322,6 +484,8 @@ def main() -> None:
     test_phase_transfer_waits_once_and_returns_exact_tokens()
     test_transaction_requires_monotonic_ordered_transitions()
     test_transaction_failure_phase_is_explicit()
+    test_mailbox_backend_orders_events_and_prevents_early_reuse()
+    test_mailbox_backend_requires_matching_generation_and_phase()
     print("exact greedy decode burst split-phase tests passed")
 
 

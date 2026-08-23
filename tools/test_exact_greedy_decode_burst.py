@@ -26,6 +26,20 @@ module = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
 
+SPLIT_MODULE_PATH = (
+    REPO_ROOT
+    / "tinyvllm"
+    / "engine"
+    / "exact_greedy_decode_burst_split_phase.py"
+)
+SPLIT_SPEC = importlib.util.spec_from_file_location(
+    "exact_greedy_decode_burst_split_phase_for_burst_test",
+    SPLIT_MODULE_PATH,
+)
+split_module = importlib.util.module_from_spec(SPLIT_SPEC)
+sys.modules[SPLIT_SPEC.name] = split_module
+SPLIT_SPEC.loader.exec_module(split_module)
+
 ExactGreedyDecodeBurstCaptureReceipt = (
     module.ExactGreedyDecodeBurstCaptureReceipt
 )
@@ -709,6 +723,109 @@ def _lease() -> ExactGreedyDecodeBurstLease:
         remaining_output_tokens=9,
         completion_only=True,
     )
+
+
+def _k8_lease() -> ExactGreedyDecodeBurstLease:
+    return build_exact_greedy_decode_burst_lease(
+        sequence_id=17,
+        schedule_generation=9,
+        graph_generation=4,
+        requested_token_count=8,
+        authorized_token_count=8,
+        initial_completion_count=3,
+        initial_sequence_length=249,
+        block_table_identity=((7, 2),),
+        write_block_id=7,
+        write_block_generation=2,
+        first_write_position=248,
+        last_write_position=255,
+        first_physical_slot=2040,
+        last_physical_slot=2047,
+        remaining_output_tokens=9,
+        completion_only=True,
+    )
+
+
+class _SplitCompletion:
+    def synchronize(self):
+        return None
+
+
+class _SplitMailbox:
+    def __init__(self, values):
+        self.values = tuple(values)
+
+    def tolist(self):
+        return list(self.values)
+
+
+class _SplitBackend:
+    def __init__(self, fake_graph, *, fail_phase=None):
+        self._transfer_type = split_module.ExactBurstPhaseTransfer
+        self._result_type = (
+            split_module.ExactGreedyDecodeBurstSplitResult
+        )
+        self.fake_graph = fake_graph
+        self.fail_phase = fail_phase
+        self.calls = []
+        self.aborted = []
+
+    def begin_transaction(self):
+        self.calls.append(("begin", self.fake_graph.replay_calls))
+        return 7
+
+    def build_tickets(self, **kwargs):
+        return split_module.build_exact_burst_publication_tickets(
+            **kwargs
+        )
+
+    def enqueue_phase(
+        self,
+        *,
+        ticket,
+        token_slice,
+        mailbox_generation,
+    ):
+        self.calls.append(
+            (
+                ticket.phase,
+                self.fake_graph.replay_calls,
+                tuple(token_slice.values),
+                mailbox_generation,
+            )
+        )
+        if ticket.phase == self.fail_phase:
+            raise RuntimeError(f"{ticket.phase} copy failed")
+        return self._transfer_type(
+            ticket=ticket,
+            mailbox_generation=mailbox_generation,
+            token_count=ticket.phase_token_count,
+            byte_count=ticket.phase_token_count * 8,
+            completion=_SplitCompletion(),
+            mailbox=_SplitMailbox(token_slice.values),
+        )
+
+    def abort_transaction(self, mailbox_generation):
+        self.aborted.append(mailbox_generation)
+
+    def build_result(
+        self,
+        *,
+        parent_lease_identity_sha256,
+        graph_identity_sha256,
+        replay_count,
+        prefix,
+        suffix,
+    ):
+        return self._result_type(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            graph_identity_sha256=graph_identity_sha256,
+            replay_count=replay_count,
+            prefix=prefix,
+            suffix=suffix,
+        )
 
 
 def _continuation_receipt(
@@ -2101,6 +2218,82 @@ def test_result_construction_failure_quarantines_original_error() -> None:
     assert fake_graph.replay_calls == 4
 
 
+def test_split_phase_replay_enqueues_prefix_after_four_and_suffix_after_eight():
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+        history_capacity=8
+    )
+
+    def replay_step(ordinal):
+        tensors["token_history"].values[ordinal] = ordinal + 50
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    backend = _SplitBackend(fake_graph)
+    result = graph.replay_split_phase(
+        lease=_k8_lease(),
+        initial_token=49,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=[],
+            dtype="int32",
+            element_size=4,
+        ),
+        mailbox_backend=backend,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+
+    assert fake_graph.replay_calls == 8
+    assert backend.calls == [
+        ("begin", 0),
+        ("prefix", 4, (50, 51, 52, 53), 7),
+        ("suffix", 8, (54, 55, 56, 57), 7),
+    ]
+    assert result.replay_count == 8
+    assert result.prefix.wait_tokens() == (50, 51, 52, 53)
+    assert result.suffix.wait_tokens() == (54, 55, 56, 57)
+    assert tensors["token_history"].tolist_calls == 0
+
+
+def test_split_phase_copy_failure_aborts_and_quarantines():
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+        history_capacity=8
+    )
+
+    def replay_step(ordinal):
+        tensors["token_history"].values[ordinal] = ordinal + 60
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    backend = _SplitBackend(fake_graph, fail_phase="prefix")
+    _assert_raises(
+        RuntimeError,
+        "prefix copy failed",
+        lambda: graph.replay_split_phase(
+            lease=_k8_lease(),
+            initial_token=59,
+            block_table=_BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=[],
+                dtype="int32",
+                element_size=4,
+            ),
+            mailbox_backend=backend,
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+        ),
+    )
+    assert fake_graph.replay_calls == 4
+    assert backend.aborted == [7]
+    assert graph.summary()["quarantine_reason"] == (
+        "split_phase_failure:RuntimeError"
+    )
+
+
 def main() -> None:
     test_policy_clips_to_budget_and_current_block()
     test_boundary_width_one_falls_back_before_replay()
@@ -2132,6 +2325,8 @@ def main() -> None:
     test_correctness_sampling_rejects_invalid_epoch_ordinals()
     test_capture_rejects_any_live_kv_mutation()
     test_result_construction_failure_quarantines_original_error()
+    test_split_phase_replay_enqueues_prefix_after_four_and_suffix_after_eight()
+    test_split_phase_copy_failure_aborts_and_quarantines()
     print("exact greedy decode burst tests passed")
 
 

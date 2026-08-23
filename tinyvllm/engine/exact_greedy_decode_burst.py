@@ -1868,6 +1868,166 @@ class ExactGreedyDecodeBurstGraph:
             self.stats.quarantine(reason)
             raise
 
+    def replay_split_phase(
+        self,
+        *,
+        lease,
+        initial_token: int,
+        mailbox_backend,
+        block_table=None,
+        block_table_factory=None,
+        graph_generation: int,
+        rank: int,
+        tensor_parallel_size: int,
+        expected_graph_identity_sha256: Optional[str] = None,
+    ):
+        reason = self._pre_replay_fallback(
+            lease=lease,
+            graph_generation=graph_generation,
+            rank=rank,
+            tensor_parallel_size=tensor_parallel_size,
+            expected_graph_identity_sha256=(
+                expected_graph_identity_sha256
+            ),
+        )
+        if reason is not None:
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+        if lease.authorized_token_count != 8:
+            reason = "split_phase_requires_k8"
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+        if (
+            isinstance(initial_token, bool)
+            or not isinstance(initial_token, int)
+            or initial_token < 0
+        ):
+            reason = "initial_token_invalid"
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+        required_backend_methods = (
+            "begin_transaction",
+            "build_tickets",
+            "enqueue_phase",
+            "build_result",
+            "abort_transaction",
+        )
+        if any(
+            not callable(getattr(mailbox_backend, name, None))
+            for name in required_backend_methods
+        ):
+            reason = "split_phase_backend_invalid"
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+
+        if block_table_factory is not None:
+            if not callable(block_table_factory):
+                reason = "block_table_factory_invalid"
+                self.stats.record_fallback(reason)
+                return ExactGreedyDecodeBurstFallback(reason)
+            try:
+                block_table = block_table_factory()
+            except Exception:
+                reason = "block_table_materialization_failure"
+                self.stats.record_fallback(reason)
+                return ExactGreedyDecodeBurstFallback(reason)
+        reason = self._block_table_fallback(block_table)
+        if reason is not None:
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+
+        tensors = self.tensors
+        self._continuation_receipt = None
+        try:
+            type(self)._reset_static_state(
+                tensors,
+                scratch_block_id=None,
+                block_size=self.block_size,
+            )
+        except Exception:
+            reason = "static_state_reset_failure"
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+        for name, value in (
+            ("input_token", initial_token),
+            ("position", lease.first_write_position),
+            ("context_length", lease.initial_sequence_length),
+            ("slot_mapping", lease.first_physical_slot),
+        ):
+            try:
+                tensors[name].fill_(value)
+            except Exception:
+                reason = f"{name}_bind_failure"
+                self.stats.record_fallback(reason)
+                return ExactGreedyDecodeBurstFallback(reason)
+        try:
+            tensors["block_table"].copy_(block_table)
+        except Exception:
+            reason = "block_table_bind_failure"
+            self.stats.record_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+
+        generation = None
+        completed_replays = 0
+        try:
+            generation = mailbox_backend.begin_transaction()
+            prefix_ticket, suffix_ticket = (
+                mailbox_backend.build_tickets(
+                    parent_lease_identity_sha256=(
+                        lease.identity_sha256
+                    ),
+                    first_write_position=(
+                        lease.first_write_position
+                    ),
+                    first_physical_slot=(
+                        lease.first_physical_slot
+                    ),
+                    parent_token_count=(
+                        lease.authorized_token_count
+                    ),
+                    prefix_token_count=4,
+                )
+            )
+            for _ in range(4):
+                self.graph.replay()
+                completed_replays += 1
+                self.stats.record_replays(1)
+            prefix = mailbox_backend.enqueue_phase(
+                ticket=prefix_ticket,
+                token_slice=tensors["token_history"][0:4],
+                mailbox_generation=generation,
+            )
+            for _ in range(4):
+                self.graph.replay()
+                completed_replays += 1
+                self.stats.record_replays(1)
+            suffix = mailbox_backend.enqueue_phase(
+                ticket=suffix_ticket,
+                token_slice=tensors["token_history"][4:8],
+                mailbox_generation=generation,
+            )
+            return mailbox_backend.build_result(
+                parent_lease_identity_sha256=(
+                    lease.identity_sha256
+                ),
+                graph_identity_sha256=(
+                    self.receipt.graph_identity_sha256
+                ),
+                replay_count=completed_replays,
+                prefix=prefix,
+                suffix=suffix,
+            )
+        except Exception as error:
+            reason = "split_phase_failure:" + type(error).__name__
+            self.invalidate_continuation(reason)
+            self.stats.quarantine(reason)
+            if generation is not None:
+                try:
+                    mailbox_backend.abort_transaction(generation)
+                except Exception:
+                    pass
+            raise
+
     def capability(self) -> dict[str, object]:
         reason = self.stats.quarantine_reason
         return {

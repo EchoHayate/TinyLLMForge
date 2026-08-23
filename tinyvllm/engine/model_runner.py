@@ -77,6 +77,9 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstLease,
     ExactGreedyDecodeBurstStats,
 )
+from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
+    ExactBurstSplitPhaseMailboxBackend,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket import (
     Qwen35HybridPrefixRestoreParticipant,
 )
@@ -2231,6 +2234,10 @@ class ModelRunner:
         )
         self.exact_greedy_decode_burst_graph = None
         self.exact_greedy_decode_burst_correctness_graph = None
+        self.exact_greedy_decode_burst_split_phase_backend = None
+        self.exact_greedy_decode_burst_split_phase_correctness_backend = (
+            None
+        )
         self.exact_greedy_decode_burst_stats = (
             ExactGreedyDecodeBurstStats()
         )
@@ -9019,6 +9026,33 @@ class ModelRunner:
                 "exact_greedy_burst_block_table",
             )
 
+        if self.config.exact_greedy_decode_burst_split_phase:
+            backend = (
+                self
+                .exact_greedy_decode_burst_split_phase_correctness_backend
+                if correctness_trace
+                else self.exact_greedy_decode_burst_split_phase_backend
+            )
+            if backend is None:
+                return self._exact_greedy_decode_burst_fallback(
+                    self.exact_greedy_decode_burst_stats,
+                    "split_phase_backend_unavailable",
+                )
+            return graph.replay_split_phase(
+                lease=lease,
+                initial_token=int(seq.last_token),
+                block_table=None,
+                block_table_factory=materialize_block_table,
+                mailbox_backend=backend,
+                graph_generation=int(
+                    capability["graph_generation"]
+                ),
+                rank=self.rank,
+                tensor_parallel_size=self.world_size,
+                expected_graph_identity_sha256=capability[
+                    "graph_identity_sha256"
+                ],
+            )
         return graph.replay(
             lease=lease,
             initial_token=int(seq.last_token),
@@ -9075,6 +9109,32 @@ class ModelRunner:
             ),
         )
 
+    def _create_exact_greedy_decode_burst_split_phase_backend(
+        self,
+    ) -> ExactBurstSplitPhaseMailboxBackend:
+        static_device = self.kv_cache.device
+        return ExactBurstSplitPhaseMailboxBackend(
+            copy_stream=torch.cuda.Stream(device=static_device),
+            prefix_mailbox=torch.empty(
+                (4,),
+                dtype=torch.int64,
+                device="cpu",
+                pin_memory=True,
+            ),
+            suffix_mailbox=torch.empty(
+                (4,),
+                dtype=torch.int64,
+                device="cpu",
+                pin_memory=True,
+            ),
+            event_factory=lambda _label: torch.cuda.Event(),
+            current_stream=lambda: torch.cuda.current_stream(
+                device=static_device
+            ),
+            stream_context=torch.cuda.stream,
+            synchronize=torch.cuda.synchronize,
+        )
+
     def _capture_exact_greedy_decode_burst(
         self,
         *,
@@ -9086,7 +9146,13 @@ class ModelRunner:
             if correctness_trace
             else "exact_greedy_decode_burst_graph"
         )
+        target_backend_attribute = (
+            "exact_greedy_decode_burst_split_phase_correctness_backend"
+            if correctness_trace
+            else "exact_greedy_decode_burst_split_phase_backend"
+        )
         setattr(self, target_attribute, None)
+        setattr(self, target_backend_attribute, None)
         if not self.config.exact_greedy_decode_burst:
             return None
         if self.world_size != 1:
@@ -9249,6 +9315,13 @@ class ModelRunner:
             setattr(self, target_attribute, None)
             return None
         setattr(self, target_attribute, graph)
+        if self.config.exact_greedy_decode_burst_split_phase:
+            setattr(
+                self,
+                target_backend_attribute,
+                self
+                ._create_exact_greedy_decode_burst_split_phase_backend(),
+            )
         return graph
 
     @torch.inference_mode()

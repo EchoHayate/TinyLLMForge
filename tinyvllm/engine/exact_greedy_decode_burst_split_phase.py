@@ -308,6 +308,179 @@ class ExactGreedyDecodeBurstSplitResult:
                 )
 
 
+class ExactBurstSplitPhaseMailboxBackend:
+    """Own two pinned mailboxes for one in-flight split transaction."""
+
+    def __init__(
+        self,
+        *,
+        copy_stream,
+        prefix_mailbox,
+        suffix_mailbox,
+        event_factory,
+        current_stream,
+        stream_context,
+        synchronize=None,
+    ):
+        if not callable(event_factory):
+            raise ValueError("event_factory must be callable")
+        if not callable(current_stream):
+            raise ValueError("current_stream must be callable")
+        if not callable(stream_context):
+            raise ValueError("stream_context must be callable")
+        if synchronize is not None and not callable(synchronize):
+            raise ValueError("synchronize must be callable or None")
+        if not callable(getattr(copy_stream, "wait_event", None)):
+            raise ValueError("copy_stream must wait on events")
+        for mailbox, name in (
+            (prefix_mailbox, "prefix_mailbox"),
+            (suffix_mailbox, "suffix_mailbox"),
+        ):
+            if not callable(getattr(mailbox, "copy_", None)):
+                raise ValueError(f"{name} must expose copy_")
+            if not callable(getattr(mailbox, "tolist", None)):
+                raise ValueError(f"{name} must expose tolist")
+        self.copy_stream = copy_stream
+        self.prefix_mailbox = prefix_mailbox
+        self.suffix_mailbox = suffix_mailbox
+        self._event_factory = event_factory
+        self._current_stream = current_stream
+        self._stream_context = stream_context
+        self._synchronize = synchronize
+        self._generation = 0
+        self._active_generation: Optional[int] = None
+        self._enqueued_phases: set[str] = set()
+
+    @property
+    def active_generation(self) -> Optional[int]:
+        return self._active_generation
+
+    def begin_transaction(self) -> int:
+        if self._active_generation is not None:
+            raise RuntimeError(
+                "split-phase mailboxes are already owned"
+            )
+        self._generation += 1
+        self._active_generation = self._generation
+        self._enqueued_phases.clear()
+        return self._generation
+
+    def enqueue_phase(
+        self,
+        *,
+        ticket: ExactBurstPublicationTicket,
+        token_slice,
+        mailbox_generation: int,
+    ) -> ExactBurstPhaseTransfer:
+        if not isinstance(ticket, ExactBurstPublicationTicket):
+            raise ValueError(
+                "phase ticket has an invalid type"
+            )
+        if mailbox_generation != self._active_generation:
+            raise ValueError(
+                "mailbox generation does not own the active "
+                "transaction"
+            )
+        if ticket.phase in self._enqueued_phases:
+            raise ValueError(
+                f"{ticket.phase} transfer was already enqueued"
+            )
+        mailbox = (
+            self.prefix_mailbox
+            if ticket.phase == "prefix"
+            else self.suffix_mailbox
+        )
+        producer = self._event_factory(
+            f"{ticket.phase}_compute_done"
+        )
+        producer.record(self._current_stream())
+        self.copy_stream.wait_event(producer)
+        completion = self._event_factory(
+            f"{ticket.phase}_copy_done"
+        )
+        with self._stream_context(self.copy_stream):
+            mailbox.copy_(token_slice, non_blocking=True)
+            completion.record(self.copy_stream)
+        self._enqueued_phases.add(ticket.phase)
+        return ExactBurstPhaseTransfer(
+            ticket=ticket,
+            mailbox_generation=mailbox_generation,
+            token_count=ticket.phase_token_count,
+            byte_count=ticket.phase_token_count * 8,
+            completion=completion,
+            mailbox=mailbox,
+        )
+
+    @staticmethod
+    def build_tickets(
+        *,
+        parent_lease_identity_sha256: str,
+        first_write_position: int,
+        first_physical_slot: int,
+        parent_token_count: int,
+        prefix_token_count: int,
+    ) -> tuple[
+        ExactBurstPublicationTicket,
+        ExactBurstPublicationTicket,
+    ]:
+        return build_exact_burst_publication_tickets(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            first_write_position=first_write_position,
+            first_physical_slot=first_physical_slot,
+            parent_token_count=parent_token_count,
+            prefix_token_count=prefix_token_count,
+        )
+
+    @staticmethod
+    def build_result(
+        *,
+        parent_lease_identity_sha256: str,
+        graph_identity_sha256: str,
+        replay_count: int,
+        prefix: ExactBurstPhaseTransfer,
+        suffix: ExactBurstPhaseTransfer,
+    ) -> ExactGreedyDecodeBurstSplitResult:
+        result = ExactGreedyDecodeBurstSplitResult(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            graph_identity_sha256=graph_identity_sha256,
+            replay_count=replay_count,
+            prefix=prefix,
+            suffix=suffix,
+        )
+        return validate_exact_burst_split_result(
+            result,
+            expected_parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            expected_graph_identity_sha256=(
+                graph_identity_sha256
+            ),
+        )
+
+    def abort_transaction(self, mailbox_generation: int) -> None:
+        if mailbox_generation != self._active_generation:
+            raise ValueError(
+                "mailbox generation does not own the active "
+                "transaction"
+            )
+        if self._synchronize is not None:
+            self._synchronize()
+        self.release_transaction(mailbox_generation)
+
+    def release_transaction(self, mailbox_generation: int) -> None:
+        if mailbox_generation != self._active_generation:
+            raise ValueError(
+                "mailbox generation does not own the active "
+                "transaction"
+            )
+        self._active_generation = None
+        self._enqueued_phases.clear()
+
+
 def _validate_ticket_identity(
     ticket: ExactBurstPublicationTicket,
 ) -> None:

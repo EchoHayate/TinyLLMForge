@@ -717,6 +717,7 @@ def make_runner(**overrides):
         "graph_resident_greedy_tail": False,
         "exact_greedy_decode_burst": False,
         "exact_greedy_decode_burst_continuation": False,
+        "exact_greedy_decode_burst_split_phase": False,
         "exact_greedy_decode_burst_tokens": 4,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
@@ -761,6 +762,10 @@ def make_runner(**overrides):
     ]
     runner.exact_greedy_decode_burst_graph = None
     runner.exact_greedy_decode_burst_correctness_graph = None
+    runner.exact_greedy_decode_burst_split_phase_backend = None
+    runner.exact_greedy_decode_burst_split_phase_correctness_backend = (
+        None
+    )
     runner.exact_greedy_decode_burst_stats = (
         burst_module.ExactGreedyDecodeBurstStats()
     )
@@ -4299,6 +4304,94 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
     assert call["expected_graph_identity_sha256"] == "b" * 64
 
 
+def test_model_runner_split_phase_delegates_to_k8_mailbox_backend():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_split_phase=True,
+        exact_greedy_decode_burst_tokens=8,
+    )
+    calls = []
+    expected = object()
+    backend = object()
+    runner.exact_greedy_decode_burst_split_phase_backend = backend
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **_kwargs):
+            raise AssertionError(
+                "split phase used ordinary replay"
+            )
+
+        def replay_split_phase(self, **kwargs):
+            calls.append(kwargs)
+            return expected
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=8,
+        authorized_token_count=8,
+        initial_completion_count=1,
+        initial_sequence_length=249,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=248,
+        last_write_position=255,
+        first_physical_slot=5 * 256 + 248,
+        last_physical_slot=5 * 256 + 255,
+        remaining_output_tokens=8,
+        completion_only=True,
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        last_token=31,
+        block_table=[5],
+    )
+
+    steps, original = _capture_profile_steps()
+    try:
+        result = runner.run_exact_greedy_decode_burst(
+            (seq,),
+            lease,
+        )
+    finally:
+        model_runner.run_profiled_step = original
+
+    assert result is expected
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["lease"] is lease
+    assert call["initial_token"] == 31
+    assert call["mailbox_backend"] is backend
+    assert call["block_table"] is None
+    assert callable(call["block_table_factory"])
+    assert call["graph_generation"] == 4
+    assert call["rank"] == 0
+    assert call["tensor_parallel_size"] == 1
+    assert call["expected_graph_identity_sha256"] == "b" * 64
+    assert steps[0]["dispatch"] == "cuda_graph"
+
+
 def test_model_runner_exact_burst_materializes_only_in_lazy_factory():
     tree = ast.parse(open(_MODEL_RUNNER_PATH).read())
     model_runner_class = next(
@@ -4478,7 +4571,11 @@ def test_model_runner_exact_burst_rejects_wrong_sequence_before_graph():
 
 
 def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
-    runner = make_runner(exact_greedy_decode_burst=True)
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_split_phase=True,
+        exact_greedy_decode_burst_tokens=8,
+    )
     runner.config.max_model_len = 512
     runner.config.num_kvcache_blocks = 100
     runner.config.hf_config = SimpleNamespace(vocab_size=32)
@@ -4490,6 +4587,14 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     observed = {}
     allocation_devices = []
     marker = object()
+    production_backend = object()
+    correctness_backend = object()
+    split_backends = iter(
+        (production_backend, correctness_backend)
+    )
+    runner._create_exact_greedy_decode_burst_split_phase_backend = (
+        lambda: next(split_backends)
+    )
 
     class StaticTensor(FakeCaptureTensor):
         def __init__(self, shape, *, dtype):
@@ -4590,6 +4695,10 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
 
     assert result is marker
     assert runner.exact_greedy_decode_burst_graph is marker
+    assert (
+        runner.exact_greedy_decode_burst_split_phase_backend
+        is production_backend
+    )
     assert production_observed["graph_pool"] == "private-pool"
     assert production_observed["graph_generation"] == 6
     assert production_observed["scratch_block_id"] == 100
@@ -4620,6 +4729,11 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     assert (
         runner.exact_greedy_decode_burst_correctness_graph
         is marker
+    )
+    assert (
+        runner
+        .exact_greedy_decode_burst_split_phase_correctness_backend
+        is correctness_backend
     )
 
 
@@ -6342,6 +6456,7 @@ def main():
         test_exact_burst_scratch_is_reported_by_capacity_snapshot,
         test_exact_burst_capability_is_fail_closed_and_json_safe,
         test_model_runner_exact_burst_delegates_once_with_padded_block_table,
+        test_model_runner_split_phase_delegates_to_k8_mailbox_backend,
         test_model_runner_exact_burst_materializes_only_in_lazy_factory,
         test_model_runner_invalidates_both_burst_graphs,
         test_model_runner_exact_burst_replay_enters_inference_mode,
