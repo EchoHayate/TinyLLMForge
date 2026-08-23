@@ -236,7 +236,10 @@ def test_verifier_rejects_manifest_sidecar_and_source_tamper() -> None:
             ).read_text(encoding="utf-8").splitlines()
         ]
         (run_dir / correctness[0]["logits_path"]).unlink()
-        with pytest.raises(ValueError, match="missing|manifest"):
+        with pytest.raises(
+            ValueError,
+            match="missing|manifest|sidecar inventory",
+        ):
             verify_bundle(run_dir, repo_root=repo_root)
 
     with TemporaryDirectory() as temporary:
@@ -252,6 +255,16 @@ def test_verifier_rejects_manifest_sidecar_and_source_tamper() -> None:
         with pytest.raises(
             ValueError,
             match="digest mismatch|byte length mismatch",
+        ):
+            verify_bundle(run_dir, repo_root=repo_root)
+
+    with TemporaryDirectory() as temporary:
+        run_dir, repo_root = _ready_bundle(Path(temporary))
+        extra = run_dir / "logits" / "unreferenced.f32"
+        extra.write_bytes(b"\x00\x00\x00\x00")
+        with pytest.raises(
+            ValueError,
+            match="sidecar inventory mismatch",
         ):
             verify_bundle(run_dir, repo_root=repo_root)
 

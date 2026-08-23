@@ -1844,6 +1844,15 @@ def _validate_manifest(
     expected_files = PRIMARY_ARTIFACTS | {
         row["logits_path"] for row in correctness_rows
     }
+    referenced_sidecars = {
+        row["logits_path"] for row in correctness_rows
+    }
+    actual_sidecars = {
+        path.relative_to(run_dir).as_posix()
+        for path in (run_dir / "logits").rglob("*.f32")
+    }
+    if referenced_sidecars != actual_sidecars:
+        raise ValueError("sidecar inventory mismatch")
     artifacts = manifest.get("artifacts")
     if (
         not isinstance(artifacts, dict)

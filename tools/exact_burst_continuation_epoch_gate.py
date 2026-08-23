@@ -999,6 +999,15 @@ def produce_gate(
     source = _read_json(run_dir / "source_manifest.json")
     workload = _read_json(run_dir / "workload_manifest.json")
     summary = _read_json(run_dir / "summary.json")
+    referenced_sidecars = {
+        row.get("logits_path") for row in correctness_rows
+    }
+    actual_sidecars = {
+        path.relative_to(run_dir).as_posix()
+        for path in (run_dir / "logits").rglob("*.f32")
+    }
+    if referenced_sidecars != actual_sidecars:
+        raise ValueError("sidecar inventory mismatch")
     _validate_source_manifest(source, repo_root=Path(repo_root))
     _validate_workload_manifest(workload)
     identities = {
@@ -1058,9 +1067,7 @@ def produce_gate(
         "comparison_sha256": comparison_sha256,
     }
     _write_json(run_dir / "gate.json", gate)
-    sidecars = sorted({
-        row["logits_path"] for row in correctness_rows
-    })
+    sidecars = sorted(referenced_sidecars)
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "run_tag": comparison["run_tag"],
