@@ -885,7 +885,12 @@ def validate_correctness_rows(
                     row["generated_tokens"],
                 )
                 - 1
-            ) % POLICY_CONFIGS[policy]["width"]
+            )
+            if not POLICY_CONFIGS[policy].get(
+                "epoch_relative_sampling",
+                False,
+            ):
+                expected_ordinal %= POLICY_CONFIGS[policy]["width"]
             if selected_ordinal != expected_ordinal:
                 raise ValueError(
                     "selected replay ordinal mismatch"

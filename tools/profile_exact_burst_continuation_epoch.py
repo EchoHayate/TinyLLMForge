@@ -84,6 +84,7 @@ CONTINUATION_MAP_FIELDS = (
     "continuation_miss_counts",
     "continuation_invalidation_counts",
 )
+CAPTURE_COST_FIELDS = _base.CAPTURE_COST_FIELDS
 SOURCE_FILES = (
     "tinyvllm/config.py",
     "tinyvllm/engine/exact_greedy_decode_burst.py",
@@ -270,6 +271,7 @@ _base._combined_summary = _combined_summary
 _base._sampled_local_ordinals = _sampled_local_ordinals
 
 policy_order = _base.policy_order
+context_cases = _base.context_cases
 performance_identities = _base.performance_identities
 correctness_identities = _base.correctness_identities
 correctness_uses_burst_trace = _base.correctness_uses_burst_trace
@@ -281,6 +283,7 @@ validate_correctness_rows = _base.validate_correctness_rows
 summarize_rows = _base.summarize_rows
 read_float32_sidecar = _base.read_float32_sidecar
 write_float32_sidecar = _base.write_float32_sidecar
+sha256_file = _base.sha256_file
 run_case = _base.run_case
 run_correctness_probe = _base.run_correctness_probe
 
