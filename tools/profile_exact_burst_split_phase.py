@@ -312,6 +312,12 @@ def _validate_burst_summary(
         )
     )
     split = POLICY_CONFIGS[policy]["split"]
+    ragged = bool(
+        POLICY_CONFIGS[policy].get(
+            "ragged_coalescing",
+            False,
+        )
+    )
     split_activity = any(
         normalized[field] for field in SPLIT_COUNTER_FIELDS
     ) or bool(normalized["split_phase_failure_counts"])
@@ -321,8 +327,8 @@ def _validate_burst_summary(
                 "non-split policy reported split phase activity"
             )
         return normalized
-    commits = normalized["commits"]
-    expected_tokens = commits * 4
+    split_commits = normalized["prefix_commits"]
+    expected_tokens = split_commits * 4
     for field in (
         "prefix_commits",
         "suffix_commits",
@@ -334,7 +340,7 @@ def _validate_burst_summary(
         "suffix_phase_waits",
         "suffix_drains",
     ):
-        if normalized[field] != commits:
+        if normalized[field] != split_commits:
             raise ValueError(
                 f"split phase commit inventory mismatch: {field}"
             )
@@ -350,14 +356,44 @@ def _validate_burst_summary(
         "prefix_token_d2h_bytes",
         "suffix_token_d2h_bytes",
     ):
-        if normalized[field] != commits * 32:
+        if normalized[field] != split_commits * 32:
             raise ValueError(
                 f"split phase byte inventory mismatch: {field}"
             )
+    if ragged:
+        expected_requested_widths = {
+            "3": 1,
+            "4": 1,
+            "8": split_commits,
+        }
+        if (
+            split_commits != 15
+            or normalized["commits"] != split_commits + 2
+            or normalized["committed_tokens"] != 127
+            or normalized["target_model_forwards"] != 127
+            or normalized["graph_replays"] != 127
+            or normalized["final_token_d2h_calls"] != 2
+            or normalized["final_token_d2h_bytes"] != 56
+            or normalized["output_budget_clipped"] != 0
+            or normalized["block_boundary_clipped"] != 0
+            or normalized["requested_width_histogram"]
+            != expected_requested_widths
+            or normalized["authorized_width_histogram"]
+            != expected_requested_widths
+            or normalized["fallback_counts"]
+        ):
+            raise ValueError(
+                "ragged coalescing fallback inventory mismatch"
+            )
+        if normalized["split_phase_failure_counts"]:
+            raise ValueError(
+                "split phase failure inventory is nonzero"
+            )
+        return normalized
     if (
-        normalized["committed_tokens"] != commits * 8
-        or normalized["target_model_forwards"] != commits * 8
-        or normalized["graph_replays"] != commits * 8
+        normalized["committed_tokens"] != split_commits * 8
+        or normalized["target_model_forwards"] != split_commits * 8
+        or normalized["graph_replays"] != split_commits * 8
     ):
         raise ValueError("split phase replay inventory mismatch")
     if (
@@ -431,7 +467,7 @@ def _validate_split_inventory(
                 "non-split policy reported split phase activity"
             )
         return normalized
-    commits = summary["commits"]
+    commits = summary["prefix_commits"]
     expected = {
         "parent_lease_count": commits,
         "prefix_row_count": commits,
@@ -473,10 +509,21 @@ def validate_case_row(row) -> dict:
         split=split,
     )
     if split:
-        if (
-            inventory["host_visible_gaps_ns"]
-            != row["host_visible_burst_gaps_ns"]
+        split_gaps = inventory["host_visible_gaps_ns"]
+        request_gaps = row["host_visible_burst_gaps_ns"]
+        if POLICY_CONFIGS[row["policy"]].get(
+            "ragged_coalescing",
+            False,
         ):
+            if (
+                request_gaps[:len(split_gaps)] != split_gaps
+                or len(request_gaps) != len(split_gaps) + 2
+            ):
+                raise ValueError(
+                    "ragged split phase gap inventory does not "
+                    "match request"
+                )
+        elif split_gaps != request_gaps:
             raise ValueError(
                 "split phase gap inventory does not match request"
             )
@@ -563,6 +610,9 @@ def _construct_llm(
         graph_resident_greedy_tail=False,
         exact_greedy_decode_burst=config["enabled"],
         exact_greedy_decode_burst_split_phase=config["split"],
+        exact_greedy_decode_burst_ragged_coalescing=bool(
+            config.get("ragged_coalescing", False)
+        ),
         exact_greedy_decode_burst_continuation=False,
         exact_greedy_decode_burst_tokens=max(2, config["width"]),
     )
@@ -681,7 +731,20 @@ def _run_request(
         phase_observations
     )
     if POLICY_CONFIGS[policy]["split"]:
-        if inventory["host_visible_gaps_ns"] != burst_gaps:
+        split_gaps = inventory["host_visible_gaps_ns"]
+        if POLICY_CONFIGS[policy].get(
+            "ragged_coalescing",
+            False,
+        ):
+            if (
+                burst_gaps[:len(split_gaps)] != split_gaps
+                or len(burst_gaps) != len(split_gaps) + 2
+            ):
+                raise RuntimeError(
+                    "ragged split phase gap collection is "
+                    "inconsistent"
+                )
+        elif split_gaps != burst_gaps:
             raise RuntimeError(
                 "split phase gap collection is inconsistent"
             )
