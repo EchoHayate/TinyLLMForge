@@ -1103,6 +1103,9 @@ def _construct_llm(
         zero_temperature_greedy_fast_path=True,
         graph_resident_greedy_tail=False,
         exact_greedy_decode_burst=config["enabled"],
+        exact_greedy_decode_burst_continuation=bool(
+            config.get("continuation", False)
+        ),
         exact_greedy_decode_burst_tokens=max(2, config["width"]),
     )
 
@@ -1480,7 +1483,14 @@ def run_correctness_probe(
                     (),
                 )
                 for local_ordinal, values in sampled:
-                    output_index = emitted_total + int(local_ordinal)
+                    output_index = (
+                        1 + int(local_ordinal)
+                        if POLICY_CONFIGS[policy].get(
+                            "epoch_relative_sampling",
+                            False,
+                        )
+                        else emitted_total + int(local_ordinal)
+                    )
                     for point in SAMPLING_POINTS[1:]:
                         if output_index == _sampling_output_index(
                             point,
