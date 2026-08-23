@@ -4084,3 +4084,124 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-23 latest reconciliation authority: Exact Greedy Decode Burst
+
+This EOF block supersedes preceding Phase-1 classifications where they
+overlap. The frozen Qwen3-0.6B four-arm gate completed with a deterministic
+K8 selection and independently reconstructed GO classification.
+
+### Prompt-to-artifact checklist
+
+| Requirement | Concrete artifact/evidence | Verdict |
+| --- | --- | --- |
+| Authoritative checkout and branch | `/Users/bytedance/Desktop/TinyLLMForge`; `feat/kv-sparse-attention` | `PASS` |
+| Immutable source identity | source commit `e3b599cf3a3f5537102f32f4f5cdd07fd6c5826e`; run tag `20260822-qwen3-06b-exact-burst-canonical-r8` | `PASS` |
+| Approved remote storage root | staging, primary run, and controller evidence are all below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/exact-greedy-decode-burst` | `PASS` |
+| Strict clean-GPU admission | A100 80GB PCIe physical GPU 2 / UUID `GPU-63c05907-407b-8240-07a0-f38872840867`; 0 MiB, 0%, no compute processes | `PASS` |
+| Frozen workload | 256/2048/8192 prompt tokens, 128 generated tokens, batch 1, temperature 0, ignore-EOS, two warmups, five measured repetitions | `PASS` |
+| Complete performance matrix | four policies x three context buckets x five repetitions = 60 rows | `PASS_60_OF_60` |
+| Complete correctness matrix | host and K1 controls paired with K4/K8 at four sampling points across three buckets = 48 rows and 48 float32 sidecars | `PASS_48_OF_48` |
+| Exact outputs and logits | token IDs and decoded-text hashes exact; max/mean absolute logit difference 0.0; all argmax values equal | `PASS_EXACT` |
+| Producer classification | `primary/gate.json` selects `decode_burst_k8`, width 8, classification `GO_EXACT_GREEDY_DECODE_BURST` | `PASS` |
+| Remote independent verifier | `primary/independent-verification.json`; status `PASS`; reconstructs GO/K8 | `PASS` |
+| Frozen-source local verifier | commit `e3b599c` was archived to temporary local storage and its verifier reconstructed a byte-equal verification receipt | `PASS` |
+| Evidence binding | comparison SHA256 `c44b8c06342ac252f1359b56c776fb4c847150b6694ee825fb51cd78a4f3c7aa`; manifest SHA256 `d53615287bcffc285ac93e9ae8ce2d69572546a6b34f48f94c1d40eef6fc8b3e` | `PASS` |
+| Benefit threshold | K8 aggregate median/P95 TPOT improvements are 29.361129%/33.916056%; all three bucket medians exceed 28%; throughput improves 39.198420% | `PASS` |
+| Protected metrics | TTFT regression 0.335487%; E2E improves 28.160104%; peak reserved regression 0.004987%; no bucket TPOT regression | `PASS` |
+| Visibility cost | maximum host-visible gap 24.035218 ms against the frozen 40 ms limit | `PASS_WITH_RECORDED_COST` |
+| Capture and capacity cost | 1.220889-17.762445 s capture, 914,432 allocated bytes, 2,097,152 reserved bytes, 913,776-913,900 retained static bytes, one scratch block | `RECORDED` |
+| Qwen3-8B boundary | Stage-1 GO authorizes validation, but no Qwen3-8B run exists yet | `AUTHORIZED_NOT_RUN` |
+| Production boundary | no streaming, EOS-aware, multi-sequence, TP>1, or default-enabled evidence | `NOT_AUTHORIZED` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Exact greedy decode burst | Source-bound Qwen3-0.6B TP1 gate is exact, complete, independently verified, and selects K8. | `GO_EXACT_GREEDY_DECODE_BURST` |
+| Decode median/P95 TPOT | Aggregate improvement versus host greedy is 29.361129%/33.916056%; every bucket improves by more than 28% median. | `ESTABLISHED` |
+| Throughput and E2E | Median throughput improves from 261.951548 to 364.632415 tokens/s; E2E improves 28.160104%. | `ESTABLISHED` |
+| Benefit cost | Maximum host-visible gap is 24.035218 ms; retained static state is approximately 0.914 MB plus one scratch block; capture can take up to 17.762445 s. | `BOUNDED_AND_RECORDED` |
+| Qwen3-8B Stage 2 | The Stage-1 prerequisite is satisfied, but Stage 2 has not run. | `AUTHORIZED_NOT_RUN` |
+| Production default | Current proof is limited to Qwen3-0.6B TP1 batch-1 completion-only greedy generation. | `NOT_AUTHORIZED` |
+| GPU-resident continuation epoch | Mechanism and gate are committed at `ca49a670de4ef71603cab65e32b63f826045913b`; its source-bound hardware gate remains pending. | `IMPLEMENTED_GATE_PENDING` |
+
+### Benefit and cost
+
+Selected K8 versus `host_greedy`:
+
+```text
+aggregate median TPOT:
+  3.476067 ms -> 2.455455 ms
+  improvement 29.361129%
+aggregate nearest-rank P95 TPOT:
+  4.645835 ms -> 3.070151 ms
+  improvement 33.916056%
+aggregate P99 TPOT improvement:          33.422108%
+aggregate E2E improvement:               28.160104%
+median output throughput:
+  261.951548 -> 364.632415 tokens/s
+  improvement 39.198420%
+aggregate TTFT regression:               0.335487%
+maximum host-visible burst gap:          24.035218 ms
+```
+
+Per-context median/P95 TPOT improvement:
+
+```text
+short:   29.939785% / 36.224692%
+medium:  29.141034% / 34.895666%
+long:    28.635497% / 33.445857%
+```
+
+K8 versus K4:
+
+```text
+aggregate median TPOT improvement:  6.562618%
+aggregate P95 TPOT improvement:     9.329137%
+aggregate E2E improvement:          6.111457%
+```
+
+Cost:
+
+```text
+capture duration range:             1.220889-17.762445 s
+capture allocated delta:            914,432 bytes
+capture reserved delta:             2,097,152 bytes
+retained static bytes:              913,776-913,900 bytes
+reserved scratch blocks:            1
+aggregate peak-reserved regression: 0.004987%
+```
+
+The local verifier must use the frozen source tree. A first recovery attempt
+correctly rejected the bundle when it was asked to compare source digests
+against current HEAD `ca49a67`, which contains the later continuation
+implementation. Re-running the verifier from an archive of `e3b599c`
+reconstructed the same classification, selection, row counts, comparison
+digest, and manifest digest as the remote independent verifier.
+
+### Final classification
+
+```text
+EXACT_GREEDY_DECODE_BURST_RUN=20260822-qwen3-06b-exact-burst-canonical-r8
+EXACT_GREEDY_DECODE_BURST_SOURCE_COMMIT=e3b599cf3a3f5537102f32f4f5cdd07fd6c5826e
+EXACT_GREEDY_DECODE_BURST_CLASSIFICATION=GO_EXACT_GREEDY_DECODE_BURST
+EXACT_GREEDY_DECODE_BURST_SELECTED_POLICY=decode_burst_k8
+EXACT_GREEDY_DECODE_BURST_SELECTED_WIDTH=8
+EXACT_GREEDY_DECODE_BURST_REMOTE_VERIFIER=PASS
+EXACT_GREEDY_DECODE_BURST_FROZEN_SOURCE_LOCAL_VERIFIER=PASS
+EXACT_GREEDY_DECODE_BURST_CORRECTNESS=PASS_EXACT
+EXACT_GREEDY_DECODE_BURST_PERFORMANCE_ROWS=60_OF_60
+EXACT_GREEDY_DECODE_BURST_CORRECTNESS_ROWS=48_OF_48
+EXACT_GREEDY_DECODE_BURST_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_29_361129_PERCENT
+EXACT_GREEDY_DECODE_BURST_AGGREGATE_P95_TPOT=IMPROVEMENT_33_916056_PERCENT
+EXACT_GREEDY_DECODE_BURST_THROUGHPUT=IMPROVEMENT_39_198420_PERCENT
+EXACT_GREEDY_DECODE_BURST_MAX_HOST_VISIBLE_GAP_MS=24_035218
+EXACT_GREEDY_DECODE_BURST_DEFAULT_ENABLED=false
+EXACT_GREEDY_DECODE_BURST_QWEN3_8B=AUTHORIZED_NOT_RUN
+EXACT_GREEDY_DECODE_BURST_PRODUCTION_DEFAULT=NOT_AUTHORIZED
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```

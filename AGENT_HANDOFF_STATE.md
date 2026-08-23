@@ -50393,3 +50393,151 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=false
 PHASE_1=NOT_ACHIEVED
 PROMOTION=NOT_PROMOTABLE
 ```
+
+## 2026-08-23 exact greedy decode burst terminal handoff
+
+This EOF section supersedes earlier Phase-1 classifications where the
+performance-improvement status overlaps. The source-bound Qwen3-0.6B
+four-arm gate completed and selected exact greedy decode burst width eight.
+
+```text
+design commit:
+  6664438
+design refinement commit:
+  7dd63e1
+implementation plan commit:
+  0c2a533
+frozen gate source commit:
+  e3b599cf3a3f5537102f32f4f5cdd07fd6c5826e
+run tag:
+  20260822-qwen3-06b-exact-burst-canonical-r8
+classification:
+  GO_EXACT_GREEDY_DECODE_BURST
+selected policy:
+  decode_burst_k8
+selected burst width:
+  8
+remote independent verification:
+  PASS
+frozen-source local independent verification:
+  PASS
+comparison SHA256:
+  c44b8c06342ac252f1359b56c776fb4c847150b6694ee825fb51cd78a4f3c7aa
+manifest SHA256:
+  d53615287bcffc285ac93e9ae8ce2d69572546a6b34f48f94c1d40eef6fc8b3e
+worker exit:
+  0
+performance rows:
+  60 / 60
+correctness rows:
+  48 / 48
+```
+
+The source-bound controller admitted physical GPU 2,
+`GPU-63c05907-407b-8240-07a0-f38872840867`, as an NVIDIA A100 80GB PCIe
+with 0 MiB used, 0% utilization, and no compute processes. All remote task
+data remained below the approved mounted root:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  exact-greedy-decode-burst/
+```
+
+Canonical local evidence:
+
+```text
+artifacts/exact_greedy_decode_burst/
+  20260822-qwen3-06b-exact-burst-canonical-r8/
+```
+
+Correctness and execution authority:
+
+```text
+exact output-token IDs:                     PASS
+exact decoded-text hashes:                  PASS
+logit comparison pairs:                     48
+logit maximum absolute difference:          0.0
+logit aggregate mean absolute difference:   0.0
+argmax equality:                            PASS
+all performance outputs exact:              PASS
+producer/verifier classification agreement: PASS
+```
+
+Selected K8 benefit versus `host_greedy`:
+
+```text
+aggregate median TPOT:
+  3.476067 ms -> 2.455455 ms
+  improvement 29.361129%
+aggregate nearest-rank P95 TPOT:
+  4.645835 ms -> 3.070151 ms
+  improvement 33.916056%
+aggregate P99 TPOT improvement:            33.422108%
+aggregate E2E improvement:                 28.160104%
+median output throughput:
+  261.951548 -> 364.632415 tokens/s
+  improvement 39.198420%
+aggregate TTFT regression:                 0.335487%
+```
+
+The selected arm passed all three context buckets:
+
+```text
+short median/P95 TPOT improvement:   29.939785% / 36.224692%
+medium median/P95 TPOT improvement:  29.141034% / 34.895666%
+long median/P95 TPOT improvement:    28.635497% / 33.445857%
+```
+
+K8 also improves over K4 by 6.562618% aggregate median TPOT, 9.329137%
+aggregate P95 TPOT, and 6.111457% E2E latency. This is why the deterministic
+selector chose K8 rather than K4.
+
+Benefit cost and boundary:
+
+```text
+maximum host-visible burst gap:       24.035218 ms
+frozen maximum allowed gap:           40.000000 ms
+capture duration range:               1.220889-17.762445 s
+capture allocated delta:              914,432 bytes
+capture reserved delta:               2,097,152 bytes
+retained static bytes:                913,776-913,900 bytes
+reserved scratch blocks:              1
+aggregate peak-reserved regression:   0.004987%
+```
+
+The frozen-source local verifier was intentionally run from a temporary
+archive of commit `e3b599c`, because the authoritative checkout had already
+advanced to the continuation implementation at `ca49a67`. It reconstructed
+the same GO classification, selected arm, row counts, comparison digest, and
+manifest digest as the remote verifier. Using current-HEAD source files to
+verify the older source-bound bundle correctly fails with a source-digest
+mismatch and is not evidence against the run.
+
+This establishes a correctness-preserving Qwen3-0.6B TP1 batch-1,
+completion-only greedy-decode performance improvement. It authorizes a
+Qwen3-8B validation run for the exact-burst mechanism, but no Qwen3-8B,
+TP>1, streaming, EOS-aware, multi-sequence, or production-default claim has
+yet been established. The feature remains default-disabled.
+
+The next active gate is the already implemented GPU-resident K4 continuation
+epoch at source commit `ca49a670de4ef71603cab65e32b63f826045913b`. It must
+complete its own source-bound Qwen3-0.6B gate before any continuation claim
+or continuation-specific Qwen3-8B run.
+
+```text
+EXACT_GREEDY_DECODE_BURST_STAGE1=GO_EXACT_GREEDY_DECODE_BURST
+EXACT_GREEDY_DECODE_BURST_SELECTED_POLICY=decode_burst_k8
+EXACT_GREEDY_DECODE_BURST_SELECTED_WIDTH=8
+EXACT_GREEDY_DECODE_BURST_CORRECTNESS=PASS_EXACT
+EXACT_GREEDY_DECODE_BURST_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_29_361129_PERCENT
+EXACT_GREEDY_DECODE_BURST_AGGREGATE_P95_TPOT=IMPROVEMENT_33_916056_PERCENT
+EXACT_GREEDY_DECODE_BURST_THROUGHPUT=IMPROVEMENT_39_198420_PERCENT
+EXACT_GREEDY_DECODE_BURST_MAX_HOST_VISIBLE_GAP_MS=24_035218
+EXACT_GREEDY_DECODE_BURST_DEFAULT_ENABLED=false
+EXACT_GREEDY_DECODE_BURST_QWEN3_8B=AUTHORIZED_NOT_RUN
+EXACT_GREEDY_DECODE_BURST_PRODUCTION_DEFAULT=NOT_AUTHORIZED
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
