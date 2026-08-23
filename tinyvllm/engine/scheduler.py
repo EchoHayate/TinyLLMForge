@@ -695,6 +695,146 @@ class ExactBurstPhaseDeltaJournal:
             publication_plan=publication_plan,
         )
 
+    def rollback(self, scheduler) -> None:
+        if self.state != "active":
+            raise RuntimeError(
+                "delta journal is not active: "
+                f"{self.state}"
+            )
+        try:
+            sequence = self.sequence
+            if sequence.token_ids is not self.token_list:
+                raise RuntimeError(
+                    "delta journal token list identity changed"
+                )
+            if len(sequence.token_ids) < self.original_length:
+                raise RuntimeError(
+                    "delta journal token list was truncated"
+                )
+            expected_block_ids = tuple(
+                block_id
+                for block_id, _ in self.expected_block_table_identity
+            )
+            if tuple(sequence.block_table) != expected_block_ids:
+                raise RuntimeError(
+                    "delta journal block table changed"
+                )
+            scheduler.block_manager.validate_block_identities(
+                self.expected_block_table_identity
+            )
+            if (
+                len(scheduler.waiting) != self.waiting_length
+                or len(scheduler.prefilling)
+                != self.prefilling_length
+                or len(scheduler.running) != self.running_length
+                or (
+                    len(scheduler.running) == 1
+                    and scheduler.running[0] is sequence
+                )
+                != self.sequence_was_running
+            ):
+                raise RuntimeError(
+                    "delta journal scheduler queues changed"
+                )
+            publication = self.publication_plan
+            block = scheduler.block_manager.blocks[
+                publication.block_id
+            ]
+            publication_is_present = (
+                publication.will_publish
+                and block.generation
+                == publication.block_generation
+                and block.hash
+                == publication.planned_block_hash
+                and tuple(block.token_ids)
+                == publication.planned_block_token_ids
+            )
+            if self.publication_applied or publication_is_present:
+                if (
+                    block.generation
+                    != publication.block_generation
+                    or block.hash
+                    != publication.planned_block_hash
+                    or tuple(block.token_ids)
+                    != publication.planned_block_token_ids
+                ):
+                    raise RuntimeError(
+                        "delta journal publication identity changed"
+                    )
+                block.hash = publication.prior_block_hash
+                block.token_ids = list(
+                    publication.prior_block_token_ids
+                )
+                block_hash = publication.planned_block_hash
+                if block_hash is None:
+                    raise RuntimeError(
+                        "delta journal publication hash is missing"
+                    )
+                if publication.prior_duplicate_block_ids is None:
+                    scheduler.block_manager.hash_to_block_ids.pop(
+                        block_hash,
+                        None,
+                    )
+                else:
+                    scheduler.block_manager.hash_to_block_ids[
+                        block_hash
+                    ] = set(
+                        publication.prior_duplicate_block_ids
+                    )
+                if publication.prior_primary_block_id is None:
+                    scheduler.block_manager.hash_to_block_id.pop(
+                        block_hash,
+                        None,
+                    )
+                else:
+                    scheduler.block_manager.hash_to_block_id[
+                        block_hash
+                    ] = publication.prior_primary_block_id
+            del sequence.token_ids[self.original_length:]
+            sequence.last_token = self.original_last_token
+            sequence.num_tokens = self.original_num_tokens
+            sequence.status = self.original_status
+            if self.decode_progress_present:
+                scheduler.decode_progress_ns_by_seq_id[
+                    sequence.seq_id
+                ] = self.decode_progress_value
+            else:
+                scheduler.decode_progress_ns_by_seq_id.pop(
+                    sequence.seq_id,
+                    None,
+                )
+            scheduler._last_slo_postprocess = dict(
+                self.last_slo_postprocess
+            )
+            scheduler.adaptive_mixed_state = (
+                self.adaptive_mixed_state
+            )
+            scheduler.adaptive_high_streak = (
+                self.adaptive_high_streak
+            )
+            scheduler.adaptive_low_streak = (
+                self.adaptive_low_streak
+            )
+            scheduler.adaptive_consecutive_mixed_steps = (
+                self.adaptive_consecutive_mixed_steps
+            )
+            scheduler._consecutive_prefill_chunks = (
+                self.consecutive_prefill_chunks
+            )
+            scheduler.slo_clock_invalid = (
+                self.slo_clock_invalid
+            )
+            scheduler.slo_clock_invalid_reason = (
+                self.slo_clock_invalid_reason
+            )
+            scheduler._last_slo_decision_now_ns = (
+                self.last_slo_decision_now_ns
+            )
+        except BaseException:
+            self.state = "rollback_failed"
+            raise
+        self.state = "rolled_back"
+
 
 def build_slo_chunk_ladder(
     max_chunk_tokens: int,
@@ -2858,18 +2998,24 @@ class Scheduler:
     ) -> None:
         self._require_active_prepared_postprocess(prepared)
         journal = prepared.snapshot
-        if not isinstance(
+        if isinstance(
             journal,
             SchedulerPostprocessJournal,
         ):
+            seqs = tuple(
+                sequence
+                for sequence, _ in journal.sequence_states
+            )
+        elif isinstance(
+            journal,
+            ExactBurstPhaseDeltaJournal,
+        ):
+            seqs = journal.scheduled_sequences
+        else:
             raise ValueError(
                 "prepared Scheduler snapshot must be a "
-                "SchedulerPostprocessJournal"
+                "supported postprocess journal"
             )
-        seqs = tuple(
-            sequence
-            for sequence, _ in journal.sequence_states
-        )
         if prepared.exact_burst_lease is not None:
             if len(seqs) != 1:
                 raise ValueError(
@@ -3049,6 +3195,14 @@ class Scheduler:
                             finished_progress_entries_removed
                         ),
                         requeue=False,
+                        publication_journal=(
+                            journal
+                            if isinstance(
+                                journal,
+                                ExactBurstPhaseDeltaJournal,
+                            )
+                            else None
+                        ),
                     )
             self._publish_slo_postprocess(
                 prepared.decision_now_ns,
@@ -3070,6 +3224,11 @@ class Scheduler:
                     commit_error,
                     rollback_error,
                 ) from commit_error
+            if isinstance(
+                journal,
+                ExactBurstPhaseDeltaJournal,
+            ):
+                self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_rollback()
             if prefill_hook_error is not None:
                 self._prefill_commit_hook_error = (
                     prefill_hook_error
@@ -3077,6 +3236,15 @@ class Scheduler:
             prepared.state = "commit_failed"
             raise
         journal.state = "committed"
+        if isinstance(
+            journal,
+            ExactBurstPhaseDeltaJournal,
+        ):
+            self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_commit(
+                published_blocks=int(
+                    journal.publication_applied
+                ),
+            )
         prepared.state = "committed"
         if prepared.exact_burst_lease is not None:
             phase = prepared.rows[0].exact_burst_phase
@@ -3148,6 +3316,9 @@ class Scheduler:
         progress_updates: dict[int, int],
         finished_progress_entries_removed: list[int],
         requeue: bool,
+        publication_journal: (
+            ExactBurstPhaseDeltaJournal | None
+        ) = None,
     ) -> None:
         for token_id in row.output_tokens:
             seq.append_token(token_id)
@@ -3166,10 +3337,20 @@ class Scheduler:
                 materialized_tokens = (
                     lease.first_write_position + 4
                 )
-            self.block_manager.publish_full_blocks(
-                seq,
-                materialized_tokens=materialized_tokens,
-            )
+            if publication_journal is None:
+                self.block_manager.publish_full_blocks(
+                    seq,
+                    materialized_tokens=materialized_tokens,
+                )
+            else:
+                publication_journal.publication_applied = (
+                    self.block_manager.publish_lease_write_block(
+                        seq,
+                        plan=(
+                            publication_journal.publication_plan
+                        ),
+                    )
+                )
         self._record_decode_progress(
             seq,
             step_end_ns,
@@ -3296,13 +3477,21 @@ class Scheduler:
         journal = prepared.snapshot
         if not isinstance(
             journal,
-            SchedulerPostprocessJournal,
+            (
+                SchedulerPostprocessJournal,
+                ExactBurstPhaseDeltaJournal,
+            ),
         ):
             raise ValueError(
                 "prepared Scheduler snapshot must be a "
-                "SchedulerPostprocessJournal"
+                "supported postprocess journal"
             )
         journal.rollback(self)
+        if isinstance(
+            journal,
+            ExactBurstPhaseDeltaJournal,
+        ):
+            self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_rollback()
         prepared.state = "rolled_back"
 
     @staticmethod

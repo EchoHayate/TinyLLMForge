@@ -729,6 +729,33 @@ def _snapshot(scheduler, sequences):
     return snapshot
 
 
+def _delta_transaction_snapshot(scheduler, sequence):
+    return {
+        "logical": _snapshot(scheduler, (sequence,)),
+        "token_list_id": id(sequence.token_ids),
+        "last_token": sequence.last_token,
+        "num_tokens": sequence.num_tokens,
+        "waiting": tuple(
+            item.seq_id for item in scheduler.waiting
+        ),
+        "prefilling": tuple(
+            item.seq_id for item in scheduler.prefilling
+        ),
+        "adaptive": (
+            scheduler.adaptive_mixed_state,
+            scheduler.adaptive_high_streak,
+            scheduler.adaptive_low_streak,
+            scheduler.adaptive_consecutive_mixed_steps,
+            scheduler._consecutive_prefill_chunks,
+        ),
+        "slo_clock": (
+            scheduler.slo_clock_invalid,
+            scheduler.slo_clock_invalid_reason,
+            scheduler._last_slo_decision_now_ns,
+        ),
+    }
+
+
 def test_scheduler_exposes_prepared_postprocess_api():
     assert hasattr(scheduler_module, "ScheduledOutputRow")
     assert hasattr(
@@ -1733,6 +1760,106 @@ def test_delta_journal_uncertain_publication_state_falls_back(
     ] == {expected_reason: 1}
 
 
+@pytest.mark.parametrize(
+    ("prompt_length", "expected_published_blocks"),
+    (
+        (2, 0),
+        (9, 1),
+    ),
+)
+def test_delta_journal_commits_prefix_then_suffix_exactly(
+    monkeypatch,
+    prompt_length,
+    expected_published_blocks,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="prefix",
+            prompt_length=prompt_length,
+            max_tokens=16,
+        )
+    )
+    compute_hash_calls = 0
+    original_compute_hash = scheduler.block_manager.compute_hash
+
+    def count_compute_hash(token_ids, prefix=-1):
+        nonlocal compute_hash_calls
+        compute_hash_calls += 1
+        return original_compute_hash(token_ids, prefix)
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "compute_hash",
+        count_compute_hash,
+    )
+    prefix = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=split_result.prefix.wait_tokens(),
+        )
+    )
+    assert isinstance(
+        prefix.snapshot,
+        scheduler_module.ExactBurstPhaseDeltaJournal,
+    )
+    assert compute_hash_calls == 0
+    scheduler.commit_prepared_postprocess(prefix)
+    assert prefix.state == "committed"
+    assert prefix.snapshot.state == "committed"
+    assert (
+        scheduler._exact_greedy_decode_burst_split_phase
+        == "prefix_committed"
+    )
+    assert (
+        scheduler._exact_greedy_decode_burst_pending_lease
+        == lease
+    )
+
+    suffix = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=split_result.suffix.wait_tokens(),
+        )
+    )
+    assert isinstance(
+        suffix.snapshot,
+        scheduler_module.ExactBurstPhaseDeltaJournal,
+    )
+    assert compute_hash_calls == expected_published_blocks
+    scheduler.commit_prepared_postprocess(suffix)
+
+    assert sequence.completion_token_ids == [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    ]
+    assert suffix.state == "committed"
+    assert suffix.snapshot.state == "committed"
+    assert scheduler._exact_greedy_decode_burst_split_phase == "idle"
+    assert scheduler._exact_greedy_decode_burst_pending_lease is None
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_attempts"] == 2
+    assert summary["lease_local_delta_journal_captures"] == 2
+    assert summary["lease_local_delta_journal_commits"] == 2
+    assert summary["lease_local_delta_journal_rollbacks"] == 0
+    assert (
+        summary["lease_local_delta_journal_published_blocks"]
+        == expected_published_blocks
+    )
+
+
 def test_split_phase_correctness_trace_survives_scheduler_revalidation(
     monkeypatch,
 ):
@@ -2197,6 +2324,306 @@ def test_split_phase_rollback_preserves_the_last_committed_boundary(
     assert _snapshot(scheduler, (sequence,)) == before
     assert scheduler._exact_greedy_decode_burst_pending_lease == lease
     assert scheduler._exact_greedy_decode_burst_split_phase == before_phase
+
+
+@pytest.mark.parametrize("failure_phase", ("prefix", "suffix"))
+def test_delta_journal_rollback_preserves_last_committed_boundary(
+    monkeypatch,
+    failure_phase,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase=failure_phase,
+            prompt_length=2,
+            max_tokens=16,
+        )
+    )
+    before = _snapshot(scheduler, (sequence,))
+    before_phase = scheduler._exact_greedy_decode_burst_split_phase
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase=failure_phase,
+            tokens=getattr(
+                split_result,
+                failure_phase,
+            ).wait_tokens(),
+        )
+    )
+
+    def fail_publication(*_args, **_kwargs):
+        raise RuntimeError("injected delta publication failure")
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_lease_write_block",
+        fail_publication,
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="injected delta publication failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert prepared.snapshot.state == "rolled_back"
+    assert _snapshot(scheduler, (sequence,)) == before
+    assert scheduler._exact_greedy_decode_burst_pending_lease == lease
+    assert scheduler._exact_greedy_decode_burst_split_phase == before_phase
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_rollbacks"] == 1
+
+
+def test_delta_journal_rollback_restores_registered_hash(
+    monkeypatch,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="suffix",
+            prompt_length=9,
+            max_tokens=16,
+        )
+    )
+    before = _snapshot(scheduler, (sequence,))
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=split_result.suffix.wait_tokens(),
+        )
+    )
+    original_publish = (
+        scheduler.block_manager.publish_lease_write_block
+    )
+
+    def publish_then_fail(*args, **kwargs):
+        original_publish(*args, **kwargs)
+        raise RuntimeError(
+            "injected post-registration failure"
+        )
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_lease_write_block",
+        publish_then_fail,
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="injected post-registration failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert prepared.snapshot.state == "rolled_back"
+    assert _snapshot(scheduler, (sequence,)) == before
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "lease_local_delta_journal_rollbacks"
+    ] == 1
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    (
+        "decode_progress",
+        "slo_publication",
+        "adaptive_reset",
+    ),
+)
+def test_delta_journal_rolls_back_post_publication_failures(
+    monkeypatch,
+    failure_point,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="suffix",
+            prompt_length=9,
+            max_tokens=16,
+        )
+    )
+    scheduler.decode_progress_ns_by_seq_id[sequence.seq_id] = 17
+    scheduler._last_slo_postprocess = {"before": True}
+    scheduler.adaptive_mixed_state = "before"
+    scheduler.adaptive_high_streak = 2
+    scheduler.adaptive_low_streak = 3
+    scheduler.adaptive_consecutive_mixed_steps = 4
+    scheduler._consecutive_prefill_chunks = 5
+    scheduler.slo_clock_invalid = True
+    scheduler.slo_clock_invalid_reason = "before"
+    scheduler._last_slo_decision_now_ns = 19
+    before = _delta_transaction_snapshot(scheduler, sequence)
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=split_result.suffix.wait_tokens(),
+        )
+    )
+
+    if failure_point == "decode_progress":
+        original = scheduler._record_decode_progress
+
+        def fail_after_decode_progress(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected decode progress failure")
+
+        monkeypatch.setattr(
+            scheduler,
+            "_record_decode_progress",
+            fail_after_decode_progress,
+        )
+    elif failure_point == "slo_publication":
+        original = scheduler._publish_slo_postprocess
+
+        def fail_after_slo_publication(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected SLO publication failure")
+
+        monkeypatch.setattr(
+            scheduler,
+            "_publish_slo_postprocess",
+            fail_after_slo_publication,
+        )
+    else:
+        def fail_after_adaptive_reset():
+            scheduler.adaptive_mixed_state = "mutated"
+            scheduler.adaptive_high_streak = 101
+            scheduler.adaptive_low_streak = 102
+            scheduler.adaptive_consecutive_mixed_steps = 103
+            scheduler._consecutive_prefill_chunks = 104
+            raise RuntimeError("injected adaptive reset failure")
+
+        monkeypatch.setattr(
+            scheduler,
+            "_maybe_reset_adaptive_mixed_controller",
+            fail_after_adaptive_reset,
+        )
+
+    with pytest.raises(RuntimeError, match="injected"):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert prepared.snapshot.state == "rolled_back"
+    assert _delta_transaction_snapshot(
+        scheduler,
+        sequence,
+    ) == before
+    assert scheduler._exact_greedy_decode_burst_pending_lease == lease
+    assert (
+        scheduler._exact_greedy_decode_burst_split_phase
+        == "prefix_committed"
+    )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "lease_local_delta_journal_rollbacks"
+    ] == 1
+
+
+def test_delta_journal_explicit_rollback_is_non_mutating(
+    monkeypatch,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="prefix",
+            prompt_length=2,
+            max_tokens=16,
+        )
+    )
+    before = _delta_transaction_snapshot(scheduler, sequence)
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=split_result.prefix.wait_tokens(),
+        )
+    )
+
+    scheduler.rollback_prepared_postprocess(prepared)
+
+    assert prepared.state == "rolled_back"
+    assert prepared.snapshot.state == "rolled_back"
+    assert _delta_transaction_snapshot(
+        scheduler,
+        sequence,
+    ) == before
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "lease_local_delta_journal_rollbacks"
+    ] == 1
+    with pytest.raises(RuntimeError, match="not active"):
+        scheduler.rollback_prepared_postprocess(prepared)
+
+
+def test_delta_journal_rollback_failure_is_terminal(
+    monkeypatch,
+):
+    scheduler, sequence, _lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="prefix",
+            prompt_length=2,
+            max_tokens=16,
+        )
+    )
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            scheduler._exact_greedy_decode_burst_pending_lease,
+            split_result,
+            phase="prefix",
+            tokens=split_result.prefix.wait_tokens(),
+        )
+    )
+
+    def fail_rollback(_owner):
+        prepared.snapshot.state = "rollback_failed"
+        raise RuntimeError("injected delta rollback failure")
+
+    monkeypatch.setattr(
+        prepared.snapshot,
+        "rollback",
+        fail_rollback,
+    )
+
+    def fail_publication(*_args, **_kwargs):
+        raise RuntimeError("injected delta commit failure")
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_lease_write_block",
+        fail_publication,
+    )
+
+    with pytest.raises(
+        scheduler_module.SchedulerPostprocessRollbackError,
+        match="injected delta rollback failure",
+    ) as exc_info:
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "rollback_failed"
+    assert prepared.snapshot.state == "rollback_failed"
+    assert str(exc_info.value.commit_error) == (
+        "injected delta commit failure"
+    )
+    assert str(exc_info.value.rollback_error) == (
+        "injected delta rollback failure"
+    )
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "lease_local_delta_journal_rollbacks"
+    ] == 0
+    with pytest.raises(RuntimeError, match="not active"):
+        scheduler.commit_prepared_postprocess(prepared)
+    with pytest.raises(RuntimeError, match="not active"):
+        scheduler.rollback_prepared_postprocess(prepared)
 
 
 def test_exact_burst_commit_rollback_restores_hashes_and_keeps_lease(
