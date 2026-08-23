@@ -1413,6 +1413,27 @@ class Scheduler:
     ) -> dict[str, object]:
         return self._exact_greedy_decode_burst_stats.summary()
 
+    def record_exact_greedy_decode_burst_split_phase_wait(
+        self,
+        phase: str,
+    ) -> None:
+        self._exact_greedy_decode_burst_stats.record_split_phase_wait(
+            phase
+        )
+
+    def record_exact_greedy_decode_burst_split_phase_drain(
+        self,
+    ) -> None:
+        self._exact_greedy_decode_burst_stats.record_split_phase_drain()
+
+    def record_exact_greedy_decode_burst_split_phase_failure(
+        self,
+        reason: str,
+    ) -> None:
+        self._exact_greedy_decode_burst_stats.record_split_phase_failure(
+            reason
+        )
+
     def _publish_slo_decision(self, values: dict) -> None:
         self.last_slo_decision = MappingProxyType(dict(values))
         self._last_slo_postprocess = {}

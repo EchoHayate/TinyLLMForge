@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 import importlib.util
 from pathlib import Path
 import sys
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,12 @@ BURST_PATH = (
     / "tinyvllm"
     / "engine"
     / "exact_greedy_decode_burst.py"
+)
+SPLIT_PHASE_PATH = (
+    ROOT
+    / "tinyvllm"
+    / "engine"
+    / "exact_greedy_decode_burst_split_phase.py"
 )
 
 
@@ -33,6 +40,10 @@ burst_module = _load_module(
     "llm_engine_exact_burst_contract_under_test",
     BURST_PATH,
 )
+split_phase_module = _load_module(
+    "llm_engine_exact_burst_split_phase_contract_under_test",
+    SPLIT_PHASE_PATH,
+)
 ExactGreedyDecodeBurstFallback = (
     burst_module.ExactGreedyDecodeBurstFallback
 )
@@ -44,6 +55,21 @@ build_exact_greedy_decode_burst_lease = (
 )
 validate_exact_greedy_decode_burst_result = (
     burst_module.validate_exact_greedy_decode_burst_result
+)
+ExactGreedyDecodeBurstSplitResult = (
+    split_phase_module.ExactGreedyDecodeBurstSplitResult
+)
+ExactBurstPhaseTransfer = (
+    split_phase_module.ExactBurstPhaseTransfer
+)
+ExactBurstSplitPhaseTransaction = (
+    split_phase_module.ExactBurstSplitPhaseTransaction
+)
+build_exact_burst_publication_tickets = (
+    split_phase_module.build_exact_burst_publication_tickets
+)
+validate_exact_burst_split_result = (
+    split_phase_module.validate_exact_burst_split_result
 )
 
 
@@ -89,6 +115,18 @@ def _load_step(partition_builder=_partition):
         "validate_exact_greedy_decode_burst_result": (
             validate_exact_greedy_decode_burst_result
         ),
+        "ExactGreedyDecodeBurstSplitResult": (
+            ExactGreedyDecodeBurstSplitResult
+        ),
+        "ExactBurstSplitPhaseTransaction": (
+            ExactBurstSplitPhaseTransaction
+        ),
+        "validate_exact_burst_split_result": (
+            validate_exact_burst_split_result
+        ),
+        "build_exact_burst_publication_tickets": (
+            build_exact_burst_publication_tickets
+        ),
         "build_engine_speculative_partition": partition_builder,
     }
     exec(
@@ -102,6 +140,42 @@ def _load_step(partition_builder=_partition):
         namespace,
     )
     return namespace["step"]
+
+
+def _load_engine_method(name: str):
+    tree = ast.parse(ENGINE_PATH.read_text(), filename=str(ENGINE_PATH))
+    engine_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "LLMEngine"
+    )
+    method = next(
+        node
+        for node in engine_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == name
+    )
+    function = ast.FunctionDef(
+        name=method.name,
+        args=method.args,
+        body=method.body,
+        decorator_list=[],
+        returns=method.returns,
+        type_comment=method.type_comment,
+    )
+    namespace = {}
+    exec(
+        compile(
+            ast.fix_missing_locations(
+                ast.Module(body=[function], type_ignores=[])
+            ),
+            str(ENGINE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+    return namespace[name]
 
 
 def _load_generate():
@@ -154,6 +228,40 @@ def _step_ast():
         if isinstance(node, ast.FunctionDef)
         and node.name == "step"
     )
+
+
+def test_step_has_pre_schedule_split_suffix_drain():
+    tree = ast.parse(ENGINE_PATH.read_text(), filename=str(ENGINE_PATH))
+    engine_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "LLMEngine"
+    )
+    method_names = {
+        node.name
+        for node in engine_class.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert "_drain_exact_burst_split_phase_suffix" in method_names
+
+    step = _step_ast()
+    schedule_call = next(
+        node
+        for node in ast.walk(step)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "schedule"
+    )
+    drain_call = next(
+        node
+        for node in ast.walk(step)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr
+        == "_drain_exact_burst_split_phase_suffix"
+    )
+    assert drain_call.lineno < schedule_call.lineno
 
 
 class _Clock:
@@ -209,7 +317,7 @@ def _lease(*, width=3):
         sequence_id=7,
         schedule_generation=11,
         graph_generation=13,
-        requested_token_count=4,
+        requested_token_count=width,
         authorized_token_count=width,
         initial_completion_count=0,
         initial_sequence_length=2,
@@ -220,7 +328,7 @@ def _lease(*, width=3):
         last_write_position=width,
         first_physical_slot=49,
         last_physical_slot=48 + width,
-        remaining_output_tokens=3,
+        remaining_output_tokens=max(3, width),
         completion_only=True,
     )
 
@@ -253,6 +361,72 @@ def _result(
     )
 
 
+class _PhaseCompletion:
+    def __init__(self, phase, events, error=None):
+        self.phase = phase
+        self.events = events
+        self.error = error
+
+    def synchronize(self):
+        self.events.append((f"{self.phase}.wait_tokens",))
+        if self.error is not None:
+            raise self.error
+
+
+class _PhaseMailbox:
+    def __init__(self, tokens):
+        self.tokens = tuple(tokens)
+
+    def tolist(self):
+        return list(self.tokens)
+
+
+def _split_result(
+    lease,
+    events,
+    *,
+    prefix_tokens=(41, 42, 43, 44),
+    suffix_tokens=(45, 46, 47, 48),
+    fail_phase=None,
+):
+    prefix_ticket, suffix_ticket = (
+        build_exact_burst_publication_tickets(
+            parent_lease_identity_sha256=lease.identity_sha256,
+            first_write_position=lease.first_write_position,
+            first_physical_slot=lease.first_physical_slot,
+            parent_token_count=8,
+            prefix_token_count=4,
+        )
+    )
+
+    def transfer(ticket, tokens):
+        error = (
+            RuntimeError(f"{ticket.phase} wait failed")
+            if fail_phase == ticket.phase
+            else None
+        )
+        return ExactBurstPhaseTransfer(
+            ticket=ticket,
+            mailbox_generation=9,
+            token_count=4,
+            byte_count=32,
+            completion=_PhaseCompletion(
+                ticket.phase,
+                events,
+                error,
+            ),
+            mailbox=_PhaseMailbox(tokens),
+        )
+
+    return ExactGreedyDecodeBurstSplitResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        graph_identity_sha256="a" * 64,
+        replay_count=8,
+        prefix=transfer(prefix_ticket, prefix_tokens),
+        suffix=transfer(suffix_ticket, suffix_tokens),
+    )
+
+
 class _Scheduler:
     last_policy_branch = "decode"
     last_speculative_selection = None
@@ -268,13 +442,15 @@ class _Scheduler:
         batch_kind=None,
         previous_fallback_counts=None,
         no_lease_reason="waiting_present",
+        events=None,
+        phase_commit_failure=None,
     ):
         self.sequence = sequence
         self.lease = lease
         self.is_prefill = is_prefill
         self.do_sample = do_sample
         self.batch_kind = batch_kind
-        self.events = []
+        self.events = [] if events is None else events
         self.release_count = 0
         self.pending_leases = int(lease is not None)
         self.fallback_reason = None
@@ -283,6 +459,8 @@ class _Scheduler:
         )
         self.no_lease_reason = no_lease_reason
         self.host_visible_gap_ns = 0
+        self.split_phase = "enqueued" if lease is not None else "idle"
+        self.phase_commit_failure = phase_commit_failure
 
     def observation_snapshot(self):
         return {"running_seq_ids": [self.sequence.seq_id]}
@@ -330,6 +508,7 @@ class _Scheduler:
         self.events.append(("fail", lease, terminal))
         if terminal:
             self.pending_leases = 0
+            self.split_phase = "idle"
 
     def prepare_exact_greedy_decode_burst_commit(
         self,
@@ -348,7 +527,49 @@ class _Scheduler:
             kwargs=kwargs,
         )
 
+    def prepare_exact_greedy_decode_burst_phase_commit(
+        self,
+        seqs,
+        lease,
+        result,
+        *,
+        phase,
+        tokens,
+        **kwargs,
+    ):
+        self.events.append((f"scheduler.prepare_{phase}",))
+        return SimpleNamespace(
+            seqs=tuple(seqs),
+            lease=lease,
+            result=result,
+            phase=phase,
+            tokens=tuple(tokens),
+            kwargs=kwargs,
+        )
+
     def commit_prepared_postprocess(self, prepared):
+        if hasattr(prepared, "phase"):
+            self.events.append(
+                (f"scheduler.commit_{prepared.phase}",)
+            )
+            if self.phase_commit_failure == prepared.phase:
+                raise RuntimeError(
+                    f"{prepared.phase} commit failed"
+                )
+            for token in prepared.tokens:
+                self.sequence.token_ids.append(token)
+            if prepared.phase == "prefix":
+                self.split_phase = "prefix_committed"
+            else:
+                self.split_phase = "idle"
+                self.pending_leases = 0
+                if (
+                    self.sequence.num_completion_tokens
+                    == self.sequence.max_tokens
+                ):
+                    self.sequence.status = "finished"
+                    self.release_count += 1
+            return
         self.events.append(("commit", prepared))
         for token in prepared.result.tokens:
             self.sequence.token_ids.append(token)
@@ -362,6 +583,21 @@ class _Scheduler:
         self.host_visible_gap_ns = prepared.kwargs[
             "host_visible_gap_ns"
         ]
+
+    def record_exact_greedy_decode_burst_split_phase_wait(
+        self,
+        phase,
+    ):
+        return None
+
+    def record_exact_greedy_decode_burst_split_phase_drain(self):
+        return None
+
+    def record_exact_greedy_decode_burst_split_phase_failure(
+        self,
+        reason,
+    ):
+        self.events.append(("scheduler.split_failure", reason))
 
     def drain_hybrid_state_release_events(self):
         return ()
@@ -415,13 +651,22 @@ class _ModelRunner:
     rank = 0
     world_size = 1
 
-    def __init__(self, outcome, *, enabled=True):
+    def __init__(
+        self,
+        outcome,
+        *,
+        enabled=True,
+        split_enabled=False,
+        configured_width=4,
+        events=None,
+    ):
         self.outcome = outcome
         self.config = SimpleNamespace(
             exact_greedy_decode_burst=enabled,
-            exact_greedy_decode_burst_tokens=4,
+            exact_greedy_decode_burst_tokens=configured_width,
+            exact_greedy_decode_burst_split_phase=split_enabled,
         )
-        self.events = []
+        self.events = [] if events is None else events
         self.quarantine_reason = None
 
     def exact_greedy_decode_burst_capability(
@@ -467,6 +712,20 @@ class _ModelRunner:
         if method_name == "run":
             self.events.append(("ordinary", args))
             return [99]
+        if method_name == (
+            "release_exact_greedy_decode_burst_split_phase"
+        ):
+            self.events.append(
+                ("model_runner.release_split",) + tuple(args)
+            )
+            return None
+        if method_name == (
+            "abort_exact_greedy_decode_burst_split_phase"
+        ):
+            self.events.append(
+                ("model_runner.abort_split",) + tuple(args)
+            )
+            return None
         raise AssertionError(
             f"unexpected ModelRunner method {method_name}"
         )
@@ -497,6 +756,10 @@ def _engine(
     partition_builder=_partition,
     previous_fallback_counts=None,
     no_lease_reason="waiting_present",
+    split_enabled=False,
+    configured_width=4,
+    events=None,
+    phase_commit_failure=None,
 ):
     sequence = _Sequence()
     scheduler = _Scheduler(
@@ -507,20 +770,36 @@ def _engine(
         batch_kind=batch_kind,
         previous_fallback_counts=previous_fallback_counts,
         no_lease_reason=no_lease_reason,
+        events=events,
+        phase_commit_failure=phase_commit_failure,
     )
-    model_runner = _ModelRunner(outcome, enabled=enabled)
-    return (
-        SimpleNamespace(
-            _clock_ns=_Clock(10, 30),
-            scheduler=scheduler,
-            model_runner=model_runner,
-            speculative_runtime=None,
-            speculative_runtime_poisoned=False,
-            speculative_runtime_poison_reason=None,
-            last_batch_kind=None,
-            last_scheduled_seqs=[],
-            last_step_observation=None,
+    model_runner = _ModelRunner(
+        outcome,
+        enabled=enabled,
+        split_enabled=split_enabled,
+        configured_width=configured_width,
+        events=events,
+    )
+    engine = SimpleNamespace(
+        _clock_ns=_Clock(10, 30, 40, 50, 60, 70, 80),
+        scheduler=scheduler,
+        model_runner=model_runner,
+        speculative_runtime=None,
+        speculative_runtime_poisoned=False,
+        speculative_runtime_poison_reason=None,
+        last_batch_kind=None,
+        last_scheduled_seqs=[],
+        last_step_observation=None,
+        _exact_burst_split_phase_transaction=None,
+    )
+    engine._drain_exact_burst_split_phase_suffix = MethodType(
+        _load_engine_method(
+            "_drain_exact_burst_split_phase_suffix"
         ),
+        engine,
+    )
+    return (
+        engine,
         sequence,
         scheduler,
         model_runner,
@@ -555,6 +834,225 @@ def test_eligible_decode_runs_one_burst_and_commits_ordered_delta_once():
     assert engine.last_step_observation[
         "new_completion_tokens_by_seq"
     ] == {7: [41, 42, 43]}
+
+
+def test_split_phase_publishes_prefix_then_drains_suffix_before_schedule():
+    events = []
+    lease = _lease(width=8)
+    result = _split_result(lease, events)
+    engine, sequence, scheduler, model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        configured_width=8,
+        events=events,
+    )
+    sequence.max_tokens = 8
+
+    outputs, num_tokens = step(engine, completion_only=True)
+
+    assert outputs == []
+    assert num_tokens == -4
+    assert sequence.completion_token_ids == [41, 42, 43, 44]
+    assert engine._exact_burst_split_phase_transaction is not None
+    assert ("prefix.wait_tokens",) in events
+    assert ("scheduler.prepare_prefix",) in events
+    assert ("scheduler.commit_prefix",) in events
+    assert ("suffix.wait_tokens",) not in events
+    assert not any(
+        event[0] == "model_runner.release_split"
+        for event in events
+    )
+    prefix_observation = engine.last_step_observation
+    assert prefix_observation["phase_published"] == "prefix"
+    assert prefix_observation["phase_token_count"] == 4
+    assert prefix_observation["pending_suffix"] is True
+    assert prefix_observation["scheduler_schedule_calls"] == 1
+
+    event_count_before_drain = len(events)
+    outputs, num_tokens = step(engine, completion_only=True)
+    drain_events = events[event_count_before_drain:]
+
+    assert drain_events[:3] == [
+        ("suffix.wait_tokens",),
+        ("scheduler.prepare_suffix",),
+        ("scheduler.commit_suffix",),
+    ]
+    assert not any(
+        event[0] == "schedule" for event in drain_events
+    )
+    assert any(
+        event[0] == "model_runner.release_split"
+        for event in drain_events
+    )
+    assert outputs == [
+        (7, [41, 42, 43, 44, 45, 46, 47, 48])
+    ]
+    assert num_tokens == -4
+    assert engine._exact_burst_split_phase_transaction is None
+    assert scheduler.pending_leases == 0
+    assert scheduler.release_count == 1
+    suffix_observation = engine.last_step_observation
+    assert suffix_observation["phase_published"] == "suffix"
+    assert suffix_observation["phase_token_count"] == 4
+    assert suffix_observation["pending_suffix"] is False
+    assert suffix_observation["scheduler_schedule_calls"] == 0
+
+
+def test_split_phase_prefix_wait_failure_is_terminal_and_gpu_safe():
+    events = []
+    lease = _lease(width=8)
+    result = _split_result(
+        lease,
+        events,
+        fail_phase="prefix",
+    )
+    engine, sequence, scheduler, _model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        configured_width=8,
+        events=events,
+    )
+    sequence.max_tokens = 8
+
+    with pytest.raises(RuntimeError, match="prefix wait failed"):
+        step(engine, completion_only=True)
+
+    assert sequence.completion_token_ids == []
+    assert ("prefix.wait_tokens",) in events
+    assert not any(
+        event[0] == "scheduler.prepare_prefix"
+        for event in events
+    )
+    assert any(
+        event[0] == "model_runner.abort_split"
+        for event in events
+    )
+    assert any(event[0] == "fail" for event in events)
+    assert not any(event[0] == "ordinary" for event in events)
+    assert engine._exact_burst_split_phase_transaction is None
+    assert scheduler.pending_leases == 0
+
+
+def test_split_phase_ticket_mismatch_is_terminal_before_publication():
+    events = []
+    lease = _lease(width=8)
+    result = _split_result(lease, events)
+    wrong_prefix, wrong_suffix = build_exact_burst_publication_tickets(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        first_write_position=lease.first_write_position + 1,
+        first_physical_slot=lease.first_physical_slot + 1,
+        parent_token_count=8,
+        prefix_token_count=4,
+    )
+    result = replace(
+        result,
+        prefix=replace(result.prefix, ticket=wrong_prefix),
+        suffix=replace(result.suffix, ticket=wrong_suffix),
+    )
+    engine, sequence, scheduler, _model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        configured_width=8,
+        events=events,
+    )
+    sequence.max_tokens = 8
+
+    with pytest.raises(
+        ValueError,
+        match="tickets do not match the parent lease",
+    ):
+        step(engine, completion_only=True)
+
+    assert sequence.completion_token_ids == []
+    assert ("prefix.wait_tokens",) not in events
+    assert any(
+        event[0] == "model_runner.abort_split"
+        for event in events
+    )
+    assert any(event[0] == "fail" for event in events)
+    assert engine._exact_burst_split_phase_transaction is None
+    assert scheduler.pending_leases == 0
+
+
+@pytest.mark.parametrize(
+    ("fail_phase", "message"),
+    (
+        ("wait", "suffix wait failed"),
+        ("commit", "suffix commit failed"),
+    ),
+)
+def test_split_phase_suffix_failure_never_schedules_or_loses_prefix(
+    fail_phase,
+    message,
+):
+    events = []
+    lease = _lease(width=8)
+    result = _split_result(
+        lease,
+        events,
+        fail_phase=("suffix" if fail_phase == "wait" else None),
+    )
+    engine, sequence, scheduler, _model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        configured_width=8,
+        events=events,
+        phase_commit_failure=(
+            "suffix" if fail_phase == "commit" else None
+        ),
+    )
+    sequence.max_tokens = 8
+    step(engine, completion_only=True)
+    assert sequence.completion_token_ids == [41, 42, 43, 44]
+    event_count_before_drain = len(events)
+
+    with pytest.raises(RuntimeError, match=message):
+        step(engine, completion_only=True)
+
+    drain_events = events[event_count_before_drain:]
+    assert not any(
+        event[0] == "schedule" for event in drain_events
+    )
+    assert sequence.completion_token_ids == [41, 42, 43, 44]
+    assert any(
+        event[0] == "model_runner.abort_split"
+        for event in drain_events
+    )
+    assert any(event[0] == "fail" for event in drain_events)
+    assert engine._exact_burst_split_phase_transaction is None
+    assert scheduler.pending_leases == 0
+
+
+def test_split_phase_drain_precedes_loss_of_completion_only_authority():
+    events = []
+    lease = _lease(width=8)
+    result = _split_result(lease, events)
+    engine, sequence, _scheduler, _model_runner, step = _engine(
+        result,
+        lease=lease,
+        split_enabled=True,
+        configured_width=8,
+        events=events,
+    )
+    sequence.max_tokens = 8
+    step(engine, completion_only=True)
+    event_count_before_drain = len(events)
+
+    outputs, num_tokens = step(engine, completion_only=False)
+
+    drain_events = events[event_count_before_drain:]
+    assert drain_events[0] == ("suffix.wait_tokens",)
+    assert not any(
+        event[0] == "schedule" for event in drain_events
+    )
+    assert outputs == [
+        (7, [41, 42, 43, 44, 45, 46, 47, 48])
+    ]
+    assert num_tokens == -4
 
 
 def test_pre_replay_fallback_cancels_lease_and_runs_ordinary_once():

@@ -4392,6 +4392,35 @@ def test_model_runner_split_phase_delegates_to_k8_mailbox_backend():
     assert steps[0]["dispatch"] == "cuda_graph"
 
 
+def test_model_runner_split_phase_releases_or_aborts_owned_generation():
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_split_phase=True,
+        exact_greedy_decode_burst_tokens=8,
+    )
+    events = []
+
+    class Backend:
+        def release_transaction(self, generation):
+            events.append(("release", generation))
+
+        def abort_transaction(self, generation):
+            events.append(("abort", generation))
+
+    runner.exact_greedy_decode_burst_split_phase_backend = Backend()
+    runner.exact_greedy_decode_burst_split_phase_correctness_backend = (
+        Backend()
+    )
+
+    runner.release_exact_greedy_decode_burst_split_phase(7)
+    runner.abort_exact_greedy_decode_burst_split_phase(
+        8,
+        correctness_trace=True,
+    )
+
+    assert events == [("release", 7), ("abort", 8)]
+
+
 def test_model_runner_exact_burst_materializes_only_in_lazy_factory():
     tree = ast.parse(open(_MODEL_RUNNER_PATH).read())
     model_runner_class = next(
@@ -6457,6 +6486,7 @@ def main():
         test_exact_burst_capability_is_fail_closed_and_json_safe,
         test_model_runner_exact_burst_delegates_once_with_padded_block_table,
         test_model_runner_split_phase_delegates_to_k8_mailbox_backend,
+        test_model_runner_split_phase_releases_or_aborts_owned_generation,
         test_model_runner_exact_burst_materializes_only_in_lazy_factory,
         test_model_runner_invalidates_both_burst_graphs,
         test_model_runner_exact_burst_replay_enters_inference_mode,

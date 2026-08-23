@@ -565,6 +565,13 @@ def validate_exact_burst_split_result(
                 f"{name} transfer byte_count mismatch"
             )
     if (
+        prefix.mailbox_generation
+        != suffix.mailbox_generation
+    ):
+        raise ValueError(
+            "split transfer mailbox generations mismatch"
+        )
+    if (
         prefix.ticket.phase_start_ordinal != 0
         or suffix.ticket.phase_start_ordinal
         != (

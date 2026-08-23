@@ -725,7 +725,7 @@ Run:
 python3 tools/test_llm_engine_exact_greedy_decode_burst.py
 python3 tools/test_exact_greedy_decode_burst.py
 python3 tools/test_exact_greedy_decode_burst_split_phase.py
-python3 tools/test_llm_engine_speculative_dispatch.py
+python3 tools/test_llm_engine_speculative_selection_source.py
 python3 -m py_compile \
   tinyvllm/engine/llm_engine.py \
   tinyvllm/engine/model_runner.py

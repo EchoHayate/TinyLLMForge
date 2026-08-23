@@ -308,6 +308,16 @@ def test_split_result_inventory_is_exact():
             ),
             "suffix ticket phase mismatch",
         ),
+        (
+            replace(
+                result,
+                suffix=replace(
+                    result.suffix,
+                    mailbox_generation=2,
+                ),
+            ),
+            "split transfer mailbox generations mismatch",
+        ),
     )
     for invalid, message in invalid_cases:
         _assert_raises(

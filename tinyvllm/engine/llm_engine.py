@@ -17,6 +17,12 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstFallback,
     validate_exact_greedy_decode_burst_result,
 )
+from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
+    ExactBurstSplitPhaseTransaction,
+    ExactGreedyDecodeBurstSplitResult,
+    build_exact_burst_publication_tickets,
+    validate_exact_burst_split_result,
+)
 from tinyvllm.engine.speculative_execution import (
     build_engine_prepared_speculative_commit_rows,
     build_engine_speculative_partition,
@@ -521,6 +527,7 @@ class LLMEngine:
         self.last_batch_kind = None
         self.last_scheduled_seqs = []
         self.last_step_observation = None
+        self._exact_burst_split_phase_transaction = None
         self.speculative_runtime = None
         self.speculative_runtime_poisoned = False
         self.speculative_runtime_poison_reason = None
@@ -3496,6 +3503,193 @@ class LLMEngine:
     def clear_reusable_prefix_cache(self):
         return self.scheduler.block_manager.clear_reusable_cache()
 
+    def _drain_exact_burst_split_phase_suffix(
+        self,
+        pending,
+        *,
+        completion_only: bool,
+    ):
+        if not isinstance(completion_only, bool):
+            raise ValueError("completion_only must be a bool")
+        if pending is not self._exact_burst_split_phase_transaction:
+            raise ValueError(
+                "split-phase suffix transaction is not active"
+            )
+        transaction = pending["transaction"]
+        lease = pending["lease"]
+        sequence = pending["sequence"]
+        correctness_trace = pending["correctness_trace"]
+        result = transaction.result
+        scheduler_schedule_calls = 0
+        started_ns = self._clock_ns()
+        try:
+            suffix_tokens = result.suffix.wait_tokens()
+            transaction.mark_suffix_ready()
+            ready_ns = self._clock_ns()
+            record_wait = getattr(
+                self.scheduler,
+                "record_exact_greedy_decode_burst_split_phase_wait",
+                None,
+            )
+            if record_wait is not None:
+                record_wait("suffix")
+            prepared = (
+                self.scheduler
+                .prepare_exact_greedy_decode_burst_phase_commit(
+                    (sequence,),
+                    lease,
+                    result,
+                    phase="suffix",
+                    tokens=suffix_tokens,
+                    host_visible_gap_ns=max(
+                        0,
+                        ready_ns - pending["prefix_published_ns"],
+                    ),
+                    decision_now_ns=started_ns,
+                    step_end_ns=ready_ns,
+                )
+            )
+            self.scheduler.commit_prepared_postprocess(prepared)
+            transaction.mark_suffix_committed()
+            self.model_runner.call(
+                "release_exact_greedy_decode_burst_split_phase",
+                result.suffix.mailbox_generation,
+                correctness_trace,
+            )
+            record_drain = getattr(
+                self.scheduler,
+                "record_exact_greedy_decode_burst_split_phase_drain",
+                None,
+            )
+            if record_drain is not None:
+                record_drain()
+            self._exact_burst_split_phase_transaction = None
+        except BaseException as error:
+            if transaction.state in (
+                "prefix_committed",
+                "suffix_ready",
+            ):
+                transaction.mark_post_prefix_failed(
+                    "suffix_failure:" + type(error).__name__
+                )
+            try:
+                self.model_runner.call(
+                    "abort_exact_greedy_decode_burst_split_phase",
+                    result.suffix.mailbox_generation,
+                    correctness_trace,
+                )
+            except BaseException:
+                pass
+            invalidator = getattr(
+                self.model_runner,
+                "invalidate_exact_greedy_decode_burst_continuation",
+                None,
+            )
+            if invalidator is not None:
+                invalidator(
+                    "split_suffix_failure:"
+                    + type(error).__name__
+                )
+            stats = getattr(
+                self.model_runner,
+                "exact_greedy_decode_burst_stats",
+                None,
+            )
+            quarantine = getattr(stats, "quarantine", None)
+            if quarantine is not None:
+                quarantine(
+                    "split_suffix_failure:"
+                    + type(error).__name__
+                )
+            record_failure = getattr(
+                self.scheduler,
+                "record_exact_greedy_decode_burst_split_phase_failure",
+                None,
+            )
+            if record_failure is not None:
+                record_failure(
+                    "suffix_failure:" + type(error).__name__
+                )
+            try:
+                pending_leases = (
+                    self.scheduler
+                    .exact_greedy_decode_burst_summary()
+                    .get("pending_leases", 0)
+                )
+                if pending_leases:
+                    self.scheduler.fail_exact_greedy_decode_burst(
+                        lease,
+                        terminal=True,
+                    )
+            except BaseException:
+                pass
+            finally:
+                self._exact_burst_split_phase_transaction = None
+            raise
+        outputs = (
+            [(sequence.seq_id, sequence.completion_token_ids)]
+            if sequence.is_finished
+            else []
+        )
+        scheduler_summary = (
+            self.scheduler.exact_greedy_decode_burst_summary()
+        )
+        model_runner_summary = (
+            self.model_runner.exact_greedy_decode_burst_summary()
+        )
+        self.last_scheduled_seqs = [sequence]
+        self.last_batch_kind = None
+        self.last_step_observation = {
+            "policy_branch": "exact_burst_split_suffix_drain",
+            "batch_kind": None,
+            "is_prefill": False,
+            "do_sample": True,
+            "scheduled": [],
+            "queue_before": pending["queue_after_prefix"],
+            "queue_after": self.scheduler.observation_snapshot(),
+            "new_completion_tokens_by_seq": {
+                sequence.seq_id: list(suffix_tokens)
+            },
+            "finished_seq_ids": (
+                [sequence.seq_id] if sequence.is_finished else []
+            ),
+            "split_phase_attempted": True,
+            "split_phase_accepted": True,
+            "parent_lease_identity_sha256": (
+                lease.identity_sha256
+            ),
+            "prefix_ticket_identity_sha256": (
+                result.prefix.ticket.identity_sha256
+            ),
+            "suffix_ticket_identity_sha256": (
+                result.suffix.ticket.identity_sha256
+            ),
+            "phase_published": "suffix",
+            "phase_token_count": len(suffix_tokens),
+            "replay_count": result.replay_count,
+            "prefix_d2h_calls": 1,
+            "suffix_d2h_calls": 1,
+            "prefix_d2h_bytes": result.prefix.byte_count,
+            "suffix_d2h_bytes": result.suffix.byte_count,
+            "prefix_wait_ns": pending["prefix_wait_ns"],
+            "suffix_wait_ns": max(0, ready_ns - started_ns),
+            "host_visible_gap_ns": max(
+                0,
+                ready_ns - pending["prefix_published_ns"],
+            ),
+            "pending_suffix": False,
+            "scheduler_schedule_calls": scheduler_schedule_calls,
+            "fallback_reason": None,
+            "quarantine_reason": model_runner_summary.get(
+                "quarantine_reason"
+            ),
+            "exact_greedy_decode_burst_pending_lease_count": int(
+                scheduler_summary.get("pending_leases", 0)
+            ),
+            "memory": self.model_runner.memory_snapshot(),
+        }
+        return outputs, -len(suffix_tokens)
+
     def step(
         self,
         *,
@@ -3562,6 +3756,17 @@ class LLMEngine:
 
         step_error = None
         try:
+            pending_split = getattr(
+                self,
+                "_exact_burst_split_phase_transaction",
+                None,
+            )
+            if pending_split is not None:
+                with step_phase("exact_burst_split_suffix_drain"):
+                    return self._drain_exact_burst_split_phase_suffix(
+                        pending_split,
+                        completion_only=completion_only,
+                    )
             queue_before = self.scheduler.observation_snapshot()
             decision_now_ns = self._clock_ns()
             with step_phase("scheduler_schedule"):
@@ -3688,6 +3893,20 @@ class LLMEngine:
             exact_burst_host_visible_gap_ns = 0
             exact_burst_fallback_reason = None
             exact_burst_committed = False
+            split_phase_attempted = False
+            split_phase_accepted = False
+            split_parent_lease_identity = None
+            split_prefix_ticket_identity = None
+            split_suffix_ticket_identity = None
+            split_phase_published = None
+            split_phase_token_count = 0
+            split_prefix_d2h_calls = 0
+            split_suffix_d2h_calls = 0
+            split_prefix_d2h_bytes = 0
+            split_suffix_d2h_bytes = 0
+            split_prefix_wait_ns = 0
+            split_suffix_wait_ns = 0
+            split_pending_suffix = False
             if partition.selected_sequences:
                 model_runner_config = getattr(
                     self.model_runner,
@@ -4252,6 +4471,13 @@ class LLMEngine:
                         False,
                     )
                 )
+                exact_burst_split_phase_enabled = bool(
+                    getattr(
+                        model_runner_config,
+                        "exact_greedy_decode_burst_split_phase",
+                        False,
+                    )
+                )
                 exact_burst_gate_only = (
                     exact_burst_gate_width is not None
                 )
@@ -4364,6 +4590,8 @@ class LLMEngine:
                         exact_burst_lease_identity = (
                             exact_burst_lease.identity_sha256
                         )
+                        split_transaction = None
+                        split_result = None
                         try:
                             with step_phase(
                                 "ordinary_or_first_target_dispatch"
@@ -4385,6 +4613,176 @@ class LLMEngine:
                                     exact_burst_lease,
                                     burst_result.fallback_reason,
                                 )
+                            elif isinstance(
+                                burst_result,
+                                ExactGreedyDecodeBurstSplitResult,
+                            ):
+                                split_phase_attempted = True
+                                split_result = burst_result
+                                if not exact_burst_split_phase_enabled:
+                                    raise RuntimeError(
+                                        "split-phase result returned "
+                                        "while split phase is disabled"
+                                    )
+                                split_result = (
+                                    validate_exact_burst_split_result(
+                                        burst_result,
+                                        expected_parent_lease_identity_sha256=(
+                                            exact_burst_lease
+                                            .identity_sha256
+                                        ),
+                                        expected_graph_identity_sha256=(
+                                            capability[
+                                                "graph_identity_sha256"
+                                            ]
+                                        ),
+                                    )
+                                )
+                                split_transaction = (
+                                    ExactBurstSplitPhaseTransaction.create(
+                                        parent_lease_identity_sha256=(
+                                            exact_burst_lease
+                                            .identity_sha256
+                                        ),
+                                        result=split_result,
+                                    )
+                                )
+                                expected_tickets = (
+                                    build_exact_burst_publication_tickets(
+                                        parent_lease_identity_sha256=(
+                                            exact_burst_lease
+                                            .identity_sha256
+                                        ),
+                                        first_write_position=(
+                                            exact_burst_lease
+                                            .first_write_position
+                                        ),
+                                        first_physical_slot=(
+                                            exact_burst_lease
+                                            .first_physical_slot
+                                        ),
+                                        parent_token_count=(
+                                            exact_burst_lease
+                                            .authorized_token_count
+                                        ),
+                                        prefix_token_count=4,
+                                    )
+                                )
+                                if (
+                                    split_result.prefix.ticket,
+                                    split_result.suffix.ticket,
+                                ) != expected_tickets:
+                                    raise ValueError(
+                                        "split-phase tickets do not "
+                                        "match the parent lease"
+                                    )
+                                prefix_wait_started_ns = self._clock_ns()
+                                prefix_tokens = (
+                                    split_result.prefix.wait_tokens()
+                                )
+                                prefix_ready_ns = self._clock_ns()
+                                split_prefix_wait_ns = max(
+                                    0,
+                                    prefix_ready_ns
+                                    - prefix_wait_started_ns,
+                                )
+                                split_transaction.mark_prefix_ready()
+                                record_wait = getattr(
+                                    self.scheduler,
+                                    (
+                                        "record_exact_greedy_decode_"
+                                        "burst_split_phase_wait"
+                                    ),
+                                    None,
+                                )
+                                if record_wait is not None:
+                                    record_wait("prefix")
+                                prepared_burst = (
+                                    self.scheduler
+                                    .prepare_exact_greedy_decode_burst_phase_commit(
+                                        tuple(seqs),
+                                        exact_burst_lease,
+                                        split_result,
+                                        phase="prefix",
+                                        tokens=prefix_tokens,
+                                        host_visible_gap_ns=max(
+                                            0,
+                                            prefix_ready_ns
+                                            - decision_now_ns,
+                                        ),
+                                        decision_now_ns=(
+                                            decision_now_ns
+                                        ),
+                                        step_end_ns=prefix_ready_ns,
+                                    )
+                                )
+                                self.scheduler.commit_prepared_postprocess(
+                                    prepared_burst
+                                )
+                                split_transaction.mark_prefix_committed()
+                                self._exact_burst_split_phase_transaction = {
+                                    "transaction": split_transaction,
+                                    "lease": exact_burst_lease,
+                                    "sequence": seqs[0],
+                                    "correctness_trace": (
+                                        exact_burst_correctness_trace
+                                    ),
+                                    "prefix_published_ns": (
+                                        prefix_ready_ns
+                                    ),
+                                    "prefix_wait_ns": (
+                                        split_prefix_wait_ns
+                                    ),
+                                    "queue_after_prefix": (
+                                        self.scheduler
+                                        .observation_snapshot()
+                                    ),
+                                }
+                                split_phase_accepted = True
+                                split_parent_lease_identity = (
+                                    exact_burst_lease.identity_sha256
+                                )
+                                split_prefix_ticket_identity = (
+                                    split_result.prefix.ticket
+                                    .identity_sha256
+                                )
+                                split_suffix_ticket_identity = (
+                                    split_result.suffix.ticket
+                                    .identity_sha256
+                                )
+                                split_phase_published = "prefix"
+                                split_phase_token_count = len(
+                                    prefix_tokens
+                                )
+                                split_prefix_d2h_calls = 1
+                                split_suffix_d2h_calls = 1
+                                split_prefix_d2h_bytes = (
+                                    split_result.prefix.byte_count
+                                )
+                                split_suffix_d2h_bytes = (
+                                    split_result.suffix.byte_count
+                                )
+                                split_pending_suffix = True
+                                exact_burst_result_identity = (
+                                    split_result
+                                    .parent_lease_identity_sha256
+                                )
+                                exact_burst_graph_identity = (
+                                    split_result
+                                    .graph_identity_sha256
+                                )
+                                exact_burst_replay_count = int(
+                                    split_result.replay_count
+                                )
+                                exact_burst_token_d2h_calls = 2
+                                exact_burst_host_visible_gap_ns = max(
+                                    0,
+                                    prefix_ready_ns
+                                    - decision_now_ns,
+                                )
+                                num_tokens = -len(prefix_tokens)
+                                exact_burst_committed = True
+                                token_ids = ()
                             else:
                                 validate_exact_greedy_decode_burst_result(
                                     exact_burst_lease,
@@ -4447,6 +4845,55 @@ class LLMEngine:
                                 exact_burst_committed = True
                                 token_ids = ()
                         except BaseException as error:
+                            split_failure_reason = (
+                                "prefix_failure:"
+                                + type(error).__name__
+                            )
+                            if split_transaction is not None:
+                                if split_transaction.state in (
+                                    "enqueued",
+                                    "prefix_ready",
+                                ):
+                                    split_transaction.mark_pre_prefix_failed(
+                                        split_failure_reason
+                                    )
+                                elif split_transaction.state in (
+                                    "prefix_committed",
+                                    "suffix_ready",
+                                ):
+                                    split_transaction.mark_post_prefix_failed(
+                                        split_failure_reason
+                                    )
+                                self._exact_burst_split_phase_transaction = (
+                                    None
+                                )
+                            if split_result is not None:
+                                record_failure = getattr(
+                                    self.scheduler,
+                                    (
+                                        "record_exact_greedy_decode_"
+                                        "burst_split_phase_failure"
+                                    ),
+                                    None,
+                                )
+                                if record_failure is not None:
+                                    record_failure(
+                                        split_failure_reason
+                                    )
+                                try:
+                                    self.model_runner.call(
+                                        (
+                                            "abort_exact_greedy_decode_"
+                                            "burst_split_phase"
+                                        ),
+                                        (
+                                            split_result.prefix
+                                            .mailbox_generation
+                                        ),
+                                        exact_burst_correctness_trace,
+                                    )
+                                except BaseException:
+                                    pass
                             invalidator = getattr(
                                 self.model_runner,
                                 (
@@ -4741,6 +5188,37 @@ class LLMEngine:
                             0,
                         )
                     )
+                ),
+                "split_phase_attempted": split_phase_attempted,
+                "split_phase_accepted": split_phase_accepted,
+                "parent_lease_identity_sha256": (
+                    split_parent_lease_identity
+                ),
+                "prefix_ticket_identity_sha256": (
+                    split_prefix_ticket_identity
+                ),
+                "suffix_ticket_identity_sha256": (
+                    split_suffix_ticket_identity
+                ),
+                "phase_published": split_phase_published,
+                "phase_token_count": split_phase_token_count,
+                "replay_count": (
+                    exact_burst_replay_count
+                    if split_phase_attempted
+                    else 0
+                ),
+                "prefix_d2h_calls": split_prefix_d2h_calls,
+                "suffix_d2h_calls": split_suffix_d2h_calls,
+                "prefix_d2h_bytes": split_prefix_d2h_bytes,
+                "suffix_d2h_bytes": split_suffix_d2h_bytes,
+                "prefix_wait_ns": split_prefix_wait_ns,
+                "suffix_wait_ns": split_suffix_wait_ns,
+                "pending_suffix": split_pending_suffix,
+                "scheduler_schedule_calls": 1,
+                "fallback_reason": (
+                    exact_burst_fallback_reason
+                    if split_phase_attempted
+                    else None
                 ),
                 "memory": self.model_runner.memory_snapshot(),
                 **timing_observation,

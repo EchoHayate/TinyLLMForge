@@ -9109,6 +9109,42 @@ class ModelRunner:
             ),
         )
 
+    def _exact_greedy_decode_burst_split_phase_backend(
+        self,
+        correctness_trace: bool,
+    ) -> ExactBurstSplitPhaseMailboxBackend:
+        if not isinstance(correctness_trace, bool):
+            raise ValueError("correctness_trace must be a bool")
+        backend = (
+            self
+            .exact_greedy_decode_burst_split_phase_correctness_backend
+            if correctness_trace
+            else self.exact_greedy_decode_burst_split_phase_backend
+        )
+        if backend is None:
+            raise RuntimeError(
+                "split-phase exact burst backend is unavailable"
+            )
+        return backend
+
+    def release_exact_greedy_decode_burst_split_phase(
+        self,
+        mailbox_generation: int,
+        correctness_trace: bool = False,
+    ) -> None:
+        self._exact_greedy_decode_burst_split_phase_backend(
+            correctness_trace
+        ).release_transaction(mailbox_generation)
+
+    def abort_exact_greedy_decode_burst_split_phase(
+        self,
+        mailbox_generation: int,
+        correctness_trace: bool = False,
+    ) -> None:
+        self._exact_greedy_decode_burst_split_phase_backend(
+            correctness_trace
+        ).abort_transaction(mailbox_generation)
+
     def _create_exact_greedy_decode_burst_split_phase_backend(
         self,
     ) -> ExactBurstSplitPhaseMailboxBackend:
