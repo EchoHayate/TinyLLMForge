@@ -113,6 +113,58 @@ class ExactGreedyDecodeBurstDecision:
     block_boundary_clipped: bool = False
 
 
+def select_exact_greedy_decode_burst_width(
+    *,
+    configured_width: int,
+    remaining_output_tokens: int,
+    initial_sequence_length: int,
+    block_size: int,
+    split_phase_enabled: bool,
+    ragged_coalescing_enabled: bool,
+) -> int:
+    if (
+        isinstance(configured_width, bool)
+        or not isinstance(configured_width, int)
+        or not 2 <= configured_width <= 8
+    ):
+        raise ValueError(
+            "configured_width must be an integer in [2, 8]"
+        )
+    _require_non_negative_int(
+        remaining_output_tokens,
+        "remaining_output_tokens",
+    )
+    _require_positive_int(
+        initial_sequence_length,
+        "initial_sequence_length",
+    )
+    _require_positive_int(block_size, "block_size")
+    _require_bool(split_phase_enabled, "split_phase_enabled")
+    _require_bool(
+        ragged_coalescing_enabled,
+        "ragged_coalescing_enabled",
+    )
+    if (
+        not ragged_coalescing_enabled
+        or not split_phase_enabled
+        or configured_width != 8
+    ):
+        return configured_width
+    first_write_position = initial_sequence_length - 1
+    writable_positions = (
+        block_size
+        - (first_write_position % block_size)
+    )
+    capacity = min(
+        configured_width,
+        remaining_output_tokens,
+        writable_positions,
+    )
+    if 2 <= capacity < configured_width:
+        return min(4, capacity)
+    return configured_width
+
+
 def build_exact_greedy_decode_burst_decision(
     *,
     enabled: bool,

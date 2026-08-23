@@ -62,6 +62,9 @@ build_exact_greedy_decode_burst_lease = (
 decide_exact_greedy_decode_burst_continuation = (
     module.decide_exact_greedy_decode_burst_continuation
 )
+select_exact_greedy_decode_burst_width = (
+    module.select_exact_greedy_decode_burst_width
+)
 validate_exact_greedy_decode_burst_result = (
     module.validate_exact_greedy_decode_burst_result
 )
@@ -514,6 +517,80 @@ def _eligible_kwargs() -> dict:
         "pending_lease": False,
         "quarantined": False,
     }
+
+
+def test_ragged_width_selector_caps_output_tail_at_k4() -> None:
+    selected = {}
+    for capacity in range(9):
+        selected[capacity] = select_exact_greedy_decode_burst_width(
+            configured_width=8,
+            remaining_output_tokens=capacity,
+            initial_sequence_length=241,
+            block_size=256,
+            split_phase_enabled=True,
+            ragged_coalescing_enabled=True,
+        )
+    assert selected == {
+        0: 8,
+        1: 8,
+        2: 2,
+        3: 3,
+        4: 4,
+        5: 4,
+        6: 4,
+        7: 4,
+        8: 8,
+    }
+
+
+def test_ragged_width_selector_caps_block_edge_at_k4() -> None:
+    selected = {}
+    for capacity in range(1, 9):
+        selected[capacity] = select_exact_greedy_decode_burst_width(
+            configured_width=8,
+            remaining_output_tokens=8,
+            initial_sequence_length=257 - capacity,
+            block_size=256,
+            split_phase_enabled=True,
+            ragged_coalescing_enabled=True,
+        )
+    assert selected == {
+        1: 8,
+        2: 2,
+        3: 3,
+        4: 4,
+        5: 4,
+        6: 4,
+        7: 4,
+        8: 8,
+    }
+
+
+def test_ragged_width_selector_is_strictly_opt_in() -> None:
+    common = {
+        "configured_width": 8,
+        "remaining_output_tokens": 7,
+        "initial_sequence_length": 241,
+        "block_size": 256,
+    }
+    assert select_exact_greedy_decode_burst_width(
+        **common,
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=False,
+    ) == 8
+    assert select_exact_greedy_decode_burst_width(
+        **common,
+        split_phase_enabled=False,
+        ragged_coalescing_enabled=True,
+    ) == 8
+    assert select_exact_greedy_decode_burst_width(
+        **{
+            **common,
+            "configured_width": 4,
+        },
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=True,
+    ) == 4
 
 
 def test_policy_clips_to_budget_and_current_block() -> None:
@@ -2409,6 +2486,9 @@ def test_split_phase_copy_failure_aborts_and_quarantines():
 
 
 def main() -> None:
+    test_ragged_width_selector_caps_output_tail_at_k4()
+    test_ragged_width_selector_caps_block_edge_at_k4()
+    test_ragged_width_selector_is_strictly_opt_in()
     test_policy_clips_to_budget_and_current_block()
     test_boundary_width_one_falls_back_before_replay()
     test_gate_only_width_one_is_explicit_and_never_implicit()
