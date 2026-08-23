@@ -705,10 +705,6 @@ def validate_exact_greedy_decode_burst_result(
             raise ValueError(
                 "sampled logit ordinals must be strictly increasing"
             )
-        if ordinal >= result.replay_count:
-            raise ValueError(
-                "sampled logit ordinal exceeds replay count"
-            )
         if (
             not isinstance(values, tuple)
             or not values
@@ -1321,9 +1317,20 @@ class ExactGreedyDecodeBurstGraph:
             raise ValueError(
                 "sampled_logit_ordinals must be strictly increasing"
             )
-        if any(value >= 8 for value in sampled_logit_ordinals):
+        history_capacity = int(
+            tensors["token_history"].shape[0]
+        )
+        _require_positive_int(
+            history_capacity,
+            "history capacity",
+        )
+        if any(
+            value >= history_capacity
+            for value in sampled_logit_ordinals
+        ):
             raise ValueError(
-                "sampled_logit_ordinals must be below eight"
+                "sampled_logit_ordinals must be below "
+                "history capacity"
             )
         if correctness_trace:
             for name in ("sampled_logits", "sample_ordinals"):
@@ -1754,25 +1761,29 @@ class ExactGreedyDecodeBurstGraph:
         sampled_logits = ()
         sampled_logit_d2h_calls = 0
         if self.correctness_trace:
-            active_ordinals = tuple(
-                ordinal
-                for ordinal in self.sampled_logit_ordinals
-                if ordinal < lease.authorized_token_count
+            history_end = (
+                history_start + lease.authorized_token_count
             )
-            if active_ordinals:
+            active_rows = tuple(
+                (row_index, ordinal)
+                for row_index, ordinal
+                in enumerate(self.sampled_logit_ordinals)
+                if history_start <= ordinal < history_end
+            )
+            if active_rows:
                 try:
                     rows = tensors["sampled_logits"][
-                        :len(active_ordinals)
+                        :len(self.sampled_logit_ordinals)
                     ].tolist()
                     sampled_logits = tuple(
                         (
                             ordinal,
-                            tuple(float(value) for value in row),
+                            tuple(
+                                float(value)
+                                for value in rows[row_index]
+                            ),
                         )
-                        for ordinal, row in zip(
-                            active_ordinals,
-                            rows,
-                        )
+                        for row_index, ordinal in active_rows
                     )
                 except Exception as error:
                     reason = (

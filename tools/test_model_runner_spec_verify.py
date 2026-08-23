@@ -4569,7 +4569,7 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
         correctness_result = (
             runner._capture_exact_greedy_decode_burst(
                 correctness_trace=True,
-                sampled_logit_ordinals=(0,),
+                sampled_logit_ordinals=(0, 63, 126),
             )
         )
         correctness_observed = dict(observed)
@@ -4603,7 +4603,11 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     )
     assert production_allocation_devices == ["cuda:0"] * 7
     assert correctness_observed["correctness_trace"] is True
-    assert correctness_observed["sampled_logit_ordinals"] == (0,)
+    assert correctness_observed["sampled_logit_ordinals"] == (
+        0,
+        63,
+        126,
+    )
     assert correctness_observed["tensors"]["sampled_logits"].shape == (
         3,
         32,

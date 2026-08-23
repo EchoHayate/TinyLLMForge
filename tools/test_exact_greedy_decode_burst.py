@@ -308,6 +308,8 @@ def _graph_fixture(
     *,
     correctness_trace=False,
     live_kv_changed=False,
+    history_capacity=8,
+    sampled_logit_ordinals=None,
 ):
     events = []
     tensors = {
@@ -335,7 +337,7 @@ def _graph_fixture(
             element_size=4,
         ),
         "token_history": _BurstTensor(
-            [-1] * 8,
+            [-1] * history_capacity,
             label="token_history",
             events=events,
         ),
@@ -450,9 +452,15 @@ def _graph_fixture(
         ),
         live_kv_snapshot=lambda: next(live_snapshots),
         correctness_trace=correctness_trace,
-        sampled_logit_ordinals=(0, 2)
-        if correctness_trace
-        else (),
+        sampled_logit_ordinals=(
+            (
+                (0, 2)
+                if sampled_logit_ordinals is None
+                else sampled_logit_ordinals
+            )
+            if correctness_trace
+            else ()
+        ),
         stats=stats,
     )
     return graph, tensors, graphs[0], events, context_slots
@@ -1862,6 +1870,183 @@ def test_correctness_graph_samples_declared_logits_with_one_d2h() -> None:
     assert graph.capability()["sampled_logit_ordinals"] == [0, 2]
 
 
+def test_correctness_sampling_is_epoch_relative_across_k4_hits() -> None:
+    ordinals = (0, 63, 126)
+    graph, tensors, fake_graph, events, _slots = _graph_fixture(
+        correctness_trace=True,
+        history_capacity=128,
+        sampled_logit_ordinals=ordinals,
+    )
+    events.clear()
+
+    def materialize_block_table():
+        return _BurstTensor(
+            [[11, 12]],
+            label="live_block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        )
+
+    def replay_step(_ordinal):
+        history_index = tensors["history_index"].values[0]
+        token = 500 + history_index
+        tensors["token_history"].values[history_index] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+        if history_index in ordinals:
+            row = ordinals.index(history_index)
+            tensors["sampled_logits"].values[row] = [
+                float(history_index + column)
+                for column in range(5)
+            ]
+
+    fake_graph.on_replay = replay_step
+    sampled = []
+    initial_token = 499
+    for burst_index in range(32):
+        result = graph.replay(
+            lease=_epoch_replay_lease(
+                first_write_position=260 + burst_index * 4,
+                first_physical_slot=(
+                    12 * 256 + 4 + burst_index * 4
+                ),
+            ),
+            initial_token=initial_token,
+            block_table_factory=materialize_block_table,
+            continuation_enabled=True,
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+        )
+        sampled.extend(result.sampled_logits)
+        initial_token = result.final_input_token
+
+    assert tuple(ordinal for ordinal, _row in sampled) == ordinals
+    assert sampled[0][1][0] == 0.0
+    assert sampled[1][1][0] == 63.0
+    assert sampled[2][1][0] == 126.0
+    sampled_resets = [
+        event
+        for event in events
+        if event[:3] == ("sampled_logits", "fill_", 0)
+    ]
+    assert len(sampled_resets) == 1
+    assert graph.summary()["continuation_hits"] == 31
+
+
+def test_correctness_sampling_resets_only_on_cold_bind() -> None:
+    graph, tensors, fake_graph, events, _slots = _graph_fixture(
+        correctness_trace=True,
+        history_capacity=128,
+        sampled_logit_ordinals=(0, 63, 126),
+    )
+    events.clear()
+
+    def materialize_block_table():
+        return _BurstTensor(
+            [[11, 12]],
+            label="live_block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        )
+
+    def replay_step(_ordinal):
+        history_index = tensors["history_index"].values[0]
+        token = 600 + history_index
+        tensors["token_history"].values[history_index] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+        if history_index == 0:
+            tensors["sampled_logits"].values[0] = [1.0] * 5
+
+    fake_graph.on_replay = replay_step
+    first = graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=260,
+            first_physical_slot=12 * 256 + 4,
+        ),
+        initial_token=599,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    tensors["sampled_logits"].values[1] = [7.0] * 5
+    second = graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=264,
+            first_physical_slot=12 * 256 + 8,
+        ),
+        initial_token=first.final_input_token,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert second.tokens == (604, 605, 606, 607)
+    assert tensors["sampled_logits"].values[1] == [7.0] * 5
+
+    graph.replay(
+        lease=_epoch_replay_lease(
+            first_write_position=269,
+            first_physical_slot=12 * 256 + 12,
+        ),
+        initial_token=second.final_input_token,
+        block_table_factory=materialize_block_table,
+        continuation_enabled=True,
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+    )
+    assert tensors["sampled_logits"].values[1] == [0] * 5
+
+
+def test_correctness_sampling_rejects_invalid_epoch_ordinals() -> None:
+    for ordinals, message in (
+        (
+            (0, 0),
+            "sampled_logit_ordinals must be strictly increasing",
+        ),
+        (
+            (2, 1),
+            "sampled_logit_ordinals must be strictly increasing",
+        ),
+        (
+            (-1,),
+            (
+                "sampled_logit_ordinals must contain "
+                "non-negative integers"
+            ),
+        ),
+        (
+            (128,),
+            (
+                "sampled_logit_ordinals must be below "
+                "history capacity"
+            ),
+        ),
+    ):
+        _assert_raises(
+            ValueError,
+            message,
+            lambda ordinals=ordinals: _graph_fixture(
+                correctness_trace=True,
+                history_capacity=128,
+                sampled_logit_ordinals=ordinals,
+            ),
+        )
+
+
 def test_capture_rejects_any_live_kv_mutation() -> None:
     _assert_raises(
         RuntimeError,
@@ -1937,6 +2122,9 @@ def main() -> None:
     test_post_replay_failures_quarantine_and_never_retry()
     test_final_d2h_failure_quarantines_after_all_replays()
     test_correctness_graph_samples_declared_logits_with_one_d2h()
+    test_correctness_sampling_is_epoch_relative_across_k4_hits()
+    test_correctness_sampling_resets_only_on_cold_bind()
+    test_correctness_sampling_rejects_invalid_epoch_ordinals()
     test_capture_rejects_any_live_kv_mutation()
     test_result_construction_failure_quarantines_original_error()
     print("exact greedy decode burst tests passed")
