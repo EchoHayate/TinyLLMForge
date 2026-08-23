@@ -464,6 +464,7 @@ class _Scheduler:
         self.host_visible_gap_ns = 0
         self.split_phase = "enqueued" if lease is not None else "idle"
         self.phase_commit_failure = phase_commit_failure
+        self.phase_prepare_kwargs = {}
 
     def observation_snapshot(self):
         return {"running_seq_ids": [self.sequence.seq_id]}
@@ -540,6 +541,7 @@ class _Scheduler:
         tokens,
         **kwargs,
     ):
+        self.phase_prepare_kwargs[phase] = dict(kwargs)
         self.events.append((f"scheduler.prepare_{phase}",))
         return SimpleNamespace(
             seqs=tuple(seqs),
@@ -908,7 +910,7 @@ def test_split_phase_publishes_prefix_then_drains_suffix_before_schedule():
     assert suffix_observation["scheduler_schedule_calls"] == 0
 
 
-def test_split_phase_prefix_observation_exposes_correctness_logits():
+def test_split_phase_correctness_authority_reaches_both_phase_commits():
     events = []
     lease = _lease(width=8)
     sampled_logits = ((0, (1.0, 3.0, 2.0)),)
@@ -917,7 +919,7 @@ def test_split_phase_prefix_observation_exposes_correctness_logits():
         events,
         sampled_logits=sampled_logits,
     )
-    engine, sequence, _scheduler, _model_runner, step = _engine(
+    engine, sequence, scheduler, _model_runner, step = _engine(
         result,
         lease=lease,
         split_enabled=True,
@@ -941,6 +943,19 @@ def test_split_phase_prefix_observation_exposes_correctness_logits():
     ] == 1
     assert observation[
         "exact_greedy_decode_burst_correctness_trace"
+    ] is True
+    assert scheduler.phase_prepare_kwargs["prefix"][
+        "correctness_trace"
+    ] is True
+
+    step(
+        engine,
+        completion_only=True,
+        exact_burst_correctness_trace=False,
+    )
+
+    assert scheduler.phase_prepare_kwargs["suffix"][
+        "correctness_trace"
     ] is True
 
 

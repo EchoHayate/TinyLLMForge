@@ -1323,6 +1323,7 @@ class Scheduler:
         *,
         phase: str,
         tokens: tuple[int, ...],
+        correctness_trace: bool = False,
         host_visible_gap_ns: int = 0,
         decision_now_ns: int | None = None,
         step_end_ns: int | None = None,
@@ -1365,6 +1366,7 @@ class Scheduler:
             expected_graph_identity_sha256=(
                 split_result.graph_identity_sha256
             ),
+            correctness_trace=correctness_trace,
         )
         expected_tickets = build_exact_burst_publication_tickets(
             parent_lease_identity_sha256=lease.identity_sha256,
@@ -1422,6 +1424,9 @@ class Scheduler:
         )
         prepared.exact_burst_lease = lease
         prepared.exact_burst_split_result = split_result
+        prepared.exact_burst_correctness_trace = (
+            correctness_trace
+        )
         prepared.exact_burst_host_visible_gap_ns = (
             host_visible_gap_ns
         )
@@ -2656,6 +2661,9 @@ class Scheduler:
                     ),
                     expected_graph_identity_sha256=(
                         split_result.graph_identity_sha256
+                    ),
+                    correctness_trace=(
+                        prepared.exact_burst_correctness_trace
                     ),
                 )
                 expected_tickets = (

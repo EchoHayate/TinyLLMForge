@@ -3541,6 +3541,7 @@ class LLMEngine:
                     result,
                     phase="suffix",
                     tokens=suffix_tokens,
+                    correctness_trace=correctness_trace,
                     host_visible_gap_ns=max(
                         0,
                         ready_ns - pending["prefix_published_ns"],
@@ -4724,6 +4725,9 @@ class LLMEngine:
                                         split_result,
                                         phase="prefix",
                                         tokens=prefix_tokens,
+                                        correctness_trace=(
+                                            exact_burst_correctness_trace
+                                        ),
                                         host_visible_gap_ns=max(
                                             0,
                                             prefix_ready_ns

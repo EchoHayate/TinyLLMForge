@@ -395,6 +395,8 @@ def _exact_burst_split_result(
     *,
     prefix_tokens=(11, 12, 13, 14),
     suffix_tokens=(15, 16, 17, 18),
+    sampled_logit_d2h_calls=0,
+    sampled_logits=(),
 ):
     prefix_ticket, suffix_ticket = (
         build_exact_burst_publication_tickets(
@@ -422,6 +424,8 @@ def _exact_burst_split_result(
         replay_count=8,
         prefix=transfer(prefix_ticket, prefix_tokens),
         suffix=transfer(suffix_ticket, suffix_tokens),
+        sampled_logit_d2h_calls=sampled_logit_d2h_calls,
+        sampled_logits=sampled_logits,
     )
 
 
@@ -1342,6 +1346,71 @@ def test_split_phase_k8_commits_prefix_then_suffix_under_one_parent_lease(
     assert summary["commits"] == 1
     assert summary["committed_tokens"] == 8
     assert summary["pending_leases"] == 0
+
+
+def test_split_phase_correctness_trace_survives_scheduler_revalidation(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    split_result = _exact_burst_split_result(
+        lease,
+        sampled_logit_d2h_calls=1,
+        sampled_logits=(
+            (0, (1.0, 2.0)),
+            (7, (2.0, 1.0)),
+        ),
+    )
+
+    prefix = scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+        (sequence,),
+        lease,
+        split_result,
+        phase="prefix",
+        tokens=(11, 12, 13, 14),
+        correctness_trace=True,
+    )
+    scheduler.commit_prepared_postprocess(prefix)
+    suffix = scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+        (sequence,),
+        lease,
+        split_result,
+        phase="suffix",
+        tokens=(15, 16, 17, 18),
+        correctness_trace=True,
+    )
+    scheduler.commit_prepared_postprocess(suffix)
+
+    assert sequence.completion_token_ids == [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    ]
+    assert scheduler._exact_greedy_decode_burst_pending_lease is None
+    assert scheduler._exact_greedy_decode_burst_split_phase == "idle"
 
 
 def test_ragged_coalescing_finishes_k8_tail_with_k4_then_k3(
