@@ -156,6 +156,22 @@ class _NonSearchableFreeBlocks(deque):
         raise AssertionError("free block membership scans are not allowed")
 
 
+class _IterationCountingList(list):
+    def __init__(self, values):
+        super().__init__(values)
+        self.iterations = 0
+        self.slice_reads = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        return super().__iter__()
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            self.slice_reads += 1
+        return super().__getitem__(index)
+
+
 def _config():
     return SimpleNamespace(
         max_num_seqs=4,
@@ -1858,6 +1874,76 @@ def test_delta_journal_commits_prefix_then_suffix_exactly(
         summary["lease_local_delta_journal_published_blocks"]
         == expected_published_blocks
     )
+
+
+def test_delta_journal_context_bounded_capture(
+    monkeypatch,
+):
+    scheduler, sequence, lease, split_result = (
+        _delta_split_phase_fixture(
+            monkeypatch,
+            phase="prefix",
+            prompt_length=249,
+            max_tokens=16,
+        )
+    )
+    row = ScheduledOutputRow(
+        sequence_id=sequence.seq_id,
+        output_tokens=split_result.prefix.wait_tokens(),
+        speculative=False,
+        exact_burst=True,
+        exact_burst_phase="prefix",
+    )
+    write_block_index = (
+        lease.first_write_position
+        // scheduler.block_manager.block_size
+    )
+    publication_plan = (
+        scheduler.block_manager.plan_lease_write_block_publication(
+            sequence,
+            appended_tokens=row.output_tokens,
+            block_table_index=write_block_index,
+            expected_block_id=lease.write_block_id,
+            expected_generation=lease.write_block_generation,
+            materialized_tokens=lease.first_write_position + 4,
+            predecessor_hash=(
+                scheduler.block_manager.blocks[
+                    sequence.block_table[write_block_index - 1]
+                ].hash
+                if write_block_index
+                else None
+            ),
+        )
+    )
+    token_ids = _IterationCountingList(sequence.token_ids)
+    block_table = _IterationCountingList(sequence.block_table)
+    sequence.token_ids = token_ids
+    sequence.block_table = block_table
+
+    delta = scheduler_module.ExactBurstPhaseDeltaJournal.capture(
+        scheduler,
+        sequence,
+        expected_block_table_identity=(
+            lease.block_table_identity
+        ),
+        publication_plan=publication_plan,
+    )
+
+    assert token_ids.iterations == 0
+    assert token_ids.slice_reads == 0
+    assert block_table.iterations == 0
+    assert block_table.slice_reads == 0
+    assert delta.publication_applied is False
+    assert not hasattr(delta, "sequence_states")
+    assert not hasattr(delta, "blocks")
+    assert not hasattr(delta, "hashes")
+
+    scheduler_module.SchedulerPostprocessJournal.capture(
+        scheduler,
+        (sequence,),
+    )
+    assert token_ids.iterations > 0
+    assert block_table.iterations > 0
 
 
 def test_split_phase_correctness_trace_survives_scheduler_revalidation(
