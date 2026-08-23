@@ -918,17 +918,12 @@ def validate_correctness_rows(
                 "correctness graph identity",
             )
             expected_ordinal = (
-                _sampling_output_index(
+                _expected_selected_replay_ordinal(
+                    policy,
                     point,
                     row["generated_tokens"],
                 )
-                - 1
             )
-            if not POLICY_CONFIGS[policy].get(
-                "epoch_relative_sampling",
-                False,
-            ):
-                expected_ordinal %= POLICY_CONFIGS[policy]["width"]
             if selected_ordinal != expected_ordinal:
                 raise ValueError(
                     "selected replay ordinal mismatch"
@@ -1433,6 +1428,22 @@ def _sampling_output_index(point: str, generated_tokens: int) -> int:
         "decode-middle": generated_tokens // 2,
         "decode-final": generated_tokens - 1,
     }[point]
+
+
+def _expected_selected_replay_ordinal(
+    policy: str,
+    point: str,
+    generated_tokens: int,
+) -> int:
+    ordinal = (
+        _sampling_output_index(point, generated_tokens) - 1
+    )
+    if not POLICY_CONFIGS[policy].get(
+        "epoch_relative_sampling",
+        False,
+    ):
+        ordinal %= POLICY_CONFIGS[policy]["width"]
+    return ordinal
 
 
 def _sampled_local_ordinals(policy: str) -> tuple[int, ...]:

@@ -7,6 +7,7 @@ from copy import deepcopy
 import os
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,22 +18,29 @@ if os.fspath(REPO_ROOT) not in sys.path:
 
 from tools.profile_exact_burst_ragged_coalescing import (
     CASE_SCHEMA_VERSION,
+    CONTEXT_CASES,
     CORRECTNESS_SCHEMA_VERSION,
+    CORRECTNESS_TRACE_IDENTITY,
     POLICIES,
     POLICY_CONFIGS,
+    SAMPLING_POINTS,
     SOURCE_FILES,
     SUMMARY_SCHEMA_VERSION,
     WORKLOAD_SCHEMA_VERSION,
     _construct_llm,
     _sampled_local_ordinals,
     build_workload_manifest,
+    correctness_point_uses_burst_trace,
     correctness_trace_for_step,
     correctness_identities,
     performance_identities,
     validate_case_row,
+    validate_correctness_rows,
+    write_float32_sidecar,
 )
 from tools.test_profile_exact_burst_split_phase import (
     _case_row as _split_case_row,
+    _correctness_row as _split_correctness_row,
 )
 
 
@@ -196,10 +204,106 @@ def test_candidate_runtime_and_correctness_trace_are_explicit() -> None:
     ) == (0, 2, 7)
 
 
+def test_correctness_rows_bind_ragged_tail_local_ordinal() -> None:
+    candidate = "decode_burst_k8_split_phase_ragged"
+    split_baseline = "decode_burst_k8_split_phase"
+    expected_candidate_ordinals = {
+        "decode-first": 0,
+        "decode-middle": 7,
+        "decode-final": 2,
+    }
+    with TemporaryDirectory() as temporary:
+        run_dir = Path(temporary)
+        rows = []
+        for bucket, _prompt, generated_tokens in CONTEXT_CASES:
+            for policy in POLICIES:
+                for point in SAMPLING_POINTS:
+                    source_policy = (
+                        split_baseline
+                        if policy == candidate
+                        else policy
+                    )
+                    row = _split_correctness_row(
+                        run_dir=run_dir,
+                        policy=source_policy,
+                        bucket=bucket,
+                        sampling_point=point,
+                    )
+                    row.update({
+                        "schema_version": CORRECTNESS_SCHEMA_VERSION,
+                        "policy": policy,
+                        "trace_identity": CORRECTNESS_TRACE_IDENTITY,
+                    })
+                    if policy == candidate:
+                        row["logits_path"] = (
+                            f"logits/{bucket}-{policy}-{point}.f32"
+                        )
+                        summary = deepcopy(
+                            _candidate_row()[
+                                "exact_greedy_decode_burst_summary"
+                            ]
+                        )
+                        summary["capture_receipts"][0][
+                            "correctness_trace"
+                        ] = True
+                        summary["sampled_logit_d2h_calls"] = 3
+                        row[
+                            "exact_greedy_decode_burst_summary"
+                        ] = summary
+                        burst_sample = (
+                            correctness_point_uses_burst_trace(
+                                policy,
+                                point,
+                            )
+                        )
+                        row["trace_graph_identity_sha256"] = (
+                            "c" * 64 if burst_sample else None
+                        )
+                        row["selected_replay_ordinal"] = (
+                            expected_candidate_ordinals[point]
+                            if burst_sample
+                            else None
+                        )
+                        row["sampled_logit_d2h_calls"] = (
+                            1 if burst_sample else 0
+                        )
+                        sidecar = write_float32_sidecar(
+                            run_dir,
+                            row["logits_path"],
+                            (1.0, 2.0, 3.0, 4.0),
+                        )
+                        row.update({
+                            "logits_shape": [1, 4],
+                            "logits_element_count":
+                                sidecar["element_count"],
+                            "logits_byte_length":
+                                sidecar["byte_length"],
+                            "logits_sha256": sidecar["sha256"],
+                        })
+                    rows.append(row)
+
+        validated = validate_correctness_rows(
+            rows,
+            run_dir=run_dir,
+        )
+
+    candidate_rows = {
+        row["sampling_point"]: row
+        for row in validated
+        if row["context_bucket"] == "short"
+        and row["policy"] == candidate
+    }
+    assert {
+        point: candidate_rows[point]["selected_replay_ordinal"]
+        for point in expected_candidate_ordinals
+    } == expected_candidate_ordinals
+
+
 def main() -> None:
     test_frozen_matrix_and_source_inventory()
     test_candidate_row_binds_k8_plus_k4_k3_inventory()
     test_candidate_runtime_and_correctness_trace_are_explicit()
+    test_correctness_rows_bind_ragged_tail_local_ordinal()
     print("exact burst ragged-coalescing profile tests passed")
 
 

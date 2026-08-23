@@ -15,6 +15,9 @@ _ORIGINAL_SPLIT_CORRECTNESS_TRACE_FOR_STEP = (
 _ORIGINAL_SPLIT_SAMPLED_LOCAL_ORDINALS = (
     _split._sampled_local_ordinals
 )
+_ORIGINAL_EXPECTED_SELECTED_REPLAY_ORDINAL = (
+    _base._expected_selected_replay_ordinal
+)
 
 CASE_SCHEMA_VERSION = "exact-burst-ragged-coalescing.case.v1"
 CORRECTNESS_SCHEMA_VERSION = (
@@ -117,6 +120,36 @@ def _sampled_local_ordinals(policy: str) -> tuple[int, ...]:
     return _ORIGINAL_SPLIT_SAMPLED_LOCAL_ORDINALS(policy)
 
 
+def _expected_selected_replay_ordinal(
+    policy: str,
+    point: str,
+    generated_tokens: int,
+) -> int:
+    if policy != "decode_burst_k8_split_phase_ragged":
+        return _ORIGINAL_EXPECTED_SELECTED_REPLAY_ORDINAL(
+            policy,
+            point,
+            generated_tokens,
+        )
+    output_index = _base._sampling_output_index(
+        point,
+        generated_tokens,
+    )
+    emitted_total = 1
+    while emitted_total < generated_tokens:
+        remaining = generated_tokens - emitted_total
+        if remaining >= 8:
+            width = 8
+        elif remaining >= 2:
+            width = min(4, remaining)
+        else:
+            width = 1
+        if output_index < emitted_total + width:
+            return output_index - emitted_total
+        emitted_total += width
+    raise ValueError("sampling point is outside ragged decode bursts")
+
+
 def validate_case_row(row) -> dict:
     normalized = _split.validate_case_row(row)
     samples = normalized["amortized_tpot_samples_ns"]
@@ -163,10 +196,16 @@ def _activate_contract() -> None:
     _base.correctness_trace_for_step = (
         correctness_trace_for_step
     )
+    _base._expected_selected_replay_ordinal = (
+        _expected_selected_replay_ordinal
+    )
     _base._sampled_local_ordinals = _sampled_local_ordinals
     _base.run_correctness_probe = _split.run_correctness_probe
     _split.correctness_trace_for_step = (
         correctness_trace_for_step
+    )
+    _split._expected_selected_replay_ordinal = (
+        _expected_selected_replay_ordinal
     )
     _split._sampled_local_ordinals = _sampled_local_ordinals
 

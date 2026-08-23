@@ -30,6 +30,7 @@ from tools.profile_exact_burst_ragged_coalescing import (
     POLICY_CONFIGS,
     SAMPLING_POINTS,
     SOURCE_FILES,
+    _expected_selected_replay_ordinal,
     build_workload_manifest,
     correctness_point_uses_burst_trace,
     summarize_rows,
@@ -257,17 +258,15 @@ def _correctness_rows(
                         policy,
                         point,
                     )
-                    output_index = {
-                        "prefill-final": 0,
-                        "decode-first": 1,
-                        "decode-middle": _generated // 2,
-                        "decode-final": _generated - 1,
-                    }[point]
                     row["trace_graph_identity_sha256"] = (
                         "c" * 64 if burst_sample else None
                     )
                     row["selected_replay_ordinal"] = (
-                        (output_index - 1) % 8
+                        _expected_selected_replay_ordinal(
+                            policy,
+                            point,
+                            _generated,
+                        )
                         if burst_sample
                         else None
                     )
