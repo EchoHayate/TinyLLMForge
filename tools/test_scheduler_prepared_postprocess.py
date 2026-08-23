@@ -1344,6 +1344,132 @@ def test_split_phase_k8_commits_prefix_then_suffix_under_one_parent_lease(
     assert summary["pending_leases"] == 0
 
 
+def test_ragged_coalescing_finishes_k8_tail_with_k4_then_k3(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=15,
+        ignore_eos=True,
+    )
+    parent = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=True,
+    )
+    assert parent.requested_token_count == 8
+    split_result = _exact_burst_split_result(parent)
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            parent,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+    )
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            parent,
+            split_result,
+            phase="suffix",
+            tokens=(15, 16, 17, 18),
+        )
+    )
+
+    k4 = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=True,
+    )
+    assert (
+        k4.requested_token_count,
+        k4.authorized_token_count,
+    ) == (4, 4)
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            k4,
+            _exact_burst_result(k4, (21, 22, 23, 24)),
+        )
+    )
+    assert scheduler._exact_greedy_decode_burst_split_phase == "idle"
+
+    k3 = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        split_phase_enabled=True,
+        ragged_coalescing_enabled=True,
+    )
+    assert (
+        k3.requested_token_count,
+        k3.authorized_token_count,
+    ) == (3, 3)
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            k3,
+            _exact_burst_result(k3, (25, 26, 27)),
+        )
+    )
+
+    assert sequence.completion_token_ids == [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+    ]
+    assert sequence.status == SequenceStatus.FINISHED
+    assert scheduler._exact_greedy_decode_burst_pending_lease is None
+    assert scheduler._exact_greedy_decode_burst_split_phase == "idle"
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["attempts"] == 3
+    assert summary["acceptances"] == 3
+    assert summary["commits"] == 3
+    assert summary["committed_tokens"] == 15
+    assert summary["requested_width_histogram"] == {
+        "3": 1,
+        "4": 1,
+        "8": 1,
+    }
+    assert summary["authorized_width_histogram"] == {
+        "3": 1,
+        "4": 1,
+        "8": 1,
+    }
+    assert summary["fallback_counts"] == {}
+    assert summary["prefix_commits"] == 1
+    assert summary["suffix_commits"] == 1
+    assert summary["final_token_d2h_calls"] == 2
+
+
 def test_split_phase_rejects_out_of_order_duplicate_and_mismatched_inputs(
     monkeypatch,
 ):
