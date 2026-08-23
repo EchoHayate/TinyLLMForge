@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -66,6 +67,10 @@ exact_burst_module = _load_module(
     "tinyvllm.engine.exact_greedy_decode_burst",
     "tinyvllm/engine/exact_greedy_decode_burst.py",
 )
+split_phase_module = _load_module(
+    "tinyvllm.engine.exact_greedy_decode_burst_split_phase",
+    "tinyvllm/engine/exact_greedy_decode_burst_split_phase.py",
+)
 
 
 class _TorchDType:
@@ -115,6 +120,15 @@ ScheduledOutputRow = scheduler_module.ScheduledOutputRow
 Scheduler = scheduler_module.Scheduler
 ExactGreedyDecodeBurstResult = (
     exact_burst_module.ExactGreedyDecodeBurstResult
+)
+ExactBurstPhaseTransfer = (
+    split_phase_module.ExactBurstPhaseTransfer
+)
+ExactGreedyDecodeBurstSplitResult = (
+    split_phase_module.ExactGreedyDecodeBurstSplitResult
+)
+build_exact_burst_publication_tickets = (
+    split_phase_module.build_exact_burst_publication_tickets
 )
 Sequence.block_size = 2
 
@@ -269,6 +283,54 @@ def _exact_burst_result(lease, tokens):
         graph_identity_sha256="a" * 64,
         token_d2h_calls=1,
         sampled_logit_d2h_calls=0,
+    )
+
+
+class _ReadyCompletion:
+    def synchronize(self):
+        return None
+
+
+class _TokenMailbox:
+    def __init__(self, tokens):
+        self._tokens = tuple(tokens)
+
+    def tolist(self):
+        return list(self._tokens)
+
+
+def _exact_burst_split_result(
+    lease,
+    *,
+    prefix_tokens=(11, 12, 13, 14),
+    suffix_tokens=(15, 16, 17, 18),
+):
+    prefix_ticket, suffix_ticket = (
+        build_exact_burst_publication_tickets(
+            parent_lease_identity_sha256=lease.identity_sha256,
+            first_write_position=lease.first_write_position,
+            first_physical_slot=lease.first_physical_slot,
+            parent_token_count=lease.authorized_token_count,
+            prefix_token_count=4,
+        )
+    )
+
+    def transfer(ticket, tokens):
+        return ExactBurstPhaseTransfer(
+            ticket=ticket,
+            mailbox_generation=1,
+            token_count=len(tokens),
+            byte_count=len(tokens) * 8,
+            completion=_ReadyCompletion(),
+            mailbox=_TokenMailbox(tokens),
+        )
+
+    return ExactGreedyDecodeBurstSplitResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        graph_identity_sha256="b" * 64,
+        replay_count=8,
+        prefix=transfer(prefix_ticket, prefix_tokens),
+        suffix=transfer(suffix_ticket, suffix_tokens),
     )
 
 
@@ -1103,6 +1165,367 @@ def test_exact_burst_completion_releases_request_storage_once(
     assert scheduler.exact_greedy_decode_burst_summary()[
         "pending_leases"
     ] == 0
+
+
+def test_split_phase_k8_commits_prefix_then_suffix_under_one_parent_lease(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    split_result = _exact_burst_split_result(lease)
+
+    prefix_prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+            host_visible_gap_ns=12_000_000,
+        )
+    )
+    scheduler.commit_prepared_postprocess(prefix_prepared)
+
+    assert sequence.completion_token_ids == [11, 12, 13, 14]
+    assert (
+        scheduler._exact_greedy_decode_burst_pending_lease
+        == lease
+    )
+    assert (
+        scheduler._exact_greedy_decode_burst_split_phase
+        == "prefix_committed"
+    )
+    prefix_summary = scheduler.exact_greedy_decode_burst_summary()
+    assert prefix_summary["prefix_commits"] == 1
+    assert prefix_summary["prefix_committed_tokens"] == 4
+    assert prefix_summary["pending_leases"] == 1
+    assert prefix_summary["commits"] == 0
+
+    suffix_prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=(15, 16, 17, 18),
+            host_visible_gap_ns=7_000_000,
+        )
+    )
+    scheduler.commit_prepared_postprocess(suffix_prepared)
+
+    assert sequence.completion_token_ids == [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    ]
+    assert scheduler._exact_greedy_decode_burst_pending_lease is None
+    assert scheduler._exact_greedy_decode_burst_split_phase == "idle"
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["prefix_commits"] == 1
+    assert summary["suffix_commits"] == 1
+    assert summary["prefix_committed_tokens"] == 4
+    assert summary["suffix_committed_tokens"] == 4
+    assert summary["commits"] == 1
+    assert summary["committed_tokens"] == 8
+    assert summary["pending_leases"] == 0
+
+
+def test_split_phase_rejects_out_of_order_duplicate_and_mismatched_inputs(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=12,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    split_result = _exact_burst_split_result(lease)
+
+    with pytest.raises(ValueError, match="prefix_committed"):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=(15, 16, 17, 18),
+        )
+
+    wrong_prefix_ticket, wrong_suffix_ticket = (
+        build_exact_burst_publication_tickets(
+            parent_lease_identity_sha256=lease.identity_sha256,
+            first_write_position=lease.first_write_position + 1,
+            first_physical_slot=lease.first_physical_slot + 1,
+            parent_token_count=8,
+            prefix_token_count=4,
+        )
+    )
+    wrong_result = replace(
+        split_result,
+        prefix=replace(
+            split_result.prefix,
+            ticket=wrong_prefix_ticket,
+        ),
+        suffix=replace(
+            split_result.suffix,
+            ticket=wrong_suffix_ticket,
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match="publication ticket does not match",
+    ):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            wrong_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+
+    with pytest.raises(ValueError, match="phase transfer"):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13),
+        )
+
+    prefix_prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+    )
+    scheduler.commit_prepared_postprocess(prefix_prepared)
+
+    with pytest.raises(ValueError, match="enqueued"):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+
+    sequence.append_token(99)
+    with pytest.raises(ValueError, match="sequence length changed"):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="suffix",
+            tokens=(15, 16, 17, 18),
+        )
+
+
+def test_split_phase_rejects_schedule_and_block_generation_drift(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    config = SimpleNamespace(
+        **{
+            **vars(_config()),
+            "kvcache_block_size": 16,
+        }
+    )
+    scheduler = Scheduler(config)
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    split_result = _exact_burst_split_result(lease)
+    scheduler.schedule_generation += 1
+
+    with pytest.raises(ValueError, match="stale"):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+
+    scheduler.schedule_generation -= 1
+    scheduler.block_manager.blocks[
+        lease.write_block_id
+    ].generation += 1
+    with pytest.raises(RuntimeError, match="block identity is stale"):
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+
+
+def test_split_phase_commit_revalidates_prepared_phase_tokens(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    split_result = _exact_burst_split_result(lease)
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase="prefix",
+            tokens=(11, 12, 13, 14),
+        )
+    )
+    prepared.rows = (
+        replace(
+            prepared.rows[0],
+            output_tokens=(91, 92, 93, 94),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="phase transfer"):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert sequence.completion_token_ids == []
+    assert scheduler._exact_greedy_decode_burst_pending_lease == lease
+    assert scheduler._exact_greedy_decode_burst_split_phase == "enqueued"
+
+
+@pytest.mark.parametrize("failure_phase", ("prefix", "suffix"))
+def test_split_phase_rollback_preserves_the_last_committed_boundary(
+    monkeypatch,
+    failure_phase,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=8,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    split_result = _exact_burst_split_result(lease)
+    if failure_phase == "suffix":
+        prefix_prepared = (
+            scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+                (sequence,),
+                lease,
+                split_result,
+                phase="prefix",
+                tokens=(11, 12, 13, 14),
+            )
+        )
+        scheduler.commit_prepared_postprocess(prefix_prepared)
+    before = _snapshot(scheduler, (sequence,))
+    before_phase = scheduler._exact_greedy_decode_burst_split_phase
+    prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_phase_commit(
+            (sequence,),
+            lease,
+            split_result,
+            phase=failure_phase,
+            tokens=(
+                (11, 12, 13, 14)
+                if failure_phase == "prefix"
+                else (15, 16, 17, 18)
+            ),
+        )
+    )
+
+    def fail_publication(*_args, **_kwargs):
+        raise RuntimeError("injected split publication failure")
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_full_blocks",
+        fail_publication,
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="injected split publication failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert _snapshot(scheduler, (sequence,)) == before
+    assert scheduler._exact_greedy_decode_burst_pending_lease == lease
+    assert scheduler._exact_greedy_decode_burst_split_phase == before_phase
 
 
 def test_exact_burst_commit_rollback_restores_hashes_and_keeps_lease(

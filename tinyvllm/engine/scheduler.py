@@ -15,6 +15,11 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     build_exact_greedy_decode_burst_lease,
     validate_exact_greedy_decode_burst_result,
 )
+from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
+    ExactGreedyDecodeBurstSplitResult,
+    build_exact_burst_publication_tickets,
+    validate_exact_burst_split_result,
+)
 from tinyvllm.engine.hybrid_state import (
     HybridStateLease,
     HybridStateSlotAllocator,
@@ -38,6 +43,7 @@ class ScheduledOutputRow:
     accepted_draft_tokens: tuple[int, ...] = ()
     exact_burst: bool = False
     exact_burst_gate_only: bool = False
+    exact_burst_phase: str | None = None
 
 
 @dataclass
@@ -52,6 +58,9 @@ class PreparedSchedulerPostprocess:
     snapshot: object
     exact_burst_lease: ExactGreedyDecodeBurstLease | None = None
     exact_burst_result: ExactGreedyDecodeBurstResult | None = None
+    exact_burst_split_result: (
+        ExactGreedyDecodeBurstSplitResult | None
+    ) = None
     exact_burst_correctness_trace: bool = False
     exact_burst_host_visible_gap_ns: int = 0
     state: str = "prepared"
@@ -699,6 +708,7 @@ class Scheduler:
         self.schedule_generation = 0
         self.last_speculative_selection = None
         self._exact_greedy_decode_burst_pending_lease = None
+        self._exact_greedy_decode_burst_split_phase = "idle"
         self._exact_greedy_decode_burst_stats = (
             ExactGreedyDecodeBurstStats()
         )
@@ -1102,6 +1112,7 @@ class Scheduler:
             completion_only=completion_only,
         )
         self._exact_greedy_decode_burst_pending_lease = lease
+        self._exact_greedy_decode_burst_split_phase = "enqueued"
         self._exact_greedy_decode_burst_stats.record_acceptance(
             requested_token_count=configured_width,
             authorized_token_count=(
@@ -1122,6 +1133,7 @@ class Scheduler:
         sequence: Sequence | None = None,
         *,
         require_current_generation: bool = True,
+        committed_token_offset: int = 0,
     ) -> None:
         if not isinstance(lease, ExactGreedyDecodeBurstLease):
             raise ValueError(
@@ -1139,17 +1151,31 @@ class Scheduler:
             raise ValueError("exact burst lease is stale")
         if sequence is None:
             return
+        if (
+            isinstance(committed_token_offset, bool)
+            or not isinstance(committed_token_offset, int)
+            or committed_token_offset < 0
+        ):
+            raise ValueError(
+                "committed_token_offset must be a non-negative integer"
+            )
         if sequence.seq_id != lease.sequence_id:
             raise ValueError(
                 "exact burst lease sequence ID mismatch"
             )
-        if len(sequence) != lease.initial_sequence_length:
+        if len(sequence) != (
+            lease.initial_sequence_length
+            + committed_token_offset
+        ):
             raise ValueError(
                 "exact burst sequence length changed"
             )
         if (
             sequence.num_completion_tokens
-            != lease.initial_completion_count
+            != (
+                lease.initial_completion_count
+                + committed_token_offset
+            )
         ):
             raise ValueError(
                 "exact burst completion count changed"
@@ -1178,6 +1204,7 @@ class Scheduler:
             reason
         )
         self._exact_greedy_decode_burst_pending_lease = None
+        self._exact_greedy_decode_burst_split_phase = "idle"
 
     def fail_exact_greedy_decode_burst(
         self,
@@ -1194,6 +1221,7 @@ class Scheduler:
         )
         if terminal:
             self._exact_greedy_decode_burst_pending_lease = None
+            self._exact_greedy_decode_burst_split_phase = "idle"
 
     def prepare_exact_greedy_decode_burst_commit(
         self,
@@ -1263,6 +1291,118 @@ class Scheduler:
         prepared.exact_burst_correctness_trace = (
             correctness_trace
         )
+        prepared.exact_burst_host_visible_gap_ns = (
+            host_visible_gap_ns
+        )
+        return prepared
+
+    def prepare_exact_greedy_decode_burst_phase_commit(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: ExactGreedyDecodeBurstLease,
+        split_result: ExactGreedyDecodeBurstSplitResult,
+        *,
+        phase: str,
+        tokens: tuple[int, ...],
+        host_visible_gap_ns: int = 0,
+        decision_now_ns: int | None = None,
+        step_end_ns: int | None = None,
+    ) -> PreparedSchedulerPostprocess:
+        if not isinstance(seqs, tuple) or len(seqs) != 1:
+            raise ValueError(
+                "exact burst phase commit requires one sequence"
+            )
+        if phase not in ("prefix", "suffix"):
+            raise ValueError(
+                "exact burst phase must be prefix or suffix"
+            )
+        expected_state = (
+            "enqueued"
+            if phase == "prefix"
+            else "prefix_committed"
+        )
+        if self._exact_greedy_decode_burst_split_phase != expected_state:
+            raise ValueError(
+                "exact burst split phase must be "
+                f"{expected_state}, got "
+                f"{self._exact_greedy_decode_burst_split_phase}"
+            )
+        if lease.authorized_token_count != 8:
+            raise ValueError(
+                "split-phase exact burst requires a K8 parent lease"
+            )
+        sequence = seqs[0]
+        committed_token_offset = 0 if phase == "prefix" else 4
+        self._validate_pending_exact_greedy_decode_burst(
+            lease,
+            sequence,
+            committed_token_offset=committed_token_offset,
+        )
+        validate_exact_burst_split_result(
+            split_result,
+            expected_parent_lease_identity_sha256=(
+                lease.identity_sha256
+            ),
+            expected_graph_identity_sha256=(
+                split_result.graph_identity_sha256
+            ),
+        )
+        expected_tickets = build_exact_burst_publication_tickets(
+            parent_lease_identity_sha256=lease.identity_sha256,
+            first_write_position=lease.first_write_position,
+            first_physical_slot=lease.first_physical_slot,
+            parent_token_count=lease.authorized_token_count,
+            prefix_token_count=4,
+        )
+        transfer = getattr(split_result, phase)
+        expected_ticket = expected_tickets[
+            0 if phase == "prefix" else 1
+        ]
+        if transfer.ticket != expected_ticket:
+            raise ValueError(
+                f"{phase} publication ticket does not match "
+                "the parent lease"
+            )
+        if not isinstance(tokens, tuple):
+            raise ValueError(
+                "exact burst phase tokens must be a tuple"
+            )
+        if tokens != transfer.wait_tokens():
+            raise ValueError(
+                f"{phase} tokens do not match the phase transfer"
+            )
+        if len(tokens) != 4:
+            raise ValueError(
+                "exact burst phase must contain four tokens"
+            )
+        if (
+            isinstance(host_visible_gap_ns, bool)
+            or not isinstance(host_visible_gap_ns, int)
+            or host_visible_gap_ns < 0
+        ):
+            raise ValueError(
+                "host_visible_gap_ns must be a non-negative integer"
+            )
+        prepared = self.prepare_postprocess(
+            seqs,
+            (
+                ScheduledOutputRow(
+                    sequence_id=sequence.seq_id,
+                    output_tokens=tokens,
+                    speculative=False,
+                    exact_burst=True,
+                    exact_burst_phase=phase,
+                ),
+            ),
+            is_prefill=False,
+            do_sample=True,
+            batch_kind=None,
+            decision_now_ns=decision_now_ns,
+            step_end_ns=step_end_ns,
+            exact_burst_split_result=split_result,
+        )
+        prepared.exact_burst_lease = lease
+        prepared.exact_burst_split_result = split_result
         prepared.exact_burst_host_visible_gap_ns = (
             host_visible_gap_ns
         )
@@ -2145,6 +2285,9 @@ class Scheduler:
         *,
         decision_now_ns: int | None = None,
         step_end_ns: int | None = None,
+        exact_burst_split_result: (
+            ExactGreedyDecodeBurstSplitResult | None
+        ) = None,
     ) -> PreparedSchedulerPostprocess:
         if not isinstance(seqs, tuple):
             raise ValueError(
@@ -2189,6 +2332,22 @@ class Scheduler:
                 raise ValueError(
                     "postprocess exact burst gate-only flag "
                     "must be a bool"
+                )
+            if row.exact_burst_phase not in (
+                None,
+                "prefix",
+                "suffix",
+            ):
+                raise ValueError(
+                    "postprocess exact burst phase must be "
+                    "prefix, suffix, or None"
+                )
+            if (
+                row.exact_burst_phase is not None
+                and not row.exact_burst
+            ):
+                raise ValueError(
+                    "exact burst phase requires exact burst"
                 )
             if row.exact_burst_gate_only and not row.exact_burst:
                 raise ValueError(
@@ -2267,11 +2426,18 @@ class Scheduler:
                 self._validate_pending_exact_greedy_decode_burst(
                     lease,
                     seq,
+                    committed_token_offset=(
+                        4
+                        if row.exact_burst_phase == "suffix"
+                        else 0
+                    ),
                 )
-                if (
-                    len(row.output_tokens)
-                    != lease.authorized_token_count
-                ):
+                expected_token_count = (
+                    4
+                    if row.exact_burst_phase is not None
+                    else lease.authorized_token_count
+                )
+                if len(row.output_tokens) != expected_token_count:
                     raise ValueError(
                         "exact burst token count does not match lease"
                     )
@@ -2337,13 +2503,26 @@ class Scheduler:
                 )
             sequence, row = exact_rows[0]
             lease = self._exact_greedy_decode_burst_pending_lease
+            materialized_tokens = (
+                lease.last_write_position + 1
+            )
+            if row.exact_burst_phase is not None:
+                if exact_burst_split_result is None:
+                    raise ValueError(
+                        "exact burst phase requires a split result"
+                    )
+                transfer = getattr(
+                    exact_burst_split_result,
+                    row.exact_burst_phase,
+                )
+                materialized_tokens = (
+                    transfer.ticket.last_write_position + 1
+                )
             journal.capture_exact_burst_publication_hashes(
                 self.block_manager,
                 sequence,
                 row.output_tokens,
-                materialized_tokens=(
-                    lease.last_write_position + 1
-                ),
+                materialized_tokens=materialized_tokens,
             )
         return PreparedSchedulerPostprocess(
             scheduled_sequence_ids=scheduled_sequence_ids,
@@ -2359,6 +2538,7 @@ class Scheduler:
                 if exact_rows
                 else None
             ),
+            exact_burst_split_result=exact_burst_split_result,
         )
 
     def commit_prepared_postprocess(
@@ -2384,21 +2564,96 @@ class Scheduler:
                 raise ValueError(
                     "exact burst commit requires one sequence"
                 )
-            if prepared.exact_burst_result is None:
-                raise ValueError(
-                    "exact burst commit requires a validated result"
+            phase = prepared.rows[0].exact_burst_phase
+            if phase is None:
+                if prepared.exact_burst_result is None:
+                    raise ValueError(
+                        "exact burst commit requires a validated result"
+                    )
+                self._validate_pending_exact_greedy_decode_burst(
+                    prepared.exact_burst_lease,
+                    seqs[0],
                 )
-            self._validate_pending_exact_greedy_decode_burst(
-                prepared.exact_burst_lease,
-                seqs[0],
-            )
-            validate_exact_greedy_decode_burst_result(
-                prepared.exact_burst_lease,
-                prepared.exact_burst_result,
-                correctness_trace=(
-                    prepared.exact_burst_correctness_trace
-                ),
-            )
+                validate_exact_greedy_decode_burst_result(
+                    prepared.exact_burst_lease,
+                    prepared.exact_burst_result,
+                    correctness_trace=(
+                        prepared.exact_burst_correctness_trace
+                    ),
+                )
+            else:
+                expected_state = (
+                    "enqueued"
+                    if phase == "prefix"
+                    else "prefix_committed"
+                )
+                if (
+                    self._exact_greedy_decode_burst_split_phase
+                    != expected_state
+                ):
+                    raise ValueError(
+                        "exact burst split phase must be "
+                        f"{expected_state}, got "
+                        f"{self._exact_greedy_decode_burst_split_phase}"
+                    )
+                split_result = prepared.exact_burst_split_result
+                if split_result is None:
+                    raise ValueError(
+                        "exact burst phase commit requires "
+                        "a validated split result"
+                    )
+                self._validate_pending_exact_greedy_decode_burst(
+                    prepared.exact_burst_lease,
+                    seqs[0],
+                    committed_token_offset=(
+                        0 if phase == "prefix" else 4
+                    ),
+                )
+                validate_exact_burst_split_result(
+                    split_result,
+                    expected_parent_lease_identity_sha256=(
+                        prepared.exact_burst_lease.identity_sha256
+                    ),
+                    expected_graph_identity_sha256=(
+                        split_result.graph_identity_sha256
+                    ),
+                )
+                expected_tickets = (
+                    build_exact_burst_publication_tickets(
+                        parent_lease_identity_sha256=(
+                            prepared.exact_burst_lease.identity_sha256
+                        ),
+                        first_write_position=(
+                            prepared.exact_burst_lease
+                            .first_write_position
+                        ),
+                        first_physical_slot=(
+                            prepared.exact_burst_lease
+                            .first_physical_slot
+                        ),
+                        parent_token_count=(
+                            prepared.exact_burst_lease
+                            .authorized_token_count
+                        ),
+                        prefix_token_count=4,
+                    )
+                )
+                transfer = getattr(split_result, phase)
+                expected_ticket = expected_tickets[
+                    0 if phase == "prefix" else 1
+                ]
+                if transfer.ticket != expected_ticket:
+                    raise ValueError(
+                        f"{phase} publication ticket does not match "
+                        "the parent lease"
+                    )
+                if prepared.rows[0].output_tokens != (
+                    transfer.wait_tokens()
+                ):
+                    raise ValueError(
+                        f"{phase} tokens do not match "
+                        "the phase transfer"
+                    )
         timestamp_valid = False
         try:
             timestamps_present = (
@@ -2510,6 +2765,40 @@ class Scheduler:
         journal.state = "committed"
         prepared.state = "committed"
         if prepared.exact_burst_lease is not None:
+            phase = prepared.rows[0].exact_burst_phase
+            if phase is not None:
+                split_result = prepared.exact_burst_split_result
+                if phase == "prefix":
+                    self._exact_greedy_decode_burst_stats.record_split_phase_inventory(
+                        prefix_byte_count=(
+                            split_result.prefix.byte_count
+                        ),
+                        suffix_byte_count=(
+                            split_result.suffix.byte_count
+                        ),
+                        replay_count=split_result.replay_count,
+                    )
+                self._exact_greedy_decode_burst_stats.record_split_phase_commit(
+                    phase=phase,
+                    token_count=len(
+                        prepared.rows[0].output_tokens
+                    ),
+                    parent_token_count=(
+                        prepared.exact_burst_lease
+                        .authorized_token_count
+                    ),
+                    host_visible_gap_ns=(
+                        prepared.exact_burst_host_visible_gap_ns
+                    ),
+                )
+                if phase == "prefix":
+                    self._exact_greedy_decode_burst_split_phase = (
+                        "prefix_committed"
+                    )
+                else:
+                    self._exact_greedy_decode_burst_pending_lease = None
+                    self._exact_greedy_decode_burst_split_phase = "idle"
+                return
             result = prepared.exact_burst_result
             if result is not None:
                 self._exact_greedy_decode_burst_stats.record_replays(
@@ -2534,6 +2823,7 @@ class Scheduler:
                 ),
             )
             self._exact_greedy_decode_burst_pending_lease = None
+            self._exact_greedy_decode_burst_split_phase = "idle"
 
     def _apply_prepared_decode_row(
         self,
@@ -2550,13 +2840,21 @@ class Scheduler:
         if row.exact_burst:
             lease = self._exact_greedy_decode_burst_pending_lease
             self._validate_pending_exact_greedy_decode_burst(
-                lease
+                lease,
+                committed_token_offset=(
+                    4
+                    if row.exact_burst_phase == "suffix"
+                    else 0
+                ),
             )
+            materialized_tokens = lease.last_write_position + 1
+            if row.exact_burst_phase == "prefix":
+                materialized_tokens = (
+                    lease.first_write_position + 4
+                )
             self.block_manager.publish_full_blocks(
                 seq,
-                materialized_tokens=(
-                    lease.last_write_position + 1
-                ),
+                materialized_tokens=materialized_tokens,
             )
         self._record_decode_progress(
             seq,

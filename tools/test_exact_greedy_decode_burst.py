@@ -1216,6 +1216,60 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
     ] == 1
 
 
+def test_stats_track_split_phase_benefit_cost_and_failures() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    stats.record_acceptance(
+        requested_token_count=8,
+        authorized_token_count=8,
+        output_budget_clipped=False,
+        block_boundary_clipped=False,
+    )
+    stats.record_split_phase_inventory(
+        prefix_byte_count=32,
+        suffix_byte_count=32,
+        replay_count=8,
+    )
+    stats.record_split_phase_wait("prefix")
+    stats.record_split_phase_commit(
+        phase="prefix",
+        token_count=4,
+        parent_token_count=8,
+        host_visible_gap_ns=12_000_000,
+    )
+    stats.record_split_phase_wait("suffix")
+    stats.record_split_phase_drain()
+    stats.record_split_phase_failure("suffix_wait_failure")
+    stats.record_split_phase_commit(
+        phase="suffix",
+        token_count=4,
+        parent_token_count=8,
+        host_visible_gap_ns=7_000_000,
+    )
+
+    summary = stats.summary()
+    assert summary["graph_replays"] == 8
+    assert summary["prefix_publication_tickets"] == 1
+    assert summary["suffix_publication_tickets"] == 1
+    assert summary["prefix_token_d2h_calls"] == 1
+    assert summary["suffix_token_d2h_calls"] == 1
+    assert summary["prefix_token_d2h_bytes"] == 32
+    assert summary["suffix_token_d2h_bytes"] == 32
+    assert summary["prefix_phase_waits"] == 1
+    assert summary["suffix_phase_waits"] == 1
+    assert summary["suffix_drains"] == 1
+    assert summary["prefix_commits"] == 1
+    assert summary["suffix_commits"] == 1
+    assert summary["prefix_committed_tokens"] == 4
+    assert summary["suffix_committed_tokens"] == 4
+    assert summary["commits"] == 1
+    assert summary["committed_tokens"] == 8
+    assert summary["pending_leases"] == 0
+    assert summary["maximum_host_visible_gap_ns"] == 12_000_000
+    assert summary["split_phase_failure_counts"] == {
+        "suffix_wait_failure": 1,
+    }
+
+
 def test_stats_track_continuation_benefit_and_cost() -> None:
     stats = ExactGreedyDecodeBurstStats()
     for _ in range(3):
@@ -2305,6 +2359,7 @@ def main() -> None:
     test_continuation_rejects_invalid_scalar_contracts()
     test_correctness_trace_is_bounded_and_ordered()
     test_stats_track_benefit_cost_and_terminal_state()
+    test_stats_track_split_phase_benefit_cost_and_failures()
     test_stats_track_continuation_benefit_and_cost()
     test_contract_is_model_agnostic_and_supports_second_caller()
     test_complete_step_capture_orders_body_and_uses_private_scratch()

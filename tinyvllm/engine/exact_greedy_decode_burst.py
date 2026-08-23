@@ -785,6 +785,19 @@ class ExactGreedyDecodeBurstStats:
     block_boundary_clipped: int = 0
     commits: int = 0
     committed_tokens: int = 0
+    prefix_commits: int = 0
+    suffix_commits: int = 0
+    prefix_committed_tokens: int = 0
+    suffix_committed_tokens: int = 0
+    prefix_publication_tickets: int = 0
+    suffix_publication_tickets: int = 0
+    prefix_token_d2h_calls: int = 0
+    suffix_token_d2h_calls: int = 0
+    prefix_token_d2h_bytes: int = 0
+    suffix_token_d2h_bytes: int = 0
+    prefix_phase_waits: int = 0
+    suffix_phase_waits: int = 0
+    suffix_drains: int = 0
     failures: int = 0
     quarantines: int = 0
     pending_leases: int = 0
@@ -810,6 +823,9 @@ class ExactGreedyDecodeBurstStats:
         default_factory=dict
     )
     continuation_invalidation_counts: dict[str, int] = field(
+        default_factory=dict
+    )
+    split_phase_failure_counts: dict[str, int] = field(
         default_factory=dict
     )
     quarantine_reason: Optional[str] = None
@@ -974,6 +990,83 @@ class ExactGreedyDecodeBurstStats:
             host_visible_gap_ns,
         )
 
+    def record_split_phase_inventory(
+        self,
+        *,
+        prefix_byte_count: int,
+        suffix_byte_count: int,
+        replay_count: int,
+    ) -> None:
+        _require_non_negative_int(
+            prefix_byte_count,
+            "prefix_byte_count",
+        )
+        _require_non_negative_int(
+            suffix_byte_count,
+            "suffix_byte_count",
+        )
+        _require_positive_int(replay_count, "replay_count")
+        self.record_replays(replay_count)
+        self.prefix_publication_tickets += 1
+        self.suffix_publication_tickets += 1
+        self.prefix_token_d2h_calls += 1
+        self.suffix_token_d2h_calls += 1
+        self.prefix_token_d2h_bytes += prefix_byte_count
+        self.suffix_token_d2h_bytes += suffix_byte_count
+
+    def record_split_phase_wait(self, phase: str) -> None:
+        if phase == "prefix":
+            self.prefix_phase_waits += 1
+            return
+        if phase == "suffix":
+            self.suffix_phase_waits += 1
+            return
+        raise ValueError("split phase must be prefix or suffix")
+
+    def record_split_phase_drain(self) -> None:
+        self.suffix_drains += 1
+
+    def record_split_phase_failure(self, reason: str) -> None:
+        reason = _require_reason(reason, "split phase failure reason")
+        self.split_phase_failure_counts[reason] = (
+            self.split_phase_failure_counts.get(reason, 0) + 1
+        )
+
+    def record_split_phase_commit(
+        self,
+        *,
+        phase: str,
+        token_count: int,
+        parent_token_count: int,
+        host_visible_gap_ns: int,
+    ) -> None:
+        _require_positive_int(token_count, "token_count")
+        _require_positive_int(
+            parent_token_count,
+            "parent_token_count",
+        )
+        _require_non_negative_int(
+            host_visible_gap_ns,
+            "host_visible_gap_ns",
+        )
+        self.maximum_host_visible_gap_ns = max(
+            self.maximum_host_visible_gap_ns,
+            host_visible_gap_ns,
+        )
+        if phase == "prefix":
+            self.prefix_commits += 1
+            self.prefix_committed_tokens += token_count
+            return
+        if phase != "suffix":
+            raise ValueError("split phase must be prefix or suffix")
+        if self.pending_leases <= 0:
+            raise ValueError("no pending burst lease to commit")
+        self.pending_leases -= 1
+        self.suffix_commits += 1
+        self.suffix_committed_tokens += token_count
+        self.commits += 1
+        self.committed_tokens += parent_token_count
+
     def record_failure(self, *, terminal: bool) -> None:
         _require_bool(terminal, "terminal")
         self.failures += 1
@@ -1012,6 +1105,35 @@ class ExactGreedyDecodeBurstStats:
             ),
             "commits": self.commits,
             "committed_tokens": self.committed_tokens,
+            "prefix_commits": self.prefix_commits,
+            "suffix_commits": self.suffix_commits,
+            "prefix_committed_tokens": (
+                self.prefix_committed_tokens
+            ),
+            "suffix_committed_tokens": (
+                self.suffix_committed_tokens
+            ),
+            "prefix_publication_tickets": (
+                self.prefix_publication_tickets
+            ),
+            "suffix_publication_tickets": (
+                self.suffix_publication_tickets
+            ),
+            "prefix_token_d2h_calls": (
+                self.prefix_token_d2h_calls
+            ),
+            "suffix_token_d2h_calls": (
+                self.suffix_token_d2h_calls
+            ),
+            "prefix_token_d2h_bytes": (
+                self.prefix_token_d2h_bytes
+            ),
+            "suffix_token_d2h_bytes": (
+                self.suffix_token_d2h_bytes
+            ),
+            "prefix_phase_waits": self.prefix_phase_waits,
+            "suffix_phase_waits": self.suffix_phase_waits,
+            "suffix_drains": self.suffix_drains,
             "failures": self.failures,
             "quarantines": self.quarantines,
             "pending_leases": self.pending_leases,
@@ -1060,6 +1182,9 @@ class ExactGreedyDecodeBurstStats:
                 sorted(
                     self.continuation_invalidation_counts.items()
                 )
+            ),
+            "split_phase_failure_counts": dict(
+                sorted(self.split_phase_failure_counts.items())
             ),
             "quarantine_reason": self.quarantine_reason,
             "capture_receipts": [
