@@ -26,6 +26,7 @@ from tools.profile_exact_burst_continuation_epoch import (
     WORKLOAD_SCHEMA_VERSION,
     build_workload_manifest,
     correctness_identities,
+    correctness_trace_for_step,
     performance_identities,
     policy_order,
     validate_case_row,
@@ -204,6 +205,29 @@ def test_only_continuation_arm_is_selectable() -> None:
     )
 
 
+def test_continuation_correctness_trace_owns_every_decode_step() -> None:
+    traced_steps = tuple(
+        emitted_total
+        for emitted_total in range(1, 128, 4)
+        if correctness_trace_for_step(
+            "decode_burst_k4_continuation",
+            emitted_total=emitted_total,
+            generated_tokens=128,
+        )
+    )
+    assert traced_steps == tuple(range(1, 128, 4))
+    assert correctness_trace_for_step(
+        "decode_burst_k4_continuation",
+        emitted_total=0,
+        generated_tokens=128,
+    ) is False
+    assert correctness_trace_for_step(
+        "decode_burst_k4_continuation",
+        emitted_total=128,
+        generated_tokens=128,
+    ) is False
+
+
 def test_workload_and_source_inventory_are_source_bound() -> None:
     manifest = build_workload_manifest(
         model="/models/qwen3",
@@ -260,6 +284,7 @@ def test_case_schema_requires_exact_continuation_counters() -> None:
 def main() -> None:
     test_frozen_schema_and_inventory()
     test_only_continuation_arm_is_selectable()
+    test_continuation_correctness_trace_owns_every_decode_step()
     test_workload_and_source_inventory_are_source_bound()
     test_case_schema_requires_exact_continuation_counters()
     print("exact burst continuation profile tests passed")

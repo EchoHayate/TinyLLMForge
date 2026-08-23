@@ -108,6 +108,9 @@ _ORIGINAL_BURST_COUNTER_FIELDS = _base.BURST_COUNTER_FIELDS
 _ORIGINAL_VALIDATE_BURST_SUMMARY = _base._validate_burst_summary
 _ORIGINAL_COUNTER_DELTA = _base._counter_delta
 _ORIGINAL_COMBINED_SUMMARY = _base._combined_summary
+_ORIGINAL_CORRECTNESS_TRACE_FOR_STEP = (
+    _base.correctness_trace_for_step
+)
 
 
 def _activate_contract() -> None:
@@ -264,18 +267,36 @@ def _sampled_local_ordinals(policy: str) -> tuple[int, ...]:
     return tuple(sorted({ordinal % width for ordinal in decode_ordinals}))
 
 
+def correctness_trace_for_step(
+    policy: str,
+    *,
+    emitted_total: int,
+    generated_tokens: int,
+) -> bool:
+    if (
+        policy in POLICY_CONFIGS
+        and POLICY_CONFIGS[policy]["continuation"]
+    ):
+        return 0 < emitted_total < generated_tokens
+    return _ORIGINAL_CORRECTNESS_TRACE_FOR_STEP(
+        policy,
+        emitted_total=emitted_total,
+        generated_tokens=generated_tokens,
+    )
+
+
 _activate_contract()
 _base._validate_burst_summary = _validate_burst_summary
 _base._counter_delta = _counter_delta
 _base._combined_summary = _combined_summary
 _base._sampled_local_ordinals = _sampled_local_ordinals
+_base.correctness_trace_for_step = correctness_trace_for_step
 
 policy_order = _base.policy_order
 context_cases = _base.context_cases
 performance_identities = _base.performance_identities
 correctness_identities = _base.correctness_identities
 correctness_uses_burst_trace = _base.correctness_uses_burst_trace
-correctness_trace_for_step = _base.correctness_trace_for_step
 runtime_environment_manifest = _base.runtime_environment_manifest
 build_workload_manifest = _base.build_workload_manifest
 validate_case_row = _base.validate_case_row
