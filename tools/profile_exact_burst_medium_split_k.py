@@ -409,6 +409,7 @@ def validate_case_row(row) -> dict:
         *_CAPTURE_SUM_FIELDS,
         "reserved_scratch_blocks",
         "replay_graph_identity_sha256",
+        "replay_graph_identity_counts",
         "replay_flash_attn_num_splits",
         "correctness_trace",
         "exact_greedy_decode_burst_summary",
@@ -527,6 +528,28 @@ def validate_case_row(row) -> dict:
         != identity
     ):
         raise ValueError("replay graph identity mismatch")
+    identity_counts = row["replay_graph_identity_counts"]
+    if (
+        not isinstance(identity_counts, dict)
+        or not identity_counts
+        or any(
+            _validate_digest(
+                graph_identity,
+                "replay graph identity inventory",
+            )
+            not in {
+                receipt["graph_identity_sha256"]
+                for receipt in summary["capture_receipts"]
+            }
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count <= 0
+            for graph_identity, count in identity_counts.items()
+        )
+        or sum(identity_counts.values()) != GENERATED_TOKENS - 1
+        or identity not in identity_counts
+    ):
+        raise ValueError("replay graph identity inventory mismatch")
     expected_cost = _capture_cost(summary["capture_receipts"])
     for field, expected in expected_cost.items():
         if row[field] != expected:
@@ -854,7 +877,7 @@ def _run_request(
     first_token_ns = None
     tpot_samples = []
     burst_gaps = []
-    graph_identities = set()
+    graph_identity_counts: dict[str, int] = {}
     final_outputs = None
     while not llm.is_finished():
         step_started_ns = time.perf_counter_ns()
@@ -884,7 +907,10 @@ def _run_request(
                     "exact_greedy_decode_burst_graph_identity_sha256"
                 )
                 if identity is not None:
-                    graph_identities.add(identity)
+                    graph_identity_counts[identity] = (
+                        graph_identity_counts.get(identity, 0)
+                        + emitted
+                    )
         if outputs:
             final_outputs = outputs
     import torch
@@ -900,7 +926,7 @@ def _run_request(
         raise RuntimeError("generated token inventory mismatch")
     if len(tpot_samples) != generated_tokens - 1:
         raise RuntimeError("amortized TPOT inventory mismatch")
-    if len(graph_identities) != 1:
+    if not graph_identity_counts:
         raise RuntimeError("replay graph identity inventory mismatch")
     decode_host_ns = []
     decode_cuda_ns = []
@@ -940,9 +966,7 @@ def _run_request(
         "decode_host_ns": decode_host_ns,
         "decode_cuda_ns": decode_cuda_ns,
         "host_visible_burst_gaps_ns": burst_gaps,
-        "replay_graph_identity_sha256": next(
-            iter(graph_identities)
-        ),
+        "replay_graph_identity_counts": graph_identity_counts,
     }
 
 
@@ -1008,6 +1032,13 @@ def run_case(
         samples = measured["amortized_tpot_samples_ns"]
         e2e_seconds = measured["e2e_ns"] / 1_000_000_000
         receipts = summary["capture_receipts"]
+        receipt_by_split = {
+            receipt["flash_attn_num_splits"]: receipt
+            for receipt in receipts
+        }
+        selected_identity = receipt_by_split[selected_split][
+            "graph_identity_sha256"
+        ]
         row = {
             "schema_version": CASE_SCHEMA_VERSION,
             "run_tag": run_tag,
@@ -1045,8 +1076,9 @@ def run_case(
             ),
             **memory,
             **_capture_cost(receipts),
-            "replay_graph_identity_sha256": measured[
-                "replay_graph_identity_sha256"
+            "replay_graph_identity_sha256": selected_identity,
+            "replay_graph_identity_counts": measured[
+                "replay_graph_identity_counts"
             ],
             "replay_flash_attn_num_splits": selected_split,
             "correctness_trace": False,

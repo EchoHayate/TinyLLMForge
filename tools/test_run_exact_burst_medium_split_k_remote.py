@@ -157,6 +157,10 @@ def test_strict_clean_gpu_and_second_check_precede_launch() -> None:
 
 
 def test_worker_gate_and_verifier_are_source_bound() -> None:
+    assert all(
+        "/data00/home/sitian/pytest-site" in command
+        for command in remote.preflight_commands()
+    )
     captured = []
     original = remote._run_remote_checked
     remote._run_remote_checked = lambda command, **_kwargs: (

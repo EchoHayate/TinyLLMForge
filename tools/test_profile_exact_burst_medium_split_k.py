@@ -147,6 +147,9 @@ def _case_row(
         "reserved_scratch_blocks": 1,
         "replay_graph_identity_sha256":
             identity_character * 64,
+        "replay_graph_identity_counts": {
+            identity_character * 64: GENERATED_TOKENS - 1,
+        },
         "replay_flash_attn_num_splits": selected_split,
         "correctness_trace": False,
         "exact_greedy_decode_burst_summary":
@@ -337,6 +340,24 @@ def test_case_row_binds_raw_metrics_receipts_and_selected_graph() -> None:
         match="selected split-K mapping",
     ):
         validate_case_row(wrong_control)
+
+    mixed_boundary = _case_row(
+        "split12",
+        context_length=4090,
+    )
+    mixed_boundary["replay_graph_identity_counts"] = {
+        "d" * 64: 7,
+        "c" * 64: GENERATED_TOKENS - 8,
+    }
+    validate_case_row(mixed_boundary)
+
+    unknown_graph = deepcopy(mixed_boundary)
+    unknown_graph["replay_graph_identity_counts"]["f" * 64] = 1
+    with pytest.raises(
+        ValueError,
+        match="replay graph identity inventory",
+    ):
+        validate_case_row(unknown_graph)
 
     stale_percentile = _case_row("auto")
     stale_percentile["amortized_tpot_p95_ns"] = 2_000_000

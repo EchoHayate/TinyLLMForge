@@ -168,6 +168,9 @@ def _upload_source_archive(*, staging: str, archive: bytes) -> str:
 
 def preflight_commands() -> tuple[str, ...]:
     python = shlex.quote(REMOTE_PYTHON)
+    pytest_path = (
+        "/data00/home/sitian/pytest-site:\"$PYTHONPATH\""
+    )
     tests = (
         "tools/test_exact_greedy_decode_burst.py",
         "tools/test_model_runner_spec_verify.py",
@@ -177,6 +180,7 @@ def preflight_commands() -> tuple[str, ...]:
         "tools/test_run_exact_burst_medium_split_k_remote.py",
     )
     return tuple(
+        f"PYTHONPATH={pytest_path} "
         f"{python} -m pytest -q {shlex.quote(test)}"
         for test in tests
     )
