@@ -62,12 +62,75 @@ build_exact_greedy_decode_burst_lease = (
 decide_exact_greedy_decode_burst_continuation = (
     module.decide_exact_greedy_decode_burst_continuation
 )
+exact_greedy_decode_burst_flash_attn_num_splits = (
+    getattr(
+        module,
+        "exact_greedy_decode_burst_flash_attn_num_splits",
+        None,
+    )
+)
 select_exact_greedy_decode_burst_width = (
     module.select_exact_greedy_decode_burst_width
 )
 validate_exact_greedy_decode_burst_result = (
     module.validate_exact_greedy_decode_burst_result
 )
+
+
+def test_medium_split_k_selector_requires_complete_burst_in_range():
+    select = exact_greedy_decode_burst_flash_attn_num_splits
+    assert callable(select)
+    cases = (
+        (False, 1537, 8, 0),
+        (True, 1536, 1, 0),
+        (True, 1537, 1, 12),
+        (True, 1537, 8, 12),
+        (True, 4090, 8, 12),
+        (True, 4091, 8, 0),
+        (True, 4097, 1, 12),
+        (True, 4098, 1, 0),
+    )
+    for enabled, initial, count, expected in cases:
+        assert select(
+            enabled=enabled,
+            initial_sequence_length=initial,
+            authorized_token_count=count,
+        ) == expected
+
+
+def test_medium_split_k_selector_rejects_invalid_inputs():
+    select = exact_greedy_decode_burst_flash_attn_num_splits
+    for kwargs, message in (
+        (
+            {
+                "enabled": 1,
+                "initial_sequence_length": 1537,
+                "authorized_token_count": 8,
+            },
+            "enabled must be a bool",
+        ),
+        (
+            {
+                "enabled": True,
+                "initial_sequence_length": 0,
+                "authorized_token_count": 8,
+            },
+            "initial_sequence_length must be a positive integer",
+        ),
+        (
+            {
+                "enabled": True,
+                "initial_sequence_length": 1537,
+                "authorized_token_count": 0,
+            },
+            "authorized_token_count must be a positive integer",
+        ),
+    ):
+        _assert_raises(
+            ValueError,
+            message,
+            lambda kwargs=kwargs: select(**kwargs),
+        )
 
 
 class _BurstTensor:

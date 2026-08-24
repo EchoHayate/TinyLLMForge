@@ -5857,6 +5857,12 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         ].default
         is False
     )
+    assert (
+        fields[
+            "exact_greedy_decode_burst_medium_split_k"
+        ].default
+        is False
+    )
     assert fields["exact_greedy_decode_burst_tokens"].default == 4
     with tempfile.TemporaryDirectory() as model:
         for invalid in (0, 1, None, "true"):
@@ -5922,6 +5928,18 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                         invalid
                     ),
                 )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_medium_split_k "
+                    "must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_medium_split_k=invalid,
+                )
         for invalid in (False, True, 1, 9, 4.0, None):
             with pytest.raises(
                 ValueError,
@@ -5945,6 +5963,22 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 exact_greedy_decode_burst_split_phase=True,
                 exact_greedy_decode_burst_tokens=8,
             )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^medium split-k requires "
+                "exact_greedy_decode_burst$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst_medium_split_k=True,
+            )
+        Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_medium_split_k=True,
+        )
         with pytest.raises(
             ValueError,
             match="^split phase requires K8$",

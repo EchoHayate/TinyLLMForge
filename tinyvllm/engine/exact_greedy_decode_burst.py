@@ -10,10 +10,44 @@ from numbers import Real
 from typing import Optional
 
 
+MEDIUM_SPLIT_K_NUM_SPLITS = 12
+MEDIUM_SPLIT_K_MIN_CONTEXT_LENGTH = 1537
+MEDIUM_SPLIT_K_MAX_CONTEXT_LENGTH = 4097
+
+
 def _require_bool(value, name: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{name} must be a bool")
     return value
+
+
+def exact_greedy_decode_burst_flash_attn_num_splits(
+    *,
+    enabled: bool,
+    initial_sequence_length: int,
+    authorized_token_count: int,
+) -> int:
+    _require_bool(enabled, "enabled")
+    _require_positive_int(
+        initial_sequence_length,
+        "initial_sequence_length",
+    )
+    _require_positive_int(
+        authorized_token_count,
+        "authorized_token_count",
+    )
+    final_context_length = (
+        initial_sequence_length + authorized_token_count - 1
+    )
+    if (
+        enabled
+        and initial_sequence_length
+        >= MEDIUM_SPLIT_K_MIN_CONTEXT_LENGTH
+        and final_context_length
+        <= MEDIUM_SPLIT_K_MAX_CONTEXT_LENGTH
+    ):
+        return MEDIUM_SPLIT_K_NUM_SPLITS
+    return 0
 
 
 def _require_non_negative_int(value, name: str) -> int:
