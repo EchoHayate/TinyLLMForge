@@ -7,17 +7,19 @@
 > forbids subagents and additional worktrees, so execute inline in the
 > authoritative checkout with `executing-plans`.
 
-**Goal:** Add a default-disabled deterministic policy that uses a separately
-captured K16 exact-greedy graph for contexts up to 2,048 tokens and otherwise
-preserves the current K8 path, then admit the feature only if a source-bound
-GPU ceiling probe and terminal paired gate show benefit without violating the
-40 ms visibility budget.
+**Goal:** Add a default-disabled deterministic policy that performs sixteen
+ordered replays of the existing complete-step exact-greedy graph for contexts
+up to 2,048 tokens and otherwise preserves the current K8 path, then admit the
+feature only if a source-bound GPU ceiling probe and terminal paired gate show
+benefit without violating the 40 ms visibility budget.
 
 **Architecture:** Keep K8 as the baseline and complete fallback. Add a pure
-K16 eligibility decision, separate K8/K16 graph identities and quarantine
-state, and width-aware scheduler/journal accounting. First implement only the
-minimum runtime surface needed for an exact K8/K16 ceiling probe; proceed to
-the full paired gate only when the frozen probe thresholds pass.
+K16 eligibility decision, a host-side width-health generation and quarantine
+state, and width-aware scheduler/journal accounting. Reuse the existing
+one-token complete-step graph so the candidate adds no duplicate graph
+capture. First implement only the minimum runtime surface needed for an exact
+K8/K16 ceiling probe; proceed to the full paired gate only when the frozen
+probe thresholds pass.
 
 **Tech Stack:** Python 3, dataclasses, PyTorch CUDA Graphs, pytest,
 TinyLLMForge scheduler/model runner, JSON/JSONL evidence, SHA256 manifests,
@@ -50,10 +52,12 @@ SSH remote controller, Qwen3-0.6B TP1 on one strict-clean A100.
   `exact_greedy_decode_burst_split_phase=false`.
 - K16 eligibility is frozen to initial sequence length `<=2048`, remaining
   output tokens `>=16`, writable positions in the current physical block
-  `>=16`, a healthy K16 graph, and no incompatible mode.
+  `>=16`, a healthy shared graph, a healthy K16 width-policy epoch, and no
+  incompatible mode.
 - Contexts 4,096 and 8,192 always select K8.
-- K16 replay or validation failure quarantines only K16 and never retries
-  work in the same engine step.
+- A K16 width-policy, D2H, result, or commit failure quarantines only K16 and
+  never retries work in the same engine step. A graph-integrity failure
+  quarantines the shared graph and therefore both widths.
 - Preserve exact output tokens, decoded text, sampled logits, argmax, target
   forwards, graph replays, D2H behavior, KV slots, ordering, fairness, and
   rollback semantics.
@@ -72,17 +76,17 @@ SSH remote controller, Qwen3-0.6B TP1 on one strict-clean A100.
 
 - Modify `tinyvllm/config.py`: add the flag and strict dependency checks.
 - Modify `tinyvllm/engine/exact_greedy_decode_burst.py`: add the pure elastic
-  selector, graph-width identity, K16 counters, and width-aware contracts.
-- Modify `tinyvllm/engine/model_runner.py`: own, capture, select, quarantine,
-  and invalidate separate K8 and K16 graphs.
+  selector, width-health identity, K16 counters, and width-aware contracts.
+- Modify `tinyvllm/engine/model_runner.py`: expose the shared graph capability
+  and distinguish graph-integrity failure from K16 width-policy failure.
 - Modify `tinyvllm/engine/scheduler.py`: request K16 only after deterministic
   eligibility and generalize the one-phase journal from fixed K8 to `{8,16}`.
 - Modify `tinyvllm/engine/llm_engine.py`: pass both graph capabilities into
   scheduling and preserve fail-closed next-step fallback.
 - Modify `tools/test_exact_greedy_decode_burst.py`: selector, graph identity,
   replay, D2H, and quarantine unit tests.
-- Modify `tools/test_model_runner_spec_verify.py`: graph ownership, capture,
-  routing, config, and serialization tests.
+- Modify `tools/test_model_runner_spec_verify.py`: shared-graph ownership,
+  width-health routing, config, and serialization tests.
 - Modify `tools/test_scheduler_prepared_postprocess.py`: width-aware K16
   transaction, rollback, publication, and counter tests.
 - Create `tools/profile_context_gated_elastic_exact_burst.py`: paired K8/K16
@@ -200,7 +204,7 @@ incompatible mode
 context above 2048
 output budget below 16
 write-block capacity below 16
-K16 graph unavailable or quarantined
+shared graph unavailable or K16 health quarantined
 ```
 
 It returns K16 only if no reason is present. It never changes or calls the
@@ -239,7 +243,7 @@ Co-authored-by: TRAE CLI <noreply@bytedance.com>
 
 Push to `origin/feat/kv-sparse-attention`.
 
-### Task 2: Give K16 an Independent Graph Identity
+### Task 2: Add Width-Scoped K16 Health Without Another Graph
 
 **Files:**
 
@@ -250,42 +254,42 @@ Push to `origin/feat/kv-sparse-attention`.
 
 **Interfaces:**
 
-- Extends `ExactGreedyDecodeBurstCaptureReceipt` with
-  `maximum_burst_width: int`.
-- Extends `ExactGreedyDecodeBurstGraph.capture` with
-  `maximum_burst_width: int`.
-- Produces model-runner graph owners:
-  `exact_greedy_decode_burst_k16_graph` and
-  `exact_greedy_decode_burst_k16_correctness_graph`.
-- Produces a capability mapping keyed by width:
-  `exact_greedy_decode_burst_capabilities(...) -> {8: dict, 16: dict}`.
+- Produces:
+  `ElasticBurstWidthHealth(generation: int = 1, k16_quarantine_reason: Optional[str] = None)`.
+- Produces:
+  `ElasticBurstWidthHealth.capability(shared_graph_capability: dict) -> dict`.
+- Produces:
+  `ElasticBurstWidthHealth.quarantine_k16(reason: str) -> None`.
+- Preserves exactly one production and one correctness graph owner.
 
-- [ ] **Step 1: Write RED graph-identity tests**
+- [ ] **Step 1: Write RED width-health tests**
 
-Capture fake K8 and K16 graphs with otherwise identical tensor metadata and
-assert:
+Construct a width-health owner and assert:
 
 ```python
-assert k8.receipt.maximum_burst_width == 8
-assert k16.receipt.maximum_burst_width == 16
-assert k8.receipt.graph_identity_sha256 != k16.receipt.graph_identity_sha256
+assert health.generation == 1
+assert health.k16_quarantine_reason is None
+health.quarantine_k16("host_visible_gap_exceeded")
+assert health.generation == 2
+assert health.k16_quarantine_reason == "host_visible_gap_exceeded"
 ```
 
-Require capture rejection when the width is not exactly 8 or 16, when token
-history capacity is below the declared width, or when a replay lease exceeds
-the graph's declared width.
+Require a second identical quarantine to be idempotent, a different reason to
+remain fail-closed, invalid reasons to raise, and generation overflow to
+raise before mutation. Require lease validation to reject a stale captured
+width-health generation before graph static-state mutation.
 
 - [ ] **Step 2: Write RED model-runner ownership tests**
 
 Require:
 
 ```text
-flag off: no K16 graph is captured
-flag on: production and correctness K16 graphs are independently captured
-K16 lease selects only the K16 graph
-K8 lease selects only the existing K8 graph
-K16 quarantine leaves K8 capability available
-continuation invalidation visits both width owners exactly once
+flag off and flag on capture the same graph-owner count
+flag on adds zero capture receipts
+K8 and K16 leases use the same graph identity
+K16 quarantine leaves K8 capability available on that graph
+shared graph quarantine disables both K8 and K16
+incremental retained static bytes for the width policy equal zero
 ```
 
 - [ ] **Step 3: Run RED**
@@ -299,27 +303,27 @@ python3 -m pytest \
   -q
 ```
 
-Expected: the new receipt field, K16 owners, and width routing are absent.
+Expected: the width-health type and stale-generation routing are absent.
 
-- [ ] **Step 4: Implement width-bound graph capture**
+- [ ] **Step 4: Implement the width-health owner**
 
-Include `maximum_burst_width` in the capture identity payload and receipt.
-Set token-history capacity to at least the declared width. Preserve the
-existing one-complete-step CUDA graph body; K16 means sixteen ordered replays
-of a width-bound owner, not a sixteen-token fused model forward.
+Add an `ElasticBurstWidthHealth` dataclass/class beside the exact-burst
+statistics. Its generation is a positive monotonic invalidation epoch. Its
+capability combines the existing graph availability with K16 policy health
+without copying or mutating the graph capability dictionary.
 
-Capture K8 exactly as before with width eight. If the elastic flag is enabled,
-capture a second production graph and, only for correctness runs, a second
-correctness graph with width sixteen. Keep graph pools, static tensors,
-receipts, and quarantine state independent.
+Store one owner on the model runner. Do not add a graph, graph pool, retained
+output, static tensor, scratch block, or capture receipt. Confirm the existing
+token-history capacity is at least sixteen before advertising K16.
 
-- [ ] **Step 5: Implement width routing and quarantine isolation**
+- [ ] **Step 5: Implement shared-graph routing and failure attribution**
 
-Select a graph by `lease.requested_token_count`. Reject a width mismatch
-before static-state mutation. Add the K16 owners to continuation invalidation
-without deduplicating distinct graph objects. A K16 failure calls quarantine
-only on the selected K16 graph; K8 remains available for the next engine
-step.
+Bind the width-health generation into K16 leases and validate it before
+static-state mutation. K8 and K16 both select the existing graph. Route
+graph identity, static tensor, replay, and live-KV failures to existing graph
+quarantine; route K16 output-copy, result, visibility, and width-aware commit
+failures to `quarantine_k16`. K8 remains available on the next engine step
+after only the width health is quarantined.
 
 - [ ] **Step 6: Run GREEN**
 
@@ -333,15 +337,15 @@ python3 -m pytest \
   -q
 ```
 
-Expected: all selected tests pass and flag-off K8 fixture receipts remain
-unchanged except for the explicit schema field fixed to eight.
+Expected: all selected tests pass; existing K8 capture receipts remain
+byte-for-byte unchanged, and enabling elastic K16 adds no receipt.
 
 - [ ] **Step 7: Commit and push Task 2**
 
 Commit exact Task 2 paths with:
 
 ```text
-feat(runtime): capture independent K16 burst graph
+feat(runtime): isolate elastic burst width health
 
 Co-authored-by: TRAE CLI <noreply@bytedance.com>
 ```
@@ -375,7 +379,7 @@ context 2048, 16 remaining, 16 writable, healthy graph -> K16 lease
 context 2049 -> K8 lease and context fallback reason
 15 remaining -> K8 lease and output-budget fallback reason
 15 writable -> K8 lease and block-capacity fallback reason
-K16 unavailable/quarantined -> K8 lease
+shared graph unavailable or K16 health quarantined -> K8 lease
 flag off -> byte-for-byte existing K8 lease payload
 ```
 
@@ -438,10 +442,11 @@ at-most-one-write-block publication assertion and all rollback state.
 
 - [ ] **Step 6: Implement next-step fail-closed fallback**
 
-Pass separate K8 and K16 capabilities from the model runner. If K16 replay,
-D2H, result validation, prepare, or commit fails, quarantine K16, cancel the
-lease, and let the existing engine loop attempt K8 only on a later step. Do
-not perform a synchronous per-token or K8 replay after a K16 replay began.
+Pass the shared graph capability plus K16 width-health capability from the
+model runner. Shared-graph integrity failures quarantine the graph. K16 D2H,
+result validation, prepare, or commit failures quarantine only K16, cancel
+the lease, and let the existing engine loop attempt K8 only on a later step.
+Do not perform a synchronous per-token or K8 replay after a K16 replay began.
 
 - [ ] **Step 7: Run GREEN and adjacent regression**
 
@@ -500,7 +505,7 @@ policy, context, repetition, order
 TTFT, E2E, TPOT samples, throughput
 host-visible gap samples
 allocated/reserved peak bytes
-capture duration and retained static bytes for K8 and K16
+shared capture duration/retained static bytes and elastic incremental deltas
 requested/authorized width histograms
 K16 attempt/accept/fallback reasons
 forwards, replays, D2H calls/bytes
@@ -792,9 +797,9 @@ Push to `origin/feat/kv-sparse-attention`.
   safety rule, benefit/cost field, and claim boundary maps to a task.
 - Placeholder scan: the plan contains no deferred implementation placeholders;
   the only conditional work is the explicit measured ceiling checkpoint.
-- Type consistency: the selector decision, capture receipt width, K8/K16 graph
-  owners, scheduler arguments, policy names, context inventory, and terminal
-  classifications are stable across tasks.
+- Type consistency: the selector decision, width-health generation, shared
+  graph capability, scheduler arguments, policy names, context inventory, and
+  terminal classifications are stable across tasks.
 - Scope boundary: the plan does not authorize streaming, EOS-aware generation,
   multi-sequence scheduling, tensor parallelism, Qwen3-8B, threshold retuning,
   or production-default enablement.

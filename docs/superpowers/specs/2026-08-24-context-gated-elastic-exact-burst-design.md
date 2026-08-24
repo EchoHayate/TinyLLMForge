@@ -58,13 +58,13 @@ exceeds the frozen 40 ms visibility limit.
 
 ## Considered Approaches
 
-### A. Context-gated K16 with deterministic K8 fallback
+### A. Context-gated K16 with a shared one-token graph
 
-Capture a K16 graph alongside K8. Select K16 only when the request is already
-eligible for exact burst, the initial context length is at most 2,048 tokens,
-the current physical block has room for sixteen writes, at least sixteen
-output tokens remain, and the K16 graph is healthy. Otherwise select K8 using
-the existing path.
+Reuse the existing complete-step CUDA Graph and select sixteen ordered replays
+only when the request is already eligible for exact burst, the initial context
+length is at most 2,048 tokens, the current physical block has room for
+sixteen writes, at least sixteen output tokens remain, and the K16 policy
+health epoch is not quarantined. Otherwise select K8 using the existing path.
 
 Benefits:
 
@@ -72,15 +72,15 @@ Benefits:
   budget appears feasible;
 - keeps selection deterministic and inspectable;
 - preserves the proven K8 path as a complete fallback;
-- changes no numerical operation.
+- changes no numerical operation;
+- adds no duplicate graph capture, retained model output, or static tensor
+  allocation.
 
 Costs:
 
-- one additional captured graph and token-history capacity;
 - larger host-visible output batches for selected requests;
 - K16-specific lifecycle and transaction coverage;
-- additional capture time and approximately one more graph's retained static
-  memory.
+- one small host-side width-health record and additional counters.
 
 This is the selected approach.
 
@@ -120,6 +120,27 @@ Costs:
 
 This approach is deferred until the simpler elastic-width ceiling is known.
 
+### D. Separately captured K16 graph
+
+Capture a second copy of the same complete-step graph and bind K16 leases to
+that copy.
+
+Benefits:
+
+- graph-level quarantine is naturally independent.
+
+Costs:
+
+- the graph body still emits one token per replay, so the second capture does
+  not reduce K16 replay work;
+- duplicates capture time, retained outputs, static tensors, and graph
+  bookkeeping;
+- makes a width policy look like a numerically distinct execution graph when
+  it is not.
+
+This approach is rejected. Width-specific health is sufficient to isolate K16
+failures while retaining the already-proven graph owner.
+
 ## Architecture
 
 ### 1. Policy
@@ -151,27 +172,43 @@ only when all of the following hold:
 initial_sequence_length <= 2048
 remaining_output_tokens >= 16
 writable positions in the current physical block >= 16
-K16 graph is available and not quarantined
+shared complete-step graph is available and not quarantined
+K16 policy health epoch is not quarantined
 no incompatible mode is active
 ```
 
-Any failed K16 condition falls back to the current K8 selector. A K16 replay
-or validation failure quarantines only the K16 graph identity and retries no
-work inside the same step; the scheduler cancels the lease and follows the
-existing safe fallback on the next engine step.
+Any failed K16 condition falls back to the current K8 selector. A K16
+width-policy, D2H, result, visibility, or commit validation failure quarantines
+only the K16 policy-health epoch and retries no work inside the same step; the
+scheduler cancels the lease and follows the existing safe K8 fallback on the
+next engine step. A failure that proves the shared graph itself invalid
+continues to quarantine the graph and therefore disables both widths.
 
 The context threshold is frozen before the terminal gate. It is not tuned
 from terminal measurements.
 
-### 3. Graph ownership
+### 3. Shared graph ownership and width-scoped health
 
-K8 and K16 use separate graph identities, token-history capacities, retained
-static tensors, capture receipts, and quarantine states. A K16 lease cannot
-be executed by a K8 graph, and a K8 lease cannot be silently widened.
+K8 and K16 use the same captured complete-step graph, static tensors, token
+history, and capture receipt. The graph already executes one complete token
+step per replay and its history capacity is at least one physical block, so
+K16 changes only the authorized replay count.
+
+The lease digest binds the requested and authorized width. A host-side
+`ElasticBurstWidthHealth` record owns a monotonically increasing generation,
+an optional K16 quarantine reason, and K16 attempt/accept/fallback counters.
+The lease captures this width-health generation. Validation rejects stale
+width generations before graph state mutation.
 
 K16 performs exactly sixteen ordered replays of the same complete-step graph.
 The final device token remains the next autoregressive input during the
 burst. Only the completed sixteen-token history slice is copied to the host.
+
+A failure attributable to K16 policy limits, host visibility, result
+validation, or width-aware commit quarantines only the K16 health record. A
+failure attributable to graph capture identity, graph replay integrity,
+static tensors, or live KV identity quarantines the shared graph and therefore
+both widths.
 
 ### 4. Scheduler transaction
 
@@ -190,7 +227,8 @@ Record:
 
 - requested and authorized width histograms;
 - K16 attempts, acceptances, K8 fallbacks, and fallback reasons;
-- K8 and K16 graph identity and capture receipts;
+- shared graph identity and capture receipt;
+- width-health generation and K16 quarantine reason;
 - per-burst host-visible gaps;
 - per-context TPOT median, P95, and P99;
 - TTFT, E2E, throughput, allocated and reserved CUDA memory;
@@ -206,11 +244,14 @@ ineligible.
 
 Every failure is fail-closed:
 
-- missing or quarantined K16 graph: choose K8 before lease creation;
+- missing or quarantined shared graph: use the existing ordinary path;
+- quarantined K16 policy health: choose K8 before lease creation;
 - stale schedule, graph, block table, ownership, or lease identity: reject
   before mutation;
-- replay failure: quarantine K16 and cancel the pending lease;
-- D2H failure: quarantine K16 and commit no host metadata;
+- replay/static-state failure: quarantine the shared graph and cancel the
+  pending lease;
+- K16 D2H/result/width validation failure: quarantine K16 policy health and
+  commit no host metadata;
 - prepare or commit failure: use the existing bounded rollback owner;
 - rollback failure: surface the compound failure and quarantine the path.
 
@@ -289,8 +330,9 @@ Promotion requires:
 The terminal report must present both:
 
 - benefit: TPOT median/P95/P99 and throughput changes overall and by context;
-- cost: maximum/p95 host-visible gap, capture duration, retained static bytes,
-  peak CUDA memory, and K8 fallback rate.
+- cost: maximum/p95 host-visible gap, incremental capture duration,
+  incremental retained static bytes, peak CUDA memory, K8 fallback rate, and
+  K16 width-health quarantine count.
 
 A correct implementation that misses the positive TPOT thresholds is
 `NO_GO_INSUFFICIENT_INCREMENTAL_BENEFIT`. A faster implementation that exceeds
