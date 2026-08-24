@@ -9386,6 +9386,7 @@ class ModelRunner:
             slot_mapping,
             context_length,
             block_table,
+            flash_attn_num_splits,
         ):
             set_context(
                 False,

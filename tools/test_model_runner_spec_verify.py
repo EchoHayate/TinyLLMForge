@@ -4835,6 +4835,7 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     )
     observed = []
     allocation_devices = []
+    context_splits = []
     markers = {
         0: object(),
         12: object(),
@@ -4876,11 +4877,20 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     original_full = getattr(model_runner.torch, "full", None)
     original_zeros = getattr(model_runner.torch, "zeros", None)
     original_cuda = model_runner.torch.cuda
+    original_set_context = model_runner.set_context
 
     class FakeBurstGraph:
         @classmethod
         def capture(cls, **kwargs):
             observed.append(kwargs)
+            kwargs["set_decode_context"](
+                slot_mapping=object(),
+                context_length=object(),
+                block_table=object(),
+                flash_attn_num_splits=kwargs[
+                    "flash_attn_num_splits"
+                ],
+            )
             if (
                 fail_medium_capture["enabled"]
                 and kwargs["flash_attn_num_splits"] == 12
@@ -4920,6 +4930,11 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
         synchronize=lambda: None,
         memory_allocated=lambda: 0,
         memory_reserved=lambda: 0,
+    )
+    model_runner.set_context = (
+        lambda _is_prefill, **kwargs: context_splits.append(
+            kwargs["flash_attn_num_splits"]
+        )
     )
     try:
         result = runner._capture_exact_greedy_decode_burst()
@@ -4964,6 +4979,7 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
         else:
             model_runner.torch.zeros = original_zeros
         model_runner.torch.cuda = original_cuda
+        model_runner.set_context = original_set_context
 
     assert result is markers[0]
     assert runner.exact_greedy_decode_burst_graph is markers[0]
@@ -4980,6 +4996,7 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
         row["flash_attn_num_splits"]
         for row in production_observed
     ] == [0, 12]
+    assert context_splits == [0, 12, 0, 12, 0, 12]
     auto_production = production_observed[0]
     assert auto_production["graph_pool"] == "private-pool"
     assert auto_production["graph_generation"] == 6
