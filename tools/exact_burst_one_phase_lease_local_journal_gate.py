@@ -704,9 +704,14 @@ def _fallback_difference(
     return result
 
 
+def _bind_base_context_contract(base) -> None:
+    base.CONTEXT_CASES = CONTEXT_CASES
+
+
 def _activate_gpu_harness():
     from tools import profile_exact_greedy_decode_burst as base
 
+    _bind_base_context_contract(base)
     original_run_request = base._run_request
     original_combined_summary = base._combined_summary
 

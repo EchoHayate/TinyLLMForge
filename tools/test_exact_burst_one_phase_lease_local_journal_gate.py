@@ -132,6 +132,26 @@ def test_gate_inventory_and_policy_order_are_fixed():
     )
 
 
+def test_gate_installs_its_context_contract_in_base_profiler(
+    monkeypatch,
+):
+    gate = _load_module()
+    from tools import profile_exact_greedy_decode_burst as base
+
+    monkeypatch.setattr(
+        base,
+        "CONTEXT_CASES",
+        (("short", 256, 128),),
+    )
+
+    gate._bind_base_context_contract(base)
+
+    assert base.CONTEXT_CASES == gate.CONTEXT_CASES
+    assert base._case_shape("2k") == (2048, 128)
+    assert base._case_shape("4k") == (4096, 128)
+    assert base._case_shape("8k") == (8192, 128)
+
+
 def test_gate_classifies_complete_beneficial_evidence_go():
     gate = _load_module()
 
