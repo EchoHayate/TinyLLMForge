@@ -1864,6 +1864,110 @@ def test_one_phase_delta_journal_falls_back_with_closed_reason(
     ] == {expected_reason: 1}
 
 
+def test_one_phase_k8_delta_journal_commits_partial_block(
+    monkeypatch,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=2,
+        )
+    )
+    compute_hash_calls = 0
+    original_compute_hash = scheduler.block_manager.compute_hash
+
+    def count_compute_hash(token_ids, prefix=-1):
+        nonlocal compute_hash_calls
+        compute_hash_calls += 1
+        return original_compute_hash(token_ids, prefix)
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "compute_hash",
+        count_compute_hash,
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+    scheduler.commit_prepared_postprocess(prepared)
+
+    assert compute_hash_calls == 0
+    assert sequence.completion_token_ids == [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    ]
+    assert prepared.state == "committed"
+    assert prepared.snapshot.state == "committed"
+    assert scheduler._exact_greedy_decode_burst_pending_lease is None
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary[
+        "lease_local_delta_journal_one_phase_commits"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_published_blocks"
+    ] == 0
+
+
+def test_one_phase_k8_delta_journal_commits_and_publishes_full_block(
+    monkeypatch,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=9,
+        )
+    )
+    compute_hash_calls = 0
+    original_compute_hash = scheduler.block_manager.compute_hash
+
+    def count_compute_hash(token_ids, prefix=-1):
+        nonlocal compute_hash_calls
+        compute_hash_calls += 1
+        return original_compute_hash(token_ids, prefix)
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "compute_hash",
+        count_compute_hash,
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+    scheduler.commit_prepared_postprocess(prepared)
+
+    assert compute_hash_calls == 1
+    assert sequence.completion_token_ids == [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    ]
+    assert prepared.state == "committed"
+    assert prepared.snapshot.state == "committed"
+    assert scheduler._exact_greedy_decode_burst_pending_lease is None
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary[
+        "lease_local_delta_journal_one_phase_commits"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_published_blocks"
+    ] == 1
+
+
 def test_delta_journal_disabled_and_terminal_suffix_fall_back(
     monkeypatch,
 ):
@@ -2653,6 +2757,102 @@ def test_delta_journal_rollback_preserves_last_committed_boundary(
     assert scheduler._exact_greedy_decode_burst_split_phase == before_phase
     summary = scheduler.exact_greedy_decode_burst_summary()
     assert summary["lease_local_delta_journal_rollbacks"] == 1
+
+
+def test_one_phase_delta_journal_rollback_restores_registered_hash(
+    monkeypatch,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=9,
+        )
+    )
+    before = _delta_transaction_snapshot(
+        scheduler,
+        sequence,
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+    original_publish = (
+        scheduler.block_manager.publish_lease_write_block
+    )
+
+    def publish_then_fail(*args, **kwargs):
+        original_publish(*args, **kwargs)
+        raise RuntimeError(
+            "injected one-phase post-registration failure"
+        )
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_lease_write_block",
+        publish_then_fail,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected one-phase post-registration failure",
+    ):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert prepared.snapshot.state == "rolled_back"
+    assert (
+        _delta_transaction_snapshot(scheduler, sequence)
+        == before
+    )
+    assert scheduler._exact_greedy_decode_burst_pending_lease == lease
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_rollbacks"] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_rollbacks"
+    ] == 1
+
+
+def test_one_phase_delta_journal_rollback_failure_is_terminal(
+    monkeypatch,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=2,
+        )
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+    sequence.token_ids = list(sequence.token_ids)
+
+    def fail_publication(*_args, **_kwargs):
+        raise RuntimeError(
+            "injected one-phase publication failure"
+        )
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "publish_lease_write_block",
+        fail_publication,
+    )
+
+    with pytest.raises(
+        scheduler_module.SchedulerPostprocessRollbackError,
+    ) as caught:
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert str(caught.value.commit_error) == (
+        "injected one-phase publication failure"
+    )
+    assert str(caught.value.rollback_error) == (
+        "delta journal token list identity changed"
+    )
+    assert prepared.state == "rollback_failed"
+    assert prepared.snapshot.state == "rollback_failed"
 
 
 def test_delta_journal_rollback_restores_registered_hash(

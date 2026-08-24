@@ -3256,6 +3256,8 @@ class Scheduler:
                 ExactBurstLeaseLocalDeltaJournal,
             ):
                 self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_rollback()
+                if prepared.rows[0].exact_burst_phase is None:
+                    self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_one_phase_rollback()
             if prefill_hook_error is not None:
                 self._prefill_commit_hook_error = (
                     prefill_hook_error
@@ -3272,6 +3274,12 @@ class Scheduler:
                     journal.publication_applied
                 ),
             )
+            if prepared.rows[0].exact_burst_phase is None:
+                self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_one_phase_commit(
+                    published_blocks=int(
+                        journal.publication_applied
+                    ),
+                )
         prepared.state = "committed"
         if prepared.exact_burst_lease is not None:
             phase = prepared.rows[0].exact_burst_phase
