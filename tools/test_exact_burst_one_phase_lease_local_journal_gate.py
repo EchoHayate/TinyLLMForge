@@ -126,6 +126,10 @@ def test_gate_inventory_and_policy_order_are_fixed():
     assert gate.PERFORMANCE_REPETITIONS == 10
     assert gate.PERFORMANCE_ROW_COUNT == 60
     assert gate.CORRECTNESS_ROW_COUNT == 24
+    assert (
+        "tools/profile_exact_greedy_decode_burst.py"
+        in gate.SOURCE_FILES
+    )
     assert gate.policy_order(0, 0) == gate.POLICIES
     assert gate.policy_order(1, 0) == tuple(
         reversed(gate.POLICIES)

@@ -208,6 +208,19 @@ def _case_row(
     }
 
 
+def test_case_row_accepts_runtime_flash_attention_split_receipt():
+    row = _case_row("decode_burst_k8")
+    row["exact_greedy_decode_burst_summary"][
+        "capture_receipts"
+    ][0]["flash_attn_num_splits"] = 0
+
+    validated = validate_case_row(row)
+
+    assert validated["exact_greedy_decode_burst_summary"][
+        "capture_receipts"
+    ][0]["flash_attn_num_splits"] == 0
+
+
 def _correctness_row(
     *,
     policy: str,

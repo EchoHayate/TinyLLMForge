@@ -64,6 +64,7 @@ SOURCE_FILES = {
     "tinyvllm/engine/llm_engine.py",
     "tinyvllm/engine/model_runner.py",
     "tinyvllm/engine/scheduler.py",
+    "tools/profile_exact_greedy_decode_burst.py",
     "tools/exact_burst_one_phase_lease_local_journal_gate.py",
     "tools/exact_burst_one_phase_lease_local_journal_verify.py",
 }

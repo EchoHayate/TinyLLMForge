@@ -419,7 +419,12 @@ def _validate_capture_receipt(
         "scratch_block_count",
         "correctness_trace",
     }
-    if not isinstance(value, dict) or set(value) != required:
+    optional = {"flash_attn_num_splits"}
+    if (
+        not isinstance(value, dict)
+        or required - set(value)
+        or set(value) - required - optional
+    ):
         raise ValueError("burst capture receipt fields mismatch")
     _validate_digest(
         value["graph_identity_sha256"],
@@ -439,6 +444,11 @@ def _validate_capture_receipt(
         )
     if value["correctness_trace"] is not expected_correctness_trace:
         raise ValueError("capture correctness trace mismatch")
+    if "flash_attn_num_splits" in value:
+        _require_non_negative_int(
+            value["flash_attn_num_splits"],
+            "capture receipt flash_attn_num_splits",
+        )
     return dict(value)
 
 
