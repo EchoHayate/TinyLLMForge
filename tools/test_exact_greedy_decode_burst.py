@@ -1437,6 +1437,15 @@ def test_stats_track_lease_local_delta_journal_lifecycle() -> None:
     stats.record_lease_local_delta_journal_fallback(
         "terminal_suffix",
     )
+    stats.record_lease_local_delta_journal_one_phase_attempt()
+    stats.record_lease_local_delta_journal_one_phase_capture()
+    stats.record_lease_local_delta_journal_one_phase_commit(
+        published_blocks=1,
+    )
+    stats.record_lease_local_delta_journal_one_phase_rollback()
+    stats.record_lease_local_delta_journal_one_phase_fallback(
+        "terminal_one_phase",
+    )
 
     summary = stats.summary()
     assert summary["lease_local_delta_journal_attempts"] == 1
@@ -1450,6 +1459,24 @@ def test_stats_track_lease_local_delta_journal_lifecycle() -> None:
     assert summary[
         "lease_local_delta_journal_fallback_counts"
     ] == {"terminal_suffix": 1}
+    assert summary[
+        "lease_local_delta_journal_one_phase_attempts"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_captures"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_commits"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_rollbacks"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_published_blocks"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_fallback_counts"
+    ] == {"terminal_one_phase": 1}
 
     try:
         stats.record_lease_local_delta_journal_commit(

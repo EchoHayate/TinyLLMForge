@@ -908,6 +908,11 @@ class ExactGreedyDecodeBurstStats:
     lease_local_delta_journal_commits: int = 0
     lease_local_delta_journal_rollbacks: int = 0
     lease_local_delta_journal_published_blocks: int = 0
+    lease_local_delta_journal_one_phase_attempts: int = 0
+    lease_local_delta_journal_one_phase_captures: int = 0
+    lease_local_delta_journal_one_phase_commits: int = 0
+    lease_local_delta_journal_one_phase_rollbacks: int = 0
+    lease_local_delta_journal_one_phase_published_blocks: int = 0
     requested_width_histogram: dict[int, int] = field(
         default_factory=dict
     )
@@ -925,6 +930,10 @@ class ExactGreedyDecodeBurstStats:
         default_factory=dict
     )
     lease_local_delta_journal_fallback_counts: dict[
+        str,
+        int,
+    ] = field(default_factory=dict)
+    lease_local_delta_journal_one_phase_fallback_counts: dict[
         str,
         int,
     ] = field(default_factory=dict)
@@ -1025,6 +1034,56 @@ class ExactGreedyDecodeBurstStats:
             "lease-local delta journal fallback reason",
         )
         counts = self.lease_local_delta_journal_fallback_counts
+        counts[reason] = counts.get(reason, 0) + 1
+
+    def record_lease_local_delta_journal_one_phase_attempt(
+        self,
+    ) -> None:
+        self.lease_local_delta_journal_one_phase_attempts += 1
+
+    def record_lease_local_delta_journal_one_phase_capture(
+        self,
+    ) -> None:
+        self.lease_local_delta_journal_one_phase_captures += 1
+
+    def record_lease_local_delta_journal_one_phase_commit(
+        self,
+        *,
+        published_blocks: int,
+    ) -> None:
+        _require_non_negative_int(
+            published_blocks,
+            "published_blocks",
+        )
+        if published_blocks > 1:
+            raise ValueError(
+                "published_blocks must be at most one"
+            )
+        self.lease_local_delta_journal_one_phase_commits += 1
+        self.lease_local_delta_journal_one_phase_published_blocks += (
+            published_blocks
+        )
+
+    def record_lease_local_delta_journal_one_phase_rollback(
+        self,
+    ) -> None:
+        self.lease_local_delta_journal_one_phase_rollbacks += 1
+
+    def record_lease_local_delta_journal_one_phase_fallback(
+        self,
+        reason: str,
+    ) -> None:
+        reason = _require_reason(
+            reason,
+            (
+                "lease-local delta journal one-phase "
+                "fallback reason"
+            ),
+        )
+        counts = (
+            self
+            .lease_local_delta_journal_one_phase_fallback_counts
+        )
         counts[reason] = counts.get(reason, 0) + 1
 
     def record_capture(
@@ -1315,6 +1374,25 @@ class ExactGreedyDecodeBurstStats:
             "lease_local_delta_journal_published_blocks": (
                 self.lease_local_delta_journal_published_blocks
             ),
+            "lease_local_delta_journal_one_phase_attempts": (
+                self.lease_local_delta_journal_one_phase_attempts
+            ),
+            "lease_local_delta_journal_one_phase_captures": (
+                self.lease_local_delta_journal_one_phase_captures
+            ),
+            "lease_local_delta_journal_one_phase_commits": (
+                self.lease_local_delta_journal_one_phase_commits
+            ),
+            "lease_local_delta_journal_one_phase_rollbacks": (
+                self.lease_local_delta_journal_one_phase_rollbacks
+            ),
+            (
+                "lease_local_delta_journal_one_phase_"
+                "published_blocks"
+            ): (
+                self
+                .lease_local_delta_journal_one_phase_published_blocks
+            ),
             "requested_width_histogram": {
                 str(key): value
                 for key, value in sorted(
@@ -1344,6 +1422,16 @@ class ExactGreedyDecodeBurstStats:
             "lease_local_delta_journal_fallback_counts": dict(
                 sorted(
                     self.lease_local_delta_journal_fallback_counts.items()
+                )
+            ),
+            (
+                "lease_local_delta_journal_one_phase_"
+                "fallback_counts"
+            ): dict(
+                sorted(
+                    self
+                    .lease_local_delta_journal_one_phase_fallback_counts
+                    .items()
                 )
             ),
             "quarantine_reason": self.quarantine_reason,

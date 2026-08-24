@@ -298,10 +298,6 @@ class Config:
                     "lease-local delta journal requires "
                     "exact_greedy_decode_burst"
                 )
-            if not self.exact_greedy_decode_burst_split_phase:
-                raise ValueError(
-                    "lease-local delta journal requires split phase"
-                )
             if self.exact_greedy_decode_burst_tokens != 8:
                 raise ValueError(
                     "lease-local delta journal requires K8"
