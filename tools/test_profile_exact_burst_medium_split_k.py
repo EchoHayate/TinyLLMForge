@@ -352,6 +352,29 @@ def test_case_row_binds_raw_metrics_receipts_and_selected_graph() -> None:
     }
     validate_case_row(mixed_boundary)
 
+    block_boundary_fallback = _case_row(
+        "auto",
+        context_length=4090,
+    )
+    block_boundary_fallback["replay_graph_identity_counts"] = {
+        "c" * 64: GENERATED_TOKENS - 2,
+    }
+    block_boundary_fallback[
+        "exact_greedy_decode_burst_summary"
+    ]["committed_tokens"] = GENERATED_TOKENS - 2
+    block_boundary_fallback[
+        "exact_greedy_decode_burst_summary"
+    ]["graph_replays"] = GENERATED_TOKENS - 2
+    block_boundary_fallback[
+        "exact_greedy_decode_burst_summary"
+    ]["target_model_forwards"] = GENERATED_TOKENS - 2
+    block_boundary_fallback[
+        "exact_greedy_decode_burst_summary"
+    ]["fallback_counts"] = {
+        "authorized_width_below_two": 1,
+    }
+    validate_case_row(block_boundary_fallback)
+
     unknown_graph = deepcopy(mixed_boundary)
     unknown_graph["replay_graph_identity_counts"]["f" * 64] = 1
     with pytest.raises(

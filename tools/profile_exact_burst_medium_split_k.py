@@ -546,7 +546,9 @@ def validate_case_row(row) -> dict:
             or count <= 0
             for graph_identity, count in identity_counts.items()
         )
-        or sum(identity_counts.values()) != GENERATED_TOKENS - 1
+        or sum(identity_counts.values())
+        != summary["committed_tokens"]
+        or summary["committed_tokens"] > GENERATED_TOKENS - 1
         or identity not in identity_counts
     ):
         raise ValueError("replay graph identity inventory mismatch")
