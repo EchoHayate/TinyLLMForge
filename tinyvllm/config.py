@@ -43,6 +43,7 @@ class Config:
     exact_greedy_decode_burst_ragged_coalescing: bool = False
     exact_greedy_decode_burst_lease_local_delta_journal: bool = False
     exact_greedy_decode_burst_tokens: int = 4
+    packed_qk_single_pass_rmsnorm: bool = False
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
     multi_sequence_cuda_graph_min_observations: int = 3
@@ -248,6 +249,13 @@ class Config:
             raise ValueError(
                 "exact_greedy_decode_burst_lease_local_delta_journal "
                 "must be a bool"
+            )
+        if not isinstance(
+            self.packed_qk_single_pass_rmsnorm,
+            bool,
+        ):
+            raise ValueError(
+                "packed_qk_single_pass_rmsnorm must be a bool"
             )
         if (
             isinstance(self.exact_greedy_decode_burst_tokens, bool)

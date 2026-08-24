@@ -2194,7 +2194,12 @@ class ModelRunner:
         set_quant_config(config.quantization, config.quant_group_size, config.act_quant_bits)
 
         def load_legacy_model(runner_config):
-            model = Qwen3ForCausalLM(runner_config.hf_config)
+            model = Qwen3ForCausalLM(
+                runner_config.hf_config,
+                packed_qk_single_pass_rmsnorm=(
+                    runner_config.packed_qk_single_pass_rmsnorm
+                ),
+            )
             load_model(
                 model,
                 runner_config.model,

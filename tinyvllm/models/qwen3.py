@@ -23,9 +23,14 @@ class QWen3Attention(nn.Module):
         rms_norm_eps: float = 1e-6, 
         qkv_bias: bool = False,
         rope_theta: float = 10000, 
-        rope_scaling: tuple | None = None
+        rope_scaling: tuple | None = None,
+        *,
+        packed_qk_single_pass_rmsnorm: bool = False,
     ):
         super().__init__()
+        self.packed_qk_single_pass_rmsnorm = (
+            packed_qk_single_pass_rmsnorm
+        )
         tp_size = dist.get_world_size()
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
@@ -137,7 +142,9 @@ class Qwen3MLP(nn.Module):
 class Qwen3DecoderLayer(nn.Module):
     def __init__(
         self,
-        config: Qwen3Config
+        config: Qwen3Config,
+        *,
+        packed_qk_single_pass_rmsnorm: bool = False,
     ):
         super().__init__()
         self.self_attn = QWen3Attention(
@@ -150,7 +157,10 @@ class Qwen3DecoderLayer(nn.Module):
             head_dim=getattr(config, 'head_dim', None),
             rope_theta=getattr(config, 'rope_theta', None) or
                        (getattr(config, 'rope_scaling', None) or {}).get('rope_theta', 10000),
-            rope_scaling=getattr(config, 'rope_scaling', None)
+            rope_scaling=getattr(config, 'rope_scaling', None),
+            packed_qk_single_pass_rmsnorm=(
+                packed_qk_single_pass_rmsnorm
+            ),
         )
         self.mlp = Qwen3MLP(
             hidden_size=config.hidden_size, 
@@ -179,12 +189,22 @@ class Qwen3DecoderLayer(nn.Module):
 
 class Qwen3Model(nn.Module):
     def __init__(
-        self, 
-        config: Qwen3Config, 
+        self,
+        config: Qwen3Config,
+        *,
+        packed_qk_single_pass_rmsnorm: bool = False,
     ) -> None:
         super().__init__()
         self.embed_tokens = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList([Qwen3DecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([
+            Qwen3DecoderLayer(
+                config,
+                packed_qk_single_pass_rmsnorm=(
+                    packed_qk_single_pass_rmsnorm
+                ),
+            )
+            for _ in range(config.num_hidden_layers)
+        ])
         self.norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
 
     def forward(
@@ -213,10 +233,17 @@ class Qwen3ForCausalLM(nn.Module):
 
     def __init__(
         self,
-        config: Qwen3Config, 
+        config: Qwen3Config,
+        *,
+        packed_qk_single_pass_rmsnorm: bool = False,
     ):
         super().__init__()
-        self.model = Qwen3Model(config) 
+        self.model = Qwen3Model(
+            config,
+            packed_qk_single_pass_rmsnorm=(
+                packed_qk_single_pass_rmsnorm
+            ),
+        )
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         if config.tie_word_embeddings:              # 和最初的embedding层共用同一权重
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
