@@ -231,7 +231,17 @@ def test_attention_has_compiled_packed_qk_helper():
     calls = _call_names(helper)
     assert "cat" in calls
     assert "rsqrt" in calls
-    assert calls.count("expand") == 2
+    assert "expand" not in calls
+    assignments = {
+        target.id
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert "q_normalized" in assignments
+    assert "k_normalized" in assignments
+    assert "weights" not in assignments
 
 
 def test_normalize_qk_routes_disabled_and_enabled_paths():

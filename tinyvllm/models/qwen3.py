@@ -104,12 +104,17 @@ class QWen3Attention(nn.Module):
         ).to(torch.float32)
         variance = normalized.pow(2).mean(dim=-1, keepdim=True)
         normalized.mul_(torch.rsqrt(variance + self.q_norm.eps))
-        weights = torch.cat((
-            self.q_norm.weight.expand(self.num_heads, -1),
-            self.k_norm.weight.expand(self.num_kv_heads, -1),
-        ), dim=0)
-        normalized = normalized.to(origin_dtype).mul_(weights)
-        return normalized.view(packed_qk.shape)
+        normalized = normalized.to(origin_dtype)
+        q_normalized = normalized[:, :self.num_heads].mul(
+            self.q_norm.weight
+        )
+        k_normalized = normalized[:, self.num_heads:].mul(
+            self.k_norm.weight
+        )
+        return torch.cat(
+            (q_normalized, k_normalized),
+            dim=1,
+        ).view(packed_qk.shape)
 
     def _normalize_qk(
         self,
