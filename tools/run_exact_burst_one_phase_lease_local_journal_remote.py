@@ -36,7 +36,7 @@ REMOTE_HOST = base.REMOTE_HOST
 REMOTE_PYTHON = base.REMOTE_PYTHON
 MODEL_PATH = base.MODEL_PATHS["qwen3-0.6b"]
 REMOTE_PYTEST_SITE = "/data00/home/sitian/pytest-site"
-DEFAULT_CONTROL_PATH = "/tmp/ssh-sitian-10.232.195.203"
+DEFAULT_CONTROL_PATH = "none"
 DEFAULT_KERBEROS_CACHE = "FILE:/Users/bytedance/krb5cc_sitian"
 LOCAL_ARTIFACT_ROOT = (
     REPO_ROOT

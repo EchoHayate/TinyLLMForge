@@ -24,6 +24,7 @@ def _gpu(index, *, memory=0, utilization=0, processes=()):
 
 def test_paths_and_runtime_are_confined_to_remote_mount():
     run_tag = "20260824-one-phase-journal-r1"
+    assert remote.DEFAULT_CONTROL_PATH == "none"
     paths = remote.remote_paths(run_tag)
     dist_port = remote.dist_port_for_run_tag(run_tag)
     assert all(
