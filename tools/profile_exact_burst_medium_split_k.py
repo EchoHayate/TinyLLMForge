@@ -132,6 +132,16 @@ def _nearest_rank(values: list[float], percentile: float) -> float:
     return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
 
 
+def _flatten_logits(logits) -> tuple[list[int], list[float]]:
+    if hasattr(logits, "shape") and hasattr(logits, "view"):
+        return (
+            [int(value) for value in logits.shape],
+            logits.view(-1).tolist(),
+        )
+    values = list(logits)
+    return [1, len(values)], values
+
+
 def _context_bucket(context_length: int) -> str:
     if context_length not in CONTEXT_LENGTHS:
         raise ValueError("context length is invalid")
@@ -1281,9 +1291,7 @@ def run_correctness_probe(
         rows = []
         for point in SAMPLING_POINTS:
             sample = captured[point]
-            logits = sample["logits"]
-            shape = [int(value) for value in logits.shape]
-            values = logits.view(-1).tolist()
+            shape, values = _flatten_logits(sample["logits"])
             sidecar = write_float32_sidecar(
                 run_dir,
                 (

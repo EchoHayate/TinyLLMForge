@@ -26,6 +26,7 @@ from tools.profile_exact_burst_medium_split_k import (
     SOURCE_FILES,
     WARMUP_REPETITIONS,
     _construct_llm,
+    _flatten_logits,
     _validate_replay_graph_identity_counts,
     build_workload_manifest,
     correctness_identities,
@@ -488,6 +489,26 @@ def test_warmup_does_not_require_graph_identity_evidence() -> None:
                 },
             ),
         )
+
+
+def test_flatten_logits_accepts_tensor_and_tuple_payloads() -> None:
+    class FakeTensor:
+        shape = (1, 3)
+
+        def view(self, *_shape):
+            return self
+
+        def tolist(self):
+            return [1.0, 2.0, 3.0]
+
+    assert _flatten_logits(FakeTensor()) == (
+        [1, 3],
+        [1.0, 2.0, 3.0],
+    )
+    assert _flatten_logits((1.0, 2.0, 3.0)) == (
+        [1, 3],
+        [1.0, 2.0, 3.0],
+    )
 
 
 def test_correctness_rows_bind_sidecars_and_selected_graphs(
