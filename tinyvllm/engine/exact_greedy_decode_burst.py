@@ -833,6 +833,7 @@ class ExactGreedyDecodeBurstCaptureReceipt:
     retained_static_bytes: int
     scratch_block_count: int
     correctness_trace: bool
+    flash_attn_num_splits: int
 
     def __post_init__(self) -> None:
         _require_digest(
@@ -854,6 +855,10 @@ class ExactGreedyDecodeBurstCaptureReceipt:
         _require_bool(
             self.correctness_trace,
             "correctness_trace",
+        )
+        _require_non_negative_int(
+            self.flash_attn_num_splits,
+            "flash_attn_num_splits",
         )
 
 
@@ -1555,6 +1560,7 @@ class ExactGreedyDecodeBurstGraph:
         live_kv_snapshot,
         correctness_trace: bool = False,
         sampled_logit_ordinals: tuple[int, ...] = (),
+        flash_attn_num_splits: int = 0,
         stats: Optional[ExactGreedyDecodeBurstStats] = None,
     ) -> "ExactGreedyDecodeBurstGraph":
         if not isinstance(tensors, dict):
@@ -1583,6 +1589,10 @@ class ExactGreedyDecodeBurstGraph:
         )
         _require_positive_int(block_size, "block_size")
         _require_bool(correctness_trace, "correctness_trace")
+        _require_non_negative_int(
+            flash_attn_num_splits,
+            "flash_attn_num_splits",
+        )
         sampled_logit_ordinals = _validate_integer_tuple(
             sampled_logit_ordinals,
             "sampled_logit_ordinals",
@@ -1657,6 +1667,7 @@ class ExactGreedyDecodeBurstGraph:
             "block_size": block_size,
             "scratch_block_id": scratch_block_id,
             "correctness_trace": correctness_trace,
+            "flash_attn_num_splits": flash_attn_num_splits,
             "sampled_logit_ordinals": list(
                 sampled_logit_ordinals
             ),
@@ -1692,6 +1703,7 @@ class ExactGreedyDecodeBurstGraph:
                 slot_mapping=tensors["slot_mapping"],
                 context_length=tensors["context_length"],
                 block_table=tensors["block_table"],
+                flash_attn_num_splits=flash_attn_num_splits,
             )
 
         try:
@@ -1774,6 +1786,7 @@ class ExactGreedyDecodeBurstGraph:
             retained_static_bytes=retained_static_bytes,
             scratch_block_count=1,
             correctness_trace=correctness_trace,
+            flash_attn_num_splits=flash_attn_num_splits,
         )
         stats.record_capture(receipt)
         return cls(
@@ -2356,6 +2369,9 @@ class ExactGreedyDecodeBurstGraph:
                 self.tensors["token_history"].shape[0]
             ),
             "correctness_trace": self.correctness_trace,
+            "flash_attn_num_splits": (
+                self.receipt.flash_attn_num_splits
+            ),
             "sampled_logit_ordinals": list(
                 self.sampled_logit_ordinals
             ),

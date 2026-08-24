@@ -390,6 +390,7 @@ def _graph_fixture(
     live_kv_changed=False,
     history_capacity=8,
     sampled_logit_ordinals=None,
+    flash_attn_num_splits=0,
 ):
     events = []
     tensors = {
@@ -496,7 +497,13 @@ def _graph_fixture(
         context_slots.append(
             tuple(kwargs["slot_mapping"].values)
         )
-        events.append((phase["value"], "set_context"))
+        events.append(
+            (
+                phase["value"],
+                "set_context",
+                kwargs["flash_attn_num_splits"],
+            )
+        )
 
     live_snapshots = iter(
         (
@@ -541,6 +548,7 @@ def _graph_fixture(
             if correctness_trace
             else ()
         ),
+        flash_attn_num_splits=flash_attn_num_splits,
         stats=stats,
     )
     return graph, tensors, graphs[0], events, context_slots
@@ -1331,6 +1339,7 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
         retained_static_bytes=321,
         scratch_block_count=1,
         correctness_trace=False,
+        flash_attn_num_splits=0,
     )
     stats = ExactGreedyDecodeBurstStats()
     stats.record_attempt()
@@ -1640,6 +1649,46 @@ def test_complete_step_capture_orders_body_and_uses_private_scratch() -> None:
     assert summary["capture_receipts"][0][
         "scratch_block_count"
     ] == 1
+
+
+def test_capture_binds_flash_attention_split_to_identity_and_receipt() -> None:
+    auto, _tensors, _graph, auto_events, _slots = _graph_fixture()
+    split, _tensors, _graph, split_events, _slots = _graph_fixture(
+        flash_attn_num_splits=12,
+    )
+
+    assert auto.receipt.flash_attn_num_splits == 0
+    assert split.receipt.flash_attn_num_splits == 12
+    assert (
+        auto.receipt.graph_identity_sha256
+        != split.receipt.graph_identity_sha256
+    )
+    assert auto.capability()["flash_attn_num_splits"] == 0
+    assert split.capability()["flash_attn_num_splits"] == 12
+    assert [
+        event[2]
+        for event in auto_events
+        if event[1] == "set_context"
+    ] == [0, 0]
+    assert [
+        event[2]
+        for event in split_events
+        if event[1] == "set_context"
+    ] == [12, 12]
+
+
+def test_capture_rejects_invalid_flash_attention_split() -> None:
+    for invalid in (-1, True, 1.5, "12"):
+        _assert_raises(
+            ValueError,
+            (
+                "flash_attn_num_splits must be a "
+                "non-negative integer"
+            ),
+            lambda invalid=invalid: _graph_fixture(
+                flash_attn_num_splits=invalid,
+            ),
+        )
 
 
 def test_replay_runs_exact_count_then_one_token_d2h() -> None:
