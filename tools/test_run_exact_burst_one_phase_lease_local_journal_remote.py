@@ -292,6 +292,53 @@ def test_worker_poll_tolerates_one_transient_remote_failure(
     ) == 0
 
 
+def test_requirement_probe_retries_transient_ssh_failures(
+    monkeypatch,
+):
+    calls = []
+    results = iter((
+        RuntimeError(
+            "remote requirement probe failed: "
+            "Connection closed by UNKNOWN port 65535"
+        ),
+        RuntimeError(
+            "remote requirement probe failed: "
+            "Connection closed by UNKNOWN port 65535"
+        ),
+        {"status": "PASS"},
+    ))
+
+    def fake_probe(model):
+        calls.append(model)
+        result = next(results)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    sleeps = []
+    monkeypatch.setattr(
+        remote.base,
+        "probe_remote_requirements",
+        fake_probe,
+    )
+    monkeypatch.setattr(
+        remote.legacy,
+        "validate_remote_requirements",
+        lambda result: result,
+    )
+    monkeypatch.setattr(
+        remote.time,
+        "sleep",
+        sleeps.append,
+    )
+
+    assert remote._probe_remote_requirements() == {
+        "status": "PASS",
+    }
+    assert calls == ["qwen3-0.6b"] * 3
+    assert sleeps == [1, 2]
+
+
 def test_controller_rejects_attempted_local_tag(
     monkeypatch,
     tmp_path,

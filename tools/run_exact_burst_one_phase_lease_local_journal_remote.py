@@ -49,6 +49,7 @@ GPU_UTILIZATION_LIMIT_PERCENT = 5
 PERFORMANCE_ROWS = 60
 CORRECTNESS_ROWS = 24
 MAX_CONSECUTIVE_POLL_FAILURES = 3
+REQUIREMENT_PROBE_ATTEMPTS = 3
 COMMITTED_ARCHIVE_PATHS = ("tinyvllm", "tools")
 SOURCE_PATCH_SHA256 = hashlib.sha256(b"").hexdigest()
 TASK_TRACKED_PATHS = (
@@ -329,9 +330,16 @@ def _run_remote_checked(
 
 
 def _probe_remote_requirements() -> dict:
-    return legacy.validate_remote_requirements(
-        base.probe_remote_requirements("qwen3-0.6b")
-    )
+    for attempt in range(1, REQUIREMENT_PROBE_ATTEMPTS + 1):
+        try:
+            return legacy.validate_remote_requirements(
+                base.probe_remote_requirements("qwen3-0.6b")
+            )
+        except RuntimeError:
+            if attempt == REQUIREMENT_PROBE_ATTEMPTS:
+                raise
+            time.sleep(attempt)
+    raise AssertionError("unreachable requirement probe retry")
 
 
 def _wait_for_clean_gpu(
