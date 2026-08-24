@@ -143,6 +143,44 @@ def test_worker_and_verifier_commands_are_source_bound(
     assert f"export MASTER_PORT={dist_port}" in joined
 
 
+def test_worker_launch_is_receipt_idempotent_and_retryable(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_remote(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="321\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(remote, "_run_remote_checked", fake_remote)
+    paths = remote.remote_paths("idempotent-launch")
+
+    assert remote._launch_worker(
+        source=paths["staging"] + "/source",
+        primary=paths["primary"],
+        controller=paths["controller"],
+        run_tag="idempotent-launch",
+        source_commit="a" * 40,
+        gpu_index=2,
+        dist_port=remote.dist_port_for_run_tag(
+            "idempotent-launch"
+        ),
+    ) == 321
+
+    command = captured["command"]
+    assert "worker.launch.lock" in command
+    assert "if test -s" in command
+    assert "worker.pid" in command
+    assert "worker.pgid" in command
+    assert captured["kwargs"]["retry_attempts"] == 3
+
+
 def test_controller_monitors_before_launch_and_verifies_locally(
     monkeypatch,
     tmp_path,

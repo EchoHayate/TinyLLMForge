@@ -514,6 +514,10 @@ def _launch_worker(
     gpu_index: int,
     dist_port: int,
 ) -> int:
+    pid_path = controller + "/worker.pid"
+    pgid_path = controller + "/worker.pgid"
+    exit_path = controller + "/worker.exitcode"
+    lock_path = controller + "/worker.launch.lock"
     worker = [
         REMOTE_PYTHON,
         (
@@ -531,7 +535,19 @@ def _launch_worker(
         run_tag,
     ]
     inner = (
-        "set +e; "
+        "set +e; umask 077; pid=$$; "
+        f"printf '%s\\n' \"$pid\" > "
+        + shlex.quote(pid_path + ".pending")
+        + "; "
+        f"printf '%s\\n' \"$pid\" > "
+        + shlex.quote(pgid_path + ".pending")
+        + "; "
+        f"mv {shlex.quote(pid_path + '.pending')} "
+        + shlex.quote(pid_path)
+        + "; "
+        f"mv {shlex.quote(pgid_path + '.pending')} "
+        + shlex.quote(pgid_path)
+        + "; "
         f"cd {shlex.quote(source)}; "
         + remote_runtime_prelude(
             source=source,
@@ -544,27 +560,39 @@ def _launch_worker(
         )
         + "; code=$?; "
         + f"printf '%s\\n' \"$code\" > "
-        + shlex.quote(
-            controller + "/worker.exitcode"
-        )
+        + shlex.quote(exit_path)
+        + "; exit \"$code\""
     )
     launch = (
         "set -eu; "
+        f"pid_path={shlex.quote(pid_path)}; "
+        f"pgid_path={shlex.quote(pgid_path)}; "
+        f"lock_path={shlex.quote(lock_path)}; "
+        "if test -s \"$pid_path\" && "
+        "test -s \"$pgid_path\"; then "
+        "pid=$(cat \"$pid_path\"); "
+        "test \"$pid\" = \"$(cat \"$pgid_path\")\"; "
+        "printf '%s\\n' \"$pid\"; exit 0; fi; "
+        "if mkdir \"$lock_path\" 2>/dev/null; then "
         f"setsid sh -c {shlex.quote(inner)} "
         f"> {shlex.quote(controller + '/worker.stdout.log')} "
         f"2> {shlex.quote(controller + '/worker.stderr.log')} "
-        "< /dev/null & pid=$!; "
-        f"printf '%s\\n' \"$pid\" > "
-        + shlex.quote(controller + "/worker.pid")
-        + "; "
-        f"printf '%s\\n' \"$pid\" > "
-        + shlex.quote(controller + "/worker.pgid")
-        + "; "
+        "< /dev/null & fi; "
+        "attempt=0; "
+        "while ! test -s \"$pid_path\" || "
+        "! test -s \"$pgid_path\"; do "
+        "attempt=$((attempt + 1)); "
+        "test \"$attempt\" -lt 10 || exit 75; "
+        "sleep 1; done; "
+        "rmdir \"$lock_path\" 2>/dev/null || true; "
+        "pid=$(cat \"$pid_path\"); "
+        "test \"$pid\" = \"$(cat \"$pgid_path\")\"; "
         "printf '%s\\n' \"$pid\""
     )
     result = _run_remote_checked(
         launch,
         context="launch remote benchmark worker",
+        retry_attempts=3,
     )
     try:
         pid = int(result.stdout.strip())
