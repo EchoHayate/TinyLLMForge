@@ -26,6 +26,7 @@ from tools.profile_exact_burst_medium_split_k import (
     SOURCE_FILES,
     WARMUP_REPETITIONS,
     _construct_llm,
+    _validate_replay_graph_identity_counts,
     build_workload_manifest,
     correctness_identities,
     expected_flash_attn_num_splits,
@@ -427,6 +428,21 @@ def test_invalid_policy_and_non_finite_metric_are_rejected() -> None:
     non_finite["ttft_ns"] = float("nan")
     with pytest.raises(ValueError, match="finite"):
         validate_case_row(non_finite)
+
+
+def test_warmup_does_not_require_graph_identity_evidence() -> None:
+    assert _validate_replay_graph_identity_counts(
+        {},
+        required=False,
+    ) == {}
+    with pytest.raises(
+        RuntimeError,
+        match="replay graph identity inventory",
+    ):
+        _validate_replay_graph_identity_counts(
+            {},
+            required=True,
+        )
 
 
 def test_correctness_rows_bind_sidecars_and_selected_graphs(

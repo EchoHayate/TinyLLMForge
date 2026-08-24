@@ -850,12 +850,25 @@ def _construct_llm(
     )
 
 
+def _validate_replay_graph_identity_counts(
+    counts: dict[str, int],
+    *,
+    required: bool,
+) -> dict[str, int]:
+    if not isinstance(counts, dict):
+        raise RuntimeError("replay graph identity inventory mismatch")
+    if required and not counts:
+        raise RuntimeError("replay graph identity inventory mismatch")
+    return dict(counts)
+
+
 def _run_request(
     llm,
     *,
     prompt: list[int],
     generated_tokens: int,
     profile_label: str | None,
+    require_graph_identity: bool,
 ) -> dict:
     from tinyvllm import SamplingParams
 
@@ -926,8 +939,12 @@ def _run_request(
         raise RuntimeError("generated token inventory mismatch")
     if len(tpot_samples) != generated_tokens - 1:
         raise RuntimeError("amortized TPOT inventory mismatch")
-    if not graph_identity_counts:
-        raise RuntimeError("replay graph identity inventory mismatch")
+    graph_identity_counts = (
+        _validate_replay_graph_identity_counts(
+            graph_identity_counts,
+            required=require_graph_identity,
+        )
+    )
     decode_host_ns = []
     decode_cuda_ns = []
     if profile_label is not None:
@@ -999,6 +1016,7 @@ def run_case(
                 ),
                 generated_tokens=GENERATED_TOKENS,
                 profile_label=None,
+                require_graph_identity=False,
             )
             llm.clear_reusable_prefix_cache()
         before = _base._runner_summaries(llm)
@@ -1015,6 +1033,7 @@ def run_case(
                 f"{run_tag}/{context_length}/"
                 f"r{repetition}/{policy}"
             ),
+            require_graph_identity=True,
         )
         memory = _aggregate_memory(
             llm.memory_snapshots(timeout_s=60.0)
