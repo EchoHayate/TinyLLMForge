@@ -270,6 +270,8 @@ def _launch_worker(
     run_tag: str,
     source_commit: str,
     model: str,
+    repetitions: int,
+    warmup_repetitions: int,
     gpu_index: int,
     dist_port: int,
 ) -> int:
@@ -280,8 +282,8 @@ def _launch_worker(
         "--out-dir", primary,
         "--source-commit", source_commit,
         "--run-tag", run_tag,
-        "--repetitions", "5",
-        "--warmup-repetitions", "2",
+        "--repetitions", str(repetitions),
+        "--warmup-repetitions", str(warmup_repetitions),
         "--context-lengths",
         "1025,1537,2049,2561,3073,3585,4090,6145",
         "--generated-tokens", "128",
@@ -504,6 +506,8 @@ def run_controller(args) -> dict:
         run_tag=args.run_tag,
         source_commit=source_commit,
         model=args.model,
+        repetitions=args.repetitions,
+        warmup_repetitions=args.warmup_repetitions,
         gpu_index=selected["index"],
         dist_port=dist_port,
     )
@@ -555,6 +559,18 @@ def parse_args(argv=None):
     parser.add_argument("--run-tag", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--local-destination", required=True)
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        choices=(3, 5),
+        default=5,
+    )
+    parser.add_argument(
+        "--warmup-repetitions",
+        type=int,
+        choices=(1, 2),
+        default=2,
+    )
     parser.add_argument(
         "--gpu-wait-timeout-seconds",
         type=int,

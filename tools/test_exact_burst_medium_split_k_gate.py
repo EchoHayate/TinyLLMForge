@@ -281,6 +281,31 @@ def test_complete_fixture_classifies_go_and_writes_bound_artifacts(
     }.issubset(path.name for path in tmp_path.iterdir())
 
 
+def test_three_repetition_microgate_is_complete_when_manifest_binds_it(
+    tmp_path: Path,
+) -> None:
+    _fixture(tmp_path)
+    path = tmp_path / "performance_rows.jsonl"
+    rows = [
+        json.loads(line)
+        for line in path.read_text().splitlines()
+    ]
+    _write_jsonl(
+        path,
+        [row for row in rows if row["repetition"] < 3],
+    )
+    workload = json.loads(
+        (tmp_path / "workload_manifest.json").read_text()
+    )
+    workload["repetitions"] = 3
+    workload["performance_row_count"] = 48
+    workload["warmup_repetitions"] = 1
+    _write_json(tmp_path / "workload_manifest.json", workload)
+    assert classify(tmp_path)["classification"] == (
+        GO_EXACT_BURST_MEDIUM_SPLIT_K
+    )
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected"),
     [

@@ -110,10 +110,12 @@ def _row_tpot(row: dict, percentile: float) -> float:
     return _nearest_rank(values, percentile)
 
 
-def _expected_performance_identities() -> set[tuple[int, int, str]]:
+def _expected_performance_identities(
+    repetitions: int,
+) -> set[tuple[int, int, str]]:
     return {
         (repetition, context_length, policy)
-        for repetition in range(REPETITIONS)
+        for repetition in range(repetitions)
         for context_length in CONTEXT_LENGTHS
         for policy in POLICIES
     }
@@ -122,6 +124,8 @@ def _expected_performance_identities() -> set[tuple[int, int, str]]:
 def _validate_inventory(
     performance_rows: list[dict],
     correctness_rows: list[dict],
+    *,
+    repetitions: int,
 ) -> None:
     identities = [
         (
@@ -135,7 +139,8 @@ def _validate_inventory(
     if (
         len(identities) != len(performance_rows)
         or len(identities) != len(set(identities))
-        or set(identities) != _expected_performance_identities()
+        or set(identities)
+        != _expected_performance_identities(repetitions)
     ):
         raise ValueError("performance row inventory is incomplete")
     correctness_identities = [
@@ -185,7 +190,11 @@ def _graph_selection(rows: list[dict]) -> dict:
     }
 
 
-def _paired(rows: list[dict]) -> list[tuple[dict, dict]]:
+def _paired(
+    rows: list[dict],
+    *,
+    repetitions: int,
+) -> list[tuple[dict, dict]]:
     by_identity = {
         (
             row["repetition"],
@@ -199,13 +208,17 @@ def _paired(rows: list[dict]) -> list[tuple[dict, dict]]:
             by_identity[(repetition, context_length, "auto")],
             by_identity[(repetition, context_length, "split12")],
         )
-        for repetition in range(REPETITIONS)
+        for repetition in range(repetitions)
         for context_length in CONTEXT_LENGTHS
     ]
 
 
-def _performance_metrics(rows: list[dict]) -> dict:
-    pairs = _paired(rows)
+def _performance_metrics(
+    rows: list[dict],
+    *,
+    repetitions: int,
+) -> dict:
+    pairs = _paired(rows, repetitions=repetitions)
     per_context = {}
     for context_length in CONTEXT_LENGTHS:
         context_pairs = [
@@ -586,11 +599,18 @@ def classify(run_dir: Path) -> dict:
         correctness_rows = _read_jsonl(
             run_dir / "correctness_rows.jsonl"
         )
-        _validate_inventory(performance_rows, correctness_rows)
         workload, source = _validate_manifests(
             run_dir,
             performance_rows,
             correctness_rows,
+        )
+        repetitions = workload.get("repetitions")
+        if repetitions not in (3, REPETITIONS):
+            raise ValueError("manifest repetition inventory mismatch")
+        _validate_inventory(
+            performance_rows,
+            correctness_rows,
+            repetitions=repetitions,
         )
         graph_selection = _graph_selection(performance_rows)
         if not graph_selection["all_exact"]:
@@ -606,7 +626,10 @@ def classify(run_dir: Path) -> dict:
             correctness_rows,
             run_dir=run_dir,
         )
-        performance = _performance_metrics(validated_performance)
+        performance = _performance_metrics(
+            validated_performance,
+            repetitions=repetitions,
+        )
         correctness = _correctness_metrics(
             validated_correctness,
             run_dir=run_dir,

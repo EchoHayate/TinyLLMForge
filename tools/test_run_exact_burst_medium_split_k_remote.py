@@ -142,6 +142,8 @@ def test_strict_clean_gpu_and_second_check_precede_launch() -> None:
                     "--source-commit", "a" * 40,
                     "--model", remote.MODEL_PATH,
                     "--local-destination", str(destination),
+                    "--repetitions", "3",
+                    "--warmup-repetitions", "1",
                 ])
             )
     finally:
@@ -175,6 +177,8 @@ def test_worker_gate_and_verifier_are_source_bound() -> None:
             run_tag="fresh-tag",
             source_commit="a" * 40,
             model=remote.MODEL_PATH,
+            repetitions=3,
+            warmup_repetitions=1,
             gpu_index=1,
             dist_port=remote.dist_port_for_run_tag("fresh-tag"),
         )
@@ -196,8 +200,8 @@ def test_worker_gate_and_verifier_are_source_bound() -> None:
     )
     for required in (
         "--generated-tokens 128",
-        "--repetitions 5",
-        "--warmup-repetitions 2",
+        "--repetitions 3",
+        "--warmup-repetitions 1",
         "--context-lengths 1025,1537,2049,2561,3073,3585,4090,6145",
         "--source-commit " + "a" * 40,
     ):

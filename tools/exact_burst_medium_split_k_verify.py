@@ -110,10 +110,14 @@ def _verify_manifest(run_dir: Path) -> dict:
     return manifest
 
 
-def _pair_rows(rows: list[dict]) -> list[tuple[dict, dict]]:
+def _pair_rows(
+    rows: list[dict],
+    *,
+    repetitions: int,
+) -> list[tuple[dict, dict]]:
     expected = {
         (repetition, context_length, policy)
-        for repetition in range(REPETITIONS)
+        for repetition in range(repetitions)
         for context_length in CONTEXT_LENGTHS
         for policy in POLICIES
     }
@@ -139,13 +143,17 @@ def _pair_rows(rows: list[dict]) -> list[tuple[dict, dict]]:
             by_identity[(repetition, context_length, "auto")],
             by_identity[(repetition, context_length, "split12")],
         )
-        for repetition in range(REPETITIONS)
+        for repetition in range(repetitions)
         for context_length in CONTEXT_LENGTHS
     ]
 
 
-def _reconstruct_performance(rows: list[dict]) -> dict:
-    pairs = _pair_rows(rows)
+def _reconstruct_performance(
+    rows: list[dict],
+    *,
+    repetitions: int,
+) -> dict:
+    pairs = _pair_rows(rows, repetitions=repetitions)
     per_context = {}
     for context_length in CONTEXT_LENGTHS:
         selected = [
@@ -449,7 +457,14 @@ def verify_artifact_directory(path: Path) -> dict:
         _read_jsonl(run_dir / "correctness_rows.jsonl"),
         run_dir=run_dir,
     )
-    performance = _reconstruct_performance(performance_rows)
+    workload = _read_json(run_dir / "workload_manifest.json")
+    repetitions = workload.get("repetitions")
+    if repetitions not in (3, REPETITIONS):
+        raise ValueError("workload repetition inventory mismatch")
+    performance = _reconstruct_performance(
+        performance_rows,
+        repetitions=repetitions,
+    )
     correctness = _reconstruct_correctness(
         correctness_rows,
         run_dir=run_dir,

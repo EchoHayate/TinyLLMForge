@@ -219,6 +219,18 @@ def test_manifest_binds_exact_inventory_and_source() -> None:
         "tools/exact_burst_medium_split_k_verify.py"
         in SOURCE_FILES
     )
+    microgate = build_workload_manifest(
+        model="/models/Qwen3-0.6B",
+        run_tag=RUN_TAG + "-micro",
+        source_commit=SOURCE_COMMIT,
+        gpu_memory_utilization=0.5,
+        environment={"fixture": True},
+        repetitions=3,
+        warmup_repetitions=1,
+    )
+    assert microgate["repetitions"] == 3
+    assert microgate["warmup_repetitions"] == 1
+    assert microgate["performance_row_count"] == 48
 
 
 def test_llm_arms_only_differ_by_medium_split_k_flag() -> None:

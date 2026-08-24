@@ -201,6 +201,8 @@ def build_workload_manifest(
     source_commit: str,
     gpu_memory_utilization: float,
     environment: dict,
+    repetitions: int = REPETITIONS,
+    warmup_repetitions: int = WARMUP_REPETITIONS,
 ) -> dict:
     if not isinstance(run_tag, str) or not run_tag:
         raise ValueError("run tag is invalid")
@@ -217,6 +219,10 @@ def build_workload_manifest(
         raise ValueError("gpu memory utilization must be in (0, 1]")
     if not isinstance(environment, dict) or not environment:
         raise ValueError("environment manifest is invalid")
+    if repetitions not in (3, REPETITIONS):
+        raise ValueError("repetitions must equal 3 or 5")
+    if warmup_repetitions not in (1, WARMUP_REPETITIONS):
+        raise ValueError("warmup repetitions must equal 1 or 2")
     return {
         "schema_version": WORKLOAD_SCHEMA_VERSION,
         "run_tag": run_tag,
@@ -230,8 +236,8 @@ def build_workload_manifest(
         },
         "generated_tokens": GENERATED_TOKENS,
         "burst_width": BURST_WIDTH,
-        "repetitions": REPETITIONS,
-        "warmup_repetitions": WARMUP_REPETITIONS,
+        "repetitions": repetitions,
+        "warmup_repetitions": warmup_repetitions,
         "batch_size": 1,
         "temperature": 0.0,
         "ignore_eos": True,
@@ -239,7 +245,7 @@ def build_workload_manifest(
         "gpu_memory_utilization": float(gpu_memory_utilization),
         "environment": dict(environment),
         "performance_row_count": (
-            REPETITIONS * len(CONTEXT_LENGTHS) * len(POLICIES)
+            repetitions * len(CONTEXT_LENGTHS) * len(POLICIES)
         ),
         "correctness_row_count": (
             len(CONTEXT_LENGTHS)
@@ -254,7 +260,7 @@ def build_workload_manifest(
                 for context_index, context_length
                 in enumerate(CONTEXT_LENGTHS)
             }
-            for repetition in range(REPETITIONS)
+            for repetition in range(repetitions)
         },
         "correctness_sampling_points": list(SAMPLING_POINTS),
         "correctness_trace_identity": CORRECTNESS_TRACE_IDENTITY,
@@ -1302,12 +1308,10 @@ def main(argv=None) -> int:
         for item in args.context_lengths.split(",")
         if item.strip()
     )
-    if args.repetitions != REPETITIONS:
-        raise ValueError(f"repetitions must equal {REPETITIONS}")
-    if args.warmup_repetitions != WARMUP_REPETITIONS:
-        raise ValueError(
-            f"warmup repetitions must equal {WARMUP_REPETITIONS}"
-        )
+    if args.repetitions not in (3, REPETITIONS):
+        raise ValueError("repetitions must equal 3 or 5")
+    if args.warmup_repetitions not in (1, WARMUP_REPETITIONS):
+        raise ValueError("warmup repetitions must equal 1 or 2")
     if contexts != CONTEXT_LENGTHS:
         raise ValueError("context lengths do not match frozen workload")
     if args.generated_tokens != GENERATED_TOKENS:
@@ -1333,11 +1337,13 @@ def main(argv=None) -> int:
             source_commit=args.source_commit,
             gpu_memory_utilization=args.gpu_memory_utilization,
             environment=runtime_environment_manifest(),
+            repetitions=args.repetitions,
+            warmup_repetitions=args.warmup_repetitions,
         ),
     )
     rows = []
     row_path = out_dir / "performance_rows.jsonl"
-    for repetition in range(REPETITIONS):
+    for repetition in range(args.repetitions):
         for context_index, context_length in enumerate(
             CONTEXT_LENGTHS
         ):
@@ -1352,7 +1358,7 @@ def main(argv=None) -> int:
                     repetition=repetition,
                     order_position=order_position,
                     context_length=context_length,
-                    warmup_repetitions=WARMUP_REPETITIONS,
+                    warmup_repetitions=args.warmup_repetitions,
                     gpu_memory_utilization=(
                         args.gpu_memory_utilization
                     ),
@@ -1382,7 +1388,7 @@ def main(argv=None) -> int:
     )
     summary = summarize_rows(
         rows,
-        expected_repetitions=REPETITIONS,
+        expected_repetitions=args.repetitions,
     )
     summary["correctness_row_count"] = len(correctness_rows)
     _write_json(out_dir / "profile_summary.json", summary)
