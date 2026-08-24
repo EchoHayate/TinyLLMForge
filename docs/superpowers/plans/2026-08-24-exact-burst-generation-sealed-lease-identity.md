@@ -301,6 +301,7 @@ git push origin feat/kv-sparse-attention
 - Modify: `tinyvllm/engine/block_manager.py`
 - Modify: `tools/test_chunked_prefill.py`
 - Modify: `tools/test_speculative_kv_transaction.py`
+- Create: `tools/test_generation_sealed_block_identity.py`
 
 **Interfaces:**
 
@@ -325,7 +326,9 @@ assert manager.ownership_generation > before
 ```
 
 Also assert `publish_full_blocks()` does not increment the generation when it
-only publishes hash/token metadata.
+only publishes hash/token metadata. Directly assign both a write block's and
+an interior block's `generation`; each assignment must advance the manager
+epoch and invalidate an older seal.
 
 - [ ] **Step 2: Write RED seal capture and validation tests**
 
@@ -363,6 +366,7 @@ Run:
 
 ```bash
 python3 -m pytest \
+  tools/test_generation_sealed_block_identity.py \
   tools/test_chunked_prefill.py \
   tools/test_speculative_kv_transaction.py \
   -q
@@ -398,6 +402,13 @@ one logical transaction may advance it more than once. For rollback or
 multi-step restoration, advance before the first mutation so even a partial
 failure invalidates every older seal. Tests assert monotonicity and
 invalidation, not an exact delta for multi-block transactions.
+
+Bind each `Block` to the manager's advance callback after construction and
+store generation internally as `_generation`. Expose a `generation` property
+whose setter validates a non-negative integer and advances the callback on
+every post-bind assignment, including restoration to an older value. Initial
+construction before callback binding does not advance the epoch. This keeps
+direct generation writes from bypassing seal invalidation.
 
 - [ ] **Step 5: Implement the immutable seal**
 
@@ -447,6 +458,7 @@ Run:
 
 ```bash
 python3 -m pytest \
+  tools/test_generation_sealed_block_identity.py \
   tools/test_chunked_prefill.py \
   tools/test_speculative_kv_transaction.py \
   -q
@@ -459,6 +471,7 @@ Expected: all selected tests pass.
 ```bash
 git add -- \
   tinyvllm/engine/block_manager.py \
+  tools/test_generation_sealed_block_identity.py \
   tools/test_chunked_prefill.py \
   tools/test_speculative_kv_transaction.py
 git -c core.hooksPath=/dev/null commit \

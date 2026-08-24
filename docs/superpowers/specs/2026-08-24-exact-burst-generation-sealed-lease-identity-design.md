@@ -218,6 +218,13 @@ mutations. A rollback or partial mutation must also advance it, even when the
 visible state is restored, so a seal captured before the attempted mutation
 can never become valid again accidentally.
 
+`Block.generation` is exposed through a manager-bound tracked property. Any
+post-construction assignment that changes or restores a block generation
+advances the owning manager's epoch. This closes direct rollback and
+fault-injection paths that would otherwise bypass method-level accounting.
+Initial block construction occurs before the callback is bound and does not
+advance the epoch.
+
 The counter is process-local scheduler authority. It is not a wall clock and
 is never compared across ranks.
 
@@ -355,6 +362,8 @@ Require tests for:
 - stable consecutive captures reuse the same immutable receipt;
 - table mutation invalidates the cache;
 - allocation, activation, release, and rollback restoration invalidate it;
+- direct write-block or interior-block generation assignment advances the
+  ownership epoch and invalidates it;
 - stale revisions reject exact-burst commit before token mutation;
 - write-block and predecessor drift reject;
 - baseline and sealed continuation receipts compare the correct identity
