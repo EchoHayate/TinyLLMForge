@@ -304,7 +304,7 @@ def write_fixture_bundle(root: Path) -> Path:
             "schema": gate.SOURCE_MANIFEST_SCHEMA,
             "run_tag": RUN_TAG,
             "source_sha": SOURCE_SHA,
-            "source_patch_sha256": "b" * 64,
+            "source_patch_sha256": hashlib.sha256(b"").hexdigest(),
             "source_file_sha256": {
                 relative: hashlib.sha256(
                     (ROOT / relative).read_bytes()

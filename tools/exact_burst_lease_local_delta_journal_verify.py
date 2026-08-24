@@ -30,6 +30,7 @@ SOURCE_SCHEMA = (
 RUNNER_SCHEMA = (
     "exact_burst_lease_local_delta_journal_runner_v1"
 )
+EXPECTED_SOURCE_PATCH_SHA256 = hashlib.sha256(b"").hexdigest()
 POLICIES = ("generic", "lease_local_delta")
 CONTEXTS = ("short", "medium", "long")
 SAMPLING_POINTS = (
@@ -526,15 +527,8 @@ def verify_artifact_directory(path: Path) -> dict:
         ):
             raise ValueError("source file digest mismatch")
     patch_digest = source.get("source_patch_sha256")
-    if (
-        not isinstance(patch_digest, str)
-        or len(patch_digest) != 64
-        or any(
-            character not in "0123456789abcdef"
-            for character in patch_digest
-        )
-    ):
-        raise ValueError("source patch digest is invalid")
+    if patch_digest != EXPECTED_SOURCE_PATCH_SHA256:
+        raise ValueError("source patch digest is not empty")
     reconstructed = _reconstruct(
         performance_rows,
         correctness_rows,

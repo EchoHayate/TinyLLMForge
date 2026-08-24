@@ -226,6 +226,18 @@ def test_verifier_rejects_source_and_summary_tamper(tmp_path):
         verifier.verify_artifact_directory(run_dir)
 
 
+def test_verifier_rejects_non_empty_source_patch_digest(tmp_path):
+    verifier = _load_module()
+    run_dir = write_fixture_bundle(tmp_path)
+    manifest_path = run_dir / "source_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["source_patch_sha256"] = "b" * 64
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(ValueError, match="source patch digest"):
+        verifier.verify_artifact_directory(run_dir)
+
+
 def test_verifier_rejects_non_finite_value(tmp_path):
     verifier = _load_module()
     run_dir = write_fixture_bundle(tmp_path)
