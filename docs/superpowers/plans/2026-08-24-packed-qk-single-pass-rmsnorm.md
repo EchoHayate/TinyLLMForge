@@ -6,6 +6,12 @@
 default-off packed-QK dispatch, then prove exactness and end-to-end benefit on
 Qwen3-0.6B.
 
+**Outcome:** Stopped after the source-bound microgate. The integrated dynamic
+helper was bitwise exact but regressed the 28-layer subpath by `28.57%`, so
+Tasks 3 and 4 are intentionally not executed and the runtime implementation
+is withdrawn. See the design's microgate reconciliation for the exact tags,
+SHAs, and evidence boundary.
+
 **Architecture:** Preserve the packed QKV projection and treat its contiguous
 Q+K prefix as `[tokens, q_heads + kv_heads, head_dim]`. A compiled helper
 performs the same FP32 per-head reduction and BF16 cast boundary once, while

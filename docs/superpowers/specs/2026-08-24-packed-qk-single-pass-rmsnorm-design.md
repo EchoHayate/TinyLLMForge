@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-24
 
-**Status:** Approved under the standing autonomous-optimization authorization
+**Status:** Microgate NO-GO; runtime implementation withdrawn
 
 **Stage-1 model:** Qwen3-0.6B
 
@@ -305,3 +305,33 @@ The final report must include:
 
 The isolated `66.05%` subpath result is reported only as mechanism evidence.
 No end-to-end claim is allowed until the canonical hardware gate completes.
+
+## Microgate Reconciliation
+
+The source-bound implementation microgates rejected this optimization before
+the full 60/24 gate:
+
+- `20260824-packed-qk-microgate-r3`, source
+  `5fd08ea1089739b0c1bdfde0138676354446fa2e`, proved bitwise equality for
+  BF16 model weights but showed that constructing a packed expanded weight
+  table caused four Triton kernels and a `71.30%` 28-layer regression.
+- `20260824-packed-qk-diagnostic-r3` isolated the compiler behavior. A
+  static-shape split-weight expression could compile to one kernel and was
+  bitwise exact, but its absolute 28-layer saving was only about `29 us`.
+- `20260824-packed-qk-microgate-r7`, source
+  `73c5f69b656869cc61b9b0f1ed949ee251f2cd40`, preserved exactness with
+  explicit output casting but compiled to three kernels and regressed by
+  `28.57%`.
+- `20260824-packed-qk-microgate-r8`, source
+  `ddcfe44c94e489a8f81cfbf340146e1b919e108c`, confirmed the real
+  Qwen3-0.6B BF16 weight contract and passed all 12 focused remote tests, but
+  the integrated dynamic helper still compiled to three kernels and regressed
+  from `121.856 us` to `156.672 us` over 28 layers (`-28.57%`).
+
+The failed variants demonstrate that the favorable standalone result depended
+on static shape specialization that the real dynamic helper did not preserve.
+Introducing shape-specific recompilation or a custom Triton kernel is not
+justified by the measured absolute ceiling, which is unlikely to satisfy the
+predeclared `2%` end-to-end TPOT threshold. The full gate is therefore not
+run, the classification is `NO_GO_PACKED_QK_RMSNORM_PERFORMANCE`, and the
+runtime/configuration implementation is withdrawn.
