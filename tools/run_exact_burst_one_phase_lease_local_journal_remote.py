@@ -322,11 +322,25 @@ def _run_remote_checked(
     *,
     context: str,
     text: bool = True,
+    retry_attempts: int = 1,
 ):
-    return base._require_success(
-        base._run_remote(command, text=text),
-        context,
-    )
+    if (
+        isinstance(retry_attempts, bool)
+        or not isinstance(retry_attempts, int)
+        or retry_attempts <= 0
+    ):
+        raise ValueError("remote retry policy is invalid")
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            return base._require_success(
+                base._run_remote(command, text=text),
+                context,
+            )
+        except RuntimeError:
+            if attempt == retry_attempts:
+                raise
+            time.sleep(attempt)
+    raise AssertionError("unreachable remote retry")
 
 
 def _probe_remote_requirements() -> dict:
@@ -486,6 +500,7 @@ def _run_remote_preflight(
     _run_remote_checked(
         command,
         context="remote source-bound preflight",
+        retry_attempts=3,
     )
 
 
@@ -695,6 +710,7 @@ def _run_remote_verifier(
     _run_remote_checked(
         command,
         context="remote independent verification",
+        retry_attempts=3,
     )
 
 

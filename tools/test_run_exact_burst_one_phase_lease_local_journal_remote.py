@@ -339,6 +339,76 @@ def test_requirement_probe_retries_transient_ssh_failures(
     assert sleeps == [1, 2]
 
 
+def test_checked_remote_call_retries_when_explicitly_authorized(
+    monkeypatch,
+):
+    results = iter((
+        subprocess.CompletedProcess(
+            args=[],
+            returncode=255,
+            stdout="",
+            stderr=(
+                "Connection closed by UNKNOWN port 65535"
+            ),
+        ),
+        subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="ready\n",
+            stderr="",
+        ),
+    ))
+    calls = []
+    sleeps = []
+
+    def fake_remote(command, *, text):
+        calls.append((command, text))
+        return next(results)
+
+    monkeypatch.setattr(remote.base, "_run_remote", fake_remote)
+    monkeypatch.setattr(remote.time, "sleep", sleeps.append)
+
+    result = remote._run_remote_checked(
+        "true",
+        context="read-only probe",
+        retry_attempts=3,
+    )
+
+    assert result.stdout == "ready\n"
+    assert calls == [("true", True), ("true", True)]
+    assert sleeps == [1]
+
+
+def test_checked_remote_call_does_not_retry_by_default(
+    monkeypatch,
+):
+    calls = []
+
+    def fake_remote(command, *, text):
+        calls.append((command, text))
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=255,
+            stdout="",
+            stderr=(
+                "Connection closed by UNKNOWN port 65535"
+            ),
+        )
+
+    monkeypatch.setattr(remote.base, "_run_remote", fake_remote)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Connection closed",
+    ):
+        remote._run_remote_checked(
+            "launch",
+            context="stateful operation",
+        )
+
+    assert calls == [("launch", True)]
+
+
 def test_controller_rejects_attempted_local_tag(
     monkeypatch,
     tmp_path,
