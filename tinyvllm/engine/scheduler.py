@@ -603,7 +603,7 @@ class SchedulerPostprocessJournal:
 
 
 @dataclass
-class ExactBurstPhaseDeltaJournal:
+class ExactBurstLeaseLocalDeltaJournal:
     sequence: Sequence
     token_list: list[int]
     original_length: int
@@ -645,7 +645,7 @@ class ExactBurstPhaseDeltaJournal:
             ...,
         ],
         publication_plan: LeaseWriteBlockPublicationPlan,
-    ) -> "ExactBurstPhaseDeltaJournal":
+    ) -> "ExactBurstLeaseLocalDeltaJournal":
         progress_present = (
             sequence.seq_id
             in scheduler.decode_progress_ns_by_seq_id
@@ -2569,7 +2569,7 @@ class Scheduler:
         )
         self.commit_prepared_postprocess(prepared)
 
-    def _select_exact_burst_phase_journal(
+    def _select_exact_burst_lease_local_journal(
         self,
         seqs: tuple[Sequence, ...],
         rows: tuple[ScheduledOutputRow, ...],
@@ -2579,14 +2579,13 @@ class Scheduler:
         batch_kind: str | None,
     ) -> (
         SchedulerPostprocessJournal
-        | ExactBurstPhaseDeltaJournal
+        | ExactBurstLeaseLocalDeltaJournal
     ):
         row = rows[0] if len(rows) == 1 else None
         if (
             row is None
             or len(seqs) != 1
             or not row.exact_burst
-            or row.exact_burst_phase not in ("prefix", "suffix")
         ):
             return SchedulerPostprocessJournal.capture(
                 self,
@@ -2600,27 +2599,51 @@ class Scheduler:
                 self,
                 seqs,
             )
-        self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_attempt()
+        stats = self._exact_greedy_decode_burst_stats
+        stats.record_lease_local_delta_journal_attempt()
         sequence = seqs[0]
         lease = self._exact_greedy_decode_burst_pending_lease
+        one_phase = row.exact_burst_phase is None
+        if one_phase:
+            stats.record_lease_local_delta_journal_one_phase_attempt()
         reason = None
+        expected_token_count = 8 if one_phase else 4
         if (
             is_prefill
             or not do_sample
             or batch_kind is not None
             or lease is None
             or lease.authorized_token_count != 8
-            or len(row.output_tokens) != 4
+            or len(row.output_tokens) != expected_token_count
             or sequence.status != SequenceStatus.RUNNING
             or not sequence.ignore_eos
+            or float(sequence.temperature) != 0.0
         ):
-            reason = "unsupported_phase_shape"
+            reason = (
+                "unsupported_burst_shape"
+                if one_phase
+                else "unsupported_phase_shape"
+            )
+        elif (
+            one_phase
+            and sequence.num_completion_tokens + 8
+            >= sequence.max_tokens
+        ):
+            reason = "terminal_one_phase"
         elif (
             row.exact_burst_phase == "suffix"
             and sequence.num_completion_tokens + 4
             >= sequence.max_tokens
         ):
             reason = "terminal_suffix"
+        elif (
+            one_phase
+            and lease.first_write_position
+            // self.block_manager.block_size
+            != lease.last_write_position
+            // self.block_manager.block_size
+        ):
+            reason = "write_block_boundary_crossed"
         write_block_index = (
             lease.first_write_position
             // self.block_manager.block_size
@@ -2687,9 +2710,11 @@ class Scheduler:
             ):
                 reason = "predecessor_hash_unavailable"
         if reason is not None:
-            self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_fallback(
-                reason
-            )
+            stats.record_lease_local_delta_journal_fallback(reason)
+            if one_phase:
+                stats.record_lease_local_delta_journal_one_phase_fallback(
+                    reason
+                )
             return SchedulerPostprocessJournal.capture(
                 self,
                 seqs,
@@ -2707,7 +2732,7 @@ class Scheduler:
                 predecessor_hash=predecessor_hash,
             )
         )
-        journal = ExactBurstPhaseDeltaJournal.capture(
+        journal = ExactBurstLeaseLocalDeltaJournal.capture(
             self,
             sequence,
             expected_block_table_identity=(
@@ -2715,7 +2740,9 @@ class Scheduler:
             ),
             publication_plan=publication_plan,
         )
-        self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_capture()
+        stats.record_lease_local_delta_journal_capture()
+        if one_phase:
+            stats.record_lease_local_delta_journal_one_phase_capture()
         return journal
 
     def prepare_postprocess(
@@ -2940,7 +2967,7 @@ class Scheduler:
                 raise ValueError(
                     "exact burst output requires a single-row batch"
                 )
-        journal = self._select_exact_burst_phase_journal(
+        journal = self._select_exact_burst_lease_local_journal(
             seqs,
             rows,
             is_prefill=is_prefill,
@@ -3008,7 +3035,7 @@ class Scheduler:
             )
         elif isinstance(
             journal,
-            ExactBurstPhaseDeltaJournal,
+            ExactBurstLeaseLocalDeltaJournal,
         ):
             seqs = journal.scheduled_sequences
         else:
@@ -3199,7 +3226,7 @@ class Scheduler:
                             journal
                             if isinstance(
                                 journal,
-                                ExactBurstPhaseDeltaJournal,
+                                ExactBurstLeaseLocalDeltaJournal,
                             )
                             else None
                         ),
@@ -3226,7 +3253,7 @@ class Scheduler:
                 ) from commit_error
             if isinstance(
                 journal,
-                ExactBurstPhaseDeltaJournal,
+                ExactBurstLeaseLocalDeltaJournal,
             ):
                 self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_rollback()
             if prefill_hook_error is not None:
@@ -3238,7 +3265,7 @@ class Scheduler:
         journal.state = "committed"
         if isinstance(
             journal,
-            ExactBurstPhaseDeltaJournal,
+            ExactBurstLeaseLocalDeltaJournal,
         ):
             self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_commit(
                 published_blocks=int(
@@ -3317,7 +3344,7 @@ class Scheduler:
         finished_progress_entries_removed: list[int],
         requeue: bool,
         publication_journal: (
-            ExactBurstPhaseDeltaJournal | None
+            ExactBurstLeaseLocalDeltaJournal | None
         ) = None,
     ) -> None:
         for token_id in row.output_tokens:
@@ -3479,7 +3506,7 @@ class Scheduler:
             journal,
             (
                 SchedulerPostprocessJournal,
-                ExactBurstPhaseDeltaJournal,
+                ExactBurstLeaseLocalDeltaJournal,
             ),
         ):
             raise ValueError(
@@ -3489,7 +3516,7 @@ class Scheduler:
         journal.rollback(self)
         if isinstance(
             journal,
-            ExactBurstPhaseDeltaJournal,
+            ExactBurstLeaseLocalDeltaJournal,
         ):
             self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_rollback()
         prepared.state = "rolled_back"

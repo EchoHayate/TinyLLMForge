@@ -680,6 +680,47 @@ def _delta_split_phase_fixture(
     return scheduler, sequence, lease, split_result
 
 
+def _delta_one_phase_fixture(
+    monkeypatch,
+    *,
+    prompt_length,
+    max_tokens=32,
+    enabled=True,
+    configured_width=8,
+):
+    monkeypatch.setattr(Sequence, "block_size", 16)
+    scheduler = Scheduler(
+        SimpleNamespace(
+            **{
+                **vars(_config()),
+                "kvcache_block_size": 16,
+                (
+                    "exact_greedy_decode_burst_"
+                    "lease_local_delta_journal"
+                ): enabled,
+            }
+        )
+    )
+    sequence = _running_sequence(
+        scheduler,
+        list(range(1, prompt_length + 1)),
+        max_tokens=max_tokens,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=configured_width,
+        split_phase_enabled=False,
+    )
+    tokens = tuple(range(11, 11 + lease.authorized_token_count))
+    result = _exact_burst_result(
+        lease,
+        tokens,
+    )
+    return scheduler, sequence, lease, result
+
+
 def _snapshot(scheduler, sequences):
     snapshot = {
         "tokens": {
@@ -1662,7 +1703,7 @@ def test_delta_journal_selects_bounded_non_terminal_split_phases(
 
     assert isinstance(
         prepared.snapshot,
-        scheduler_module.ExactBurstPhaseDeltaJournal,
+        scheduler_module.ExactBurstLeaseLocalDeltaJournal,
     )
     summary = scheduler.exact_greedy_decode_burst_summary()
     assert summary["lease_local_delta_journal_attempts"] == 1
@@ -1670,6 +1711,157 @@ def test_delta_journal_selects_bounded_non_terminal_split_phases(
     assert summary[
         "lease_local_delta_journal_fallback_counts"
     ] == {}
+
+
+@pytest.mark.parametrize(
+    ("prompt_length", "expected_publish"),
+    (
+        (2, False),
+        (9, True),
+    ),
+)
+def test_one_phase_k8_selects_lease_local_journal(
+    monkeypatch,
+    prompt_length,
+    expected_publish,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=prompt_length,
+        )
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.ExactBurstLeaseLocalDeltaJournal,
+    )
+    assert (
+        prepared.snapshot.publication_plan.will_publish
+        is expected_publish
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_attempts"] == 1
+    assert summary["lease_local_delta_journal_captures"] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_attempts"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_captures"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_fallback_counts"
+    ] == {}
+
+
+def test_one_phase_delta_journal_disabled_uses_generic(
+    monkeypatch,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=2,
+            enabled=False,
+        )
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_attempts"] == 0
+    assert summary[
+        "lease_local_delta_journal_one_phase_attempts"
+    ] == 0
+
+
+@pytest.mark.parametrize(
+    ("prompt_length", "max_tokens", "configured_width", "mutation",
+     "expected_reason"),
+    (
+        (2, 8, 8, None, "terminal_one_phase"),
+        (2, 32, 4, None, "unsupported_burst_shape"),
+        (
+            9,
+            32,
+            8,
+            "published_write_block",
+            "write_block_already_published",
+        ),
+        (
+            25,
+            32,
+            8,
+            "missing_predecessor",
+            "predecessor_hash_unavailable",
+        ),
+    ),
+)
+def test_one_phase_delta_journal_falls_back_with_closed_reason(
+    monkeypatch,
+    prompt_length,
+    max_tokens,
+    configured_width,
+    mutation,
+    expected_reason,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=prompt_length,
+            max_tokens=max_tokens,
+            configured_width=configured_width,
+        )
+    )
+    manager = scheduler.block_manager
+    write_index = (
+        lease.first_write_position // manager.block_size
+    )
+    if mutation == "published_write_block":
+        manager._register_cached_block(
+            lease.write_block_id,
+            1234567,
+            sequence.block(write_index),
+        )
+    elif mutation == "missing_predecessor":
+        predecessor_id = sequence.block_table[write_index - 1]
+        predecessor_hash = manager.blocks[
+            predecessor_id
+        ].hash
+        manager.hash_to_block_id.pop(predecessor_hash, None)
+        manager.hash_to_block_ids.pop(predecessor_hash, None)
+
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary[
+        "lease_local_delta_journal_one_phase_attempts"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_captures"
+    ] == 0
+    assert summary[
+        "lease_local_delta_journal_one_phase_fallback_counts"
+    ] == {expected_reason: 1}
 
 
 def test_delta_journal_disabled_and_terminal_suffix_fall_back(
@@ -1820,7 +2012,7 @@ def test_delta_journal_commits_prefix_then_suffix_exactly(
     )
     assert isinstance(
         prefix.snapshot,
-        scheduler_module.ExactBurstPhaseDeltaJournal,
+        scheduler_module.ExactBurstLeaseLocalDeltaJournal,
     )
     assert compute_hash_calls == 0
     scheduler.commit_prepared_postprocess(prefix)
@@ -1846,7 +2038,7 @@ def test_delta_journal_commits_prefix_then_suffix_exactly(
     )
     assert isinstance(
         suffix.snapshot,
-        scheduler_module.ExactBurstPhaseDeltaJournal,
+        scheduler_module.ExactBurstLeaseLocalDeltaJournal,
     )
     assert compute_hash_calls == expected_published_blocks
     scheduler.commit_prepared_postprocess(suffix)
@@ -1920,7 +2112,7 @@ def test_delta_journal_context_bounded_capture(
     sequence.token_ids = token_ids
     sequence.block_table = block_table
 
-    delta = scheduler_module.ExactBurstPhaseDeltaJournal.capture(
+    delta = scheduler_module.ExactBurstLeaseLocalDeltaJournal.capture(
         scheduler,
         sequence,
         expected_block_table_identity=(
