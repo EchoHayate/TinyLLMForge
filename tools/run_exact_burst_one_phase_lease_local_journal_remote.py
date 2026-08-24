@@ -317,6 +317,23 @@ def _require_task_tracked_diff_clean(
         )
 
 
+def _retry_idempotent(operation, *, attempts: int = 3):
+    if (
+        isinstance(attempts, bool)
+        or not isinstance(attempts, int)
+        or attempts <= 0
+    ):
+        raise ValueError("remote retry policy is invalid")
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except RuntimeError:
+            if attempt == attempts:
+                raise
+            time.sleep(attempt)
+    raise AssertionError("unreachable idempotent retry")
+
+
 def _run_remote_checked(
     command: str,
     *,
@@ -330,30 +347,34 @@ def _run_remote_checked(
         or retry_attempts <= 0
     ):
         raise ValueError("remote retry policy is invalid")
-    for attempt in range(1, retry_attempts + 1):
-        try:
-            return base._require_success(
+    return _retry_idempotent(
+        lambda: base._require_success(
                 base._run_remote(command, text=text),
                 context,
-            )
-        except RuntimeError:
-            if attempt == retry_attempts:
-                raise
-            time.sleep(attempt)
-    raise AssertionError("unreachable remote retry")
+        ),
+        attempts=retry_attempts,
+    )
 
 
 def _probe_remote_requirements() -> dict:
-    for attempt in range(1, REQUIREMENT_PROBE_ATTEMPTS + 1):
-        try:
-            return legacy.validate_remote_requirements(
+    return _retry_idempotent(
+        lambda: legacy.validate_remote_requirements(
                 base.probe_remote_requirements("qwen3-0.6b")
-            )
-        except RuntimeError:
-            if attempt == REQUIREMENT_PROBE_ATTEMPTS:
-                raise
-            time.sleep(attempt)
-    raise AssertionError("unreachable requirement probe retry")
+        ),
+        attempts=REQUIREMENT_PROBE_ATTEMPTS,
+    )
+
+
+def _require_remote_destinations_absent(
+    paths: dict[str, str],
+) -> None:
+    _retry_idempotent(
+        lambda: base.require_remote_destinations_absent(paths)
+    )
+
+
+def _query_remote_gpu_rows() -> list[dict]:
+    return _retry_idempotent(base.query_remote_gpu_rows)
 
 
 def _wait_for_clean_gpu(
@@ -378,7 +399,7 @@ def _wait_for_clean_gpu(
                 MINIMUM_KERBEROS_LIFETIME_SECONDS
             )
         )
-        rows = base.query_remote_gpu_rows()
+        rows = _query_remote_gpu_rows()
         receipt = {
             "observed_unix_ns": time.time_ns(),
             "gpus": rows,
@@ -860,7 +881,7 @@ def run_controller(args) -> dict:
     requirements = _probe_remote_requirements()
     paths = remote_paths(args.run_tag)
     dist_port = dist_port_for_run_tag(args.run_tag)
-    base.require_remote_destinations_absent(paths)
+    _require_remote_destinations_absent(paths)
 
     local_destination.mkdir(
         parents=True,
@@ -912,7 +933,7 @@ def run_controller(args) -> dict:
     )
     launch_gpu = validate_selected_gpu_still_clean(
         selected,
-        base.query_remote_gpu_rows(),
+        _query_remote_gpu_rows(),
     )
     preflight = {
         **manifest,

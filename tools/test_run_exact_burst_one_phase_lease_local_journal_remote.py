@@ -447,6 +447,56 @@ def test_checked_remote_call_does_not_retry_by_default(
     assert calls == [("launch", True)]
 
 
+def test_remote_destination_check_retries_transient_failure(
+    monkeypatch,
+):
+    calls = []
+
+    def fake_check(paths):
+        calls.append(paths)
+        if len(calls) == 1:
+            raise RuntimeError("transient SSH failure")
+
+    sleeps = []
+    monkeypatch.setattr(
+        remote.base,
+        "require_remote_destinations_absent",
+        fake_check,
+    )
+    monkeypatch.setattr(remote.time, "sleep", sleeps.append)
+    paths = remote.remote_paths("destination-retry")
+
+    remote._require_remote_destinations_absent(paths)
+
+    assert calls == [paths, paths]
+    assert sleeps == [1]
+
+
+def test_gpu_inventory_query_retries_transient_failure(
+    monkeypatch,
+):
+    calls = []
+    expected = [_gpu(2)]
+
+    def fake_query():
+        calls.append(True)
+        if len(calls) == 1:
+            raise RuntimeError("transient SSH failure")
+        return expected
+
+    sleeps = []
+    monkeypatch.setattr(
+        remote.base,
+        "query_remote_gpu_rows",
+        fake_query,
+    )
+    monkeypatch.setattr(remote.time, "sleep", sleeps.append)
+
+    assert remote._query_remote_gpu_rows() == expected
+    assert calls == [True, True]
+    assert sleeps == [1]
+
+
 def test_controller_rejects_attempted_local_tag(
     monkeypatch,
     tmp_path,
