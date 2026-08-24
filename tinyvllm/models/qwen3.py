@@ -107,10 +107,10 @@ class QWen3Attention(nn.Module):
         normalized = normalized.to(origin_dtype)
         q_normalized = normalized[:, :self.num_heads].mul(
             self.q_norm.weight
-        ).to(origin_dtype)
+        )
         k_normalized = normalized[:, self.num_heads:].mul(
             self.k_norm.weight
-        ).to(origin_dtype)
+        )
         return torch.cat(
             (q_normalized, k_normalized),
             dim=1,

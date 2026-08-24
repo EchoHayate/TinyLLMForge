@@ -242,6 +242,20 @@ def test_attention_has_compiled_packed_qk_helper():
     assert "q_normalized" in assignments
     assert "k_normalized" in assignments
     assert "weights" not in assignments
+    for assignment_name in ("q_normalized", "k_normalized"):
+        assignment = next(
+            node
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == assignment_name
+                for target in node.targets
+            )
+        )
+        assert isinstance(assignment.value, ast.Call)
+        assert isinstance(assignment.value.func, ast.Attribute)
+        assert assignment.value.func.attr == "mul"
 
 
 def test_normalize_qk_routes_disabled_and_enabled_paths():
@@ -295,8 +309,14 @@ def test_packed_qk_matches_separate_bf16_rmsnorm(
     attention.q_size = q_heads * head_dim
     attention.kv_size = kv_heads * head_dim
     attention.packed_qk_single_pass_rmsnorm = True
-    attention.q_norm = RMSNorm(head_dim, eps=1e-6)
-    attention.k_norm = RMSNorm(head_dim, eps=1e-6)
+    attention.q_norm = RMSNorm(
+        head_dim,
+        eps=1e-6,
+    ).to(dtype=torch.bfloat16)
+    attention.k_norm = RMSNorm(
+        head_dim,
+        eps=1e-6,
+    ).to(dtype=torch.bfloat16)
 
     with torch.no_grad():
         attention.q_norm.weight.copy_(
@@ -325,6 +345,8 @@ def test_packed_qk_matches_separate_bf16_rmsnorm(
         generator=generator,
         dtype=torch.float32,
     ).to(torch.bfloat16)
+    assert attention.q_norm.weight.dtype == qkv.dtype
+    assert attention.k_norm.weight.dtype == qkv.dtype
     q, k, _ = qkv.split(
         [attention.q_size, attention.kv_size, attention.kv_size],
         dim=-1,
