@@ -50541,3 +50541,184 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-24 Continuation: r10 Recovery and Next Optimization Queue
+
+The only authoritative checkout remains:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+```
+
+It resolves to `/Users/bytedance/dev/TinyLLMForge`. Do not update the retired
+`/Users/bytedance/dev/TinyLLMForge-adaptive-ngram` checkout.
+
+Current branch and pushed HEAD:
+
+```text
+branch: feat/kv-sparse-attention
+HEAD:   4ebeb9022958595fae62d83873f1fd74f8b067bc
+remote: origin/feat/kv-sparse-attention
+```
+
+### Active r10 one-phase journal gate
+
+The canonical run remains:
+
+```text
+run tag:
+  20260824-qwen3-06b-one-phase-lease-local-r10
+frozen source:
+  c3890e7aa4d17b12f00d41b5df0bf8a004de6b96
+source patch SHA256:
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+remote worker PID/PGID:
+  2952927 / 2952927
+selected GPU:
+  index 2
+  GPU-63c05907-407b-8240-07a0-f38872840867
+distribution port:
+  40399
+local completion session:
+  unified exec 37855
+local completion Python PID:
+  56134
+```
+
+The completion session must be reused. Do not start a replacement benchmark
+worker, change the run tag, or classify partial rows.
+
+Before the remote failure, the worker had emitted all 60 performance rows and
+at least 4 of 24 correctness rows. No terminal `summary.json`, `gate.json`, or
+`worker.exitcode` had been confirmed.
+
+Current repeated recovery errors are:
+
+```text
+bash: /data00/home/sitian/.bashrc: Input/output error
+bash: /data00/home/sitian/tllm/env/bin/python: Input/output error
+Connection closed by UNKNOWN port 65535
+```
+
+Evidence collected on 2026-08-24:
+
+- the local completion loop remains alive and retries automatically;
+- no replacement remote worker was launched;
+- the Kerberos TGT is valid through `2026-08-25 05:13:23 +0800`;
+- TCP port 22 on `10.232.195.203` is reachable;
+- a direct SSH bypass probe did not complete and was terminated locally;
+- ordinary proxy-path SSH alternates between transport closure and remote
+  `/data00` I/O errors; and
+- no evidence currently establishes worker success, worker failure, or a
+  safe rerun.
+
+Once the connection recovers, session `37855` is expected to:
+
+1. read the existing worker exit receipt;
+2. run the remote independent verifier;
+3. write controller completion;
+4. download the terminal bundle; and
+5. run the frozen-source local verifier.
+
+Only after all five steps pass may the r10 audit, Phase 1 audit, and handoff
+classify the run and may `tinyvllm/engine/block_manager.py` be changed.
+
+### Generation-sealed identity
+
+The accepted design and implementation plan are already pushed:
+
+```text
+design commit: 38fcd79
+tracked-table implementation commit: 753d15c
+invalidation refinement commit: 7a9dfd5
+```
+
+The uncommitted RED suite is:
+
+```text
+tools/test_generation_sealed_block_identity.py
+```
+
+Latest result:
+
+```text
+19 failed in 0.33s
+```
+
+All failures are expected missing `BlockManager` generation-seal behavior.
+Do not implement that behavior until r10 frozen-source verification is
+complete.
+
+### Elastic K8/K16
+
+The default-disabled shared-one-token-graph design and plan are pushed:
+
+```text
+design commit: 3352b20
+implementation-plan commit: 282d915
+shared-graph refinement commit: 047fe3b
+```
+
+K8 and K16 reuse the same existing one-token graph. K16 is selected only for
+contexts at most 2,048 tokens with at least sixteen output tokens and sixteen
+writable positions. A real ceiling probe is mandatory before a terminal gate.
+
+### New original candidate: octet-folded replay graph
+
+A lease-time pre-armed commit envelope was rejected after a local ceiling
+probe. It could move roughly 42% to 51% of prepare work, but only about 12 to
+26 microseconds per burst, or approximately 1 to 3 microseconds per K8 token.
+That absolute ceiling is too small to justify another cross-device lifecycle.
+
+The selected next candidate captures eight ordered complete-token steps in
+one CUDA Graph:
+
+```text
+K8:  8 one-token graph launches -> 1 folded launch
+K16: 16 one-token graph launches -> 2 folded launches
+```
+
+It preserves logical target forwards, token feedback, KV writes, final D2H,
+and scheduler authority. The existing one-token graph remains the fallback.
+The primary costs to measure are capture duration, allocated/reserved memory,
+and retained outputs.
+
+Pushed artifacts:
+
+```text
+918b796 docs(runtime): design octet-folded replay graph
+4ebeb90 docs(runtime): plan octet-folded replay graph
+```
+
+Canonical files:
+
+```text
+docs/superpowers/specs/
+  2026-08-24-exact-burst-octet-folded-replay-graph-design.md
+docs/superpowers/plans/
+  2026-08-24-exact-burst-octet-folded-replay-graph.md
+```
+
+Execution order is frozen:
+
+```text
+r10 reconciliation
+-> generation-sealed identity CPU/GPU gates
+-> elastic K8/K16 ceiling and conditional terminal gate
+-> octet-folded graph ceiling and conditional terminal gate
+```
+
+The octet-folded ceiling requires exact parity, unchanged logical model work,
+at least 85% fewer K8 physical graph launches, at least 80% fewer K16
+physical graph launches, at least 1.0% aggregate median TPOT improvement, at
+least 0.5% aggregate P95 TPOT improvement, protected regressions no worse
+than 2%, capture memory no more than 1% of baseline peak, retained-static
+delta no more than 128 MiB, and capture duration no more than 120 seconds.
+
+```text
+R10_ONE_PHASE_JOURNAL=PENDING_REMOTE_RECOVERY
+GENERATION_SEALED_IDENTITY=RED_READY_BLOCKED_BY_R10
+ELASTIC_K8_K16=DESIGN_AND_PLAN_PUSHED
+OCTET_FOLDED_GRAPH=DESIGN_AND_PLAN_PUSHED
+NEXT_COMMAND=poll_unified_exec_session_37855
+```
