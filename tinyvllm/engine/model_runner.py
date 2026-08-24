@@ -77,6 +77,7 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstGraph,
     ExactGreedyDecodeBurstLease,
     ExactGreedyDecodeBurstStats,
+    exact_greedy_decode_burst_flash_attn_num_splits,
 )
 from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
     ExactBurstSplitPhaseMailboxBackend,
@@ -8906,12 +8907,14 @@ class ModelRunner:
         self,
         *,
         correctness_trace: bool = False,
+        graph=None,
     ) -> dict[str, object]:
-        graph = (
-            self.exact_greedy_decode_burst_correctness_graph
-            if correctness_trace
-            else self.exact_greedy_decode_burst_graph
-        )
+        if graph is None:
+            graph = (
+                self.exact_greedy_decode_burst_correctness_graph
+                if correctness_trace
+                else self.exact_greedy_decode_burst_graph
+            )
         reason = None
         if not self.config.exact_greedy_decode_burst:
             reason = "disabled"
@@ -8967,19 +8970,56 @@ class ModelRunner:
             ),
         }
 
+    def _select_exact_greedy_decode_burst_graph(
+        self,
+        lease: ExactGreedyDecodeBurstLease,
+        *,
+        correctness_trace: bool,
+    ):
+        use_medium_split_k = (
+            exact_greedy_decode_burst_flash_attn_num_splits(
+                enabled=getattr(
+                    self.config,
+                    "exact_greedy_decode_burst_medium_split_k",
+                    False,
+                ),
+                initial_sequence_length=(
+                    lease.initial_sequence_length
+                ),
+                authorized_token_count=(
+                    lease.authorized_token_count
+                ),
+            )
+            == MEDIUM_SPLIT_K_NUM_SPLITS
+        )
+        if use_medium_split_k:
+            graph = (
+                self
+                .exact_greedy_decode_burst_medium_split_k_correctness_graph
+                if correctness_trace
+                else self.exact_greedy_decode_burst_medium_split_k_graph
+            )
+            if graph is not None:
+                return graph
+        return (
+            self.exact_greedy_decode_burst_correctness_graph
+            if correctness_trace
+            else self.exact_greedy_decode_burst_graph
+        )
+
     def _run_exact_greedy_decode_burst(
         self,
         seqs: tuple[Sequence, ...],
         lease: ExactGreedyDecodeBurstLease,
         correctness_trace: bool = False,
     ):
-        graph = (
-            self.exact_greedy_decode_burst_correctness_graph
-            if correctness_trace
-            else self.exact_greedy_decode_burst_graph
+        graph = self._select_exact_greedy_decode_burst_graph(
+            lease,
+            correctness_trace=correctness_trace,
         )
         capability = self.exact_greedy_decode_burst_capability(
             correctness_trace=correctness_trace,
+            graph=graph,
         )
         if not capability["available"] or graph is None:
             return self._exact_greedy_decode_burst_fallback(
@@ -9098,6 +9138,11 @@ class ModelRunner:
         for graph in (
             self.exact_greedy_decode_burst_graph,
             self.exact_greedy_decode_burst_correctness_graph,
+            self.exact_greedy_decode_burst_medium_split_k_graph,
+            (
+                self
+                .exact_greedy_decode_burst_medium_split_k_correctness_graph
+            ),
         ):
             if graph is None or id(graph) in seen_graphs:
                 continue

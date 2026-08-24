@@ -4630,7 +4630,61 @@ def test_model_runner_exact_burst_materializes_only_in_lazy_factory():
     )
 
 
-def test_model_runner_invalidates_both_burst_graphs():
+def test_model_runner_selects_medium_split_k_graph_by_complete_lease_span():
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_medium_split_k=True,
+    )
+    auto = object()
+    split = object()
+    auto_correctness = object()
+    split_correctness = object()
+    runner.exact_greedy_decode_burst_graph = auto
+    runner.exact_greedy_decode_burst_medium_split_k_graph = split
+    runner.exact_greedy_decode_burst_correctness_graph = (
+        auto_correctness
+    )
+    runner.exact_greedy_decode_burst_medium_split_k_correctness_graph = (
+        split_correctness
+    )
+
+    def lease(initial_sequence_length, authorized_token_count):
+        return SimpleNamespace(
+            initial_sequence_length=initial_sequence_length,
+            authorized_token_count=authorized_token_count,
+        )
+
+    assert runner._select_exact_greedy_decode_burst_graph(
+        lease(1537, 8),
+        correctness_trace=False,
+    ) is split
+    assert runner._select_exact_greedy_decode_burst_graph(
+        lease(4090, 8),
+        correctness_trace=True,
+    ) is split_correctness
+    assert runner._select_exact_greedy_decode_burst_graph(
+        lease(1536, 8),
+        correctness_trace=False,
+    ) is auto
+    assert runner._select_exact_greedy_decode_burst_graph(
+        lease(4091, 8),
+        correctness_trace=True,
+    ) is auto_correctness
+
+    runner.config.exact_greedy_decode_burst_medium_split_k = False
+    assert runner._select_exact_greedy_decode_burst_graph(
+        lease(2049, 8),
+        correctness_trace=False,
+    ) is auto
+    runner.config.exact_greedy_decode_burst_medium_split_k = True
+    runner.exact_greedy_decode_burst_medium_split_k_graph = None
+    assert runner._select_exact_greedy_decode_burst_graph(
+        lease(2049, 8),
+        correctness_trace=False,
+    ) is auto
+
+
+def test_model_runner_invalidates_all_distinct_burst_graphs():
     runner = make_runner(exact_greedy_decode_burst=True)
     calls = []
 
@@ -4638,12 +4692,24 @@ def test_model_runner_invalidates_both_burst_graphs():
         def invalidate_continuation(self, reason):
             calls.append(reason)
 
-    runner.exact_greedy_decode_burst_graph = FakeGraph()
-    runner.exact_greedy_decode_burst_correctness_graph = FakeGraph()
+    production_auto = FakeGraph()
+    production_split = FakeGraph()
+    correctness_auto = FakeGraph()
+    runner.exact_greedy_decode_burst_graph = production_auto
+    runner.exact_greedy_decode_burst_medium_split_k_graph = (
+        production_split
+    )
+    runner.exact_greedy_decode_burst_correctness_graph = (
+        correctness_auto
+    )
+    runner.exact_greedy_decode_burst_medium_split_k_correctness_graph = (
+        production_split
+    )
     runner.invalidate_exact_greedy_decode_burst_continuation(
         "engine_failure:RuntimeError"
     )
     assert calls == [
+        "engine_failure:RuntimeError",
         "engine_failure:RuntimeError",
         "engine_failure:RuntimeError",
     ]
