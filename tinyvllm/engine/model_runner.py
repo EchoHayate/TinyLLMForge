@@ -72,6 +72,7 @@ from tinyvllm.engine.graph_resident_greedy_tail import (
     decide_graph_resident_greedy_tail,
 )
 from tinyvllm.engine.exact_greedy_decode_burst import (
+    MEDIUM_SPLIT_K_NUM_SPLITS,
     ExactGreedyDecodeBurstFallback,
     ExactGreedyDecodeBurstGraph,
     ExactGreedyDecodeBurstLease,
@@ -2234,6 +2235,10 @@ class ModelRunner:
         )
         self.exact_greedy_decode_burst_graph = None
         self.exact_greedy_decode_burst_correctness_graph = None
+        self.exact_greedy_decode_burst_medium_split_k_graph = None
+        self.exact_greedy_decode_burst_medium_split_k_correctness_graph = (
+            None
+        )
         self.exact_greedy_decode_burst_split_phase_backend = None
         self.exact_greedy_decode_burst_split_phase_correctness_backend = (
             None
@@ -9189,11 +9194,46 @@ class ModelRunner:
         *,
         correctness_trace: bool = False,
         sampled_logit_ordinals: tuple[int, ...] = (),
+        flash_attn_num_splits: int | None = None,
     ):
+        if flash_attn_num_splits is None:
+            auto_graph = self._capture_exact_greedy_decode_burst(
+                correctness_trace=correctness_trace,
+                sampled_logit_ordinals=sampled_logit_ordinals,
+                flash_attn_num_splits=0,
+            )
+            if getattr(
+                self.config,
+                "exact_greedy_decode_burst_medium_split_k",
+                False,
+            ):
+                self._capture_exact_greedy_decode_burst(
+                    correctness_trace=correctness_trace,
+                    sampled_logit_ordinals=sampled_logit_ordinals,
+                    flash_attn_num_splits=(
+                        MEDIUM_SPLIT_K_NUM_SPLITS
+                    ),
+                )
+            return auto_graph
+        is_medium_split_k = (
+            flash_attn_num_splits
+            == MEDIUM_SPLIT_K_NUM_SPLITS
+        )
         target_attribute = (
-            "exact_greedy_decode_burst_correctness_graph"
-            if correctness_trace
-            else "exact_greedy_decode_burst_graph"
+            (
+                "exact_greedy_decode_burst_medium_split_k_"
+                "correctness_graph"
+            )
+            if correctness_trace and is_medium_split_k
+            else (
+                "exact_greedy_decode_burst_medium_split_k_graph"
+                if is_medium_split_k
+                else (
+                    "exact_greedy_decode_burst_correctness_graph"
+                    if correctness_trace
+                    else "exact_greedy_decode_burst_graph"
+                )
+            )
         )
         target_backend_attribute = (
             "exact_greedy_decode_burst_split_phase_correctness_backend"
@@ -9201,7 +9241,8 @@ class ModelRunner:
             else "exact_greedy_decode_burst_split_phase_backend"
         )
         setattr(self, target_attribute, None)
-        setattr(self, target_backend_attribute, None)
+        if not is_medium_split_k:
+            setattr(self, target_backend_attribute, None)
         if not self.config.exact_greedy_decode_burst:
             return None
         if self.world_size != 1:
@@ -9306,6 +9347,7 @@ class ModelRunner:
                 slot_mapping=slot_mapping,
                 context_lens=context_length,
                 block_tables=block_table,
+                flash_attn_num_splits=flash_attn_num_splits,
             )
 
         def live_kv_identity():
@@ -9355,16 +9397,24 @@ class ModelRunner:
                 sampled_logit_ordinals=(
                     sampled_logit_ordinals
                 ),
+                flash_attn_num_splits=flash_attn_num_splits,
                 stats=self.exact_greedy_decode_burst_stats,
             )
         except Exception as error:
             self.exact_greedy_decode_burst_stats.record_fallback(
-                "capture_failure:" + type(error).__name__
+                (
+                    "medium_split_k_capture_unavailable"
+                    if is_medium_split_k
+                    else "capture_failure:" + type(error).__name__
+                )
             )
             setattr(self, target_attribute, None)
             return None
         setattr(self, target_attribute, graph)
-        if self.config.exact_greedy_decode_burst_split_phase:
+        if (
+            flash_attn_num_splits == 0
+            and self.config.exact_greedy_decode_burst_split_phase
+        ):
             setattr(
                 self,
                 target_backend_attribute,

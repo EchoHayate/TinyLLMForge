@@ -719,6 +719,7 @@ def make_runner(**overrides):
         "exact_greedy_decode_burst_continuation": False,
         "exact_greedy_decode_burst_split_phase": False,
         "exact_greedy_decode_burst_ragged_coalescing": False,
+        "exact_greedy_decode_burst_medium_split_k": False,
         "exact_greedy_decode_burst_tokens": 4,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
@@ -763,6 +764,10 @@ def make_runner(**overrides):
     ]
     runner.exact_greedy_decode_burst_graph = None
     runner.exact_greedy_decode_burst_correctness_graph = None
+    runner.exact_greedy_decode_burst_medium_split_k_graph = None
+    runner.exact_greedy_decode_burst_medium_split_k_correctness_graph = (
+        None
+    )
     runner.exact_greedy_decode_burst_split_phase_backend = None
     runner.exact_greedy_decode_burst_split_phase_correctness_backend = (
         None
@@ -4750,6 +4755,7 @@ def test_model_runner_exact_burst_rejects_wrong_sequence_before_graph():
 def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     runner = make_runner(
         exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_medium_split_k=True,
         exact_greedy_decode_burst_split_phase=True,
         exact_greedy_decode_burst_tokens=8,
     )
@@ -4761,9 +4767,13 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     runner.model = SimpleNamespace(
         compute_logits=lambda hidden: hidden,
     )
-    observed = {}
+    observed = []
     allocation_devices = []
-    marker = object()
+    markers = {
+        0: object(),
+        12: object(),
+    }
+    fail_medium_capture = {"enabled": False}
     production_backend = object()
     correctness_backend = object()
     split_backends = iter(
@@ -4804,14 +4814,19 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     class FakeBurstGraph:
         @classmethod
         def capture(cls, **kwargs):
-            observed.update(kwargs)
+            observed.append(kwargs)
+            if (
+                fail_medium_capture["enabled"]
+                and kwargs["flash_attn_num_splits"] == 12
+            ):
+                raise RuntimeError("split capture failed")
             assert kwargs["live_kv_snapshot"]() == (
                 1234,
                 (2, 1, 100),
                 (1, 1, 1),
                 0,
             )
-            return marker
+            return markers[kwargs["flash_attn_num_splits"]]
 
     model_runner.ExactGreedyDecodeBurstGraph = FakeBurstGraph
     model_runner.torch.full = (
@@ -4842,11 +4857,11 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     )
     try:
         result = runner._capture_exact_greedy_decode_burst()
-        production_observed = dict(observed)
+        production_observed = list(observed)
         production_allocation_devices = list(
             allocation_devices
         )
-        observed.clear()
+        observed[:] = []
         allocation_devices.clear()
         correctness_result = (
             runner._capture_exact_greedy_decode_burst(
@@ -4854,9 +4869,23 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
                 sampled_logit_ordinals=(0, 63, 126),
             )
         )
-        correctness_observed = dict(observed)
+        correctness_observed = list(observed)
         correctness_allocation_devices = list(
             allocation_devices
+        )
+        production_medium_graph = (
+            runner.exact_greedy_decode_burst_medium_split_k_graph
+        )
+        correctness_medium_graph = (
+            runner
+            .exact_greedy_decode_burst_medium_split_k_correctness_graph
+        )
+        fail_medium_capture["enabled"] = True
+        runner._create_exact_greedy_decode_burst_split_phase_backend = (
+            lambda: production_backend
+        )
+        fallback_result = (
+            runner._capture_exact_greedy_decode_burst()
         )
     finally:
         model_runner.ExactGreedyDecodeBurstGraph = original_graph
@@ -4870,48 +4899,74 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
             model_runner.torch.zeros = original_zeros
         model_runner.torch.cuda = original_cuda
 
-    assert result is marker
-    assert runner.exact_greedy_decode_burst_graph is marker
+    assert result is markers[0]
+    assert runner.exact_greedy_decode_burst_graph is markers[0]
+    assert (
+        production_medium_graph
+        is markers[12]
+    )
     assert (
         runner.exact_greedy_decode_burst_split_phase_backend
         is production_backend
     )
-    assert production_observed["graph_pool"] == "private-pool"
-    assert production_observed["graph_generation"] == 6
-    assert production_observed["scratch_block_id"] == 100
-    assert production_observed["block_size"] == 256
-    assert production_observed["correctness_trace"] is False
-    assert production_observed["sampled_logit_ordinals"] == ()
-    assert production_observed["tensors"]["input_token"].shape == (1,)
-    assert production_observed["tensors"]["block_table"].shape == (1, 2)
-    assert production_observed["tensors"]["token_history"].shape == (
+    assert len(production_observed) == 2
+    assert [
+        row["flash_attn_num_splits"]
+        for row in production_observed
+    ] == [0, 12]
+    auto_production = production_observed[0]
+    assert auto_production["graph_pool"] == "private-pool"
+    assert auto_production["graph_generation"] == 6
+    assert auto_production["scratch_block_id"] == 100
+    assert auto_production["block_size"] == 256
+    assert auto_production["correctness_trace"] is False
+    assert auto_production["sampled_logit_ordinals"] == ()
+    assert auto_production["tensors"]["input_token"].shape == (1,)
+    assert auto_production["tensors"]["block_table"].shape == (1, 2)
+    assert auto_production["tensors"]["token_history"].shape == (
         256,
     )
-    assert production_allocation_devices == ["cuda:0"] * 7
-    assert correctness_observed["correctness_trace"] is True
-    assert correctness_observed["sampled_logit_ordinals"] == (
+    assert production_allocation_devices == ["cuda:0"] * 14
+    assert len(correctness_observed) == 2
+    assert [
+        row["flash_attn_num_splits"]
+        for row in correctness_observed
+    ] == [0, 12]
+    auto_correctness = correctness_observed[0]
+    assert auto_correctness["correctness_trace"] is True
+    assert auto_correctness["sampled_logit_ordinals"] == (
         0,
         63,
         126,
     )
-    assert correctness_observed["tensors"]["sampled_logits"].shape == (
+    assert auto_correctness["tensors"]["sampled_logits"].shape == (
         3,
         32,
     )
-    assert correctness_observed["tensors"]["sample_ordinals"].shape == (
+    assert auto_correctness["tensors"]["sample_ordinals"].shape == (
         3,
     )
-    assert correctness_allocation_devices == ["cuda:0"] * 9
-    assert correctness_result is marker
+    assert correctness_allocation_devices == ["cuda:0"] * 18
+    assert correctness_result is markers[0]
     assert (
         runner.exact_greedy_decode_burst_correctness_graph
-        is marker
+        is markers[0]
+    )
+    assert (
+        correctness_medium_graph
+        is markers[12]
     )
     assert (
         runner
         .exact_greedy_decode_burst_split_phase_correctness_backend
         is correctness_backend
     )
+    assert fallback_result is markers[0]
+    assert runner.exact_greedy_decode_burst_graph is markers[0]
+    assert runner.exact_greedy_decode_burst_medium_split_k_graph is None
+    assert runner.exact_greedy_decode_burst_stats.fallback_counts[
+        "medium_split_k_capture_unavailable"
+    ] == 1
 
 
 def test_scratch_blocks_are_above_scheduler_visible_range():
