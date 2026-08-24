@@ -76,6 +76,29 @@ def _init_keywords(class_node: ast.ClassDef, callee: str) -> set[str]:
     }
 
 
+def _method(
+    class_node: ast.ClassDef,
+    name: str,
+) -> ast.FunctionDef:
+    return next(
+        node
+        for node in class_node.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+
+
+def _call_names(node: ast.AST) -> list[str]:
+    names = []
+    for call in (
+        item for item in ast.walk(node) if isinstance(item, ast.Call)
+    ):
+        if isinstance(call.func, ast.Name):
+            names.append(call.func.id)
+        elif isinstance(call.func, ast.Attribute):
+            names.append(call.func.attr)
+    return names
+
+
 def test_packed_qk_config_is_strict_and_default_off(
     monkeypatch,
     tmp_path,
@@ -159,3 +182,151 @@ def test_qwen3_constructors_propagate_packed_qk_mode():
         decoder,
         "QWen3Attention",
     )
+
+
+def test_attention_exposes_packed_qk_receipt_contract():
+    tree = ast.parse(QWEN3_PATH.read_text(encoding="utf-8"))
+    attention = _class(tree, "QWen3Attention")
+    receipt = _method(
+        attention,
+        "packed_qk_single_pass_rmsnorm_receipt",
+    )
+    returned = next(
+        node.value
+        for node in ast.walk(receipt)
+        if isinstance(node, ast.Return)
+    )
+
+    assert isinstance(returned, ast.Dict)
+    keys = {
+        key.value
+        for key in returned.keys
+        if isinstance(key, ast.Constant)
+    }
+    assert keys == {
+        "packed_qk_single_pass_rmsnorm_enabled",
+        "q_heads",
+        "kv_heads",
+        "head_dim",
+    }
+
+
+def test_attention_has_compiled_packed_qk_helper():
+    tree = ast.parse(QWEN3_PATH.read_text(encoding="utf-8"))
+    attention = _class(tree, "QWen3Attention")
+    helper = _method(attention, "_packed_qk_rmsnorm")
+
+    assert any(
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Name)
+        and decorator.func.id == "compile_if_enabled"
+        and any(
+            keyword.arg == "dynamic"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in decorator.keywords
+        )
+        for decorator in helper.decorator_list
+    )
+    calls = _call_names(helper)
+    assert "cat" in calls
+    assert "rsqrt" in calls
+    assert calls.count("expand") == 2
+
+
+def test_normalize_qk_routes_disabled_and_enabled_paths():
+    tree = ast.parse(QWEN3_PATH.read_text(encoding="utf-8"))
+    attention = _class(tree, "QWen3Attention")
+    normalize = _method(attention, "_normalize_qk")
+    branches = [
+        node
+        for node in ast.walk(normalize)
+        if isinstance(node, ast.If)
+    ]
+
+    assert len(branches) == 1
+    branch = branches[0]
+    assert ast.unparse(branch.test) == (
+        "self.packed_qk_single_pass_rmsnorm"
+    )
+    assert "_packed_qk_rmsnorm" in _call_names(
+        ast.Module(body=branch.body, type_ignores=[]),
+    )
+    disabled_calls = _call_names(
+        ast.Module(body=branch.orelse, type_ignores=[]),
+    )
+    assert disabled_calls.count("q_norm") == 1
+    assert disabled_calls.count("k_norm") == 1
+
+
+@pytest.mark.parametrize("token_count", [1, 4, 17])
+@pytest.mark.parametrize(
+    ("q_heads", "kv_heads"),
+    [(16, 8), (8, 8)],
+)
+def test_packed_qk_matches_separate_bf16_rmsnorm(
+    monkeypatch,
+    token_count,
+    q_heads,
+    kv_heads,
+):
+    torch = pytest.importorskip("torch")
+    monkeypatch.setenv("TORCH_COMPILE_DISABLE", "1")
+
+    from tinyvllm.layers.layernorm import RMSNorm
+    from tinyvllm.models.qwen3 import QWen3Attention
+
+    head_dim = 128
+    attention = QWen3Attention.__new__(QWen3Attention)
+    torch.nn.Module.__init__(attention)
+    attention.num_heads = q_heads
+    attention.num_kv_heads = kv_heads
+    attention.head_dim = head_dim
+    attention.q_size = q_heads * head_dim
+    attention.kv_size = kv_heads * head_dim
+    attention.packed_qk_single_pass_rmsnorm = True
+    attention.q_norm = RMSNorm(head_dim, eps=1e-6)
+    attention.k_norm = RMSNorm(head_dim, eps=1e-6)
+
+    with torch.no_grad():
+        attention.q_norm.weight.copy_(
+            torch.linspace(
+                0.75,
+                1.25,
+                head_dim,
+                dtype=torch.float32,
+            ),
+        )
+        attention.k_norm.weight.copy_(
+            torch.linspace(
+                1.5,
+                0.5,
+                head_dim,
+                dtype=torch.float32,
+            ),
+        )
+
+    generator = torch.Generator().manual_seed(
+        token_count * 1000 + q_heads * 10 + kv_heads,
+    )
+    qkv = torch.randn(
+        token_count,
+        (q_heads + 2 * kv_heads) * head_dim,
+        generator=generator,
+        dtype=torch.float32,
+    ).to(torch.bfloat16)
+    q, k, _ = qkv.split(
+        [attention.q_size, attention.kv_size, attention.kv_size],
+        dim=-1,
+    )
+    expected_q = attention.q_norm(
+        q.view(token_count, q_heads, head_dim),
+    ).view(q.shape)
+    expected_k = attention.k_norm(
+        k.view(token_count, kv_heads, head_dim),
+    ).view(k.shape)
+
+    actual_q, actual_k = attention._normalize_qk(qkv)
+
+    assert torch.equal(actual_q, expected_q)
+    assert torch.equal(actual_k, expected_k)

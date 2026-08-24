@@ -9,6 +9,7 @@ from tinyvllm.layers.layernorm import RMSNorm
 from tinyvllm.layers.linear import QKVParallelLinear, MergedColumnParallelLinear, RowParallelLinear
 from tinyvllm.layers.rotary_embedding import get_rope
 from tinyvllm.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
+from tinyvllm.utils.torch_compile import compile_if_enabled
 
 
 class QWen3Attention(nn.Module):
@@ -80,24 +81,88 @@ class QWen3Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps = rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps = rms_norm_eps)
 
+    def packed_qk_single_pass_rmsnorm_receipt(self) -> dict:
+        return {
+            "packed_qk_single_pass_rmsnorm_enabled": (
+                self.packed_qk_single_pass_rmsnorm
+            ),
+            "q_heads": self.num_heads,
+            "kv_heads": self.num_kv_heads,
+            "head_dim": self.head_dim,
+        }
+
+    @compile_if_enabled(dynamic=True)
+    def _packed_qk_rmsnorm(
+        self,
+        packed_qk: torch.Tensor,
+    ) -> torch.Tensor:
+        origin_dtype = packed_qk.dtype
+        normalized = packed_qk.view(
+            packed_qk.size(0),
+            self.num_heads + self.num_kv_heads,
+            self.head_dim,
+        ).to(torch.float32)
+        variance = normalized.pow(2).mean(dim=-1, keepdim=True)
+        normalized.mul_(torch.rsqrt(variance + self.q_norm.eps))
+        weights = torch.cat((
+            self.q_norm.weight.expand(self.num_heads, -1),
+            self.k_norm.weight.expand(self.num_kv_heads, -1),
+        ), dim=0)
+        normalized = normalized.to(origin_dtype).mul_(weights)
+        return normalized.view(packed_qk.shape)
+
+    def _normalize_qk(
+        self,
+        qkv: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q, k, _ = qkv.split(
+            [self.q_size, self.kv_size, self.kv_size],
+            dim=-1,
+        )
+        if self.packed_qk_single_pass_rmsnorm:
+            packed_qk = qkv.narrow(
+                -1,
+                0,
+                self.q_size + self.kv_size,
+            )
+            normalized_qk = self._packed_qk_rmsnorm(packed_qk)
+            q, k = normalized_qk.split(
+                [self.q_size, self.kv_size],
+                dim=-1,
+            )
+        else:
+            q_by_head = q.view(
+                -1,
+                self.num_heads,
+                self.head_dim,
+            )
+            k_by_head = k.view(
+                -1,
+                self.num_kv_heads,
+                self.head_dim,
+            )
+            q_by_head = self.q_norm(q_by_head)
+            k_by_head = self.k_norm(k_by_head)
+            q = q_by_head.view(q.shape)
+            k = k_by_head.view(k.shape)
+        return q, k
+
     def forward(self,
                 positions: torch.Tensor,                       # [batch_size * seq_len]
                 hidden_states: torch.Tensor                    # [batch_size * seq_len, num_kv_heads * head_dim] = [16384, 8 * 128]
         ) -> torch.Tensor:
         qkv = self.qkv_proj(hidden_states)                     #[batch_size×seq_len, q_size + 2×kv_size]   [16384, (2 *8 + 16) * 128] = [16384, 4096]
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim = -1)    # q = [16384, 16 * 128]
-        q_by_head = q.view(-1, self.num_heads, self.head_dim)           # q_by_head = [16384, 16, 128]
-        k_by_head = k.view(-1, self.num_kv_heads, self.head_dim)
-        q_by_head = self.q_norm(q_by_head)
-        k_by_head = self.k_norm(k_by_head)
+        q, k = self._normalize_qk(qkv)
+        v = qkv.narrow(
+            -1,
+            self.q_size + self.kv_size,
+            self.kv_size,
+        )
 # 注意力权重 = softmax( (Q @ K^T) * 缩放因子 )
 # 注意力输出 = 注意力权重 @ V
 # V 的数值范围对最终结果的影响远小于 Q/K
 # 即使 V 的数值有波动，注意力权重本身已经是 “归一化的概率分布”（sum=1），加权求和后会自然 “平滑” V 的数值差异；
 # 退一步说，即使 V 有较大数值，后续通常还有线性层（如代码中的 o_proj）和后续的归一化层（如 Transformer 块的输出归一化），可以进一步调整输出分布，无需在 V 本身额外加归一化。
-        q = q_by_head.view(q.shape)         #q变回原来的 q = [16384, 16 * 128]
-        k = k_by_head.view(k.shape)
-
         q, k = self.rotary_emb(positions, q, k)
 
         o = self.attn(q, k, v)
