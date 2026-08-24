@@ -105,7 +105,18 @@ def remote_paths(run_tag: str) -> dict[str, str]:
     return paths
 
 
-def remote_runtime_prelude(*, source: str, gpu_index: int) -> str:
+def dist_port_for_run_tag(run_tag: str) -> int:
+    tag = base.validate_run_tag(run_tag)
+    digest = hashlib.sha256(tag.encode("utf-8")).digest()
+    return 20_000 + int.from_bytes(digest[:4], "big") % 30_000
+
+
+def remote_runtime_prelude(
+    *,
+    source: str,
+    gpu_index: int,
+    dist_port: int,
+) -> str:
     if (
         not isinstance(source, str)
         or not source.startswith(TASK_REMOTE_ROOT + "/staging/")
@@ -118,6 +129,12 @@ def remote_runtime_prelude(*, source: str, gpu_index: int) -> str:
         or gpu_index < 0
     ):
         raise ValueError("GPU index is invalid")
+    if (
+        isinstance(dist_port, bool)
+        or not isinstance(dist_port, int)
+        or not 20_000 <= dist_port < 50_000
+    ):
+        raise ValueError("distributed port is invalid")
     runtime = source.rsplit("/", 1)[0] + "/runtime"
     directories = {
         "TMPDIR": runtime + "/tmp",
@@ -133,6 +150,8 @@ def remote_runtime_prelude(*, source: str, gpu_index: int) -> str:
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "CUDA_VISIBLE_DEVICES": str(gpu_index),
+        "TINYVLLM_DIST_PORT": str(dist_port),
+        "MASTER_PORT": str(dist_port),
         "PYTHONPATH": source,
     }
     return (
@@ -366,7 +385,12 @@ def _upload_source_archive(*, staging: str, archive: bytes) -> str:
     return source
 
 
-def _run_remote_preflight(*, source: str, gpu_index: int) -> None:
+def _run_remote_preflight(
+    *,
+    source: str,
+    gpu_index: int,
+    dist_port: int,
+) -> None:
     pytest_path = (
         f"{shlex.quote(REMOTE_PYTEST_SITE)}:\"$PYTHONPATH\""
     )
@@ -384,6 +408,7 @@ def _run_remote_preflight(*, source: str, gpu_index: int) -> None:
         + remote_runtime_prelude(
             source=source,
             gpu_index=gpu_index,
+            dist_port=dist_port,
         )
         + f"{REMOTE_PYTHON} -m py_compile "
         + " ".join(shlex.quote(path) for path in compile_files)
@@ -406,6 +431,7 @@ def _launch_worker(
     run_tag: str,
     source_commit: str,
     gpu_index: int,
+    dist_port: int,
 ) -> int:
     worker = [
         REMOTE_PYTHON,
@@ -421,6 +447,7 @@ def _launch_worker(
         + remote_runtime_prelude(
             source=source,
             gpu_index=gpu_index,
+            dist_port=dist_port,
         )
         + " ".join(shlex.quote(part) for part in worker)
         + "; code=$?; "
@@ -528,6 +555,7 @@ def _run_remote_verifier(
     source: str,
     primary: str,
     gpu_index: int,
+    dist_port: int,
 ) -> None:
     controller = _controller_from_primary(primary)
     output = controller + "/independent-verify/verification.json"
@@ -537,6 +565,7 @@ def _run_remote_verifier(
         + remote_runtime_prelude(
             source=source,
             gpu_index=gpu_index,
+            dist_port=dist_port,
         )
         + f"{REMOTE_PYTHON} "
         + "tools/exact_burst_lease_local_delta_journal_verify.py "
@@ -638,6 +667,7 @@ def run_controller(args) -> dict:
     )
     requirements = _probe_remote_requirements()
     paths = remote_paths(args.run_tag)
+    dist_port = dist_port_for_run_tag(args.run_tag)
     base.require_remote_destinations_absent(paths)
 
     local_destination.mkdir(parents=True, exist_ok=False)
@@ -653,6 +683,7 @@ def run_controller(args) -> dict:
         "remote_paths": paths,
         "performance_rows": PERFORMANCE_ROWS,
         "correctness_rows": CORRECTNESS_ROWS,
+        "dist_port": dist_port,
         "kerberos": kerberos,
         "remote_requirements": requirements,
     }
@@ -676,6 +707,7 @@ def run_controller(args) -> dict:
     _run_remote_preflight(
         source=source,
         gpu_index=selected["index"],
+        dist_port=dist_port,
     )
     launch_gpu = validate_selected_gpu_still_clean(
         selected,
@@ -699,6 +731,7 @@ def run_controller(args) -> dict:
         run_tag=args.run_tag,
         source_commit=source_commit,
         gpu_index=selected["index"],
+        dist_port=dist_port,
     )
     launch_receipt = {
         "schema": (
@@ -710,6 +743,7 @@ def run_controller(args) -> dict:
         "worker_pid": pid,
         "worker_pgid": pid,
         "selected_gpu": selected,
+        "dist_port": dist_port,
     }
     _write_json(
         local_destination / "launch_receipt.json",
@@ -732,6 +766,7 @@ def run_controller(args) -> dict:
         source=source,
         primary=paths["primary"],
         gpu_index=selected["index"],
+        dist_port=dist_port,
     )
     completion = {
         "schema": (
@@ -745,6 +780,7 @@ def run_controller(args) -> dict:
         "worker_pgid": pid,
         "worker_exitcode": exitcode,
         "selected_gpu": selected,
+        "dist_port": dist_port,
     }
     _write_remote_completion(
         controller=paths["controller"],

@@ -23,7 +23,9 @@ def _gpu(index, *, memory=0, utilization=0, processes=()):
 
 
 def test_paths_and_runtime_are_confined_to_remote_mount():
-    paths = remote.remote_paths("20260824-delta-journal-r1")
+    run_tag = "20260824-delta-journal-r1"
+    paths = remote.remote_paths(run_tag)
+    dist_port = remote.dist_port_for_run_tag(run_tag)
     assert all(
         path.startswith(remote.TASK_REMOTE_ROOT + "/")
         for path in paths.values()
@@ -31,9 +33,16 @@ def test_paths_and_runtime_are_confined_to_remote_mount():
     prelude = remote.remote_runtime_prelude(
         source=paths["staging"] + "/source",
         gpu_index=2,
+        dist_port=dist_port,
     )
     assert paths["staging"] + "/runtime" in prelude
     assert "export CUDA_VISIBLE_DEVICES=2" in prelude
+    assert f"export TINYVLLM_DIST_PORT={dist_port}" in prelude
+    assert f"export MASTER_PORT={dist_port}" in prelude
+    assert 20_000 <= dist_port < 50_000
+    assert dist_port != remote.dist_port_for_run_tag(
+        "20260824-delta-journal-r2"
+    )
     for variable in (
         "TMPDIR",
         "TMP",
@@ -97,19 +106,23 @@ def test_worker_and_verifier_commands_are_source_bound(
         )
 
     monkeypatch.setattr(remote, "_run_remote_checked", fake_remote)
-    paths = remote.remote_paths("fresh-delta-tag")
+    run_tag = "fresh-delta-tag"
+    paths = remote.remote_paths(run_tag)
+    dist_port = remote.dist_port_for_run_tag(run_tag)
     pid = remote._launch_worker(
         source=paths["staging"] + "/source",
         primary=paths["primary"],
         controller=paths["controller"],
-        run_tag="fresh-delta-tag",
+        run_tag=run_tag,
         source_commit="a" * 40,
         gpu_index=1,
+        dist_port=dist_port,
     )
     remote._run_remote_verifier(
         source=paths["staging"] + "/source",
         primary=paths["primary"],
         gpu_index=1,
+        dist_port=dist_port,
     )
 
     assert pid == 321
@@ -125,6 +138,8 @@ def test_worker_and_verifier_commands_are_source_bound(
         in joined
     )
     assert str(remote.MODEL_PATH) in joined
+    assert f"export TINYVLLM_DIST_PORT={dist_port}" in joined
+    assert f"export MASTER_PORT={dist_port}" in joined
 
 
 def test_controller_monitors_before_launch_and_verifies_locally(
