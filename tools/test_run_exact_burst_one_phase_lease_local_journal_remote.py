@@ -447,6 +447,124 @@ def test_checked_remote_call_does_not_retry_by_default(
     assert calls == [("launch", True)]
 
 
+def test_checked_remote_upload_retries_when_explicitly_authorized(
+    monkeypatch,
+):
+    results = iter((
+        subprocess.CompletedProcess(
+            args=[],
+            returncode=255,
+            stdout=b"",
+            stderr=b"Connection closed",
+        ),
+        subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=b"stored\n",
+            stderr=b"",
+        ),
+    ))
+    calls = []
+    sleeps = []
+
+    def fake_remote(command, payload):
+        calls.append((command, payload))
+        return next(results)
+
+    monkeypatch.setattr(
+        remote.base,
+        "_run_remote_with_input",
+        fake_remote,
+    )
+    monkeypatch.setattr(remote.time, "sleep", sleeps.append)
+
+    result = remote._run_remote_with_input_checked(
+        "store",
+        b"payload",
+        context="receipt upload",
+        retry_attempts=3,
+    )
+
+    assert result.stdout == b"stored\n"
+    assert calls == [
+        ("store", b"payload"),
+        ("store", b"payload"),
+    ]
+    assert sleeps == [1]
+
+
+def test_controller_receipt_upload_is_content_idempotent(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_remote(command, payload, **kwargs):
+        captured["command"] = command
+        captured["payload"] = payload
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=b"stored\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(
+        remote,
+        "_run_remote_with_input_checked",
+        fake_remote,
+        raising=False,
+    )
+    controller = remote.remote_paths(
+        "controller-receipt"
+    )["controller"]
+
+    remote._create_controller_dir(
+        controller=controller,
+        receipt={"status": "READY"},
+    )
+
+    assert "os.replace" in captured["command"]
+    assert "existing receipt mismatch" in captured["command"]
+    assert captured["kwargs"]["retry_attempts"] == 3
+
+
+def test_completion_receipt_upload_is_content_idempotent(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_remote(command, payload, **kwargs):
+        captured["command"] = command
+        captured["payload"] = payload
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=b"stored\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(
+        remote,
+        "_run_remote_with_input_checked",
+        fake_remote,
+        raising=False,
+    )
+    controller = remote.remote_paths(
+        "completion-receipt"
+    )["controller"]
+
+    remote._write_remote_completion(
+        controller=controller,
+        receipt={"status": "COMPLETE"},
+    )
+
+    assert "os.replace" in captured["command"]
+    assert "existing receipt mismatch" in captured["command"]
+    assert captured["kwargs"]["retry_attempts"] == 3
+
+
 def test_remote_destination_check_retries_transient_failure(
     monkeypatch,
 ):

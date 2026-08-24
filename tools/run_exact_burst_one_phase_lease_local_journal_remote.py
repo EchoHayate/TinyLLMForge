@@ -83,8 +83,6 @@ committed_archive = legacy.committed_archive
 download_remote_tree_preserving_partial = (
     common.download_remote_tree_preserving_partial
 )
-_create_controller_dir = legacy._create_controller_dir
-_write_remote_completion = legacy._write_remote_completion
 
 
 def validate_remote_task_root(value: str) -> str:
@@ -356,6 +354,22 @@ def _run_remote_checked(
     )
 
 
+def _run_remote_with_input_checked(
+    command: str,
+    payload: bytes,
+    *,
+    context: str,
+    retry_attempts: int = 1,
+):
+    return _retry_idempotent(
+        lambda: base._require_success(
+            base._run_remote_with_input(command, payload),
+            context,
+        ),
+        attempts=retry_attempts,
+    )
+
+
 def _probe_remote_requirements() -> dict:
     return _retry_idempotent(
         lambda: legacy.validate_remote_requirements(
@@ -375,6 +389,94 @@ def _require_remote_destinations_absent(
 
 def _query_remote_gpu_rows() -> list[dict]:
     return _retry_idempotent(base.query_remote_gpu_rows)
+
+
+def _write_idempotent_remote_receipt(
+    *,
+    path: str,
+    receipt: dict,
+    create_parent: bool,
+    context: str,
+) -> None:
+    if (
+        not isinstance(path, str)
+        or not path.startswith(
+            TASK_REMOTE_ROOT + "/controller-verification/"
+        )
+    ):
+        raise ValueError("remote receipt path is invalid")
+    payload = json.dumps(
+        receipt,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    script_lines = [
+        "import os,pathlib,sys",
+        f"path=pathlib.Path({path!r})",
+        "payload=sys.stdin.buffer.read()",
+    ]
+    if create_parent:
+        script_lines.extend((
+            "path.parent.parent.mkdir(parents=True,exist_ok=True)",
+            "path.parent.mkdir(parents=False,exist_ok=True)",
+        ))
+    else:
+        script_lines.extend((
+            "if not path.parent.is_dir():",
+            " raise ValueError('receipt parent is missing')",
+        ))
+    script_lines.extend((
+        "pending=path.with_name(path.name+'.pending')",
+        "if path.is_file():",
+        " if path.read_bytes()!=payload:",
+        "  raise ValueError('existing receipt mismatch')",
+        "elif pending.exists():",
+        " if not pending.is_file() or pending.read_bytes()!=payload:",
+        "  raise ValueError('existing receipt mismatch')",
+        " os.replace(pending,path)",
+        "else:",
+        " with pending.open('xb') as handle:",
+        "  handle.write(payload)",
+        "  handle.flush()",
+        "  os.fsync(handle.fileno())",
+        " os.replace(pending,path)",
+        "if path.read_bytes()!=payload:",
+        " raise ValueError('existing receipt mismatch')",
+        "print('stored')",
+    ))
+    _run_remote_with_input_checked(
+        f"{REMOTE_PYTHON} -c "
+        + shlex.quote("\n".join(script_lines)),
+        payload,
+        context=context,
+        retry_attempts=3,
+    )
+
+
+def _create_controller_dir(
+    controller: str,
+    receipt: dict,
+) -> None:
+    _write_idempotent_remote_receipt(
+        path=controller + "/preflight.json",
+        receipt=receipt,
+        create_parent=True,
+        context="controller receipt upload",
+    )
+
+
+def _write_remote_completion(
+    *,
+    controller: str,
+    receipt: dict,
+) -> None:
+    _write_idempotent_remote_receipt(
+        path=controller + "/completion.json",
+        receipt=receipt,
+        create_parent=False,
+        context="controller completion upload",
+    )
 
 
 def _wait_for_clean_gpu(
