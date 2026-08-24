@@ -109,6 +109,7 @@ evidence, SSH remote controller, Qwen3-0.6B on one strict-clean A100.
 - Modify: `tinyvllm/engine/sequence.py`
 - Create: `tools/test_generation_sealed_block_table.py`
 - Modify: `tools/test_chunked_prefill.py`
+- Modify: `tools/test_scheduler_prepared_postprocess.py`
 
 **Interfaces:**
 
@@ -284,7 +285,9 @@ Expected: all selected tests pass.
 git add -- \
   tinyvllm/engine/sequence.py \
   tools/test_generation_sealed_block_table.py \
-  tools/test_chunked_prefill.py
+  tools/test_chunked_prefill.py \
+  tools/test_scheduler_prepared_postprocess.py \
+  docs/superpowers/plans/2026-08-24-exact-burst-generation-sealed-lease-identity.md
 git -c core.hooksPath=/dev/null commit \
   -m "feat(runtime): version sequence block tables" \
   -m "Co-authored-by: TRAE CLI <noreply@bytedance.com>"

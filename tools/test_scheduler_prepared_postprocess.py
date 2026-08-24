@@ -113,6 +113,9 @@ Sequence = sys.modules[
 SequenceStatus = sys.modules[
     "tinyvllm.engine.sequence"
 ].SequenceStatus
+VersionedBlockTable = sys.modules[
+    "tinyvllm.engine.sequence"
+].VersionedBlockTable
 PreparedSchedulerPostprocess = (
     scheduler_module.PreparedSchedulerPostprocess
 )
@@ -159,6 +162,26 @@ class _NonSearchableFreeBlocks(deque):
 class _IterationCountingList(list):
     def __init__(self, values):
         super().__init__(values)
+        self.iterations = 0
+        self.slice_reads = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        return super().__iter__()
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            self.slice_reads += 1
+        return super().__getitem__(index)
+
+
+class _IterationCountingVersionedBlockTable(
+    VersionedBlockTable,
+):
+    __slots__ = ("iterations", "slice_reads")
+
+    def __init__(self, values, *, revision):
+        super().__init__(values, revision=revision)
         self.iterations = 0
         self.slice_reads = 0
 
@@ -2212,9 +2235,12 @@ def test_delta_journal_context_bounded_capture(
         )
     )
     token_ids = _IterationCountingList(sequence.token_ids)
-    block_table = _IterationCountingList(sequence.block_table)
+    block_table = _IterationCountingVersionedBlockTable(
+        sequence.block_table,
+        revision=sequence.block_table.revision,
+    )
     sequence.token_ids = token_ids
-    sequence.block_table = block_table
+    sequence._block_table = block_table
 
     delta = scheduler_module.ExactBurstLeaseLocalDeltaJournal.capture(
         scheduler,

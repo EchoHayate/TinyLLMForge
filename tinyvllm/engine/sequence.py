@@ -4,6 +4,84 @@ from itertools import count
 import math
 from tinyvllm.sampling_params import SamplingParams
 
+
+class VersionedBlockTable(list):
+    __slots__ = ("_revision",)
+
+    def __init__(self, values=(), *, revision: int = 0):
+        if (
+            isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 0
+        ):
+            raise ValueError(
+                "block-table revision must be a non-negative integer"
+            )
+        if isinstance(values, list):
+            values = list.copy(values)
+        super().__init__(values)
+        self._revision = revision
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    def _bump(self) -> None:
+        if self._revision >= (1 << 63) - 1:
+            raise OverflowError("block-table revision exhausted")
+        self._revision += 1
+
+    def append(self, value) -> None:
+        self._bump()
+        super().append(value)
+
+    def extend(self, values) -> None:
+        self._bump()
+        super().extend(values)
+
+    def insert(self, index, value) -> None:
+        self._bump()
+        super().insert(index, value)
+
+    def pop(self, index=-1):
+        self._bump()
+        return super().pop(index)
+
+    def remove(self, value) -> None:
+        self._bump()
+        super().remove(value)
+
+    def clear(self) -> None:
+        self._bump()
+        super().clear()
+
+    def reverse(self) -> None:
+        self._bump()
+        super().reverse()
+
+    def sort(self, *, key=None, reverse=False) -> None:
+        self._bump()
+        super().sort(key=key, reverse=reverse)
+
+    def __setitem__(self, key, value) -> None:
+        self._bump()
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key) -> None:
+        self._bump()
+        super().__delitem__(key)
+
+    def __iadd__(self, values):
+        self._bump()
+        super().__iadd__(values)
+        return self
+
+    def __imul__(self, count):
+        self._bump()
+        super().__imul__(count)
+        return self
+
+
 class SequenceStatus(Enum):
     WAITING = auto()            # 1
     RUNNING = auto()            # 2
@@ -70,6 +148,26 @@ class Sequence:
     @property
     def last_block_num_tokens(self):                    # 计算最后一个块中的 token 数量             
         return self.num_tokens - (self.num_blocks - 1) * self.block_size
+
+    @property
+    def block_table(self) -> VersionedBlockTable:
+        return self._block_table
+
+    @block_table.setter
+    def block_table(self, values) -> None:
+        prior = getattr(self, "_block_table", None)
+        if values is prior:
+            return
+        if prior is None:
+            revision = 0
+        else:
+            if prior.revision >= (1 << 63) - 1:
+                raise OverflowError("block-table revision exhausted")
+            revision = prior.revision + 1
+        self._block_table = VersionedBlockTable(
+            values,
+            revision=revision,
+        )
     
     def block(self, i):                                 # 返回 block[i]中的 token_ids列表
         assert 0 <= i < self.num_blocks
@@ -83,26 +181,36 @@ class Sequence:
     # 由于是多卡，涉及通信发送，需要将sequence进行序列化，这个函数是决定将哪些 Sequence的属性进行序列化传输
     # 增加这个魔术方法后，pickle模块会自动调用该函数，将 Sequence 数据进行序列化
     def __getstate__(self):                             
-        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, self.block_table,
+        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, list(self.block_table),
                 self.num_computed_tokens, self.prefill_chunk_start, self.prefill_chunk_end,
                 self.prefill_chunk_final, self.step_is_decode, self.step_do_sample,
                 self.seq_id, self.hybrid_state_slot_id, self.hybrid_state_generation,
-                self.temperature, self.max_tokens,
+                self.temperature, self.max_tokens, self.block_table.revision,
                 self.token_ids if self.num_completion_tokens == 0 else self.last_token)
     
     # 由于是多卡，涉及通信接收，需要对序列化的 Sequence 进行解析，该函数和 getstate函数一一对应
     def __setstate__(self, state):
-        # 新 state 是 16 元组：(num_tokens, num_prompt_tokens, num_cached_blocks, block_table,
+        # 新 state 是 17 元组：(num_tokens, num_prompt_tokens, num_cached_blocks, block_table,
         # num_computed_tokens, prefill_chunk_start, prefill_chunk_end, prefill_chunk_final,
         # step_is_decode, step_do_sample, seq_id, hybrid_state_slot_id, hybrid_state_generation,
-        # temperature, max_tokens, token_ids 或 last_token)。最后一项按 num_completion_tokens 分支：
+        # temperature, max_tokens, block_table_revision, token_ids 或 last_token)。
+        # 最后一项按 num_completion_tokens 分支：
+        # 旧 16 元组没有 block_table_revision，恢复为 0。
         # 旧 15 元组没有 max_tokens，恢复为 0。
         # 旧 14 元组没有 temperature，恢复为 greedy 0.0。
         # 旧 11 元组没有 hybrid state 字段，也恢复为 disabled sentinel。
         #   - 还在 prefill（completion=0）：last item 是完整 token_ids
         #   - 已进入 decode（completion>0）：last item 是 last_token（int）
         # 注意：num_cached_blocks 是 @property，不能直接赋值，反推回 num_cached_tokens。
-        self.num_tokens, self.num_prompt_tokens, num_cached_blocks, self.block_table = state[:4]
+        self.num_tokens, self.num_prompt_tokens, num_cached_blocks = state[:3]
+        block_table = state[3]
+        if len(state) >= 17:
+            self._block_table = VersionedBlockTable(
+                block_table,
+                revision=state[15],
+            )
+        else:
+            self.block_table = block_table
         self.seq_id = -1
         self.step_is_decode = False
         self.step_do_sample = True
