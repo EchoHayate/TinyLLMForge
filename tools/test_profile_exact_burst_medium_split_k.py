@@ -434,14 +434,36 @@ def test_warmup_does_not_require_graph_identity_evidence() -> None:
     assert _validate_replay_graph_identity_counts(
         {},
         required=False,
+        diagnostics=(),
     ) == {}
     with pytest.raises(
         RuntimeError,
-        match="replay graph identity inventory",
+        match=(
+            "replay graph identity inventory mismatch: "
+            "attempted=3 accepted=0 "
+            "fallback_reasons=\\{'capture_not_ready': 3\\}"
+        ),
     ):
         _validate_replay_graph_identity_counts(
             {},
             required=True,
+            diagnostics=(
+                {
+                    "attempted": True,
+                    "accepted": False,
+                    "fallback_reason": "capture_not_ready",
+                },
+                {
+                    "attempted": True,
+                    "accepted": False,
+                    "fallback_reason": "capture_not_ready",
+                },
+                {
+                    "attempted": True,
+                    "accepted": False,
+                    "fallback_reason": "capture_not_ready",
+                },
+            ),
         )
 
 

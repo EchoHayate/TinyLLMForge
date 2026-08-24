@@ -854,11 +854,29 @@ def _validate_replay_graph_identity_counts(
     counts: dict[str, int],
     *,
     required: bool,
+    diagnostics: tuple[dict, ...],
 ) -> dict[str, int]:
     if not isinstance(counts, dict):
         raise RuntimeError("replay graph identity inventory mismatch")
     if required and not counts:
-        raise RuntimeError("replay graph identity inventory mismatch")
+        attempted = sum(
+            bool(row.get("attempted")) for row in diagnostics
+        )
+        accepted = sum(
+            bool(row.get("accepted")) for row in diagnostics
+        )
+        fallback_reasons: dict[str, int] = {}
+        for row in diagnostics:
+            reason = row.get("fallback_reason")
+            if reason is not None:
+                fallback_reasons[reason] = (
+                    fallback_reasons.get(reason, 0) + 1
+                )
+        raise RuntimeError(
+            "replay graph identity inventory mismatch: "
+            f"attempted={attempted} accepted={accepted} "
+            f"fallback_reasons={fallback_reasons}"
+        )
     return dict(counts)
 
 
@@ -891,6 +909,7 @@ def _run_request(
     tpot_samples = []
     burst_gaps = []
     graph_identity_counts: dict[str, int] = {}
+    graph_identity_diagnostics = []
     final_outputs = None
     while not llm.is_finished():
         step_started_ns = time.perf_counter_ns()
@@ -907,6 +926,17 @@ def _run_request(
             if first_token_ns is None:
                 first_token_ns = step_finished_ns
             elif not observation["is_prefill"]:
+                graph_identity_diagnostics.append({
+                    "attempted": observation[
+                        "exact_greedy_decode_burst_attempted"
+                    ],
+                    "accepted": observation[
+                        "exact_greedy_decode_burst_accepted"
+                    ],
+                    "fallback_reason": observation[
+                        "exact_greedy_decode_burst_fallback_reason"
+                    ],
+                })
                 per_token_ns = (
                     step_finished_ns - step_started_ns
                 ) / emitted
@@ -943,6 +973,7 @@ def _run_request(
         _validate_replay_graph_identity_counts(
             graph_identity_counts,
             required=require_graph_identity,
+            diagnostics=tuple(graph_identity_diagnostics),
         )
     )
     decode_host_ns = []
