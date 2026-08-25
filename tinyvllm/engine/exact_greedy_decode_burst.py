@@ -152,6 +152,89 @@ class ExactGreedyDecodeBurstDecision:
     block_boundary_clipped: bool = False
 
 
+@dataclass(frozen=True)
+class ElasticExactBurstWidthDecision:
+    requested_width: int
+    selected_width: int
+    k16_eligible: bool
+    k16_fallback_reason: Optional[str]
+
+
+def select_context_gated_elastic_exact_burst_width(
+    *,
+    enabled: bool,
+    base_width: int,
+    initial_sequence_length: int,
+    remaining_output_tokens: int,
+    write_block_capacity: int,
+    shared_graph_available: bool,
+    k16_health_quarantined: bool,
+    incompatible_modes: tuple[str, ...],
+) -> ElasticExactBurstWidthDecision:
+    _require_bool(enabled, "enabled")
+    if (
+        isinstance(base_width, bool)
+        or not isinstance(base_width, int)
+        or base_width != 8
+    ):
+        raise ValueError("base_width must be exactly 8")
+    _require_positive_int(
+        initial_sequence_length,
+        "initial_sequence_length",
+    )
+    _require_non_negative_int(
+        remaining_output_tokens,
+        "remaining_output_tokens",
+    )
+    _require_positive_int(
+        write_block_capacity,
+        "write_block_capacity",
+    )
+    _require_bool(
+        shared_graph_available,
+        "shared_graph_available",
+    )
+    _require_bool(
+        k16_health_quarantined,
+        "k16_health_quarantined",
+    )
+    if (
+        not isinstance(incompatible_modes, tuple)
+        or any(
+            not isinstance(mode, str) or not mode
+            for mode in incompatible_modes
+        )
+    ):
+        raise ValueError(
+            "incompatible_modes must be a tuple of non-empty strings"
+        )
+
+    requested_width = 16 if enabled else base_width
+    reason = None
+    if not enabled:
+        reason = "disabled"
+    elif incompatible_modes:
+        reason = "incompatible_mode"
+    elif initial_sequence_length > 2048:
+        reason = "context_above_2048"
+    elif remaining_output_tokens < 16:
+        reason = "output_budget_below_16"
+    elif write_block_capacity < 16:
+        reason = "write_block_capacity_below_16"
+    elif not shared_graph_available:
+        reason = "k16_graph_unavailable"
+    elif k16_health_quarantined:
+        reason = "k16_health_quarantined"
+
+    selected_width = 16 if reason is None else base_width
+    return ElasticExactBurstWidthDecision(
+        requested_width=requested_width,
+        selected_width=selected_width,
+        k16_eligible=selected_width == 16,
+        k16_fallback_reason=reason,
+    )
+
+
 def select_exact_greedy_decode_burst_width(
     *,
     configured_width: int,

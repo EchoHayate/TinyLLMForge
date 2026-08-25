@@ -6115,6 +6115,12 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         ].default
         is False
     )
+    assert (
+        fields[
+            "exact_greedy_decode_burst_elastic_k16"
+        ].default
+        is False
+    )
     assert fields["exact_greedy_decode_burst_tokens"].default == 4
     with tempfile.TemporaryDirectory() as model:
         for invalid in (0, 1, None, "true"):
@@ -6206,6 +6212,18 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                     model=model,
                     exact_greedy_decode_burst_medium_split_k=invalid,
                 )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_elastic_k16 "
+                    "must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_elastic_k16=invalid,
+                )
         for invalid in (False, True, 1, 9, 4.0, None):
             with pytest.raises(
                 ValueError,
@@ -6240,6 +6258,56 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 model=model,
                 exact_greedy_decode_burst_medium_split_k=True,
             )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^elastic K16 requires "
+                "exact_greedy_decode_burst$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst_elastic_k16=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^elastic K16 requires K8 base width$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=4,
+                exact_greedy_decode_burst_elastic_k16=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^elastic K16 requires split phase off$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_split_phase=True,
+                exact_greedy_decode_burst_elastic_k16=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^elastic K16 requires ragged coalescing off$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_split_phase=True,
+                exact_greedy_decode_burst_ragged_coalescing=True,
+                exact_greedy_decode_burst_elastic_k16=True,
+            )
+        elastic_k16 = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_tokens=8,
+            exact_greedy_decode_burst_elastic_k16=True,
+        )
         Config(
             model=model,
             exact_greedy_decode_burst=True,
@@ -6408,6 +6476,7 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         .exact_greedy_decode_burst_generation_sealed_identity
         is True
     )
+    assert elastic_k16.exact_greedy_decode_burst_elastic_k16 is True
     assert enabled.exact_greedy_decode_burst is True
     assert enabled.exact_greedy_decode_burst_continuation is False
     assert enabled.exact_greedy_decode_burst_split_phase is True

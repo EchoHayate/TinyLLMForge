@@ -98,6 +98,11 @@ exact_greedy_decode_burst_flash_attn_num_splits = (
 select_exact_greedy_decode_burst_width = (
     module.select_exact_greedy_decode_burst_width
 )
+select_context_gated_elastic_exact_burst_width = getattr(
+    module,
+    "select_context_gated_elastic_exact_burst_width",
+    None,
+)
 validate_exact_greedy_decode_burst_result = (
     module.validate_exact_greedy_decode_burst_result
 )
@@ -688,6 +693,209 @@ def test_ragged_width_selector_is_strictly_opt_in() -> None:
         split_phase_enabled=True,
         ragged_coalescing_enabled=True,
     ) == 4
+
+
+def test_context_gated_elastic_width_selector_is_deterministic() -> None:
+    select = select_context_gated_elastic_exact_burst_width
+    assert callable(select)
+    assert module.ElasticExactBurstWidthDecision.__dataclass_params__.frozen
+    cases = (
+        # enabled, context, remaining, writable, healthy, width, reason
+        (False, 256, 128, 128, True, 8, "disabled"),
+        (True, 2048, 16, 16, True, 16, None),
+        (
+            True,
+            2049,
+            128,
+            128,
+            True,
+            8,
+            "context_above_2048",
+        ),
+        (
+            True,
+            256,
+            15,
+            128,
+            True,
+            8,
+            "output_budget_below_16",
+        ),
+        (
+            True,
+            256,
+            128,
+            15,
+            True,
+            8,
+            "write_block_capacity_below_16",
+        ),
+        (
+            True,
+            256,
+            128,
+            128,
+            False,
+            8,
+            "k16_graph_unavailable",
+        ),
+        (
+            True,
+            4096,
+            128,
+            128,
+            True,
+            8,
+            "context_above_2048",
+        ),
+        (
+            True,
+            8192,
+            128,
+            128,
+            True,
+            8,
+            "context_above_2048",
+        ),
+    )
+    for (
+        enabled,
+        context,
+        remaining,
+        writable,
+        healthy,
+        expected_width,
+        expected_reason,
+    ) in cases:
+        decision = select(
+            enabled=enabled,
+            base_width=8,
+            initial_sequence_length=context,
+            remaining_output_tokens=remaining,
+            write_block_capacity=writable,
+            shared_graph_available=healthy,
+            k16_health_quarantined=False,
+            incompatible_modes=(),
+        )
+        assert decision.requested_width == (
+            16 if enabled else 8
+        )
+        assert decision.selected_width == expected_width
+        assert decision.k16_eligible is (
+            enabled and expected_width == 16
+        )
+        assert decision.k16_fallback_reason == expected_reason
+        if not enabled:
+            assert decision.selected_width == (
+                select_exact_greedy_decode_burst_width(
+                    configured_width=8,
+                    remaining_output_tokens=remaining,
+                    initial_sequence_length=context,
+                    block_size=256,
+                    split_phase_enabled=False,
+                    ragged_coalescing_enabled=False,
+                )
+            )
+
+
+def test_context_gated_elastic_width_selector_honors_k16_health() -> None:
+    select = select_context_gated_elastic_exact_burst_width
+    assert callable(select)
+    decision = select(
+        enabled=True,
+        base_width=8,
+        initial_sequence_length=256,
+        remaining_output_tokens=128,
+        write_block_capacity=128,
+        shared_graph_available=True,
+        k16_health_quarantined=True,
+        incompatible_modes=(),
+    )
+    assert decision.requested_width == 16
+    assert decision.selected_width == 8
+    assert decision.k16_eligible is False
+    assert decision.k16_fallback_reason == "k16_health_quarantined"
+
+
+def test_context_gated_elastic_width_selector_validates_inputs() -> None:
+    select = select_context_gated_elastic_exact_burst_width
+    assert callable(select)
+    valid = {
+        "enabled": True,
+        "base_width": 8,
+        "initial_sequence_length": 256,
+        "remaining_output_tokens": 128,
+        "write_block_capacity": 128,
+        "shared_graph_available": True,
+        "k16_health_quarantined": False,
+        "incompatible_modes": (),
+    }
+    invalid_cases = (
+        ("enabled", 1),
+        ("base_width", True),
+        ("initial_sequence_length", True),
+        ("remaining_output_tokens", True),
+        ("write_block_capacity", True),
+        ("shared_graph_available", 1),
+        ("k16_health_quarantined", 0),
+        ("initial_sequence_length", 0),
+        ("write_block_capacity", 0),
+        ("remaining_output_tokens", -1),
+        ("base_width", 4),
+        ("incompatible_modes", ["split_phase"]),
+        ("incompatible_modes", ("",)),
+        ("incompatible_modes", (1,)),
+    )
+    for name, value in invalid_cases:
+        kwargs = dict(valid)
+        kwargs[name] = value
+        _assert_raises(
+            ValueError,
+            {
+                "enabled": "enabled must be a bool",
+                "base_width": "base_width must be exactly 8",
+                "initial_sequence_length": (
+                    "initial_sequence_length must be a positive integer"
+                ),
+                "remaining_output_tokens": (
+                    "remaining_output_tokens must be a "
+                    "non-negative integer"
+                ),
+                "write_block_capacity": (
+                    "write_block_capacity must be a positive integer"
+                ),
+                "shared_graph_available": (
+                    "shared_graph_available must be a bool"
+                ),
+                "k16_health_quarantined": (
+                    "k16_health_quarantined must be a bool"
+                ),
+                "incompatible_modes": (
+                    "incompatible_modes must be a tuple of "
+                    "non-empty strings"
+                ),
+            }[name],
+            lambda kwargs=kwargs: select(**kwargs),
+        )
+
+
+def test_context_gated_elastic_width_selector_checks_modes_first() -> None:
+    select = select_context_gated_elastic_exact_burst_width
+    assert callable(select)
+    decision = select(
+        enabled=True,
+        base_width=8,
+        initial_sequence_length=4096,
+        remaining_output_tokens=0,
+        write_block_capacity=1,
+        shared_graph_available=False,
+        k16_health_quarantined=True,
+        incompatible_modes=("split_phase",),
+    )
+    assert decision.requested_width == 16
+    assert decision.selected_width == 8
+    assert decision.k16_eligible is False
+    assert decision.k16_fallback_reason == "incompatible_mode"
 
 
 def test_policy_clips_to_budget_and_current_block() -> None:

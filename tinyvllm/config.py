@@ -44,6 +44,7 @@ class Config:
     exact_greedy_decode_burst_lease_local_delta_journal: bool = False
     exact_greedy_decode_burst_generation_sealed_identity: bool = False
     exact_greedy_decode_burst_medium_split_k: bool = False
+    exact_greedy_decode_burst_elastic_k16: bool = False
     exact_greedy_decode_burst_tokens: int = 4
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
@@ -267,6 +268,14 @@ class Config:
                 "exact_greedy_decode_burst_medium_split_k "
                 "must be a bool"
             )
+        if not isinstance(
+            self.exact_greedy_decode_burst_elastic_k16,
+            bool,
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst_elastic_k16 "
+                "must be a bool"
+            )
         if (
             self.exact_greedy_decode_burst_medium_split_k
             and not self.exact_greedy_decode_burst
@@ -289,6 +298,24 @@ class Config:
                 "exact_greedy_decode_burst_tokens must be an "
                 "integer in [2, 8]"
             )
+        if self.exact_greedy_decode_burst_elastic_k16:
+            if not self.exact_greedy_decode_burst:
+                raise ValueError(
+                    "elastic K16 requires "
+                    "exact_greedy_decode_burst"
+                )
+            if self.exact_greedy_decode_burst_tokens != 8:
+                raise ValueError(
+                    "elastic K16 requires K8 base width"
+                )
+            if self.exact_greedy_decode_burst_ragged_coalescing:
+                raise ValueError(
+                    "elastic K16 requires ragged coalescing off"
+                )
+            if self.exact_greedy_decode_burst_split_phase:
+                raise ValueError(
+                    "elastic K16 requires split phase off"
+                )
         if self.exact_greedy_decode_burst_ragged_coalescing:
             if not self.exact_greedy_decode_burst:
                 raise ValueError(
