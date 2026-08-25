@@ -40,7 +40,9 @@ def test_paths_and_runtime_are_confined_to_remote_mount():
     paths = remote.remote_paths(run_tag)
     dist_port = remote.dist_port_for_run_tag(run_tag)
 
-    assert remote.DEFAULT_CONTROL_PATH == "none"
+    assert remote.DEFAULT_CONTROL_PATH == (
+        "/tmp/ssh-sitian-10.232.195.203"
+    )
     assert remote.REMOTE_PYTHON == (
         "/data00/home/sitian/tllm/env/bin/python3.11"
     )
