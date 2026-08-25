@@ -330,7 +330,7 @@ class _Sequence:
         return self.status == "finished"
 
 
-def _lease(*, width=3):
+def _lease(*, width=3, width_health_generation=None):
     return build_exact_greedy_decode_burst_lease(
         sequence_id=7,
         schedule_generation=11,
@@ -348,6 +348,7 @@ def _lease(*, width=3):
         last_physical_slot=48 + width,
         remaining_output_tokens=max(3, width),
         completion_only=True,
+        width_health_generation=width_health_generation,
     )
 
 
@@ -465,6 +466,7 @@ class _Scheduler:
         no_lease_reason="waiting_present",
         events=None,
         phase_commit_failure=None,
+        commit_failure=None,
     ):
         self.sequence = sequence
         self.lease = lease
@@ -482,6 +484,7 @@ class _Scheduler:
         self.host_visible_gap_ns = 0
         self.split_phase = "enqueued" if lease is not None else "idle"
         self.phase_commit_failure = phase_commit_failure
+        self.commit_failure = commit_failure
         self.phase_prepare_kwargs = {}
 
     def observation_snapshot(self):
@@ -594,6 +597,8 @@ class _Scheduler:
                     self.release_count += 1
             return
         self.events.append(("commit", prepared))
+        if self.commit_failure is not None:
+            raise self.commit_failure
         for token in prepared.result.tokens:
             self.sequence.token_ids.append(token)
         if (
@@ -681,6 +686,7 @@ class _ModelRunner:
         enabled=True,
         split_enabled=False,
         ragged_enabled=False,
+        elastic_enabled=False,
         configured_width=4,
         events=None,
     ):
@@ -692,9 +698,13 @@ class _ModelRunner:
             exact_greedy_decode_burst_ragged_coalescing=(
                 ragged_enabled
             ),
+            exact_greedy_decode_burst_elastic_k16=(
+                elastic_enabled
+            ),
         )
         self.events = [] if events is None else events
         self.quarantine_reason = None
+        self.elastic_quarantine_reason = None
 
     def exact_greedy_decode_burst_capability(
         self,
@@ -709,6 +719,44 @@ class _ModelRunner:
             "graph_generation": 13,
             "correctness_trace": correctness_trace,
         }
+
+    def elastic_exact_greedy_decode_burst_capability(
+        self,
+        *,
+        correctness_trace=False,
+    ):
+        self.events.append(
+            ("elastic_capability", correctness_trace)
+        )
+        return {
+            "k8_available": True,
+            "k16_available": (
+                self.elastic_quarantine_reason is None
+            ),
+            "k16_fallback_reason": (
+                None
+                if self.elastic_quarantine_reason is None
+                else (
+                    "k16_quarantined:"
+                    + self.elastic_quarantine_reason
+                )
+            ),
+            "k16_health_generation": (
+                1 if self.elastic_quarantine_reason is None else 2
+            ),
+            "shared_graph_identity_sha256": "a" * 64,
+            "shared_graph_generation": 13,
+            "shared_graph_history_capacity": 16,
+            "incremental_retained_static_bytes": 0,
+        }
+
+    def quarantine_elastic_exact_greedy_decode_burst_k16(
+        self,
+        reason,
+    ):
+        self.events.append(("quarantine_k16", reason))
+        if self.elastic_quarantine_reason is None:
+            self.elastic_quarantine_reason = reason
 
     def run_exact_greedy_decode_burst(self, seqs, lease):
         raise AssertionError(
@@ -785,9 +833,11 @@ def _engine(
     no_lease_reason="waiting_present",
     split_enabled=False,
     ragged_enabled=False,
+    elastic_enabled=False,
     configured_width=4,
     events=None,
     phase_commit_failure=None,
+    commit_failure=None,
 ):
     sequence = _Sequence()
     scheduler = _Scheduler(
@@ -800,12 +850,14 @@ def _engine(
         no_lease_reason=no_lease_reason,
         events=events,
         phase_commit_failure=phase_commit_failure,
+        commit_failure=commit_failure,
     )
     model_runner = _ModelRunner(
         outcome,
         enabled=enabled,
         split_enabled=split_enabled,
         ragged_enabled=ragged_enabled,
+        elastic_enabled=elastic_enabled,
         configured_width=configured_width,
         events=events,
     )
@@ -863,6 +915,94 @@ def test_eligible_decode_runs_one_burst_and_commits_ordered_delta_once():
     assert engine.last_step_observation[
         "new_completion_tokens_by_seq"
     ] == {7: [41, 42, 43]}
+
+
+def test_engine_passes_elastic_k16_capability_to_scheduler():
+    lease = _lease(width=16, width_health_generation=1)
+    result = _result(lease, tokens=tuple(range(41, 57)))
+    engine, _sequence, scheduler, model_runner, step = _engine(
+        result,
+        lease=lease,
+        configured_width=8,
+        elastic_enabled=True,
+    )
+    engine.scheduler.sequence.max_tokens = 16
+
+    step(engine, completion_only=True)
+
+    lease_event = next(
+        event for event in scheduler.events if event[0] == "lease"
+    )
+    kwargs = lease_event[2]
+    assert kwargs["elastic_k16_enabled"] is True
+    assert kwargs["k16_graph_available"] is True
+    assert kwargs["k16_health_quarantined"] is False
+    assert kwargs["k16_health_generation"] == 1
+    assert [event[0] for event in model_runner.events].count(
+        "elastic_capability"
+    ) == 1
+
+
+def test_k16_engine_failure_quarantines_width_only_without_retry():
+    lease = _lease(width=16, width_health_generation=1)
+    result = _result(lease, tokens=tuple(range(41, 57)))
+    error = RuntimeError("K16 commit failure")
+    engine, _sequence, scheduler, model_runner, step = _engine(
+        result,
+        lease=lease,
+        configured_width=8,
+        elastic_enabled=True,
+        commit_failure=error,
+    )
+
+    with pytest.raises(RuntimeError, match="K16 commit failure"):
+        step(engine, completion_only=True)
+
+    assert (
+        "quarantine_k16",
+        "engine_failure:RuntimeError",
+    ) in model_runner.events
+    assert model_runner.quarantine_reason is None
+    assert not any(
+        event[0] == "invalidate_continuation"
+        for event in model_runner.events
+    )
+    assert [event[0] for event in scheduler.events].count("fail") == 1
+    assert not any(
+        event[0] in {"ordinary", "cancel"}
+        for event in model_runner.events + scheduler.events
+    )
+
+
+def test_k16_graph_replay_failure_preserves_shared_quarantine_scope():
+    lease = _lease(width=16, width_health_generation=1)
+    error = RuntimeError("K16 graph replay failure")
+    engine, _sequence, scheduler, model_runner, step = _engine(
+        error,
+        lease=lease,
+        configured_width=8,
+        elastic_enabled=True,
+    )
+
+    with pytest.raises(RuntimeError, match="K16 graph replay failure"):
+        step(engine, completion_only=True)
+
+    assert model_runner.quarantine_reason == (
+        "replay_failure:RuntimeError"
+    )
+    assert not any(
+        event[0] == "quarantine_k16"
+        for event in model_runner.events
+    )
+    assert (
+        "invalidate_continuation",
+        "engine_failure:RuntimeError",
+    ) in model_runner.events
+    assert [event[0] for event in scheduler.events].count("fail") == 1
+    assert not any(
+        event[0] in {"ordinary", "cancel"}
+        for event in model_runner.events + scheduler.events
+    )
 
 
 def test_split_phase_publishes_prefix_then_drains_suffix_before_schedule():

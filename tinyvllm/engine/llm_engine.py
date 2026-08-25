@@ -4482,6 +4482,16 @@ class LLMEngine:
                 exact_burst_gate_only = (
                     exact_burst_gate_width is not None
                 )
+                exact_burst_elastic_k16_enabled = (
+                    bool(
+                        getattr(
+                            model_runner_config,
+                            "exact_greedy_decode_burst_elastic_k16",
+                            False,
+                        )
+                    )
+                    and not exact_burst_gate_only
+                )
                 exact_burst_configured_width = (
                     exact_burst_gate_width
                     if exact_burst_gate_only
@@ -4514,6 +4524,23 @@ class LLMEngine:
                                 exact_burst_correctness_trace
                             )
                         )
+                    )
+                    elastic_capability = None
+                    if exact_burst_elastic_k16_enabled:
+                        elastic_capability = (
+                            self.model_runner
+                            .elastic_exact_greedy_decode_burst_capability(
+                                correctness_trace=(
+                                    exact_burst_correctness_trace
+                                )
+                            )
+                        )
+                    k16_fallback_reason = (
+                        elastic_capability.get(
+                            "k16_fallback_reason"
+                        )
+                        if elastic_capability is not None
+                        else None
                     )
                     exact_burst_attempted = True
                     exact_burst_lease = (
@@ -4563,6 +4590,47 @@ class LLMEngine:
                             ),
                             allow_single_token_gate=(
                                 exact_burst_gate_only
+                            ),
+                            elastic_k16_enabled=(
+                                exact_burst_elastic_k16_enabled
+                            ),
+                            k16_graph_available=(
+                                (
+                                    bool(
+                                        elastic_capability[
+                                            "k16_available"
+                                        ]
+                                    )
+                                    or (
+                                        isinstance(
+                                            k16_fallback_reason,
+                                            str,
+                                        )
+                                        and k16_fallback_reason.startswith(
+                                            "k16_quarantined:"
+                                        )
+                                    )
+                                )
+                                if elastic_capability is not None
+                                else False
+                            ),
+                            k16_health_quarantined=(
+                                isinstance(
+                                    k16_fallback_reason,
+                                    str,
+                                )
+                                and k16_fallback_reason.startswith(
+                                    "k16_quarantined:"
+                                )
+                            ),
+                            k16_health_generation=(
+                                int(
+                                    elastic_capability[
+                                        "k16_health_generation"
+                                    ]
+                                )
+                                if elastic_capability is not None
+                                else None
                             ),
                         )
                     )
@@ -4924,19 +4992,6 @@ class LLMEngine:
                                     )
                                 except BaseException:
                                     pass
-                            invalidator = getattr(
-                                self.model_runner,
-                                (
-                                    "invalidate_exact_greedy_decode_"
-                                    "burst_continuation"
-                                ),
-                                None,
-                            )
-                            if invalidator is not None:
-                                invalidator(
-                                    "engine_failure:"
-                                    + type(error).__name__
-                                )
                             stats = getattr(
                                 self.model_runner,
                                 "exact_greedy_decode_burst_stats",
@@ -4947,11 +5002,64 @@ class LLMEngine:
                                 "quarantine",
                                 None,
                             )
-                            if quarantine is not None:
-                                quarantine(
+                            graph_quarantine_reason = (
+                                self.model_runner
+                                .exact_greedy_decode_burst_summary()
+                                .get("quarantine_reason")
+                            )
+                            width_local_failure = (
+                                exact_burst_lease
+                                .authorized_token_count
+                                == 16
+                                and graph_quarantine_reason is None
+                            )
+                            if width_local_failure:
+                                width_reason = (
                                     "engine_failure:"
                                     + type(error).__name__
                                 )
+                                width_quarantine = getattr(
+                                    self.model_runner,
+                                    (
+                                        "quarantine_elastic_exact_"
+                                        "greedy_decode_burst_k16"
+                                    ),
+                                    None,
+                                )
+                                if width_quarantine is not None:
+                                    width_quarantine(width_reason)
+                                else:
+                                    width_health = getattr(
+                                        self.model_runner,
+                                        (
+                                            "elastic_exact_burst_"
+                                            "width_health"
+                                        ),
+                                        None,
+                                    )
+                                    if width_health is not None:
+                                        width_health.quarantine_k16(
+                                            width_reason
+                                        )
+                            else:
+                                invalidator = getattr(
+                                    self.model_runner,
+                                    (
+                                        "invalidate_exact_greedy_decode_"
+                                        "burst_continuation"
+                                    ),
+                                    None,
+                                )
+                                if invalidator is not None:
+                                    invalidator(
+                                        "engine_failure:"
+                                        + type(error).__name__
+                                    )
+                                if quarantine is not None:
+                                    quarantine(
+                                        "engine_failure:"
+                                        + type(error).__name__
+                                    )
                             try:
                                 self.scheduler.fail_exact_greedy_decode_burst(
                                     exact_burst_lease,

@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import replace
 import hashlib
 import importlib.util
+from itertools import count
 from pathlib import Path
 import sys
 import types
@@ -290,6 +291,10 @@ def _prepare_exact_burst_lease(
     allow_single_token_gate=False,
     split_phase_enabled=False,
     ragged_coalescing_enabled=False,
+    elastic_k16_enabled=False,
+    k16_graph_available=False,
+    k16_health_quarantined=False,
+    k16_health_generation=None,
 ):
     scheduler.schedule_generation = 1
     return scheduler.prepare_exact_greedy_decode_burst(
@@ -309,7 +314,112 @@ def _prepare_exact_burst_lease(
         allow_single_token_gate=allow_single_token_gate,
         split_phase_enabled=split_phase_enabled,
         ragged_coalescing_enabled=ragged_coalescing_enabled,
+        elastic_k16_enabled=elastic_k16_enabled,
+        k16_graph_available=k16_graph_available,
+        k16_health_quarantined=k16_health_quarantined,
+        k16_health_generation=k16_health_generation,
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "block_size",
+        "prompt_length",
+        "max_tokens",
+        "k16_graph_available",
+        "k16_health_quarantined",
+        "expected_width",
+        "expected_reason",
+    ),
+    (
+        (4096, 2048, 16, True, False, 16, None),
+        (4096, 2049, 16, True, False, 8, "context_above_2048"),
+        (4096, 2048, 15, True, False, 8, "output_budget_below_16"),
+        (32, 18, 16, True, False, 8, "write_block_capacity_below_16"),
+        (4096, 2048, 16, False, False, 8, "k16_graph_unavailable"),
+        (4096, 2048, 16, True, True, 8, "k16_health_quarantined"),
+    ),
+)
+def test_context_gated_elastic_scheduler_selects_k16_or_k8(
+    monkeypatch,
+    block_size,
+    prompt_length,
+    max_tokens,
+    k16_graph_available,
+    k16_health_quarantined,
+    expected_width,
+    expected_reason,
+):
+    monkeypatch.setattr(Sequence, "block_size", block_size)
+    scheduler = Scheduler(_config(kvcache_block_size=block_size))
+    sequence = _running_sequence(
+        scheduler,
+        list(range(prompt_length)),
+        max_tokens=max_tokens,
+        ignore_eos=True,
+    )
+
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        elastic_k16_enabled=True,
+        k16_graph_available=k16_graph_available,
+        k16_health_quarantined=k16_health_quarantined,
+        k16_health_generation=3,
+    )
+
+    assert lease.requested_token_count == expected_width
+    assert lease.authorized_token_count == expected_width
+    assert lease.width_health_generation == (
+        3 if expected_width == 16 else None
+    )
+    assert lease.first_physical_slot // block_size == (
+        lease.last_physical_slot // block_size
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["k16_attempts"] == 1
+    assert summary["k16_acceptances"] == int(expected_width == 16)
+    assert summary["k8_fallbacks"] == int(expected_width == 8)
+    assert summary["elastic_k16_fallback_counts"] == (
+        {} if expected_reason is None else {expected_reason: 1}
+    )
+    assert summary["fallback_counts"] == {}
+
+
+def test_elastic_flag_off_preserves_k8_lease_identity(monkeypatch):
+    monkeypatch.setattr(Sequence, "block_size", 32)
+
+    def prepare(*, pass_elastic_args):
+        Sequence.counter = count(123)
+        scheduler = Scheduler(_config(kvcache_block_size=32))
+        sequence = _running_sequence(
+            scheduler,
+            list(range(9)),
+            max_tokens=16,
+            ignore_eos=True,
+        )
+        kwargs = {}
+        if pass_elastic_args:
+            kwargs = {
+                "elastic_k16_enabled": False,
+                "k16_graph_available": True,
+                "k16_health_quarantined": False,
+                "k16_health_generation": 7,
+            }
+        return _prepare_exact_burst_lease(
+            scheduler,
+            sequence,
+            configured_width=8,
+            **kwargs,
+        )
+
+    baseline = prepare(pass_elastic_args=False)
+    explicit_disabled = prepare(pass_elastic_args=True)
+
+    assert explicit_disabled == baseline
+    assert explicit_disabled.identity_sha256 == baseline.identity_sha256
+    assert explicit_disabled.width_health_generation is None
 
 
 def _exact_burst_result(lease, tokens):
@@ -715,12 +825,13 @@ def _delta_one_phase_fixture(
     configured_width=8,
     generation_sealed=False,
 ):
-    monkeypatch.setattr(Sequence, "block_size", 16)
+    block_size = 32 if configured_width == 16 else 16
+    monkeypatch.setattr(Sequence, "block_size", block_size)
     scheduler = Scheduler(
         SimpleNamespace(
             **{
                 **vars(_config()),
-                "kvcache_block_size": 16,
+                "kvcache_block_size": block_size,
                 (
                     "exact_greedy_decode_burst_"
                     "lease_local_delta_journal"
@@ -741,8 +852,15 @@ def _delta_one_phase_fixture(
     lease = _prepare_exact_burst_lease(
         scheduler,
         sequence,
-        configured_width=configured_width,
+        configured_width=(
+            8 if configured_width == 16 else configured_width
+        ),
         split_phase_enabled=False,
+        elastic_k16_enabled=(configured_width == 16),
+        k16_graph_available=(configured_width == 16),
+        k16_health_generation=(
+            3 if configured_width == 16 else None
+        ),
     )
     tokens = tuple(range(11, 11 + lease.authorized_token_count))
     result = _exact_burst_result(
@@ -1171,6 +1289,33 @@ def test_gate_only_single_replay_uses_distinct_exact_row_and_commits():
     assert summary["commits"] == 1
     assert summary["committed_tokens"] == 1
     assert summary["pending_leases"] == 0
+
+
+def test_gate_only_single_replay_bypasses_elastic_k16_selection():
+    scheduler = Scheduler(_config())
+    sequence = _running_sequence(
+        scheduler,
+        [1, 2],
+        max_tokens=1,
+        ignore_eos=True,
+    )
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=1,
+        allow_single_token_gate=True,
+        elastic_k16_enabled=True,
+        k16_graph_available=True,
+        k16_health_generation=3,
+    )
+
+    assert lease.requested_token_count == 1
+    assert lease.authorized_token_count == 1
+    assert lease.width_health_generation is None
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["k16_attempts"] == 0
+    assert summary["k16_acceptances"] == 0
+    assert summary["k8_fallbacks"] == 0
 
 
 @pytest.mark.parametrize(
@@ -2015,6 +2160,84 @@ def test_one_phase_k8_selects_lease_local_journal(
     assert summary[
         "lease_local_delta_journal_one_phase_fallback_counts"
     ] == {}
+
+
+@pytest.mark.parametrize(
+    ("prompt_length", "expected_publish"),
+    (
+        (2, False),
+        (17, True),
+    ),
+)
+def test_one_phase_k16_selects_lease_local_journal_and_commits(
+    monkeypatch,
+    prompt_length,
+    expected_publish,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=prompt_length,
+            max_tokens=64,
+            configured_width=16,
+        )
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.ExactBurstLeaseLocalDeltaJournal,
+    )
+    assert (
+        prepared.snapshot.publication_plan.will_publish
+        is expected_publish
+    )
+    scheduler.commit_prepared_postprocess(prepared)
+
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_attempts"] == 1
+    assert summary["lease_local_delta_journal_captures"] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_attempts"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_captures"
+    ] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_commits"
+    ] == 1
+    assert summary["per_width_commits"] == {"16": 1}
+    assert sequence.completion_token_ids == list(range(11, 27))
+
+
+def test_terminal_one_phase_k16_uses_generic_journal(monkeypatch):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=2,
+            max_tokens=16,
+            configured_width=16,
+        )
+    )
+
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    assert isinstance(
+        prepared.snapshot,
+        scheduler_module.SchedulerPostprocessJournal,
+    )
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary[
+        "lease_local_delta_journal_one_phase_fallback_counts"
+    ] == {"terminal_one_phase": 1}
 
 
 def test_one_phase_delta_journal_disabled_uses_generic(
@@ -3072,6 +3295,100 @@ def test_one_phase_delta_journal_rollback_restores_registered_hash(
     assert summary[
         "lease_local_delta_journal_one_phase_rollbacks"
     ] == 1
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    ("append", "publication", "progress", "final_commit"),
+)
+def test_one_phase_k16_delta_journal_rolls_back_every_commit_stage(
+    monkeypatch,
+    failure_point,
+):
+    prompt_length = 17 if failure_point == "publication" else 2
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=prompt_length,
+            max_tokens=64,
+            configured_width=16,
+        )
+    )
+    scheduler.decode_progress_ns_by_seq_id[sequence.seq_id] = 17
+    scheduler._last_slo_postprocess = {"before": True}
+    scheduler.adaptive_mixed_state = "before"
+    scheduler.adaptive_high_streak = 2
+    scheduler.adaptive_low_streak = 3
+    scheduler.adaptive_consecutive_mixed_steps = 4
+    scheduler._consecutive_prefill_chunks = 5
+    before = _delta_transaction_snapshot(scheduler, sequence)
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    if failure_point == "append":
+        original = Sequence.append_token
+
+        def append_then_fail(target, token_id):
+            original(target, token_id)
+            raise RuntimeError("injected K16 append failure")
+
+        monkeypatch.setattr(Sequence, "append_token", append_then_fail)
+    elif failure_point == "publication":
+        original = scheduler.block_manager.publish_lease_write_block
+
+        def publish_then_fail(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected K16 publication failure")
+
+        monkeypatch.setattr(
+            scheduler.block_manager,
+            "publish_lease_write_block",
+            publish_then_fail,
+        )
+    elif failure_point == "progress":
+        original = scheduler._record_decode_progress
+
+        def progress_then_fail(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected K16 progress failure")
+
+        monkeypatch.setattr(
+            scheduler,
+            "_record_decode_progress",
+            progress_then_fail,
+        )
+    else:
+        def final_commit_then_fail():
+            scheduler.adaptive_mixed_state = "mutated"
+            scheduler.adaptive_high_streak = 101
+            scheduler.adaptive_low_streak = 102
+            scheduler.adaptive_consecutive_mixed_steps = 103
+            scheduler._consecutive_prefill_chunks = 104
+            raise RuntimeError("injected K16 final commit failure")
+
+        monkeypatch.setattr(
+            scheduler,
+            "_maybe_reset_adaptive_mixed_controller",
+            final_commit_then_fail,
+        )
+
+    with pytest.raises(RuntimeError, match="injected K16"):
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert prepared.state == "commit_failed"
+    assert prepared.snapshot.state == "rolled_back"
+    assert _delta_transaction_snapshot(scheduler, sequence) == before
+    assert scheduler._exact_greedy_decode_burst_pending_lease == lease
+    assert scheduler._exact_greedy_decode_burst_split_phase == "enqueued"
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["lease_local_delta_journal_rollbacks"] == 1
+    assert summary[
+        "lease_local_delta_journal_one_phase_rollbacks"
+    ] == 1
+    assert summary["per_width_commits"] == {}
 
 
 def test_one_phase_delta_journal_rollback_failure_is_terminal(

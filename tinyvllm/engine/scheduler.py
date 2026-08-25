@@ -16,6 +16,7 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstStats,
     build_exact_greedy_decode_burst_decision,
     build_exact_greedy_decode_burst_lease,
+    select_context_gated_elastic_exact_burst_width,
     select_exact_greedy_decode_burst_width,
     validate_exact_greedy_decode_burst_result,
 )
@@ -1284,6 +1285,10 @@ class Scheduler:
         allow_single_token_gate: bool = False,
         split_phase_enabled: bool = False,
         ragged_coalescing_enabled: bool = False,
+        elastic_k16_enabled: bool = False,
+        k16_graph_available: bool = False,
+        k16_health_quarantined: bool = False,
+        k16_health_generation: int | None = None,
     ) -> ExactGreedyDecodeBurstLease | None:
         if not isinstance(seqs, tuple):
             raise ValueError(
@@ -1304,22 +1309,62 @@ class Scheduler:
             if sequence is not None
             else 0
         )
-        selected_width = (
-            configured_width
-            if allow_single_token_gate
-            else select_exact_greedy_decode_burst_width(
-                configured_width=configured_width,
-                remaining_output_tokens=remaining_output_tokens,
-                initial_sequence_length=(
-                    len(sequence) if sequence is not None else 1
-                ),
-                block_size=self.block_manager.block_size,
-                split_phase_enabled=split_phase_enabled,
-                ragged_coalescing_enabled=(
-                    ragged_coalescing_enabled
-                ),
+        initial_sequence_length = (
+            len(sequence) if sequence is not None else 1
+        )
+        first_write_position = initial_sequence_length - 1
+        writable_positions = (
+            self.block_manager.block_size
+            - (
+                first_write_position
+                % self.block_manager.block_size
             )
         )
+        if elastic_k16_enabled and not allow_single_token_gate:
+            elastic_incompatible_modes = incompatible_modes
+            if split_phase_enabled:
+                elastic_incompatible_modes += ("split_phase",)
+            if ragged_coalescing_enabled:
+                elastic_incompatible_modes += (
+                    "ragged_coalescing",
+                )
+            elastic_decision = (
+                select_context_gated_elastic_exact_burst_width(
+                    enabled=True,
+                    base_width=configured_width,
+                    initial_sequence_length=initial_sequence_length,
+                    remaining_output_tokens=remaining_output_tokens,
+                    write_block_capacity=writable_positions,
+                    shared_graph_available=k16_graph_available,
+                    k16_health_quarantined=(
+                        k16_health_quarantined
+                    ),
+                    incompatible_modes=elastic_incompatible_modes,
+                )
+            )
+            selected_width = elastic_decision.selected_width
+            self._exact_greedy_decode_burst_stats.record_elastic_width_decision(
+                requested_width=elastic_decision.requested_width,
+                selected_width=elastic_decision.selected_width,
+                fallback_reason=(
+                    elastic_decision.k16_fallback_reason
+                ),
+            )
+        else:
+            selected_width = (
+                configured_width
+                if allow_single_token_gate
+                else select_exact_greedy_decode_burst_width(
+                    configured_width=configured_width,
+                    remaining_output_tokens=remaining_output_tokens,
+                    initial_sequence_length=initial_sequence_length,
+                    block_size=self.block_manager.block_size,
+                    split_phase_enabled=split_phase_enabled,
+                    ragged_coalescing_enabled=(
+                        ragged_coalescing_enabled
+                    ),
+                )
+            )
         decision = build_exact_greedy_decode_burst_decision(
             enabled=enabled,
             configured_width=selected_width,
@@ -1351,6 +1396,7 @@ class Scheduler:
             ),
             quarantined=quarantined,
             allow_single_token_gate=allow_single_token_gate,
+            allow_elastic_k16=(selected_width == 16),
         )
         if not decision.optimized:
             self._exact_greedy_decode_burst_stats.record_fallback(
@@ -1464,6 +1510,11 @@ class Scheduler:
             completion_only=completion_only,
             block_table_identity_seal=(
                 block_table_identity_seal
+            ),
+            width_health_generation=(
+                k16_health_generation
+                if decision.authorized_token_count == 16
+                else None
             ),
         )
         self._exact_greedy_decode_burst_pending_lease = lease
@@ -2705,13 +2756,25 @@ class Scheduler:
         if one_phase:
             stats.record_lease_local_delta_journal_one_phase_attempt()
         reason = None
-        expected_token_count = 8 if one_phase else 4
+        one_phase_width = (
+            lease.authorized_token_count
+            if lease is not None
+            else 0
+        )
+        expected_token_count = one_phase_width if one_phase else 4
         if (
             is_prefill
             or not do_sample
             or batch_kind is not None
             or lease is None
-            or lease.authorized_token_count != 8
+            or (
+                one_phase
+                and lease.authorized_token_count not in (8, 16)
+            )
+            or (
+                not one_phase
+                and lease.authorized_token_count != 8
+            )
             or len(row.output_tokens) != expected_token_count
             or sequence.status != SequenceStatus.RUNNING
             or not sequence.ignore_eos
@@ -2724,7 +2787,7 @@ class Scheduler:
             )
         elif (
             one_phase
-            and sequence.num_completion_tokens + 8
+            and sequence.num_completion_tokens + one_phase_width
             >= sequence.max_tokens
         ):
             reason = "terminal_one_phase"
@@ -3438,6 +3501,10 @@ class Scheduler:
                 ),
                 host_visible_gap_ns=(
                     prepared.exact_burst_host_visible_gap_ns
+                ),
+                authorized_width=(
+                    prepared.exact_burst_lease
+                    .authorized_token_count
                 ),
             )
             self._exact_greedy_decode_burst_pending_lease = None

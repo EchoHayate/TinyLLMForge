@@ -414,23 +414,31 @@ def build_exact_greedy_decode_burst_decision(
     pending_lease: bool,
     quarantined: bool,
     allow_single_token_gate: bool = False,
+    allow_elastic_k16: bool = False,
 ) -> ExactGreedyDecodeBurstDecision:
     _require_bool(enabled, "enabled")
     _require_bool(
         allow_single_token_gate,
         "allow_single_token_gate",
     )
+    _require_bool(allow_elastic_k16, "allow_elastic_k16")
     minimum_width = 1 if allow_single_token_gate else 2
+    maximum_width = 16 if allow_elastic_k16 else 8
     if (
         isinstance(configured_width, bool)
         or not isinstance(configured_width, int)
         or configured_width < minimum_width
-        or configured_width > 8
+        or configured_width > maximum_width
     ):
         if allow_single_token_gate:
             raise ValueError(
                 "configured_width must be an integer in [1, 8] "
                 "for the gate-only entrypoint"
+            )
+        if allow_elastic_k16:
+            raise ValueError(
+                "configured_width must be an integer in [2, 16] "
+                "for the elastic K16 entrypoint"
             )
         raise ValueError(
             "configured_width must be an integer in [2, 8]"
@@ -1271,6 +1279,9 @@ class ExactGreedyDecodeBurstStats:
     lease_local_delta_journal_one_phase_commits: int = 0
     lease_local_delta_journal_one_phase_rollbacks: int = 0
     lease_local_delta_journal_one_phase_published_blocks: int = 0
+    k16_attempts: int = 0
+    k16_acceptances: int = 0
+    k8_fallbacks: int = 0
     requested_width_histogram: dict[int, int] = field(
         default_factory=dict
     )
@@ -1298,6 +1309,12 @@ class ExactGreedyDecodeBurstStats:
     identity_seal_fallback_counts: dict[str, int] = field(
         default_factory=dict
     )
+    elastic_k16_fallback_counts: dict[str, int] = field(
+        default_factory=dict
+    )
+    per_width_commits: dict[int, int] = field(
+        default_factory=dict
+    )
     quarantine_reason: Optional[str] = None
     capture_receipts: list[
         ExactGreedyDecodeBurstCaptureReceipt
@@ -1305,6 +1322,39 @@ class ExactGreedyDecodeBurstStats:
 
     def record_attempt(self) -> None:
         self.attempts += 1
+
+    def record_elastic_width_decision(
+        self,
+        *,
+        requested_width: int,
+        selected_width: int,
+        fallback_reason: Optional[str],
+    ) -> None:
+        _require_positive_int(requested_width, "requested_width")
+        _require_positive_int(selected_width, "selected_width")
+        if requested_width != 16:
+            raise ValueError(
+                "elastic K16 decision must request width sixteen"
+            )
+        if selected_width not in (8, 16):
+            raise ValueError(
+                "elastic K16 decision must select width eight or sixteen"
+            )
+        self.k16_attempts += 1
+        if selected_width == 16:
+            if fallback_reason is not None:
+                raise ValueError(
+                    "accepted K16 decision cannot have a fallback reason"
+                )
+            return
+        reason = _require_reason(
+            fallback_reason,
+            "elastic K16 fallback reason",
+        )
+        self.k8_fallbacks += 1
+        self.elastic_k16_fallback_counts[reason] = (
+            self.elastic_k16_fallback_counts.get(reason, 0) + 1
+        )
 
     def record_acceptance(
         self,
@@ -1331,6 +1381,11 @@ class ExactGreedyDecodeBurstStats:
             "block_boundary_clipped",
         )
         self.acceptances += 1
+        if (
+            requested_token_count == 16
+            and authorized_token_count == 16
+        ):
+            self.k16_acceptances += 1
         self.pending_leases += 1
         self.requested_width_histogram[requested_token_count] = (
             self.requested_width_histogram.get(
@@ -1557,8 +1612,15 @@ class ExactGreedyDecodeBurstStats:
         *,
         token_count: int,
         host_visible_gap_ns: int,
+        authorized_width: Optional[int] = None,
     ) -> None:
         _require_positive_int(token_count, "token_count")
+        if authorized_width is None:
+            authorized_width = token_count
+        _require_positive_int(
+            authorized_width,
+            "authorized_width",
+        )
         _require_non_negative_int(
             host_visible_gap_ns,
             "host_visible_gap_ns",
@@ -1568,6 +1630,9 @@ class ExactGreedyDecodeBurstStats:
         self.pending_leases -= 1
         self.commits += 1
         self.committed_tokens += token_count
+        self.per_width_commits[authorized_width] = (
+            self.per_width_commits.get(authorized_width, 0) + 1
+        )
         self.maximum_host_visible_gap_ns = max(
             self.maximum_host_visible_gap_ns,
             host_visible_gap_ns,
@@ -1649,6 +1714,9 @@ class ExactGreedyDecodeBurstStats:
         self.suffix_committed_tokens += token_count
         self.commits += 1
         self.committed_tokens += parent_token_count
+        self.per_width_commits[parent_token_count] = (
+            self.per_width_commits.get(parent_token_count, 0) + 1
+        )
 
     def record_failure(self, *, terminal: bool) -> None:
         _require_bool(terminal, "terminal")
@@ -1795,6 +1863,9 @@ class ExactGreedyDecodeBurstStats:
                 self
                 .lease_local_delta_journal_one_phase_published_blocks
             ),
+            "k16_attempts": self.k16_attempts,
+            "k16_acceptances": self.k16_acceptances,
+            "k8_fallbacks": self.k8_fallbacks,
             "requested_width_histogram": {
                 str(key): value
                 for key, value in sorted(
@@ -1810,6 +1881,15 @@ class ExactGreedyDecodeBurstStats:
             "fallback_counts": dict(
                 sorted(self.fallback_counts.items())
             ),
+            "elastic_k16_fallback_counts": dict(
+                sorted(self.elastic_k16_fallback_counts.items())
+            ),
+            "per_width_commits": {
+                str(key): value
+                for key, value in sorted(
+                    self.per_width_commits.items()
+                )
+            },
             "identity_seal_fallback_counts": dict(
                 sorted(self.identity_seal_fallback_counts.items())
             ),

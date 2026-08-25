@@ -2016,6 +2016,66 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
     ] == 1
 
 
+def test_stats_track_elastic_k16_selection_and_per_width_commits() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    stats.record_elastic_width_decision(
+        requested_width=16,
+        selected_width=16,
+        fallback_reason=None,
+    )
+    stats.record_acceptance(
+        requested_token_count=16,
+        authorized_token_count=16,
+        output_budget_clipped=False,
+        block_boundary_clipped=False,
+    )
+    stats.record_commit(
+        token_count=16,
+        host_visible_gap_ns=10,
+        authorized_width=16,
+    )
+    stats.record_elastic_width_decision(
+        requested_width=16,
+        selected_width=8,
+        fallback_reason="context_above_2048",
+    )
+    stats.record_acceptance(
+        requested_token_count=8,
+        authorized_token_count=8,
+        output_budget_clipped=False,
+        block_boundary_clipped=False,
+    )
+    stats.record_commit(
+        token_count=8,
+        host_visible_gap_ns=20,
+        authorized_width=8,
+    )
+
+    summary = stats.summary()
+    assert summary["k16_attempts"] == 2
+    assert summary["k16_acceptances"] == 1
+    assert summary["k8_fallbacks"] == 1
+    assert summary["elastic_k16_fallback_counts"] == {
+        "context_above_2048": 1,
+    }
+    assert summary["per_width_commits"] == {"8": 1, "16": 1}
+    assert summary["fallback_counts"] == {}
+
+
+def test_k16_selection_is_not_acceptance_until_lease_is_issued() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    stats.record_elastic_width_decision(
+        requested_width=16,
+        selected_width=16,
+        fallback_reason=None,
+    )
+
+    summary = stats.summary()
+    assert summary["k16_attempts"] == 1
+    assert summary["k16_acceptances"] == 0
+    assert summary["pending_leases"] == 0
+
+
 def test_stats_track_split_phase_benefit_cost_and_failures() -> None:
     stats = ExactGreedyDecodeBurstStats()
     stats.record_acceptance(
