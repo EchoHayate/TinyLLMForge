@@ -9041,12 +9041,30 @@ class ModelRunner:
         block_ids = tuple(
             int(block_id) for block_id in seq.block_table
         )
-        leased_block_ids = tuple(
-            block_id
-            for block_id, _generation
-            in lease.block_table_identity
-        )
-        if block_ids != leased_block_ids:
+        identity_seal = lease.block_table_identity_seal
+        if identity_seal is None:
+            identity_matches = block_ids == tuple(
+                block_id
+                for block_id, _generation
+                in lease.block_table_identity
+            )
+        else:
+            write_block_index = identity_seal.write_block_index
+            predecessor_block_id = (
+                block_ids[write_block_index - 1]
+                if 0 < write_block_index < len(block_ids)
+                else None
+            )
+            identity_matches = (
+                identity_seal.sequence_id == int(seq.seq_id)
+                and len(block_ids) == identity_seal.block_count
+                and 0 <= write_block_index < len(block_ids)
+                and block_ids[write_block_index]
+                == identity_seal.write_block_id
+                and predecessor_block_id
+                == identity_seal.predecessor_block_id
+            )
+        if not identity_matches:
             return self._exact_greedy_decode_burst_fallback(
                 self.exact_greedy_decode_burst_stats,
                 "block_table_identity_drift",

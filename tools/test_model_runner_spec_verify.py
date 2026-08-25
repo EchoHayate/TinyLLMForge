@@ -4310,6 +4310,114 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
     assert call["expected_graph_identity_sha256"] == "b" * 64
 
 
+def test_model_runner_exact_burst_accepts_scheduler_validated_sealed_identity():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(exact_greedy_decode_burst=True)
+    materializations = []
+    calls = []
+    expected = object()
+
+    def prepare_block_tables(rows, name="block_tables"):
+        materializations.append((rows, name))
+        return FakeTensor([list(row) for row in rows])
+
+    runner.prepare_block_tables_from_rows = prepare_block_tables
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 8,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **kwargs):
+            block_table = kwargs["block_table_factory"]()
+            assert block_table.values == [[5, 6, -1, -1]]
+            calls.append(kwargs)
+            return expected
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph()
+    seal = burst_module.BlockTableIdentitySeal(
+        sequence_id=7,
+        table_revision=2,
+        ownership_generation=11,
+        block_count=2,
+        write_block_index=1,
+        write_block_id=6,
+        write_block_generation=9,
+        predecessor_block_id=5,
+        predecessor_block_generation=8,
+        identity_sha256="a" * 64,
+    )
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=8,
+        authorized_token_count=8,
+        initial_completion_count=1,
+        initial_sequence_length=257,
+        block_table_identity=(),
+        block_table_identity_seal=seal,
+        write_block_id=6,
+        write_block_generation=9,
+        first_write_position=256,
+        last_write_position=263,
+        first_physical_slot=6 * 256,
+        last_physical_slot=6 * 256 + 7,
+        remaining_output_tokens=8,
+        completion_only=True,
+    )
+    seq = SimpleNamespace(
+        seq_id=7,
+        last_token=31,
+        block_table=[5, 6],
+    )
+
+    result = runner.run_exact_greedy_decode_burst((seq,), lease)
+
+    assert result is expected
+    assert len(calls) == 1
+    assert materializations == [(
+        [[5, 6, -1, -1]],
+        "exact_greedy_burst_block_table",
+    )]
+    for drifted_block_table in (
+        [5],
+        [5, 7],
+        [4, 6],
+    ):
+        fallback = runner.run_exact_greedy_decode_burst(
+            (
+                SimpleNamespace(
+                    seq_id=7,
+                    last_token=31,
+                    block_table=drifted_block_table,
+                ),
+            ),
+            lease,
+        )
+        assert type(fallback).__name__ == (
+            "ExactGreedyDecodeBurstFallback"
+        )
+        assert fallback.fallback_reason == (
+            "block_table_identity_drift"
+        )
+        assert fallback.replay_count == 0
+    assert len(calls) == 1
+
+
 def test_model_runner_split_phase_delegates_to_k8_mailbox_backend():
     burst_module = sys.modules[
         "tinyvllm.engine.exact_greedy_decode_burst"
