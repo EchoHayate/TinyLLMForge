@@ -4,7 +4,7 @@ from copy import deepcopy
 import math
 from pathlib import Path
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.profile_context_gated_elastic_exact_burst import (
+    CORRECTNESS_BLOCK_SIZE,
     CONTEXT_LENGTHS,
     GENERATED_TOKENS,
     POLICIES,
@@ -262,8 +263,76 @@ def test_llm_arms_only_differ_by_elastic_k16_flag() -> None:
     }
     assert control["exact_greedy_decode_burst"] is True
     assert control["exact_greedy_decode_burst_tokens"] == 8
+    assert control["kvcache_block_size"] == CORRECTNESS_BLOCK_SIZE
     assert control["tensor_parallel_size"] == 1
     assert control["max_num_seqs"] == 1
+
+
+def test_correctness_sampling_is_policy_and_context_aware() -> None:
+    from tools import profile_context_gated_elastic_exact_burst as profile
+
+    tinyvllm_package = ModuleType("tinyvllm")
+    tinyvllm_package.__path__ = [str(REPO_ROOT / "tinyvllm")]
+    engine_package = ModuleType("tinyvllm.engine")
+    engine_package.__path__ = [
+        str(REPO_ROOT / "tinyvllm" / "engine")
+    ]
+    expected_ordinals = {
+        ("fixed_k8", 256): (0, 6, 7),
+        ("fixed_k8", 2048): (0, 6, 7),
+        ("fixed_k8", 4096): (0, 6, 7),
+        ("fixed_k8", 8192): (0, 6, 7),
+        ("context_gated_elastic_k16", 256): (0, 6, 15),
+        ("context_gated_elastic_k16", 2048): (0, 6, 15),
+        ("context_gated_elastic_k16", 4096): (0, 6, 7),
+        ("context_gated_elastic_k16", 8192): (0, 6, 7),
+    }
+    expected_trace_starts = {
+        ("fixed_k8", 256): {1, 57, 121},
+        ("fixed_k8", 2048): {1, 57, 121},
+        ("fixed_k8", 4096): {1, 57, 121},
+        ("fixed_k8", 8192): {1, 57, 121},
+        ("context_gated_elastic_k16", 256): {1, 49, 121},
+        ("context_gated_elastic_k16", 2048): {1, 49, 121},
+        ("context_gated_elastic_k16", 4096): {1, 57, 121},
+        ("context_gated_elastic_k16", 8192): {1, 57, 121},
+    }
+
+    with patch.dict(
+        sys.modules,
+        {
+            "tinyvllm": tinyvllm_package,
+            "tinyvllm.engine": engine_package,
+        },
+    ):
+        for identity, expected in expected_ordinals.items():
+            policy, context_length = identity
+            assert profile._correctness_sampled_logit_ordinals(
+                policy=policy,
+                context_length=context_length,
+            ) == expected
+
+            emitted_total = 1
+            selected_starts = set()
+            while emitted_total < GENERATED_TOKENS:
+                if profile._correctness_trace_for_step(
+                    policy=policy,
+                    context_length=context_length,
+                    emitted_total=emitted_total,
+                ):
+                    selected_starts.add(emitted_total)
+                remaining = GENERATED_TOKENS - emitted_total
+                width = (
+                    16
+                    if (
+                        policy == "context_gated_elastic_k16"
+                        and context_length <= 2048
+                        and remaining >= 16
+                    )
+                    else 8
+                )
+                emitted_total += min(width, remaining)
+            assert selected_starts == expected_trace_starts[identity]
 
 
 def test_case_rows_bind_raw_metrics_costs_and_width_policy() -> None:

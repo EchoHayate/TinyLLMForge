@@ -60,6 +60,7 @@ GENERATED_TOKENS = 128
 REPETITIONS = 5
 WARMUP_REPETITIONS = 2
 SAMPLING_POINTS = _base.SAMPLING_POINTS
+CORRECTNESS_BLOCK_SIZE = 256
 SOURCE_FILES = (
     "tinyvllm/config.py",
     "tinyvllm/engine/exact_greedy_decode_burst.py",
@@ -742,6 +743,7 @@ def _construct_llm(
         max_num_batched_tokens=prompt_tokens + generated_tokens,
         max_num_seqs=1,
         max_model_len=prompt_tokens + generated_tokens,
+        kvcache_block_size=CORRECTNESS_BLOCK_SIZE,
         gpu_memory_utilization=gpu_memory_utilization,
         tensor_parallel_size=1,
         enforce_eager=False,
@@ -982,6 +984,94 @@ def _sampling_output_index(point: str) -> int:
         raise ValueError("sampling point is invalid") from error
 
 
+def _correctness_selected_width(
+    *,
+    policy: str,
+    context_length: int,
+    emitted_total: int,
+) -> int:
+    if policy not in POLICIES:
+        raise ValueError("policy is invalid")
+    if context_length not in CONTEXT_LENGTHS:
+        raise ValueError("context length is invalid")
+    _require_non_negative_int(emitted_total, "emitted_total")
+    if emitted_total <= 0 or emitted_total >= GENERATED_TOKENS:
+        return 0
+
+    from tinyvllm.engine.exact_greedy_decode_burst import (
+        select_context_gated_elastic_exact_burst_width,
+    )
+
+    first_write_position = context_length + emitted_total - 1
+    write_block_capacity = (
+        CORRECTNESS_BLOCK_SIZE
+        - (first_write_position % CORRECTNESS_BLOCK_SIZE)
+    )
+    decision = select_context_gated_elastic_exact_burst_width(
+        enabled=POLICY_CONFIGS[policy][
+            "exact_greedy_decode_burst_elastic_k16"
+        ],
+        base_width=8,
+        initial_sequence_length=context_length,
+        remaining_output_tokens=(
+            GENERATED_TOKENS - emitted_total
+        ),
+        write_block_capacity=write_block_capacity,
+        shared_graph_available=True,
+        k16_health_quarantined=False,
+        incompatible_modes=(),
+    )
+    return min(
+        decision.selected_width,
+        GENERATED_TOKENS - emitted_total,
+        write_block_capacity,
+    )
+
+
+def _correctness_sampled_logit_ordinals(
+    *,
+    policy: str,
+    context_length: int,
+) -> tuple[int, ...]:
+    sampled_indices = {
+        _sampling_output_index(point)
+        for point in SAMPLING_POINTS[1:]
+    }
+    sampled_ordinals = set()
+    emitted_total = 1
+    while emitted_total < GENERATED_TOKENS:
+        width = _correctness_selected_width(
+            policy=policy,
+            context_length=context_length,
+            emitted_total=emitted_total,
+        )
+        for output_index in sampled_indices:
+            if emitted_total <= output_index < emitted_total + width:
+                sampled_ordinals.add(output_index - emitted_total)
+        emitted_total += width
+    return tuple(sorted(sampled_ordinals))
+
+
+def _correctness_trace_for_step(
+    *,
+    policy: str,
+    context_length: int,
+    emitted_total: int,
+) -> bool:
+    width = _correctness_selected_width(
+        policy=policy,
+        context_length=context_length,
+        emitted_total=emitted_total,
+    )
+    if width == 0:
+        return False
+    return any(
+        emitted_total <= _sampling_output_index(point)
+        < emitted_total + width
+        for point in SAMPLING_POINTS[1:]
+    )
+
+
 def run_correctness_probe(
     *,
     model: str,
@@ -1006,7 +1096,10 @@ def run_correctness_probe(
     try:
         llm.model_runner.call(
             "capture_exact_greedy_decode_burst_correctness_graph",
-            (0, 6, 7, 15),
+            _correctness_sampled_logit_ordinals(
+                policy=policy,
+                context_length=context_length,
+            ),
         )
         llm.enable_step_logits_authority_recording(
             True,
@@ -1026,7 +1119,11 @@ def run_correctness_probe(
         final_outputs = None
         emitted_total = 0
         while not llm.is_finished():
-            trace_this_step = emitted_total > 0
+            trace_this_step = _correctness_trace_for_step(
+                policy=policy,
+                context_length=context_length,
+                emitted_total=emitted_total,
+            )
             outputs, _num_tokens = llm.step(
                 completion_only=True,
                 exact_burst_correctness_trace=trace_this_step,
