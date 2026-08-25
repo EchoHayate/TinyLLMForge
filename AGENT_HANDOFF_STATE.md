@@ -50794,3 +50794,106 @@ generation-sealed block-table identity suite:
 ```text
 NEXT_COMMAND=python3 -m pytest tools/test_generation_sealed_block_identity.py -q
 ```
+
+## 2026-08-25 generation-sealed identity terminal reconciliation
+
+The generation-sealed lease-identity implementation and complete source-bound
+GPU gate are finished in the authoritative checkout:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+branch: feat/kv-sparse-attention
+frozen source:
+  18f2ff24d2c4fa470a2f118afada194b26f4149a
+run tag:
+  20260825-generation-sealed-task7-r7
+```
+
+Terminal evidence:
+
+```text
+performance rows:        60 / 60
+correctness rows:        24 / 24
+logit sidecars:          12 / 12
+worker exit code:        0
+producer classification:        NO_GO_PERFORMANCE
+remote verifier:                 PASS / NO_GO_PERFORMANCE
+frozen-source local verifier:    PASS / NO_GO_PERFORMANCE
+output/logit/argmax parity:       exact / 0.0 max abs diff
+execution inventory:             equal
+candidate cold/hot/validations:  30 / 450 / 1440
+candidate fallback/failure/rollback:
+                                0 / 0 / 0
+```
+
+GPU benefit and cost:
+
+```text
+8K lifecycle median/P95 improvement:
+  48.046332% / 7.587183%
+aggregate lifecycle median/P95 improvement:
+  35.881303% / 12.584104%
+aggregate TPOT median improvement:
+  0.463800%
+aggregate TPOT P95/P99 regression:
+  2.439467% / 2.439467%
+TTFT improvement:
+  1.309128%
+E2E improvement:
+  0.219737%
+throughput improvement:
+  0.220221%
+allocated/reserved memory improvement:
+  0.464710% / 1.011846%
+```
+
+The gate is a performance NO-GO, not a correctness or safety failure. It
+misses the 8K and aggregate lifecycle-P95 thresholds, the 0.5% TPOT-median
+threshold, and the 2% TPOT-P95/P99 protection limit. The feature remains
+default-disabled and is not promoted.
+
+Model-agnostic review:
+
+```text
+mechanism:    reusable candidate
+integration:  first adopter only
+```
+
+Core consumes only sequence/block ownership and lease/seal lifecycle state.
+Qwen3-0.6B, TP1, K8, contexts, workload order, and thresholds remain in the
+benchmark/profile layer. A second caller/model is still absent.
+
+Detailed audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-24-exact-burst-generation-sealed-lease-identity-audit.md
+```
+
+Local test boundary:
+
+```text
+historical 20-file combined pytest process:
+  482 passed, 1 skipped, 32 failed
+root cause:
+  legacy cross-module import/global monkeypatch contamination
+fresh dependency-light files in isolated local Python processes:
+  505 passed, 1 skipped
+fresh Torch-backed tools/test_chunked_prefill.py on frozen remote source:
+  101 passed
+fresh local artifact verifier:
+  PASS / NO_GO_PERFORMANCE / 60 + 24 rows
+```
+
+Do not reinterpret the combined-process failures as runtime regressions, and
+do not silently claim the suite is globally isolation-safe.
+
+The frozen execution order now advances to the already approved elastic
+K8/K16 ceiling:
+
+```text
+GENERATION_SEALED_IDENTITY=NO_GO_PERFORMANCE_COMPLETE
+ELASTIC_K8_K16=NEXT
+OCTET_FOLDED_GRAPH=BLOCKED_BY_ELASTIC
+NEXT_COMMAND=read docs/superpowers/plans/2026-08-24-context-gated-elastic-exact-burst.md and execute its first unchecked task
+```

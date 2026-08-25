@@ -4270,3 +4270,64 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-25 latest reconciliation: Generation-Sealed Lease Identity
+
+This EOF block records the complete source-bound gate for generation-sealed
+block-table lease identity. It does not supersede the established Phase-1
+exact-greedy K8 result; it classifies this follow-up bookkeeping optimization.
+
+### Prompt-to-artifact checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Immutable source and clean patch | commit `18f2ff24d2c4fa470a2f118afada194b26f4149a`; empty-patch SHA256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | `PASS` |
+| Approved mounted storage | staging, primary, and controller paths are below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818` | `PASS` |
+| Strict-clean GPU | A100 GPU 2, 3 MiB, 0%, no compute process at admission | `PASS` |
+| Complete performance matrix | two policies x three contexts x ten repetitions | `PASS_60_OF_60` |
+| Complete correctness matrix | two policies x three contexts x four sampling points | `PASS_24_OF_24` |
+| Exact numerical behavior | output IDs and argmax exact; sampled-logit max absolute difference `0.0` | `PASS_EXACT` |
+| Execution and transaction invariants | equal forwards/replays/D2H; 30 cold captures, 450 hot reuses, 1,440 validations, zero fallback/failure/rollback | `PASS` |
+| Worker and verifier closure | worker exit 0; producer, remote verifier, and frozen-source local verifier agree | `PASS` |
+| Median lifecycle benefit | 8K `48.046332%`; aggregate `35.881303%` | `PASS` |
+| Lifecycle tail benefit | 8K P95 `7.587183%`; aggregate P95 `12.584104%` | `FAIL` |
+| TPOT benefit and protection | median improvement `0.463800%`; P95/P99 regression `2.439467%` | `FAIL` |
+| Memory and other protected metrics | TTFT, E2E, throughput, allocated, and reserved memory do not regress | `PASS` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Generation-sealed lease identity | Complete source-bound Qwen3-0.6B TP1 gate with exact correctness and dual-verifier agreement | `NO_GO_PERFORMANCE` |
+| Scheduler lifecycle median | 8K improves `48.046332%`; aggregate improves `35.881303%` | `ESTABLISHED_LOCAL_BENEFIT` |
+| Scheduler lifecycle P95 | 8K improves only `7.587183%`; aggregate improves only `12.584104%` | `BELOW_THRESHOLD` |
+| End-to-end TPOT | median improves `0.463800%`, while P95/P99 regress `2.439467%` | `NOT_PROMOTABLE` |
+| Correctness and transaction safety | exact tokens/logits/argmax, equal execution inventory, no fallback/failure/rollback | `PASS` |
+| Genericity | reusable sequence/block ownership mechanism with one exact-greedy K8 adopter and one Qwen3-0.6B hardware proof | `REUSABLE_CANDIDATE_FIRST_ADOPTER_ONLY` |
+
+Detailed evidence is in
+`docs/superpowers/audits/2026-08-24-exact-burst-generation-sealed-lease-identity-audit.md`.
+
+```text
+GENERATION_SEALED_IDENTITY_RUN=20260825-generation-sealed-task7-r7
+GENERATION_SEALED_IDENTITY_SOURCE_COMMIT=18f2ff24d2c4fa470a2f118afada194b26f4149a
+GENERATION_SEALED_IDENTITY_CLASSIFICATION=NO_GO_PERFORMANCE
+GENERATION_SEALED_IDENTITY_PERFORMANCE_ROWS=60_OF_60
+GENERATION_SEALED_IDENTITY_CORRECTNESS_ROWS=24_OF_24
+GENERATION_SEALED_IDENTITY_WORKER_EXITCODE=0
+GENERATION_SEALED_IDENTITY_REMOTE_VERIFIER=PASS
+GENERATION_SEALED_IDENTITY_FROZEN_SOURCE_LOCAL_VERIFIER=PASS
+GENERATION_SEALED_IDENTITY_CORRECTNESS=PASS_EXACT
+GENERATION_SEALED_IDENTITY_8K_LIFECYCLE_MEDIAN=IMPROVEMENT_48_046332_PERCENT
+GENERATION_SEALED_IDENTITY_8K_LIFECYCLE_P95=IMPROVEMENT_7_587183_PERCENT
+GENERATION_SEALED_IDENTITY_AGGREGATE_LIFECYCLE_MEDIAN=IMPROVEMENT_35_881303_PERCENT
+GENERATION_SEALED_IDENTITY_AGGREGATE_LIFECYCLE_P95=IMPROVEMENT_12_584104_PERCENT
+GENERATION_SEALED_IDENTITY_AGGREGATE_TPOT_MEDIAN=IMPROVEMENT_0_463800_PERCENT
+GENERATION_SEALED_IDENTITY_AGGREGATE_TPOT_P95=REGRESSION_2_439467_PERCENT
+GENERATION_SEALED_IDENTITY_AGGREGATE_TPOT_P99=REGRESSION_2_439467_PERCENT
+GENERATION_SEALED_IDENTITY_PROMOTION=NOT_AUTHORIZED
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
