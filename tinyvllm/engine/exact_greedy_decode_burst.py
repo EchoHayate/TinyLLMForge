@@ -15,6 +15,7 @@ from tinyvllm.engine.block_identity import BlockTableIdentitySeal
 MEDIUM_SPLIT_K_NUM_SPLITS = 12
 MEDIUM_SPLIT_K_MIN_CONTEXT_LENGTH = 1537
 MEDIUM_SPLIT_K_MAX_CONTEXT_LENGTH = 4097
+MAX_ELASTIC_BURST_WIDTH_HEALTH_GENERATION = (1 << 63) - 1
 IDENTITY_SEAL_FALLBACK_REASONS = frozenset({
     "untracked_block_table",
 })
@@ -158,6 +159,109 @@ class ElasticExactBurstWidthDecision:
     selected_width: int
     k16_eligible: bool
     k16_fallback_reason: Optional[str]
+
+
+@dataclass
+class ElasticBurstWidthHealth:
+    generation: int = 1
+    k16_quarantine_reason: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _require_positive_int(self.generation, "generation")
+        if (
+            self.generation
+            > MAX_ELASTIC_BURST_WIDTH_HEALTH_GENERATION
+        ):
+            raise ValueError(
+                "generation exceeds the supported maximum"
+            )
+        if self.k16_quarantine_reason is not None:
+            _require_reason(
+                self.k16_quarantine_reason,
+                "K16 quarantine reason",
+            )
+
+    def quarantine_k16(self, reason: str) -> None:
+        reason = _require_reason(
+            reason,
+            "K16 quarantine reason",
+        )
+        if self.k16_quarantine_reason is not None:
+            return
+        if (
+            self.generation
+            >= MAX_ELASTIC_BURST_WIDTH_HEALTH_GENERATION
+        ):
+            raise OverflowError(
+                "K16 width-health generation exhausted"
+            )
+        self.generation += 1
+        self.k16_quarantine_reason = reason
+
+    def capability(
+        self,
+        shared_graph_capability: dict,
+    ) -> dict[str, object]:
+        if not isinstance(shared_graph_capability, dict):
+            raise ValueError(
+                "shared_graph_capability must be a dict"
+            )
+        shared_available = shared_graph_capability.get("available")
+        if not isinstance(shared_available, bool):
+            raise ValueError(
+                "shared graph availability must be a bool"
+            )
+        history_capacity = shared_graph_capability.get(
+            "history_capacity",
+            0,
+        )
+        _require_non_negative_int(
+            history_capacity,
+            "shared graph history capacity",
+        )
+        graph_generation = shared_graph_capability.get(
+            "graph_generation",
+            0,
+        )
+        _require_non_negative_int(
+            graph_generation,
+            "shared graph generation",
+        )
+
+        reason = None
+        if not shared_available:
+            shared_reason = shared_graph_capability.get(
+                "fallback_reason"
+            )
+            if shared_reason is None:
+                shared_reason = "capture_unavailable"
+            shared_reason = _require_reason(
+                shared_reason,
+                "shared graph fallback reason",
+            )
+            reason = f"shared_graph_unavailable:{shared_reason}"
+        elif history_capacity < 16:
+            reason = "k16_history_capacity_below_16"
+        elif self.k16_quarantine_reason is not None:
+            reason = (
+                "k16_quarantined:"
+                + self.k16_quarantine_reason
+            )
+
+        return {
+            "k8_available": shared_available,
+            "k16_available": reason is None,
+            "k16_fallback_reason": reason,
+            "k16_health_generation": self.generation,
+            "shared_graph_identity_sha256": (
+                shared_graph_capability.get(
+                    "graph_identity_sha256"
+                )
+            ),
+            "shared_graph_generation": graph_generation,
+            "shared_graph_history_capacity": history_capacity,
+            "incremental_retained_static_bytes": 0,
+        }
 
 
 def select_context_gated_elastic_exact_burst_width(
@@ -488,6 +592,7 @@ class ExactGreedyDecodeBurstLease:
     block_table_identity_seal: Optional[
         BlockTableIdentitySeal
     ] = None
+    width_health_generation: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -687,6 +792,13 @@ def _lease_payload(**values) -> dict:
             ),
             "identity_sha256": seal.identity_sha256,
         }
+    width_health_generation = values.get(
+        "width_health_generation"
+    )
+    if width_health_generation is not None:
+        payload["width_health_generation"] = (
+            width_health_generation
+        )
     return payload
 
 
@@ -751,8 +863,16 @@ def _sealed_lease_identity_payload(
     def encode_optional(value: Optional[int]) -> str:
         return "-" if value is None else str(value)
 
+    width_health_generation = values.get(
+        "width_health_generation"
+    )
     fields = (
-        "exact_greedy_decode_burst_lease_generation_sealed_v1",
+        (
+            "exact_greedy_decode_burst_lease_generation_sealed_"
+            "elastic_v1"
+            if width_health_generation is not None
+            else "exact_greedy_decode_burst_lease_generation_sealed_v1"
+        ),
         str(values["sequence_id"]),
         str(values["schedule_generation"]),
         str(values["graph_generation"]),
@@ -779,6 +899,8 @@ def _sealed_lease_identity_payload(
         encode_optional(seal.predecessor_block_generation),
         seal.identity_sha256,
     )
+    if width_health_generation is not None:
+        fields += (str(width_health_generation),)
     return "|".join(fields).encode("ascii")
 
 
@@ -803,6 +925,7 @@ def build_exact_greedy_decode_burst_lease(
     block_table_identity_seal: Optional[
         BlockTableIdentitySeal
     ] = None,
+    width_health_generation: Optional[int] = None,
 ) -> ExactGreedyDecodeBurstLease:
     for name, value in (
         ("sequence_id", sequence_id),
@@ -831,6 +954,19 @@ def build_exact_greedy_decode_burst_lease(
     if authorized_token_count > remaining_output_tokens:
         raise ValueError(
             "authorized token count exceeds output budget"
+        )
+    if authorized_token_count == 16:
+        if requested_token_count != 16:
+            raise ValueError(
+                "K16 authorized width requires K16 request"
+            )
+        _require_positive_int(
+            width_health_generation,
+            "width_health_generation",
+        )
+    elif width_health_generation is not None:
+        raise ValueError(
+            "K8 lease cannot bind width-health generation"
         )
     if (
         last_write_position
@@ -874,6 +1010,7 @@ def build_exact_greedy_decode_burst_lease(
         "remaining_output_tokens": remaining_output_tokens,
         "completion_only": completion_only,
         "block_table_identity_seal": seal,
+        "width_health_generation": width_health_generation,
     }
     if seal is None:
         encoded = json.dumps(
@@ -2169,6 +2306,7 @@ class ExactGreedyDecodeBurstGraph:
         rank: int,
         tensor_parallel_size: int,
         expected_graph_identity_sha256: Optional[str],
+        expected_width_health_generation: Optional[int],
     ) -> Optional[str]:
         if self.stats.quarantine_reason is not None:
             return "quarantined"
@@ -2178,6 +2316,14 @@ class ExactGreedyDecodeBurstGraph:
             return "graph_generation_drift"
         if lease.graph_generation != graph_generation:
             return "lease_graph_generation_drift"
+        if lease.authorized_token_count == 16:
+            if expected_width_health_generation is None:
+                return "width_health_unavailable"
+            if (
+                lease.width_health_generation
+                != expected_width_health_generation
+            ):
+                return "lease_width_health_generation_drift"
         if rank != self.rank:
             return "rank_drift"
         if tensor_parallel_size != self.tensor_parallel_size:
@@ -2252,6 +2398,8 @@ class ExactGreedyDecodeBurstGraph:
         rank: int,
         tensor_parallel_size: int,
         expected_graph_identity_sha256: Optional[str] = None,
+        expected_width_health_generation: Optional[int] = None,
+        width_health: Optional[ElasticBurstWidthHealth] = None,
     ) -> ExactGreedyDecodeBurstResult | ExactGreedyDecodeBurstFallback:
         reason = self._pre_replay_fallback(
             lease=lease,
@@ -2260,6 +2408,9 @@ class ExactGreedyDecodeBurstGraph:
             tensor_parallel_size=tensor_parallel_size,
             expected_graph_identity_sha256=(
                 expected_graph_identity_sha256
+            ),
+            expected_width_health_generation=(
+                expected_width_health_generation
             ),
         )
         if reason is not None:
@@ -2398,7 +2549,13 @@ class ExactGreedyDecodeBurstGraph:
                 + type(error).__name__
             )
             self.invalidate_continuation(reason)
-            self.stats.quarantine(reason)
+            if (
+                lease.authorized_token_count == 16
+                and width_health is not None
+            ):
+                width_health.quarantine_k16(reason)
+            else:
+                self.stats.quarantine(reason)
             raise
         self.stats.record_final_token_d2h(
             token_count=len(tokens),
@@ -2441,7 +2598,13 @@ class ExactGreedyDecodeBurstGraph:
                         + type(error).__name__
                     )
                     self.invalidate_continuation(reason)
-                    self.stats.quarantine(reason)
+                    if (
+                        lease.authorized_token_count == 16
+                        and width_health is not None
+                    ):
+                        width_health.quarantine_k16(reason)
+                    else:
+                        self.stats.quarantine(reason)
                     raise
                 sampled_logit_d2h_calls = 1
                 self.stats.record_sampled_logit_d2h()
@@ -2517,7 +2680,13 @@ class ExactGreedyDecodeBurstGraph:
                 + type(error).__name__
             )
             self.invalidate_continuation(reason)
-            self.stats.quarantine(reason)
+            if (
+                lease.authorized_token_count == 16
+                and width_health is not None
+            ):
+                width_health.quarantine_k16(reason)
+            else:
+                self.stats.quarantine(reason)
             raise
 
     def replay_split_phase(
@@ -2532,6 +2701,7 @@ class ExactGreedyDecodeBurstGraph:
         rank: int,
         tensor_parallel_size: int,
         expected_graph_identity_sha256: Optional[str] = None,
+        expected_width_health_generation: Optional[int] = None,
     ):
         reason = self._pre_replay_fallback(
             lease=lease,
@@ -2540,6 +2710,9 @@ class ExactGreedyDecodeBurstGraph:
             tensor_parallel_size=tensor_parallel_size,
             expected_graph_identity_sha256=(
                 expected_graph_identity_sha256
+            ),
+            expected_width_health_generation=(
+                expected_width_health_generation
             ),
         )
         if reason is not None:

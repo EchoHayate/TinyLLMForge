@@ -720,6 +720,7 @@ def make_runner(**overrides):
         "exact_greedy_decode_burst_split_phase": False,
         "exact_greedy_decode_burst_ragged_coalescing": False,
         "exact_greedy_decode_burst_medium_split_k": False,
+        "exact_greedy_decode_burst_elastic_k16": False,
         "exact_greedy_decode_burst_tokens": 4,
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
@@ -774,6 +775,9 @@ def make_runner(**overrides):
     )
     runner.exact_greedy_decode_burst_stats = (
         burst_module.ExactGreedyDecodeBurstStats()
+    )
+    runner.elastic_exact_burst_width_health = (
+        burst_module.ElasticBurstWidthHealth()
     )
     runner._ordinary_graph_generation = 0
     runner.qwen35_recurrent_capture_session = None
@@ -4209,6 +4213,114 @@ def test_exact_burst_capability_is_fail_closed_and_json_safe():
         "graph_generation": 7,
         "correctness_trace": False,
     }
+
+
+def test_elastic_width_health_reuses_the_exact_burst_graph_owner():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    assert hasattr(burst_module, "ElasticBurstWidthHealth")
+    disabled = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_tokens=8,
+        exact_greedy_decode_burst_elastic_k16=False,
+    )
+    enabled = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_tokens=8,
+        exact_greedy_decode_burst_elastic_k16=True,
+    )
+    assert hasattr(disabled, "elastic_exact_burst_width_health")
+    assert hasattr(enabled, "elastic_exact_burst_width_health")
+
+    class FakeGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "fallback_reason": None,
+                "graph_identity_sha256": "c" * 64,
+                "graph_generation": 5,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 256,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+    graph = FakeGraph()
+    disabled.exact_greedy_decode_burst_graph = graph
+    enabled.exact_greedy_decode_burst_graph = graph
+    k8_lease = SimpleNamespace(
+        initial_sequence_length=256,
+        authorized_token_count=8,
+    )
+    k16_lease = SimpleNamespace(
+        initial_sequence_length=256,
+        authorized_token_count=16,
+    )
+
+    assert disabled._select_exact_greedy_decode_burst_graph(
+        k8_lease,
+        correctness_trace=False,
+    ) is graph
+    assert enabled._select_exact_greedy_decode_burst_graph(
+        k16_lease,
+        correctness_trace=False,
+    ) is graph
+    assert disabled.exact_greedy_decode_burst_stats.capture_receipts == []
+    assert enabled.exact_greedy_decode_burst_stats.capture_receipts == []
+
+    capability = (
+        enabled.elastic_exact_greedy_decode_burst_capability()
+    )
+    assert capability["k8_available"] is True
+    assert capability["k16_available"] is True
+    assert capability["shared_graph_identity_sha256"] == "c" * 64
+    assert capability["incremental_retained_static_bytes"] == 0
+
+    enabled.elastic_exact_burst_width_health.quarantine_k16(
+        "host_visible_gap_exceeded"
+    )
+    quarantined = (
+        enabled.elastic_exact_greedy_decode_burst_capability()
+    )
+    assert quarantined["k8_available"] is True
+    assert quarantined["k16_available"] is False
+
+    graph.capability = lambda: {
+        **FakeGraph().capability(),
+        "available": False,
+        "fallback_reason": "quarantined",
+        "quarantine_reason": "replay_failure:RuntimeError",
+    }
+    shared_failure = (
+        enabled.elastic_exact_greedy_decode_burst_capability()
+    )
+    assert shared_failure["k8_available"] is False
+    assert shared_failure["k16_available"] is False
+
+
+def test_elastic_k16_flag_does_not_add_a_capture_path():
+    tree = ast.parse(open(_MODEL_RUNNER_PATH).read())
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    capture_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_capture_exact_greedy_decode_burst"
+    )
+    assert (
+        "exact_greedy_decode_burst_elastic_k16"
+        not in ast.unparse(capture_method)
+    )
 
 
 def test_model_runner_exact_burst_delegates_once_with_padded_block_table():

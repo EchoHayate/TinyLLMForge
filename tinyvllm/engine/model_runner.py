@@ -73,6 +73,7 @@ from tinyvllm.engine.graph_resident_greedy_tail import (
 )
 from tinyvllm.engine.exact_greedy_decode_burst import (
     MEDIUM_SPLIT_K_NUM_SPLITS,
+    ElasticBurstWidthHealth,
     ExactGreedyDecodeBurstFallback,
     ExactGreedyDecodeBurstGraph,
     ExactGreedyDecodeBurstLease,
@@ -2246,6 +2247,9 @@ class ModelRunner:
         )
         self.exact_greedy_decode_burst_stats = (
             ExactGreedyDecodeBurstStats()
+        )
+        self.elastic_exact_burst_width_health = (
+            ElasticBurstWidthHealth()
         )
         self._ordinary_graph_generation = 0
         self._record_step_logits = False
@@ -8970,6 +8974,35 @@ class ModelRunner:
             ),
         }
 
+    def elastic_exact_greedy_decode_burst_capability(
+        self,
+        *,
+        correctness_trace: bool = False,
+    ) -> dict[str, object]:
+        graph = (
+            self.exact_greedy_decode_burst_correctness_graph
+            if correctness_trace
+            else self.exact_greedy_decode_burst_graph
+        )
+        shared_capability = (
+            self.exact_greedy_decode_burst_capability(
+                correctness_trace=correctness_trace,
+                graph=graph,
+            )
+        )
+        history_capacity = 0
+        if graph is not None:
+            graph_capability = graph.capability()
+            history_capacity = int(
+                graph_capability.get("history_capacity", 0)
+            )
+        return self.elastic_exact_burst_width_health.capability(
+            {
+                **shared_capability,
+                "history_capacity": history_capacity,
+            }
+        )
+
     def _select_exact_greedy_decode_burst_graph(
         self,
         lease: ExactGreedyDecodeBurstLease,
@@ -9128,6 +9161,9 @@ class ModelRunner:
                 expected_graph_identity_sha256=capability[
                     "graph_identity_sha256"
                 ],
+                expected_width_health_generation=(
+                    self.elastic_exact_burst_width_health.generation
+                ),
             )
         return graph.replay(
             lease=lease,
@@ -9146,6 +9182,10 @@ class ModelRunner:
             expected_graph_identity_sha256=capability[
                 "graph_identity_sha256"
             ],
+            expected_width_health_generation=(
+                self.elastic_exact_burst_width_health.generation
+            ),
+            width_health=self.elastic_exact_burst_width_health,
         )
 
     def invalidate_exact_greedy_decode_burst_continuation(

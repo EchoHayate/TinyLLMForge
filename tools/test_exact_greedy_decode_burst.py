@@ -76,6 +76,11 @@ ExactGreedyDecodeBurstFallback = (
 )
 ExactGreedyDecodeBurstGraph = module.ExactGreedyDecodeBurstGraph
 ExactGreedyDecodeBurstLease = module.ExactGreedyDecodeBurstLease
+ElasticBurstWidthHealth = getattr(
+    module,
+    "ElasticBurstWidthHealth",
+    None,
+)
 BlockTableIdentitySeal = module.BlockTableIdentitySeal
 ExactGreedyDecodeBurstResult = module.ExactGreedyDecodeBurstResult
 ExactGreedyDecodeBurstStats = module.ExactGreedyDecodeBurstStats
@@ -1215,6 +1220,241 @@ class _SplitBackend:
             sampled_logit_d2h_calls=sampled_logit_d2h_calls,
             sampled_logits=sampled_logits,
         )
+
+
+def _k16_lease(
+    *,
+    width_health_generation=1,
+) -> ExactGreedyDecodeBurstLease:
+    return build_exact_greedy_decode_burst_lease(
+        sequence_id=17,
+        schedule_generation=9,
+        graph_generation=4,
+        requested_token_count=16,
+        authorized_token_count=16,
+        initial_completion_count=3,
+        initial_sequence_length=241,
+        block_table_identity=((7, 2),),
+        write_block_id=7,
+        write_block_generation=2,
+        first_write_position=240,
+        last_write_position=255,
+        first_physical_slot=2032,
+        last_physical_slot=2047,
+        remaining_output_tokens=16,
+        completion_only=True,
+        width_health_generation=width_health_generation,
+    )
+
+
+def test_elastic_width_health_is_monotonic_and_fail_closed() -> None:
+    assert callable(ElasticBurstWidthHealth)
+    health = ElasticBurstWidthHealth()
+    assert health.generation == 1
+    assert health.k16_quarantine_reason is None
+
+    health.quarantine_k16("host_visible_gap_exceeded")
+    assert health.generation == 2
+    assert (
+        health.k16_quarantine_reason
+        == "host_visible_gap_exceeded"
+    )
+
+    health.quarantine_k16("host_visible_gap_exceeded")
+    health.quarantine_k16("different_failure")
+    assert health.generation == 2
+    assert (
+        health.k16_quarantine_reason
+        == "host_visible_gap_exceeded"
+    )
+
+    for invalid in ("", None, 1):
+        _assert_raises(
+            ValueError,
+            (
+                "K16 quarantine reason must be a "
+                "non-empty string"
+            ),
+            lambda invalid=invalid: ElasticBurstWidthHealth(
+            ).quarantine_k16(invalid),
+        )
+
+    maximum = module.MAX_ELASTIC_BURST_WIDTH_HEALTH_GENERATION
+    exhausted = ElasticBurstWidthHealth(generation=maximum)
+    _assert_raises(
+        OverflowError,
+        "K16 width-health generation exhausted",
+        lambda: exhausted.quarantine_k16("failure"),
+    )
+    assert exhausted.generation == maximum
+    assert exhausted.k16_quarantine_reason is None
+
+
+def test_elastic_width_health_capability_reuses_shared_graph() -> None:
+    assert callable(ElasticBurstWidthHealth)
+    shared = {
+        "available": True,
+        "fallback_reason": None,
+        "graph_identity_sha256": "a" * 64,
+        "graph_generation": 7,
+        "history_capacity": 16,
+    }
+    original = dict(shared)
+    health = ElasticBurstWidthHealth()
+
+    capability = health.capability(shared)
+
+    assert shared == original
+    assert capability == {
+        "k8_available": True,
+        "k16_available": True,
+        "k16_fallback_reason": None,
+        "k16_health_generation": 1,
+        "shared_graph_identity_sha256": "a" * 64,
+        "shared_graph_generation": 7,
+        "shared_graph_history_capacity": 16,
+        "incremental_retained_static_bytes": 0,
+    }
+
+    health.quarantine_k16("host_visible_gap_exceeded")
+    quarantined = health.capability(shared)
+    assert quarantined["k8_available"] is True
+    assert quarantined["k16_available"] is False
+    assert quarantined["k16_fallback_reason"] == (
+        "k16_quarantined:host_visible_gap_exceeded"
+    )
+
+    unavailable = health.capability(
+        {
+            **shared,
+            "available": False,
+            "fallback_reason": "quarantined",
+        }
+    )
+    assert unavailable["k8_available"] is False
+    assert unavailable["k16_available"] is False
+    assert unavailable["k16_fallback_reason"] == (
+        "shared_graph_unavailable:quarantined"
+    )
+
+    undersized = ElasticBurstWidthHealth().capability(
+        {**shared, "history_capacity": 8}
+    )
+    assert undersized["k8_available"] is True
+    assert undersized["k16_available"] is False
+    assert undersized["k16_fallback_reason"] == (
+        "k16_history_capacity_below_16"
+    )
+
+
+def test_k16_lease_rejects_stale_width_health_before_mutation() -> None:
+    graph, _tensors, fake_graph, events, _slots = _graph_fixture(
+        history_capacity=16,
+    )
+    events.clear()
+    replay_calls_before = fake_graph.replay_calls
+
+    result = graph.replay(
+        lease=_k16_lease(width_health_generation=3),
+        initial_token=19,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=events,
+            dtype="int32",
+            element_size=4,
+        ),
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+        expected_width_health_generation=4,
+    )
+
+    assert isinstance(result, ExactGreedyDecodeBurstFallback)
+    assert (
+        result.fallback_reason
+        == "lease_width_health_generation_drift"
+    )
+    assert fake_graph.replay_calls == replay_calls_before
+    assert events == []
+
+
+def test_k16_post_replay_failure_quarantines_only_width_health() -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+        history_capacity=16,
+    )
+    health = ElasticBurstWidthHealth()
+
+    def replay_step(ordinal):
+        token = 20 + ordinal
+        tensors["token_history"].values[ordinal] = token
+        tensors["input_token"].values = [token]
+        tensors["position"].values[0] += 1
+        tensors["context_length"].values[0] += 1
+        tensors["slot_mapping"].values[0] += 1
+        tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_step
+    tensors["token_history"].fail_tolist = True
+    _assert_raises(
+        RuntimeError,
+        "final D2H failed",
+        lambda: graph.replay(
+            lease=_k16_lease(width_health_generation=1),
+            initial_token=19,
+            block_table=_BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=[],
+                dtype="int32",
+                element_size=4,
+            ),
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+            expected_width_health_generation=1,
+            width_health=health,
+        ),
+    )
+    assert graph.summary()["quarantine_reason"] is None
+    assert health.generation == 2
+    assert health.k16_quarantine_reason == (
+        "final_token_d2h_failure:RuntimeError"
+    )
+
+
+def test_k16_replay_failure_quarantines_the_shared_graph() -> None:
+    graph, _tensors, fake_graph, _events, _slots = _graph_fixture(
+        history_capacity=16,
+    )
+    health = ElasticBurstWidthHealth()
+    fake_graph.replay_error_at = fake_graph.replay_calls + 1
+
+    _assert_raises(
+        RuntimeError,
+        f"replay {fake_graph.replay_error_at} failed",
+        lambda: graph.replay(
+            lease=_k16_lease(width_health_generation=1),
+            initial_token=19,
+            block_table=_BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=[],
+                dtype="int32",
+                element_size=4,
+            ),
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+            expected_width_health_generation=1,
+            width_health=health,
+        ),
+    )
+    assert graph.summary()["quarantine_reason"] == (
+        "replay_failure:RuntimeError"
+    )
+    assert health.generation == 1
+    assert health.k16_quarantine_reason is None
 
 
 def _continuation_receipt(
