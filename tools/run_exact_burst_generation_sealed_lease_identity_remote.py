@@ -647,6 +647,12 @@ def _run_remote_preflight(
             "run_exact_burst_generation_sealed_lease_identity_remote.py"
         ),
     )
+    pytest_commands = "; ".join(
+        f"PYTHONPATH={pytest_path} "
+        + f"{REMOTE_PYTHON} -m pytest -q "
+        + shlex.quote(path)
+        for path in REMOTE_PREFLIGHT_TEST_FILES
+    )
     command = (
         "set -eu; "
         f"cd {shlex.quote(source)}; "
@@ -658,12 +664,7 @@ def _run_remote_preflight(
         + f"{REMOTE_PYTHON} -m py_compile "
         + " ".join(shlex.quote(path) for path in compile_files)
         + "; "
-        + f"PYTHONPATH={pytest_path} "
-        + f"{REMOTE_PYTHON} -m pytest -q "
-        + " ".join(
-            shlex.quote(path)
-            for path in REMOTE_PREFLIGHT_TEST_FILES
-        )
+        + pytest_commands
     )
     _run_remote_checked(
         command,

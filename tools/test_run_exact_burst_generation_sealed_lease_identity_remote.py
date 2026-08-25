@@ -578,6 +578,9 @@ def test_remote_preflight_covers_controller_and_adjacent_suites(
         "tools/test_exact_burst_one_phase_lease_local_journal_verify.py",
     ):
         assert path in command
+    assert command.count(" -m pytest -q ") == len(
+        remote.REMOTE_PREFLIGHT_TEST_FILES
+    )
     assert captured["kwargs"] == {
         "context": "remote source-bound preflight",
         "retry_attempts": 3,
