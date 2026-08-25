@@ -3673,7 +3673,19 @@ def test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers():
     seq.prefill_chunk_final = True
     seq.temperature = 0.6
 
-    restored = pickle.loads(pickle.dumps(seq))
+    current_sequence_module = sys.modules.get(
+        "tinyvllm.engine.sequence"
+    )
+    sys.modules["tinyvllm.engine.sequence"] = sequence_mod
+    try:
+        restored = pickle.loads(pickle.dumps(seq))
+    finally:
+        if current_sequence_module is None:
+            sys.modules.pop("tinyvllm.engine.sequence", None)
+        else:
+            sys.modules["tinyvllm.engine.sequence"] = (
+                current_sequence_module
+            )
 
     assert restored.step_is_decode is True
     assert restored.step_do_sample is False
@@ -3682,6 +3694,38 @@ def test_sequence_pickle_preserves_mixed_step_metadata_for_tp_workers():
     assert restored.prefill_chunk_end == 4
     assert restored.prefill_chunk_final is True
     assert restored.temperature == 0.6
+
+
+def test_scheduler_postprocess_rollback_epoch_exhaustion_is_fail_closed():
+    reset_sequence_state()
+    scheduler = Scheduler(make_config())
+    sequence = make_seq([1, 2, 3, 4, 5], max_tokens=2)
+    scheduler.block_manager.allocate(
+        sequence,
+        publish_hashes=False,
+    )
+    scheduler.running.append(sequence)
+    journal = scheduler_mod.SchedulerPostprocessJournal.capture(
+        scheduler,
+        (sequence,),
+    )
+
+    scheduler.block_manager.deallocate(sequence)
+    scheduler.block_manager.ownership_generation = (1 << 63) - 1
+    free_before = tuple(scheduler.block_manager.free_block_ids)
+    used_before = set(scheduler.block_manager.used_block_ids)
+
+    try:
+        journal.rollback(scheduler)
+    except OverflowError as error:
+        assert str(error) == "block ownership generation exhausted"
+    else:
+        raise AssertionError(
+            "exhausted ownership epoch allowed rollback mutation"
+        )
+
+    assert tuple(scheduler.block_manager.free_block_ids) == free_before
+    assert scheduler.block_manager.used_block_ids == used_before
 
 
 def test_lm_head_prefill_returns_only_requested_logits_rows():

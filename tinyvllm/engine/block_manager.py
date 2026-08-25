@@ -45,6 +45,27 @@ class LeaseWriteBlockPublicationPlan:
     prior_duplicate_block_ids: Optional[frozenset[int]]
 
 
+@dataclass(frozen=True)
+class BlockTableIdentitySeal:
+    sequence_id: int
+    table_revision: int
+    ownership_generation: int
+    block_count: int
+    write_block_index: int
+    write_block_id: int
+    write_block_generation: int
+    predecessor_block_id: Optional[int]
+    predecessor_block_generation: Optional[int]
+    identity_sha256: str
+
+
+@dataclass(frozen=True)
+class _BlockTableIdentityCacheEntry:
+    block_table: object
+    seal: BlockTableIdentitySeal
+    identities: tuple[tuple[int, int], ...]
+
+
 @dataclass
 class SpeculativeKVTransaction:
     sequence_id: int
@@ -208,6 +229,7 @@ class _SpeculativeKVCommitJournal:
                 f"{self.state}"
             )
         try:
+            manager._advance_ownership_generation()
             for block_id in reversed(self.release_order):
                 state = self.blocks[block_id]
                 if (
@@ -266,10 +288,52 @@ class _SpeculativeKVCommitJournal:
 class Block:
     def __init__(self, block_id):           # 单个block块的属性
         self.block_id = block_id            # 块id
-        self.ref_count = 0                  # 引用数量 主要涉及相同前缀的引用
+        self._ownership_generation_callback = None
+        self._ref_count = 0                 # 引用数量 主要涉及相同前缀的引用
         self.hash = -1                      # hash值 用于比较block大小  -1表示无效 
         self.token_ids = []                 # 包含的 token_id
-        self.generation = 0
+        self._generation = 0
+
+    def bind_ownership_generation_callback(self, callback) -> None:
+        self._ownership_generation_callback = callback
+
+    def _advance_ownership_generation(self) -> None:
+        if self._ownership_generation_callback is not None:
+            self._ownership_generation_callback()
+
+    @property
+    def ref_count(self) -> int:
+        return self._ref_count
+
+    @ref_count.setter
+    def ref_count(self, value: int) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+        ):
+            raise ValueError(
+                "block ref_count must be a non-negative integer"
+            )
+        self._advance_ownership_generation()
+        self._ref_count = value
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    @generation.setter
+    def generation(self, value: int) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+        ):
+            raise ValueError(
+                "block generation must be a non-negative integer"
+            )
+        self._advance_ownership_generation()
+        self._generation = value
     
     def update(self, hash: int, token_ids: list[int]):      # 记录该 block 的哈希值和所有 block_id
         self.hash = hash
@@ -286,11 +350,202 @@ class BlockManager:
     def __init__(self, num_blocks: int, block_size: int):
         assert num_blocks > 0
         self.block_size = block_size
-        self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]   
+        self.ownership_generation = 0
+        self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
+        for block in self.blocks:
+            block.bind_ownership_generation_callback(
+                self._advance_ownership_generation
+            )
         self.hash_to_block_id: dict[int, int] = dict()              #键代表某个block的token序列的哈希值 值代表这个哈希值对应的kv缓存块的id（block_id） 用于快速查找和复用内容相同的 KV 缓存块
         self.hash_to_block_ids: dict[int, set[int]] = dict()
         self.free_block_ids: deque[int] = deque(range(num_blocks))  #双向队列分配和回收元素
         self.used_block_ids: set[int] = set()                       #跟踪所有正在被使用的block_id 查找的时间复杂度O（1） 如果使用deque 查找的时间复杂度为O（n） 
+
+    def _advance_ownership_generation(self) -> None:
+        if self.ownership_generation >= (1 << 63) - 1:
+            raise OverflowError(
+                "block ownership generation exhausted"
+            )
+        self.ownership_generation += 1
+
+    @staticmethod
+    def _validate_identity_digest(identity_sha256: str) -> None:
+        if (
+            not isinstance(identity_sha256, str)
+            or len(identity_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in identity_sha256
+            )
+        ):
+            raise ValueError(
+                "block-table identity digest is malformed"
+            )
+
+    @staticmethod
+    def _identity_digest(
+        identities: tuple[tuple[int, int], ...],
+    ) -> str:
+        payload = ";".join(
+            f"{block_id}:{generation}"
+            for block_id, generation in identities
+        )
+        return hashlib.sha256(payload.encode("ascii")).hexdigest()
+
+    def capture_block_table_identity(
+        self,
+        sequence: Sequence,
+        write_block_index: int,
+    ) -> BlockTableIdentitySeal:
+        if not isinstance(sequence, Sequence):
+            raise ValueError("sequence must be a Sequence")
+        if (
+            isinstance(sequence.seq_id, bool)
+            or not isinstance(sequence.seq_id, int)
+            or sequence.seq_id < 0
+        ):
+            raise ValueError(
+                "sequence ID must be a non-negative integer"
+            )
+        if (
+            isinstance(write_block_index, bool)
+            or not isinstance(write_block_index, int)
+            or write_block_index < 0
+            or write_block_index >= len(sequence.block_table)
+        ):
+            raise ValueError(
+                "write block index is out of range"
+            )
+
+        block_table = sequence.block_table
+        write_block_id = block_table[write_block_index]
+        write_block_generation = self.blocks[
+            write_block_id
+        ].generation
+        predecessor_block_id = (
+            block_table[write_block_index - 1]
+            if write_block_index > 0
+            else None
+        )
+        predecessor_block_generation = (
+            self.blocks[predecessor_block_id].generation
+            if predecessor_block_id is not None
+            else None
+        )
+        cached = getattr(
+            sequence,
+            "_block_table_identity_cache_entry",
+            None,
+        )
+        if (
+            cached is not None
+            and cached.block_table is block_table
+            and cached.seal.table_revision == block_table.revision
+            and cached.seal.ownership_generation
+            == self.ownership_generation
+            and cached.seal.block_count == len(block_table)
+            and cached.seal.write_block_index == write_block_index
+            and cached.seal.write_block_id == write_block_id
+            and cached.seal.write_block_generation
+            == write_block_generation
+            and cached.seal.predecessor_block_id
+            == predecessor_block_id
+            and cached.seal.predecessor_block_generation
+            == predecessor_block_generation
+        ):
+            return cached.seal
+
+        identities = self.block_identities(tuple(block_table))
+        seal = BlockTableIdentitySeal(
+            sequence_id=sequence.seq_id,
+            table_revision=block_table.revision,
+            ownership_generation=self.ownership_generation,
+            block_count=len(block_table),
+            write_block_index=write_block_index,
+            write_block_id=write_block_id,
+            write_block_generation=write_block_generation,
+            predecessor_block_id=predecessor_block_id,
+            predecessor_block_generation=(
+                predecessor_block_generation
+            ),
+            identity_sha256=self._identity_digest(identities),
+        )
+        sequence._block_table_identity_cache_entry = (
+            _BlockTableIdentityCacheEntry(
+                block_table=block_table,
+                seal=seal,
+                identities=identities,
+            )
+        )
+        return seal
+
+    def validate_block_table_identity(
+        self,
+        sequence: Sequence,
+        seal: BlockTableIdentitySeal,
+    ) -> None:
+        if not isinstance(sequence, Sequence):
+            raise ValueError("sequence must be a Sequence")
+        if not isinstance(seal, BlockTableIdentitySeal):
+            raise ValueError(
+                "seal must be a BlockTableIdentitySeal"
+            )
+        if sequence.seq_id != seal.sequence_id:
+            raise ValueError("sequence ID does not match identity seal")
+        self._validate_identity_digest(seal.identity_sha256)
+
+        block_table = sequence.block_table
+        if (
+            block_table.revision != seal.table_revision
+            or len(block_table) != seal.block_count
+        ):
+            raise RuntimeError("block table identity is stale")
+        if (
+            seal.write_block_index < 0
+            or seal.write_block_index >= len(block_table)
+        ):
+            raise RuntimeError("block table identity is stale")
+
+        write_block_id = block_table[seal.write_block_index]
+        if (
+            write_block_id != seal.write_block_id
+            or self.blocks[write_block_id].generation
+            != seal.write_block_generation
+        ):
+            raise RuntimeError("write block identity is stale")
+
+        predecessor_block_id = (
+            block_table[seal.write_block_index - 1]
+            if seal.write_block_index > 0
+            else None
+        )
+        if (
+            predecessor_block_id != seal.predecessor_block_id
+            or (
+                predecessor_block_id is not None
+                and self.blocks[predecessor_block_id].generation
+                != seal.predecessor_block_generation
+            )
+        ):
+            raise RuntimeError(
+                "predecessor block identity is stale"
+            )
+        if self.ownership_generation != seal.ownership_generation:
+            raise RuntimeError("block ownership identity is stale")
+
+        cached = getattr(
+            sequence,
+            "_block_table_identity_cache_entry",
+            None,
+        )
+        if (
+            cached is None
+            or cached.block_table is not block_table
+            or cached.seal != seal
+        ):
+            raise ValueError(
+                "block-table identity digest does not match cache"
+            )
 
     def block_identities(
         self,
@@ -894,6 +1149,7 @@ class BlockManager:
                 self._allocate_block(block_id)
                 new_block_ids.append(block_id)
         except BaseException:
+            self._advance_ownership_generation()
             self._release_prefix_references(new_block_ids, 1)
             self._release_prefix_references(
                 acquired_prefix_ids,
@@ -1332,6 +1588,7 @@ class BlockManager:
                 self._allocate_block(block_id)
                 reserved_block_ids.append(block_id)
         except BaseException:
+            self._advance_ownership_generation()
             for block_id in candidate_ids:
                 self.used_block_ids.discard(block_id)
             for block_id, (

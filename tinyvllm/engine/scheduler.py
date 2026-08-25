@@ -466,6 +466,8 @@ class SchedulerPostprocessJournal:
                     block_manager
                 )
             )
+            if self.blocks or released_block_ids:
+                block_manager._advance_ownership_generation()
             for block_id in reversed(released_block_ids):
                 if (
                     not block_manager.free_block_ids
