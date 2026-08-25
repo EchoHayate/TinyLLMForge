@@ -9,10 +9,15 @@ import math
 from numbers import Real
 from typing import Optional
 
+from tinyvllm.engine.block_identity import BlockTableIdentitySeal
+
 
 MEDIUM_SPLIT_K_NUM_SPLITS = 12
 MEDIUM_SPLIT_K_MIN_CONTEXT_LENGTH = 1537
 MEDIUM_SPLIT_K_MAX_CONTEXT_LENGTH = 4097
+IDENTITY_SEAL_FALLBACK_REASONS = frozenset({
+    "untracked_block_table",
+})
 
 
 def _require_bool(value, name: str) -> bool:
@@ -397,6 +402,9 @@ class ExactGreedyDecodeBurstLease:
     remaining_output_tokens: int
     completion_only: bool
     identity_sha256: str
+    block_table_identity_seal: Optional[
+        BlockTableIdentitySeal
+    ] = None
 
 
 @dataclass(frozen=True)
@@ -411,6 +419,9 @@ class ExactGreedyDecodeBurstContinuationReceipt:
     next_context_length: int
     next_physical_slot: int
     history_cursor: int
+    block_table_identity_seal: Optional[
+        BlockTableIdentitySeal
+    ] = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -425,7 +436,14 @@ class ExactGreedyDecodeBurstContinuationReceipt:
             "history_cursor",
         ):
             _require_non_negative_int(getattr(self, name), name)
-        _validate_block_identity(self.block_table_identity)
+        _validate_identity_mode(
+            self.block_table_identity,
+            self.block_table_identity_seal,
+            sequence_id=self.sequence_id,
+            write_block_id=self.write_block_id,
+            write_block_generation=self.write_block_generation,
+            require_write_match=False,
+        )
 
 
 @dataclass(frozen=True)
@@ -479,7 +497,9 @@ def decide_exact_greedy_decode_burst_continuation(
     ):
         reason = "graph_generation_drift"
     elif (
-        receipt.block_table_identity
+        receipt.block_table_identity_seal
+        != lease.block_table_identity_seal
+        or receipt.block_table_identity
         != lease.block_table_identity
     ):
         reason = "block_table_identity_drift"
@@ -532,7 +552,7 @@ def decide_exact_greedy_decode_burst_continuation(
 
 
 def _lease_payload(**values) -> dict:
-    return {
+    payload = {
         "sequence_id": values["sequence_id"],
         "schedule_generation": values["schedule_generation"],
         "graph_generation": values["graph_generation"],
@@ -566,6 +586,64 @@ def _lease_payload(**values) -> dict:
         ],
         "completion_only": values["completion_only"],
     }
+    seal = values.get("block_table_identity_seal")
+    if seal is not None:
+        payload["block_table_identity_seal"] = asdict(seal)
+    return payload
+
+
+def _validate_identity_mode(
+    block_table_identity,
+    block_table_identity_seal,
+    *,
+    sequence_id: int,
+    write_block_id: int,
+    write_block_generation: int,
+    require_write_match: bool = True,
+) -> tuple[tuple[tuple[int, int], ...], Optional[
+    BlockTableIdentitySeal
+]]:
+    has_full_identity = bool(block_table_identity)
+    has_seal = block_table_identity_seal is not None
+    if has_full_identity == has_seal:
+        raise ValueError(
+            "exactly one block-table identity mode is required"
+        )
+    if has_seal:
+        if not isinstance(
+            block_table_identity_seal,
+            BlockTableIdentitySeal,
+        ):
+            raise ValueError(
+                "block_table_identity_seal has an invalid type"
+            )
+        seal = block_table_identity_seal
+        if seal.sequence_id != sequence_id:
+            raise ValueError(
+                "sealed block-table sequence ID mismatch"
+            )
+        if require_write_match and (
+            seal.write_block_id != write_block_id
+            or seal.write_block_generation
+            != write_block_generation
+        ):
+            raise ValueError(
+                "write block identity does not match identity seal"
+            )
+        _require_digest(
+            seal.identity_sha256,
+            "block_table_identity_seal.identity_sha256",
+        )
+        return (), seal
+    identities = _validate_block_identity(block_table_identity)
+    if require_write_match and identities[-1] != (
+        write_block_id,
+        write_block_generation,
+    ):
+        raise ValueError(
+            "write block identity does not match block table"
+        )
+    return identities, None
 
 
 def build_exact_greedy_decode_burst_lease(
@@ -586,6 +664,9 @@ def build_exact_greedy_decode_burst_lease(
     last_physical_slot: int,
     remaining_output_tokens: int,
     completion_only: bool,
+    block_table_identity_seal: Optional[
+        BlockTableIdentitySeal
+    ] = None,
 ) -> ExactGreedyDecodeBurstLease:
     for name, value in (
         ("sequence_id", sequence_id),
@@ -632,16 +713,13 @@ def build_exact_greedy_decode_burst_lease(
     _require_bool(completion_only, "completion_only")
     if not completion_only:
         raise ValueError("burst lease must be completion-only")
-    identities = _validate_block_identity(
-        block_table_identity
+    identities, seal = _validate_identity_mode(
+        block_table_identity,
+        block_table_identity_seal,
+        sequence_id=sequence_id,
+        write_block_id=write_block_id,
+        write_block_generation=write_block_generation,
     )
-    if identities[-1] != (
-        write_block_id,
-        write_block_generation,
-    ):
-        raise ValueError(
-            "write block identity does not match block table"
-        )
     values = {
         "sequence_id": sequence_id,
         "schedule_generation": schedule_generation,
@@ -659,6 +737,7 @@ def build_exact_greedy_decode_burst_lease(
         "last_physical_slot": last_physical_slot,
         "remaining_output_tokens": remaining_output_tokens,
         "completion_only": completion_only,
+        "block_table_identity_seal": seal,
     }
     encoded = json.dumps(
         _lease_payload(**values),
@@ -903,6 +982,9 @@ class ExactGreedyDecodeBurstStats:
     skipped_block_table_constructions: int = 0
     skipped_block_table_copy_calls: int = 0
     skipped_block_table_bytes: int = 0
+    identity_seal_cold_captures: int = 0
+    identity_seal_hot_reuses: int = 0
+    identity_seal_validations: int = 0
     lease_local_delta_journal_attempts: int = 0
     lease_local_delta_journal_captures: int = 0
     lease_local_delta_journal_commits: int = 0
@@ -937,6 +1019,9 @@ class ExactGreedyDecodeBurstStats:
         str,
         int,
     ] = field(default_factory=dict)
+    identity_seal_fallback_counts: dict[str, int] = field(
+        default_factory=dict
+    )
     quarantine_reason: Optional[str] = None
     capture_receipts: list[
         ExactGreedyDecodeBurstCaptureReceipt
@@ -994,6 +1079,29 @@ class ExactGreedyDecodeBurstStats:
         reason = _require_reason(reason, "fallback reason")
         self.fallback_counts[reason] = (
             self.fallback_counts.get(reason, 0) + 1
+        )
+
+    def record_identity_seal_capture(
+        self,
+        *,
+        hot_reuse: bool,
+    ) -> None:
+        _require_bool(hot_reuse, "hot_reuse")
+        if hot_reuse:
+            self.identity_seal_hot_reuses += 1
+        else:
+            self.identity_seal_cold_captures += 1
+
+    def record_identity_seal_validation(self) -> None:
+        self.identity_seal_validations += 1
+
+    def record_identity_seal_fallback(self, reason: str) -> None:
+        reason = _require_reason(
+            reason,
+            "identity seal fallback reason",
+        )
+        self.identity_seal_fallback_counts[reason] = (
+            self.identity_seal_fallback_counts.get(reason, 0) + 1
         )
 
     def record_lease_local_delta_journal_attempt(self) -> None:
@@ -1285,6 +1393,15 @@ class ExactGreedyDecodeBurstStats:
             self.quarantines += 1
 
     def summary(self) -> dict[str, object]:
+        unknown_identity_seal_fallback_reasons = sorted(
+            set(self.identity_seal_fallback_counts)
+            - IDENTITY_SEAL_FALLBACK_REASONS
+        )
+        if unknown_identity_seal_fallback_reasons:
+            raise ValueError(
+                "unknown identity seal fallback reason: "
+                f"{unknown_identity_seal_fallback_reasons[0]}"
+            )
         payload = {
             "attempts": self.attempts,
             "acceptances": self.acceptances,
@@ -1359,6 +1476,15 @@ class ExactGreedyDecodeBurstStats:
             "skipped_block_table_bytes": (
                 self.skipped_block_table_bytes
             ),
+            "identity_seal_cold_captures": (
+                self.identity_seal_cold_captures
+            ),
+            "identity_seal_hot_reuses": (
+                self.identity_seal_hot_reuses
+            ),
+            "identity_seal_validations": (
+                self.identity_seal_validations
+            ),
             "lease_local_delta_journal_attempts": (
                 self.lease_local_delta_journal_attempts
             ),
@@ -1407,6 +1533,9 @@ class ExactGreedyDecodeBurstStats:
             },
             "fallback_counts": dict(
                 sorted(self.fallback_counts.items())
+            ),
+            "identity_seal_fallback_counts": dict(
+                sorted(self.identity_seal_fallback_counts.items())
             ),
             "continuation_miss_counts": dict(
                 sorted(self.continuation_miss_counts.items())
@@ -2216,6 +2345,9 @@ class ExactGreedyDecodeBurstGraph:
                     graph_generation=graph_generation,
                     block_table_identity=(
                         lease.block_table_identity
+                    ),
+                    block_table_identity_seal=(
+                        lease.block_table_identity_seal
                     ),
                     write_block_id=lease.write_block_id,
                     write_block_generation=(

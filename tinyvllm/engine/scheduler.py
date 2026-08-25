@@ -613,6 +613,7 @@ class ExactBurstLeaseLocalDeltaJournal:
     original_num_tokens: int
     original_status: SequenceStatus
     expected_block_table_identity: tuple[tuple[int, int], ...]
+    expected_block_table_identity_seal: object | None
     waiting_length: int
     prefilling_length: int
     running_length: int
@@ -647,6 +648,7 @@ class ExactBurstLeaseLocalDeltaJournal:
             ...,
         ],
         publication_plan: LeaseWriteBlockPublicationPlan,
+        expected_block_table_identity_seal=None,
     ) -> "ExactBurstLeaseLocalDeltaJournal":
         progress_present = (
             sequence.seq_id
@@ -661,6 +663,9 @@ class ExactBurstLeaseLocalDeltaJournal:
             original_status=sequence.status,
             expected_block_table_identity=(
                 expected_block_table_identity
+            ),
+            expected_block_table_identity_seal=(
+                expected_block_table_identity_seal
             ),
             waiting_length=len(scheduler.waiting),
             prefilling_length=len(scheduler.prefilling),
@@ -713,17 +718,29 @@ class ExactBurstLeaseLocalDeltaJournal:
                 raise RuntimeError(
                     "delta journal token list was truncated"
                 )
-            expected_block_ids = tuple(
-                block_id
-                for block_id, _ in self.expected_block_table_identity
-            )
-            if tuple(sequence.block_table) != expected_block_ids:
-                raise RuntimeError(
-                    "delta journal block table changed"
+            if self.expected_block_table_identity_seal is not None:
+                (
+                    scheduler
+                    ._exact_greedy_decode_burst_stats
+                    .record_identity_seal_validation()
                 )
-            scheduler.block_manager.validate_block_identities(
-                self.expected_block_table_identity
-            )
+                scheduler.block_manager.validate_block_table_identity(
+                    sequence,
+                    self.expected_block_table_identity_seal,
+                )
+            else:
+                expected_block_ids = tuple(
+                    block_id
+                    for block_id, _
+                    in self.expected_block_table_identity
+                )
+                if tuple(sequence.block_table) != expected_block_ids:
+                    raise RuntimeError(
+                        "delta journal block table changed"
+                    )
+                scheduler.block_manager.validate_block_identities(
+                    self.expected_block_table_identity
+                )
             if (
                 len(scheduler.waiting) != self.waiting_length
                 or len(scheduler.prefilling)
@@ -956,6 +973,18 @@ class Scheduler:
                     (
                         "exact_greedy_decode_burst_"
                         "lease_local_delta_journal"
+                    ),
+                    False,
+                )
+            )
+        )
+        self._exact_greedy_decode_burst_generation_sealed_identity = (
+            bool(
+                getattr(
+                    config,
+                    (
+                        "exact_greedy_decode_burst_"
+                        "generation_sealed_identity"
                     ),
                     False,
                 )
@@ -1333,9 +1362,6 @@ class Scheduler:
                 "sequence_not_running"
             )
             return None
-        block_table_identity = self.block_manager.block_identities(
-            tuple(sequence.block_table)
-        )
         first_write_position = decision.first_write_position
         write_block_index = (
             first_write_position // self.block_manager.block_size
@@ -1348,6 +1374,62 @@ class Scheduler:
         write_block_generation = self.block_manager.blocks[
             write_block_id
         ].generation
+        if self._exact_greedy_decode_burst_generation_sealed_identity:
+            table_revision = getattr(
+                sequence.block_table,
+                "revision",
+                None,
+            )
+            if (
+                isinstance(table_revision, bool)
+                or not isinstance(table_revision, int)
+                or table_revision < 0
+            ):
+                (
+                    self
+                    ._exact_greedy_decode_burst_stats
+                    .record_identity_seal_fallback(
+                        "untracked_block_table"
+                    )
+                )
+                block_table_identity = (
+                    self.block_manager.block_identities(
+                        tuple(sequence.block_table)
+                    )
+                )
+                block_table_identity_seal = None
+            else:
+                block_table_identity = ()
+                prior_cache_entry = getattr(
+                    sequence,
+                    "_block_table_identity_cache_entry",
+                    None,
+                )
+                prior_seal = getattr(
+                    prior_cache_entry,
+                    "seal",
+                    None,
+                )
+                block_table_identity_seal = (
+                    self.block_manager.capture_block_table_identity(
+                        sequence,
+                        write_block_index=write_block_index,
+                    )
+                )
+                (
+                    self
+                    ._exact_greedy_decode_burst_stats
+                    .record_identity_seal_capture(
+                        hot_reuse=(
+                            block_table_identity_seal is prior_seal
+                        ),
+                    )
+                )
+        else:
+            block_table_identity = self.block_manager.block_identities(
+                tuple(sequence.block_table)
+            )
+            block_table_identity_seal = None
         write_offset = (
             first_write_position % self.block_manager.block_size
         )
@@ -1380,6 +1462,9 @@ class Scheduler:
             ),
             remaining_output_tokens=remaining_output_tokens,
             completion_only=completion_only,
+            block_table_identity_seal=(
+                block_table_identity_seal
+            ),
         )
         self._exact_greedy_decode_burst_pending_lease = lease
         self._exact_greedy_decode_burst_split_phase = "enqueued"
@@ -1450,16 +1535,27 @@ class Scheduler:
             raise ValueError(
                 "exact burst completion count changed"
             )
-        self.block_manager.validate_block_identities(
-            lease.block_table_identity
-        )
-        if tuple(sequence.block_table) != tuple(
-            block_id
-            for block_id, _ in lease.block_table_identity
-        ):
-            raise ValueError(
-                "exact burst sequence block table changed"
+        if lease.block_table_identity_seal is not None:
+            (
+                self
+                ._exact_greedy_decode_burst_stats
+                .record_identity_seal_validation()
             )
+            self.block_manager.validate_block_table_identity(
+                sequence,
+                lease.block_table_identity_seal,
+            )
+        else:
+            self.block_manager.validate_block_identities(
+                lease.block_table_identity
+            )
+            if tuple(sequence.block_table) != tuple(
+                block_id
+                for block_id, _ in lease.block_table_identity
+            ):
+                raise ValueError(
+                    "exact burst sequence block table changed"
+                )
 
     def cancel_exact_greedy_decode_burst(
         self,
@@ -2739,6 +2835,9 @@ class Scheduler:
             sequence,
             expected_block_table_identity=(
                 lease.block_table_identity
+            ),
+            expected_block_table_identity_seal=(
+                lease.block_table_identity_seal
             ),
             publication_plan=publication_plan,
         )

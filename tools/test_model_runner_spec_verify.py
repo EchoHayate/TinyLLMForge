@@ -5997,6 +5997,12 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
     )
     assert (
         fields[
+            "exact_greedy_decode_burst_generation_sealed_identity"
+        ].default
+        is False
+    )
+    assert (
+        fields[
             "exact_greedy_decode_burst_medium_split_k"
         ].default
         is False
@@ -6063,6 +6069,20 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                 Config(
                     model=model,
                     exact_greedy_decode_burst_lease_local_delta_journal=(
+                        invalid
+                    ),
+                )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_generation_sealed_"
+                    "identity must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_generation_sealed_identity=(
                         invalid
                     ),
                 )
@@ -6194,6 +6214,50 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         )
         with pytest.raises(
             ValueError,
+            match=(
+                "^generation-sealed identity requires "
+                "exact_greedy_decode_burst$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_lease_local_delta_journal=True,
+                exact_greedy_decode_burst_generation_sealed_identity=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^generation-sealed identity requires K8$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=4,
+                exact_greedy_decode_burst_lease_local_delta_journal=True,
+                exact_greedy_decode_burst_generation_sealed_identity=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^generation-sealed identity requires "
+                "lease-local delta journal$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_generation_sealed_identity=True,
+            )
+        enabled_generation_sealed = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_tokens=8,
+            exact_greedy_decode_burst_lease_local_delta_journal=True,
+            exact_greedy_decode_burst_generation_sealed_identity=True,
+        )
+        with pytest.raises(
+            ValueError,
             match="^lease-local delta journal requires K8$",
         ):
             Config(
@@ -6229,6 +6293,11 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
     assert (
         enabled_one_phase
         .exact_greedy_decode_burst_lease_local_delta_journal
+        is True
+    )
+    assert (
+        enabled_generation_sealed
+        .exact_greedy_decode_burst_generation_sealed_identity
         is True
     )
     assert enabled.exact_greedy_decode_burst is True

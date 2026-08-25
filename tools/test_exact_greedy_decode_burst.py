@@ -4,14 +4,39 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
+import pickle
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 import sys
+import types
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+for package_name in ("tinyvllm", "tinyvllm.engine"):
+    package = types.ModuleType(package_name)
+    package.__path__ = [
+        str(REPO_ROOT / package_name.replace(".", "/"))
+    ]
+    sys.modules.setdefault(package_name, package)
+
+
+class _FakeXXH64:
+    def __init__(self):
+        self._hash = hashlib.blake2b(digest_size=8)
+
+    def update(self, data):
+        self._hash.update(data)
+
+    def intdigest(self):
+        return int.from_bytes(self._hash.digest(), "little")
+
+
+xxhash_module = types.ModuleType("xxhash")
+xxhash_module.xxh64 = _FakeXXH64
+sys.modules.setdefault("xxhash", xxhash_module)
 MODULE_PATH = (
     REPO_ROOT
     / "tinyvllm"
@@ -51,6 +76,7 @@ ExactGreedyDecodeBurstFallback = (
 )
 ExactGreedyDecodeBurstGraph = module.ExactGreedyDecodeBurstGraph
 ExactGreedyDecodeBurstLease = module.ExactGreedyDecodeBurstLease
+BlockTableIdentitySeal = module.BlockTableIdentitySeal
 ExactGreedyDecodeBurstResult = module.ExactGreedyDecodeBurstResult
 ExactGreedyDecodeBurstStats = module.ExactGreedyDecodeBurstStats
 build_exact_greedy_decode_burst_decision = (
@@ -1079,6 +1105,77 @@ def _continuation_decision(
     )
 
 
+def test_generation_sealed_lease_and_continuation_receipt_contract():
+    baseline = _continuation_lease()
+    assert baseline.block_table_identity
+    assert baseline.block_table_identity_seal is None
+    assert baseline.identity_sha256 == (
+        "92e6396f17264a52420a96d3e5f69053"
+        "be3461ac028f704a6c57979480ba7622"
+    )
+
+    seal = BlockTableIdentitySeal(
+        sequence_id=7,
+        table_revision=3,
+        ownership_generation=11,
+        block_count=2,
+        write_block_index=1,
+        write_block_id=12,
+        write_block_generation=1,
+        predecessor_block_id=11,
+        predecessor_block_generation=4,
+        identity_sha256="a" * 64,
+    )
+    sealed = _continuation_lease(
+        block_table_identity=(),
+        block_table_identity_seal=seal,
+    )
+    assert sealed.block_table_identity == ()
+    assert sealed.block_table_identity_seal == seal
+    assert pickle.loads(pickle.dumps(sealed)) == sealed
+    assert sealed.identity_sha256 != baseline.identity_sha256
+    assert _continuation_lease(
+        block_table_identity=(),
+        block_table_identity_seal=seal,
+    ).identity_sha256 == sealed.identity_sha256
+    assert _continuation_lease(
+        block_table_identity=(),
+        block_table_identity_seal=replace(
+            seal,
+            ownership_generation=12,
+        ),
+    ).identity_sha256 != sealed.identity_sha256
+
+    baseline_receipt = _continuation_receipt()
+    sealed_receipt = _continuation_receipt(
+        block_table_identity=(),
+        block_table_identity_seal=seal,
+    )
+    assert (
+        baseline_receipt.block_table_identity
+        == baseline.block_table_identity
+    )
+    assert baseline_receipt.block_table_identity_seal is None
+    assert sealed_receipt.block_table_identity == ()
+    assert sealed_receipt.block_table_identity_seal == seal
+
+    for kwargs in (
+        {
+            "block_table_identity": ((11, 4), (12, 1)),
+            "block_table_identity_seal": seal,
+        },
+        {
+            "block_table_identity": (),
+            "block_table_identity_seal": None,
+        },
+    ):
+        _assert_raises(
+            ValueError,
+            "exactly one block-table identity mode is required",
+            lambda kwargs=kwargs: _continuation_receipt(**kwargs),
+        )
+
+
 def test_continuation_requires_an_exact_receipt_match() -> None:
     decision = _continuation_decision()
     assert decision.continue_from_resident_state is True
@@ -1503,6 +1600,9 @@ def test_stats_track_lease_local_delta_journal_lifecycle() -> None:
 
 def test_stats_track_continuation_benefit_and_cost() -> None:
     stats = ExactGreedyDecodeBurstStats()
+    stats.record_identity_seal_capture(hot_reuse=False)
+    stats.record_identity_seal_capture(hot_reuse=True)
+    stats.record_identity_seal_validation()
     for _ in range(3):
         stats.record_continuation_attempt()
     stats.record_cold_bind()
@@ -1520,6 +1620,10 @@ def test_stats_track_continuation_benefit_and_cost() -> None:
     )
 
     summary = stats.summary()
+    assert summary["identity_seal_cold_captures"] == 1
+    assert summary["identity_seal_hot_reuses"] == 1
+    assert summary["identity_seal_validations"] == 1
+    assert summary["identity_seal_fallback_counts"] == {}
     assert summary["continuation_attempts"] == 3
     assert summary["continuation_hits"] == 2
     assert summary["cold_binds"] == 1
@@ -1578,6 +1682,21 @@ def test_stats_track_continuation_benefit_and_cost() -> None:
     ] == {
         "engine_failure:RuntimeError": 1,
     }
+
+
+def test_stats_reject_unknown_identity_seal_fallback_reason() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    stats.record_identity_seal_fallback("untracked_block_table")
+    assert stats.summary()["identity_seal_fallback_counts"] == {
+        "untracked_block_table": 1,
+    }
+
+    stats.identity_seal_fallback_counts["unknown_reason"] = 1
+    _assert_raises(
+        ValueError,
+        "unknown identity seal fallback reason: unknown_reason",
+        stats.summary,
+    )
 
 
 def test_contract_is_model_agnostic_and_supports_second_caller() -> None:

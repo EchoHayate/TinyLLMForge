@@ -42,6 +42,7 @@ class Config:
     exact_greedy_decode_burst_split_phase: bool = False
     exact_greedy_decode_burst_ragged_coalescing: bool = False
     exact_greedy_decode_burst_lease_local_delta_journal: bool = False
+    exact_greedy_decode_burst_generation_sealed_identity: bool = False
     exact_greedy_decode_burst_medium_split_k: bool = False
     exact_greedy_decode_burst_tokens: int = 4
     multi_sequence_cuda_graphs: bool = False
@@ -251,6 +252,14 @@ class Config:
                 "must be a bool"
             )
         if not isinstance(
+            self.exact_greedy_decode_burst_generation_sealed_identity,
+            bool,
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst_generation_sealed_identity "
+                "must be a bool"
+            )
+        if not isinstance(
             self.exact_greedy_decode_burst_medium_split_k,
             bool,
         ):
@@ -292,6 +301,24 @@ class Config:
                 )
             if self.exact_greedy_decode_burst_tokens != 8:
                 raise ValueError("ragged coalescing requires K8")
+        if self.exact_greedy_decode_burst_generation_sealed_identity:
+            if not self.exact_greedy_decode_burst:
+                raise ValueError(
+                    "generation-sealed identity requires "
+                    "exact_greedy_decode_burst"
+                )
+            if self.exact_greedy_decode_burst_tokens != 8:
+                raise ValueError(
+                    "generation-sealed identity requires K8"
+                )
+            if not (
+                self
+                .exact_greedy_decode_burst_lease_local_delta_journal
+            ):
+                raise ValueError(
+                    "generation-sealed identity requires "
+                    "lease-local delta journal"
+                )
         if self.exact_greedy_decode_burst_lease_local_delta_journal:
             if not self.exact_greedy_decode_burst:
                 raise ValueError(

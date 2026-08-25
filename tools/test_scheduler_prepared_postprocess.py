@@ -195,8 +195,8 @@ class _IterationCountingVersionedBlockTable(
         return super().__getitem__(index)
 
 
-def _config():
-    return SimpleNamespace(
+def _config(**overrides):
+    values = dict(
         max_num_seqs=4,
         max_num_batched_tokens=64,
         max_model_len=64,
@@ -220,7 +220,10 @@ def _config():
         num_kvcache_blocks=32,
         kvcache_block_size=2,
         exact_greedy_decode_burst_lease_local_delta_journal=False,
+        exact_greedy_decode_burst_generation_sealed_identity=False,
     )
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def _running_sequence(
@@ -710,6 +713,7 @@ def _delta_one_phase_fixture(
     max_tokens=32,
     enabled=True,
     configured_width=8,
+    generation_sealed=False,
 ):
     monkeypatch.setattr(Sequence, "block_size", 16)
     scheduler = Scheduler(
@@ -721,6 +725,10 @@ def _delta_one_phase_fixture(
                     "exact_greedy_decode_burst_"
                     "lease_local_delta_journal"
                 ): enabled,
+                (
+                    "exact_greedy_decode_burst_"
+                    "generation_sealed_identity"
+                ): generation_sealed,
             }
         )
     )
@@ -1323,6 +1331,233 @@ def test_exact_burst_lease_rejects_wrong_sequence_and_stale_generation():
     assert scheduler.exact_greedy_decode_burst_summary()[
         "pending_leases"
     ] == 1
+
+
+def test_generation_sealed_scheduler_lease_uses_identity_seal():
+    scheduler = Scheduler(_config(
+        exact_greedy_decode_burst_lease_local_delta_journal=True,
+        exact_greedy_decode_burst_generation_sealed_identity=True,
+    ))
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+
+    assert lease.block_table_identity == ()
+    assert lease.block_table_identity_seal is not None
+    assert lease.block_table_identity_seal.sequence_id == sequence.seq_id
+    scheduler.cancel_exact_greedy_decode_burst(
+        lease,
+        "test_cleanup",
+    )
+
+
+def test_generation_sealed_scheduler_reuses_hot_identity_seal(
+    monkeypatch,
+):
+    monkeypatch.setattr(Sequence, "block_size", 32)
+    scheduler = Scheduler(_config(
+        kvcache_block_size=32,
+        exact_greedy_decode_burst_lease_local_delta_journal=True,
+        exact_greedy_decode_burst_generation_sealed_identity=True,
+    ))
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        max_tokens=16,
+        ignore_eos=True,
+    )
+    block_identity_calls = 0
+    original_block_identities = (
+        scheduler.block_manager.block_identities
+    )
+
+    def counted_block_identities(block_ids):
+        nonlocal block_identity_calls
+        block_identity_calls += 1
+        return original_block_identities(block_ids)
+
+    monkeypatch.setattr(
+        scheduler.block_manager,
+        "block_identities",
+        counted_block_identities,
+    )
+
+    first = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    first_prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            first,
+            _exact_burst_result(
+                first,
+                tuple(range(11, 19)),
+            ),
+        )
+    )
+    scheduler.commit_prepared_postprocess(first_prepared)
+
+    second = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+    )
+    second_prepared = (
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            second,
+            _exact_burst_result(
+                second,
+                tuple(range(21, 29)),
+            ),
+        )
+    )
+    scheduler.commit_prepared_postprocess(second_prepared)
+
+    assert first.block_table_identity_seal is not None
+    assert second.block_table_identity_seal is (
+        first.block_table_identity_seal
+    )
+    assert block_identity_calls == 1
+    assert sequence.completion_token_ids == [
+        *range(11, 19),
+        *range(21, 29),
+    ]
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["identity_seal_cold_captures"] == 1
+    assert summary["identity_seal_hot_reuses"] == 1
+    assert summary["identity_seal_validations"] == 6
+    assert summary["identity_seal_fallback_counts"] == {}
+
+
+def test_generation_sealed_scheduler_falls_back_for_untracked_table():
+    scheduler = Scheduler(_config(
+        exact_greedy_decode_burst_lease_local_delta_journal=True,
+        exact_greedy_decode_burst_generation_sealed_identity=True,
+    ))
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    sequence._block_table = list(sequence.block_table)
+
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+
+    assert lease.block_table_identity
+    assert lease.block_table_identity_seal is None
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "identity_seal_fallback_counts"
+    ] == {"untracked_block_table": 1}
+    scheduler.cancel_exact_greedy_decode_burst(
+        lease,
+        "test_cleanup",
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("append", "block table identity is stale"),
+        ("same_length_replacement", "block table identity is stale"),
+        ("whole_table_replacement", "block table identity is stale"),
+        ("write_generation", "write block identity is stale"),
+        ("unrelated_allocation", "block ownership identity is stale"),
+        ("unrelated_deallocation", "block ownership identity is stale"),
+        ("ownership_restoration", "block ownership identity is stale"),
+    ),
+)
+def test_generation_sealed_lease_rejects_identity_drift_before_mutation(
+    mutation,
+    message,
+):
+    scheduler = Scheduler(_config(
+        exact_greedy_decode_burst_lease_local_delta_journal=True,
+        exact_greedy_decode_burst_generation_sealed_identity=True,
+    ))
+    sequence = _running_sequence(
+        scheduler,
+        [1],
+        ignore_eos=True,
+    )
+    unrelated = None
+    if mutation == "unrelated_deallocation":
+        unrelated = Sequence(
+            [2],
+            SamplingParams(
+                temperature=0.0,
+                max_tokens=8,
+                ignore_eos=True,
+            ),
+        )
+        scheduler.block_manager.allocate(unrelated)
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=2,
+    )
+    before_tokens = tuple(sequence.token_ids)
+
+    if mutation == "append":
+        sequence.block_table.append(sequence.block_table[-1])
+    elif mutation == "same_length_replacement":
+        sequence.block_table[0] = sequence.block_table[0]
+    elif mutation == "whole_table_replacement":
+        sequence.block_table = list(sequence.block_table)
+    elif mutation == "write_generation":
+        block = scheduler.block_manager.blocks[
+            lease.write_block_id
+        ]
+        block.generation += 1
+    elif mutation == "unrelated_allocation":
+        unrelated = Sequence(
+            [2],
+            SamplingParams(
+                temperature=0.0,
+                max_tokens=8,
+                ignore_eos=True,
+            ),
+        )
+        scheduler.block_manager.allocate(unrelated)
+    elif mutation == "unrelated_deallocation":
+        scheduler.block_manager.deallocate(unrelated)
+    else:
+        block = scheduler.block_manager.blocks[
+            lease.write_block_id
+        ]
+        original_generation = block.generation
+        block.generation += 1
+        block.generation = original_generation
+
+    with pytest.raises(RuntimeError, match=f"^{message}$"):
+        scheduler.prepare_exact_greedy_decode_burst_commit(
+            (sequence,),
+            lease,
+            _exact_burst_result(lease, (11, 12)),
+        )
+
+    assert tuple(sequence.token_ids) == before_tokens
+    assert scheduler.exact_greedy_decode_burst_summary()[
+        "pending_leases"
+    ] == 1
+    scheduler.cancel_exact_greedy_decode_burst(
+        lease,
+        "test_cleanup",
+    )
 
 
 def test_exact_burst_row_rejects_wrong_lease_token_count():
@@ -2876,6 +3111,47 @@ def test_one_phase_delta_journal_rollback_failure_is_terminal(
     )
     assert str(caught.value.rollback_error) == (
         "delta journal token list identity changed"
+    )
+    assert prepared.state == "rollback_failed"
+    assert prepared.snapshot.state == "rollback_failed"
+
+
+def test_generation_sealed_post_capture_drift_is_terminal(
+    monkeypatch,
+):
+    scheduler, sequence, lease, result = (
+        _delta_one_phase_fixture(
+            monkeypatch,
+            prompt_length=2,
+            generation_sealed=True,
+        )
+    )
+    prepared = scheduler.prepare_exact_greedy_decode_burst_commit(
+        (sequence,),
+        lease,
+        result,
+    )
+
+    def mutate_identity_then_fail(*_args, **_kwargs):
+        sequence.block_table[0] = sequence.block_table[0]
+        raise RuntimeError("injected post-capture identity drift")
+
+    monkeypatch.setattr(
+        scheduler,
+        "_publish_slo_postprocess",
+        mutate_identity_then_fail,
+    )
+
+    with pytest.raises(
+        scheduler_module.SchedulerPostprocessRollbackError,
+    ) as caught:
+        scheduler.commit_prepared_postprocess(prepared)
+
+    assert str(caught.value.commit_error) == (
+        "injected post-capture identity drift"
+    )
+    assert str(caught.value.rollback_error) == (
+        "block table identity is stale"
     )
     assert prepared.state == "rollback_failed"
     assert prepared.snapshot.state == "rollback_failed"

@@ -7,7 +7,7 @@ from dataclasses import replace
 import importlib.util
 from pathlib import Path
 import sys
-from types import MethodType, SimpleNamespace
+from types import MethodType, ModuleType, SimpleNamespace
 
 import pytest
 
@@ -26,6 +26,12 @@ SPLIT_PHASE_PATH = (
     / "engine"
     / "exact_greedy_decode_burst_split_phase.py"
 )
+BLOCK_IDENTITY_PATH = (
+    ROOT
+    / "tinyvllm"
+    / "engine"
+    / "block_identity.py"
+)
 
 
 def _load_module(module_name: str, path: Path):
@@ -36,6 +42,18 @@ def _load_module(module_name: str, path: Path):
     return module
 
 
+for package_name in ("tinyvllm", "tinyvllm.engine"):
+    package = ModuleType(package_name)
+    package.__path__ = [
+        str(ROOT / package_name.replace(".", "/"))
+    ]
+    sys.modules.setdefault(package_name, package)
+
+if "tinyvllm.engine.block_identity" not in sys.modules:
+    _load_module(
+        "tinyvllm.engine.block_identity",
+        BLOCK_IDENTITY_PATH,
+    )
 burst_module = _load_module(
     "llm_engine_exact_burst_contract_under_test",
     BURST_PATH,

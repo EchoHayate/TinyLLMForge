@@ -6,6 +6,7 @@ import xxhash
 #[thinking] 这里是把token_ids转换成hash值 然后去做处理 这样做：用哈希处理 token_ids 能减轻 KV 缓存负担  有没有别的方式呢
 import numpy as np
 
+from tinyvllm.engine.block_identity import BlockTableIdentitySeal
 from tinyvllm.engine.sequence import Sequence
 
 
@@ -43,20 +44,6 @@ class LeaseWriteBlockPublicationPlan:
     prior_block_token_ids: tuple[int, ...]
     prior_primary_block_id: Optional[int]
     prior_duplicate_block_ids: Optional[frozenset[int]]
-
-
-@dataclass(frozen=True)
-class BlockTableIdentitySeal:
-    sequence_id: int
-    table_revision: int
-    ownership_generation: int
-    block_count: int
-    write_block_index: int
-    write_block_id: int
-    write_block_generation: int
-    predecessor_block_id: Optional[int]
-    predecessor_block_generation: Optional[int]
-    identity_sha256: str
 
 
 @dataclass(frozen=True)
