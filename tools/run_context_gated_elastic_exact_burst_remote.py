@@ -562,8 +562,11 @@ def _run_frozen_source_local_verifier(
     primary: Path,
     output: Path,
 ) -> dict:
+    frozen_source = Path(frozen_source).resolve()
+    primary = Path(primary).resolve()
+    output = Path(output).resolve()
     script = (
-        Path(frozen_source)
+        frozen_source
         / "tools"
         / "context_gated_elastic_exact_burst_ceiling.py"
     )

@@ -290,9 +290,10 @@ def test_frozen_source_local_verifier_uses_downloaded_source(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    frozen_source = tmp_path / "frozen-source"
-    primary = tmp_path / "primary"
-    output = tmp_path / "verify.json"
+    monkeypatch.chdir(tmp_path)
+    frozen_source = Path("frozen-source")
+    primary = Path("primary")
+    output = Path("verify.json")
     script = (
         frozen_source
         / "tools"
@@ -305,7 +306,7 @@ def test_frozen_source_local_verifier_uses_downloaded_source(
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
-        output.write_text(
+        output.resolve().write_text(
             json.dumps({
                 "verified": True,
                 "classification": "CEILING_GO",
@@ -328,8 +329,10 @@ def test_frozen_source_local_verifier_uses_downloaded_source(
         output=output,
     )
     command, kwargs = calls[0]
-    assert Path(command[1]) == script
-    assert kwargs["cwd"] == frozen_source
+    assert Path(command[1]) == script.resolve()
+    assert Path(command[2]) == primary.resolve()
+    assert Path(command[-1]) == output.resolve()
+    assert kwargs["cwd"] == frozen_source.resolve()
     assert receipt["verified"] is True
 
 
