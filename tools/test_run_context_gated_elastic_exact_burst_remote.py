@@ -25,7 +25,10 @@ def test_paths_runtime_and_source_patch_are_strict() -> None:
     run_tag = "20260825-elastic-k16-ceiling-r1"
     paths = remote.remote_paths(run_tag)
     port = remote.dist_port_for_run_tag(run_tag)
-    assert remote.DEFAULT_CONTROL_PATH == "none"
+    assert remote.DEFAULT_CONTROL_PATH == remote.base.CONTROL_PATH
+    assert remote.DEFAULT_CONTROL_PATH == (
+        "/tmp/ssh-sitian-10.232.195.203"
+    )
     assert all(
         path.startswith(remote.TASK_REMOTE_ROOT + "/")
         for path in paths.values()
