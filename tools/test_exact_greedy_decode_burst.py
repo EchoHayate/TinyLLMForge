@@ -1145,6 +1145,32 @@ def test_generation_sealed_lease_and_continuation_receipt_contract():
             ownership_generation=12,
         ),
     ).identity_sha256 != sealed.identity_sha256
+    for changed_seal, lease_overrides in (
+        (replace(seal, sequence_id=8), {"sequence_id": 8}),
+        (replace(seal, table_revision=4), {}),
+        (replace(seal, ownership_generation=12), {}),
+        (replace(seal, block_count=3), {}),
+        (replace(seal, write_block_index=0), {}),
+        (
+            replace(seal, write_block_id=13),
+            {"write_block_id": 13},
+        ),
+        (
+            replace(seal, write_block_generation=2),
+            {"write_block_generation": 2},
+        ),
+        (replace(seal, predecessor_block_id=10), {}),
+        (
+            replace(seal, predecessor_block_generation=5),
+            {},
+        ),
+        (replace(seal, identity_sha256="b" * 64), {}),
+    ):
+        assert _continuation_lease(
+            block_table_identity=(),
+            block_table_identity_seal=changed_seal,
+            **lease_overrides,
+        ).identity_sha256 != sealed.identity_sha256
 
     baseline_receipt = _continuation_receipt()
     sealed_receipt = _continuation_receipt(
@@ -1174,6 +1200,79 @@ def test_generation_sealed_lease_and_continuation_receipt_contract():
             "exactly one block-table identity mode is required",
             lambda kwargs=kwargs: _continuation_receipt(**kwargs),
         )
+
+
+def test_generation_sealed_lease_digest_avoids_recursive_dataclass_copy():
+    seal = BlockTableIdentitySeal(
+        sequence_id=7,
+        table_revision=3,
+        ownership_generation=11,
+        block_count=2,
+        write_block_index=1,
+        write_block_id=12,
+        write_block_generation=1,
+        predecessor_block_id=11,
+        predecessor_block_generation=4,
+        identity_sha256="a" * 64,
+    )
+    original_asdict = module.asdict
+
+    def reject_recursive_copy(_value):
+        raise AssertionError(
+            "sealed lease digest must not recursively copy the seal"
+        )
+
+    module.asdict = reject_recursive_copy
+    try:
+        sealed = _continuation_lease(
+            block_table_identity=(),
+            block_table_identity_seal=seal,
+        )
+    finally:
+        module.asdict = original_asdict
+
+    assert sealed.block_table_identity_seal is seal
+    assert sealed.identity_sha256 == (
+        "707ee58e07b1a534d5550ef2c65db108"
+        "dad58c5c4809852162a42f65e821cc27"
+    )
+
+
+def test_generation_sealed_lease_digest_avoids_generic_json_encoder():
+    seal = BlockTableIdentitySeal(
+        sequence_id=7,
+        table_revision=3,
+        ownership_generation=11,
+        block_count=2,
+        write_block_index=1,
+        write_block_id=12,
+        write_block_generation=1,
+        predecessor_block_id=11,
+        predecessor_block_generation=4,
+        identity_sha256="a" * 64,
+    )
+    original_dumps = module.json.dumps
+
+    def reject_generic_json(*_args, **_kwargs):
+        raise AssertionError(
+            "sealed lease digest must use its canonical fast encoder"
+        )
+
+    module.json.dumps = reject_generic_json
+    try:
+        first = _continuation_lease(
+            block_table_identity=(),
+            block_table_identity_seal=seal,
+        )
+        second = _continuation_lease(
+            block_table_identity=(),
+            block_table_identity_seal=seal,
+        )
+    finally:
+        module.json.dumps = original_dumps
+
+    assert first.identity_sha256 == second.identity_sha256
+    assert len(first.identity_sha256) == 64
 
 
 def test_continuation_requires_an_exact_receipt_match() -> None:

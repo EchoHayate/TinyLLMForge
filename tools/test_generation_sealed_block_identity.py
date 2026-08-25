@@ -168,6 +168,29 @@ def test_stable_capture_reuses_identical_seal_without_rescanning(
     assert calls == 1
 
 
+def test_cached_immutable_seal_skips_redundant_digest_validation(
+    monkeypatch,
+):
+    manager, sequence = make_allocated_fixture()
+    seal = manager.capture_block_table_identity(
+        sequence,
+        write_block_index=len(sequence.block_table) - 1,
+    )
+
+    def forbidden(_identity_sha256):
+        raise AssertionError(
+            "cached immutable seal digest was already validated"
+        )
+
+    monkeypatch.setattr(
+        manager,
+        "_validate_identity_digest",
+        forbidden,
+    )
+
+    manager.validate_block_table_identity(sequence, seal)
+
+
 @pytest.mark.parametrize(
     "mutate",
     (

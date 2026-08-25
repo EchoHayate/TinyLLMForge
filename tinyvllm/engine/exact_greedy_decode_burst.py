@@ -588,7 +588,22 @@ def _lease_payload(**values) -> dict:
     }
     seal = values.get("block_table_identity_seal")
     if seal is not None:
-        payload["block_table_identity_seal"] = asdict(seal)
+        payload["block_table_identity_seal"] = {
+            "sequence_id": seal.sequence_id,
+            "table_revision": seal.table_revision,
+            "ownership_generation": seal.ownership_generation,
+            "block_count": seal.block_count,
+            "write_block_index": seal.write_block_index,
+            "write_block_id": seal.write_block_id,
+            "write_block_generation": (
+                seal.write_block_generation
+            ),
+            "predecessor_block_id": seal.predecessor_block_id,
+            "predecessor_block_generation": (
+                seal.predecessor_block_generation
+            ),
+            "identity_sha256": seal.identity_sha256,
+        }
     return payload
 
 
@@ -644,6 +659,44 @@ def _validate_identity_mode(
             "write block identity does not match block table"
         )
     return identities, None
+
+
+def _sealed_lease_identity_payload(
+    values: dict,
+    seal: BlockTableIdentitySeal,
+) -> bytes:
+    def encode_optional(value: Optional[int]) -> str:
+        return "-" if value is None else str(value)
+
+    fields = (
+        "exact_greedy_decode_burst_lease_generation_sealed_v1",
+        str(values["sequence_id"]),
+        str(values["schedule_generation"]),
+        str(values["graph_generation"]),
+        str(values["requested_token_count"]),
+        str(values["authorized_token_count"]),
+        str(values["initial_completion_count"]),
+        str(values["initial_sequence_length"]),
+        str(values["write_block_id"]),
+        str(values["write_block_generation"]),
+        str(values["first_write_position"]),
+        str(values["last_write_position"]),
+        str(values["first_physical_slot"]),
+        str(values["last_physical_slot"]),
+        str(values["remaining_output_tokens"]),
+        "1" if values["completion_only"] else "0",
+        str(seal.sequence_id),
+        str(seal.table_revision),
+        str(seal.ownership_generation),
+        str(seal.block_count),
+        str(seal.write_block_index),
+        str(seal.write_block_id),
+        str(seal.write_block_generation),
+        encode_optional(seal.predecessor_block_id),
+        encode_optional(seal.predecessor_block_generation),
+        seal.identity_sha256,
+    )
+    return "|".join(fields).encode("ascii")
 
 
 def build_exact_greedy_decode_burst_lease(
@@ -739,11 +792,14 @@ def build_exact_greedy_decode_burst_lease(
         "completion_only": completion_only,
         "block_table_identity_seal": seal,
     }
-    encoded = json.dumps(
-        _lease_payload(**values),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    if seal is None:
+        encoded = json.dumps(
+            _lease_payload(**values),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    else:
+        encoded = _sealed_lease_identity_payload(values, seal)
     return ExactGreedyDecodeBurstLease(
         **values,
         identity_sha256=hashlib.sha256(encoded).hexdigest(),

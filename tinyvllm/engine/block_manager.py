@@ -479,7 +479,13 @@ class BlockManager:
             )
         if sequence.seq_id != seal.sequence_id:
             raise ValueError("sequence ID does not match identity seal")
-        self._validate_identity_digest(seal.identity_sha256)
+        cached = getattr(
+            sequence,
+            "_block_table_identity_cache_entry",
+            None,
+        )
+        if cached is None or cached.seal is not seal:
+            self._validate_identity_digest(seal.identity_sha256)
 
         block_table = sequence.block_table
         if (
@@ -520,11 +526,6 @@ class BlockManager:
         if self.ownership_generation != seal.ownership_generation:
             raise RuntimeError("block ownership identity is stale")
 
-        cached = getattr(
-            sequence,
-            "_block_table_identity_cache_entry",
-            None,
-        )
         if (
             cached is None
             or cached.block_table is not block_table
