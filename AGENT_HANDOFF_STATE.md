@@ -50722,3 +50722,75 @@ ELASTIC_K8_K16=DESIGN_AND_PLAN_PUSHED
 OCTET_FOLDED_GRAPH=DESIGN_AND_PLAN_PUSHED
 NEXT_COMMAND=poll_unified_exec_session_37855
 ```
+
+## 2026-08-25 r10 terminal interruption reconciliation
+
+SSH access recovered through the existing ControlMaster, but r10 did not
+recover as a running benchmark. Worker PID/PGID `2952927` is absent and no
+`worker.exitcode` exists. The completion session ended after reporting:
+
+```text
+RuntimeError: remote worker disappeared before writing exit code
+```
+
+The remote partial bundle was downloaded without alteration to:
+
+```text
+artifacts/exact_burst_one_phase_lease_local_journal/
+  20260824-qwen3-06b-one-phase-lease-local-r10/
+    primary/
+    controller/
+```
+
+Preserved evidence:
+
+```text
+performance rows:        60 / 60
+prepare-sample rows:     60 / 60
+correctness rows:        16 / 24
+missing correctness:     all eight 8K rows
+logit sidecars:           8
+worker exit receipt:      absent
+producer summary/gate:    absent
+source/runner manifests:  absent
+remote verifier receipt:  absent
+```
+
+The verifier archived from frozen source commit
+`c3890e7aa4d17b12f00d41b5df0bf8a004de6b96` rejects the partial bundle with
+`required artifact is missing: source_manifest.json`. Therefore the only
+allowed fixed-precedence classification is:
+
+```text
+R10_ONE_PHASE_JOURNAL=NO_GO_EVIDENCE_INCOMPLETE
+R10_PERFORMANCE_ROWS=60_OF_60
+R10_CORRECTNESS_ROWS=16_OF_24
+R10_REMOTE_VERIFIER=ABSENT
+R10_FROZEN_SOURCE_LOCAL_VERIFIER=REJECTED_INCOMPLETE
+R10_PROMOTION=NOT_AUTHORIZED
+```
+
+Diagnostic-only performance values are:
+
+```text
+aggregate prepare median/P95 improvement: 81.372219% / 64.937033%
+8K prepare median/P95 improvement:        87.226748% / 40.445404%
+aggregate TPOT median/P95 improvement:     2.382038% / 1.768253%
+TTFT regression:                           0.169831%
+E2E improvement:                           2.026498%
+throughput improvement:                    2.068202%
+peak allocated/reserved reduction:         0.464710% / 1.011846%
+```
+
+These rows also show 30 total candidate generic-journal captures and 30
+`unsupported_burst_shape` fallbacks: each candidate row records 16 attempts
+but only 15 captures/commits. Thus the frozen 8K prepare-P95 and zero-fallback
+requirements would not pass even if the missing correctness rows existed.
+
+Do not resume, overwrite, or reuse r10. The r10 freeze is reconciled as a
+failed/incomplete gate, so the next executable task is the already RED
+generation-sealed block-table identity suite:
+
+```text
+NEXT_COMMAND=python3 -m pytest tools/test_generation_sealed_block_identity.py -q
+```

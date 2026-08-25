@@ -4205,3 +4205,68 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-25 latest reconciliation: One-Phase Lease-Local Journal r10
+
+The one-phase lease-local journal run did not produce terminal evidence. This
+section records the immutable interruption without changing the established
+Phase-1 exact-greedy-burst result above.
+
+```text
+run tag:
+  20260824-qwen3-06b-one-phase-lease-local-r10
+source commit:
+  c3890e7aa4d17b12f00d41b5df0bf8a004de6b96
+worker PID/PGID:
+  2952927 / 2952927
+recovery observation:
+  worker absent before worker.exitcode was written
+performance rows:
+  60 / 60
+correctness rows:
+  16 / 24
+missing correctness:
+  all eight 8K policy/sampling-point rows
+producer summary/gate:
+  absent
+remote verifier:
+  absent
+frozen-source local verifier:
+  rejected incomplete artifact
+classification:
+  NO_GO_EVIDENCE_INCOMPLETE
+```
+
+The complete performance matrix is diagnostic only. It reports aggregate
+prepare median/P95 improvements of `81.372219%`/`64.937033%` and aggregate
+TPOT median/P95 improvements of `2.382038%`/`1.768253%`. The cost side reports
+TTFT regression of `0.169831%`, E2E improvement of `2.026498%`, throughput
+improvement of `2.068202%`, and peak allocated/reserved-memory reductions of
+`0.464710%`/`1.011846%`.
+
+The same diagnostic matrix also fails two frozen requirements:
+
+- 8K prepare P95 improves `40.445404%`, below the required `50%`; and
+- all 30 candidate rows record one `unsupported_burst_shape` fallback and one
+  generic-journal capture, so captures/commits are 15 rather than 16 eligible
+  bursts.
+
+Available 2K/4K correctness pairs are exact, but the missing 8K rows and
+terminal receipts prohibit promotion. The tag will not be resumed,
+overwritten, or reused.
+
+```text
+ONE_PHASE_LEASE_LOCAL_JOURNAL_RUN=20260824-qwen3-06b-one-phase-lease-local-r10
+ONE_PHASE_LEASE_LOCAL_JOURNAL_CLASSIFICATION=NO_GO_EVIDENCE_INCOMPLETE
+ONE_PHASE_LEASE_LOCAL_JOURNAL_PERFORMANCE_ROWS=60_OF_60
+ONE_PHASE_LEASE_LOCAL_JOURNAL_CORRECTNESS_ROWS=16_OF_24
+ONE_PHASE_LEASE_LOCAL_JOURNAL_8K_CORRECTNESS=0_OF_8
+ONE_PHASE_LEASE_LOCAL_JOURNAL_WORKER_EXITCODE=MISSING
+ONE_PHASE_LEASE_LOCAL_JOURNAL_REMOTE_VERIFIER=ABSENT
+ONE_PHASE_LEASE_LOCAL_JOURNAL_LOCAL_VERIFIER=REJECTED_INCOMPLETE
+ONE_PHASE_LEASE_LOCAL_JOURNAL_PROMOTION=NOT_AUTHORIZED
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
