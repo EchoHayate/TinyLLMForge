@@ -336,6 +336,73 @@ def test_frozen_source_local_verifier_uses_downloaded_source(
     assert receipt["verified"] is True
 
 
+def test_terminal_mode_uses_five_repetitions_and_independent_verifier(
+    monkeypatch,
+) -> None:
+    commands = []
+
+    def fake_remote(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="321\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(remote, "_run_remote_checked", fake_remote)
+    remote._run_remote_preflight(
+        source=remote.TASK_REMOTE_ROOT + "/staging/fresh/source",
+        gpu_index=0,
+        dist_port=23456,
+        gate_kind="terminal",
+    )
+    remote._launch_worker(
+        source=remote.TASK_REMOTE_ROOT + "/staging/fresh/source",
+        primary=remote.TASK_REMOTE_ROOT + "/runs/fresh",
+        controller=(
+            remote.TASK_REMOTE_ROOT
+            + "/controller-verification/fresh"
+        ),
+        run_tag="fresh",
+        source_commit="a" * 40,
+        gpu_index=0,
+        dist_port=23456,
+        gate_kind="terminal",
+    )
+    remote._run_remote_verifier(
+        source=remote.TASK_REMOTE_ROOT + "/staging/fresh/source",
+        primary=remote.TASK_REMOTE_ROOT + "/runs/fresh",
+        gpu_index=0,
+        dist_port=23456,
+        gate_kind="terminal",
+    )
+
+    joined = "\n".join(commands)
+    assert "test_context_gated_elastic_exact_burst_gate.py" in joined
+    assert "test_context_gated_elastic_exact_burst_verify.py" in joined
+    assert "--repetitions 5" in joined
+    assert "--warmup-repetitions 2" in joined
+    assert "context_gated_elastic_exact_burst_gate.py" in joined
+    assert "context_gated_elastic_exact_burst_verify.py" in joined
+
+
+def test_terminal_mode_is_explicit_and_has_40_by_32_inventory() -> None:
+    args = remote.parse_args([
+        "--run-tag",
+        "fresh",
+        "--source-sha",
+        "a" * 40,
+        "--local-output-dir",
+        "result",
+        "--gate-kind",
+        "terminal",
+    ])
+    assert args.gate_kind == "terminal"
+    assert remote.expected_row_counts("terminal") == (40, 32)
+    assert "terminal_manifest.json" in remote.primary_files("terminal")
+
+
 def test_controller_source_has_no_kinit_or_process_kill() -> None:
     source = Path(remote.__file__).read_text(encoding="utf-8")
     forbidden = ("kinit", "kill -", "pkill", "killall")

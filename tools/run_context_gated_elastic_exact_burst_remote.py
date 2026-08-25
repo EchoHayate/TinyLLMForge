@@ -42,6 +42,9 @@ GPU_UTILIZATION_LIMIT_PERCENT = 5
 PERFORMANCE_ROWS = 24
 CORRECTNESS_ROWS = 32
 CEILING_REPETITIONS = 3
+TERMINAL_PERFORMANCE_ROWS = 40
+TERMINAL_CORRECTNESS_ROWS = 32
+TERMINAL_REPETITIONS = 5
 SOURCE_PATCH_SHA256 = hashlib.sha256(b"").hexdigest()
 COMMITTED_ARCHIVE_PATHS = ("tinyvllm", "tools")
 TASK_TRACKED_PATHS = (
@@ -56,6 +59,10 @@ TASK_TRACKED_PATHS = (
     "tools/test_context_gated_elastic_exact_burst_ceiling.py",
     "tools/run_context_gated_elastic_exact_burst_remote.py",
     "tools/test_run_context_gated_elastic_exact_burst_remote.py",
+    "tools/context_gated_elastic_exact_burst_gate.py",
+    "tools/test_context_gated_elastic_exact_burst_gate.py",
+    "tools/context_gated_elastic_exact_burst_verify.py",
+    "tools/test_context_gated_elastic_exact_burst_verify.py",
 )
 PRIMARY_FILES = (
     "workload_manifest.json",
@@ -68,6 +75,19 @@ PRIMARY_FILES = (
     "ceiling_summary.json",
     "ceiling_gate.json",
     "producer_receipt.json",
+)
+TERMINAL_PRIMARY_FILES = (
+    "workload_manifest.json",
+    "source_manifest.json",
+    "source.patch",
+    "performance_rows.jsonl",
+    "correctness_rows.jsonl",
+    "profile_summary.json",
+    "terminal_source_manifest.json",
+    "terminal_summary.json",
+    "terminal_gate.json",
+    "producer_receipt.json",
+    "terminal_manifest.json",
 )
 
 validate_kerberos = infra.validate_kerberos
@@ -85,6 +105,24 @@ _run_remote_with_input_checked = infra._run_remote_with_input_checked
 _poll_worker = infra._poll_worker
 _query_remote_gpu_rows = infra._query_remote_gpu_rows
 _probe_remote_requirements = infra._probe_remote_requirements
+
+
+def _validate_gate_kind(value: str) -> str:
+    if value not in {"ceiling", "terminal"}:
+        raise ValueError("gate kind is invalid")
+    return value
+
+
+def expected_row_counts(gate_kind: str) -> tuple[int, int]:
+    kind = _validate_gate_kind(gate_kind)
+    if kind == "terminal":
+        return TERMINAL_PERFORMANCE_ROWS, TERMINAL_CORRECTNESS_ROWS
+    return PERFORMANCE_ROWS, CORRECTNESS_ROWS
+
+
+def primary_files(gate_kind: str) -> tuple[str, ...]:
+    kind = _validate_gate_kind(gate_kind)
+    return TERMINAL_PRIMARY_FILES if kind == "terminal" else PRIMARY_FILES
 
 
 def validate_remote_task_root(value: str) -> str:
@@ -379,20 +417,36 @@ def _run_remote_preflight(
     source: str,
     gpu_index: int,
     dist_port: int,
+    gate_kind: str = "ceiling",
 ) -> None:
+    kind = _validate_gate_kind(gate_kind)
     pytest_path = (
         f"{shlex.quote(REMOTE_PYTEST_SITE)}:\"$PYTHONPATH\""
     )
-    compile_files = (
-        "tools/profile_context_gated_elastic_exact_burst.py",
-        "tools/context_gated_elastic_exact_burst_ceiling.py",
-        "tools/run_context_gated_elastic_exact_burst_remote.py",
-    )
-    test_files = (
-        "tools/test_profile_context_gated_elastic_exact_burst.py",
-        "tools/test_context_gated_elastic_exact_burst_ceiling.py",
-        "tools/test_run_context_gated_elastic_exact_burst_remote.py",
-    )
+    if kind == "terminal":
+        compile_files = (
+            "tools/profile_context_gated_elastic_exact_burst.py",
+            "tools/context_gated_elastic_exact_burst_gate.py",
+            "tools/context_gated_elastic_exact_burst_verify.py",
+            "tools/run_context_gated_elastic_exact_burst_remote.py",
+        )
+        test_files = (
+            "tools/test_profile_context_gated_elastic_exact_burst.py",
+            "tools/test_context_gated_elastic_exact_burst_gate.py",
+            "tools/test_context_gated_elastic_exact_burst_verify.py",
+            "tools/test_run_context_gated_elastic_exact_burst_remote.py",
+        )
+    else:
+        compile_files = (
+            "tools/profile_context_gated_elastic_exact_burst.py",
+            "tools/context_gated_elastic_exact_burst_ceiling.py",
+            "tools/run_context_gated_elastic_exact_burst_remote.py",
+        )
+        test_files = (
+            "tools/test_profile_context_gated_elastic_exact_burst.py",
+            "tools/test_context_gated_elastic_exact_burst_ceiling.py",
+            "tools/test_run_context_gated_elastic_exact_burst_remote.py",
+        )
     command = (
         "set -eu; "
         f"cd {shlex.quote(source)}; "
@@ -424,7 +478,20 @@ def _launch_worker(
     source_commit: str,
     gpu_index: int,
     dist_port: int,
+    gate_kind: str = "ceiling",
 ) -> int:
+    kind = _validate_gate_kind(gate_kind)
+    repetitions = (
+        TERMINAL_REPETITIONS
+        if kind == "terminal"
+        else CEILING_REPETITIONS
+    )
+    warmup_repetitions = "2" if kind == "terminal" else "1"
+    classifier = (
+        "tools/context_gated_elastic_exact_burst_gate.py"
+        if kind == "terminal"
+        else "tools/context_gated_elastic_exact_burst_ceiling.py"
+    )
     pid_path = controller + "/worker.pid"
     pgid_path = controller + "/worker.pgid"
     exit_path = controller + "/worker.exitcode"
@@ -443,13 +510,13 @@ def _launch_worker(
         "--run-tag",
         run_tag,
         "--repetitions",
-        str(CEILING_REPETITIONS),
+        str(repetitions),
         "--warmup-repetitions",
-        "1",
+        warmup_repetitions,
     ]
     classify_command = [
         REMOTE_PYTHON,
-        "tools/context_gated_elastic_exact_burst_ceiling.py",
+        classifier,
         primary,
         "--source-root",
         source,
@@ -532,9 +599,17 @@ def _run_remote_verifier(
     primary: str,
     gpu_index: int,
     dist_port: int,
+    gate_kind: str = "ceiling",
 ) -> None:
+    kind = _validate_gate_kind(gate_kind)
     controller = _controller_from_primary(primary)
     output = controller + "/independent-verify/verification.json"
+    verifier = (
+        "tools/context_gated_elastic_exact_burst_verify.py"
+        if kind == "terminal"
+        else "tools/context_gated_elastic_exact_burst_ceiling.py"
+    )
+    verify_flag = "" if kind == "terminal" else " --verify-only"
     command = (
         "set -eu; "
         f"cd {shlex.quote(source)}; "
@@ -544,8 +619,8 @@ def _run_remote_verifier(
             dist_port=dist_port,
         )
         + f"{REMOTE_PYTHON} "
-        + "tools/context_gated_elastic_exact_burst_ceiling.py "
-        + f"{shlex.quote(primary)} --verify-only "
+        + f"{verifier} "
+        + f"{shlex.quote(primary)}{verify_flag} "
         + f"--source-root {shlex.quote(source)} "
         + f"--output {shlex.quote(output)}"
     )
@@ -561,14 +636,20 @@ def _run_frozen_source_local_verifier(
     frozen_source: Path,
     primary: Path,
     output: Path,
+    gate_kind: str = "ceiling",
 ) -> dict:
+    kind = _validate_gate_kind(gate_kind)
     frozen_source = Path(frozen_source).resolve()
     primary = Path(primary).resolve()
     output = Path(output).resolve()
     script = (
         frozen_source
         / "tools"
-        / "context_gated_elastic_exact_burst_ceiling.py"
+        / (
+            "context_gated_elastic_exact_burst_verify.py"
+            if kind == "terminal"
+            else "context_gated_elastic_exact_burst_ceiling.py"
+        )
     )
     if not script.is_file():
         raise ValueError("frozen-source verifier is missing")
@@ -578,17 +659,21 @@ def _run_frozen_source_local_verifier(
     environment["PYTHONPYCACHEPREFIX"] = os.fspath(
         output.parent / "pycache"
     )
+    command = [
+        sys.executable,
+        os.fspath(script),
+        os.fspath(primary),
+    ]
+    if kind == "ceiling":
+        command.append("--verify-only")
+    command.extend([
+        "--source-root",
+        os.fspath(frozen_source),
+        "--output",
+        os.fspath(output),
+    ])
     result = subprocess.run(
-        [
-            sys.executable,
-            os.fspath(script),
-            os.fspath(primary),
-            "--verify-only",
-            "--source-root",
-            os.fspath(frozen_source),
-            "--output",
-            os.fspath(output),
-        ],
+        command,
         cwd=frozen_source,
         env=environment,
         check=False,
@@ -607,7 +692,9 @@ def _download_ceiling_bundle(
     *,
     paths: dict[str, str],
     local_destination: Path,
+    gate_kind: str = "ceiling",
 ) -> dict:
+    kind = _validate_gate_kind(gate_kind)
     primary = local_destination / "primary"
     controller = local_destination / "controller"
     frozen_source = local_destination / "frozen-source"
@@ -624,7 +711,7 @@ def _download_ceiling_bundle(
         frozen_source,
     )
     missing = [
-        name for name in PRIMARY_FILES
+        name for name in primary_files(kind)
         if not (primary / name).is_file()
     ]
     if missing:
@@ -647,14 +734,16 @@ def _download_ceiling_bundle(
             / "local-verify"
             / "verification.json"
         ),
+        gate_kind=kind,
     )
+    performance_rows, correctness_rows = expected_row_counts(kind)
     if (
         remote_verification != local_verification
         or remote_verification.get("verified") is not True
         or remote_verification.get("performance_row_count")
-        != PERFORMANCE_ROWS
+        != performance_rows
         or remote_verification.get("correctness_row_count")
-        != CORRECTNESS_ROWS
+        != correctness_rows
     ):
         raise ValueError("verification receipt disagreement")
     download_receipt = {
@@ -676,6 +765,7 @@ def _download_ceiling_bundle(
 
 
 def run_controller(args) -> dict:
+    gate_kind = _validate_gate_kind(args.gate_kind)
     validate_remote_task_root(args.remote_task_root)
     if args.host != REMOTE_HOST:
         raise ValueError("remote host is not authorized")
@@ -712,8 +802,9 @@ def run_controller(args) -> dict:
         "source_patch_sha256": SOURCE_PATCH_SHA256,
         "remote_host": args.host,
         "remote_paths": paths,
-        "performance_rows": PERFORMANCE_ROWS,
-        "correctness_rows": CORRECTNESS_ROWS,
+        "gate_kind": gate_kind,
+        "performance_rows": expected_row_counts(gate_kind)[0],
+        "correctness_rows": expected_row_counts(gate_kind)[1],
         "dist_port": dist_port,
         "kerberos": kerberos,
         "remote_requirements": requirements,
@@ -739,6 +830,7 @@ def run_controller(args) -> dict:
         source=source,
         gpu_index=selected["index"],
         dist_port=dist_port,
+        gate_kind=gate_kind,
     )
     launch_gpu = validate_selected_gpu_still_clean(
         selected,
@@ -763,6 +855,7 @@ def run_controller(args) -> dict:
         source_commit=source_commit,
         gpu_index=selected["index"],
         dist_port=dist_port,
+        gate_kind=gate_kind,
     )
     launch_receipt = {
         "schema": "context_gated_elastic_exact_burst_remote_v1",
@@ -796,6 +889,7 @@ def run_controller(args) -> dict:
         primary=paths["primary"],
         gpu_index=selected["index"],
         dist_port=dist_port,
+        gate_kind=gate_kind,
     )
     completion = {
         "schema": "context_gated_elastic_exact_burst_remote_v1",
@@ -816,6 +910,7 @@ def run_controller(args) -> dict:
     downloaded = _download_ceiling_bundle(
         paths=paths,
         local_destination=local_destination,
+        gate_kind=gate_kind,
     )
     result = {
         **completion,
@@ -837,6 +932,11 @@ def parse_args(argv=None):
     parser.add_argument(
         "--remote-task-root",
         default=APPROVED_ROOT,
+    )
+    parser.add_argument(
+        "--gate-kind",
+        choices=("ceiling", "terminal"),
+        default="ceiling",
     )
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--run-tag", required=True)
