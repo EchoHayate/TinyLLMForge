@@ -568,9 +568,12 @@ def test_remote_preflight_covers_controller_and_adjacent_suites(
     for path in (
         "tools/test_run_exact_burst_generation_sealed_lease_identity_remote.py",
         "tools/test_llm_engine_exact_greedy_decode_burst.py",
-        "tools/test_exact_burst_continuation_epoch.py",
-        "tools/test_exact_burst_ragged_coalescing.py",
-        "tools/test_exact_burst_split_phase.py",
+        "tools/test_exact_burst_continuation_epoch_gate.py",
+        "tools/test_exact_burst_continuation_epoch_verify.py",
+        "tools/test_exact_burst_ragged_coalescing_gate.py",
+        "tools/test_exact_burst_ragged_coalescing_verify.py",
+        "tools/test_exact_burst_split_phase_gate.py",
+        "tools/test_exact_burst_split_phase_verify.py",
         "tools/test_exact_burst_one_phase_lease_local_journal_gate.py",
         "tools/test_exact_burst_one_phase_lease_local_journal_verify.py",
     ):
@@ -580,6 +583,14 @@ def test_remote_preflight_covers_controller_and_adjacent_suites(
         "retry_attempts": 3,
         "idempotent": True,
     }
+
+
+def test_remote_preflight_inventory_names_existing_files():
+    assert remote.REMOTE_PREFLIGHT_TEST_FILES
+    assert all(
+        (remote.REPO_ROOT / path).is_file()
+        for path in remote.REMOTE_PREFLIGHT_TEST_FILES
+    )
 
 
 def test_terminal_download_reuses_verified_existing_tree(

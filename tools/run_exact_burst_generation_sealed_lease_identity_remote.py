@@ -80,6 +80,31 @@ PRIMARY_FILES = (
     "source_manifest.json",
     "runner_receipt.json",
 )
+REMOTE_PREFLIGHT_TEST_FILES = (
+    (
+        "tools/"
+        "test_run_exact_burst_generation_sealed_lease_identity_remote.py"
+    ),
+    "tools/test_exact_burst_generation_sealed_lease_identity_gate.py",
+    "tools/test_exact_burst_generation_sealed_lease_identity_verify.py",
+    "tools/test_profile_exact_burst_generation_sealed_lease_identity.py",
+    "tools/test_scheduler_prepared_postprocess.py",
+    "tools/test_exact_greedy_decode_burst.py",
+    "tools/test_model_runner_spec_verify.py",
+    "tools/test_generation_sealed_block_table.py",
+    "tools/test_hybrid_state_sequence.py",
+    "tools/test_chunked_prefill.py",
+    "tools/test_speculative_kv_transaction.py",
+    "tools/test_llm_engine_exact_greedy_decode_burst.py",
+    "tools/test_exact_burst_continuation_epoch_gate.py",
+    "tools/test_exact_burst_continuation_epoch_verify.py",
+    "tools/test_exact_burst_ragged_coalescing_gate.py",
+    "tools/test_exact_burst_ragged_coalescing_verify.py",
+    "tools/test_exact_burst_split_phase_gate.py",
+    "tools/test_exact_burst_split_phase_verify.py",
+    "tools/test_exact_burst_one_phase_lease_local_journal_gate.py",
+    "tools/test_exact_burst_one_phase_lease_local_journal_verify.py",
+)
 
 validate_kerberos = base.validate_kerberos
 committed_archive = legacy.committed_archive
@@ -622,34 +647,6 @@ def _run_remote_preflight(
             "run_exact_burst_generation_sealed_lease_identity_remote.py"
         ),
     )
-    test_files = (
-        (
-            "tools/"
-            "test_run_exact_burst_generation_sealed_lease_identity_remote.py"
-        ),
-        "tools/test_exact_burst_generation_sealed_lease_identity_gate.py",
-        "tools/test_exact_burst_generation_sealed_lease_identity_verify.py",
-        "tools/test_profile_exact_burst_generation_sealed_lease_identity.py",
-        "tools/test_scheduler_prepared_postprocess.py",
-        "tools/test_exact_greedy_decode_burst.py",
-        "tools/test_model_runner_spec_verify.py",
-        "tools/test_generation_sealed_block_table.py",
-        "tools/test_hybrid_state_sequence.py",
-        "tools/test_chunked_prefill.py",
-        "tools/test_speculative_kv_transaction.py",
-        "tools/test_llm_engine_exact_greedy_decode_burst.py",
-        "tools/test_exact_burst_continuation_epoch.py",
-        "tools/test_exact_burst_ragged_coalescing.py",
-        "tools/test_exact_burst_split_phase.py",
-        (
-            "tools/"
-            "test_exact_burst_one_phase_lease_local_journal_gate.py"
-        ),
-        (
-            "tools/"
-            "test_exact_burst_one_phase_lease_local_journal_verify.py"
-        ),
-    )
     command = (
         "set -eu; "
         f"cd {shlex.quote(source)}; "
@@ -663,7 +660,10 @@ def _run_remote_preflight(
         + "; "
         + f"PYTHONPATH={pytest_path} "
         + f"{REMOTE_PYTHON} -m pytest -q "
-        + " ".join(shlex.quote(path) for path in test_files)
+        + " ".join(
+            shlex.quote(path)
+            for path in REMOTE_PREFLIGHT_TEST_FILES
+        )
     )
     _run_remote_checked(
         command,
