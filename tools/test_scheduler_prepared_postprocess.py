@@ -387,6 +387,45 @@ def test_context_gated_elastic_scheduler_selects_k16_or_k8(
     assert summary["fallback_counts"] == {}
 
 
+def test_context_gated_elastic_scheduler_uses_original_prompt_length_after_prefill(
+    monkeypatch,
+):
+    block_size = 4096
+    prompt_length = 2048
+    monkeypatch.setattr(Sequence, "block_size", block_size)
+    scheduler = Scheduler(_config(kvcache_block_size=block_size))
+    sequence = _running_sequence(
+        scheduler,
+        list(range(prompt_length)),
+        max_tokens=32,
+        ignore_eos=True,
+    )
+    sequence.append_token(99_999)
+
+    lease = _prepare_exact_burst_lease(
+        scheduler,
+        sequence,
+        configured_width=8,
+        elastic_k16_enabled=True,
+        k16_graph_available=True,
+        k16_health_quarantined=False,
+        k16_health_generation=3,
+    )
+
+    assert sequence.num_prompt_tokens == prompt_length
+    assert len(sequence) == prompt_length + 1
+    assert lease.requested_token_count == 16
+    assert lease.authorized_token_count == 16
+    assert lease.initial_sequence_length == prompt_length + 1
+    assert lease.first_write_position == prompt_length
+    assert lease.width_health_generation == 3
+    summary = scheduler.exact_greedy_decode_burst_summary()
+    assert summary["k16_attempts"] == 1
+    assert summary["k16_acceptances"] == 1
+    assert summary["k8_fallbacks"] == 0
+    assert summary["elastic_k16_fallback_counts"] == {}
+
+
 def test_elastic_flag_off_preserves_k8_lease_identity(monkeypatch):
     monkeypatch.setattr(Sequence, "block_size", 32)
 

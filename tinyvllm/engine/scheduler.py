@@ -1312,6 +1312,11 @@ class Scheduler:
         initial_sequence_length = (
             len(sequence) if sequence is not None else 1
         )
+        initial_prompt_length = (
+            sequence.num_prompt_tokens
+            if sequence is not None
+            else 1
+        )
         first_write_position = initial_sequence_length - 1
         writable_positions = (
             self.block_manager.block_size
@@ -1332,7 +1337,7 @@ class Scheduler:
                 select_context_gated_elastic_exact_burst_width(
                     enabled=True,
                     base_width=configured_width,
-                    initial_sequence_length=initial_sequence_length,
+                    initial_sequence_length=initial_prompt_length,
                     remaining_output_tokens=remaining_output_tokens,
                     write_block_capacity=writable_positions,
                     shared_graph_available=k16_graph_available,
