@@ -205,6 +205,7 @@ def parse_nsys_sqlite(
             "coverage_errors": sorted(set(coverage_errors)),
             "rows": [],
             "critical_rows": [],
+            "step_rows": [],
         }
 
     result_rows, step_metrics = _build_metric_rows(
@@ -220,6 +221,10 @@ def parse_nsys_sqlite(
         "rows": result_rows,
         "critical_rows": _build_critical_rows(
             result_rows,
+            step_metrics,
+        ),
+        "step_rows": _build_step_rows(
+            step_identities,
             step_metrics,
         ),
     }
@@ -939,3 +944,20 @@ def _build_critical_rows(result_rows, step_metrics):
             "final_required_offset_ns": final_required_offset,
         })
     return critical_rows
+
+
+def _build_step_rows(step_identities, step_metrics):
+    return [
+        identity
+        | {
+            "step_critical_interval_ns": (
+                metrics["critical_interval"].end_ns
+                - metrics["critical_interval"].start_ns
+            ),
+            "final_required_offset_ns": (
+                metrics["final_required_offset_ns"]
+            ),
+        }
+        for step_key, identity in sorted(step_identities.items())
+        for metrics in (step_metrics[step_key],)
+    ]

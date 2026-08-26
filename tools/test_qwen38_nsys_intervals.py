@@ -343,6 +343,18 @@ def test_parse_nsys_sqlite_correlates_four_ranks_and_exact_unions(tmp_path):
         "step_critical_interval_ns": 240,
         "final_required_offset_ns": 280,
     }]
+    assert result["step_rows"] == [
+        {
+            **{
+                name: value
+                for name, value in _identity(rank).items()
+                if name not in {"layer_index", "layer_role"}
+            },
+            "step_critical_interval_ns": 210 + rank * 10,
+            "final_required_offset_ns": 250 + rank * 10,
+        }
+        for rank in range(4)
+    ]
 
 
 def test_parse_nsys_sqlite_infers_rank_from_correlated_cuda_device(
@@ -366,6 +378,7 @@ def test_missing_nccl_correlation_is_inconclusive_not_estimated(tmp_path):
     assert result["classification"] == "INCONCLUSIVE_TRACE_COVERAGE"
     assert result["rows"] == []
     assert result["critical_rows"] == []
+    assert result["step_rows"] == []
     assert result["coverage_errors"] == [
         "rank 2 operation 1 has no correlated NCCL kernel"
     ]

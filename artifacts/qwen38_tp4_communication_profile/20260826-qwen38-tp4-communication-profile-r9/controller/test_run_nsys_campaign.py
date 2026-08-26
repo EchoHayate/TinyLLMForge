@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sqlite3
 import sys
+
+import pytest
 
 
 HERE = Path(__file__).resolve().parent
@@ -128,6 +131,48 @@ def test_reparented_gpu_worker_with_attempt_token_is_owned():
         ownership_token="attempt-token",
         token_reader=lambda pid: "another-attempt",
     )
+
+
+def test_foreign_process_requires_two_consecutive_samples():
+    module = _load()
+
+    confirmed, pending = module.confirm_persistent_foreign_pids(
+        previous=set(),
+        current={42},
+    )
+    assert confirmed == []
+    assert pending == {42}
+
+    confirmed, pending = module.confirm_persistent_foreign_pids(
+        previous=pending,
+        current={42, 43},
+    )
+    assert confirmed == [42]
+    assert pending == {42, 43}
+
+    confirmed, pending = module.confirm_persistent_foreign_pids(
+        previous=pending,
+        current=set(),
+    )
+    assert confirmed == []
+    assert pending == set()
+
+
+def test_existing_nsys_sqlite_requires_complete_trace_tables(tmp_path):
+    module = _load()
+    sqlite_path = tmp_path / "incomplete.sqlite"
+    connection = sqlite3.connect(sqlite_path)
+    connection.execute(
+        "create table StringIds (id integer primary key, value text)"
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        RuntimeError,
+        match="Nsight SQLite table inventory is incomplete",
+    ):
+        module.validate_nsys_sqlite(sqlite_path)
 
 
 def test_retryable_interference_stops_after_attempt_budget():

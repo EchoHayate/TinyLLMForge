@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import sqlite3
 import statistics
 import subprocess
 import time
@@ -39,6 +40,12 @@ WORKLOADS = {
 }
 OWNERSHIP_ENV = "TINYLLMFORGE_NSYS_OWNERSHIP_TOKEN"
 DEFAULT_MAX_ATTEMPTS = 3
+REQUIRED_NSYS_TABLES = frozenset({
+    "StringIds",
+    "NVTX_EVENTS",
+    "CUPTI_ACTIVITY_KIND_RUNTIME",
+    "CUPTI_ACTIVITY_KIND_KERNEL",
+})
 
 
 def nsys_cases() -> tuple[dict, ...]:
@@ -179,6 +186,15 @@ def is_owned_process(
         pid in process_group_owned
         or token_reader(pid) == ownership_token
     )
+
+
+def confirm_persistent_foreign_pids(
+    *,
+    previous: set[int],
+    current: set[int],
+) -> tuple[list[int], set[int]]:
+    current = set(current)
+    return sorted(set(previous) & current), current
 
 
 def token_owned_pids(ownership_token: str) -> list[int]:
@@ -330,6 +346,7 @@ def monitor_case(
     )
     samples_path = CONTROLLER / "nsys-resource-samples.raw.jsonl"
     violations = []
+    pending_foreign_by_uuid: dict[str, set[int]] = {}
     with (
         stdout_path.open("w", encoding="utf-8") as stdout,
         stderr_path.open("w", encoding="utf-8") as stderr,
@@ -374,6 +391,16 @@ def monitor_case(
                         ownership_token=ownership_token,
                     )
                 ]
+                confirmed_foreign, pending_foreign = (
+                    confirm_persistent_foreign_pids(
+                        previous=pending_foreign_by_uuid.get(
+                            uuid,
+                            set(),
+                        ),
+                        current=set(foreign),
+                    )
+                )
+                pending_foreign_by_uuid[uuid] = pending_foreign
                 owned.update(
                     item["pid"]
                     for item in row["compute_processes"]
@@ -383,9 +410,10 @@ def monitor_case(
                         ownership_token=ownership_token,
                     )
                 )
-                if foreign:
+                if confirmed_foreign:
                     violations.append(
-                        f"unrelated GPU process on {uuid}: {foreign}"
+                        "unrelated GPU process on "
+                        f"{uuid}: {confirmed_foreign}"
                     )
                 sample["selected_gpus"].append(row)
             sample["owned_pids"] = sorted(owned)
@@ -460,6 +488,7 @@ def validate_existing_case(
         raise RuntimeError(
             f"incomplete existing Nsight case {selected_case_id}"
         )
+    validate_nsys_sqlite(sqlite_path)
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     if (
         payload.get("classification") != "PASS"
@@ -492,6 +521,48 @@ def complete_case(
             f"Nsight case did not produce artifacts: {case_id(case)}"
         )
     return payload
+
+
+def validate_nsys_sqlite(path: Path) -> None:
+    path = Path(path).resolve()
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("Nsight SQLite artifact is missing")
+    try:
+        connection = sqlite3.connect(
+            f"{path.as_uri()}?mode=ro",
+            uri=True,
+        )
+        try:
+            if connection.execute(
+                "pragma quick_check"
+            ).fetchone() != ("ok",):
+                raise RuntimeError(
+                    "Nsight SQLite integrity check failed"
+                )
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "select name from sqlite_master "
+                    "where type='table'"
+                )
+            }
+            if not REQUIRED_NSYS_TABLES.issubset(tables):
+                raise RuntimeError(
+                    "Nsight SQLite table inventory is incomplete"
+                )
+            if any(
+                connection.execute(
+                    f'select count(*) from "{table}"'
+                ).fetchone()[0] <= 0
+                for table in REQUIRED_NSYS_TABLES
+            ):
+                raise RuntimeError(
+                    "Nsight SQLite required table is empty"
+                )
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        raise RuntimeError("Nsight SQLite is unreadable") from error
 
 
 def build_overhead_controls(
