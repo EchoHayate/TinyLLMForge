@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.distributed as dist                # 用于张量并行
 from tinyvllm.engine.decode_internal_profiler import (
     profile_collective,
+    profile_operation,
 )
 
 from tinyvllm.utils.context import get_context
@@ -38,7 +39,12 @@ class VocabParallelEmbedding(nn.Module):
         if self.tp_size > 1:
             mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)        #e.g.((1,1,0,0) (1,0,0,0) (0,0,0,0))   
             x = mask * (x - self.vocab_start_idx)           #重置当前GPU分块的token索引 让其落在当前GPU分块内 e.g 75000→0，75001→1，
-        y = F.embedding(x, self.weight)         #根据index和权重去做lookup 计算输出形状
+        with profile_operation(
+            "memory",
+            "vocab_parallel_embedding_lookup",
+            tensor=x,
+        ):
+            y = F.embedding(x, self.weight)         #根据index和权重去做lookup 计算输出形状
         if self.tp_size > 1:
             y = mask.unsqueeze(1) * y                 # 这里只是计算到了局部值
             profile_collective(

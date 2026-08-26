@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from tinyvllm.engine.hybrid_state import HybridStateLease
+from tinyvllm.engine.decode_internal_profiler import profile_layer
 from tinyvllm.layers.qwen35_packed_layer_stack import (
     Qwen35PackedHeterogeneousLayerStack,
 )
@@ -213,11 +214,14 @@ class Qwen35PackedForCausalLM(nn.Module):
             input_ids,
             input_embeds,
         )
-        hidden_states = (
-            self.embed_tokens(input_ids)
-            if input_embeds is None
-            else input_embeds
-        )
+        if input_embeds is None:
+            with profile_layer(
+                len(self.layer_stack.layers),
+                "embedding",
+            ):
+                hidden_states = self.embed_tokens(input_ids)
+        else:
+            hidden_states = input_embeds
         self._validate_hidden_output(
             hidden_states,
             token_count=input_ids.shape[0],

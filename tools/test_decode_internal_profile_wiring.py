@@ -13,6 +13,7 @@ LLM_ENGINE = ROOT / "tinyvllm/engine/llm_engine.py"
 LINEAR = ROOT / "tinyvllm/layers/linear.py"
 EMBED_HEAD = ROOT / "tinyvllm/layers/embed_head.py"
 QWEN35_COMPONENTS = ROOT / "tinyvllm/models/qwen35_components.py"
+QWEN35_PACKED_MODEL = ROOT / "tinyvllm/models/qwen35_packed.py"
 QWEN35_PACKED_STACK = (
     ROOT / "tinyvllm/layers/qwen35_packed_layer_stack.py"
 )
@@ -71,6 +72,23 @@ def _compile_method(path, class_name, method_name):
     namespace = {}
     exec(compile(module, str(path), "exec"), namespace)
     return namespace[method_name]
+
+
+def _profile_scope_calls(node, role):
+    result = []
+    for child in ast.walk(node):
+        if not isinstance(child, ast.With) or len(child.items) != 1:
+            continue
+        context = child.items[0].context_expr
+        if (
+            not isinstance(context, ast.Call)
+            or not isinstance(context.func, ast.Name)
+            or context.func.id != "profile_layer"
+            or role not in _string_constants(context)
+        ):
+            continue
+        result.extend(_called_names(statement) for statement in child.body)
+    return result
 
 
 def test_model_runner_exposes_profile_lifecycle_and_wraps_run():
@@ -344,6 +362,23 @@ def test_linear_gemm_and_packed_layer_boundaries_are_profiled():
     assert "profile_layer" in _called_names(stack_prepare)
     assert "profile_layer" in _called_names(full_forward)
     assert "profile_layer" in _called_names(stateful_forward)
+
+
+def test_embedding_operations_have_layer_ownership():
+    prepare_step = _class_method(
+        QWEN35_PACKED_MODEL,
+        "Qwen35PackedForCausalLM",
+        "prepare_step",
+    )
+    embedding_scopes = _profile_scope_calls(prepare_step, "embedding")
+    embed_forward = _class_method(
+        EMBED_HEAD,
+        "VocabParallelEmbedding",
+        "forward",
+    )
+
+    assert any("embed_tokens" in calls for calls in embedding_scopes)
+    assert "profile_operation" in _called_names(embed_forward)
 
 
 def test_qwen35_output_projections_use_true_row_parallel_layout():

@@ -168,6 +168,32 @@ def _validate_operation_inventory(value):
     return tuple(result)
 
 
+def _validate_collective_byte_inventory(value, operations):
+    if not isinstance(value, list):
+        raise ValueError("collective byte inventory must be a list")
+    expected_ordinals = {
+        operation[0]
+        for operation in operations
+        if operation[1] == "collective"
+    }
+    result = []
+    seen = set()
+    for row in value:
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise ValueError("collective byte inventory row is invalid")
+        ordinal = _integer(row[0], "collective operation ordinal")
+        byte_count = _integer(row[1], "collective bytes")
+        if ordinal in seen:
+            raise ValueError(
+                "collective byte inventory contains duplicate ordinal"
+            )
+        seen.add(ordinal)
+        result.append((ordinal, byte_count))
+    if seen != expected_ordinals or [row[0] for row in result] != sorted(seen):
+        raise ValueError("collective operation byte inventory mismatch")
+    return tuple(result)
+
+
 def _validate_layers(value):
     if not isinstance(value, list) or not value:
         raise ValueError("step layers must be a non-empty list")
@@ -188,9 +214,15 @@ def _validate_layers(value):
         normalized = dict(layer)
         normalized["layer_index"] = layer_index
         normalized["layer_role"] = layer_role
-        normalized["operation_inventory"] = _validate_operation_inventory(
+        operations = _validate_operation_inventory(
             layer.get("operation_inventory")
         )
+        normalized["operation_inventory"] = operations
+        byte_inventory = _validate_collective_byte_inventory(
+            layer.get("collective_byte_inventory"),
+            operations,
+        )
+        normalized["collective_byte_inventory"] = byte_inventory
         for metric in _LAYER_METRICS:
             normalized[metric] = _integer(
                 layer.get(metric),
@@ -213,6 +245,12 @@ def _validate_layers(value):
             raise ValueError("exposed collective arithmetic mismatch")
         if normalized["gemm_ns"] > normalized["compute_ns"]:
             raise ValueError("GEMM duration exceeds compute duration")
+        if normalized["collective_count"] != len(byte_inventory):
+            raise ValueError("collective count does not match inventory")
+        if normalized["collective_bytes"] != sum(
+            row[1] for row in byte_inventory
+        ):
+            raise ValueError("collective bytes do not match inventory")
         critical_interval_ns = normalized["step_critical_interval_ns"]
         for metric in (
             "collective_ns",

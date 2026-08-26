@@ -63,6 +63,7 @@ def _layer(
         "gpu_idle_ns": 80,
         "collective_count": 1,
         "collective_bytes": 40960,
+        "collective_byte_inventory": [[1, 40960]],
         "critical_path_ns": 700 + rank,
         "cpu_global_tids": [((100 + rank) << 24) | 7],
         "stream_ids": [7, 11],

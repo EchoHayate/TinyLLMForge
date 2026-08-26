@@ -709,6 +709,34 @@ def _normalize_layer(layer) -> dict:
     if [row[0] for row in normalized_operations] != sorted(ordinals):
         raise ValueError("operation inventory order mismatch")
     result["operation_inventory"] = normalized_operations
+    byte_rows = layer.get("collective_byte_inventory")
+    if not isinstance(byte_rows, list):
+        raise ValueError("collective byte inventory must be a list")
+    expected_collectives = {
+        operation[0]
+        for operation in normalized_operations
+        if operation[1] == "collective"
+    }
+    normalized_bytes = []
+    byte_ordinals = set()
+    for row in byte_rows:
+        if not isinstance(row, list) or len(row) != 2:
+            raise ValueError("collective byte inventory row is invalid")
+        ordinal = _integer(row[0], "collective operation ordinal")
+        byte_count = _integer(row[1], "collective bytes")
+        if ordinal in byte_ordinals:
+            raise ValueError(
+                "collective byte inventory has duplicate ordinal"
+            )
+        byte_ordinals.add(ordinal)
+        normalized_bytes.append([ordinal, byte_count])
+    if (
+        byte_ordinals != expected_collectives
+        or [row[0] for row in normalized_bytes]
+        != sorted(byte_ordinals)
+    ):
+        raise ValueError("collective byte inventory mismatch")
+    result["collective_byte_inventory"] = normalized_bytes
     for metric in LAYER_METRICS:
         result[metric] = _integer(layer.get(metric), metric)
     result["step_critical_interval_ns"] = _integer(
@@ -725,6 +753,12 @@ def _normalize_layer(layer) -> dict:
         or result["gemm_ns"] > result["compute_ns"]
     ):
         raise ValueError("profile interval arithmetic mismatch")
+    if (
+        result["collective_count"] != len(normalized_bytes)
+        or result["collective_bytes"]
+        != sum(row[1] for row in normalized_bytes)
+    ):
+        raise ValueError("collective byte accounting mismatch")
     if (
         result["compute_ns"] + result["exposed_collective_ns"]
         > result["step_critical_interval_ns"]
@@ -959,6 +993,9 @@ def _structured_rows(rank_rows: dict[int, dict]) -> list[dict]:
         row = rank_rows[rank]
         for step in row["steps"]:
             for layer in step["layers"]:
+                byte_by_ordinal = dict(
+                    layer["collective_byte_inventory"]
+                )
                 for ordinal, operation_class, operation_name in layer[
                     "operation_inventory"
                 ]:
@@ -976,8 +1013,8 @@ def _structured_rows(rank_rows: dict[int, dict]) -> list[dict]:
                         "operation_name": operation_name,
                     }
                     if operation_class == "collective":
-                        structured["collective_bytes"] = layer[
-                            "collective_bytes"
+                        structured["collective_bytes"] = byte_by_ordinal[
+                            ordinal
                         ]
                     result.append(structured)
     return result

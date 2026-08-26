@@ -20,7 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if os.fspath(ROOT) not in sys.path:
     sys.path.insert(0, os.fspath(ROOT))
 
-from tools.verify_qwen38_tp4_communication_profile import verify_bundle
+from tools.verify_qwen38_tp4_communication_profile import (
+    _structured_rows as _verifier_structured_rows,
+    verify_bundle,
+)
 
 
 SOURCE_REVISION = "1" * 40
@@ -115,10 +118,48 @@ def _profile_layer(rank: int) -> dict:
         "gpu_idle_ns": 20,
         "collective_count": 1,
         "collective_bytes": 4096,
+        "collective_byte_inventory": [[1, 4096]],
         "critical_path_ns": 190 + rank * 10,
         "cpu_global_tids": [((100 + rank) << 24) | 7],
         "stream_ids": [7, 11],
     }
+
+
+def test_structured_rows_preserve_each_collective_byte_count():
+    rank_rows = {}
+    for rank in range(4):
+        layer = _profile_layer(rank)
+        layer["operation_inventory"] = [
+            [0, "gemm", "qkv_projection"],
+            [1, "collective", "row_parallel_all_reduce"],
+            [2, "collective", "row_parallel_all_reduce"],
+        ]
+        layer["collective_count"] = 2
+        layer["collective_bytes"] = 3072
+        layer["collective_byte_inventory"] = [
+            [1, 1024],
+            [2, 2048],
+        ]
+        rank_rows[rank] = {
+            "attempt": "attempt-a",
+            "workload": "Q0",
+            "repetition": 0,
+            "rank": rank,
+            "steps": [{
+                "request_set_sha256": "c" * 64,
+                "decode_ordinal": 0,
+                "layers": [layer],
+            }],
+        }
+
+    rows = _verifier_structured_rows(rank_rows)
+
+    assert [
+        row["collective_bytes"]
+        for row in rows
+        if row["rank"] == 0
+        and row["operation_class"] == "collective"
+    ] == [1024, 2048]
 
 
 def _profile_rows() -> list[dict]:
