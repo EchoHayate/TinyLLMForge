@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -1901,8 +1902,21 @@ def test_build_ssh_argv_quotes_remote_arguments_without_kerberos_mutation():
         "-S",
         "/Users/bytedance/.ssh/cm-sitian",
     ]
-    assert argv[-3:-1] == ["sh", "-c"]
-    assert shlex.split(argv[-1]) == remote_argv
+    remote_command = " ".join(argv[argv.index("sitian@10.232.195.203") + 1:])
+    result = subprocess.run(
+        ["sh", "-c", remote_command],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "value with spaces; $(id)\n"
+    assert len(argv[argv.index("sitian@10.232.195.203") + 1:]) == 1
+    assert shlex.split(argv[-1]) == [
+        "sh",
+        "-c",
+        shlex.join(remote_argv),
+    ]
     assert "kinit" not in argv
     assert "krenew" not in argv
 

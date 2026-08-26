@@ -245,6 +245,9 @@ def build_ssh_argv(
         ):
             raise ValueError("SSH control path is invalid")
         argv.extend(["-S", control_path])
+    remote_command = (
+        f"sh -c {shlex.quote(shlex.join(remote_argv))}"
+    )
     argv.extend([
         "-o",
         "ControlMaster=no",
@@ -253,9 +256,7 @@ def build_ssh_argv(
         "-o",
         "ConnectTimeout=20",
         ssh_target,
-        "sh",
-        "-c",
-        shlex.join(remote_argv),
+        remote_command,
     ])
     return argv
 
