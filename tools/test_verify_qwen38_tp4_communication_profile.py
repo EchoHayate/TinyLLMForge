@@ -706,9 +706,27 @@ def _write_bundle(root: Path) -> None:
         "worker_entry_inventories": [
             {
                 "worker_id": worker_id,
+                "capture_source": (
+                    "controller/gpu_admission_samples.jsonl"
+                    if worker_id == "correctness"
+                    else (
+                        "controller/nsys-resource-samples.raw.jsonl"
+                        if "__nsys_replay__" in worker_id
+                        else (
+                            "controller/"
+                            "structured-resource-samples.raw.jsonl"
+                        )
+                    )
+                ),
+                "capture_stage": (
+                    "before_tinyllmforge_tp4"
+                    if worker_id == "correctness"
+                    else "pre_gpu_mutation"
+                ),
+                "captured_at_unix_ns": 1_000_000 + index,
                 "gpu_rows": _clean_gpu_inventory(),
             }
-            for worker_id in _worker_ids()
+            for index, worker_id in enumerate(_worker_ids())
         ],
         "strict_clean_limits": {
             "maximum_memory_used_mib": 1024,
@@ -1068,6 +1086,18 @@ def test_verify_bundle_rejects_revision_workload_rank_or_gpu_drift(
             lambda payload: payload[
                 "worker_entry_inventories"
             ].pop(),
+            "worker-entry",
+        ),
+        (
+            lambda payload: payload[
+                "worker_entry_inventories"
+            ][0].pop("capture_source"),
+            "worker-entry",
+        ),
+        (
+            lambda payload: payload[
+                "worker_entry_inventories"
+            ][0].update({"captured_at_unix_ns": 0}),
             "worker-entry",
         ),
     ),

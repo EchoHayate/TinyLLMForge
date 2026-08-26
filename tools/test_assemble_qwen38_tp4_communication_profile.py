@@ -10,6 +10,7 @@ from tools.assemble_qwen38_tp4_communication_profile import (
     assemble_bundle,
     build_case_correctness_rows,
     build_profile_case_rows,
+    build_worker_entry_inventories,
 )
 
 
@@ -247,6 +248,17 @@ def _write_json(path: Path, payload) -> None:
     )
 
 
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+
+
 def _matrix_case(
     workload: str,
     phase: str,
@@ -291,6 +303,9 @@ def _write_raw_attempt(root: Path) -> None:
     structured_cases.mkdir(parents=True)
     replay_cases.mkdir(parents=True)
     traces.mkdir()
+    structured_entry_rows = []
+    nsys_entry_rows = []
+    case_index = 0
     for workload in WORKLOADS:
         for phase, repetitions in (
             ("warmup", range(2)),
@@ -298,17 +313,40 @@ def _write_raw_attempt(root: Path) -> None:
         ):
             for repetition in repetitions:
                 case = _matrix_case(workload, phase, repetition)
+                case["pid"] = 10_000 + case_index
                 _write_json(
                     structured_cases
                     / f"{workload}__{phase}__r{repetition}.json",
                     case,
                 )
+                structured_entry_rows.append({
+                    "captured_at_unix_ns": 1_000_000 + case_index,
+                    "case": {
+                        "workload": workload,
+                        "phase": phase,
+                        "repetition": repetition,
+                    },
+                    "engine_ready": False,
+                    "owned_pids": [case["pid"]],
+                    "selected_gpus": [
+                        {
+                            "gpu_index": rank + 2,
+                            "gpu_uuid": GPU_UUIDS[rank],
+                            "memory_used_mib": 10 + case_index,
+                            "gpu_utilization_percent": 0,
+                            "power_watts": 70.0 + rank,
+                            "compute_processes": [],
+                        }
+                        for rank in range(4)
+                    ],
+                })
                 if phase == "measured":
                     replay = copy.deepcopy(case)
                     replay["phase"] = "nsys_replay"
                     replay["case_id"] = (
                         f"{workload}__nsys_replay__r{repetition}"
                     )
+                    replay["pid"] = 20_000 + case_index
                     replay["decode_time_ns"] = int(
                         case["decode_time_ns"] * 1.02
                     )
@@ -323,6 +361,28 @@ def _write_raw_attempt(root: Path) -> None:
                     (traces / f"{workload}-r{repetition}.sqlite").write_bytes(
                         b"trace"
                     )
+                    nsys_entry_rows.append({
+                        "captured_at_unix_ns": 2_000_000 + case_index,
+                        "case": {
+                            "workload": workload,
+                            "phase": "nsys_replay",
+                            "repetition": repetition,
+                        },
+                        "engine_ready": False,
+                        "owned_pids": [replay["pid"]],
+                        "selected_gpus": [
+                            {
+                                "gpu_index": rank + 2,
+                                "gpu_uuid": GPU_UUIDS[rank],
+                                "memory_used_mib": 100 + case_index,
+                                "gpu_utilization_percent": 0,
+                                "power_watts": 70.0 + rank,
+                                "compute_processes": [],
+                            }
+                            for rank in range(4)
+                        ],
+                    })
+                case_index += 1
 
     controller = root / "controller"
     controller.mkdir()
@@ -340,6 +400,19 @@ def _write_raw_attempt(root: Path) -> None:
     _write_json(controller / "nsys-admission.json", {
         "selected_gpus": clean,
     })
+    _write_jsonl(controller / "gpu_admission_samples.jsonl", [{
+        "captured_at_unix_ns": 500_000,
+        "stage": "before_official_tp1",
+        "selected_gpus": clean,
+    }])
+    _write_jsonl(
+        controller / "structured-resource-samples.raw.jsonl",
+        structured_entry_rows,
+    )
+    _write_jsonl(
+        controller / "nsys-resource-samples.raw.jsonl",
+        nsys_entry_rows,
+    )
     _write_json(controller / "environment_identity.json", {
         "source_revision": "d" * 40,
         "source_tree_sha256": SOURCE_TREE_SHA256,
@@ -412,6 +485,55 @@ def _write_raw_attempt(root: Path) -> None:
         "schema_version": "tinyllmforge.source-manifest.v1",
         "source_tree_sha256": SOURCE_TREE_SHA256,
     })
+
+
+def test_worker_entry_inventories_use_timestamped_raw_evidence(tmp_path):
+    attempt = tmp_path / "attempt"
+    _write_raw_attempt(attempt)
+
+    rows = build_worker_entry_inventories(
+        attempt,
+        expected_gpu_uuids=GPU_UUIDS,
+    )
+
+    assert len(rows) == 61
+    by_id = {row["worker_id"]: row for row in rows}
+    assert by_id["correctness"]["capture_source"] == (
+        "controller/gpu_admission_samples.jsonl"
+    )
+    assert by_id["P0__warmup__r0"]["capture_source"] == (
+        "controller/structured-resource-samples.raw.jsonl"
+    )
+    assert by_id["P0__warmup__r0"]["captured_at_unix_ns"] == 1_000_000
+    assert by_id["P0__warmup__r0"]["gpu_rows"][0][
+        "memory_used_mib"
+    ] == 10
+    assert by_id["P0__nsys_replay__r0"]["capture_source"] == (
+        "controller/nsys-resource-samples.raw.jsonl"
+    )
+    assert by_id["P0__nsys_replay__r0"]["captured_at_unix_ns"] > 2_000_000
+
+
+def test_worker_entry_inventories_reject_missing_raw_case_evidence(tmp_path):
+    attempt = tmp_path / "attempt"
+    _write_raw_attempt(attempt)
+    samples = (
+        attempt / "controller/nsys-resource-samples.raw.jsonl"
+    )
+    rows = [
+        json.loads(line)
+        for line in samples.read_text(encoding="utf-8").splitlines()
+    ]
+    _write_jsonl(samples, rows[1:])
+
+    with pytest.raises(
+        ValueError,
+        match="worker-entry evidence is incomplete",
+    ):
+        build_worker_entry_inventories(
+            attempt,
+            expected_gpu_uuids=GPU_UUIDS,
+        )
 
 
 def _fake_parse(_path: Path, structured_rows: list[dict]) -> dict:

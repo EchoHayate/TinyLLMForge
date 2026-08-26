@@ -625,7 +625,36 @@ def _validate_identity(root: Path) -> dict:
     for worker_entry in worker_entries:
         if (
             not isinstance(worker_entry, dict)
-            or set(worker_entry) != {"worker_id", "gpu_rows"}
+            or set(worker_entry)
+            != {
+                "worker_id",
+                "capture_source",
+                "capture_stage",
+                "captured_at_unix_ns",
+                "gpu_rows",
+            }
+        ):
+            raise ValueError("worker-entry inventory mismatch")
+        worker_id = worker_entry["worker_id"]
+        expected_source = (
+            "controller/gpu_admission_samples.jsonl"
+            if worker_id == "correctness"
+            else (
+                "controller/nsys-resource-samples.raw.jsonl"
+                if "__nsys_replay__" in worker_id
+                else "controller/structured-resource-samples.raw.jsonl"
+            )
+        )
+        if (
+            worker_entry["capture_source"] != expected_source
+            or not isinstance(worker_entry["capture_stage"], str)
+            or not worker_entry["capture_stage"]
+            or _integer(
+                worker_entry["captured_at_unix_ns"],
+                "worker-entry capture timestamp",
+                minimum=1,
+            )
+            <= 0
         ):
             raise ValueError("worker-entry inventory mismatch")
         _validate_clean_gpu_inventory(

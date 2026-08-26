@@ -352,6 +352,15 @@ def _read_json(path: Path):
         return json.load(handle)
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        return [
+            json.loads(line)
+            for line in handle
+            if line.strip()
+        ]
+
+
 def _write_json(path: Path, payload) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(
@@ -471,6 +480,144 @@ def _clean_inventory(rows: list[dict]) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def _validated_entry_inventory(
+    rows: object,
+    *,
+    expected_gpu_uuids: list[str],
+) -> list[dict]:
+    if not isinstance(rows, list):
+        raise ValueError("worker-entry evidence is incomplete")
+    cleaned = _clean_inventory(rows)
+    if (
+        len(cleaned) != len(RANKS)
+        or [row["gpu_uuid"] for row in cleaned] != expected_gpu_uuids
+        or len({row["gpu_index"] for row in cleaned}) != len(RANKS)
+        or any(
+            row["memory_used_mib"] > 1024
+            or row["utilization_percent"] > 5
+            or row["compute_processes"] != []
+            for row in cleaned
+        )
+    ):
+        raise ValueError("worker-entry evidence is not strict-clean")
+    return cleaned
+
+
+def _entry_sample_for_pid(
+    samples: list[dict],
+    *,
+    pid: int,
+) -> dict:
+    matching = [
+        row
+        for row in samples
+        if pid in row.get("owned_pids", [])
+    ]
+    if not matching:
+        raise ValueError("worker-entry evidence is incomplete")
+    owned = matching[0].get("owned_pids")
+    if not isinstance(owned, list) or not owned:
+        raise ValueError("worker-entry evidence is incomplete")
+    launch_pid = owned[0]
+    launch_samples = [
+        row
+        for row in samples
+        if row.get("owned_pids")
+        and row["owned_pids"][0] == launch_pid
+    ]
+    if not launch_samples:
+        raise ValueError("worker-entry evidence is incomplete")
+    return min(
+        launch_samples,
+        key=lambda row: row.get("captured_at_unix_ns", -1),
+    )
+
+
+def build_worker_entry_inventories(
+    attempt_root: Path,
+    *,
+    expected_gpu_uuids: list[str],
+) -> list[dict]:
+    attempt_root = Path(attempt_root)
+    controller = attempt_root / "controller"
+    admission_rows = _read_jsonl(
+        controller / "gpu_admission_samples.jsonl"
+    )
+    if not admission_rows:
+        raise ValueError("worker-entry evidence is incomplete")
+    correctness_sample = admission_rows[-1]
+    structured_samples = _read_jsonl(
+        controller / "structured-resource-samples.raw.jsonl"
+    )
+    nsys_samples = _read_jsonl(
+        controller / "nsys-resource-samples.raw.jsonl"
+    )
+
+    captures = {
+        "correctness": (
+            correctness_sample,
+            "controller/gpu_admission_samples.jsonl",
+            correctness_sample.get("stage"),
+        ),
+    }
+    for worker_id in EXPECTED_WORKER_IDS[1:]:
+        workload, phase, repetition_text = worker_id.split("__")
+        repetition = int(repetition_text.removeprefix("r"))
+        if phase == "nsys_replay":
+            result_path = (
+                attempt_root
+                / "artifacts/nsys_replay/cases"
+                / f"{worker_id}.json"
+            )
+            samples = nsys_samples
+            source = "controller/nsys-resource-samples.raw.jsonl"
+        else:
+            result_path = (
+                attempt_root
+                / "artifacts/structured/cases"
+                / f"{worker_id}.json"
+            )
+            samples = structured_samples
+            source = (
+                "controller/structured-resource-samples.raw.jsonl"
+            )
+        result = _read_json(result_path)
+        if (
+            result.get("workload") != workload
+            or result.get("phase") != phase
+            or result.get("repetition") != repetition
+            or isinstance(result.get("pid"), bool)
+            or not isinstance(result.get("pid"), int)
+        ):
+            raise ValueError("worker-entry evidence is incomplete")
+        sample = _entry_sample_for_pid(samples, pid=result["pid"])
+        captures[worker_id] = (
+            sample,
+            source,
+            "pre_gpu_mutation",
+        )
+
+    if set(captures) != set(EXPECTED_WORKER_IDS):
+        raise ValueError("worker-entry evidence is incomplete")
+    result = []
+    for worker_id in EXPECTED_WORKER_IDS:
+        sample, source, stage = captures[worker_id]
+        captured_at = sample.get("captured_at_unix_ns")
+        if isinstance(captured_at, bool) or not isinstance(captured_at, int):
+            raise ValueError("worker-entry evidence is incomplete")
+        result.append({
+            "worker_id": worker_id,
+            "capture_source": source,
+            "capture_stage": stage,
+            "captured_at_unix_ns": captured_at,
+            "gpu_rows": _validated_entry_inventory(
+                sample.get("selected_gpus"),
+                expected_gpu_uuids=expected_gpu_uuids,
+            ),
+        })
+    return result
 
 
 def _write_manifest(root: Path) -> None:
@@ -695,13 +842,12 @@ def assemble_bundle(
             "gpu_rows": gpu_pci_rows,
             "interconnect_matrix": environment_identity["gpu_topology"],
             "controller_entry_inventory": selected,
-            "worker_entry_inventories": [
-                {
-                    "worker_id": worker_id,
-                    "gpu_rows": selected,
-                }
-                for worker_id in EXPECTED_WORKER_IDS
-            ],
+            "worker_entry_inventories": (
+                build_worker_entry_inventories(
+                    attempt_root,
+                    expected_gpu_uuids=gpu_uuids,
+                )
+            ),
             "strict_clean_limits": {
                 "maximum_memory_used_mib": 1024,
                 "maximum_utilization_percent": 5,
