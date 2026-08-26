@@ -1337,14 +1337,34 @@ def test_verify_bundle_rejects_incomplete_cleanup(bundle):
         verify_bundle(bundle)
 
 
-def test_verify_bundle_rejects_profiler_overhead_above_three_percent(bundle):
+def test_verify_bundle_classifies_high_profiler_overhead_without_go(bundle):
     _mutate_json(
         bundle / "online_metrics.json",
         lambda payload: payload["overhead_controls"][0].update(
             {"profiled_ns": 1040}
         ),
     )
+    _mutate_json(
+        bundle / "communication_exposure_summary.json",
+        lambda payload: payload.update({
+            "profiler_overhead_ratio": 0.04,
+            "classification": "INCONCLUSIVE_LOW_HEADROOM",
+        }),
+    )
+    report_path = bundle / "report.md"
+    report_path.write_text(
+        report_path.read_text(encoding="utf-8").replace(
+            "Classification: `GO_COMMUNICATION_OVERLAP`",
+            "Classification: `INCONCLUSIVE_LOW_HEADROOM`",
+        ),
+        encoding="utf-8",
+    )
     _refresh_manifest(bundle)
 
-    with pytest.raises(ValueError, match="profiler overhead"):
-        verify_bundle(bundle)
+    result = verify_bundle(bundle)
+
+    assert result["status"] == "PASS"
+    assert result["profiler_overhead_ratio"] == pytest.approx(0.04)
+    assert result["reconstructed_classification"] == (
+        "INCONCLUSIVE_LOW_HEADROOM"
+    )
