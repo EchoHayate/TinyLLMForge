@@ -50985,3 +50985,99 @@ CONTEXT_GATED_ELASTIC_EXACT_BURST_PROMOTION=AUTHORIZED_STAGE1_DEFAULT_DISABLED
 NEXT_OPTIMIZATION=UNSELECTED
 NEXT_COMMAND=select and freeze the next optimization before implementation
 ```
+
+## 2026-08-26 Qwen3.8-27B TP4 Task 9 preflight reconciliation
+
+The communication-exposure campaign has completed its non-executing Task 9
+preflight in the sole authoritative checkout:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+branch: feat/kv-sparse-attention
+source used by final preflight:
+  116625a225d574c5561382df3d6e50f47eac27fa
+attempt tag:
+  20260826-qwen38-tp4-communication-profile-r1
+remote approved root:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+declared model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+```
+
+The first real plan-only run exposed an OpenSSH argv-boundary defect. The
+controller had passed `sh`, `-c`, and the command as separate post-target
+arguments, producing successful empty stdout. Commit `116625a` fixes the
+boundary with one fully quoted remote command argument and adds a regression
+test that emulates OpenSSH argument joining.
+
+Verification:
+
+```text
+focused SSH regression:  1 passed
+controller suite:        102 passed
+Qwen3.8 related suite:   277 passed
+py_compile:              PASS
+git diff --check:        PASS
+live SSH sentinel:       PASS
+GitHub branch SHA:       116625a225d574c5561382df3d6e50f47eac27fa
+```
+
+Task 9 receipts:
+
+```text
+artifacts/qwen38_tp4_communication_profile/
+  20260826-qwen38-tp4-communication-profile-r1/controller/
+    source_identity.json
+    plan_only.json
+    plan_audit.json
+    ssh_storage_preflight.json
+    strict_clean_admission.json
+    dry_run.json
+    prompt_to_artifact_checklist.md
+    manifest.sha256
+```
+
+Current result:
+
+```text
+TASK9_PREFLIGHT=COMPLETE
+PLAN_AUDIT=PASS
+STRICT_CLEAN_ADMISSION=READY
+DRY_RUN=BLOCKED_KERBEROS_TTL
+REMOTE_MODEL_ROOT=MISSING
+BENCHMARK_EXECUTION_AUTHORIZED=false
+GPU_WORKER_STARTED=false
+COMMUNICATION_OVERLAP_AUTHORIZED=false
+```
+
+The contemporaneous rank map selected GPU indices `0,1,2,3`; each had
+`0 MiB`, `0%` utilization, and no compute processes. No monitor, reservation,
+signal, or workload was started. The read-only storage receipt records both
+the `/dev/nbd2 ro` and `/dev/nbd16 rw` mount rows and approximately 1.596 TB
+available under `/data00/home/sitian`.
+
+The real dry-run fails before any remote write because the local Kerberos
+payload has no expected principal/TGT. No `kinit` or `krenew` was run. The
+declared Qwen3.8-27B snapshot path also does not exist, and production worker
+adapters remain unconfigured.
+
+Detailed preflight audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-26-qwen38-tp4-task9-preflight-audit.md
+```
+
+Immediate continuation:
+
+```text
+1. Wait for an externally restored Kerberos TGT with at least 5,400 seconds.
+2. Acquire the immutable Qwen3.8-27B snapshot below the approved remote root.
+3. Verify every model file against model_manifest.json.
+4. Configure production correctness/workload/cleanup adapters.
+5. Re-run strict-clean admission from current NVML state before any launch.
+```
+
+Do not start Task 10, implement overlap, or claim a performance benefit until
+these prerequisites are met and both producer and verifier later return
+`GO_COMMUNICATION_OVERLAP`.

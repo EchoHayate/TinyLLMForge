@@ -824,7 +824,7 @@ Co-authored-by: TRAE CLI <noreply@bytedance.com>"
 - Consumes committed source and a local/remote immutable model manifest.
 - Produces plan, preflight, SSH, storage, and strict-clean admission receipts.
 
-- [ ] **Step 1: Verify branch/source identity and push implementation**
+- [x] **Step 1: Verify branch/source identity and push implementation**
 
 Run:
 
@@ -836,23 +836,44 @@ git push origin feat/kv-sparse-attention
 
 Expected: branch tracks the same remote commit; intended implementation commits each have one required trailer.
 
-- [ ] **Step 2: Rebuild or reuse SSH ControlMaster without Kerberos initialization**
+Result (2026-08-26): local `HEAD`, the tracking branch, and GitHub all
+resolved to `116625a225d574c5561382df3d6e50f47eac27fa`. The commit contains
+exactly one required trailer.
+
+- [x] **Step 2: Rebuild or reuse SSH ControlMaster without Kerberos initialization**
 
 Use the existing authenticated SSH configuration and a socket stored beneath the approved local workspace/session area. Verify with a read-only command that prints remote hostname, current user, mount information for `/data00/home/sitian`, and no task output elsewhere.
 
 Expected: successful read-only connection. If authentication closes the connection, preserve the receipt and continue local verification; do not classify GPU/model state from that error.
 
-- [ ] **Step 3: Run controller dry-run**
+Result (2026-08-26): reused the already-authenticated
+`/tmp/ssh-sitian-10.232.195.203` master because no Kerberos credential was
+available to establish a replacement and a prior workspace-derived socket
+name exceeded the Unix-domain path limit. The read-only probe reached
+`n232-195-203` as `sitian`, recorded both `/data00/home/sitian` mount layers,
+and performed no write probe. The legacy socket location is a documented
+local-only variance; no task data was written there.
+
+- [x] **Step 3: Run controller dry-run**
 
 Run the new controller with `--dry-run` and a fresh tag. Inspect every emitted local and remote path and every argv element.
 
 Expected: no GPU worker starts; all remote paths are below the approved root; source/model/workload identities are immutable.
 
-- [ ] **Step 4: Run strict-clean admission**
+Result (2026-08-26): `--plan-only` passed the complete path/argv audit for
+the immutable source and declared model revisions. The real `--dry-run`
+then exited `2` with `BLOCKED_KERBEROS_TTL` before any remote write or worker
+launch. This is the required fail-fast result; it is not `DRY_RUN_READY`.
+
+- [x] **Step 4: Run strict-clean admission**
 
 Query current NVML inventory and select four qualifying GPUs by current state rather than historical indices.
 
 Expected: exactly four unique UUIDs satisfy all three thresholds. If fewer are available, start the local controller's bounded monitor so the same committed attempt launches immediately when the clean window appears; do not reserve GPUs or affect external work.
+
+Result (2026-08-26): current NVML admission selected GPU indices
+`0,1,2,3`; all four had `0 MiB`, `0%` utilization, and no compute process.
+No monitor was needed, and no GPU was reserved or modified.
 
 ### Task 10: Qwen3.8 Correctness Campaign
 
