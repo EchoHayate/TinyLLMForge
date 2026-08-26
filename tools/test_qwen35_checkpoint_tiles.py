@@ -125,8 +125,9 @@ def _tile_shape_from_slices(tile):
 def test_plans_all_five_binding_classes_at_tp_1_and_2():
     expected_kinds = {
         "axis0": 3,
+        "axis1": 2,
         "squeeze_axis0": 1,
-        "replicated": 23,
+        "replicated": 21,
     }
     budgets = {1: 24, 2: 24}
     for world_size in (1, 2):
@@ -261,6 +262,7 @@ def test_representative_source_and_destination_slices():
         slice(0, 8),
     )
 
+
     query_index = next(
         index
         for index, binding in enumerate(binding_plan.bindings)
@@ -344,14 +346,14 @@ def test_representative_source_and_destination_slices():
         for tile in result.tiles
         if tile.binding_index == output_projection_index
     ]
-    assert output_projection_tiles[0].kind == "replicated"
+    assert output_projection_tiles[0].kind == "axis1"
     assert output_projection_tiles[0].source_slices == (
-        slice(0, 3),
-        slice(0, 4),
+        slice(0, 6),
+        slice(2, 4),
     )
     assert output_projection_tiles[0].destination_slices == (
-        slice(0, 3),
-        slice(0, 4),
+        slice(0, 6),
+        slice(0, 2),
     )
 
     convolution_index = next(
@@ -376,6 +378,39 @@ def test_representative_source_and_destination_slices():
         slice(0, 2),
         slice(0, 3),
     )
+
+
+def test_untied_lm_head_uses_axis_zero_tp_tiles():
+    for rank in range(2):
+        _, _, _, binding_plan = assignment_helper._fixture(
+            rank,
+            2,
+            tie_word_embeddings=False,
+        )
+        lm_head = next(
+            binding
+            for binding in binding_plan.bindings
+            if binding.load.weight.target == "lm_head.weight"
+        )
+        isolated_plan = replace(
+            binding_plan,
+            bindings=(lm_head,),
+        )
+        lm_head_tiles = build_qwen35_checkpoint_tile_plan(
+            isolated_plan,
+            max_tile_bytes=24,
+        ).tiles
+
+        assert lm_head_tiles
+        assert all(tile.kind == "axis0" for tile in lm_head_tiles)
+        assert lm_head_tiles[0].source_slices == (
+            slice(rank * 16, rank * 16 + 1),
+            slice(0, 8),
+        )
+        assert lm_head_tiles[0].destination_slices == (
+            slice(0, 1),
+            slice(0, 8),
+        )
 
 
 def test_tile_planner_rejects_malformed_contracts():

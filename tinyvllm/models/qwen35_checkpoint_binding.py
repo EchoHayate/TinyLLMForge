@@ -58,6 +58,7 @@ _CHECKPOINT_DTYPES = {
 _ROOT_TARGETS = {
     "embed_tokens.weight": "embed_tokens.weight",
     "final_norm.weight": "final_norm.weight",
+    "lm_head.weight": "lm_head.weight",
 }
 _REPLICATED_TARGET_SUFFIXES = (
     "input_layernorm.weight",
@@ -185,6 +186,8 @@ def _require_exact_component(
 ) -> None:
     if target == "embed_tokens.weight":
         expected_type = VocabParallelEmbedding
+    elif target == "lm_head.weight":
+        expected_type = ParallelLMHead
     elif (
         target == "final_norm.weight"
         or target.endswith(_OFFSET_NORM_TARGET_SUFFIXES)
@@ -314,7 +317,7 @@ def _local_contract(
 ]:
     target = load.weight.target
     shape = _transformed_shape(load)
-    if target == "embed_tokens.weight":
+    if target in ("embed_tokens.weight", "lm_head.weight"):
         local_shape = _shard_shape(
             shape,
             0,
@@ -467,8 +470,10 @@ def _loader_kind(
     return "custom_parameter_loader"
 
 
-def _validate_embedding_alias(
+def _validate_output_head_contract(
     model: Qwen35PackedForCausalLM,
+    *,
+    tie_word_embeddings: bool,
 ) -> None:
     if type(model.lm_head) is not ParallelLMHead:
         raise ValueError("lm_head must be an exact ParallelLMHead")
@@ -478,20 +483,23 @@ def _validate_embedding_alias(
         raise ValueError(
             "embed_tokens and lm_head local shape/dtype must match"
         )
-    if (
-        embedding.device.type == "meta"
-        or lm_head.device.type == "meta"
-    ):
-        if embedding is not lm_head:
+    if embedding.device.type == "meta" or lm_head.device.type == "meta":
+        aliases = embedding is lm_head
+    else:
+        aliases = (
+            embedding.untyped_storage().data_ptr()
+            == lm_head.untyped_storage().data_ptr()
+            and embedding.storage_offset() == lm_head.storage_offset()
+        )
+    if tie_word_embeddings:
+        if not aliases:
             raise ValueError(
                 "embed_tokens and lm_head must share storage"
             )
-    elif (
-        embedding.untyped_storage().data_ptr()
-        != lm_head.untyped_storage().data_ptr()
-        or embedding.storage_offset() != lm_head.storage_offset()
-    ):
-        raise ValueError("embed_tokens and lm_head must share storage")
+    elif aliases:
+        raise ValueError(
+            "untied embed_tokens and lm_head must not share storage"
+        )
 
 
 def build_qwen35_checkpoint_binding_plan(
@@ -511,7 +519,22 @@ def build_qwen35_checkpoint_binding_plan(
         tensor_parallel_size,
         tensor_parallel_rank,
     )
-    _validate_embedding_alias(model)
+    for load in tensor_plan.loads:
+        if type(load) is not Qwen35CheckpointTensorLoad:
+            raise ValueError(
+                "tensor plan loads must be "
+                "Qwen35CheckpointTensorLoad values"
+            )
+    lm_head_load_count = sum(
+        load.weight.target == "lm_head.weight"
+        for load in tensor_plan.loads
+    )
+    if lm_head_load_count > 1:
+        raise ValueError("duplicate checkpoint binding target: lm_head.weight")
+    _validate_output_head_contract(
+        model,
+        tie_word_embeddings=lm_head_load_count == 0,
+    )
 
     bindings = []
     binding_keys = set()

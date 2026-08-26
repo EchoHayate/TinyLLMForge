@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,18 +46,35 @@ def test_resolves_qwen38_profile_only_for_official_architecture():
         ),
     )
 
+    def adopt(value, **identity):
+        calls.append((value, identity))
+        return profile
+
     assert resolve(
         qwen38,
-        adopt_qwen38_text=lambda value: (
-            calls.append(value) or profile
-        ),
+        model_dir="/model",
+        adopt_qwen38_text=adopt,
+        read_source_identity=lambda _path: {
+            "repository": "Qwen/Qwen3.8-27B",
+            "revision": "a" * 40,
+        },
     ) is profile
-    assert calls == [qwen38]
+    assert calls == [(
+        qwen38,
+        {
+            "repository": "Qwen/Qwen3.8-27B",
+            "revision": "a" * 40,
+        },
+    )]
     assert resolve(
         SimpleNamespace(architectures=["Qwen3ForCausalLM"]),
+        model_dir="/model",
         adopt_qwen38_text=lambda _value: calls.append("unexpected"),
+        read_source_identity=lambda _path: calls.append(
+            "unexpected identity read"
+        ),
     ) is None
-    assert calls == [qwen38]
+    assert len(calls) == 1
 
 
 def test_same_architecture_with_other_topology_stays_qwen35():
@@ -72,7 +91,11 @@ def test_same_architecture_with_other_topology_stays_qwen35():
 
     assert resolve(
         hf_config,
+        model_dir="/model",
         adopt_qwen38_text=lambda value: calls.append(value),
+        read_source_identity=lambda _path: calls.append(
+            "unexpected identity read"
+        ),
     ) is None
     assert calls == []
 
@@ -97,3 +120,58 @@ def test_model_runner_validates_before_distributed_and_checks_each_batch():
     assert run_body.index(
         "validate_qwen38_sequence_batch("
     ) < run_body.index("self.bind_kv_block_identity_rows(")
+    compact_init_body = "".join(init_body.split())
+    assert (
+        "qwen38_text_profile=(self.qwen38_text_profile)"
+        in compact_init_body
+    )
+
+
+def test_qwen38_manifest_is_accepted_by_shared_checkpoint_loader(tmp_path):
+    identity = _load_function("_qwen35_checkpoint_manifest_identity")
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+    files = {
+        "config.json": {"sha256": "1" * 64, "size": 1},
+        "model.safetensors.index.json": {
+            "sha256": "2" * 64,
+            "size": 2,
+        },
+        "model-00001-of-00001.safetensors": {
+            "sha256": "3" * 64,
+            "size": 3,
+        },
+    }
+    manifest = {
+        "schema_version": "tinyllmforge.qwen38-model-manifest.v1",
+        "repository": "Qwen/Qwen3.8-27B",
+        "resolved_revision": "a" * 40,
+        "model_root": str(model_root.resolve()),
+        "checkpoint_shards": [
+            "model-00001-of-00001.safetensors"
+        ],
+        "files": files,
+    }
+    manifest_path = tmp_path / "model_manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+    result = identity(
+        model_root,
+        path_type=Path,
+        json_module=json,
+        hashlib_module=hashlib,
+    )
+
+    assert result["config_sha256"] == "1" * 64
+    assert result["index_sha256"] == "2" * 64
+    assert result["shards"] == ((
+        "model-00001-of-00001.safetensors",
+        files["model-00001-of-00001.safetensors"],
+    ),)

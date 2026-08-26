@@ -33,6 +33,7 @@ is_qwen38_text_checkpoint = adopter.is_qwen38_text_checkpoint
 reject_qwen38_multimodal_inputs = (
     adopter.reject_qwen38_multimodal_inputs
 )
+read_qwen38_source_identity = adopter.read_qwen38_source_identity
 validate_qwen38_sequence_batch = (
     adopter.validate_qwen38_sequence_batch
 )
@@ -55,6 +56,7 @@ def _official_config(**overrides):
         "layer_types": layer_types,
         "dtype": "bfloat16",
         "vocab_size": 248320,
+        "tie_word_embeddings": False,
         "image_token_id": 248056,
         "video_token_id": 248057,
     }
@@ -85,11 +87,100 @@ def test_adopts_official_qwen38_text_topology():
     assert profile.layer_types[3] == "full_attention"
     assert profile.dtype == "bfloat16"
     assert profile.vocab_size == 248320
+    assert profile.tie_word_embeddings is False
     assert profile.language_model_only is False
     assert profile.multimodal_token_ids == (248056, 248057)
 
     with pytest.raises(FrozenInstanceError):
         profile.hidden_size = 1
+
+
+def test_adopts_local_config_with_explicit_manifest_identity():
+    config = _official_config()
+    del config._name_or_path
+    del config._commit_hash
+
+    profile = adopt_qwen38_text_config(
+        config,
+        repository=QWEN38_REPOSITORY,
+        revision=REVISION,
+    )
+
+    assert profile.repository == QWEN38_REPOSITORY
+    assert profile.revision == REVISION
+
+
+def test_reads_source_identity_from_adjacent_verified_manifest(tmp_path):
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+    manifest = {
+        "schema_version": "tinyllmforge.qwen38-model-manifest.v1",
+        "repository": QWEN38_REPOSITORY,
+        "resolved_revision": REVISION,
+        "model_root": str(model_root.resolve()),
+    }
+    (tmp_path / "model_manifest.json").write_text(
+        __import__("json").dumps(manifest),
+        encoding="utf-8",
+    )
+
+    assert read_qwen38_source_identity(model_root) == {
+        "repository": QWEN38_REPOSITORY,
+        "revision": REVISION,
+    }
+
+
+def test_source_identity_rejects_model_root_drift(tmp_path):
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+    (tmp_path / "model_manifest.json").write_text(
+        __import__("json").dumps({
+            "schema_version": (
+                "tinyllmforge.qwen38-model-manifest.v1"
+            ),
+            "repository": QWEN38_REPOSITORY,
+            "resolved_revision": REVISION,
+            "model_root": str((tmp_path / "other").resolve()),
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="model root"):
+        read_qwen38_source_identity(model_root)
+
+
+def test_source_identity_rejects_duplicate_keys_and_noncanonical_root(
+    tmp_path,
+):
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+    manifest_path = tmp_path / "model_manifest.json"
+    manifest_path.write_text(
+        (
+            "{"
+            f'"schema_version":"{adopter.QWEN38_MODEL_MANIFEST_SCHEMA}",'
+            f'"repository":"{QWEN38_REPOSITORY}",'
+            f'"resolved_revision":"{REVISION}",'
+            f'"resolved_revision":"{REVISION}",'
+            f'"model_root":"{model_root.resolve()}"'
+            "}"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        read_qwen38_source_identity(model_root)
+
+    manifest_path.write_text(
+        __import__("json").dumps({
+            "schema_version": adopter.QWEN38_MODEL_MANIFEST_SCHEMA,
+            "repository": QWEN38_REPOSITORY,
+            "resolved_revision": REVISION,
+            "model_root": str(model_root / ".." / "model"),
+        }),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="model root"):
+        read_qwen38_source_identity(model_root)
 
 
 def test_qwen38_detection_requires_architecture_and_exact_topology():
@@ -161,6 +252,22 @@ def test_qwen38_detection_requires_architecture_and_exact_topology():
         (
             _official_config(text_overrides={"dtype": "float16"}),
             "dtype",
+        ),
+        (
+            _official_config(
+                text_overrides={"vocab_size": 151936}
+            ),
+            "vocab_size",
+        ),
+        (
+            _official_config(
+                text_overrides={"tie_word_embeddings": True}
+            ),
+            "tie_word_embeddings",
+        ),
+        (
+            _official_config(language_model_only=True),
+            "language_model_only",
         ),
     ),
 )

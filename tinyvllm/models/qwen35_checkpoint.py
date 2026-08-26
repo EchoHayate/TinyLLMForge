@@ -189,8 +189,60 @@ def _layer_types(config, num_hidden_layers: int) -> tuple[str, ...]:
     return normalized
 
 
+def _tie_word_embeddings(config) -> bool:
+    if not hasattr(config, "tie_word_embeddings"):
+        raise ValueError(
+            "missing Qwen3.5 config field: tie_word_embeddings"
+        )
+    value = getattr(config, "tie_word_embeddings")
+    if type(value) is not bool:
+        raise ValueError("tie_word_embeddings must be a bool")
+    return value
+
+
+def _validate_qwen38_text_profile(config, profile) -> None:
+    if profile is None:
+        return
+    field_pairs = (
+        ("text_model_type", "model_type"),
+        ("num_hidden_layers", "num_hidden_layers"),
+        ("hidden_size", "hidden_size"),
+        ("intermediate_size", "intermediate_size"),
+        ("vocab_size", "vocab_size"),
+        ("dtype", "dtype"),
+        ("tie_word_embeddings", "tie_word_embeddings"),
+    )
+    for profile_field, config_field in field_pairs:
+        if not hasattr(profile, profile_field):
+            raise ValueError(
+                f"qwen38_text_profile missing {profile_field}"
+            )
+        if not hasattr(config, config_field):
+            raise ValueError(
+                f"missing Qwen3.5 config field: {config_field}"
+            )
+        if getattr(profile, profile_field) != getattr(
+            config,
+            config_field,
+        ):
+            raise ValueError(
+                "qwen38_text_profile "
+                f"{profile_field} does not match text_config"
+            )
+    if not hasattr(profile, "layer_types"):
+        raise ValueError("qwen38_text_profile missing layer_types")
+    if tuple(profile.layer_types) != tuple(
+        getattr(config, "layer_types", ())
+    ):
+        raise ValueError(
+            "qwen38_text_profile layer_types "
+            "does not match text_config"
+        )
+
+
 def _expected_language_targets(
     layer_types: tuple[str, ...],
+    tie_word_embeddings: bool,
 ) -> dict[str, tuple[str, str | int | None]]:
     expected = {
         "model.language_model.embed_tokens.weight": (
@@ -202,6 +254,8 @@ def _expected_language_targets(
             None,
         ),
     }
+    if not tie_word_embeddings:
+        expected["lm_head.weight"] = ("lm_head.weight", None)
     for layer_index, layer_type in enumerate(layer_types):
         source_prefix = (
             f"model.language_model.layers.{layer_index}."
@@ -239,6 +293,7 @@ def _validate_shard_name(value) -> str:
 def _language_tensor_contracts(
     config,
     layer_types: tuple[str, ...],
+    tie_word_embeddings: bool,
 ) -> dict[str, tuple[str, tuple[int, ...], str]]:
     compute_dtype = _config_dtype(config)
     hidden_size = _positive_integer(config, "hidden_size")
@@ -292,6 +347,12 @@ def _language_tensor_contracts(
             "identity",
         ),
     }
+    if not tie_word_embeddings:
+        contracts["lm_head.weight"] = (
+            compute_dtype,
+            (vocab_size, hidden_size),
+            "identity",
+        )
     shared = {
         "input_layernorm.weight": (
             compute_dtype,
@@ -471,12 +532,14 @@ def _parse_tensor_metadata(
 def build_qwen35_checkpoint_weight_plan(
     hf_config,
     index_payload: Mapping[str, object],
+    *,
+    qwen38_text_profile=None,
 ) -> Qwen35CheckpointWeightPlan:
     config = getattr(hf_config, "text_config", hf_config)
+    _validate_qwen38_text_profile(config, qwen38_text_profile)
     num_hidden_layers = _positive_integer(config, "num_hidden_layers")
     layer_types = _layer_types(config, num_hidden_layers)
-    if getattr(config, "tie_word_embeddings", None) is not True:
-        raise ValueError("tie_word_embeddings must be true")
+    tie_word_embeddings = _tie_word_embeddings(config)
 
     if not isinstance(index_payload, Mapping):
         raise ValueError("index payload must be a mapping")
@@ -493,7 +556,10 @@ def build_qwen35_checkpoint_weight_plan(
         shard_name = _validate_shard_name(shard_value)
         source = Qwen35CheckpointSource(source_name, shard_name)
         shards.add(shard_name)
-        if source_name.startswith("model.language_model."):
+        if (
+            source_name.startswith("model.language_model.")
+            or source_name == "lm_head.weight"
+        ):
             language_sources[source_name] = source
         elif source_name.startswith("model.visual."):
             skip_sources.append(Qwen35CheckpointSkip(source, "visual"))
@@ -504,7 +570,10 @@ def build_qwen35_checkpoint_weight_plan(
                 f"unsupported checkpoint scope: {source_name}"
             )
 
-    expected = _expected_language_targets(layer_types)
+    expected = _expected_language_targets(
+        layer_types,
+        tie_word_embeddings,
+    )
     observed_names = set(language_sources)
     expected_names = set(expected)
     missing = expected_names - observed_names
@@ -545,6 +614,13 @@ def build_qwen35_checkpoint_weight_plan(
         skip_sources,
         key=lambda entry: entry.source.name,
     ))
+    if (
+        qwen38_text_profile is not None
+        and any(entry.scope != "visual" for entry in skips)
+    ):
+        raise ValueError(
+            "Qwen3.8 checkpoint skip scope must be visual"
+        )
     covered_names = {
         entry.source.name for entry in loads
     } | {
@@ -563,10 +639,13 @@ def build_qwen35_checkpoint_tensor_plan(
     hf_config,
     index_payload: Mapping[str, object],
     shard_headers: Mapping[str, Mapping[str, object]],
+    *,
+    qwen38_text_profile=None,
 ) -> Qwen35CheckpointTensorPlan:
     weight_plan = build_qwen35_checkpoint_weight_plan(
         hf_config,
         index_payload,
+        qwen38_text_profile=qwen38_text_profile,
     )
     if not isinstance(shard_headers, Mapping):
         raise ValueError("shard_headers must be a mapping")
@@ -631,7 +710,12 @@ def build_qwen35_checkpoint_tensor_plan(
     config = getattr(hf_config, "text_config", hf_config)
     num_hidden_layers = _positive_integer(config, "num_hidden_layers")
     layer_types = _layer_types(config, num_hidden_layers)
-    contracts = _language_tensor_contracts(config, layer_types)
+    tie_word_embeddings = _tie_word_embeddings(config)
+    contracts = _language_tensor_contracts(
+        config,
+        layer_types,
+        tie_word_embeddings,
+    )
     loads = []
     for weight in weight_plan.loads:
         metadata = parsed_by_source[weight.source.name]

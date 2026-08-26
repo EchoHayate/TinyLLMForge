@@ -147,7 +147,7 @@ def _expected_local(binding, source, world_size, rank):
             return torch.cat(shards, dim=0)
         local_rows = transformed.shape[0] // world_size
         return transformed.narrow(0, rank * local_rows, local_rows)
-    if target == "embed_tokens.weight":
+    if target in ("embed_tokens.weight", "lm_head.weight"):
         local_rows = transformed.shape[0] // world_size
         return transformed.narrow(0, rank * local_rows, local_rows)
     if target.endswith("mlp.gate_up_proj.weight"):
@@ -221,9 +221,15 @@ def _expected_destinations(binding_plan, sources):
     return expected
 
 
-def _fixture(rank, world_size):
-    model, pool = helper._fixture(rank, world_size)
-    tensor_plan = helper._tensor_plan()
+def _fixture(rank, world_size, *, tie_word_embeddings=True):
+    model, pool = helper._fixture(
+        rank,
+        world_size,
+        tie_word_embeddings=tie_word_embeddings,
+    )
+    tensor_plan = helper._tensor_plan(
+        tie_word_embeddings=tie_word_embeddings,
+    )
     binding_plan = helper.build_qwen35_checkpoint_binding_plan(
         model,
         tensor_plan,
@@ -289,6 +295,55 @@ def test_tp_1_and_2_assign_all_bindings_exactly():
                 object_id, value = pool_snapshot[key]
                 assert id(tensor) == object_id
                 torch.testing.assert_close(tensor, value)
+
+
+def test_tp_1_and_2_assign_independent_lm_head_exactly():
+    for world_size in (1, 2):
+        for rank in range(world_size):
+            model, _, tensor_plan, binding_plan = _fixture(
+                rank,
+                world_size,
+                tie_word_embeddings=False,
+            )
+            _initialize_destinations(binding_plan)
+            sources = _source_tensors(tensor_plan)
+
+            result = assign_qwen35_checkpoint_tensors(
+                binding_plan,
+                sources,
+            )
+
+            lm_head = helper._binding_by_target(
+                binding_plan,
+                "lm_head.weight",
+            )
+            embedding = helper._binding_by_target(
+                binding_plan,
+                "embed_tokens.weight",
+            )
+            assert result.assigned_bindings == 28
+            assert lm_head.destination is not embedding.destination
+            lm_head_source = sources[lm_head.load.weight.source.name]
+            embedding_source = sources[
+                embedding.load.weight.source.name
+            ]
+            local_rows = helper.VOCAB_SIZE // world_size
+            torch.testing.assert_close(
+                lm_head.destination,
+                lm_head_source.narrow(
+                    0,
+                    rank * local_rows,
+                    local_rows,
+                ),
+            )
+            torch.testing.assert_close(
+                embedding.destination,
+                embedding_source.narrow(
+                    0,
+                    rank * local_rows,
+                    local_rows,
+                ),
+            )
 
 
 def test_tp2_output_projections_assign_matching_local_columns():

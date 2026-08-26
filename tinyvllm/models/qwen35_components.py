@@ -342,8 +342,9 @@ def build_qwen35_concrete_component_assembly(
         raise ValueError("dtype must be bfloat16")
     if _field(config, "hidden_act") != "silu":
         raise ValueError("hidden_act must be silu")
-    if _field(config, "tie_word_embeddings") is not True:
-        raise ValueError("tie_word_embeddings must be true")
+    tie_word_embeddings = _field(config, "tie_word_embeddings")
+    if type(tie_word_embeddings) is not bool:
+        raise ValueError("tie_word_embeddings must be a bool")
 
     hidden_size = _positive_integer(config, "hidden_size")
     intermediate_size = _positive_integer(config, "intermediate_size")
@@ -451,7 +452,8 @@ def build_qwen35_concrete_component_assembly(
             hidden_size,
             exact_full_vocab=True,
         ).to(dtype=torch.bfloat16)
-        lm_head.weight = embed_tokens.weight
+        if tie_word_embeddings:
+            lm_head.weight = embed_tokens.weight
         final_norm = _compute_norm(hidden_size, norm_eps)
 
         def build_decoder_layer(layer_index, block_type, _adapter):

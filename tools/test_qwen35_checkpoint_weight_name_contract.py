@@ -123,8 +123,11 @@ def _index_for(
     *,
     visual_count=0,
     mtp_count=0,
+    tie_word_embeddings=True,
 ):
     names = _text_names(layer_types)
+    if tie_word_embeddings is False:
+        names.add("lm_head.weight")
     names.update(
         f"model.visual.synthetic.{index}.weight"
         for index in range(visual_count)
@@ -167,6 +170,8 @@ def _expected_metadata(config, source_name):
         "bfloat16": "BF16",
         "float32": "F32",
     }[text.dtype]
+    if source_name == "lm_head.weight":
+        return compute_dtype, (text.vocab_size, hidden_size)
     suffix = source_name.removeprefix("model.language_model.")
     if suffix == "embed_tokens.weight":
         return compute_dtype, (text.vocab_size, hidden_size)
@@ -266,7 +271,10 @@ def _header_for(config, payload):
     offset = 0
     header = {}
     for source_name in sorted(payload["weight_map"]):
-        if source_name.startswith("model.language_model."):
+        if (
+            source_name.startswith("model.language_model.")
+            or source_name == "lm_head.weight"
+        ):
             dtype, shape = _expected_metadata(config, source_name)
         else:
             dtype, shape = "BF16", (1,)
@@ -401,6 +409,33 @@ def test_explicit_skip_and_total_coverage():
     ))
 
 
+def test_untied_lm_head_mapping_and_tensor_contract():
+    config = _config(tie_word_embeddings=False)
+    payload = _index_for(tie_word_embeddings=False)
+    headers = _header_for(config, payload)
+
+    weight_plan = build_qwen35_checkpoint_weight_plan(
+        config,
+        payload,
+    )
+    tensor_plan = build_qwen35_checkpoint_tensor_plan(
+        config,
+        payload,
+        headers,
+    )
+
+    weight = _loads_by_source(weight_plan)["lm_head.weight"]
+    assert weight.target == "lm_head.weight"
+    assert weight.packed_slot is None
+    tensor = {
+        entry.weight.source.name: entry
+        for entry in tensor_plan.loads
+    }["lm_head.weight"]
+    assert tensor.metadata.dtype == "BF16"
+    assert tensor.metadata.shape == (32, 8)
+    assert tensor.transform == "identity"
+
+
 def test_language_grammar_fails_closed():
     base = _index_for()
 
@@ -457,12 +492,30 @@ def test_language_grammar_fails_closed():
         "unexpected language-model weights",
     )
 
+    untied_missing_head = _index_for(tie_word_embeddings=False)
+    del untied_missing_head["weight_map"]["lm_head.weight"]
     _expect_error(
         lambda: build_qwen35_checkpoint_weight_plan(
             _config(tie_word_embeddings=False),
+            untied_missing_head,
+        ),
+        "missing language-model weights",
+    )
+    tied_extra_head = _index_for()
+    tied_extra_head["weight_map"]["lm_head.weight"] = SHARD
+    _expect_error(
+        lambda: build_qwen35_checkpoint_weight_plan(
+            _config(),
+            tied_extra_head,
+        ),
+        "unexpected language-model weights",
+    )
+    _expect_error(
+        lambda: build_qwen35_checkpoint_weight_plan(
+            _config(tie_word_embeddings="false"),
             base,
         ),
-        "tie_word_embeddings must be true",
+        "tie_word_embeddings must be a bool",
     )
     _expect_error(
         lambda: build_qwen35_checkpoint_weight_plan(

@@ -43,7 +43,10 @@ _DTYPES = {
     "BF16": (torch.bfloat16, 2),
     "F32": (torch.float32, 4),
 }
-_AXIS_ONE_SUFFIXES = ()
+_AXIS_ONE_SUFFIXES = (
+    "linear_attention.out_proj.weight",
+    "full_attention.output_projection.weight",
+)
 _REPLICATED_SUFFIXES = (
     "input_layernorm.weight",
     "post_attention_layernorm.weight",
@@ -54,11 +57,9 @@ _REPLICATED_SUFFIXES = (
     "linear_attention.in_proj_a.weight",
     "linear_attention.in_proj_qkv.weight",
     "linear_attention.in_proj_z.weight",
-    "linear_attention.out_proj.weight",
     "full_attention.q_projection.weight",
     "full_attention.k_projection.weight",
     "full_attention.v_projection.weight",
-    "full_attention.output_projection.weight",
     "mlp.gate_up_proj.weight",
     "mlp.down_proj.weight",
 )
@@ -223,7 +224,7 @@ def _classify_binding(
         return "axis1"
     if (
         (
-            target == "embed_tokens.weight"
+            target in ("embed_tokens.weight", "lm_head.weight")
             or target.endswith(_AXIS_ZERO_SUFFIXES)
         )
         and binding.loader_kind in (

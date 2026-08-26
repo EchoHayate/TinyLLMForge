@@ -460,6 +460,26 @@ def test_tp4_replicates_complete_full_attention_kv_heads():
     assert observed == [(0, 0), (0, 0), (1, 1), (1, 1)]
 
 
+def test_untied_output_head_owns_distinct_sharded_weight():
+    config = _config(tie_word_embeddings=False)
+
+    for world_size in (1, 2):
+        for rank in range(world_size):
+            _, _, assembly = _build(config, world_size, rank)
+            model = assembly.packed.model
+
+            assert model.embed_tokens.weight is not model.lm_head.weight
+            assert model.embed_tokens.weight.shape == (
+                config.vocab_size // world_size,
+                config.hidden_size,
+            )
+            assert model.lm_head.weight.shape == (
+                config.vocab_size // world_size,
+                config.hidden_size,
+            )
+            assert callable(model.lm_head.weight.weight_loader)
+
+
 def test_factory_failures_restore_tp_context_and_preserve_pool():
     config = _config()
     original_rank = torch.distributed.get_rank
@@ -469,7 +489,7 @@ def test_factory_failures_restore_tp_context_and_preserve_pool():
         (_config(dtype="float16"), 1, 0, {}, "dtype"),
         (_config(hidden_act="gelu"), 1, 0, {}, "hidden_act"),
         (
-            _config(tie_word_embeddings=False),
+            _config(tie_word_embeddings="false"),
             1,
             0,
             {},
@@ -587,6 +607,7 @@ def test_factory_failures_restore_tp_context_and_preserve_pool():
 def main():
     test_tp_1_and_2_construct_exact_meta_graph_and_reuse_pool()
     test_tp4_replicates_complete_full_attention_kv_heads()
+    test_untied_output_head_owns_distinct_sharded_weight()
     test_factory_failures_restore_tp_context_and_preserve_pool()
     print("qwen35 concrete component factory tests passed (2 tests)")
 

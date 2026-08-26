@@ -127,6 +127,7 @@ from tinyvllm.models.qwen35_checkpoint import (
 )
 from tinyvllm.models.qwen38_text_adopter import (
     adopt_qwen38_text_config,
+    read_qwen38_source_identity,
     validate_qwen38_sequence_batch,
 )
 from tinyvllm.models.qwen35_checkpoint_candidate_factory import (
@@ -306,7 +307,9 @@ def _configure_qwen35_linear_execution(
 def _resolve_qwen38_text_profile(
     hf_config,
     *,
+    model_dir,
     adopt_qwen38_text,
+    read_source_identity,
 ):
     architectures = getattr(hf_config, "architectures", ())
     text_config = getattr(hf_config, "text_config", None)
@@ -321,7 +324,10 @@ def _resolve_qwen38_text_profile(
     )
     if topology != (64, 5120, 17408):
         return None
-    return adopt_qwen38_text(hf_config)
+    return adopt_qwen38_text(
+        hf_config,
+        **read_source_identity(model_dir),
+    )
 
 
 def _initialize_model_runner_model(
@@ -349,11 +355,19 @@ def _qwen35_checkpoint_manifest_identity(
     manifest_sha256 = hashlib_module.sha256(payload).hexdigest()
     manifest = json_module.loads(payload)
     files = manifest.get("files")
-    if (
-        manifest.get("schema_version") != 1
-        or not isinstance(files, dict)
-        or manifest.get("local_path") != str(model_path)
-        or manifest.get("remote_model_dir") != str(model_path)
+    schema_version = manifest.get("schema_version")
+    legacy_identity = (
+        schema_version == 1
+        and manifest.get("local_path") == str(model_path)
+        and manifest.get("remote_model_dir") == str(model_path)
+    )
+    qwen38_identity = (
+        schema_version
+        == "tinyllmforge.qwen38-model-manifest.v1"
+        and manifest.get("model_root") == str(model_path)
+    )
+    if not isinstance(files, dict) or not (
+        legacy_identity or qwen38_identity
     ):
         raise ValueError("Qwen3.5 model manifest identity is invalid")
     required = (
@@ -366,13 +380,41 @@ def _qwen35_checkpoint_manifest_identity(
         for name in required
     ):
         raise ValueError("Qwen3.5 model manifest files are incomplete")
-    shard_rows = tuple(
-        (name, row)
-        for name, row in sorted(files.items())
-        if name.endswith(".safetensors")
-    )
+    if qwen38_identity:
+        shard_names = manifest.get("checkpoint_shards")
+        if (
+            not isinstance(shard_names, list)
+            or not shard_names
+            or len(shard_names) != len(set(shard_names))
+            or any(
+                not isinstance(name, str)
+                or not name.endswith(".safetensors")
+                for name in shard_names
+            )
+        ):
+            raise ValueError(
+                "Qwen3.8 model manifest checkpoint shards are invalid"
+            )
+        shard_rows = tuple(
+            (name, files.get(name))
+            for name in sorted(shard_names)
+        )
+    else:
+        shard_rows = tuple(
+            (name, row)
+            for name, row in sorted(files.items())
+            if name.endswith(".safetensors")
+        )
     if not shard_rows:
         raise ValueError("Qwen3.5 model manifest has no checkpoint shard")
+    if any(
+        not isinstance(row, dict)
+        or set(row) != {"sha256", "size"}
+        for _, row in shard_rows
+    ):
+        raise ValueError(
+            "Qwen3.5 model manifest checkpoint shards are incomplete"
+        )
     composite_payload = {
         "config_sha256": files["config.json"]["sha256"],
         "index_sha256": files[
@@ -404,7 +446,12 @@ def _qwen35_checkpoint_manifest_identity(
     }
 
 
-def _load_qwen35_model_runner_model(config, rank):
+def _load_qwen35_model_runner_model(
+    config,
+    rank,
+    *,
+    qwen38_text_profile=None,
+):
     from pathlib import Path
 
     identity = _qwen35_checkpoint_manifest_identity(
@@ -434,6 +481,7 @@ def _load_qwen35_model_runner_model(config, rank):
         metadata.hf_config,
         metadata.index_payload,
         metadata.shard_headers,
+        qwen38_text_profile=qwen38_text_profile,
     )
     layout = build_qwen35_hybrid_state_layout(
         metadata.hf_config,
@@ -2186,7 +2234,9 @@ class ModelRunner:
         self.ack_sender = ack_sender
         self.qwen38_text_profile = _resolve_qwen38_text_profile(
             hf_config,
+            model_dir=config.model,
             adopt_qwen38_text=adopt_qwen38_text_config,
+            read_source_identity=read_qwen38_source_identity,
         )
         self._command_ids = count()
         self._command_timeline_clock_ns = time.monotonic_ns
@@ -2250,7 +2300,17 @@ class ModelRunner:
                 config,
                 rank=rank,
                 load_legacy_model=load_legacy_model,
-                load_qwen35_model=_load_qwen35_model_runner_model,
+                load_qwen35_model=(
+                    lambda runner_config, runner_rank: (
+                        _load_qwen35_model_runner_model(
+                            runner_config,
+                            runner_rank,
+                            qwen38_text_profile=(
+                                self.qwen38_text_profile
+                            ),
+                        )
+                    )
+                ),
             )
         )
         # 加载完成后再做 cpu-offload（量化已在 loader 内 finalize 完成）

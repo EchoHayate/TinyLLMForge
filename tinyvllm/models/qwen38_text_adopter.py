@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import json
+from pathlib import Path
 import re
 
 
@@ -12,6 +14,10 @@ QWEN38_NUM_HIDDEN_LAYERS = 64
 QWEN38_HIDDEN_SIZE = 5120
 QWEN38_INTERMEDIATE_SIZE = 17408
 QWEN38_DTYPE = "bfloat16"
+QWEN38_VOCAB_SIZE = 248320
+QWEN38_MODEL_MANIFEST_SCHEMA = (
+    "tinyllmforge.qwen38-model-manifest.v1"
+)
 
 _IMMUTABLE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _MULTIMODAL_TOKEN_FIELDS = (
@@ -34,6 +40,7 @@ class Qwen38TextRuntimeProfile:
     layer_types: tuple[str, ...]
     dtype: str
     vocab_size: int
+    tie_word_embeddings: bool
     language_model_only: bool
     multimodal_token_ids: tuple[int, ...]
 
@@ -135,14 +142,28 @@ def _multimodal_token_ids(hf_config, text_config):
     return tuple(sorted(set(values)))
 
 
-def adopt_qwen38_text_config(hf_config):
-    repository = _field(hf_config, "_name_or_path")
+def adopt_qwen38_text_config(
+    hf_config,
+    *,
+    repository=None,
+    revision=None,
+):
+    if repository is None:
+        repository = _field(hf_config, "_name_or_path")
     if repository != QWEN38_REPOSITORY:
         raise ValueError(
             "Qwen3.8 repository must be "
             f"{QWEN38_REPOSITORY}"
         )
-    revision = _revision(hf_config)
+    if revision is None:
+        revision = _revision(hf_config)
+    elif (
+        not isinstance(revision, str)
+        or _IMMUTABLE_REVISION.fullmatch(revision) is None
+    ):
+        raise ValueError(
+            "Qwen3.8 requires an immutable revision SHA"
+        )
     architecture = _architecture(hf_config)
     if _field(hf_config, "model_type") != "qwen3_5":
         raise ValueError("Qwen3.8 top-level model type must be qwen3_5")
@@ -169,6 +190,25 @@ def adopt_qwen38_text_config(hf_config):
         raise ValueError(
             "Qwen3.8 intermediate_size must be 17408"
         )
+    vocab_size = _positive_integer(text_config, "vocab_size")
+    if vocab_size != QWEN38_VOCAB_SIZE:
+        raise ValueError("Qwen3.8 vocab_size must be 248320")
+    tie_word_embeddings = _field(
+        text_config,
+        "tie_word_embeddings",
+    )
+    if tie_word_embeddings is not False:
+        raise ValueError(
+            "Qwen3.8 tie_word_embeddings must be false"
+        )
+    language_model_only = _field(
+        hf_config,
+        "language_model_only",
+    )
+    if language_model_only is not False:
+        raise ValueError(
+            "Qwen3.8 language_model_only must be false"
+        )
     return Qwen38TextRuntimeProfile(
         repository=repository,
         revision=revision,
@@ -179,15 +219,65 @@ def adopt_qwen38_text_config(hf_config):
         intermediate_size=intermediate_size,
         layer_types=_layer_types(text_config),
         dtype=_dtype(text_config),
-        vocab_size=_positive_integer(text_config, "vocab_size"),
-        language_model_only=bool(
-            getattr(hf_config, "language_model_only", False)
-        ),
+        vocab_size=vocab_size,
+        tie_word_embeddings=tie_word_embeddings,
+        language_model_only=language_model_only,
         multimodal_token_ids=_multimodal_token_ids(
             hf_config,
             text_config,
         ),
     )
+
+
+def read_qwen38_source_identity(model_dir):
+    model_root = Path(model_dir).resolve()
+    manifest_path = model_root.parent / "model_manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise ValueError(
+            "Qwen3.8 model manifest must be an adjacent regular file"
+        )
+    try:
+        def reject_duplicate_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON key: {key}")
+                result[key] = value
+            return result
+
+        payload = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(
+            "Qwen3.8 model manifest is not valid JSON"
+        ) from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version")
+        != QWEN38_MODEL_MANIFEST_SCHEMA
+    ):
+        raise ValueError("Qwen3.8 model manifest schema mismatch")
+    manifest_root = payload.get("model_root")
+    if (
+        not isinstance(manifest_root, str)
+        or manifest_root != str(model_root)
+    ):
+        raise ValueError("Qwen3.8 model root identity mismatch")
+    repository = payload.get("repository")
+    revision = payload.get("resolved_revision")
+    if repository != QWEN38_REPOSITORY:
+        raise ValueError("Qwen3.8 manifest repository mismatch")
+    if (
+        not isinstance(revision, str)
+        or _IMMUTABLE_REVISION.fullmatch(revision) is None
+    ):
+        raise ValueError("Qwen3.8 manifest revision is not immutable")
+    return {
+        "repository": repository,
+        "revision": revision,
+    }
 
 
 def is_qwen38_text_checkpoint(hf_config):

@@ -234,14 +234,20 @@ def _full_attention(world_size: int) -> Qwen35FullAttentionShell:
     )
 
 
-def _fixture(rank: int, world_size: int):
+def _fixture(
+    rank: int,
+    world_size: int,
+    *,
+    tie_word_embeddings: bool = True,
+):
     with _dist_layout(rank, world_size):
         embed_tokens = _bf16(VocabParallelEmbedding(
             VOCAB_SIZE,
             HIDDEN_SIZE,
         ))
         lm_head = _bf16(ParallelLMHead(VOCAB_SIZE, HIDDEN_SIZE))
-        lm_head.weight.data = embed_tokens.weight.data
+        if tie_word_embeddings:
+            lm_head.weight.data = embed_tokens.weight.data
         linear_layer = Qwen35DecoderLayerShell(
             block_type="linear_attention",
             input_layernorm=_bf16(Qwen35OffsetRMSNorm(HIDDEN_SIZE)),
@@ -391,7 +397,10 @@ def _tp4_replication_tensor_plan():
     )
 
 
-def _tensor_plan() -> Qwen35CheckpointTensorPlan:
+def _tensor_plan(
+    *,
+    tie_word_embeddings: bool = True,
+) -> Qwen35CheckpointTensorPlan:
     global_key_width = KEY_HEADS * KEY_HEAD_DIM
     global_value_width = VALUE_HEADS * VALUE_HEAD_DIM
     global_conv_width = 2 * global_key_width + global_value_width
@@ -399,6 +408,10 @@ def _tensor_plan() -> Qwen35CheckpointTensorPlan:
         ("embed_tokens.weight", (VOCAB_SIZE, HIDDEN_SIZE), "BF16", None),
         ("final_norm.weight", (HIDDEN_SIZE,), "BF16", None),
     ]
+    if not tie_word_embeddings:
+        entries.append(
+            ("lm_head.weight", (VOCAB_SIZE, HIDDEN_SIZE), "BF16", None)
+        )
     for layer_index in (0, 1):
         prefix = f"layers.{layer_index}."
         entries.extend((
@@ -1002,11 +1015,48 @@ def test_meta_embedding_alias_requires_the_same_parameter_object():
     )
 
 
+def test_untied_lm_head_binds_independent_tp_shard():
+    tensor_plan = _tensor_plan(tie_word_embeddings=False)
+    for world_size in (1, 2):
+        for rank in range(world_size):
+            model, pool = _fixture(
+                rank,
+                world_size,
+                tie_word_embeddings=False,
+            )
+            snapshot = _snapshot(model, pool)
+
+            plan = build_qwen35_checkpoint_binding_plan(
+                model,
+                tensor_plan,
+                tensor_parallel_size=world_size,
+                tensor_parallel_rank=rank,
+            )
+
+            embedding = _binding_by_target(
+                plan,
+                "embed_tokens.weight",
+            )
+            lm_head = _binding_by_target(plan, "lm_head.weight")
+            assert embedding.destination is model.embed_tokens.weight
+            assert lm_head.destination is model.lm_head.weight
+            assert lm_head.destination is not embedding.destination
+            assert lm_head.destination_kind == "parameter"
+            assert lm_head.loader_kind == "custom_parameter_loader"
+            assert lm_head.local_shape == (
+                VOCAB_SIZE // world_size,
+                HIDDEN_SIZE,
+            )
+            assert lm_head.destination_slice is None
+            _assert_unchanged(model, pool, snapshot)
+
+
 def main():
     test_tp_1_and_2_bind_complete_real_component_graph_read_only()
     test_tp4_binds_complete_replicated_kv_heads_by_source_rank()
     test_fail_closed_component_shape_dtype_loader_alias_and_plan_contracts()
     test_meta_embedding_alias_requires_the_same_parameter_object()
+    test_untied_lm_head_binds_independent_tp_shard()
     print("qwen35 checkpoint target binding tests passed (4 tests)")
 
 
