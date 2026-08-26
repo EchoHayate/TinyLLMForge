@@ -57,6 +57,8 @@ def _official_config(**overrides):
         "dtype": "bfloat16",
         "vocab_size": 248320,
         "tie_word_embeddings": False,
+        "mtp_num_hidden_layers": 1,
+        "mtp_use_dedicated_embeddings": False,
         "image_token_id": 248056,
         "video_token_id": 248057,
     }
@@ -88,6 +90,25 @@ def test_adopts_official_qwen38_text_topology():
     assert profile.dtype == "bfloat16"
     assert profile.vocab_size == 248320
     assert profile.tie_word_embeddings is False
+    assert profile.mtp_num_hidden_layers == 1
+    assert profile.mtp_use_dedicated_embeddings is False
+    assert profile.base_decode_auxiliary_skip_sources == (
+        "mtp.fc.weight",
+        "mtp.layers.0.input_layernorm.weight",
+        "mtp.layers.0.mlp.down_proj.weight",
+        "mtp.layers.0.mlp.gate_proj.weight",
+        "mtp.layers.0.mlp.up_proj.weight",
+        "mtp.layers.0.post_attention_layernorm.weight",
+        "mtp.layers.0.self_attn.k_norm.weight",
+        "mtp.layers.0.self_attn.k_proj.weight",
+        "mtp.layers.0.self_attn.o_proj.weight",
+        "mtp.layers.0.self_attn.q_norm.weight",
+        "mtp.layers.0.self_attn.q_proj.weight",
+        "mtp.layers.0.self_attn.v_proj.weight",
+        "mtp.norm.weight",
+        "mtp.pre_fc_norm_embedding.weight",
+        "mtp.pre_fc_norm_hidden.weight",
+    )
     assert profile.language_model_only is False
     assert profile.multimodal_token_ids == (248056, 248057)
 
@@ -264,6 +285,20 @@ def test_qwen38_detection_requires_architecture_and_exact_topology():
                 text_overrides={"tie_word_embeddings": True}
             ),
             "tie_word_embeddings",
+        ),
+        (
+            _official_config(
+                text_overrides={"mtp_num_hidden_layers": 2}
+            ),
+            "mtp_num_hidden_layers",
+        ),
+        (
+            _official_config(
+                text_overrides={
+                    "mtp_use_dedicated_embeddings": True
+                }
+            ),
+            "mtp_use_dedicated_embeddings",
         ),
         (
             _official_config(language_model_only=True),

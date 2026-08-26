@@ -15,6 +15,24 @@ QWEN38_HIDDEN_SIZE = 5120
 QWEN38_INTERMEDIATE_SIZE = 17408
 QWEN38_DTYPE = "bfloat16"
 QWEN38_VOCAB_SIZE = 248320
+QWEN38_MTP_NUM_HIDDEN_LAYERS = 1
+QWEN38_BASE_DECODE_AUXILIARY_SKIP_SOURCES = (
+    "mtp.fc.weight",
+    "mtp.layers.0.input_layernorm.weight",
+    "mtp.layers.0.mlp.down_proj.weight",
+    "mtp.layers.0.mlp.gate_proj.weight",
+    "mtp.layers.0.mlp.up_proj.weight",
+    "mtp.layers.0.post_attention_layernorm.weight",
+    "mtp.layers.0.self_attn.k_norm.weight",
+    "mtp.layers.0.self_attn.k_proj.weight",
+    "mtp.layers.0.self_attn.o_proj.weight",
+    "mtp.layers.0.self_attn.q_norm.weight",
+    "mtp.layers.0.self_attn.q_proj.weight",
+    "mtp.layers.0.self_attn.v_proj.weight",
+    "mtp.norm.weight",
+    "mtp.pre_fc_norm_embedding.weight",
+    "mtp.pre_fc_norm_hidden.weight",
+)
 QWEN38_MODEL_MANIFEST_SCHEMA = (
     "tinyllmforge.qwen38-model-manifest.v1"
 )
@@ -41,6 +59,9 @@ class Qwen38TextRuntimeProfile:
     dtype: str
     vocab_size: int
     tie_word_embeddings: bool
+    mtp_num_hidden_layers: int
+    mtp_use_dedicated_embeddings: bool
+    base_decode_auxiliary_skip_sources: tuple[str, ...]
     language_model_only: bool
     multimodal_token_ids: tuple[int, ...]
 
@@ -201,6 +222,22 @@ def adopt_qwen38_text_config(
         raise ValueError(
             "Qwen3.8 tie_word_embeddings must be false"
         )
+    mtp_num_hidden_layers = _positive_integer(
+        text_config,
+        "mtp_num_hidden_layers",
+    )
+    if mtp_num_hidden_layers != QWEN38_MTP_NUM_HIDDEN_LAYERS:
+        raise ValueError(
+            "Qwen3.8 mtp_num_hidden_layers must be 1"
+        )
+    mtp_use_dedicated_embeddings = _field(
+        text_config,
+        "mtp_use_dedicated_embeddings",
+    )
+    if mtp_use_dedicated_embeddings is not False:
+        raise ValueError(
+            "Qwen3.8 mtp_use_dedicated_embeddings must be false"
+        )
     language_model_only = _field(
         hf_config,
         "language_model_only",
@@ -221,6 +258,13 @@ def adopt_qwen38_text_config(
         dtype=_dtype(text_config),
         vocab_size=vocab_size,
         tie_word_embeddings=tie_word_embeddings,
+        mtp_num_hidden_layers=mtp_num_hidden_layers,
+        mtp_use_dedicated_embeddings=(
+            mtp_use_dedicated_embeddings
+        ),
+        base_decode_auxiliary_skip_sources=(
+            QWEN38_BASE_DECODE_AUXILIARY_SKIP_SOURCES
+        ),
         language_model_only=language_model_only,
         multimodal_token_ids=_multimodal_token_ids(
             hf_config,

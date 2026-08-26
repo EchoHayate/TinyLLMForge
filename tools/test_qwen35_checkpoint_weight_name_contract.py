@@ -68,6 +68,23 @@ FULL_SUFFIXES = (
     "self_attn.q_proj.weight",
     "self_attn.v_proj.weight",
 )
+QWEN38_MTP_SOURCES = (
+    "mtp.fc.weight",
+    "mtp.layers.0.input_layernorm.weight",
+    "mtp.layers.0.mlp.down_proj.weight",
+    "mtp.layers.0.mlp.gate_proj.weight",
+    "mtp.layers.0.mlp.up_proj.weight",
+    "mtp.layers.0.post_attention_layernorm.weight",
+    "mtp.layers.0.self_attn.k_norm.weight",
+    "mtp.layers.0.self_attn.k_proj.weight",
+    "mtp.layers.0.self_attn.o_proj.weight",
+    "mtp.layers.0.self_attn.q_norm.weight",
+    "mtp.layers.0.self_attn.q_proj.weight",
+    "mtp.layers.0.self_attn.v_proj.weight",
+    "mtp.norm.weight",
+    "mtp.pre_fc_norm_embedding.weight",
+    "mtp.pre_fc_norm_hidden.weight",
+)
 
 
 def _config(
@@ -143,6 +160,33 @@ def _index_for(
             for name in sorted(names)
         },
     }
+
+
+def _qwen38_profile(config):
+    text = config.text_config
+    return types.SimpleNamespace(
+        text_model_type=text.model_type,
+        num_hidden_layers=text.num_hidden_layers,
+        hidden_size=text.hidden_size,
+        intermediate_size=text.intermediate_size,
+        vocab_size=text.vocab_size,
+        dtype=text.dtype,
+        tie_word_embeddings=text.tie_word_embeddings,
+        layer_types=tuple(text.layer_types),
+        base_decode_auxiliary_skip_sources=QWEN38_MTP_SOURCES,
+    )
+
+
+def _qwen38_index(config):
+    payload = _index_for(
+        tuple(config.text_config.layer_types),
+        tie_word_embeddings=config.text_config.tie_word_embeddings,
+    )
+    payload["weight_map"].update({
+        source_name: SHARD
+        for source_name in QWEN38_MTP_SOURCES
+    })
+    return payload
 
 
 _DTYPE_BYTES = {
@@ -407,6 +451,59 @@ def test_explicit_skip_and_total_coverage():
         for name in payload["weight_map"]
         if not name.startswith("model.language_model.")
     ))
+
+
+def test_qwen38_base_decode_accepts_only_declared_mtp_inventory():
+    config = _config(
+        tie_word_embeddings=False,
+        model_type="qwen3_5_text",
+    )
+    payload = _qwen38_index(config)
+    profile = _qwen38_profile(config)
+
+    plan = build_qwen35_checkpoint_weight_plan(
+        config,
+        payload,
+        qwen38_text_profile=profile,
+    )
+
+    assert tuple(
+        entry.source.name
+        for entry in plan.skips
+        if entry.scope == "mtp"
+    ) == QWEN38_MTP_SOURCES
+    assert all(
+        entry.scope in {"visual", "mtp"}
+        for entry in plan.skips
+    )
+
+    missing = {
+        "metadata": dict(payload["metadata"]),
+        "weight_map": dict(payload["weight_map"]),
+    }
+    missing["weight_map"].pop(QWEN38_MTP_SOURCES[0])
+    _expect_error(
+        lambda: build_qwen35_checkpoint_weight_plan(
+            config,
+            missing,
+            qwen38_text_profile=profile,
+        ),
+        "Qwen3.8 base-decode auxiliary checkpoint inventory mismatch",
+    )
+
+    extra = {
+        "metadata": dict(payload["metadata"]),
+        "weight_map": dict(payload["weight_map"]),
+    }
+    extra["weight_map"]["mtp.extra.weight"] = SHARD
+    _expect_error(
+        lambda: build_qwen35_checkpoint_weight_plan(
+            config,
+            extra,
+            qwen38_text_profile=profile,
+        ),
+        "Qwen3.8 base-decode auxiliary checkpoint inventory mismatch",
+    )
 
 
 def test_untied_lm_head_mapping_and_tensor_contract():

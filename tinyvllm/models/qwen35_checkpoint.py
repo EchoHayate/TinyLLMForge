@@ -238,6 +238,32 @@ def _validate_qwen38_text_profile(config, profile) -> None:
             "qwen38_text_profile layer_types "
             "does not match text_config"
         )
+    if not hasattr(profile, "base_decode_auxiliary_skip_sources"):
+        raise ValueError(
+            "qwen38_text_profile missing "
+            "base_decode_auxiliary_skip_sources"
+        )
+    auxiliary_sources = getattr(
+        profile,
+        "base_decode_auxiliary_skip_sources",
+    )
+    if (
+        not isinstance(auxiliary_sources, tuple)
+        or not auxiliary_sources
+        or any(
+            not isinstance(source_name, str) or not source_name
+            for source_name in auxiliary_sources
+        )
+        or tuple(sorted(set(auxiliary_sources))) != auxiliary_sources
+        or any(
+            not source_name.startswith("mtp.")
+            for source_name in auxiliary_sources
+        )
+    ):
+        raise ValueError(
+            "qwen38_text_profile base-decode auxiliary sources "
+            "must be unique sorted MTP names"
+        )
 
 
 def _expected_language_targets(
@@ -614,13 +640,28 @@ def build_qwen35_checkpoint_weight_plan(
         skip_sources,
         key=lambda entry: entry.source.name,
     ))
-    if (
-        qwen38_text_profile is not None
-        and any(entry.scope != "visual" for entry in skips)
-    ):
-        raise ValueError(
-            "Qwen3.8 checkpoint skip scope must be visual"
+    if qwen38_text_profile is not None:
+        observed_auxiliary_sources = tuple(
+            entry.source.name
+            for entry in skips
+            if entry.scope == "mtp"
         )
+        expected_auxiliary_sources = (
+            qwen38_text_profile
+            .base_decode_auxiliary_skip_sources
+        )
+        if observed_auxiliary_sources != expected_auxiliary_sources:
+            raise ValueError(
+                "Qwen3.8 base-decode auxiliary checkpoint "
+                "inventory mismatch"
+            )
+        if any(
+            entry.scope not in {"visual", "mtp"}
+            for entry in skips
+        ):
+            raise ValueError(
+                "Qwen3.8 checkpoint skip scope is unsupported"
+            )
     covered_names = {
         entry.source.name for entry in loads
     } | {

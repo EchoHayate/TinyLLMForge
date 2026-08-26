@@ -262,7 +262,7 @@ Extend the checkpoint contract fixture to represent 64 layers, the official cade
 
 - [ ] **Step 5: Reuse the existing language planner behind validated input**
 
-Add a `qwen38_text_profile` optional argument to the Qwen3.5 checkpoint planner. When present, verify it agrees with `text_config`, allow only explicit `model.visual.*` skips, and preserve the existing TP shard rules. No generic checkpoint module may contain the repository string.
+Add a `qwen38_text_profile` optional argument to the Qwen3.5 checkpoint planner. When present, verify it agrees with `text_config`, allow explicit `model.visual.*` skips plus the exact adapter-declared 15-tensor `mtp.*` auxiliary inventory that the official base `Qwen3_5ForConditionalGeneration.forward` does not consume, and preserve the existing TP shard rules. Missing, extra, duplicated, or undeclared MTP tensors fail closed. This base-decode exclusion does not claim Qwen3.8 speculative-MTP support. No generic checkpoint module may contain the repository string.
 
 - [ ] **Step 6: Run focused and adjacent tests GREEN**
 
