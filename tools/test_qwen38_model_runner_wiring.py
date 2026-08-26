@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODEL_RUNNER_PATH = ROOT / "tinyvllm/engine/model_runner.py"
 
 
-def _load_function(name):
+def _load_function(name, **namespace):
     tree = ast.parse(
         MODEL_RUNNER_PATH.read_text(encoding="utf-8"),
         filename=str(MODEL_RUNNER_PATH),
@@ -21,7 +21,6 @@ def _load_function(name):
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == name
     )
-    namespace = {}
     exec(
         compile(
             ast.Module(body=[function], type_ignores=[]),
@@ -31,6 +30,34 @@ def _load_function(name):
         namespace,
     )
     return namespace[name]
+
+
+def _load_model_runner_method(name, **namespace):
+    tree = ast.parse(
+        MODEL_RUNNER_PATH.read_text(encoding="utf-8"),
+        filename=str(MODEL_RUNNER_PATH),
+    )
+    model_runner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ModelRunner"
+    )
+    method = next(
+        node
+        for node in model_runner.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    compiled = {}
+    compiled.update(namespace)
+    exec(
+        compile(
+            ast.Module(body=[method], type_ignores=[]),
+            str(MODEL_RUNNER_PATH),
+            "exec",
+        ),
+        compiled,
+    )
+    return compiled[name]
 
 
 def test_resolves_qwen38_profile_only_for_official_architecture():
@@ -175,3 +202,203 @@ def test_qwen38_manifest_is_accepted_by_shared_checkpoint_loader(tmp_path):
         "model-00001-of-00001.safetensors",
         files["model-00001-of-00001.safetensors"],
     ),)
+
+
+def test_qwen38_correctness_rank_identity_reports_loaded_partition_and_gpu():
+    cuda = SimpleNamespace(
+        current_device=lambda: 2,
+        get_device_properties=lambda index: (
+            SimpleNamespace(uuid=f"GPU-device-{index}")
+        ),
+    )
+    identity = _load_model_runner_method(
+        "qwen38_correctness_rank_identity",
+        torch=SimpleNamespace(cuda=cuda),
+    )
+    runner = SimpleNamespace(
+        rank=2,
+        world_size=4,
+        qwen38_correctness_weight_partition_identity={
+            "expected_weight_shard_sha256": "1" * 64,
+            "loaded_weight_shard_sha256": "1" * 64,
+        },
+    )
+
+    assert identity(runner) == {
+        "rank": 2,
+        "gpu_index": 2,
+        "gpu_uuid": "GPU-device-2",
+        "expected_weight_shard_sha256": "1" * 64,
+        "loaded_weight_shard_sha256": "1" * 64,
+    }
+
+
+def test_qwen38_correctness_rank_identity_fails_without_load_attestation():
+    cuda = SimpleNamespace(
+        current_device=lambda: 0,
+        get_device_properties=lambda _index: (
+            SimpleNamespace(uuid="GPU-device-0")
+        ),
+    )
+    identity = _load_model_runner_method(
+        "qwen38_correctness_rank_identity",
+        torch=SimpleNamespace(cuda=cuda),
+    )
+    runner = SimpleNamespace(
+        rank=0,
+        world_size=1,
+        qwen38_correctness_weight_partition_identity=None,
+    )
+
+    try:
+        identity(runner)
+    except RuntimeError as error:
+        assert "load attestation" in str(error)
+    else:
+        raise AssertionError("missing rank-local load attestation was accepted")
+
+
+def test_qwen38_partition_attestation_is_deterministic_and_rank_local():
+    attest = _load_function(
+        "_qwen38_checkpoint_partition_attestation",
+        hashlib=hashlib,
+        json=json,
+    )
+    source = SimpleNamespace(
+        name="model.layers.0.weight",
+        shard="model-00001-of-00018.safetensors",
+    )
+    metadata = SimpleNamespace(
+        dtype="BF16",
+        shape=(8, 4),
+        data_offsets=(0, 64),
+    )
+    load = SimpleNamespace(
+        weight=SimpleNamespace(
+            source=source,
+            target="layers.0.weight",
+            packed_slot=None,
+        ),
+        metadata=metadata,
+        transform="identity",
+    )
+    binding = SimpleNamespace(
+        load=load,
+        destination_name="layer_stack.layers.0.weight",
+        destination_kind="parameter",
+        loader_kind="row_parallel",
+        local_shape=(8, 1),
+        destination_slice=None,
+        source_segments=None,
+    )
+    candidate = SimpleNamespace(
+        binding_plan=SimpleNamespace(
+            bindings=(binding,),
+            tensor_parallel_size=4,
+            tensor_parallel_rank=2,
+        ),
+        stats=SimpleNamespace(
+            assigned_bindings=1,
+            source_tensors=1,
+            shard_count=1,
+            loaded_bytes=64,
+        ),
+    )
+    manifest_identity = {
+        "manifest_sha256": "1" * 64,
+        "composite_sha256": "2" * 64,
+    }
+
+    first = attest(
+        manifest_identity,
+        candidate,
+        tensor_parallel_size=4,
+        tensor_parallel_rank=2,
+    )
+    second = attest(
+        manifest_identity,
+        candidate,
+        tensor_parallel_size=4,
+        tensor_parallel_rank=2,
+    )
+
+    assert first == second
+    assert first == {
+        "expected_weight_shard_sha256": first[
+            "expected_weight_shard_sha256"
+        ],
+        "loaded_weight_shard_sha256": first[
+            "expected_weight_shard_sha256"
+        ],
+    }
+    assert len(first["expected_weight_shard_sha256"]) == 64
+
+    candidate.binding_plan.tensor_parallel_rank = 1
+    other_rank = attest(
+        manifest_identity,
+        candidate,
+        tensor_parallel_size=4,
+        tensor_parallel_rank=1,
+    )
+    assert (
+        other_rank["expected_weight_shard_sha256"]
+        != first["expected_weight_shard_sha256"]
+    )
+
+
+def test_qwen38_partition_attestation_rejects_incomplete_strict_load():
+    attest = _load_function(
+        "_qwen38_checkpoint_partition_attestation",
+        hashlib=hashlib,
+        json=json,
+    )
+    source = SimpleNamespace(name="weight", shard="model.safetensors")
+    binding = SimpleNamespace(
+        load=SimpleNamespace(
+            weight=SimpleNamespace(
+                source=source,
+                target="weight",
+                packed_slot=None,
+            ),
+            metadata=SimpleNamespace(
+                dtype="BF16",
+                shape=(4, 4),
+                data_offsets=(0, 32),
+            ),
+            transform="identity",
+        ),
+        destination_name="weight",
+        destination_kind="parameter",
+        loader_kind="replicated",
+        local_shape=(4, 4),
+        destination_slice=None,
+        source_segments=None,
+    )
+    candidate = SimpleNamespace(
+        binding_plan=SimpleNamespace(
+            bindings=(binding,),
+            tensor_parallel_size=1,
+            tensor_parallel_rank=0,
+        ),
+        stats=SimpleNamespace(
+            assigned_bindings=0,
+            source_tensors=1,
+            shard_count=1,
+            loaded_bytes=32,
+        ),
+    )
+
+    try:
+        attest(
+            {
+                "manifest_sha256": "1" * 64,
+                "composite_sha256": "2" * 64,
+            },
+            candidate,
+            tensor_parallel_size=1,
+            tensor_parallel_rank=0,
+        )
+    except RuntimeError as error:
+        assert "coverage" in str(error)
+    else:
+        raise AssertionError("incomplete strict checkpoint load was attested")

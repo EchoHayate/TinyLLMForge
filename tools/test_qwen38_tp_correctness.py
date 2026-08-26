@@ -78,6 +78,7 @@ def _row(
     first_token=7,
     delta=0.0,
 ):
+    root_logits_authority = rank == 0
     return {
         "schema_version": correctness.ROW_SCHEMA,
         "source_tree_sha256": SOURCE_SHA,
@@ -89,13 +90,21 @@ def _row(
         "dtype": "bfloat16",
         "tp_size": tp_size,
         "rank": rank,
+        "gpu_index": rank,
+        "gpu_uuid": f"GPU-{mode}-{rank}",
         "prompt_token_ids": PROMPT,
         "generated_token_ids": GENERATED,
-        "positions": _positions(
-            first_token=first_token,
-            delta=delta,
+        "logits_authority": (
+            "rank0_full"
+            if root_logits_authority
+            else "unavailable_non_root_by_tp_design"
         ),
-        "finite_logits": True,
+        "positions": (
+            _positions(first_token=first_token, delta=delta)
+            if root_logits_authority
+            else None
+        ),
+        "finite_logits": True if root_logits_authority else None,
         "expected_weight_shard_sha256": shard_sha,
         "loaded_weight_shard_sha256": shard_sha,
     }
@@ -213,22 +222,24 @@ def test_complete_source_bound_tp1_tp4_bundle_passes(tmp_path):
     assert result["exact_topk_token_ids"] is True
     assert result["within_numeric_tolerance"] is True
     assert result["finite_logits_all_ranks"] is True
+    assert result["non_root_logits_unavailable_by_design"] is True
     assert result["rank_inventory"] == [0, 1, 2, 3]
+    assert result["distinct_gpu_uuids"] is True
     assert result["distinct_expected_shards"] is True
     assert result["process_groups_destroyed"] is True
     assert result["owned_children_remaining"] == []
-    assert result["max_abs_logit_error"] == pytest.approx(0.005)
+    assert result["max_abs_logit_error"] == pytest.approx(0.002)
     assert result["max_rel_logit_error"] > 0.0
 
 
 def test_numerically_close_different_argmax_is_a_hard_failure(tmp_path):
     rows = _write_bundle(tmp_path)
-    tp4_rank_2 = next(
+    tp4_rank_0 = next(
         row
         for row in rows
-        if row["mode"] == "tinyllmforge_tp4" and row["rank"] == 2
+        if row["mode"] == "tinyllmforge_tp4" and row["rank"] == 0
     )
-    tp4_rank_2["positions"][0] = {
+    tp4_rank_0["positions"][0] = {
         "position": 0,
         "topk_token_ids": [8, 7, 9],
         "topk_logits": [5.0001, 4.0, 3.0],
@@ -240,6 +251,22 @@ def test_numerically_close_different_argmax_is_a_hard_failure(tmp_path):
     assert result["classification"] == "FAIL"
     assert result["within_numeric_tolerance"] is True
     assert result["exact_argmax_positions"] is False
+
+
+def test_non_root_tp_rows_must_not_fabricate_replicated_logits(tmp_path):
+    rows = _write_bundle(tmp_path)
+    tp4_rank_2 = next(
+        row
+        for row in rows
+        if row["mode"] == "tinyllmforge_tp4" and row["rank"] == 2
+    )
+    tp4_rank_2["logits_authority"] = "rank0_full"
+    tp4_rank_2["positions"] = _positions(delta=0.004)
+    tp4_rank_2["finite_logits"] = True
+    _rewrite_rows(tmp_path, rows)
+
+    with pytest.raises(ValueError, match="non-root logits authority"):
+        correctness.validate_correctness_bundle(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -286,6 +313,16 @@ def test_rank_inventory_shards_and_cleanup_fail_closed(tmp_path):
     result = correctness.validate_correctness_bundle(tmp_path)
     assert result["classification"] == "FAIL"
     assert result["distinct_expected_shards"] is False
+
+    rows = _write_bundle(tmp_path)
+    tp4_rows = [
+        row for row in rows if row["mode"] == "tinyllmforge_tp4"
+    ]
+    tp4_rows[-1]["gpu_uuid"] = tp4_rows[0]["gpu_uuid"]
+    _rewrite_rows(tmp_path, rows)
+    result = correctness.validate_correctness_bundle(tmp_path)
+    assert result["classification"] == "FAIL"
+    assert result["distinct_gpu_uuids"] is False
 
     _write_bundle(tmp_path)
     cleanup_path = tmp_path / "cleanup_receipt.json"
@@ -361,6 +398,13 @@ def test_compare_decode_rows_rejects_nonfinite_or_incomplete_positions():
             {
                 **reference,
                 "rank": rank,
+                "logits_authority": (
+                    "rank0_full"
+                    if rank == 0
+                    else "unavailable_non_root_by_tp_design"
+                ),
+                "positions": _positions() if rank == 0 else None,
+                "finite_logits": True if rank == 0 else None,
                 "expected_weight_shard_sha256": str(rank + 3) * 64,
                 "loaded_weight_shard_sha256": str(rank + 3) * 64,
             }
@@ -376,8 +420,8 @@ def test_compare_decode_rows_rejects_nonfinite_or_incomplete_positions():
     )
     assert result["classification"] == "PASS"
 
-    tp4["rank_rows"][1]["positions"][0]["topk_logits"][0] = float("nan")
-    tp4["rank_rows"][1]["finite_logits"] = False
+    tp4["rank_rows"][0]["positions"][0]["topk_logits"][0] = float("nan")
+    tp4["rank_rows"][0]["finite_logits"] = False
     result = correctness.compare_decode_rows(
         reference,
         tp1,

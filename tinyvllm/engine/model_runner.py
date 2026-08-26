@@ -339,7 +339,7 @@ def _initialize_model_runner_model(
 ):
     if getattr(config.hf_config, "model_type", None) == "qwen3_5":
         return load_qwen35_model(config, rank)
-    return load_legacy_model(config), None
+    return load_legacy_model(config), None, None
 
 
 def _qwen35_checkpoint_manifest_identity(
@@ -446,6 +446,102 @@ def _qwen35_checkpoint_manifest_identity(
     }
 
 
+def _qwen38_checkpoint_partition_attestation(
+    manifest_identity,
+    candidate,
+    *,
+    tensor_parallel_size,
+    tensor_parallel_rank,
+):
+    plan = candidate.binding_plan
+    if (
+        plan.tensor_parallel_size != tensor_parallel_size
+        or plan.tensor_parallel_rank != tensor_parallel_rank
+    ):
+        raise RuntimeError(
+            "Qwen3.8 checkpoint partition TP context mismatch"
+        )
+    bindings = tuple(plan.bindings)
+    sources = {}
+    binding_rows = []
+    for binding in bindings:
+        load = binding.load
+        weight = load.weight
+        source = weight.source
+        metadata = load.metadata
+        source_row = {
+            "name": source.name,
+            "shard": source.shard,
+            "dtype": metadata.dtype,
+            "shape": list(metadata.shape),
+            "data_offsets": list(metadata.data_offsets),
+        }
+        previous = sources.setdefault(source.name, source_row)
+        if previous != source_row:
+            raise RuntimeError(
+                "Qwen3.8 checkpoint source contract is inconsistent"
+            )
+        binding_rows.append({
+            "source_name": source.name,
+            "source_shard": source.shard,
+            "target": weight.target,
+            "packed_slot": weight.packed_slot,
+            "transform": load.transform,
+            "destination_name": binding.destination_name,
+            "destination_kind": binding.destination_kind,
+            "loader_kind": binding.loader_kind,
+            "local_shape": list(binding.local_shape),
+            "destination_slice": (
+                None
+                if binding.destination_slice is None
+                else list(binding.destination_slice)
+            ),
+            "source_segments": (
+                None
+                if binding.source_segments is None
+                else list(binding.source_segments)
+            ),
+        })
+    expected_loaded_bytes = sum(
+        row["data_offsets"][1] - row["data_offsets"][0]
+        for row in sources.values()
+    )
+    stats = candidate.stats
+    if (
+        stats.assigned_bindings != len(bindings)
+        or stats.source_tensors != len(sources)
+        or stats.shard_count
+        != len({row["shard"] for row in sources.values()})
+        or stats.loaded_bytes != expected_loaded_bytes
+    ):
+        raise RuntimeError(
+            "Qwen3.8 strict checkpoint load coverage is incomplete"
+        )
+    payload = {
+        "schema_version": (
+            "tinyllmforge.qwen38-rank-partition-attestation.v1"
+        ),
+        "manifest_sha256": manifest_identity["manifest_sha256"],
+        "checkpoint_composite_sha256": manifest_identity[
+            "composite_sha256"
+        ],
+        "tensor_parallel_size": tensor_parallel_size,
+        "tensor_parallel_rank": tensor_parallel_rank,
+        "bindings": binding_rows,
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "expected_weight_shard_sha256": digest,
+        "loaded_weight_shard_sha256": digest,
+    }
+
+
 def _load_qwen35_model_runner_model(
     config,
     rank,
@@ -532,7 +628,17 @@ def _load_qwen35_model_runner_model(
         candidate.owner.model,
         configure_rows=configure_linear_execution_rows,
     )
-    return candidate.owner.model, candidate.owner
+    partition_identity = (
+        _qwen38_checkpoint_partition_attestation(
+            identity,
+            candidate,
+            tensor_parallel_size=config.tensor_parallel_size,
+            tensor_parallel_rank=rank,
+        )
+        if qwen38_text_profile is not None
+        else None
+    )
+    return candidate.owner.model, candidate.owner, partition_identity
 
 
 def _qwen35_mtp_registration_dependencies():
@@ -2295,7 +2401,11 @@ class ModelRunner:
             )
             return model
 
-        self.model, initial_qwen35_owner = (
+        (
+            self.model,
+            initial_qwen35_owner,
+            self.qwen38_correctness_weight_partition_identity,
+        ) = (
             _initialize_model_runner_model(
                 config,
                 rank=rank,
@@ -3262,6 +3372,53 @@ class ModelRunner:
         return {
             "rank": self.rank,
             "enabled": self._record_step_logits,
+        }
+
+    def qwen38_correctness_rank_identity(self) -> dict:
+        attestation = getattr(
+            self,
+            "qwen38_correctness_weight_partition_identity",
+            None,
+        )
+        required = {
+            "expected_weight_shard_sha256",
+            "loaded_weight_shard_sha256",
+        }
+        if (
+            not isinstance(attestation, dict)
+            or set(attestation) != required
+        ):
+            raise RuntimeError(
+                "Qwen3.8 rank-local load attestation is unavailable"
+            )
+        for field in required:
+            value = attestation[field]
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in value
+                )
+            ):
+                raise RuntimeError(
+                    "Qwen3.8 rank-local load attestation is invalid"
+                )
+        gpu_index = int(torch.cuda.current_device())
+        gpu_uuid = getattr(
+            torch.cuda.get_device_properties(gpu_index),
+            "uuid",
+            None,
+        )
+        if isinstance(gpu_uuid, bytes):
+            gpu_uuid = gpu_uuid.decode("ascii")
+        if not isinstance(gpu_uuid, str) or not gpu_uuid:
+            raise RuntimeError("CUDA GPU UUID is unavailable")
+        return {
+            "rank": self.rank,
+            "gpu_index": gpu_index,
+            "gpu_uuid": gpu_uuid,
+            **attestation,
         }
 
     def configure_h2d_slot_reuse_diagnostic(

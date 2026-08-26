@@ -9,7 +9,7 @@ import re
 
 
 BUNDLE_SCHEMA = "tinyllmforge.qwen38-tp-correctness-bundle.v1"
-ROW_SCHEMA = "tinyllmforge.qwen38-tp-correctness-row.v1"
+ROW_SCHEMA = "tinyllmforge.qwen38-tp-correctness-row.v2"
 CLEANUP_SCHEMA = "tinyllmforge.qwen38-tp-correctness-cleanup.v1"
 SOURCE_SCHEMA = "tinyllmforge.source-manifest.v1"
 MODEL_SCHEMA = "tinyllmforge.qwen38-model-manifest.v1"
@@ -32,8 +32,11 @@ _ROW_FIELDS = {
     "dtype",
     "tp_size",
     "rank",
+    "gpu_index",
+    "gpu_uuid",
     "prompt_token_ids",
     "generated_token_ids",
+    "logits_authority",
     "positions",
     "finite_logits",
     "expected_weight_shard_sha256",
@@ -250,27 +253,69 @@ def compare_decode_rows(
     reference_row = _validate_comparison_row(reference)
     generated_count = len(reference_row["generated"])
     topk = len(reference_row["positions"][0]["token_ids"])
-    candidates = [
-        _validate_comparison_row(
-            tp1,
-            generated_count=generated_count,
-            topk=topk,
-        )
-    ]
+    tp1_row = _validate_comparison_row(
+        tp1,
+        generated_count=generated_count,
+        topk=topk,
+    )
     rank_rows = tp4.get("rank_rows") if isinstance(tp4, dict) else None
     if not isinstance(rank_rows, list) or len(rank_rows) != 4:
         raise ValueError("TP4 rank rows must contain four entries")
-    candidates.extend(
-        _validate_comparison_row(
-            row,
-            generated_count=generated_count,
-            topk=topk,
-        )
-        for row in rank_rows
+    rows_by_rank = {}
+    for row in rank_rows:
+        if not isinstance(row, dict):
+            raise ValueError("TP4 rank row must be a mapping")
+        rank = row.get("rank")
+        if (
+            isinstance(rank, bool)
+            or not isinstance(rank, int)
+            or rank < 0
+            or rank > 3
+            or rank in rows_by_rank
+        ):
+            raise ValueError("TP4 rank rows must cover ranks 0..3")
+        rows_by_rank[rank] = row
+    if sorted(rows_by_rank) != [0, 1, 2, 3]:
+        raise ValueError("TP4 rank rows must cover ranks 0..3")
+    root = rows_by_rank[0]
+    if root.get("logits_authority") != "rank0_full":
+        raise ValueError("TP4 rank-0 logits authority mismatch")
+    tp4_root = _validate_comparison_row(
+        root,
+        generated_count=generated_count,
+        topk=topk,
     )
+    non_root_rows = []
+    for rank in range(1, 4):
+        row = rows_by_rank[rank]
+        if (
+            row.get("logits_authority")
+            != "unavailable_non_root_by_tp_design"
+            or row.get("positions") is not None
+            or row.get("finite_logits") is not None
+        ):
+            raise ValueError("TP4 non-root logits authority mismatch")
+        prompt = _validate_token_ids(
+            row.get("prompt_token_ids"),
+            "prompt_token_ids",
+        )
+        generated = _validate_token_ids(
+            row.get("generated_token_ids"),
+            "generated_token_ids",
+        )
+        if len(generated) != generated_count:
+            raise ValueError("generated token count mismatch")
+        non_root_rows.append({
+            "prompt": prompt,
+            "generated": generated,
+        })
+    candidates = [tp1_row, tp4_root]
 
     exact_prompt_tokens = all(
         row["prompt"] == reference_row["prompt"] for row in candidates
+    ) and all(
+        row["prompt"] == reference_row["prompt"]
+        for row in non_root_rows
     )
     exact_generated_tokens = (
         reference_row["generated_matches_argmax"]
@@ -278,6 +323,10 @@ def compare_decode_rows(
             row["generated"] == reference_row["generated"]
             and row["generated_matches_argmax"]
             for row in candidates
+        )
+        and all(
+            row["generated"] == reference_row["generated"]
+            for row in non_root_rows
         )
     )
     exact_argmax_positions = all(
@@ -348,6 +397,7 @@ def compare_decode_rows(
         "exact_topk_token_ids": exact_topk_token_ids,
         "within_numeric_tolerance": within_numeric_tolerance,
         "finite_logits_all_ranks": finite_logits_all_ranks,
+        "non_root_logits_unavailable_by_design": True,
         "max_abs_logit_error": max_abs_error,
         "max_rel_logit_error": max_rel_error,
         "atol": atol,
@@ -425,13 +475,42 @@ def _validate_row(row, manifest):
     expected_tp, expected_ranks = _EXPECTED_MODES[mode]
     if row["tp_size"] != expected_tp or row["rank"] not in expected_ranks:
         raise ValueError("correctness row rank identity mismatch")
+    if (
+        isinstance(row["gpu_index"], bool)
+        or not isinstance(row["gpu_index"], int)
+        or row["gpu_index"] < 0
+        or not isinstance(row["gpu_uuid"], str)
+        or not row["gpu_uuid"]
+    ):
+        raise ValueError("correctness row GPU identity mismatch")
     if row["prompt_token_ids"] != manifest["prompt_token_ids"]:
         raise ValueError("correctness row prompt_token_ids mismatch")
-    _validate_comparison_row(
-        row,
-        generated_count=manifest["generated_token_count"],
-        topk=manifest["topk"],
-    )
+    if mode == "tinyllmforge_tp4" and row["rank"] != 0:
+        if (
+            row["logits_authority"]
+            != "unavailable_non_root_by_tp_design"
+            or row["positions"] is not None
+            or row["finite_logits"] is not None
+        ):
+            raise ValueError("TP4 non-root logits authority mismatch")
+        _validate_token_ids(
+            row["prompt_token_ids"],
+            "prompt_token_ids",
+        )
+        generated = _validate_token_ids(
+            row["generated_token_ids"],
+            "generated_token_ids",
+        )
+        if len(generated) != manifest["generated_token_count"]:
+            raise ValueError("generated token count mismatch")
+    else:
+        if row["logits_authority"] != "rank0_full":
+            raise ValueError("rank-0 logits authority mismatch")
+        _validate_comparison_row(
+            row,
+            generated_count=manifest["generated_token_count"],
+            topk=manifest["topk"],
+        )
     _validate_sha256(
         row["expected_weight_shard_sha256"],
         "expected_weight_shard_sha256",
@@ -546,6 +625,12 @@ def validate_correctness_bundle(root: Path) -> dict:
         row["expected_weight_shard_sha256"] for row in tp4_rows
     ]
     distinct_expected_shards = len(set(expected_shards)) == 4
+    distinct_gpu_uuids = len({
+        row["gpu_uuid"] for row in tp4_rows
+    }) == 4
+    distinct_gpu_indices = len({
+        row["gpu_index"] for row in tp4_rows
+    }) == 4
     loaded_expected_shards = all(
         row["loaded_weight_shard_sha256"]
         == row["expected_weight_shard_sha256"]
@@ -581,6 +666,8 @@ def validate_correctness_bundle(root: Path) -> dict:
     result = {
         **comparison,
         "rank_inventory": rank_inventory,
+        "distinct_gpu_uuids": distinct_gpu_uuids,
+        "distinct_gpu_indices": distinct_gpu_indices,
         "distinct_expected_shards": distinct_expected_shards,
         "loaded_expected_shards": loaded_expected_shards,
         "process_groups_destroyed": process_groups_destroyed,
@@ -593,6 +680,8 @@ def validate_correctness_bundle(root: Path) -> dict:
         "PASS"
         if comparison["classification"] == "PASS"
         and rank_inventory == [0, 1, 2, 3]
+        and distinct_gpu_uuids
+        and distinct_gpu_indices
         and distinct_expected_shards
         and loaded_expected_shards
         and process_groups_destroyed

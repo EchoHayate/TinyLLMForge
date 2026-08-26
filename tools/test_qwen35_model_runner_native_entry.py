@@ -36,7 +36,7 @@ def test_qwen35_model_initialization_uses_native_loader_only():
     native_model = object()
     native_owner = SimpleNamespace(model=native_model)
 
-    model, owner = initialize_model(
+    model, owner, partition_identity = initialize_model(
         SimpleNamespace(
             hf_config=SimpleNamespace(model_type="qwen3_5"),
         ),
@@ -44,12 +44,13 @@ def test_qwen35_model_initialization_uses_native_loader_only():
         load_legacy_model=lambda _config: calls.append("legacy"),
         load_qwen35_model=lambda _config, rank: (
             calls.append(("qwen35", rank))
-            or (native_model, native_owner)
+            or (native_model, native_owner, {"rank": rank})
         ),
     )
 
     assert model is native_model
     assert owner is native_owner
+    assert partition_identity == {"rank": 2}
     assert calls == [("qwen35", 2)]
 
 
@@ -58,7 +59,7 @@ def test_legacy_model_initialization_preserves_existing_loader():
     calls = []
     legacy_model = object()
 
-    model, owner = initialize_model(
+    model, owner, partition_identity = initialize_model(
         SimpleNamespace(
             hf_config=SimpleNamespace(model_type="qwen3"),
         ),
@@ -73,6 +74,7 @@ def test_legacy_model_initialization_preserves_existing_loader():
 
     assert model is legacy_model
     assert owner is None
+    assert partition_identity is None
     assert calls == ["legacy"]
 
 
