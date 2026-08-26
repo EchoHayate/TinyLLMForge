@@ -35,6 +35,23 @@ FULL_SUFFIXES = (
     "self_attn.q_proj.weight",
     "self_attn.v_proj.weight",
 )
+QWEN38_MTP_SOURCES = (
+    "mtp.fc.weight",
+    "mtp.layers.0.input_layernorm.weight",
+    "mtp.layers.0.mlp.down_proj.weight",
+    "mtp.layers.0.mlp.gate_proj.weight",
+    "mtp.layers.0.mlp.up_proj.weight",
+    "mtp.layers.0.post_attention_layernorm.weight",
+    "mtp.layers.0.self_attn.k_norm.weight",
+    "mtp.layers.0.self_attn.k_proj.weight",
+    "mtp.layers.0.self_attn.o_proj.weight",
+    "mtp.layers.0.self_attn.q_norm.weight",
+    "mtp.layers.0.self_attn.q_proj.weight",
+    "mtp.layers.0.self_attn.v_proj.weight",
+    "mtp.norm.weight",
+    "mtp.pre_fc_norm_embedding.weight",
+    "mtp.pre_fc_norm_hidden.weight",
+)
 
 
 def _load_checkpoint():
@@ -76,6 +93,7 @@ def _profile():
         vocab_size=248320,
         dtype="bfloat16",
         tie_word_embeddings=False,
+        base_decode_auxiliary_skip_sources=QWEN38_MTP_SOURCES,
     )
 
 
@@ -85,6 +103,7 @@ def _index():
         "model.language_model.norm.weight",
         "lm_head.weight",
         "model.visual.patch_embed.proj.weight",
+        *QWEN38_MTP_SOURCES,
     }
     for index in range(64):
         prefix = f"model.language_model.layers.{index}."
@@ -127,6 +146,11 @@ def test_qwen38_untied_lm_head_is_loaded_and_visual_scope_is_skipped():
         and row.scope == "visual"
         for row in plan.skips
     )
+    assert tuple(
+        row.source.name
+        for row in plan.skips
+        if row.scope == "mtp"
+    ) == QWEN38_MTP_SOURCES
     assert len(loads) == 851
 
 
@@ -204,7 +228,7 @@ def test_qwen38_profile_must_match_checkpoint_text_config():
         )
 
 
-def test_qwen38_profile_allows_only_visual_checkpoint_skips():
+def test_qwen38_profile_rejects_undeclared_mtp_checkpoint_skip():
     checkpoint = _load_checkpoint()
     index = _index()
     index["weight_map"]["mtp.synthetic.weight"] = (
@@ -218,8 +242,8 @@ def test_qwen38_profile_allows_only_visual_checkpoint_skips():
             qwen38_text_profile=_profile(),
         )
     except ValueError as error:
-        assert "Qwen3.8 checkpoint skip scope" in str(error)
+        assert "auxiliary checkpoint inventory mismatch" in str(error)
     else:
         raise AssertionError(
-            "Qwen3.8 checkpoint accepted a non-visual skip"
+            "Qwen3.8 checkpoint accepted undeclared MTP auxiliary weight"
         )
