@@ -1,12 +1,17 @@
 import torch
 from torch import nn
 
+from tinyvllm.engine.decode_internal_profiler import profile_layer
 from tinyvllm.layers.qwen35_decoder_layer import Qwen35DecoderLayerShell
 
 
 class Qwen35PackedFullDecoderLayer(nn.Module):
 
-    def __init__(self, decoder_layer: Qwen35DecoderLayerShell):
+    def __init__(
+        self,
+        decoder_layer: Qwen35DecoderLayerShell,
+        layer_index: int = 0,
+    ):
         super().__init__()
         if not isinstance(decoder_layer, Qwen35DecoderLayerShell):
             raise ValueError(
@@ -16,7 +21,16 @@ class Qwen35PackedFullDecoderLayer(nn.Module):
             raise ValueError(
                 "decoder_layer must use the full_attention block type"
             )
+        if (
+            isinstance(layer_index, bool)
+            or not isinstance(layer_index, int)
+            or layer_index < 0
+        ):
+            raise ValueError(
+                "layer_index must be a non-negative integer"
+            )
         self.decoder_layer = decoder_layer
+        self.layer_index = layer_index
 
     @staticmethod
     def _validate_inputs(
@@ -65,7 +79,7 @@ class Qwen35PackedFullDecoderLayer(nn.Module):
                 "position_ids device must match hidden_states"
             )
 
-    def forward(
+    def _forward_unprofiled(
         self,
         token_counts: tuple[int, ...],
         position_ids: torch.Tensor,
@@ -87,3 +101,16 @@ class Qwen35PackedFullDecoderLayer(nn.Module):
             ))
             offset = end
         return torch.cat(outputs)
+
+    def forward(
+        self,
+        token_counts: tuple[int, ...],
+        position_ids: torch.Tensor,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        with profile_layer(self.layer_index, "full_attention"):
+            return self._forward_unprofiled(
+                token_counts,
+                position_ids,
+                hidden_states,
+            )

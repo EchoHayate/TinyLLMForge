@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 
+from tinyvllm.engine.decode_internal_profiler import profile_layer
 from tinyvllm.engine.hybrid_state import HybridStateLease
 from tinyvllm.engine.qwen35_layer_state import Qwen35LayerStateAdapter
 from tinyvllm.layers.qwen35_decoder_layer import Qwen35DecoderLayerShell
@@ -28,6 +29,7 @@ class Qwen35PackedStatefulLinearDecoderLayer(nn.Module):
             )
         self.decoder_layer = decoder_layer
         self.state_adapter = state_adapter
+        self.layer_index = state_adapter.layer_index
 
     @staticmethod
     def _validate_inputs(
@@ -90,7 +92,7 @@ class Qwen35PackedStatefulLinearDecoderLayer(nn.Module):
                 "position_ids device must match hidden_states"
             )
 
-    def forward(
+    def _forward_unprofiled(
         self,
         leases: tuple[HybridStateLease, ...],
         token_counts: tuple[int, ...],
@@ -174,3 +176,18 @@ class Qwen35PackedStatefulLinearDecoderLayer(nn.Module):
             torch.stack(candidate_recurrent),
         )
         return torch.cat(outputs)
+
+    def forward(
+        self,
+        leases: tuple[HybridStateLease, ...],
+        token_counts: tuple[int, ...],
+        position_ids: torch.Tensor,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        with profile_layer(self.layer_index, "linear_attention"):
+            return self._forward_unprofiled(
+                leases,
+                token_counts,
+                position_ids,
+                hidden_states,
+            )

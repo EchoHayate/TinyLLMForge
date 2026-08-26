@@ -128,6 +128,7 @@ def _profiler(
             ),
             synchronize=lambda: synchronizations.append(True),
             nvtx_range_factory=nvtx_ranges,
+            stream_resolver=lambda: None,
             profile_label="policy=exact_restore/case=test-case",
             **profiler_kwargs,
         ),
@@ -201,12 +202,12 @@ def test_nvtx_ranges_distinguish_prefill_first_steady_and_collective():
         (
             "enter",
             "decode_internal/policy=exact_restore/case=test-case/"
-            "collective/row_parallel_all_reduce",
+            "operation/0/collective/row_parallel_all_reduce",
         ),
         (
             "exit",
             "decode_internal/policy=exact_restore/case=test-case/"
-            "collective/row_parallel_all_reduce",
+            "operation/0/collective/row_parallel_all_reduce",
         ),
         (
             "exit",
@@ -273,13 +274,56 @@ def test_records_step_and_collective_and_synchronizes_once():
         "repeat_index": None,
         "request_set_sha256": "a" * 64,
         "speculative_selected_sequence_ids_sha256": None,
+        "attempt": None,
+        "workload": None,
+        "repetition": None,
+        "layer_index": None,
+        "layer_role": None,
+        "operation_ordinal": 0,
         "operation": "row_parallel_all_reduce",
+        "operation_class": "collective",
+        "collective_kind": "row_parallel_all_reduce",
+        "process_group": "tensor_parallel",
+        "async_mode": False,
+        "source_stream": None,
+        "completion_stream": None,
         "tensor_shape": [4, 2048],
         "tensor_dtype": "torch.bfloat16",
+        "wall_start_ns": 200,
+        "wall_end_ns": 300,
         "wall_ns": 100,
         "cuda_ns": 500_000,
     }]
+    assert snapshot["operations"] == [{
+        "rank": 2,
+        "step_index": 0,
+        "decode_ordinal": 0,
+        "command_id": None,
+        "engine_step_id": None,
+        "repeat_index": None,
+        "request_set_sha256": "a" * 64,
+        "speculative_selected_sequence_ids_sha256": None,
+        "attempt": None,
+        "workload": None,
+        "repetition": None,
+        "layer_index": None,
+        "layer_role": None,
+        "operation_ordinal": 0,
+        "operation_class": "collective",
+        "operation_name": "row_parallel_all_reduce",
+        "tensor_shape": [4, 2048],
+        "tensor_dtype": "torch.bfloat16",
+        "source_stream": None,
+        "completion_stream": None,
+        "wall_start_ns": 200,
+        "wall_end_ns": 300,
+        "wall_ns": 100,
+        "cuda_ns": 500_000,
+    }]
+    assert snapshot["layers"] == []
     assert snapshot["dropped_steps"] == 0
+    assert snapshot["dropped_layers"] == 0
+    assert snapshot["dropped_operations"] == 0
     assert snapshot["dropped_collectives"] == 0
 
 
@@ -455,6 +499,8 @@ def test_disabled_profiler_is_noop():
         "enabled": False,
         "finalization_status": "complete",
         "steps": [],
+        "layers": [],
+        "operations": [],
         "collectives": [],
     }
 

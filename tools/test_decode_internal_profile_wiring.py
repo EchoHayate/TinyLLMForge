@@ -13,6 +13,15 @@ LLM_ENGINE = ROOT / "tinyvllm/engine/llm_engine.py"
 LINEAR = ROOT / "tinyvllm/layers/linear.py"
 EMBED_HEAD = ROOT / "tinyvllm/layers/embed_head.py"
 QWEN35_COMPONENTS = ROOT / "tinyvllm/models/qwen35_components.py"
+QWEN35_PACKED_STACK = (
+    ROOT / "tinyvllm/layers/qwen35_packed_layer_stack.py"
+)
+QWEN35_PACKED_FULL = (
+    ROOT / "tinyvllm/layers/qwen35_packed_full_decoder_layer.py"
+)
+QWEN35_PACKED_STATEFUL = (
+    ROOT / "tinyvllm/layers/qwen35_packed_stateful_decoder_layer.py"
+)
 
 
 def _class_method(path, class_name, method_name):
@@ -280,6 +289,61 @@ def test_collective_call_sites_use_profile_helper():
         '                "replicated_weight_row_parallel_all_gather"'
         in linear_source
     )
+
+
+def test_linear_collectives_emit_frozen_synchronous_metadata():
+    tree = ast.parse(LINEAR.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "profile_collective"
+    ]
+
+    assert len(calls) == 4
+    for call in calls:
+        keywords = {
+            keyword.arg: keyword.value
+            for keyword in call.keywords
+        }
+        assert {
+            "collective_kind",
+            "process_group",
+            "async_mode",
+        } <= keywords.keys()
+        assert (
+            isinstance(keywords["async_mode"], ast.Constant)
+            and keywords["async_mode"].value is False
+        )
+
+
+def test_linear_gemm_and_packed_layer_boundaries_are_profiled():
+    unpartitioned = _class_method(
+        LINEAR,
+        "_QuantMixin",
+        "_linear_forward_unpartitioned",
+    )
+    stack_prepare = _class_method(
+        QWEN35_PACKED_STACK,
+        "Qwen35PackedHeterogeneousLayerStack",
+        "prepare_transactional",
+    )
+    full_forward = _class_method(
+        QWEN35_PACKED_FULL,
+        "Qwen35PackedFullDecoderLayer",
+        "forward",
+    )
+    stateful_forward = _class_method(
+        QWEN35_PACKED_STATEFUL,
+        "Qwen35PackedStatefulLinearDecoderLayer",
+        "forward",
+    )
+
+    assert "profile_operation" in _called_names(unpartitioned)
+    assert "profile_layer" in _called_names(stack_prepare)
+    assert "profile_layer" in _called_names(full_forward)
+    assert "profile_layer" in _called_names(stateful_forward)
 
 
 def test_qwen35_output_projections_use_true_row_parallel_layout():

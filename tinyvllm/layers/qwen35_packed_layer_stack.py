@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
+from tinyvllm.engine.decode_internal_profiler import profile_layer
 from tinyvllm.engine.hybrid_state import HybridStateLease
 from tinyvllm.engine.qwen35_state_transaction import (
     Qwen35CrossLayerStateTransaction,
@@ -458,42 +459,47 @@ class Qwen35PackedHeterogeneousLayerStack(nn.Module):
             else None
         )
         linear_offset = 0
-        for layer in self.layers:
-            if layer.block_type == "full_attention":
-                hidden_states = self._run_full_layer(
-                    layer,
-                    token_counts,
-                    position_ids,
-                    hidden_states,
+        for layer_index, layer in enumerate(self.layers):
+            with profile_layer(layer_index, layer.block_type):
+                if layer.block_type == "full_attention":
+                    hidden_states = self._run_full_layer(
+                        layer,
+                        token_counts,
+                        position_ids,
+                        hidden_states,
+                    )
+                    continue
+                adapter = self.state_transaction.adapters[linear_offset]
+                convolution_states, recurrent_states = (
+                    gathered[linear_offset]
                 )
-                continue
-            adapter = self.state_transaction.adapters[linear_offset]
-            convolution_states, recurrent_states = gathered[linear_offset]
-            (
-                hidden_states,
-                layer_candidates,
-                layer_prefixes,
-            ) = self._run_linear_layer(
-                layer,
-                adapter,
-                token_counts,
-                hidden_states,
-                convolution_states,
-                recurrent_states,
-                capture_prefix_states=capture_prefix_states,
-            )
-            candidates.append(layer_candidates)
-            if capture_prefix_states:
-                for sequence_index, sequence_prefixes in enumerate(
-                    layer_prefixes
-                ):
-                    for prefix_index, candidate_pair in enumerate(
-                        sequence_prefixes
-                    ):
-                        prefix_candidates[
-                            sequence_index
-                        ][prefix_index].append(candidate_pair)
-            linear_offset += 1
+                (
+                    hidden_states,
+                    layer_candidates,
+                    layer_prefixes,
+                ) = self._run_linear_layer(
+                    layer,
+                    adapter,
+                    token_counts,
+                    hidden_states,
+                    convolution_states,
+                    recurrent_states,
+                    capture_prefix_states=capture_prefix_states,
+                )
+                candidates.append(layer_candidates)
+                if capture_prefix_states:
+                    for (
+                        sequence_index,
+                        sequence_prefixes,
+                    ) in enumerate(layer_prefixes):
+                        for (
+                            prefix_index,
+                            candidate_pair,
+                        ) in enumerate(sequence_prefixes):
+                            prefix_candidates[
+                                sequence_index
+                            ][prefix_index].append(candidate_pair)
+                linear_offset += 1
 
         normalized_prefix_candidates = (
             None

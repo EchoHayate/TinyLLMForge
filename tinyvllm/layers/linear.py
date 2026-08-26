@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from tinyvllm.engine.decode_internal_profiler import (
     profile_collective,
+    profile_operation,
 )
 
 from tinyvllm.layers.quantization import (
@@ -147,16 +148,37 @@ class _QuantMixin:
         # A8 假量化（对所有量化路径都生效，包括 None；naive W4A8 用，没有 weight 量化时也允许 A8 验 act 噪声单独的影响）
         if self.act_quant_bits == 8:
             x = fake_quantize_act_int8(x)
+        operation_name = f"{type(self).__name__}.linear"
         if self.quant_method is None:
-            return F.linear(x, self.weight, bias)
+            with profile_operation(
+                "gemm",
+                operation_name,
+                tensor=x,
+            ):
+                return F.linear(x, self.weight, bias)
         # int8_bnb：fused W8A16 GEMM（仅 fp16 走快路径，bf16 fallback）
         if self.quant_method == "int8_bnb":
-            y = _bnb_int8_matmul(x, self.qweight, self.scales, bias)
+            with profile_operation(
+                "gemm",
+                operation_name,
+                tensor=x,
+            ):
+                y = _bnb_int8_matmul(
+                    x,
+                    self.qweight,
+                    self.scales,
+                    bias,
+                )
             if y is not None:
                 return y
         # weight-only 量化：临时反量化（同设备：x.device 即 weight 当前所在设备）
         w = self._get_dequantized_weight(x.dtype)
-        return F.linear(x, w, bias)
+        with profile_operation(
+            "gemm",
+            operation_name,
+            tensor=x,
+        ):
+            return F.linear(x, w, bias)
 
     def _linear_forward(
         self,
@@ -708,7 +730,12 @@ class ReplicatedMergedColumnParallelLinear(ReplicatedLinear):
                 if self.bias is None
                 else self.bias.narrow(0, offset, size)
             )
-            outputs.append(F.linear(x, weight, bias))
+            with profile_operation(
+                "gemm",
+                f"{type(self).__name__}.linear",
+                tensor=x,
+            ):
+                outputs.append(F.linear(x, weight, bias))
             offset += size
         return torch.cat(outputs, dim=-1)
 
@@ -969,10 +996,15 @@ class RowParallelLinear(LinearBase):
             raise RuntimeError(
                 "accumulation weight is not loaded"
             )
-        output = F.linear(
-            x.to(dtype=self.accumulation_dtype),
-            self.accumulation_weight,
-        )
+        with profile_operation(
+            "gemm",
+            f"{type(self).__name__}.linear",
+            tensor=x,
+        ):
+            output = F.linear(
+                x.to(dtype=self.accumulation_dtype),
+                self.accumulation_weight,
+            )
         if bias is not None:
             output = output + bias.to(
                 dtype=self.accumulation_dtype
@@ -998,9 +1030,17 @@ class RowParallelLinear(LinearBase):
                 "row_parallel_prefill_all_gather",
                 x,
                 lambda tensor: dist.all_gather(gathered, tensor),
+                collective_kind="all_gather",
+                process_group="tensor_parallel",
+                async_mode=False,
             )
             x = torch.cat(gathered, dim=-1)
-        return F.linear(x, self.prefill_weight, self.bias)
+        with profile_operation(
+            "gemm",
+            f"{type(self).__name__}.prefill_linear",
+            tensor=x,
+        ):
+            return F.linear(x, self.prefill_weight, self.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output_dtype = x.dtype
@@ -1018,6 +1058,9 @@ class RowParallelLinear(LinearBase):
                         "row_parallel_all_reduce",
                         output,
                         dist.all_reduce,
+                        collective_kind="all_reduce",
+                        process_group="tensor_parallel",
+                        async_mode=False,
                     )
                 if output.dtype != output_dtype:
                     output = output.to(dtype=output_dtype)
@@ -1030,6 +1073,9 @@ class RowParallelLinear(LinearBase):
                 "row_parallel_all_reduce",
                 y,
                 dist.all_reduce,
+                collective_kind="all_reduce",
+                process_group="tensor_parallel",
+                async_mode=False,
             )
         if y.dtype != output_dtype:
             y = y.to(dtype=output_dtype)
@@ -1076,6 +1122,9 @@ class ReplicatedWeightRowParallelLinear(LinearBase):
                 "replicated_weight_row_parallel_all_gather",
                 x,
                 lambda tensor: dist.all_gather(gathered, tensor),
+                collective_kind="all_gather",
+                process_group="tensor_parallel",
+                async_mode=False,
             )
             x = torch.cat(gathered, dim=-1)
         return self._linear_forward_unpartitioned(
