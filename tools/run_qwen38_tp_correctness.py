@@ -509,7 +509,10 @@ def run_tinyllmforge_worker(
             raise ValueError("LLMEngine TP ownership mismatch")
         receipt["failed_stage"] = "rank_identity"
         identities = _validate_rank_identities(
-            rank_identity_reader(engine),
+            rank_identity_reader(
+                engine,
+                timeout_s=float(timeout_s),
+            ),
             tensor_parallel_size,
         )
         receipt["rank_inventory"] = [

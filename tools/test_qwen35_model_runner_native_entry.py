@@ -78,6 +78,55 @@ def test_legacy_model_initialization_preserves_existing_loader():
     assert calls == ["legacy"]
 
 
+def test_qwen38_checkpoint_tensor_budget_matches_validated_embedding():
+    checkpoint_tensor_budget, = _load_functions(
+        "_qwen35_checkpoint_max_tensor_bytes"
+    )
+
+    assert checkpoint_tensor_budget(None) == 1 << 30
+    assert checkpoint_tensor_budget(
+        SimpleNamespace(
+            vocab_size=248320,
+            hidden_size=5120,
+            dtype="bfloat16",
+        )
+    ) == 248320 * 5120 * 2
+
+
+def test_native_loader_uses_profile_bound_checkpoint_tensor_budget():
+    tree = ast.parse(
+        MODEL_RUNNER_PATH.read_text(encoding="utf-8"),
+        filename=str(MODEL_RUNNER_PATH),
+    )
+    loader = next(
+        node
+        for node in tree.body
+        if (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "_load_qwen35_model_runner_model"
+        )
+    )
+    call = next(
+        node
+        for node in ast.walk(loader)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "load_qwen35_fresh_checkpoint_candidate"
+        )
+    )
+    budget = next(
+        keyword.value
+        for keyword in call.keywords
+        if keyword.arg == "max_tensor_bytes"
+    )
+
+    assert ast.unparse(budget) == (
+        "_qwen35_checkpoint_max_tensor_bytes(qwen38_text_profile)"
+    )
+
+
 def test_packed_eager_dispatch_uses_active_leases_and_token_counts():
     run_eager, = _load_functions("_run_model_runner_eager")
     calls = []

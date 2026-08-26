@@ -542,6 +542,32 @@ def _qwen38_checkpoint_partition_attestation(
     }
 
 
+def _qwen35_checkpoint_max_tensor_bytes(qwen38_text_profile) -> int:
+    default_budget = 1 << 30
+    if qwen38_text_profile is None:
+        return default_budget
+    if getattr(qwen38_text_profile, "dtype", None) != "bfloat16":
+        raise ValueError(
+            "Qwen3.8 checkpoint tensor budget requires bfloat16"
+        )
+    dimensions = (
+        getattr(qwen38_text_profile, "vocab_size", None),
+        getattr(qwen38_text_profile, "hidden_size", None),
+    )
+    if any(
+        isinstance(dimension, bool)
+        or not isinstance(dimension, int)
+        or dimension <= 0
+        for dimension in dimensions
+    ):
+        raise ValueError(
+            "Qwen3.8 checkpoint tensor budget requires "
+            "positive integer dimensions"
+        )
+    vocab_size, hidden_size = dimensions
+    return max(default_budget, vocab_size * hidden_size * 2)
+
+
 def _load_qwen35_model_runner_model(
     config,
     rank,
@@ -617,7 +643,9 @@ def _load_qwen35_model_runner_model(
     candidate = load_qwen35_fresh_checkpoint_candidate(
         target.take,
         config.model,
-        max_tensor_bytes=1 << 30,
+        max_tensor_bytes=_qwen35_checkpoint_max_tensor_bytes(
+            qwen38_text_profile
+        ),
         model_fingerprint=identity["manifest_sha256"],
     )
     move_qwen35_loaded_checkpoint_candidate_to_device(

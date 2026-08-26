@@ -461,10 +461,16 @@ def test_tinyllmforge_worker_uses_engine_owned_tp_and_rank0_logits(
     (tmp_path / "model").mkdir()
     engine = _FakeEngine(tp_size=4)
     factory_calls = []
+    rank_identity_timeouts = []
 
     def engine_factory(model_root, **kwargs):
         factory_calls.append((Path(model_root), kwargs))
         return engine
+
+    def rank_identity_reader(value, *, timeout_s):
+        assert value is engine
+        rank_identity_timeouts.append(timeout_s)
+        return _rank_identities(4)
 
     receipt = runner.run_tinyllmforge_worker(
         mode="tinyllmforge_tp4",
@@ -483,7 +489,7 @@ def test_tinyllmforge_worker_uses_engine_owned_tp_and_rank0_logits(
         timeout_s=30.0,
         engine_factory=engine_factory,
         sampling_params_factory=lambda **kwargs: SimpleNamespace(**kwargs),
-        rank_identity_reader=lambda value: _rank_identities(4),
+        rank_identity_reader=rank_identity_reader,
         process_identity_reader=lambda: {"pid": 101, "pgid": 202},
     )
 
@@ -498,6 +504,7 @@ def test_tinyllmforge_worker_uses_engine_owned_tp_and_rank0_logits(
             },
         )
     ]
+    assert rank_identity_timeouts == [30.0]
     assert engine.added_requests == [([11, 22, 33], 0.0, 2, True)]
     assert engine.recording_calls == [(True, 30.0), (False, 30.0)]
     assert engine.exited is True
@@ -563,7 +570,9 @@ def test_tinyllmforge_worker_failure_atomically_records_cleanup(tmp_path):
             sampling_params_factory=lambda **kwargs: SimpleNamespace(
                 **kwargs
             ),
-            rank_identity_reader=lambda value: _rank_identities(4),
+            rank_identity_reader=lambda value, *, timeout_s: (
+                _rank_identities(4)
+            ),
             process_identity_reader=lambda: {"pid": 101, "pgid": 202},
         )
 
@@ -600,7 +609,9 @@ def test_tinyllmforge_worker_rejects_writes_outside_attempt(tmp_path):
             timeout_s=30.0,
             engine_factory=lambda model_root, **kwargs: object(),
             sampling_params_factory=lambda **kwargs: object(),
-            rank_identity_reader=lambda value: _rank_identities(1),
+            rank_identity_reader=lambda value, *, timeout_s: (
+                _rank_identities(1)
+            ),
             process_identity_reader=lambda: {"pid": 101, "pgid": 202},
         )
 
@@ -911,8 +922,8 @@ def _run_fake_tiny_worker(
         timeout_s=30.0,
         engine_factory=lambda model_root, **kwargs: engine,
         sampling_params_factory=lambda **kwargs: SimpleNamespace(**kwargs),
-        rank_identity_reader=lambda value: _rank_identities(
-            tensor_parallel_size
+        rank_identity_reader=lambda value, *, timeout_s: (
+            _rank_identities(tensor_parallel_size)
         ),
         process_identity_reader=lambda: {"pid": 101, "pgid": 202},
     )
