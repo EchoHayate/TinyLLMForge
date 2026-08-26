@@ -113,9 +113,14 @@ def parse_nsys_sqlite(
             )
         }
         nvtx = _read_nvtx(connection, strings)
+        rank_by_global_tid = _read_rank_by_global_tid(
+            connection,
+            nvtx,
+        )
         steps, layers, operations = _index_nvtx_ranges(
             nvtx,
             step_identities,
+            rank_by_global_tid,
         )
         operation_correlations = _read_runtime_correlations(
             connection,
@@ -125,6 +130,7 @@ def parse_nsys_sqlite(
             connection,
             strings,
             operation_correlations,
+            operations,
         )
     kernel_map = _kernel_map(kernels)
     coverage_errors = []
@@ -391,6 +397,32 @@ def _read_nvtx(connection, strings):
     return result
 
 
+def _read_rank_by_global_tid(connection, nvtx):
+    result = {}
+    for global_tid in sorted({
+        row["global_tid"] for row in nvtx
+    }):
+        global_pid = global_tid & ~((1 << 24) - 1)
+        device_ids = {
+            int(row["deviceId"])
+            for row in connection.execute(
+                "SELECT DISTINCT k.deviceId "
+                "FROM CUPTI_ACTIVITY_KIND_RUNTIME AS r "
+                "JOIN CUPTI_ACTIVITY_KIND_KERNEL AS k "
+                "ON k.correlationId = r.correlationId "
+                "AND k.globalPid = ? "
+                "WHERE r.globalTid = ?",
+                (global_pid, global_tid),
+            )
+        }
+        if len(device_ids) != 1:
+            raise ValueError(
+                "NVTX process does not map to exactly one CUDA device"
+            )
+        result[global_tid] = next(iter(device_ids))
+    return result
+
+
 def _read_runtime_correlations(connection, operations):
     by_thread = {}
     for key, operation in operations.items():
@@ -401,6 +433,12 @@ def _read_runtime_correlations(connection, operations):
         ))
     for thread_operations in by_thread.values():
         thread_operations.sort()
+    starts_by_thread = {
+        global_tid: [
+            item[0] for item in thread_operations
+        ]
+        for global_tid, thread_operations in by_thread.items()
+    }
     correlations = {key: set() for key in operations}
     if not by_thread:
         return correlations
@@ -430,7 +468,7 @@ def _read_runtime_correlations(connection, operations):
         end = int(row["end"])
         thread_operations = by_thread[global_tid]
         index = bisect_right(
-            [item[0] for item in thread_operations],
+            starts_by_thread[global_tid],
             start,
         ) - 1
         if index < 0:
@@ -445,47 +483,63 @@ def _read_correlated_kernels(
     connection,
     strings,
     operation_correlations,
+    operations,
 ):
-    correlation_ids = sorted({
-        correlation_id
-        for values in operation_correlations.values()
+    correlation_keys = sorted({
+        (
+            int(operations[key]["global_tid"])
+            & ~((1 << 24) - 1),
+            correlation_id,
+        )
+        for key, values in operation_correlations.items()
         for correlation_id in values
     })
+    if not correlation_keys:
+        return []
+    connection.execute(
+        "CREATE TEMP TABLE wanted_correlations ("
+        "globalPid INTEGER NOT NULL, "
+        "correlationId INTEGER NOT NULL, "
+        "PRIMARY KEY (globalPid, correlationId)"
+        ") WITHOUT ROWID"
+    )
+    connection.executemany(
+        "INSERT INTO wanted_correlations VALUES (?, ?)",
+        correlation_keys,
+    )
     result = []
-    for offset in range(0, len(correlation_ids), 500):
-        chunk = correlation_ids[offset:offset + 500]
-        placeholders = ", ".join("?" for _ in chunk)
-        query = (
-            "SELECT start, end, streamId, correlationId, globalPid, "
-            "demangledName, shortName "
-            "FROM CUPTI_ACTIVITY_KIND_KERNEL "
-            f"WHERE correlationId IN ({placeholders}) "
-            "AND globalPid IS NOT NULL"
+    query = (
+        "SELECT k.start, k.end, k.streamId, k.correlationId, "
+        "k.globalPid, k.demangledName, k.shortName "
+        "FROM CUPTI_ACTIVITY_KIND_KERNEL AS k "
+        "JOIN wanted_correlations AS w "
+        "ON w.globalPid = k.globalPid "
+        "AND w.correlationId = k.correlationId"
+    )
+    for row in connection.execute(query):
+        demangled_name = row["demangledName"]
+        name = (
+            strings.get(int(demangled_name))
+            if demangled_name is not None
+            else None
         )
-        for row in connection.execute(query, chunk):
-            demangled_name = row["demangledName"]
-            name = (
-                strings.get(int(demangled_name))
-                if demangled_name is not None
-                else None
-            )
-            short_name = row["shortName"]
-            if name is None and short_name is not None:
-                name = strings.get(int(short_name))
-            result.append({
-                "interval": Interval(
-                    int(row["start"]),
-                    int(row["end"]),
-                ),
-                "stream_id": int(row["streamId"]),
-                "correlation_id": int(row["correlationId"]),
-                "global_pid": int(row["globalPid"]),
-                "name": "" if name is None else str(name),
-            })
+        short_name = row["shortName"]
+        if name is None and short_name is not None:
+            name = strings.get(int(short_name))
+        result.append({
+            "interval": Interval(
+                int(row["start"]),
+                int(row["end"]),
+            ),
+            "stream_id": int(row["streamId"]),
+            "correlation_id": int(row["correlationId"]),
+            "global_pid": int(row["globalPid"]),
+            "name": "" if name is None else str(name),
+        })
     return result
 
 
-def _profile_identity(parts):
+def _profile_identity(parts, inferred_rank=None):
     identity = {}
     for component in parts:
         key, separator, value = component.partition("=")
@@ -494,9 +548,18 @@ def _profile_identity(parts):
         if key in identity:
             raise ValueError(f"duplicate NVTX profile identity field {key}")
         identity[key] = value
-    required = {"attempt", "workload", "repetition", "rank"}
+    required = {"attempt", "workload", "repetition"}
     if required - identity.keys():
         raise ValueError("NVTX profile identity is incomplete")
+    if "rank" not in identity:
+        if inferred_rank is None:
+            raise ValueError("NVTX profile identity is incomplete")
+        identity["rank"] = inferred_rank
+    elif (
+        inferred_rank is not None
+        and int(identity["rank"]) != inferred_rank
+    ):
+        raise ValueError("NVTX profile rank does not match CUDA device")
     return (
         identity["attempt"],
         identity["workload"],
@@ -505,7 +568,7 @@ def _profile_identity(parts):
     )
 
 
-def _parse_nvtx_label(text):
+def _parse_nvtx_label(text, inferred_rank=None):
     parts = text.split("/")
     if not parts or parts[0] != "decode_internal":
         return None
@@ -513,13 +576,17 @@ def _parse_nvtx_label(text):
         if component in {"decode_first", "decode_steady"}:
             if index != len(parts) - 1:
                 raise ValueError("invalid NVTX step label")
-            return ("step", _profile_identity(parts[1:index]), ())
+            return (
+                "step",
+                _profile_identity(parts[1:index], inferred_rank),
+                (),
+            )
         if component == "layer":
             if len(parts) != index + 3:
                 raise ValueError("invalid NVTX layer label")
             return (
                 "layer",
-                _profile_identity(parts[1:index]),
+                _profile_identity(parts[1:index], inferred_rank),
                 (
                     _integer(int(parts[index + 1]), "layer_index"),
                     parts[index + 2],
@@ -530,7 +597,7 @@ def _parse_nvtx_label(text):
                 raise ValueError("invalid NVTX operation label")
             return (
                 "operation",
-                _profile_identity(parts[1:index]),
+                _profile_identity(parts[1:index], inferred_rank),
                 (
                     _integer(
                         int(parts[index + 1]),
@@ -550,12 +617,19 @@ def _contains(outer, inner):
     )
 
 
-def _index_nvtx_ranges(nvtx, step_identities):
+def _index_nvtx_ranges(
+    nvtx,
+    step_identities,
+    rank_by_global_tid,
+):
     raw_steps = {}
     raw_layers = []
     raw_operations = []
     for row in nvtx:
-        parsed = _parse_nvtx_label(row["text"])
+        parsed = _parse_nvtx_label(
+            row["text"],
+            rank_by_global_tid.get(row["global_tid"]),
+        )
         if parsed is None:
             continue
         kind, prefix, suffix = parsed
@@ -593,25 +667,49 @@ def _index_nvtx_ranges(nvtx, step_identities):
         for step_key, trace_step in zip(ordered_step_keys, trace_steps):
             steps[step_key] = trace_step
 
-    def containing_step(prefix, row):
-        candidates = [
-            (step_key, step)
-            for step_key, step in steps.items()
-            if (
-                (
-                    step_key[0],
-                    step_key[1],
-                    step_key[2],
-                    step_key[5],
-                )
-                == prefix
-                and step["global_tid"] == row["global_tid"]
-                and _contains(step["interval"], row["interval"])
-            )
+    steps_by_prefix_tid = {}
+    for step_key, step in steps.items():
+        prefix = (
+            step_key[0],
+            step_key[1],
+            step_key[2],
+            step_key[5],
+        )
+        steps_by_prefix_tid.setdefault(
+            (prefix, step["global_tid"]),
+            [],
+        ).append((
+            step["interval"].start_ns,
+            step["interval"].end_ns,
+            step_key,
+        ))
+    step_starts = {}
+    for lookup_key, candidates in steps_by_prefix_tid.items():
+        candidates.sort()
+        for previous, current in zip(candidates, candidates[1:]):
+            if previous[1] > current[0]:
+                raise ValueError("NVTX step ranges overlap")
+        step_starts[lookup_key] = [
+            candidate[0] for candidate in candidates
         ]
-        if len(candidates) != 1:
+
+    def containing_step(prefix, row):
+        lookup_key = (prefix, row["global_tid"])
+        candidates = steps_by_prefix_tid.get(lookup_key, ())
+        starts = step_starts.get(lookup_key, ())
+        index = bisect_right(
+            starts,
+            row["interval"].start_ns,
+        ) - 1
+        if index < 0:
             raise ValueError("NVTX operation is outside its step or layer")
-        return candidates[0][0]
+        start_ns, end_ns, step_key = candidates[index]
+        if (
+            row["interval"].start_ns < start_ns
+            or row["interval"].end_ns > end_ns
+        ):
+            raise ValueError("NVTX operation is outside its step or layer")
+        return step_key
 
     layers = {}
     for prefix, (layer_index, layer_role), row in raw_layers:
@@ -694,12 +792,14 @@ def _build_metric_rows(
 ):
     result = []
     step_metrics = {}
+    operations_by_step = {}
+    for key, structured in rows_by_key.items():
+        operations_by_step.setdefault(key[:-1], []).append((
+            structured,
+            correlated[key],
+        ))
     for step_key, identity in sorted(step_identities.items()):
-        step_operations = [
-            (structured, correlated[key])
-            for key, structured in rows_by_key.items()
-            if key[:-1] == step_key
-        ]
+        step_operations = operations_by_step.get(step_key, ())
         all_kernels = [
             kernel
             for _, kernels in step_operations
@@ -720,22 +820,20 @@ def _build_metric_rows(
         step_idle = _duration(
             subtract_intervals((critical_interval,), required)
         )
-        layer_keys = sorted({
-            (
+        operations_by_layer = {}
+        for structured, kernels in step_operations:
+            layer_key = (
                 structured["layer_index"],
                 structured["layer_role"],
             )
-            for structured, _ in step_operations
-        })
-        for layer_index, layer_role in layer_keys:
-            layer_operations = [
-                (structured, kernels)
-                for structured, kernels in step_operations
-                if (
-                    structured["layer_index"] == layer_index
-                    and structured["layer_role"] == layer_role
-                )
-            ]
+            operations_by_layer.setdefault(layer_key, []).append((
+                structured,
+                kernels,
+            ))
+        for (
+            layer_index,
+            layer_role,
+        ), layer_operations in sorted(operations_by_layer.items()):
             gemm = [
                 kernel["interval"]
                 for structured, kernels in layer_operations

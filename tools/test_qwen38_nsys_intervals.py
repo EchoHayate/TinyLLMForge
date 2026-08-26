@@ -134,11 +134,14 @@ def _structured_rows(ranks=(0, 1, 2, 3)):
     return rows
 
 
-def _profile_prefix(rank):
-    return (
+def _profile_prefix(rank, *, include_rank=True):
+    prefix = (
         "decode_internal/attempt=attempt-a/workload=Q1/"
-        f"repetition=2/rank={rank}"
+        "repetition=2"
     )
+    if include_rank:
+        return f"{prefix}/rank={rank}"
+    return prefix
 
 
 def _create_trace(
@@ -152,6 +155,7 @@ def _create_trace(
     omit_runtime_table=False,
     unrelated_null_kernel=False,
     correlated_short_name_fallback=False,
+    labels_include_rank=True,
 ):
     connection = sqlite3.connect(path)
     connection.execute(
@@ -191,7 +195,10 @@ def _create_trace(
         base = rank * 1_000
         global_pid = (100 + rank) << 24
         global_tid = global_pid | 7
-        prefix = _profile_prefix(rank)
+        prefix = _profile_prefix(
+            rank,
+            include_rank=labels_include_rank,
+        )
         nvtx_rows = [
             (base + 100, base + 500, 59, f"{prefix}/decode_steady",
              global_tid, None),
@@ -336,6 +343,18 @@ def test_parse_nsys_sqlite_correlates_four_ranks_and_exact_unions(tmp_path):
         "step_critical_interval_ns": 240,
         "final_required_offset_ns": 280,
     }]
+
+
+def test_parse_nsys_sqlite_infers_rank_from_correlated_cuda_device(
+    tmp_path,
+):
+    path = tmp_path / "trace.sqlite"
+    _create_trace(path, labels_include_rank=False)
+
+    result = intervals.parse_nsys_sqlite(path, _structured_rows())
+
+    assert result["classification"] == "COMPLETE"
+    assert {row["rank"] for row in result["rows"]} == {0, 1, 2, 3}
 
 
 def test_missing_nccl_correlation_is_inconclusive_not_estimated(tmp_path):
