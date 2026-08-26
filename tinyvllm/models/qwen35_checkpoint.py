@@ -737,12 +737,17 @@ def build_qwen35_checkpoint_tensor_plan(
     total_size = metadata_value.get("total_size")
     if (
         isinstance(total_size, bool)
-        or not isinstance(total_size, int)
+        or not isinstance(total_size, (int, float))
         or total_size < 0
+        or (
+            isinstance(total_size, float)
+            and not total_size.is_integer()
+        )
     ):
         raise ValueError(
             "index metadata total_size must be a non-negative integer"
         )
+    total_size = int(total_size)
     if payload_bytes != total_size:
         raise ValueError(
             "payload byte total must match index metadata"

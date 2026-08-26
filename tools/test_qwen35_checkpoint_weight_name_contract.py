@@ -774,6 +774,32 @@ def test_tensor_metadata_and_transforms():
     assert config.text_config.hidden_size == 8
 
 
+def test_tensor_plan_normalizes_integral_float_total_size():
+    config = _config()
+    payload = _index_for()
+    headers = _header_for(config, payload)
+    expected_total_size = payload["metadata"]["total_size"]
+    payload["metadata"]["total_size"] = float(expected_total_size)
+
+    plan = build_qwen35_checkpoint_tensor_plan(
+        config,
+        payload,
+        headers,
+    )
+
+    assert plan.payload_bytes == expected_total_size
+
+    payload["metadata"]["total_size"] = float(expected_total_size) + 0.5
+    _expect_error(
+        lambda: build_qwen35_checkpoint_tensor_plan(
+            config,
+            payload,
+            headers,
+        ),
+        "index metadata total_size must be a non-negative integer",
+    )
+
+
 def test_tensor_shape_and_dtype_fail_closed():
     cases = (
         (
@@ -1028,6 +1054,7 @@ def main():
         test_official_qwen35_2b_topology_counts,
         test_read_only_and_frozen_contract,
         test_tensor_metadata_and_transforms,
+        test_tensor_plan_normalizes_integral_float_total_size,
         test_tensor_shape_and_dtype_fail_closed,
         test_tensor_header_structure_fails_closed,
         test_tensor_plan_is_read_only_and_frozen,
