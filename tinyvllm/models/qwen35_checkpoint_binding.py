@@ -587,9 +587,16 @@ def build_qwen35_checkpoint_binding_plan(
                 f"{load.metadata.dtype}"
             )
         allows_runtime_cast = (
-            target.endswith("linear_attention.norm_weight")
-            and expected_dtype == torch.float32
-            and destination.dtype == torch.bfloat16
+            (
+                target.endswith("linear_attention.norm_weight")
+                and expected_dtype == torch.float32
+                and destination.dtype == torch.bfloat16
+            )
+            or (
+                target.endswith("linear_attention.A_log")
+                and expected_dtype == torch.bfloat16
+                and destination.dtype == torch.float32
+            )
         )
         if destination.dtype != expected_dtype and not allows_runtime_cast:
             raise ValueError(

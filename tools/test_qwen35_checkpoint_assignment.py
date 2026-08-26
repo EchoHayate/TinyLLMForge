@@ -27,6 +27,7 @@ from tinyvllm.models.qwen35_checkpoint_assignment import (
     Qwen35CheckpointAssignmentResult,
     _assign_qwen35_checkpoint_source_bindings,
     _direct_buffer_local,
+    _prepare_operation,
     assign_qwen35_checkpoint_tensors,
 )
 from tinyvllm.models.qwen35_checkpoint import (
@@ -295,6 +296,54 @@ def test_tp_1_and_2_assign_all_bindings_exactly():
                 object_id, value = pool_snapshot[key]
                 assert id(tensor) == object_id
                 torch.testing.assert_close(tensor, value)
+
+
+def test_bf16_a_log_is_explicitly_cast_to_float32_destination():
+    model, _, tensor_plan, _ = _fixture(0, 1)
+    loads = list(tensor_plan.loads)
+    a_log_index = next(
+        index
+        for index, load in enumerate(loads)
+        if load.weight.target.endswith("linear_attention.A_log")
+    )
+    loads[a_log_index] = replace(
+        loads[a_log_index],
+        metadata=replace(
+            loads[a_log_index].metadata,
+            dtype="BF16",
+        ),
+    )
+    qwen38_tensor_plan = replace(
+        tensor_plan,
+        loads=tuple(loads),
+    )
+    binding_plan = helper.build_qwen35_checkpoint_binding_plan(
+        model,
+        qwen38_tensor_plan,
+        tensor_parallel_size=1,
+        tensor_parallel_rank=0,
+    )
+    binding = helper._binding_by_target(
+        binding_plan,
+        "layers.0.linear_attention.A_log",
+    )
+    source = torch.tensor((1.25, -2.5), dtype=torch.bfloat16)
+
+    operation = _prepare_operation(binding, source, 1, 0)
+
+    assert operation.source.dtype == torch.bfloat16
+    assert operation.transformed.dtype == torch.float32
+    assert operation.local_tensor.dtype == torch.float32
+    _assign_qwen35_checkpoint_source_bindings(
+        (binding,),
+        source,
+        tensor_parallel_size=1,
+        tensor_parallel_rank=0,
+    )
+    torch.testing.assert_close(
+        binding.destination,
+        source.to(torch.float32),
+    )
 
 
 def test_tp_1_and_2_assign_independent_lm_head_exactly():

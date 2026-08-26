@@ -191,7 +191,10 @@ def _prepare_operation(
         )
     source = _validate_source(binding, source)
     transformed = _transform_source(binding, source)
-    if target.endswith("linear_attention.norm_weight"):
+    if target.endswith((
+        "linear_attention.A_log",
+        "linear_attention.norm_weight",
+    )):
         transformed = transformed.to(destination.dtype)
     local_tensor = None
 

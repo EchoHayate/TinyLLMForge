@@ -311,7 +311,7 @@ def _expected_metadata(config, source_name):
     return expected[suffix]
 
 
-def _header_for(config, payload):
+def _header_for(config, payload, *, qwen38_text_profile=None):
     offset = 0
     header = {}
     for source_name in sorted(payload["weight_map"]):
@@ -320,6 +320,17 @@ def _header_for(config, payload):
             or source_name == "lm_head.weight"
         ):
             dtype, shape = _expected_metadata(config, source_name)
+            if (
+                qwen38_text_profile is not None
+                and source_name.endswith((
+                    "linear_attn.A_log",
+                    "linear_attn.norm.weight",
+                ))
+            ):
+                dtype = {
+                    "bfloat16": "BF16",
+                    "float32": "F32",
+                }[qwen38_text_profile.dtype]
         else:
             dtype, shape = "BF16", (1,)
         size = _DTYPE_BYTES[dtype]
@@ -504,6 +515,38 @@ def test_qwen38_base_decode_accepts_only_declared_mtp_inventory():
         ),
         "Qwen3.8 base-decode auxiliary checkpoint inventory mismatch",
     )
+
+
+def test_qwen38_tensor_plan_uses_checkpoint_compute_dtype_for_linear_aux():
+    config = _config(
+        tie_word_embeddings=False,
+        model_type="qwen3_5_text",
+    )
+    payload = _qwen38_index(config)
+    profile = _qwen38_profile(config)
+    headers = _header_for(
+        config,
+        payload,
+        qwen38_text_profile=profile,
+    )
+
+    plan = build_qwen35_checkpoint_tensor_plan(
+        config,
+        payload,
+        headers,
+        qwen38_text_profile=profile,
+    )
+
+    loads = {
+        entry.weight.source.name: entry
+        for entry in plan.loads
+    }
+    assert loads[
+        "model.language_model.layers.0.linear_attn.A_log"
+    ].metadata.dtype == "BF16"
+    assert loads[
+        "model.language_model.layers.0.linear_attn.norm.weight"
+    ].metadata.dtype == "BF16"
 
 
 def test_untied_lm_head_mapping_and_tensor_contract():

@@ -320,8 +320,15 @@ def _language_tensor_contracts(
     config,
     layer_types: tuple[str, ...],
     tie_word_embeddings: bool,
+    *,
+    qwen38_text_profile=None,
 ) -> dict[str, tuple[str, tuple[int, ...], str]]:
     compute_dtype = _config_dtype(config)
+    linear_aux_dtype = (
+        compute_dtype
+        if qwen38_text_profile is not None
+        else "F32"
+    )
     hidden_size = _positive_integer(config, "hidden_size")
     intermediate_size = _positive_integer(config, "intermediate_size")
     vocab_size = _positive_integer(config, "vocab_size")
@@ -438,7 +445,7 @@ def _language_tensor_contracts(
             "squeeze_conv_channel",
         ),
         "linear_attn.A_log": (
-            "F32",
+            linear_aux_dtype,
             (linear_num_value_heads,),
             "identity",
         ),
@@ -448,7 +455,7 @@ def _language_tensor_contracts(
             "identity",
         ),
         "linear_attn.norm.weight": (
-            "F32",
+            linear_aux_dtype,
             (linear_value_head_dim,),
             "identity",
         ),
@@ -761,6 +768,7 @@ def build_qwen35_checkpoint_tensor_plan(
         config,
         layer_types,
         tie_word_embeddings,
+        qwen38_text_profile=qwen38_text_profile,
     )
     loads = []
     for weight in weight_plan.loads:
