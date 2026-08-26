@@ -50897,3 +50897,91 @@ ELASTIC_K8_K16=NEXT
 OCTET_FOLDED_GRAPH=BLOCKED_BY_ELASTIC
 NEXT_COMMAND=read docs/superpowers/plans/2026-08-24-context-gated-elastic-exact-burst.md and execute its first unchecked task
 ```
+
+## 2026-08-26 context-gated elastic exact-burst terminal reconciliation
+
+The approved elastic K8/K16 plan is complete through Task 7 in the sole
+authoritative checkout:
+
+```text
+/Users/bytedance/Desktop/TinyLLMForge
+branch: feat/kv-sparse-attention
+terminal source:
+  1e7ecaf85df81c7f52de1ce8fcaef098bd30c05d
+run tag:
+  20260825-context-gated-elastic-k16-terminal-r1
+```
+
+Terminal evidence:
+
+```text
+performance rows:               40 / 40
+correctness rows:               32 / 32
+float32 logit sidecars:         32 / 32
+worker exit code:               0
+producer classification:        GO_CONTEXT_GATED_ELASTIC_EXACT_BURST
+remote verifier:                PASS / GO_CONTEXT_GATED_ELASTIC_EXACT_BURST
+frozen-source local verifier:   PASS / GO_CONTEXT_GATED_ELASTIC_EXACT_BURST
+download inventory rehash:      PASS / 938 entries
+terminal manifest rehash:       PASS / 42 artifacts
+output/text/logit/argmax parity: exact
+width selection:                exact
+```
+
+Measured benefit and cost:
+
+```text
+eligible 256+2048 TPOT median improvement:  2.848048%
+eligible 256+2048 TPOT P95 improvement:     2.128914%
+eligible TPOT P99 improvement:              0.786624%
+eligible TTFT improvement:                  2.305949%
+eligible E2E improvement:                   3.341934%
+eligible throughput improvement:            3.409600%
+
+selected-K16 P95/maximum visible gap:        36.914469 / 37.006666 ms
+frozen maximum visible gap:                  40.000000 ms
+elastic incremental capture duration:       0 ns
+elastic incremental retained/allocated/reserved:
+                                              0 / 0 / 0 bytes
+eligible allocated-memory improvement:       0.068240%
+eligible reserved-memory regression:         0.139958%
+candidate K8 fallback:                       180 / 250 = 72%
+K16 width-health quarantines:                0
+```
+
+The fallback rate is expected: the frozen policy routes every 4,096/8,192
+attempt to K8 and uses K8 for the final output-budget tail. The verifier
+accepts only `context_above_2048` and `output_budget_below_16`; failures,
+rollbacks, pending leases, graph quarantine, and width quarantine are zero.
+
+Runtime totals:
+
+```text
+attempts / acceptances / commits:  250 / 250 / 250
+committed tokens:                  2,540
+target forwards / graph replays:   2,540 / 2,540
+intermediate token D2H calls:      0
+final token D2H calls / bytes:     250 / 20,320
+```
+
+The result authorizes only the default-disabled Qwen3-0.6B TP1, batch-one,
+completion-only, temperature-zero, ignore-EOS Stage-1 envelope. It does not
+authorize threshold retuning, streaming, EOS-aware behavior, multi-sequence
+scheduling, tensor parallelism, Qwen3-8B claims, or production-default
+enablement.
+
+Detailed audit:
+
+```text
+docs/superpowers/audits/
+  2026-08-24-context-gated-elastic-exact-burst-audit.md
+```
+
+```text
+CONTEXT_GATED_ELASTIC_EXACT_BURST=GO_COMPLETE
+CONTEXT_GATED_ELASTIC_EXACT_BURST_SOURCE=1e7ecaf85df81c7f52de1ce8fcaef098bd30c05d
+CONTEXT_GATED_ELASTIC_EXACT_BURST_RUN=20260825-context-gated-elastic-k16-terminal-r1
+CONTEXT_GATED_ELASTIC_EXACT_BURST_PROMOTION=AUTHORIZED_STAGE1_DEFAULT_DISABLED
+NEXT_OPTIMIZATION=UNSELECTED
+NEXT_COMMAND=select and freeze the next optimization before implementation
+```

@@ -4331,3 +4331,66 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-26 latest reconciliation: Context-Gated Elastic Exact Burst
+
+The context-gated K8/K16 follow-up has completed its source-bound terminal
+gate in the authoritative checkout.
+
+### Prompt-to-artifact checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Frozen selector | K16 at 256/2,048; K8 at 4,096/8,192; threshold remains exactly 2,048 | `PASS` |
+| Default-disabled dependency contract | elastic flag requires exact burst K8 and excludes split phase | `PASS` |
+| Shared graph owner | one complete-token graph/capture receipt per row; zero elastic incremental capture or retained bytes | `PASS` |
+| Complete performance matrix | two policies x four contexts x five paired repetitions | `PASS_40_OF_40` |
+| Complete correctness matrix | two policies x four contexts x four sampling points and 32 float32 sidecars | `PASS_32_OF_32` |
+| Exact numerical behavior | token IDs, decoded text, sampled logits, and argmax are exact | `PASS_EXACT` |
+| Runtime inventory | 2,540 committed tokens = 2,540 target forwards = 2,540 graph replays; zero intermediate D2H | `PASS` |
+| Lifecycle safety | zero failure, rollback, pending lease, or quarantine; expected K8 fallback reasons only | `PASS` |
+| Eligible TPOT benefit | median `2.848048%`; P95 `2.128914%` | `PASS` |
+| Visibility bound | P95 `36.914469 ms`; maximum `37.006666 ms` against `40 ms` | `PASS` |
+| Protected metrics | every per-context median/P95/P99, TTFT, E2E, throughput, allocated, and reserved-memory bound passes | `PASS` |
+| Source and storage safety | pushed source `1e7ecaf...`, empty patch, approved `/data00/home/sitian/...` root | `PASS` |
+| Worker and verifier closure | exit 0; producer, remote verifier, and fresh frozen-source local verifier agree | `PASS` |
+| Download integrity | 42 terminal-manifest artifacts and 938 download entries independently rehashed | `PASS` |
+| Claim boundary | Qwen3-0.6B, TP1, batch one, completion-only, temperature zero, ignore-EOS only | `PASS_SCOPED` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Context-gated elastic K8/K16 | Complete source-bound terminal gate with exact correctness and dual-verifier agreement | `GO_CONTEXT_GATED_ELASTIC_EXACT_BURST` |
+| Eligible-context TPOT | median improves `2.848048%`; P95 improves `2.128914%` | `ESTABLISHED_STAGE1_BENEFIT` |
+| Per-context protection | worst median/P95 TPOT regression `0.129540%` / `0.161586%`; worst P99 regression `1.527992%` | `PASS` |
+| Host-visible gap | P95 `36.914469 ms`; maximum `37.006666 ms` | `PASS_BELOW_40_MS` |
+| Correctness and transaction safety | exact tokens/text/logits/argmax; equal forwards/replays/tokens; no unexpected lifecycle events | `PASS` |
+| Incremental graph cost | no duplicate capture, retained static storage, allocated memory, or reserved memory | `ZERO_INCREMENTAL_GRAPH_COST` |
+| Conservative-policy cost | 180 of 250 attempts use K8 fallback, all for frozen context/output-budget reasons | `EXPECTED_72_PERCENT_FALLBACK` |
+| Promotion boundary | default-disabled Stage-1 envelope only; no Qwen3-8B or production-default claim | `AUTHORIZED_SCOPED_ONLY` |
+
+Detailed evidence is in
+`docs/superpowers/audits/2026-08-24-context-gated-elastic-exact-burst-audit.md`.
+
+```text
+ELASTIC_EXACT_BURST_RUN=20260825-context-gated-elastic-k16-terminal-r1
+ELASTIC_EXACT_BURST_SOURCE_COMMIT=1e7ecaf85df81c7f52de1ce8fcaef098bd30c05d
+ELASTIC_EXACT_BURST_CLASSIFICATION=GO_CONTEXT_GATED_ELASTIC_EXACT_BURST
+ELASTIC_EXACT_BURST_PERFORMANCE_ROWS=40_OF_40
+ELASTIC_EXACT_BURST_CORRECTNESS_ROWS=32_OF_32
+ELASTIC_EXACT_BURST_WORKER_EXITCODE=0
+ELASTIC_EXACT_BURST_REMOTE_VERIFIER=PASS
+ELASTIC_EXACT_BURST_FROZEN_SOURCE_LOCAL_VERIFIER=PASS
+ELASTIC_EXACT_BURST_CORRECTNESS=PASS_EXACT
+ELASTIC_EXACT_BURST_ELIGIBLE_TPOT_MEDIAN=IMPROVEMENT_2_848048_PERCENT
+ELASTIC_EXACT_BURST_ELIGIBLE_TPOT_P95=IMPROVEMENT_2_128914_PERCENT
+ELASTIC_EXACT_BURST_MAXIMUM_K16_GAP_MS=37_006666
+ELASTIC_EXACT_BURST_K8_FALLBACK_RATE=72_PERCENT_EXPECTED
+ELASTIC_EXACT_BURST_INCREMENTAL_CAPTURE_DURATION_NS=0
+ELASTIC_EXACT_BURST_PROMOTION=AUTHORIZED_STAGE1_DEFAULT_DISABLED
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
