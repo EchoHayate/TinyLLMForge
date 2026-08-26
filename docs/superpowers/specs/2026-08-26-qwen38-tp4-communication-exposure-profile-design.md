@@ -339,9 +339,13 @@ authorize asynchronous execution.
 
 ### Nsight Timeline
 
-One representative repetition per workload is captured with Nsight Systems.
-The selected repetition is the one nearest the five-run median decode time,
-chosen only after the structured runs complete.
+All five measured repetitions per workload are replayed with Nsight Systems.
+These 25 profiled replays are the only source of the five exposure observations
+used by the four-of-five direction gate. After the five unprofiled structured
+runs complete, the repetition nearest their median decode time is selected
+deterministically and marked as the representative trace for detailed report
+inspection. The representative label does not replace the other four Nsight
+replays or create additional statistical weight.
 
 The trace must include:
 
@@ -354,7 +358,9 @@ The trace must include:
 
 If NCCL kernels cannot be identified and correlated to the structured
 collective inventory, exposed communication is not estimated from names or
-wall-time subtraction. That workload is `INCONCLUSIVE_TRACE_COVERAGE`.
+wall-time subtraction. Any missing or incomplete measured replay makes that
+workload, and therefore the terminal result,
+`INCONCLUSIVE_TRACE_COVERAGE`.
 
 ### Metric Definitions
 

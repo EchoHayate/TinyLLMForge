@@ -653,7 +653,12 @@ Assert selection requires four unique UUIDs, each with used memory at most `1024
 
 - [ ] **Step 2: Write RED workload-plan tests**
 
-Assert 10 warmups and 25 measured structured cases, five representative Nsight replays selected later, and paired profiled/unprofiled overhead controls. Freeze P0/P1/Q0/Q1/Q2 exactly and preserve deterministic measured order.
+Assert 10 warmups, 25 unprofiled measured structured cases, and 25 measured
+Nsight replays. Select one representative replay per workload only after the
+unprofiled runs complete, but retain all five per-workload Nsight replays for
+the four-of-five exposure-direction gate. Require 25 paired
+profiled/unprofiled overhead controls. Freeze P0/P1/Q0/Q1/Q2 exactly and
+preserve deterministic measured order.
 
 - [ ] **Step 3: Write RED remote safety tests**
 
@@ -686,7 +691,13 @@ At controller and worker entry, sample inventory and bind UUID-to-rank mapping. 
 
 - [ ] **Step 7: Implement structured and Nsight phases**
 
-Run correctness first. Only after it passes, run two warmups and five measured repetitions per workload. Select nearest-median repetitions and invoke Nsight with CUDA, NVTX, OS runtime, and context-switch traces when supported. Export SQLite below `attempt/nsys/`.
+Run correctness first. Only after it passes, run two warmups and five
+unprofiled measured repetitions per workload. Select the nearest-median
+repetition for each workload as its report representative, then replay all five
+measured repetitions per workload under Nsight with CUDA, NVTX, OS runtime,
+and context-switch traces when supported. Export all 25 SQLite databases below
+`attempt/nsys/`; mark five as representative without dropping or duplicating
+their contribution to the four-of-five gate.
 
 - [ ] **Step 8: Verify focused and adjacent GREEN**
 
@@ -891,9 +902,14 @@ For each workload, run matched profiled/unprofiled controls on the same admitted
 
 Expected: overhead `<= 3%` for a `GO`; higher overhead prevents promotion.
 
-- [ ] **Step 3: Select and capture representative Nsight repetitions**
+- [ ] **Step 3: Capture all measured Nsight replays and mark representatives**
 
-After all structured rows complete, choose the repetition nearest median decode time for each workload and capture one replay under Nsight. Export SQLite and correlate every required collective with its structured operation identity.
+After all structured rows complete, choose the repetition nearest median decode
+time for each workload as its representative. Replay all five measured
+repetitions for every workload under Nsight, export 25 SQLite databases, and
+correlate every required collective with its structured operation identity.
+Use all five exposure observations in the direction gate; use the representative
+label only to select the detailed trace shown in the report.
 
 - [ ] **Step 4: Produce all summaries**
 
