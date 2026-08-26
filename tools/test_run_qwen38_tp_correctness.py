@@ -31,6 +31,12 @@ def _load():
 runner = _load()
 
 
+class _TorchCudaUuid:
+
+    def __str__(self):
+        return "7dc22583-df04-6c76-4ba5-ea32c428c130"
+
+
 def _load_verifier():
     spec = importlib.util.spec_from_file_location(
         "qwen38_tp_correctness_for_runner_test",
@@ -50,6 +56,25 @@ def test_production_root_is_the_approved_remote_data_mount():
         "/data00/home/sitian/tinyllmforge-workspaces/"
         "command-timeline-20260818"
     )
+
+
+def test_cuda_device_identity_normalizes_torch_cuuid(monkeypatch):
+    cuda = SimpleNamespace(
+        current_device=lambda: 0,
+        get_device_properties=lambda _index: (
+            SimpleNamespace(uuid=_TorchCudaUuid())
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(cuda=cuda),
+    )
+
+    assert runner._read_cuda_device_identity() == {
+        "gpu_index": 0,
+        "gpu_uuid": "GPU-7dc22583-df04-6c76-4ba5-ea32c428c130",
+    }
 
 
 def _plan(tmp_path, monkeypatch):

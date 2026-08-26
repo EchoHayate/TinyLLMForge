@@ -229,6 +229,18 @@ def _read_cuda_device_identity():
     )
     if isinstance(gpu_uuid, bytes):
         gpu_uuid = gpu_uuid.decode("ascii")
+    elif gpu_uuid is not None and not isinstance(gpu_uuid, str):
+        candidate = str(gpu_uuid)
+        parts = candidate.split("-")
+        if (
+            tuple(len(part) for part in parts) == (8, 4, 4, 4, 12)
+            and all(
+                character in "0123456789abcdefABCDEF"
+                for part in parts
+                for character in part
+            )
+        ):
+            gpu_uuid = f"GPU-{candidate.lower()}"
     if not isinstance(gpu_uuid, str) or not gpu_uuid:
         raise RuntimeError("CUDA GPU UUID is unavailable")
     return {

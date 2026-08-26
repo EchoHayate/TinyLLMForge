@@ -233,6 +233,36 @@ def test_qwen38_correctness_rank_identity_reports_loaded_partition_and_gpu():
     }
 
 
+def test_qwen38_correctness_rank_identity_normalizes_torch_cuuid():
+    class TorchCudaUuid:
+
+        def __str__(self):
+            return "7dc22583-df04-6c76-4ba5-ea32c428c130"
+
+    cuda = SimpleNamespace(
+        current_device=lambda: 2,
+        get_device_properties=lambda _index: (
+            SimpleNamespace(uuid=TorchCudaUuid())
+        ),
+    )
+    identity = _load_model_runner_method(
+        "qwen38_correctness_rank_identity",
+        torch=SimpleNamespace(cuda=cuda),
+    )
+    runner = SimpleNamespace(
+        rank=2,
+        world_size=4,
+        qwen38_correctness_weight_partition_identity={
+            "expected_weight_shard_sha256": "1" * 64,
+            "loaded_weight_shard_sha256": "1" * 64,
+        },
+    )
+
+    assert identity(runner)["gpu_uuid"] == (
+        "GPU-7dc22583-df04-6c76-4ba5-ea32c428c130"
+    )
+
+
 def test_qwen38_correctness_rank_identity_fails_without_load_attestation():
     cuda = SimpleNamespace(
         current_device=lambda: 0,
