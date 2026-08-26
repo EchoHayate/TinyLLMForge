@@ -144,7 +144,7 @@ def test_prompt_case_rejects_drift_and_invalid_tokens():
 
 def test_bf16_tolerance_and_classification_domain_are_frozen():
     assert contract.BF16_DECISION_TOLERANCE == (
-        contract.ComparisonTolerance(atol=2e-5, rtol=1e-5)
+        contract.ComparisonTolerance(atol=2e-5, rtol=0.0)
     )
     assert contract.FINAL_CLASSIFICATIONS == ("PASS", "NO_GO_LOGIT")
 
