@@ -125,6 +125,10 @@ from tinyvllm.models.qwen35_checkpoint_metadata import (
 from tinyvllm.models.qwen35_checkpoint import (
     build_qwen35_checkpoint_tensor_plan,
 )
+from tinyvllm.models.qwen38_text_adopter import (
+    adopt_qwen38_text_config,
+    validate_qwen38_sequence_batch,
+)
 from tinyvllm.models.qwen35_checkpoint_candidate_factory import (
     prepare_qwen35_checkpoint_candidate_target,
 )
@@ -297,6 +301,27 @@ def _configure_qwen35_linear_execution(
 ):
     configure_rows(model, 1024)
     return model
+
+
+def _resolve_qwen38_text_profile(
+    hf_config,
+    *,
+    adopt_qwen38_text,
+):
+    architectures = getattr(hf_config, "architectures", ())
+    text_config = getattr(hf_config, "text_config", None)
+    if tuple(architectures or ()) != (
+        "Qwen3_5ForConditionalGeneration",
+    ) or text_config is None:
+        return None
+    topology = (
+        getattr(text_config, "num_hidden_layers", None),
+        getattr(text_config, "hidden_size", None),
+        getattr(text_config, "intermediate_size", None),
+    )
+    if topology != (64, 5120, 17408):
+        return None
+    return adopt_qwen38_text(hf_config)
 
 
 def _initialize_model_runner_model(
@@ -2159,6 +2184,10 @@ class ModelRunner:
         self.rank = rank
         self.event = event
         self.ack_sender = ack_sender
+        self.qwen38_text_profile = _resolve_qwen38_text_profile(
+            hf_config,
+            adopt_qwen38_text=adopt_qwen38_text_config,
+        )
         self._command_ids = count()
         self._command_timeline_clock_ns = time.monotonic_ns
         self._command_timeline_max_rows = (
@@ -10461,6 +10490,12 @@ class ModelRunner:
             released_hybrid_state_leases: tuple[HybridStateLease, ...] = (),
             kv_block_identity_rows: tuple[KVBlockIdentityRow, ...] = (),
             ) -> list[int] | None:
+        if self.qwen38_text_profile is not None:
+            validate_qwen38_sequence_batch(
+                self.qwen38_text_profile,
+                seqs,
+                is_prefill=is_prefill,
+            )
         self.bind_kv_block_identity_rows(
             tuple(seqs),
             kv_block_identity_rows,
