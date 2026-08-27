@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -157,6 +159,7 @@ def _copy_trace(
     destination: Path,
     max_attempts: int,
     retry_delay_seconds: float,
+    copy_mode: str = "rclone",
 ) -> None:
     remote_path = f"{remote_trace_root.rstrip('/')}/{Path(relative).name}"
     ssh_options = [
@@ -173,26 +176,67 @@ def _copy_trace(
             ["-S", ssh_control_path, "-o", "ControlMaster=no"]
         )
     ssh_options.append(ssh_target)
-    command = [
-        "rclone",
-        "copyto",
-        f":sftp:{remote_path}",
-        str(destination),
-        "--sftp-ssh",
-        " ".join(ssh_options),
-        "--sftp-disable-hashcheck",
-        "--multi-thread-cutoff",
-        "1M",
-        "--multi-thread-streams",
-        "2",
-    ]
     environment = dict(os.environ)
     environment["KRB5CCNAME"] = "FILE:/Users/bytedance/krb5cc_sitian"
     for attempt in range(1, max_attempts + 1):
         try:
-            subprocess.run(command, check=True, env=environment)
+            if copy_mode == "rclone":
+                command = [
+                    "rclone",
+                    "copyto",
+                    f":sftp:{remote_path}",
+                    str(destination),
+                    "--sftp-ssh",
+                    " ".join(ssh_options),
+                    "--sftp-disable-hashcheck",
+                    "--multi-thread-cutoff",
+                    "1M",
+                    "--multi-thread-streams",
+                    "2",
+                ]
+                subprocess.run(command, check=True, env=environment)
+            elif copy_mode == "gzip-ssh":
+                partial = destination.with_name(
+                    f"{destination.name}.gzip.partial"
+                )
+                command = [
+                    *ssh_options,
+                    shlex.join(("gzip", "-1", "-c", "--", remote_path)),
+                ]
+                with partial.open("wb") as output:
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        env=environment,
+                    )
+                    assert process.stdout is not None
+                    try:
+                        with gzip.GzipFile(
+                            fileobj=process.stdout,
+                            mode="rb",
+                        ) as source:
+                            shutil.copyfileobj(
+                                source,
+                                output,
+                                length=8 * 1024**2,
+                            )
+                        returncode = process.wait()
+                    finally:
+                        process.stdout.close()
+                        if process.poll() is None:
+                            process.terminate()
+                            process.wait()
+                if returncode != 0:
+                    raise subprocess.CalledProcessError(returncode, command)
+                partial.replace(destination)
+            else:
+                raise ValueError(f"unsupported copy mode: {copy_mode}")
             return
-        except subprocess.CalledProcessError:
+        except (
+            EOFError,
+            gzip.BadGzipFile,
+            subprocess.CalledProcessError,
+        ):
             destination.unlink(missing_ok=True)
             for partial in destination.parent.glob(
                 f"{destination.name}.*.partial"
@@ -223,6 +267,11 @@ def main() -> int:
     parser.add_argument("--resume-log", type=Path)
     parser.add_argument("--copy-attempts", type=int, default=5)
     parser.add_argument("--retry-delay-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--copy-mode",
+        choices=("rclone", "gzip-ssh"),
+        default="rclone",
+    )
     parser.add_argument("--remote-manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
@@ -303,6 +352,7 @@ def main() -> int:
                 destination=staged,
                 max_attempts=args.copy_attempts,
                 retry_delay_seconds=args.retry_delay_seconds,
+                copy_mode=args.copy_mode,
             )
             actual = verifier._sha256_file(staged)
             expected = recorded[relative]

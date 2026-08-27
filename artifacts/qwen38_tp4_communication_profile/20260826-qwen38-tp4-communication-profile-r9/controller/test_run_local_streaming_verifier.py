@@ -85,3 +85,47 @@ def test_copy_trace_retries_and_reuses_control_master(tmp_path, monkeypatch):
     assert len(invocations) == 3
     assert all("-S /tmp/test-control" in line for line in invocations)
     assert all("--multi-thread-streams 2" in line for line in invocations)
+
+
+def test_copy_trace_gzip_ssh_streams_and_retries_atomically(
+    tmp_path,
+    monkeypatch,
+):
+    payload = (b"sqlite-fixture-" * 4096) + b"terminal"
+    source = tmp_path / "source.sqlite"
+    source.write_bytes(payload)
+    counter = tmp_path / "attempts"
+    argv_log = tmp_path / "argv"
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> '{argv_log}'\n"
+        f"count=$(cat '{counter}' 2>/dev/null || echo 0)\n"
+        "count=$((count + 1))\n"
+        f"printf '%s' \"$count\" > '{counter}'\n"
+        "[ \"$count\" -ge 2 ] || exit 1\n"
+        f"exec gzip -1 -c -- '{source}'\n",
+        encoding="utf-8",
+    )
+    fake_ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{__import__('os').environ['PATH']}")
+    destination = tmp_path / "Q1-r0.sqlite"
+
+    module._copy_trace(
+        ssh_target="sitian@example",
+        ssh_control_path="/tmp/test-control",
+        remote_trace_root="/remote/nsys",
+        relative="nsys/Q1-r0.sqlite",
+        destination=destination,
+        max_attempts=2,
+        retry_delay_seconds=0,
+        copy_mode="gzip-ssh",
+    )
+
+    assert counter.read_text(encoding="utf-8") == "2"
+    assert destination.read_bytes() == payload
+    assert not list(tmp_path.glob("Q1-r0.sqlite.*.partial"))
+    invocations = argv_log.read_text(encoding="utf-8").splitlines()
+    assert len(invocations) == 2
+    assert all("-S /tmp/test-control" in line for line in invocations)
+    assert all("gzip -1 -c -- /remote/nsys/Q1-r0.sqlite" in line for line in invocations)
