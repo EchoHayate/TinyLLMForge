@@ -1095,17 +1095,40 @@ def _verify_nsys(root: Path, profiles: dict) -> None:
                 actual = parsed_rows[key]
                 if any(actual[field] != expected[field] for field in metric_fields):
                     raise ValueError("Nsight/profile interval arithmetic mismatch")
+            parsed_step_rows = {
+                (row["rank"], row["decode_ordinal"]): row
+                for row in parsed["step_rows"]
+            }
+            expected_step_rows = {
+                (rank, step["decode_ordinal"]): step
+                for rank, profile in rank_rows.items()
+                for step in profile["steps"]
+            }
+            if set(parsed_step_rows) != set(expected_step_rows):
+                raise ValueError("Nsight/profile step inventory mismatch")
+            for key, expected in expected_step_rows.items():
+                if (
+                    parsed_step_rows[key]["final_required_offset_ns"]
+                    != expected["final_required_offset_ns"]
+                ):
+                    raise ValueError(
+                        "Nsight/profile rank-step offset mismatch"
+                    )
             critical_rows = {
                 row["decode_ordinal"]: row
                 for row in parsed["critical_rows"]
             }
             for step_index, step in enumerate(rank_rows[0]["steps"]):
                 actual = critical_rows.get(step["decode_ordinal"])
+                critical_rank = step["critical_rank"]
+                critical_step = rank_rows[critical_rank]["steps"][
+                    step_index
+                ]
                 if (
                     actual is None
-                    or actual["critical_rank"] != step["critical_rank"]
+                    or actual["critical_rank"] != critical_rank
                     or actual["final_required_offset_ns"]
-                    != step["final_required_offset_ns"]
+                    != critical_step["final_required_offset_ns"]
                 ):
                     raise ValueError("Nsight/profile critical-rank mismatch")
 

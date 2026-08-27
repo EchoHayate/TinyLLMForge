@@ -207,7 +207,7 @@ def _profile_rows() -> list[dict]:
                             "request_set_sha256": "c" * 64,
                             "decode_ordinal": 0,
                             "critical_rank": 3,
-                            "final_required_offset_ns": 280,
+                            "final_required_offset_ns": 250 + rank * 10,
                             "layers": [_profile_layer(rank)],
                         }],
                     })
