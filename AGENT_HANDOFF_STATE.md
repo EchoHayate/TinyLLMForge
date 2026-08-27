@@ -51081,3 +51081,156 @@ Immediate continuation:
 Do not start Task 10, implement overlap, or claim a performance benefit until
 these prerequisites are met and both producer and verifier later return
 `GO_COMMUNICATION_OVERLAP`.
+
+## 2026-08-27 Qwen3.8-27B TP4 communication-exposure terminal reconciliation
+
+The frozen r9 campaign completed the full structured and Nsight matrix in the
+sole authoritative checkout:
+
+```text
+authoritative checkout:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+frozen runtime source:
+  549fef12dcfdab842af99ff09ce1847b623cdbad
+frozen source-tree SHA-256:
+  dfdf6e758cbaa52fa24d8fa99550a709a8bf8bf81f8bc6d3f53842ec9c1a0654
+controller/verifier source:
+  cf68649bc98c571e5950f8ad39396616c75c7631
+attempt:
+  20260826-qwen38-tp4-communication-profile-r9
+remote root:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+model:
+  Qwen/Qwen3.8-27B
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+model manifest SHA-256:
+  8f1520d552b7c9bbbadabe27d0e9632f25da9c6fc1d7ff7e43fb7471edc1316a
+```
+
+Final producer inventory:
+
+```text
+structured cases:                 35
+measured profile rows:            140
+correctness rows:                 100
+resource rows:                    100
+Nsight replays / SQLite traces:   25 / 25
+strict-clean worker entries:      61 / 61
+producer artifacts before verify: 38
+producer classification:
+  INCONCLUSIVE_LOW_HEADROOM
+```
+
+Selected rank map:
+
+```text
+rank 0 -> physical 2 -> GPU-63c05907-407b-8240-07a0-f38872840867
+rank 1 -> physical 3 -> GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d
+rank 2 -> physical 4 -> GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1
+rank 3 -> physical 5 -> GPU-687b7858-ca44-98ad-cfba-b6785eaf05e8
+```
+
+Producer median communication signal:
+
+```text
+workload  exposed communication  overlap headroom  representative
+P0        21.300382%              10.446015%         r3
+P1        13.359492%              10.423242%         r4
+Q0        34.145316%              10.644781%         r0
+Q1        38.818101%              10.602486%         r2
+Q2        27.848422%              10.773773%         r1
+```
+
+The mandatory cost gate fails:
+
+```text
+paired controls:                  25 / 25
+median Nsight overhead:           30.773947%
+maximum Nsight overhead:          38.194519%
+frozen GO ceiling:                3.000000%
+```
+
+The remote independent verifier completed a full artifact/hash/semantic
+recomputation:
+
+```text
+status:                           PASS
+producer classification:          INCONCLUSIVE_LOW_HEADROOM
+reconstructed classification:     INCONCLUSIVE_LOW_HEADROOM
+profile / correctness / traces:   140 / 100 / 25
+strict-clean worker entries:      61
+cleanup valid:                    true
+trace coverage complete:          true
+stderr bytes:                     0
+independent verification SHA-256:
+  c07348a63f02603fb8b1f99ae9b559dc80e1abe94ac2751a91288559e7e85e13
+post-verification manifest SHA-256:
+  a0a7e551b84edde2030dceb30f1ffb13823b8b3612a68f5c3ea1a59db6b3eb40
+post-verification artifact count: 39
+```
+
+The local Mac verifier completed against the downloaded non-Nsight bundle
+while staging one immutable SQLite trace at a time from the same remote final
+bundle through gzip-over-SSH. Each trace was locally decompressed, hashed,
+semantically parsed, compared with the frozen profile rows, and immediately
+deleted. Commit `026d8c6` explicitly closes each streamed SQLite connection
+and accepts both fresh and resumed PASS records; commit `cf68649` adds
+retry-safe compressed streaming with partial-file cleanup and atomic
+promotion. Together they kept local trace storage bounded to one trace.
+
+The first local continuation reached 18 / 25 before the
+`jump-proxy-hl` ControlMaster disappeared during `Q1-r3`; all five bounded
+copy attempts failed before verification and the temporary directory was
+removed. The Kerberos TGT remained valid through August 28, 2026 02:41 CST.
+A read-only probe showed the HL path closed while `jump-proxy-lf` reached
+`n232-195-203` as `sitian`. A replacement LF ControlMaster resumed the same
+verifier from the persisted 18 PASS records and completed the remaining
+traces. No campaign, producer, or Nsight replay was restarted.
+
+Final local verifier evidence:
+
+```text
+status:                           PASS
+producer classification:          INCONCLUSIVE_LOW_HEADROOM
+reconstructed classification:     INCONCLUSIVE_LOW_HEADROOM
+profile / correctness / traces:   140 / 100 / 25
+strict-clean worker entries:      61
+cleanup valid:                    true
+trace coverage complete:          true
+stderr bytes:                     0
+local result SHA-256:
+  c07348a63f02603fb8b1f99ae9b559dc80e1abe94ac2751a91288559e7e85e13
+remote/local verifier JSON:       byte-identical
+post-verification artifacts:      39 / 39
+retained temporary traces:        0
+```
+
+Fresh local test evidence before the documentation commit:
+
+```text
+all 13 Qwen3.8-related test files:
+  327 passed in 12.75s
+downloaded non-Nsight producer artifacts:
+  13 / 13 SHA-256 matches
+git diff --check:
+  PASS
+```
+
+Claim boundary:
+
+```text
+COMMUNICATION_EXPOSURE_PROFILE=COMPLETE
+PRODUCER_CLASSIFICATION=INCONCLUSIVE_LOW_HEADROOM
+OVERLAP_DESIGN_AUTHORIZED=false
+ASYNC_COLLECTIVES_AUTHORIZED=false
+NEXT_COMMAND=select a new optimization direction outside communication-overlap implementation
+```
+
+This result does not reproduce the external `QPS 1.55 -> 2.34` claim and does
+not establish a TinyLLMForge speedup. It measures a communication-exposure
+signal whose profiler perturbation is too large for promotion. Do not create
+the conditional overlap design or modify collective execution from this
+evidence.
