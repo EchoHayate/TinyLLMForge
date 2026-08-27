@@ -180,6 +180,152 @@ def test_llm_engine_exposes_acknowledged_profile_lifecycle():
     )
 
 
+def test_llm_engine_exposes_acknowledged_collective_census_lifecycle():
+    configure = _class_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "configure_synchronous_collective_census",
+    )
+    finalize = _class_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "finalize_synchronous_collective_census",
+    )
+    reset = _class_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "reset_synchronous_collective_census",
+    )
+
+    assert "call_model_runner_acknowledged" in _called_names(configure)
+    assert "call_model_runner_acknowledged" in _called_names(reset)
+    assert "call_model_runner_acknowledged" in _called_names(finalize)
+    assert (
+        "configure_synchronous_collective_census"
+        in _string_constants(configure)
+    )
+    assert (
+        "reset_synchronous_collective_census"
+        in _string_constants(reset)
+    )
+    assert (
+        "finalize_synchronous_collective_census"
+        in _string_constants(finalize)
+    )
+
+
+def test_llm_engine_returns_ordered_collective_census_inventory():
+    policy = {
+        "enabled": True,
+        "sample_budget": 8,
+        "cohort_count": 17,
+        "expected_collective_count": 130,
+        "source_revision": "a" * 40,
+        "attempt": "attempt-r1",
+        "workload": "P0",
+        "repetition": 0,
+    }
+    calls = []
+
+    class FakeEngine:
+        model_runner = type("ModelRunner", (), {"world_size": 4})()
+
+        def call_model_runner_acknowledged(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return (
+                {
+                    "rank": 0,
+                    "enabled": True,
+                    "sample_budget": 8,
+                    "cohort_count": 17,
+                },
+                tuple(
+                    type(
+                        "Ack",
+                        (),
+                        {
+                            "rank": rank,
+                            "result": {
+                                "rank": rank,
+                                "enabled": True,
+                                "sample_budget": 8,
+                                "cohort_count": 17,
+                            },
+                        },
+                    )()
+                    for rank in range(1, 4)
+                ),
+            )
+
+    configure = _compile_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "configure_synchronous_collective_census",
+    )
+    result = configure(
+        FakeEngine(),
+        policy,
+        timeout_s=60.0,
+    )
+
+    assert calls == [
+        (
+            ("configure_synchronous_collective_census", policy),
+            {"timeout_s": 60.0},
+        )
+    ]
+    assert result["rank_inventory"] == [0, 1, 2, 3]
+
+
+def test_llm_engine_rejects_collective_census_rank_disagreement():
+    policy = {
+        "enabled": True,
+        "sample_budget": 8,
+        "cohort_count": 17,
+        "expected_collective_count": 130,
+        "source_revision": "a" * 40,
+        "attempt": "attempt-r1",
+        "workload": "P0",
+        "repetition": 0,
+    }
+
+    class FakeEngine:
+        model_runner = type("ModelRunner", (), {"world_size": 2})()
+
+        def call_model_runner_acknowledged(self, *_args, **_kwargs):
+            return (
+                {
+                    "rank": 0,
+                    "enabled": True,
+                    "sample_budget": 8,
+                    "cohort_count": 17,
+                },
+                (
+                    type(
+                        "Ack",
+                        (),
+                        {
+                            "rank": 1,
+                            "result": {
+                                "rank": 1,
+                                "enabled": True,
+                                "sample_budget": 16,
+                                "cohort_count": 17,
+                            },
+                        },
+                    )(),
+                ),
+            )
+
+    configure = _compile_method(
+        LLM_ENGINE,
+        "LLMEngine",
+        "configure_synchronous_collective_census",
+    )
+    with pytest.raises(RuntimeError, match="ranks disagree"):
+        configure(FakeEngine(), policy, timeout_s=60.0)
+
+
 def test_rank_aware_profile_finalization_only_reuses_rank_zero_sync():
     finalize = _compile_method(
         MODEL_RUNNER,

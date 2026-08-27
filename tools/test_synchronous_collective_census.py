@@ -407,3 +407,30 @@ def test_activation_restores_previous_census():
             assert active_synchronous_collective_census() is inner
         assert active_synchronous_collective_census() is outer
     assert active_synchronous_collective_census() is None
+
+
+def test_disabled_census_is_a_complete_noop_snapshot():
+    census = SynchronousCollectiveCensus.disabled(rank=3)
+    calls = []
+
+    with activate_synchronous_collective_census(census):
+        result = run_census_step(
+            census,
+            batch_kind="decode",
+            is_decode=True,
+            active_sequence_count=1,
+            request_set_sha256="b" * 64,
+            dispatch="eager",
+            call=lambda: _observe_embedding(calls),
+        )
+
+    assert result[1] == "done"
+    assert len(calls) == 1
+    assert census.finalize() == {
+        "schema": "tinyllmforge.synchronous-collective-census.v1",
+        "rank": 3,
+        "enabled": False,
+        "finalization_status": "complete",
+        "steps": [],
+        "collectives": [],
+    }

@@ -84,6 +84,12 @@ _MODEL_RUNNER_PATH = os.path.join(
     "engine",
     "model_runner.py",
 )
+_SYNCHRONOUS_COLLECTIVE_CENSUS_PATH = os.path.join(
+    _REPO_ROOT,
+    "tinyvllm",
+    "engine",
+    "synchronous_collective_census.py",
+)
 _CONFIG_PATH = os.path.join(
     _REPO_ROOT,
     "tinyvllm",
@@ -370,6 +376,14 @@ def _load_model_runner_module():
         "tinyvllm.engine.spec_verify_trace",
         _SPEC_VERIFY_TRACE_PATH,
     )
+    if (
+        "tinyvllm.engine.synchronous_collective_census"
+        not in sys.modules
+    ):
+        _load_source_module(
+            "tinyvllm.engine.synchronous_collective_census",
+            _SYNCHRONOUS_COLLECTIVE_CENSUS_PATH,
+        )
     _install_module(
         "tinyvllm.engine.decode_internal_profiler",
         DecodeInternalProfiler=type(
@@ -676,6 +690,7 @@ def make_runner(**overrides):
     runner.block_size = 256
     runner.rank = 0
     runner.world_size = 1
+    runner.qwen38_text_profile = None
     runner.kv_offload = None
     runner.hybrid_state_runtime_bridge = None
     runner.qwen35_speculative_state_owner = None
@@ -747,6 +762,17 @@ def make_runner(**overrides):
     runner._cuda_graph_step_id = 0
     runner._cuda_graph_request_ids_hash = "request-hash"
     runner.decode_internal_profiler = SimpleNamespace()
+    census_module = sys.modules[
+        "tinyvllm.engine.synchronous_collective_census"
+    ]
+    runner.synchronous_collective_census = (
+        census_module.SynchronousCollectiveCensus.disabled(
+            rank=runner.rank,
+        )
+    )
+    runner._synchronous_collective_census_policy = {
+        "enabled": False,
+    }
     greedy_module = sys.modules[
         "tinyvllm.engine.greedy_sampling_fast_path"
     ]
@@ -794,6 +820,104 @@ def make_runner(**overrides):
         )
     )
     return runner
+
+
+def _collective_census_policy_payload():
+    return {
+        "enabled": True,
+        "sample_budget": 8,
+        "cohort_count": 17,
+        "expected_collective_count": 130,
+        "source_revision": "a" * 40,
+        "attempt": "attempt-r1",
+        "workload": "P0",
+        "repetition": 0,
+    }
+
+
+def test_model_runner_configures_rank_local_collective_census():
+    runner = make_runner()
+    runner.rank = 2
+    runner.world_size = 4
+    original_cuda = model_runner.torch.cuda
+    model_runner.torch.cuda = SimpleNamespace(
+        Event=lambda **_kwargs: object(),
+        synchronize=lambda: None,
+        current_stream=lambda: SimpleNamespace(
+            device=SimpleNamespace(index=2),
+            cuda_stream=7,
+        ),
+    )
+    try:
+        receipt = runner.configure_synchronous_collective_census(
+            _collective_census_policy_payload()
+        )
+    finally:
+        model_runner.torch.cuda = original_cuda
+
+    assert receipt == {
+        "rank": 2,
+        "enabled": True,
+        "sample_budget": 8,
+        "cohort_count": 17,
+    }
+    assert runner.synchronous_collective_census.rank == 2
+    assert runner.synchronous_collective_census.policy == (
+        sys.modules[
+            "tinyvllm.engine.synchronous_collective_census"
+        ].CollectiveCensusPolicy(
+            sample_budget=8,
+            cohort_count=17,
+            expected_collective_count=130,
+            source_revision="a" * 40,
+            attempt="attempt-r1",
+            workload="P0",
+            repetition=0,
+        )
+    )
+
+
+def test_model_runner_reset_creates_distinct_collective_census():
+    runner = make_runner()
+    original_cuda = model_runner.torch.cuda
+    model_runner.torch.cuda = SimpleNamespace(
+        Event=lambda **_kwargs: object(),
+        synchronize=lambda: None,
+        current_stream=lambda: SimpleNamespace(
+            device=SimpleNamespace(index=0),
+            cuda_stream=7,
+        ),
+    )
+    try:
+        runner.configure_synchronous_collective_census(
+            _collective_census_policy_payload()
+        )
+        first = runner.synchronous_collective_census
+        receipt = runner.reset_synchronous_collective_census()
+    finally:
+        model_runner.torch.cuda = original_cuda
+
+    assert receipt["enabled"] is True
+    assert runner.synchronous_collective_census is not first
+
+
+def test_model_runner_collective_census_finalization_sync_owner():
+    calls = []
+
+    class FakeCensus:
+        def finalize(self, *, already_synchronized):
+            calls.append(already_synchronized)
+            return {"rank": 2}
+
+    runner = make_runner()
+    runner.rank = 2
+    runner.world_size = 4
+    runner.synchronous_collective_census = FakeCensus()
+
+    assert runner.finalize_synchronous_collective_census(
+        already_synchronized_rank=2,
+    ) == {"rank": 2}
+    assert calls == [True]
 
 
 def _trace_ready_runner(rank=0):

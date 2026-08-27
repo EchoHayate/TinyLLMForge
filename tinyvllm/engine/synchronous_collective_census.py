@@ -218,20 +218,24 @@ class SynchronousCollectiveCensus:
         self,
         *,
         rank: int,
-        policy: CollectiveCensusPolicy,
-        event_factory: Callable,
-        synchronize: Callable,
-        stream_resolver: Callable,
+        policy: CollectiveCensusPolicy | None,
+        event_factory: Callable | None,
+        synchronize: Callable | None,
+        stream_resolver: Callable | None,
+        enabled: bool = True,
     ):
-        if not isinstance(policy, CollectiveCensusPolicy):
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be a boolean")
+        if enabled and not isinstance(policy, CollectiveCensusPolicy):
             raise TypeError("policy must be a CollectiveCensusPolicy")
-        if not callable(event_factory):
+        if enabled and not callable(event_factory):
             raise ValueError("event_factory must be callable")
-        if not callable(synchronize):
+        if enabled and not callable(synchronize):
             raise ValueError("synchronize must be callable")
-        if not callable(stream_resolver):
+        if enabled and not callable(stream_resolver):
             raise ValueError("stream_resolver must be callable")
         self.rank = int(rank)
+        self.enabled = enabled
         self.policy = policy
         self._event_factory = event_factory
         self._synchronize = synchronize
@@ -244,6 +248,17 @@ class SynchronousCollectiveCensus:
         self._decode_ordinal = 0
         self._decode_request_set_sha256 = None
         self._finalized = None
+
+    @classmethod
+    def disabled(cls, *, rank: int):
+        return cls(
+            rank=rank,
+            policy=None,
+            event_factory=None,
+            synchronize=None,
+            stream_resolver=None,
+            enabled=False,
+        )
 
     def _require_mutable(self) -> None:
         if self._finalized is not None:
@@ -258,6 +273,8 @@ class SynchronousCollectiveCensus:
         request_set_sha256: str,
         dispatch: str,
     ) -> None:
+        if not self.enabled:
+            return
         self._require_mutable()
         if self._active_step is not None:
             raise RuntimeError("collective census step is active")
@@ -305,6 +322,8 @@ class SynchronousCollectiveCensus:
         }
 
     def end_step(self, *, status: str = "completed") -> None:
+        if not self.enabled:
+            return
         if self._active_step is None:
             raise RuntimeError("collective census step is not active")
         if status not in {"completed", "failed"}:
@@ -318,6 +337,9 @@ class SynchronousCollectiveCensus:
 
     @contextmanager
     def layer(self, layer_index: int, layer_role: str):
+        if not self.enabled:
+            yield
+            return
         self._require_mutable()
         if (
             not isinstance(layer_index, int)
@@ -351,6 +373,8 @@ class SynchronousCollectiveCensus:
         source_rank: int | None,
         destination_rank: int | None,
     ):
+        if not self.enabled:
+            return call(tensor)
         self._require_mutable()
         row = self._prepare_record(
             site_role=site_role,
@@ -513,6 +537,17 @@ class SynchronousCollectiveCensus:
         self._collectives.append(row)
 
     def finalize(self, *, already_synchronized: bool = False) -> dict:
+        if not isinstance(already_synchronized, bool):
+            raise ValueError("already_synchronized must be a bool")
+        if not self.enabled:
+            return {
+                "schema": SCHEMA,
+                "rank": self.rank,
+                "enabled": False,
+                "finalization_status": "complete",
+                "steps": [],
+                "collectives": [],
+            }
         if self._active_step is not None or self._active_layer is not None:
             raise RuntimeError("cannot finalize an open census scope")
         if self._finalized is None:
@@ -526,6 +561,8 @@ class SynchronousCollectiveCensus:
             self._finalized = {
                 "schema": SCHEMA,
                 "rank": self.rank,
+                "enabled": True,
+                "finalization_status": "complete",
                 "source_revision": self.policy.source_revision,
                 "attempt": self.policy.attempt,
                 "workload": self.policy.workload,

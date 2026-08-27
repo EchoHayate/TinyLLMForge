@@ -57,6 +57,11 @@ from tinyvllm.engine.decode_internal_profiler import (
     DecodeInternalProfiler,
     run_profiled_step,
 )
+from tinyvllm.engine.synchronous_collective_census import (
+    CollectiveCensusPolicy,
+    SynchronousCollectiveCensus,
+    activate_synchronous_collective_census,
+)
 from tinyvllm.engine.decode_metadata_landing import (
     ReplayAwareDecodeMetadataArena,
     build_decode_metadata_plan,
@@ -2490,6 +2495,12 @@ class ModelRunner:
         )
         self._decode_internal_profile_enabled = False
         self._decode_internal_profile_label = "disabled"
+        self.synchronous_collective_census = (
+            SynchronousCollectiveCensus.disabled(rank=rank)
+        )
+        self._synchronous_collective_census_policy = {
+            "enabled": False,
+        }
         self.hybrid_state_runtime_bridge = None
         self._last_hybrid_state_slot_ids = None
         self.qwen35_hybrid_model_owner = None
@@ -3946,6 +3957,9 @@ class ModelRunner:
             "configure_decode_internal_profile",
             "reset_decode_internal_profile",
             "finalize_decode_internal_profile",
+            "configure_synchronous_collective_census",
+            "reset_synchronous_collective_census",
+            "finalize_synchronous_collective_census",
         )
         if self.command_timeline.enabled and not management_method:
             trace_context = self._active_command_timeline_trace()
@@ -10743,6 +10757,111 @@ class ModelRunner:
             already_synchronized=already_synchronized,
         )
 
+    def configure_synchronous_collective_census(self, policy):
+        if not isinstance(policy, dict):
+            raise ValueError(
+                "synchronous collective census policy must be a dict"
+            )
+        enabled = policy.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                "synchronous collective census enabled must be a boolean"
+            )
+        if not enabled:
+            if set(policy) != {"enabled"}:
+                raise ValueError(
+                    "disabled synchronous collective census policy "
+                    "contains unexpected fields"
+                )
+            census = SynchronousCollectiveCensus.disabled(rank=self.rank)
+            stored_policy = {"enabled": False}
+            sample_budget = 0
+            cohort_count = 0
+        else:
+            expected_fields = {
+                "enabled",
+                "sample_budget",
+                "cohort_count",
+                "expected_collective_count",
+                "source_revision",
+                "attempt",
+                "workload",
+                "repetition",
+            }
+            if set(policy) != expected_fields:
+                raise ValueError(
+                    "synchronous collective census policy fields mismatch"
+                )
+            census_policy = CollectiveCensusPolicy(
+                **{
+                    key: policy[key]
+                    for key in expected_fields
+                    if key != "enabled"
+                }
+            )
+
+            def stream_resolver():
+                stream = torch.cuda.current_stream()
+                return (
+                    f"cuda:{stream.device.index}:stream:"
+                    f"{int(stream.cuda_stream)}"
+                )
+
+            census = SynchronousCollectiveCensus(
+                rank=self.rank,
+                policy=census_policy,
+                event_factory=lambda: torch.cuda.Event(
+                    enable_timing=True,
+                ),
+                synchronize=torch.cuda.synchronize,
+                stream_resolver=stream_resolver,
+            )
+            stored_policy = dict(policy)
+            sample_budget = census_policy.sample_budget
+            cohort_count = census_policy.cohort_count
+        self.synchronous_collective_census = census
+        self._synchronous_collective_census_policy = stored_policy
+        return {
+            "rank": self.rank,
+            "enabled": enabled,
+            "sample_budget": sample_budget,
+            "cohort_count": cohort_count,
+        }
+
+    def reset_synchronous_collective_census(self):
+        return self.configure_synchronous_collective_census(
+            dict(self._synchronous_collective_census_policy)
+        )
+
+    def finalize_synchronous_collective_census(
+        self,
+        already_synchronized=False,
+        already_synchronized_rank=None,
+    ):
+        if not isinstance(already_synchronized, bool):
+            raise ValueError("already_synchronized must be a bool")
+        if already_synchronized_rank is not None:
+            if (
+                isinstance(already_synchronized_rank, bool)
+                or not isinstance(already_synchronized_rank, int)
+                or already_synchronized_rank < 0
+                or already_synchronized_rank >= self.world_size
+            ):
+                raise ValueError(
+                    "already_synchronized_rank must be a valid rank or None"
+                )
+            if already_synchronized:
+                raise ValueError(
+                    "already_synchronized and "
+                    "already_synchronized_rank are mutually exclusive"
+                )
+            already_synchronized = (
+                self.rank == already_synchronized_rank
+            )
+        return self.synchronous_collective_census.finalize(
+            already_synchronized=already_synchronized,
+        )
+
     def run(self, seqs:list[Sequence], is_prefill: bool, do_sample: bool = True,
             batch_kind: str | None = None,
             released_hybrid_state_leases: tuple[HybridStateLease, ...] = (),
@@ -10773,28 +10892,33 @@ class ModelRunner:
                 for seq in seqs
             )
         )
-        return run_profiled_step(
-            self.decode_internal_profiler,
-            batch_kind=(
-                batch_kind
-                or ("prefill" if is_prefill else "decode")
-            ),
-            is_decode=is_decode,
-            active_sequence_count=len(seqs),
-            request_set_sha256=request_set_sha256,
-            dispatch=(
-                "eager"
-                if is_prefill or len(seqs) > 1 or self.enforce_eager
-                else "graph_or_eager"
-            ),
-            call=lambda: self._run_model_step(
-                seqs,
-                is_prefill,
-                do_sample,
-                batch_kind,
-                released_hybrid_state_leases,
-            ),
-        )
+        with activate_synchronous_collective_census(
+            self.synchronous_collective_census
+        ):
+            return run_profiled_step(
+                self.decode_internal_profiler,
+                batch_kind=(
+                    batch_kind
+                    or ("prefill" if is_prefill else "decode")
+                ),
+                is_decode=is_decode,
+                active_sequence_count=len(seqs),
+                request_set_sha256=request_set_sha256,
+                dispatch=(
+                    "eager"
+                    if is_prefill
+                    or len(seqs) > 1
+                    or self.enforce_eager
+                    else "graph_or_eager"
+                ),
+                call=lambda: self._run_model_step(
+                    seqs,
+                    is_prefill,
+                    do_sample,
+                    batch_kind,
+                    released_hybrid_state_leases,
+                ),
+            )
 
     @torch.inference_mode()
     def capture_cudagraph(self):

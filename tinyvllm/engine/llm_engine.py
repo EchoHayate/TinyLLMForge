@@ -1227,6 +1227,172 @@ class LLMEngine:
             "ranks": [rows[rank] for rank in expected],
         }
 
+    def configure_synchronous_collective_census(
+        self,
+        policy,
+        *,
+        timeout_s,
+    ):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "configure_synchronous_collective_census",
+                policy,
+                timeout_s=timeout_s,
+            )
+        )
+        ranked = [(0, local_result)]
+        ranked.extend(
+            (ack.rank, ack.result)
+            for ack in worker_acks
+        )
+        expected_fields = {
+            "rank",
+            "enabled",
+            "sample_budget",
+            "cohort_count",
+        }
+        rows = {}
+        reference = None
+        for outer_rank, row in ranked:
+            if (
+                not isinstance(row, dict)
+                or set(row) != expected_fields
+                or row.get("rank") != outer_rank
+                or outer_rank in rows
+            ):
+                raise RuntimeError(
+                    "synchronous collective census configuration "
+                    "acknowledgement is invalid"
+                )
+            non_rank = {
+                key: value
+                for key, value in row.items()
+                if key != "rank"
+            }
+            if reference is None:
+                reference = non_rank
+            elif non_rank != reference:
+                raise RuntimeError(
+                    "synchronous collective census ranks disagree"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise RuntimeError(
+                "synchronous collective census ranks are incomplete"
+            )
+        return dict(reference) | {
+            "rank_inventory": list(expected),
+        }
+
+    def reset_synchronous_collective_census(self, *, timeout_s):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "reset_synchronous_collective_census",
+                timeout_s=timeout_s,
+            )
+        )
+        ranked = [(0, local_result)]
+        ranked.extend(
+            (ack.rank, ack.result)
+            for ack in worker_acks
+        )
+        expected_fields = {
+            "rank",
+            "enabled",
+            "sample_budget",
+            "cohort_count",
+        }
+        rows = {}
+        reference = None
+        for outer_rank, row in ranked:
+            if (
+                not isinstance(row, dict)
+                or set(row) != expected_fields
+                or row.get("rank") != outer_rank
+                or outer_rank in rows
+            ):
+                raise RuntimeError(
+                    "synchronous collective census reset "
+                    "acknowledgement is invalid"
+                )
+            non_rank = {
+                key: value
+                for key, value in row.items()
+                if key != "rank"
+            }
+            if reference is None:
+                reference = non_rank
+            elif non_rank != reference:
+                raise RuntimeError(
+                    "synchronous collective census reset ranks disagree"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise RuntimeError(
+                "synchronous collective census reset ranks are incomplete"
+            )
+        return tuple(rows[rank] for rank in expected)
+
+    def finalize_synchronous_collective_census(
+        self,
+        *,
+        already_synchronized=False,
+        already_synchronized_rank=None,
+        timeout_s,
+    ):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "finalize_synchronous_collective_census",
+                already_synchronized,
+                already_synchronized_rank,
+                timeout_s=timeout_s,
+            )
+        )
+        ranked = [(0, local_result)]
+        ranked.extend(
+            (ack.rank, ack.result)
+            for ack in worker_acks
+        )
+        rows = {}
+        enabled = None
+        for outer_rank, row in ranked:
+            if (
+                not isinstance(row, dict)
+                or row.get("schema")
+                != "tinyllmforge.synchronous-collective-census.v1"
+                or row.get("rank") != outer_rank
+                or not isinstance(row.get("enabled"), bool)
+                or row.get("finalization_status") != "complete"
+                or not isinstance(row.get("steps"), list)
+                or not isinstance(row.get("collectives"), list)
+                or outer_rank in rows
+            ):
+                raise RuntimeError(
+                    "synchronous collective census finalization "
+                    "acknowledgement is invalid"
+                )
+            if enabled is None:
+                enabled = row["enabled"]
+            elif enabled is not row["enabled"]:
+                raise RuntimeError(
+                    "synchronous collective census enabled state "
+                    "disagrees across ranks"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise RuntimeError(
+                "synchronous collective census finalization ranks "
+                "are incomplete"
+            )
+        return {
+            "enabled": enabled,
+            "rank_inventory": list(expected),
+            "ranks": [rows[rank] for rank in expected],
+        }
+
     def _collect_qwen35_recurrent_capture_rows(
         self,
         method_name,
