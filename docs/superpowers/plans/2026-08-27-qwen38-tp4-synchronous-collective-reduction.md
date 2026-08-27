@@ -128,7 +128,8 @@ JSONL evidence, SSH, NVIDIA NVML/nvidia-smi, Git.
 
 - Produces:
   `CollectiveCensusPolicy(sample_budget: int, cohort_count: int,
-  source_revision: str, attempt: str, workload: str, repetition: int)`.
+  expected_collective_count: int, source_revision: str, attempt: str,
+  workload: str, repetition: int)`.
 - Produces:
   `SynchronousCollectiveCensus(rank, policy, event_factory, synchronize,
   stream_resolver)`.
@@ -144,6 +145,7 @@ def test_policy_selects_a_stable_bounded_cohort():
     policy = CollectiveCensusPolicy(
         sample_budget=8,
         cohort_count=17,
+        expected_collective_count=130,
         source_revision="a" * 40,
         attempt="attempt-r1",
         workload="P0",
@@ -170,6 +172,7 @@ def test_policy_rejects_unsupported_event_budget(budget):
         CollectiveCensusPolicy(
             sample_budget=budget,
             cohort_count=17,
+            expected_collective_count=130,
             source_revision="a" * 40,
             attempt="attempt-r1",
             workload="P0",
@@ -198,6 +201,7 @@ Implement these exact public types:
 class CollectiveCensusPolicy:
     sample_budget: int
     cohort_count: int
+    expected_collective_count: int
     source_revision: str
     attempt: str
     workload: str
@@ -213,15 +217,24 @@ class CollectiveCensusPolicy:
             f"{self.source_revision}\0{self.attempt}\0"
             f"{self.workload}\0{self.repetition}\0{decode_ordinal}"
         ).encode("utf-8")
-        start = int.from_bytes(
+        cohort = int.from_bytes(
             hashlib.sha256(seed).digest()[:8],
             "big",
-        ) % collective_count
+        ) % self.cohort_count
+        cohort_width = math.ceil(
+            self.expected_collective_count / self.cohort_count
+        )
+        start = (
+            cohort * cohort_width
+        ) % self.expected_collective_count
         return tuple(
             sorted(
-                (start + offset) % collective_count
+                (start + offset) % self.expected_collective_count
                 for offset in range(
-                    min(self.sample_budget, collective_count)
+                    min(
+                        self.sample_budget,
+                        self.expected_collective_count,
+                    )
                 )
             )
         )
@@ -718,6 +731,7 @@ The policy payload schema is:
     "enabled": True,
     "sample_budget": 8,
     "cohort_count": 17,
+    "expected_collective_count": 130,
     "source_revision": "a" * 40,
     "attempt": "attempt-r1",
     "workload": "P0",
