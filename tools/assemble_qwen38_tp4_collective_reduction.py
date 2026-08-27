@@ -462,13 +462,21 @@ def _validate_resource_samples(resource_samples, case_ids, gpu_topology):
     by_case = {}
     normalized = []
     for sample in resource_samples:
+        owned_pids = sample.get("owned_pids")
         if (
             not isinstance(sample, dict)
             or sample.get("case_id") not in case_ids
             or sample["case_id"] in by_case
+            or not isinstance(owned_pids, list)
+            or any(
+                type(pid) is not int or pid <= 0
+                for pid in owned_pids
+            )
+            or len(owned_pids) != len(set(owned_pids))
             or not isinstance(sample.get("selected_gpus"), list)
         ):
             raise ValueError("resource sample inventory is invalid")
+        owned_pid_set = set(owned_pids)
         gpu_rows = sample["selected_gpus"]
         observed = {
             (row.get("gpu_index"), row.get("gpu_uuid"))
@@ -479,9 +487,18 @@ def _validate_resource_samples(resource_samples, case_ids, gpu_topology):
             len(gpu_rows) != 4
             or observed != expected_gpus
             or any(
-                row.get("memory_used_mib", 1025) > 1024
-                or row.get("utilization_percent", 6) > 5
-                or row.get("compute_processes") != []
+                not isinstance(row, dict)
+                or type(row.get("memory_used_mib")) is not int
+                or row["memory_used_mib"] < 0
+                or type(row.get("utilization_percent")) is not int
+                or not 0 <= row["utilization_percent"] <= 100
+                or not isinstance(row.get("compute_processes"), list)
+                or any(
+                    not isinstance(process, dict)
+                    or type(process.get("pid")) is not int
+                    or process["pid"] not in owned_pid_set
+                    for process in row["compute_processes"]
+                )
                 for row in gpu_rows
             )
         ):

@@ -109,6 +109,27 @@ def test_independent_verifier_reconstructs_classification_and_manifest(
     assert "independent_verification.json" in manifest["artifacts"]
 
 
+def test_independent_verifier_accepts_active_owned_gpu_processes(
+    tmp_path,
+):
+    inputs = _inputs()
+    for sample in inputs["resource_samples"]:
+        sample["owned_pids"] = [101, 102, 103, 104]
+        for offset, row in enumerate(sample["selected_gpus"]):
+            row["memory_used_mib"] = 20_000 + offset
+            row["utilization_percent"] = 80 + offset
+            row["compute_processes"] = [{
+                "pid": 101 + offset,
+                "process_name": "python",
+                "used_memory_mib": 20_000 + offset,
+            }]
+    assemble_bundle(output_root=tmp_path, **inputs)
+
+    result = verify_bundle(tmp_path)
+
+    assert result["status"] == "PASS"
+
+
 def test_independent_verifier_does_not_import_producer_assembler():
     source = inspect.getsource(verifier_module)
 
@@ -261,10 +282,13 @@ def test_verifier_rejects_every_evidence_authority_mutation(tmp_path):
             lambda: _mutate_jsonl(
                 tmp_path,
                 "resource_samples.jsonl",
-                lambda rows: rows[0]["selected_gpus"][0].__setitem__(
-                    "memory_used_mib",
-                    1025,
-                ),
+                lambda rows: rows[0]["selected_gpus"][0][
+                    "compute_processes"
+                ].append({
+                    "pid": 999,
+                    "process_name": "foreign",
+                    "used_memory_mib": 1,
+                }),
             ),
         ),
         (

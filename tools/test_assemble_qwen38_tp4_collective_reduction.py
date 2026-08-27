@@ -258,6 +258,7 @@ def _inputs():
         "resource_samples": [
             {
                 "case_id": case["case_id"],
+                "owned_pids": [],
                 "selected_gpus": [
                     {
                         "gpu_index": row["gpu_index"],
@@ -322,6 +323,38 @@ def test_assembler_rejects_incomplete_or_divergent_cases(
         snapshot["collectives"][7]["tensor_bytes"] += 2
 
     with pytest.raises(ValueError):
+        assemble_bundle(output_root=tmp_path, **inputs)
+
+
+def test_assembler_accepts_active_owned_gpu_processes(tmp_path):
+    inputs = _inputs()
+    for sample in inputs["resource_samples"]:
+        sample["owned_pids"] = [101, 102, 103, 104]
+        for offset, row in enumerate(sample["selected_gpus"]):
+            row["memory_used_mib"] = 20_000 + offset
+            row["utilization_percent"] = 80 + offset
+            row["compute_processes"] = [{
+                "pid": 101 + offset,
+                "process_name": "python",
+                "used_memory_mib": 20_000 + offset,
+            }]
+
+    result = assemble_bundle(output_root=tmp_path, **inputs)
+
+    assert result["classification"] == "GO_SYNC_COLLECTIVE_REDUCTION"
+
+
+def test_assembler_rejects_foreign_gpu_process(tmp_path):
+    inputs = _inputs()
+    sample = inputs["resource_samples"][0]
+    sample["owned_pids"] = [101]
+    sample["selected_gpus"][0]["compute_processes"] = [{
+        "pid": 999,
+        "process_name": "foreign",
+        "used_memory_mib": 1,
+    }]
+
+    with pytest.raises(ValueError, match="resource identity"):
         assemble_bundle(output_root=tmp_path, **inputs)
 
 
