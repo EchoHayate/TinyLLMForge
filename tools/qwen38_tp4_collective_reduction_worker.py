@@ -102,7 +102,31 @@ def _validate_engine_ownership(engine) -> None:
         raise RuntimeError("TP4 engine ownership mismatch")
 
 
-def _case_rows(workloads, budgets):
+def collective_reduction_case_id(
+    *,
+    campaign_phase,
+    workload,
+    phase,
+    repetition,
+    budget,
+):
+    if campaign_phase not in {"calibration", "terminal"}:
+        raise ValueError("unknown campaign phase")
+    if workload not in WORKLOADS:
+        raise ValueError("unknown workload")
+    if phase not in {"warmup", "measured"}:
+        raise ValueError("unknown measurement phase")
+    if type(repetition) is not int or repetition < 0:
+        raise ValueError("invalid repetition")
+    if budget not in EVENT_BUDGETS:
+        raise ValueError("unsupported event budget")
+    return (
+        f"{campaign_phase}__{workload}__budget{budget}__"
+        f"{phase}__r{repetition}"
+    )
+
+
+def _case_rows(campaign_phase, workloads, budgets):
     rows = []
     for workload in workloads:
         family, prompt_tokens, output_tokens, concurrency = (
@@ -115,6 +139,7 @@ def _case_rows(workloads, budgets):
             ):
                 for repetition in repetitions:
                     rows.append({
+                        "campaign_phase": campaign_phase,
                         "workload": workload,
                         "workload_family": family,
                         "phase": phase,
@@ -134,10 +159,12 @@ def build_collective_reduction_cases(*, selected_budget: int):
         )
     return {
         "calibration": _case_rows(
+            "calibration",
             CALIBRATION_WORKLOADS,
             EVENT_BUDGETS,
         ),
         "terminal": _case_rows(
+            "terminal",
             TERMINAL_WORKLOADS,
             (selected_budget,),
         ),
@@ -321,7 +348,9 @@ def run_collective_reduction_pair(
     engine,
     attempt: str,
     source_revision: str,
+    campaign_phase: str,
     workload: str,
+    phase: str,
     repetition: int,
     budget: int,
     timeout_s: float,
@@ -369,13 +398,19 @@ def run_collective_reduction_pair(
     return {
         "schema_version": WORKER_SCHEMA,
         "classification": "PASS",
-        "case_id": (
-            f"{workload}__budget{budget}__r{repetition}"
+        "case_id": collective_reduction_case_id(
+            campaign_phase=campaign_phase,
+            workload=workload,
+            phase=phase,
+            repetition=repetition,
+            budget=budget,
         ),
         "attempt": attempt,
         "source_revision": source_revision,
+        "campaign_phase": campaign_phase,
         "workload": workload,
         "workload_family": WORKLOADS[workload][0],
+        "phase": phase,
         "repetition": repetition,
         "budget": budget,
         "arm_order": list(arm_order),

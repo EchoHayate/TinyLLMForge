@@ -145,6 +145,29 @@ def test_build_cases_freezes_calibration_and_terminal_matrix():
     } == {16}
 
 
+def test_build_cases_assigns_unique_artifact_identity_to_every_case():
+    worker = _load()
+    cases = worker.build_collective_reduction_cases(
+        selected_budget=16
+    )
+    rows = cases["calibration"] + cases["terminal"]
+    identities = {
+        worker.collective_reduction_case_id(**{
+            key: row[key]
+            for key in (
+                "campaign_phase",
+                "workload",
+                "phase",
+                "repetition",
+                "budget",
+            )
+        })
+        for row in rows
+    }
+
+    assert len(identities) == len(rows)
+
+
 def test_worker_preserves_exact_request_outputs_across_pair():
     worker = _load()
     engine = _FakeEngine({
@@ -155,7 +178,9 @@ def test_worker_preserves_exact_request_outputs_across_pair():
         engine=engine,
         attempt="attempt-r1",
         source_revision="a" * 40,
+        campaign_phase="calibration",
         workload="P0",
+        phase="measured",
         repetition=0,
         budget=8,
         timeout_s=30.0,
@@ -183,7 +208,9 @@ def test_worker_rejects_output_mismatch_and_closes_once():
             attempt="attempt-r1",
             source_revision="a" * 40,
             cases=[{
+                "campaign_phase": "calibration",
                 "workload": "P0",
+                "phase": "measured",
                 "repetition": 0,
                 "budget": 8,
             }],
@@ -208,7 +235,9 @@ def test_campaign_streams_full_cases_and_retains_bounded_receipts():
         attempt="attempt-r1",
         source_revision="a" * 40,
         cases=[{
+            "campaign_phase": "calibration",
             "workload": "P0",
+            "phase": "measured",
             "repetition": 0,
             "budget": 0,
         }],
@@ -222,7 +251,7 @@ def test_campaign_streams_full_cases_and_retains_bounded_receipts():
     assert len(streamed) == 1
     assert "arms" in streamed[0]
     assert result["cases"] == [{
-        "case_id": "P0__budget0__r0",
+        "case_id": "calibration__P0__budget0__measured__r0",
         "classification": "PASS",
         "budget": 0,
     }]
