@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, ExitStack, nullcontext
 from contextvars import ContextVar
 import copy
 import sys
@@ -36,6 +36,22 @@ def active_decode_internal_profiler():
     return _ACTIVE_PROFILER.get()
 
 
+def _synchronous_collective_census_module():
+    return (
+        sys.modules.get(
+            "tinyvllm.engine.synchronous_collective_census"
+        )
+        or sys.modules.get("synchronous_collective_census")
+    )
+
+
+def _active_synchronous_collective_census():
+    module = _synchronous_collective_census_module()
+    if module is None:
+        return None
+    return module.active_synchronous_collective_census()
+
+
 def _active_model_runner_command_trace():
     module = sys.modules.get(
         "tinyvllm.engine.model_runner_command_timeline"
@@ -57,10 +73,18 @@ def _active_cuda_stream_identity():
 
 
 def profile_layer(layer_index, layer_role):
+    stack = ExitStack()
     profiler = active_decode_internal_profiler()
-    if profiler is None:
-        return nullcontext()
-    return profiler.layer(layer_index, layer_role)
+    if profiler is not None:
+        stack.enter_context(
+            profiler.layer(layer_index, layer_role)
+        )
+    module = _synchronous_collective_census_module()
+    if module is not None:
+        stack.enter_context(
+            module.census_layer(layer_index, layer_role)
+        )
+    return stack
 
 
 def profile_operation(operation_class, operation_name, *, tensor=None):
@@ -79,27 +103,49 @@ def profile_collective(
     tensor,
     call,
     *,
+    site_role=None,
     collective_kind=None,
     process_group=None,
+    execution_phase="decode",
     async_mode=False,
+    source_rank=None,
+    destination_rank=None,
     source_stream=None,
     completion_stream=None,
 ):
     if not isinstance(async_mode, bool) or async_mode:
         raise ValueError("async_mode must be False")
     profiler = active_decode_internal_profiler()
-    if profiler is None:
-        return call(tensor)
-    with profiler.collective(
-        operation,
-        tensor,
+
+    def profiled_call(value):
+        if profiler is None:
+            return call(value)
+        with profiler.collective(
+            operation,
+            value,
+            collective_kind=collective_kind,
+            process_group=process_group,
+            async_mode=async_mode,
+            source_stream=source_stream,
+            completion_stream=completion_stream,
+        ):
+            return call(value)
+
+    module = _synchronous_collective_census_module()
+    if module is None:
+        return profiled_call(tensor)
+    return module.observe_synchronous_collective(
+        site_role=site_role,
+        operation=operation,
+        tensor=tensor,
+        call=profiled_call,
         collective_kind=collective_kind,
         process_group=process_group,
+        execution_phase=execution_phase,
         async_mode=async_mode,
-        source_stream=source_stream,
-        completion_stream=completion_stream,
-    ):
-        return call(tensor)
+        source_rank=source_rank,
+        destination_rank=destination_rank,
+    )
 
 
 def run_profiled_step(
@@ -119,10 +165,31 @@ def run_profiled_step(
         request_set_sha256=request_set_sha256,
         dispatch=dispatch,
     )
+    census = _active_synchronous_collective_census()
+    if census is not None:
+        try:
+            census.begin_step(
+                batch_kind=batch_kind,
+                is_decode=is_decode,
+                active_sequence_count=active_sequence_count,
+                request_set_sha256=request_set_sha256,
+                dispatch=dispatch,
+            )
+        except BaseException:
+            profiler.end_step()
+            raise
+    status = "completed"
     try:
         return call()
+    except BaseException:
+        status = "failed"
+        raise
     finally:
-        profiler.end_step()
+        try:
+            if census is not None:
+                census.end_step(status=status)
+        finally:
+            profiler.end_step()
 
 
 class DecodeInternalProfiler:

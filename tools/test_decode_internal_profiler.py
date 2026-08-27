@@ -14,6 +14,9 @@ MODULE_PATH = (
 COMMAND_TIMELINE_MODULE_PATH = (
     ROOT / "tinyvllm/engine/model_runner_command_timeline.py"
 )
+CENSUS_MODULE_PATH = (
+    ROOT / "tinyvllm/engine/synchronous_collective_census.py"
+)
 
 
 def _load():
@@ -29,8 +32,23 @@ def _load():
 
 profiler_module = _load()
 DecodeInternalProfiler = profiler_module.DecodeInternalProfiler
+profile_layer = profiler_module.profile_layer
 profile_collective = profiler_module.profile_collective
 run_profiled_step = profiler_module.run_profiled_step
+
+
+def _load_census():
+    spec = importlib.util.spec_from_file_location(
+        "tinyvllm.engine.synchronous_collective_census",
+        CENSUS_MODULE_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+census_module = _load_census()
 
 
 def _load_command_timeline():
@@ -664,3 +682,124 @@ def test_run_profiled_step_closes_step_on_success_and_failure():
             call=lambda: (_ for _ in ()).throw(ValueError("boom")),
         )
     assert len(failing.finalize()["steps"]) == 1
+
+
+def _census():
+    return census_module.SynchronousCollectiveCensus(
+        rank=2,
+        policy=census_module.CollectiveCensusPolicy(
+            sample_budget=8,
+            cohort_count=1,
+            expected_collective_count=8,
+            source_revision="a" * 40,
+            attempt="attempt-r1",
+            workload="P0",
+            repetition=0,
+        ),
+        event_factory=FakeEvents([1.0, 1.25]),
+        synchronize=lambda: None,
+        stream_resolver=lambda: "cuda:2:stream:7",
+    )
+
+
+def test_profile_collective_composes_profiler_and_census_once():
+    profiler, _ = _profiler(
+        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+    )
+    census = _census()
+    calls = []
+
+    def execute():
+        with profile_layer(3, "full_attention"):
+            return profile_collective(
+                "row_parallel_all_reduce",
+                FakeTensor(),
+                lambda tensor: calls.append(tensor) or "done",
+                site_role="row_parallel_output",
+                collective_kind="all_reduce",
+                process_group="tensor_parallel",
+            )
+
+    with census_module.activate_synchronous_collective_census(census):
+        result = run_profiled_step(
+            profiler,
+            batch_kind="decode",
+            is_decode=True,
+            active_sequence_count=1,
+            request_set_sha256="a" * 64,
+            dispatch="eager",
+            call=execute,
+        )
+
+    assert result == "done"
+    assert len(calls) == 1
+    assert len(profiler.finalize()["collectives"]) == 1
+    assert len(census.finalize()["collectives"]) == 1
+
+
+def test_profile_collective_composition_preserves_exception_identity():
+    profiler, _ = _profiler(
+        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+    )
+    census = _census()
+    calls = []
+    error = RuntimeError("collective failed")
+
+    def fail(tensor):
+        calls.append(tensor)
+        raise error
+
+    def execute():
+        with profile_layer(3, "mlp"):
+            return profile_collective(
+                "row_parallel_all_reduce",
+                FakeTensor(),
+                fail,
+                site_role="row_parallel_output",
+                collective_kind="all_reduce",
+                process_group="tensor_parallel",
+            )
+
+    with census_module.activate_synchronous_collective_census(census):
+        with pytest.raises(RuntimeError) as exc_info:
+            run_profiled_step(
+                profiler,
+                batch_kind="decode",
+                is_decode=True,
+                active_sequence_count=1,
+                request_set_sha256="a" * 64,
+                dispatch="eager",
+                call=execute,
+            )
+
+    assert exc_info.value is error
+    assert len(calls) == 1
+    assert len(profiler.finalize()["collectives"]) == 1
+    assert census.finalize()["collectives"][0]["status"] == "failed"
+
+
+def test_existing_profiler_snapshot_schema_is_unchanged():
+    profiler, _ = _profiler([0.0, 1.0])
+    run_profiled_step(
+        profiler,
+        batch_kind="decode",
+        is_decode=True,
+        active_sequence_count=1,
+        request_set_sha256="a" * 64,
+        dispatch="eager",
+        call=lambda: None,
+    )
+
+    assert set(profiler.finalize()) == {
+        "rank",
+        "enabled",
+        "finalization_status",
+        "steps",
+        "layers",
+        "operations",
+        "collectives",
+        "dropped_steps",
+        "dropped_layers",
+        "dropped_operations",
+        "dropped_collectives",
+    }
