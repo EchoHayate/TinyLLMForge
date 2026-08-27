@@ -119,7 +119,10 @@ def build_attempt_plan(
     paths = {
         "attempt_root": attempt_root,
         "source_root": f"{attempt_root}/source",
-        "model_root": f"{remote_root}/models/{model_revision}",
+        "model_root": (
+            f"{remote_root}/models/Qwen3.8-27B/"
+            f"snapshots/{model_revision}"
+        ),
         "case_root": f"{attempt_root}/cases",
         "bundle_root": f"{attempt_root}/final_bundle",
         "controller_log_path": (
@@ -145,10 +148,8 @@ def build_attempt_plan(
         f"{attempt_root}/worker.json",
         "--output-dir",
         paths["case_root"],
-        "--selected-budget",
-        "16",
         "--phase",
-        "calibration",
+        "full",
     ]
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
@@ -176,7 +177,7 @@ def build_attempt_plan(
                 ],
             },
             {
-                "purpose": "run calibration worker",
+                "purpose": "run qualification worker",
                 "argv": worker_argv,
             },
             {
@@ -491,7 +492,8 @@ def main(
         raise ValueError("CLI query dependency is invalid")
 
     model_root = (
-        f"{args.remote_root}/models/{args.model_revision}"
+        f"{args.remote_root}/models/Qwen3.8-27B/"
+        f"snapshots/{args.model_revision}"
     )
     attempt_root = (
         f"{args.remote_root}/attempts/{args.attempt_tag}"

@@ -8,15 +8,18 @@ from itertools import count
 import json
 import os
 from pathlib import Path
+from statistics import median
 import tempfile
 import time
 
 if __package__:
+    from tools.qwen38_collective_reduction import select_event_budget
     from tools.qwen38_tp4_communication_profile_worker import (
         WORKLOADS,
         build_request_specs,
     )
 else:
+    from qwen38_collective_reduction import select_event_budget
     from qwen38_tp4_communication_profile_worker import (
         WORKLOADS,
         build_request_specs,
@@ -491,6 +494,146 @@ def run_collective_reduction_campaign(
     }
 
 
+def select_event_budget_from_cases(cases):
+    grouped = {budget: [] for budget in EVENT_BUDGETS}
+    identities = {budget: set() for budget in EVENT_BUDGETS}
+    for case in cases:
+        if (
+            not isinstance(case, dict)
+            or case.get("campaign_phase") != "calibration"
+            or case.get("phase") != "measured"
+            or case.get("budget") not in EVENT_BUDGETS
+        ):
+            continue
+        arms = case.get("arms")
+        if (
+            not isinstance(arms, list)
+            or {row.get("arm") for row in arms} != {
+                "control",
+                "instrumented",
+            }
+        ):
+            raise ValueError("calibration case arms are invalid")
+        by_arm = {row["arm"]: row for row in arms}
+        control = by_arm["control"].get("decode_time_ns")
+        instrumented = by_arm["instrumented"].get("decode_time_ns")
+        if (
+            isinstance(control, bool)
+            or not isinstance(control, (int, float))
+            or control <= 0
+            or isinstance(instrumented, bool)
+            or not isinstance(instrumented, (int, float))
+            or instrumented <= 0
+        ):
+            raise ValueError("calibration timing is invalid")
+        budget = case["budget"]
+        identity = (case.get("workload"), case.get("repetition"))
+        if identity in identities[budget]:
+            raise ValueError("calibration case identity is duplicated")
+        identities[budget].add(identity)
+        grouped[budget].append(instrumented / control - 1.0)
+    expected_identities = {
+        (workload, repetition)
+        for workload in CALIBRATION_WORKLOADS
+        for repetition in range(5)
+    }
+    if any(
+        identities[budget] != expected_identities
+        for budget in EVENT_BUDGETS
+    ):
+        raise ValueError("calibration case coverage is incomplete")
+    return select_event_budget([
+        {
+            "budget": budget,
+            "median_overhead_ratio": median(grouped[budget]),
+            "maximum_overhead_ratio": max(grouped[budget]),
+        }
+        for budget in EVENT_BUDGETS
+    ])
+
+
+def run_full_collective_reduction_campaign(
+    *,
+    attempt,
+    source_revision,
+    model_root,
+    timeout_s,
+    engine_factory=_default_engine_factory,
+    sampling_params_factory=_default_sampling_params_factory,
+    clock_ns=time.monotonic_ns,
+    reset_sequence_ids=_reset_sequence_ids,
+    case_sink=None,
+    phase_runner=run_collective_reduction_campaign,
+    case_matrix_builder=build_collective_reduction_cases,
+    budget_selector=select_event_budget_from_cases,
+    pid_resolver=os.getpid,
+):
+    calibration_rows = []
+
+    def calibration_sink(row):
+        calibration_rows.append(dict(row))
+        if case_sink is not None:
+            case_sink(row)
+
+    matrix = case_matrix_builder(16)
+    calibration = phase_runner(
+        attempt=attempt,
+        source_revision=source_revision,
+        cases=matrix["calibration"],
+        model_root=model_root,
+        timeout_s=timeout_s,
+        engine_factory=engine_factory,
+        sampling_params_factory=sampling_params_factory,
+        clock_ns=clock_ns,
+        reset_sequence_ids=reset_sequence_ids,
+        case_sink=calibration_sink,
+    )
+    selected_budget = budget_selector(calibration_rows)
+    phase_results = [calibration]
+    if selected_budget is not None:
+        terminal = phase_runner(
+            attempt=attempt,
+            source_revision=source_revision,
+            cases=case_matrix_builder(selected_budget)["terminal"],
+            model_root=model_root,
+            timeout_s=timeout_s,
+            engine_factory=engine_factory,
+            sampling_params_factory=sampling_params_factory,
+            clock_ns=clock_ns,
+            reset_sequence_ids=reset_sequence_ids,
+            case_sink=case_sink,
+        )
+        phase_results.append(terminal)
+    if any(
+        not isinstance(result, dict)
+        or result.get("classification") != "PASS"
+        or result.get("attempt") != attempt
+        or result.get("source_revision") != source_revision
+        for result in phase_results
+    ):
+        raise RuntimeError("collective reduction phase failed")
+    owned_pid = pid_resolver()
+    if type(owned_pid) is not int or owned_pid <= 0:
+        raise RuntimeError("collective reduction worker PID is invalid")
+    return {
+        "schema_version": WORKER_SCHEMA,
+        "classification": "PASS",
+        "attempt": attempt,
+        "source_revision": source_revision,
+        "selected_budget": selected_budget,
+        "owned_pids": [owned_pid],
+        "cases": [
+            dict(case)
+            for result in phase_results
+            for case in result["cases"]
+        ],
+        "phase_cleanups": [
+            dict(result["cleanup"])
+            for result in phase_results
+        ],
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--attempt", required=True)
@@ -498,17 +641,14 @@ def main(argv=None) -> int:
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--selected-budget", type=int, required=True)
+    parser.add_argument("--selected-budget", type=int)
     parser.add_argument(
         "--phase",
-        choices=("calibration", "terminal"),
+        choices=("calibration", "terminal", "full"),
         required=True,
     )
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     args = parser.parse_args(argv)
-    cases = build_collective_reduction_cases(
-        selected_budget=args.selected_budget
-    )[args.phase]
 
     def write_case(case_result):
         _atomic_write_json(
@@ -516,18 +656,37 @@ def main(argv=None) -> int:
             case_result,
         )
 
-    result = run_collective_reduction_campaign(
-        attempt=args.attempt,
-        source_revision=args.source_revision,
-        cases=cases,
-        model_root=args.model_root,
-        timeout_s=args.timeout_s,
-        case_sink=write_case,
-    )
+    if args.phase == "full":
+        if args.selected_budget is not None:
+            parser.error("--selected-budget is invalid with --phase full")
+        result = run_full_collective_reduction_campaign(
+            attempt=args.attempt,
+            source_revision=args.source_revision,
+            model_root=args.model_root,
+            timeout_s=args.timeout_s,
+            case_sink=write_case,
+        )
+    else:
+        if args.selected_budget is None:
+            parser.error(
+                "--selected-budget is required for a single phase"
+            )
+        cases = build_collective_reduction_cases(
+            selected_budget=args.selected_budget
+        )[args.phase]
+        result = run_collective_reduction_campaign(
+            attempt=args.attempt,
+            source_revision=args.source_revision,
+            cases=cases,
+            model_root=args.model_root,
+            timeout_s=args.timeout_s,
+            case_sink=write_case,
+        )
     _atomic_write_json(args.output, result)
     print(json.dumps({
         "classification": result["classification"],
         "case_count": len(result["cases"]),
+        "selected_budget": result.get("selected_budget"),
         "output": str(args.output),
         "output_dir": str(args.output_dir),
     }, sort_keys=True))

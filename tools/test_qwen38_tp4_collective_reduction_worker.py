@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -258,6 +259,167 @@ def test_campaign_streams_full_cases_and_retains_bounded_receipts():
         "budget": 0,
     }]
     assert engine.exit_calls == 1
+
+
+def test_calibration_cases_select_largest_budget_within_overhead_limits():
+    worker = _load()
+    cases = []
+    for workload in ("P0", "P1", "Q1"):
+        for budget, instrumented_ns in (
+            (0, 1_000),
+            (8, 1_020),
+            (16, 1_029),
+            (32, 1_060),
+        ):
+            for repetition in range(5):
+                cases.append({
+                    "campaign_phase": "calibration",
+                    "workload": workload,
+                    "phase": "measured",
+                    "repetition": repetition,
+                    "budget": budget,
+                    "arms": [
+                        {
+                            "arm": "control",
+                            "decode_time_ns": 1_000,
+                        },
+                        {
+                            "arm": "instrumented",
+                            "decode_time_ns": instrumented_ns,
+                        },
+                    ],
+                })
+
+    assert worker.select_event_budget_from_cases(cases) == 16
+
+
+def test_full_campaign_merges_actual_phase_receipts():
+    worker = _load()
+    calibration_case = {
+        "campaign_phase": "calibration",
+        "workload": "P0",
+        "phase": "measured",
+        "repetition": 0,
+        "budget": 0,
+    }
+    terminal_case = {
+        "campaign_phase": "terminal",
+        "workload": "P0",
+        "phase": "measured",
+        "repetition": 0,
+        "budget": 16,
+    }
+    phase_results = iter((
+        {
+            "schema_version": worker.WORKER_SCHEMA,
+            "classification": "PASS",
+            "attempt": "attempt-r1",
+            "source_revision": "a" * 40,
+            "cases": [{
+                "case_id": (
+                    "calibration__P0__budget0__measured__r0"
+                ),
+                "classification": "PASS",
+                "budget": 0,
+            }],
+            "cleanup": {
+                "process_group_destroyed": True,
+                "rank_exit_codes": [0, 0, 0, 0],
+                "owned_children_remaining": [],
+            },
+        },
+        {
+            "schema_version": worker.WORKER_SCHEMA,
+            "classification": "PASS",
+            "attempt": "attempt-r1",
+            "source_revision": "a" * 40,
+            "cases": [{
+                "case_id": "terminal__P0__budget16__measured__r0",
+                "classification": "PASS",
+                "budget": 16,
+            }],
+            "cleanup": {
+                "process_group_destroyed": True,
+                "rank_exit_codes": [0, 0, 0, 0],
+                "owned_children_remaining": [],
+            },
+        },
+    ))
+    streamed = []
+
+    result = worker.run_full_collective_reduction_campaign(
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        model_root=Path("/model"),
+        timeout_s=30.0,
+        case_sink=streamed.append,
+        phase_runner=lambda **_kwargs: next(phase_results),
+        case_matrix_builder=lambda selected_budget: {
+            "calibration": (calibration_case,),
+            "terminal": (
+                terminal_case
+                if selected_budget == 16
+                else ()
+            ),
+        },
+        budget_selector=lambda _rows: 16,
+        pid_resolver=lambda: 4242,
+    )
+
+    assert result["classification"] == "PASS"
+    assert result["selected_budget"] == 16
+    assert result["owned_pids"] == [4242]
+    assert [row["case_id"] for row in result["cases"]] == [
+        "calibration__P0__budget0__measured__r0",
+        "terminal__P0__budget16__measured__r0",
+    ]
+    assert len(result["phase_cleanups"]) == 2
+
+
+def test_worker_cli_full_campaign_selects_budget_internally(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    worker = _load()
+    output = tmp_path / "worker.json"
+    output_dir = tmp_path / "cases"
+    calls = []
+    monkeypatch.setattr(
+        worker,
+        "run_full_collective_reduction_campaign",
+        lambda **kwargs: calls.append(kwargs) or {
+            "schema_version": worker.WORKER_SCHEMA,
+            "classification": "PASS",
+            "attempt": "attempt-r1",
+            "source_revision": "a" * 40,
+            "selected_budget": 16,
+            "owned_pids": [4242],
+            "cases": [],
+            "phase_cleanups": [],
+        },
+    )
+
+    return_code = worker.main([
+        "--attempt",
+        "attempt-r1",
+        "--source-revision",
+        "a" * 40,
+        "--model-root",
+        str(tmp_path / "model"),
+        "--output",
+        str(output),
+        "--output-dir",
+        str(output_dir),
+        "--phase",
+        "full",
+    ])
+
+    assert return_code == 0
+    assert len(calls) == 1
+    assert calls[0]["model_root"] == tmp_path / "model"
+    assert json.loads(output.read_text())["selected_budget"] == 16
+    assert json.loads(capsys.readouterr().out)["selected_budget"] == 16
 
 
 def test_worker_script_starts_from_an_unrelated_working_directory(

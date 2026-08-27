@@ -102,6 +102,15 @@ def test_plan_keeps_every_path_below_approved_remote_root():
     )
 
 
+def test_plan_uses_the_frozen_qwen38_snapshot_layout():
+    plan = _build_plan(model_revision="b" * 40)
+
+    assert plan["model_root"] == (
+        f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/"
+        f"snapshots/{'b' * 40}"
+    )
+
+
 def test_plan_contains_no_nsys_or_overlap_mechanism():
     encoded = json.dumps(_build_plan(), sort_keys=True).lower()
 
@@ -110,6 +119,18 @@ def test_plan_contains_no_nsys_or_overlap_mechanism():
     assert "communication_stream" not in encoded
     assert _build_plan()["overlap_design_authorized"] is False
     assert _build_plan()["async_collectives_authorized"] is False
+
+
+def test_plan_runs_the_self_selecting_full_worker():
+    commands = _build_plan()["remote_commands"]
+    worker = next(
+        row["argv"]
+        for row in commands
+        if row["purpose"] == "run qualification worker"
+    )
+
+    assert worker[worker.index("--phase") + 1] == "full"
+    assert "--selected-budget" not in worker
 
 
 def test_controller_plan_has_no_auth_or_signal_commands():
@@ -381,7 +402,10 @@ def test_cli_dry_run_performs_bounded_preflight_without_worker(capsys):
     events = []
     attempt = "20260827-qwen38-tp4-collective-reduction-r1"
     model_revision = "b" * 40
-    model_root = f"{APPROVED_REMOTE_ROOT}/models/{model_revision}"
+    model_root = (
+        f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/"
+        f"snapshots/{model_revision}"
+    )
     attempt_root = f"{APPROVED_REMOTE_ROOT}/attempts/{attempt}"
 
     return_code = main(
