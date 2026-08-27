@@ -11,10 +11,16 @@ from pathlib import Path
 import tempfile
 import time
 
-from tools.qwen38_tp4_communication_profile_worker import (
-    WORKLOADS,
-    build_request_specs,
-)
+if __package__:
+    from tools.qwen38_tp4_communication_profile_worker import (
+        WORKLOADS,
+        build_request_specs,
+    )
+else:
+    from qwen38_tp4_communication_profile_worker import (
+        WORKLOADS,
+        build_request_specs,
+    )
 
 
 WORKER_SCHEMA = "qwen38.tp4-collective-reduction-worker.v1"

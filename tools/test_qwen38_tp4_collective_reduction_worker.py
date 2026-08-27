@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -256,3 +258,21 @@ def test_campaign_streams_full_cases_and_retains_bounded_receipts():
         "budget": 0,
     }]
     assert engine.exit_calls == 1
+
+
+def test_worker_script_starts_from_an_unrelated_working_directory(
+    tmp_path,
+):
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [sys.executable, str(MODULE_PATH), "--help"],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
