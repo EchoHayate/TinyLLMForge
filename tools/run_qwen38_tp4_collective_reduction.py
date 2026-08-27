@@ -1096,7 +1096,10 @@ def main(
         local_verifier=local_verifier,
         cleanup_validator=cleanup_validator,
     )
-    if local_controller_root is not None and args.dry_run:
+    if (
+        local_controller_root is not None
+        and (args.plan_only or args.dry_run)
+    ):
         write_json_atomic(
             local_controller_root / "plan.json",
             plan,
@@ -1130,6 +1133,7 @@ def main(
                 ),
             },
         )
+    if local_controller_root is not None and args.dry_run:
         write_json_atomic(
             local_controller_root / "ssh_storage_preflight.json",
             {

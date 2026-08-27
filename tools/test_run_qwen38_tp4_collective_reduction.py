@@ -650,6 +650,81 @@ def test_cli_persists_successful_dry_run_preflight_receipts(
     assert payload["plan"]["attempt_tag"] == attempt
 
 
+def test_cli_plan_only_replaces_stale_local_plan_receipts(
+    tmp_path,
+    capsys,
+):
+    local_attempt_root = tmp_path / "attempt"
+    controller_root = local_attempt_root / "controller"
+    controller_root.mkdir(parents=True)
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    source_revision = "a" * 40
+    model_revision = "b" * 40
+    source_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=source_revision,
+        source_files={"tinyvllm/config.py": "c" * 64},
+    )
+    stale_plan = _build_plan(source_revision="d" * 40)
+    (controller_root / "plan.json").write_text(
+        json.dumps(stale_plan),
+        encoding="utf-8",
+    )
+    (controller_root / "plan_audit.json").write_text(
+        json.dumps(
+            {
+                "classification": "PASS",
+                "source_revision": "d" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    return_code = main(
+        [
+            "--attempt-tag",
+            attempt,
+            "--source-revision",
+            source_revision,
+            "--model-revision",
+            model_revision,
+            "--plan-only",
+            "--local-attempt-root",
+            str(local_attempt_root),
+        ],
+        source_identity_builder=lambda **_kwargs: source_identity,
+        path_state_query=lambda **_kwargs: _remote_query_state(
+            attempt=attempt,
+            model_revision=model_revision,
+        ),
+        inventory_query=lambda **_kwargs: [
+            _gpu(index) for index in range(4)
+        ],
+        gpu_monitor=lambda **_kwargs: pytest.fail(
+            "plan-only must not monitor GPUs"
+        ),
+        worker_runner=lambda _plan: pytest.fail(
+            "plan-only must not start a worker"
+        ),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    persisted_plan = json.loads(
+        (controller_root / "plan.json").read_text()
+    )
+    persisted_audit = json.loads(
+        (controller_root / "plan_audit.json").read_text()
+    )
+
+    assert return_code == 0
+    assert payload["classification"] == "PLAN_ONLY"
+    assert persisted_plan == payload["plan"]
+    assert persisted_plan["source_revision"] == source_revision
+    assert persisted_audit["classification"] == "PASS"
+    assert persisted_audit["source_revision"] == source_revision
+    assert persisted_audit["attempt_absent"] is True
+
+
 def test_cli_rejects_missing_model_identity_before_gpu_monitor():
     attempt = "20260827-qwen38-tp4-collective-reduction-r1"
     model_revision = "b" * 40
