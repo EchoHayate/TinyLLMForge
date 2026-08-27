@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
@@ -103,7 +104,7 @@ def parse_nsys_sqlite(
     rows_by_key, step_identities = _validate_structured_rows(
         structured_rows
     )
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.row_factory = sqlite3.Row
         _validate_schema(connection)
         strings = {

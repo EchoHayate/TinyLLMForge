@@ -357,6 +357,32 @@ def test_parse_nsys_sqlite_correlates_four_ranks_and_exact_unions(tmp_path):
     ]
 
 
+def test_parse_nsys_sqlite_closes_connection(tmp_path, monkeypatch):
+    path = tmp_path / "trace.sqlite"
+    _create_trace(path)
+    closed = []
+    original_connect = sqlite3.connect
+
+    class TrackingConnection(sqlite3.Connection):
+        def close(self):
+            closed.append(True)
+            return super().close()
+
+    def tracking_connect(*args, **kwargs):
+        return original_connect(
+            *args,
+            factory=TrackingConnection,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(intervals.sqlite3, "connect", tracking_connect)
+
+    result = intervals.parse_nsys_sqlite(path, _structured_rows())
+
+    assert result["classification"] == "COMPLETE"
+    assert closed == [True]
+
+
 def test_parse_nsys_sqlite_infers_rank_from_correlated_cuda_device(
     tmp_path,
 ):
