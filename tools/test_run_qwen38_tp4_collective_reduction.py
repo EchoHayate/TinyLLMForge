@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,7 @@ from tools.run_qwen38_tp4_collective_reduction import (
     build_attempt_plan,
     expected_case_ids,
     main,
+    query_remote_collective_path_state,
     run_attempt,
     select_strict_clean_gpus,
 )
@@ -70,6 +72,43 @@ def _worker_result(*, selected_budget=16, case_ids=None):
                 "owned_children_remaining": [],
             },
         ],
+    }
+
+
+def _remote_query_state(*, attempt, model_revision):
+    model_root = (
+        f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/"
+        f"snapshots/{model_revision}"
+    )
+    return {
+        "resolved_paths": {
+            "remote_root": APPROVED_REMOTE_ROOT,
+            "model_root": model_root,
+            "attempt_root": (
+                f"{APPROVED_REMOTE_ROOT}/attempts/{attempt}"
+            ),
+        },
+        "attempt_exists": False,
+        "remote_root_ready": True,
+        "model_manifest": {
+            "schema_version": "tinyllmforge.qwen38-model-manifest.v1",
+            "repository": "Qwen/Qwen3.8-27B",
+            "revision": model_revision,
+            "text_profile": {
+                "num_hidden_layers": 64,
+                "hidden_size": 5120,
+                "vocab_size": 248320,
+                "dtype": "bfloat16",
+            },
+        },
+        "model_files": {
+            "config_readable": True,
+            "weight_index_readable": True,
+            "weight_shard_count": 18,
+            "all_weight_shards_readable": True,
+            "snapshot_revision": model_revision,
+            "snapshot_revision_matches": True,
+        },
     }
 
 
@@ -445,14 +484,10 @@ def test_cli_dry_run_performs_bounded_preflight_without_worker(capsys):
         ),
         path_state_query=lambda **_kwargs: (
             events.append("paths")
-            or {
-                "resolved_paths": {
-                    "remote_root": APPROVED_REMOTE_ROOT,
-                    "model_root": model_root,
-                    "attempt_root": attempt_root,
-                },
-                "attempt_exists": False,
-            }
+            or _remote_query_state(
+                attempt=attempt,
+                model_revision=model_revision,
+            )
         ),
         inventory_query=lambda **_kwargs: (
             events.append("inventory")
@@ -514,12 +549,10 @@ def test_cli_persists_successful_dry_run_preflight_receipts(
             "remaining_lifetime_seconds": 7200,
         },
         path_state_query=lambda **_kwargs: {
-            "resolved_paths": {
-                "remote_root": APPROVED_REMOTE_ROOT,
-                "model_root": model_root,
-                "attempt_root": attempt_root,
-            },
-            "attempt_exists": False,
+            **_remote_query_state(
+                attempt=attempt,
+                model_revision=model_revision,
+            ),
         },
         inventory_query=lambda **_kwargs: selected_gpus,
         gpu_monitor=lambda **_kwargs: {
@@ -577,6 +610,26 @@ def test_cli_persists_successful_dry_run_preflight_receipts(
             "attempt_root": attempt_root,
         },
         "attempt_exists": False,
+        "remote_root_ready": True,
+        "model_manifest": {
+            "schema_version": "tinyllmforge.qwen38-model-manifest.v1",
+            "repository": "Qwen/Qwen3.8-27B",
+            "revision": model_revision,
+            "text_profile": {
+                "num_hidden_layers": 64,
+                "hidden_size": 5120,
+                "vocab_size": 248320,
+                "dtype": "bfloat16",
+            },
+        },
+        "model_files": {
+            "config_readable": True,
+            "weight_index_readable": True,
+            "weight_shard_count": 18,
+            "all_weight_shards_readable": True,
+            "snapshot_revision": model_revision,
+            "snapshot_revision_matches": True,
+        },
         "remote_query_performed": True,
         "remote_write_performed": False,
     }
@@ -595,6 +648,77 @@ def test_cli_persists_successful_dry_run_preflight_receipts(
     assert payload["classification"] == "DRY_RUN_READY"
     assert payload["worker_started"] is False
     assert payload["plan"]["attempt_tag"] == attempt
+
+
+def test_cli_rejects_missing_model_identity_before_gpu_monitor():
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    model_revision = "b" * 40
+    model_root = (
+        f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/"
+        f"snapshots/{model_revision}"
+    )
+
+    with pytest.raises(ValueError, match="model preflight"):
+        main(
+            [
+                "--attempt-tag",
+                attempt,
+                "--source-revision",
+                "a" * 40,
+                "--model-revision",
+                model_revision,
+                "--dry-run",
+            ],
+            kerberos_query=lambda: {"classification": "READY"},
+            path_state_query=lambda **_kwargs: {
+                "resolved_paths": {
+                    "remote_root": APPROVED_REMOTE_ROOT,
+                    "model_root": model_root,
+                    "attempt_root": (
+                        f"{APPROVED_REMOTE_ROOT}/attempts/{attempt}"
+                    ),
+                },
+                "attempt_exists": False,
+            },
+            inventory_query=lambda **_kwargs: pytest.fail(
+                "GPU inventory must not run"
+            ),
+            gpu_monitor=lambda **_kwargs: pytest.fail(
+                "GPU monitor must not run"
+            ),
+        )
+
+
+def test_remote_collective_path_query_builds_verified_model_manifest():
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    model_revision = "b" * 40
+    expected = _remote_query_state(
+        attempt=attempt,
+        model_revision=model_revision,
+    )
+    calls = []
+
+    result = query_remote_collective_path_state(
+        ssh_target="sitian@example",
+        remote_root=APPROVED_REMOTE_ROOT,
+        model_root=expected["resolved_paths"]["model_root"],
+        model_revision=model_revision,
+        attempt_tag=attempt,
+        timeout_s=30,
+        retry_count=1,
+        command_runner=lambda argv, **kwargs: (
+            calls.append((argv, kwargs))
+            or SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(expected),
+                stderr="",
+            )
+        ),
+    )
+
+    assert result == expected
+    assert len(calls) == 1
+    assert "input" not in calls[0][1]
 
 
 def test_cli_persists_source_and_blocked_kerberos_receipts(

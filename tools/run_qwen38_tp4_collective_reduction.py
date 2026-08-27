@@ -26,7 +26,6 @@ from tools.run_qwen38_tp4_communication_profile import (
     query_local_kerberos,
     query_remote_gpu_inventory,
     query_remote_gpu_topology,
-    query_remote_path_state,
     run_remote_argv,
     select_strict_clean_gpus,
     validate_selected_gpu_processes,
@@ -38,6 +37,7 @@ from tools.qwen38_tp4_collective_reduction_worker import (
     build_collective_reduction_cases,
     collective_reduction_case_id,
 )
+from tools.qwen38_collective_reduction import EXPECTED_PROFILE
 
 
 APPROVED_REMOTE_ROOT = (
@@ -50,6 +50,8 @@ ATTEMPT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_ARCHIVE_PATHS = ("tinyvllm", "tools")
+MODEL_REPOSITORY = "Qwen/Qwen3.8-27B"
+MODEL_MANIFEST_SCHEMA = "tinyllmforge.qwen38-model-manifest.v1"
 
 
 def _path_below(path: str, root: str) -> bool:
@@ -175,6 +177,190 @@ def capture_source_identity(
         source_revision=source_revision,
         source_files=source_files,
     )
+
+
+def query_remote_collective_path_state(
+    *,
+    ssh_target,
+    remote_root,
+    model_root,
+    model_revision,
+    attempt_tag,
+    timeout_s,
+    retry_count,
+    control_path=None,
+    command_runner=subprocess.run,
+):
+    if remote_root != APPROVED_REMOTE_ROOT:
+        raise ValueError("remote_root is not approved")
+    model_revision = _validate_revision(
+        model_revision,
+        "model_revision",
+    )
+    if (
+        not _path_below(model_root, remote_root)
+        or PurePosixPath(model_root).name != model_revision
+        or not isinstance(attempt_tag, str)
+        or not ATTEMPT_PATTERN.fullmatch(attempt_tag)
+        or ".." in attempt_tag
+    ):
+        raise ValueError("remote model or attempt path is invalid")
+    attempt_root = f"{remote_root}/attempts/{attempt_tag}"
+    script = "\n".join([
+        "import json,os,sys",
+        (
+            "remote_root,model_root,attempt_root,model_revision="
+            "sys.argv[1:]"
+        ),
+        "config_path=os.path.join(model_root,'config.json')",
+        (
+            "index_path=os.path.join("
+            "model_root,'model.safetensors.index.json')"
+        ),
+        "config_readable=os.path.isfile(config_path) and os.access(config_path,os.R_OK)",
+        "index_readable=os.path.isfile(index_path) and os.access(index_path,os.R_OK)",
+        "config={}",
+        "index={}",
+        "if config_readable:",
+        "  with open(config_path,encoding='utf-8') as handle: config=json.load(handle)",
+        "if index_readable:",
+        "  with open(index_path,encoding='utf-8') as handle: index=json.load(handle)",
+        "text=config.get('text_config',{}) if isinstance(config,dict) else {}",
+        "weight_map=index.get('weight_map',{}) if isinstance(index,dict) else {}",
+        (
+            "shards=sorted(set(weight_map.values())) "
+            "if isinstance(weight_map,dict) else []"
+        ),
+        (
+            "all_shards=bool(shards) and all("
+            "os.path.isfile(os.path.join(model_root,name)) and "
+            "os.access(os.path.join(model_root,name),os.R_OK) "
+            "for name in shards)"
+        ),
+        "snapshot_revision=os.path.basename(os.path.realpath(model_root))",
+        "print(json.dumps({",
+        "'resolved_paths':{",
+        "'remote_root':os.path.realpath(remote_root),",
+        "'model_root':os.path.realpath(model_root),",
+        "'attempt_root':os.path.realpath(attempt_root),",
+        "},",
+        "'attempt_exists':os.path.lexists(attempt_root),",
+        (
+            "'remote_root_ready':os.path.isdir(remote_root) "
+            "and os.access(remote_root,os.R_OK|os.W_OK|os.X_OK),"
+        ),
+        "'model_manifest':{",
+        f"'schema_version':{MODEL_MANIFEST_SCHEMA!r},",
+        f"'repository':{MODEL_REPOSITORY!r},",
+        "'revision':model_revision,",
+        "'text_profile':{",
+        "'num_hidden_layers':text.get('num_hidden_layers'),",
+        "'hidden_size':text.get('hidden_size'),",
+        "'vocab_size':text.get('vocab_size'),",
+        "'dtype':text.get('dtype'),",
+        "},",
+        "},",
+        "'model_files':{",
+        "'config_readable':config_readable,",
+        "'weight_index_readable':index_readable,",
+        "'weight_shard_count':len(shards),",
+        "'all_weight_shards_readable':all_shards,",
+        "'snapshot_revision':snapshot_revision,",
+        (
+            "'snapshot_revision_matches':"
+            "snapshot_revision==model_revision,"
+        ),
+        "},",
+        "},sort_keys=True))",
+    ])
+    result = run_remote_argv(
+        ssh_target=ssh_target,
+        remote_argv=[
+            "python3",
+            "-c",
+            script,
+            remote_root,
+            model_root,
+            attempt_root,
+            model_revision,
+        ],
+        control_path=control_path,
+        timeout_s=timeout_s,
+        retry_count=retry_count,
+        command_runner=command_runner,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            getattr(result, "stderr", "")
+            or "remote collective path preflight failed"
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError(
+            "remote collective path preflight JSON is invalid"
+        ) from error
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "remote collective path preflight JSON is invalid"
+        )
+    return payload
+
+
+def _validate_collective_path_state(
+    path_state,
+    *,
+    remote_root,
+    model_root,
+    model_revision,
+    attempt_root,
+):
+    if (
+        not isinstance(path_state, dict)
+        or set(path_state) != {
+            "resolved_paths",
+            "attempt_exists",
+            "remote_root_ready",
+            "model_manifest",
+            "model_files",
+        }
+        or not isinstance(path_state.get("resolved_paths"), dict)
+        or set(path_state["resolved_paths"])
+        != {"remote_root", "model_root", "attempt_root"}
+    ):
+        raise ValueError("remote model preflight result is invalid")
+    resolved = path_state["resolved_paths"]
+    manifest = path_state["model_manifest"]
+    files = path_state["model_files"]
+    if (
+        type(path_state["attempt_exists"]) is not bool
+        or path_state["remote_root_ready"] is not True
+        or not isinstance(manifest, dict)
+        or manifest.get("schema_version") != MODEL_MANIFEST_SCHEMA
+        or manifest.get("repository") != MODEL_REPOSITORY
+        or manifest.get("revision") != model_revision
+        or manifest.get("text_profile") != EXPECTED_PROFILE
+        or not isinstance(files, dict)
+        or files.get("config_readable") is not True
+        or files.get("weight_index_readable") is not True
+        or type(files.get("weight_shard_count")) is not int
+        or files["weight_shard_count"] <= 0
+        or files.get("all_weight_shards_readable") is not True
+        or files.get("snapshot_revision") != model_revision
+        or files.get("snapshot_revision_matches") is not True
+    ):
+        raise ValueError("remote model preflight result is invalid")
+    if (
+        resolved.get("remote_root") != remote_root
+        or resolved.get("model_root") != model_root
+        or resolved.get("attempt_root") != attempt_root
+    ):
+        raise ValueError("remote path preflight result is invalid")
+    return {
+        "attempt_exists": path_state["attempt_exists"],
+        "attempt_parent_is_symlink": False,
+        "remote_root_is_symlink": False,
+    }
 
 
 def _validate_remote_path_state(state):
@@ -588,7 +774,9 @@ def main(
     inventory_query: Callable[..., list[dict]] = (
         query_remote_gpu_inventory
     ),
-    path_state_query: Callable[..., dict] = query_remote_path_state,
+    path_state_query: Callable[..., dict] = (
+        query_remote_collective_path_state
+    ),
     kerberos_query: Callable[..., dict] = query_local_kerberos,
     gpu_monitor: Callable[..., dict] = wait_for_strict_clean_gpus,
     source_identity_builder: Callable[..., dict] = (
@@ -682,30 +870,19 @@ def main(
         ssh_target=args.ssh_target,
         remote_root=args.remote_root,
         model_root=model_root,
+        model_revision=args.model_revision,
         attempt_tag=args.attempt_tag,
         control_path=args.control_path,
         timeout_s=args.command_timeout_s,
         retry_count=args.retry_count,
     )
-    if (
-        not isinstance(path_state, dict)
-        or set(path_state) != {"resolved_paths", "attempt_exists"}
-        or not isinstance(path_state.get("resolved_paths"), dict)
-        or set(path_state["resolved_paths"])
-        != {"remote_root", "model_root", "attempt_root"}
-    ):
-        raise ValueError("remote path preflight result is invalid")
-    resolved = path_state["resolved_paths"]
-    remote_path_state = {
-        "attempt_exists": path_state["attempt_exists"],
-        "attempt_parent_is_symlink": (
-            resolved["attempt_root"] != attempt_root
-        ),
-        "remote_root_is_symlink": (
-            resolved["remote_root"] != args.remote_root
-            or resolved["model_root"] != model_root
-        ),
-    }
+    remote_path_state = _validate_collective_path_state(
+        path_state,
+        remote_root=args.remote_root,
+        model_root=model_root,
+        model_revision=args.model_revision,
+        attempt_root=attempt_root,
+    )
 
     if args.plan_only:
         selected = select_strict_clean_gpus(query_inventory())
@@ -813,6 +990,9 @@ def main(
                 "kerberos": kerberos,
                 "resolved_paths": dict(path_state["resolved_paths"]),
                 "attempt_exists": path_state["attempt_exists"],
+                "remote_root_ready": path_state["remote_root_ready"],
+                "model_manifest": dict(path_state["model_manifest"]),
+                "model_files": dict(path_state["model_files"]),
                 "remote_query_performed": True,
                 "remote_write_performed": False,
             },
