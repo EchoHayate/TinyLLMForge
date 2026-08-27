@@ -7,6 +7,7 @@ import pytest
 
 from tools.run_qwen38_tp4_collective_reduction import (
     APPROVED_REMOTE_ROOT,
+    build_source_identity,
     build_attempt_plan,
     expected_case_ids,
     main,
@@ -131,6 +132,26 @@ def test_plan_runs_the_self_selecting_full_worker():
 
     assert worker[worker.index("--phase") + 1] == "full"
     assert "--selected-budget" not in worker
+
+
+def test_source_identity_binds_sorted_file_hashes():
+    identity = build_source_identity(
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        source_files={
+            "tinyvllm/z.py": "f" * 64,
+            "tinyvllm/a.py": "0" * 64,
+        },
+    )
+
+    assert identity["schema_version"] == (
+        "qwen38.tp4-collective-reduction-source.v1"
+    )
+    assert list(identity["source_files"]) == [
+        "tinyvllm/a.py",
+        "tinyvllm/z.py",
+    ]
+    assert len(identity["source_tree_sha256"]) == 64
 
 
 def test_controller_plan_has_no_auth_or_signal_commands():
@@ -452,3 +473,58 @@ def test_cli_dry_run_performs_bounded_preflight_without_worker(capsys):
     assert payload["classification"] == "DRY_RUN_READY"
     assert payload["worker_started"] is False
     assert events == ["kerberos", "paths", "monitor", "inventory", "inventory"]
+
+
+def test_cli_persists_source_and_blocked_kerberos_receipts(
+    tmp_path,
+    capsys,
+):
+    local_attempt_root = tmp_path / "attempt"
+    source_identity = build_source_identity(
+        attempt="20260827-qwen38-tp4-collective-reduction-r1",
+        source_revision="a" * 40,
+        source_files={"tinyvllm/config.py": "b" * 64},
+    )
+
+    return_code = main(
+        [
+            "--attempt-tag",
+            "20260827-qwen38-tp4-collective-reduction-r1",
+            "--source-revision",
+            "a" * 40,
+            "--model-revision",
+            "b" * 40,
+            "--dry-run",
+            "--local-attempt-root",
+            str(local_attempt_root),
+        ],
+        source_identity_builder=lambda **_kwargs: source_identity,
+        kerberos_query=lambda: {
+            "classification": "BLOCKED_KERBEROS_TTL",
+            "reason": "test",
+        },
+        path_state_query=lambda **_kwargs: pytest.fail(
+            "remote path query must not run"
+        ),
+        inventory_query=lambda **_kwargs: pytest.fail(
+            "GPU query must not run"
+        ),
+    )
+
+    assert return_code == 2
+    assert json.loads(
+        (local_attempt_root / "controller/source_identity.json").read_text()
+    ) == source_identity
+    preflight = json.loads(
+        (
+            local_attempt_root
+            / "controller/ssh_storage_preflight.json"
+        ).read_text()
+    )
+    assert preflight["classification"] == "BLOCKED_KERBEROS"
+    assert preflight["remote_query_performed"] is False
+    dry_run = json.loads(
+        (local_attempt_root / "controller/dry_run.json").read_text()
+    )
+    assert dry_run["worker_started"] is False
+    assert json.loads(capsys.readouterr().out) == dry_run

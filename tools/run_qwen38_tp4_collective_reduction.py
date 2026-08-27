@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-from pathlib import PurePosixPath
+import os
+from pathlib import Path, PurePosixPath
 import re
+import subprocess
 from typing import Callable
 
 from tools.run_qwen38_tp4_communication_profile import (
@@ -45,6 +48,8 @@ PLAN_SCHEMA_VERSION = "qwen38.tp4-collective-reduction-plan.v1"
 EVENT_BUDGETS = (0, 8, 16, 32)
 ATTEMPT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_ARCHIVE_PATHS = ("tinyvllm", "tools")
 
 
 def _path_below(path: str, root: str) -> bool:
@@ -57,6 +62,119 @@ def _validate_revision(value, name):
     if not isinstance(value, str) or not REVISION_PATTERN.fullmatch(value):
         raise ValueError(f"{name} must be a lowercase 40-character SHA")
     return value
+
+
+def build_source_identity(
+    *,
+    attempt,
+    source_revision,
+    source_files,
+):
+    if (
+        not isinstance(attempt, str)
+        or not ATTEMPT_PATTERN.fullmatch(attempt)
+        or ".." in attempt
+    ):
+        raise ValueError("attempt is invalid")
+    source_revision = _validate_revision(
+        source_revision,
+        "source_revision",
+    )
+    if not isinstance(source_files, dict) or not source_files:
+        raise ValueError("source file inventory is invalid")
+    normalized = {}
+    for relative, digest in sorted(source_files.items()):
+        if not isinstance(relative, str):
+            raise ValueError("source file inventory is invalid")
+        path = PurePosixPath(relative)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or path.as_posix() != relative
+            or not isinstance(digest, str)
+            or not SHA256_PATTERN.fullmatch(digest)
+        ):
+            raise ValueError("source file inventory is invalid")
+        normalized[relative] = digest
+    canonical = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "schema_version": (
+            "qwen38.tp4-collective-reduction-source.v1"
+        ),
+        "attempt": attempt,
+        "source_revision": source_revision,
+        "source_tree_sha256": hashlib.sha256(canonical).hexdigest(),
+        "source_files": normalized,
+        "source_archive_paths": list(SOURCE_ARCHIVE_PATHS),
+    }
+
+
+def capture_source_identity(
+    *,
+    attempt,
+    source_revision,
+    repo_root=None,
+    command_runner=subprocess.run,
+):
+    if not callable(command_runner):
+        raise ValueError("source command runner is invalid")
+    root = (
+        Path(__file__).resolve().parents[1]
+        if repo_root is None
+        else Path(repo_root).resolve()
+    )
+
+    def run_git(arguments):
+        result = command_runner(
+            ["git", "-C", str(root), *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                result.stderr or "source identity git command failed"
+            )
+        return result.stdout
+
+    head = run_git(["rev-parse", "HEAD"]).strip()
+    if head != source_revision:
+        raise ValueError("source revision does not match local HEAD")
+    dirty = run_git([
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=no",
+        "--",
+        *SOURCE_ARCHIVE_PATHS,
+    ])
+    if dirty:
+        raise ValueError("source archive scope has tracked changes")
+    raw_files = run_git([
+        "ls-files",
+        "-z",
+        "--",
+        *SOURCE_ARCHIVE_PATHS,
+    ])
+    source_files = {}
+    for relative in raw_files.split("\0"):
+        if not relative:
+            continue
+        path = root / relative
+        payload = (
+            os.readlink(path).encode("utf-8")
+            if path.is_symlink()
+            else path.read_bytes()
+        )
+        source_files[relative] = hashlib.sha256(payload).hexdigest()
+    return build_source_identity(
+        attempt=attempt,
+        source_revision=source_revision,
+        source_files=source_files,
+    )
 
 
 def _validate_remote_path_state(state):
@@ -459,6 +577,7 @@ def build_parser():
     )
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--local-attempt-root", type=Path)
     return parser
 
 
@@ -471,6 +590,9 @@ def main(
     path_state_query: Callable[..., dict] = query_remote_path_state,
     kerberos_query: Callable[..., dict] = query_local_kerberos,
     gpu_monitor: Callable[..., dict] = wait_for_strict_clean_gpus,
+    source_identity_builder: Callable[..., dict] = (
+        capture_source_identity
+    ),
     worker_runner=None,
     assembler=None,
     remote_verifier=None,
@@ -490,6 +612,21 @@ def main(
         )
     ):
         raise ValueError("CLI query dependency is invalid")
+    local_controller_root = None
+    if args.local_attempt_root is not None:
+        if not callable(source_identity_builder):
+            raise ValueError("source identity dependency is invalid")
+        local_controller_root = (
+            args.local_attempt_root.resolve() / "controller"
+        )
+        source_identity = source_identity_builder(
+            attempt=args.attempt_tag,
+            source_revision=args.source_revision,
+        )
+        write_json_atomic(
+            local_controller_root / "source_identity.json",
+            source_identity,
+        )
 
     model_root = (
         f"{args.remote_root}/models/Qwen3.8-27B/"
@@ -520,6 +657,21 @@ def main(
                 "worker_started": False,
                 "kerberos": raw_kerberos,
             }
+            if local_controller_root is not None:
+                write_json_atomic(
+                    local_controller_root
+                    / "ssh_storage_preflight.json",
+                    {
+                        "classification": "BLOCKED_KERBEROS",
+                        "kerberos": raw_kerberos,
+                        "remote_query_performed": False,
+                        "remote_write_performed": False,
+                    },
+                )
+                write_json_atomic(
+                    local_controller_root / "dry_run.json",
+                    result,
+                )
             print(json.dumps(result, indent=2, sort_keys=True))
             return 2
         kerberos = dict(raw_kerberos)
