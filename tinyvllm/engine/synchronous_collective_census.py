@@ -485,6 +485,7 @@ class SynchronousCollectiveCensus:
             "row_parallel_prefill_materialization",
             "replicated_weight_input_materialization",
             "lm_head_parameter_materialization",
+            "vocab_parallel_logits_materialization",
         }:
             return site_role.replace("_", ".")
         raise ValueError(f"unknown site_role: {site_role}")

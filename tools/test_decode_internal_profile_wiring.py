@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from collections import Counter
 import copy
 from pathlib import Path
 
@@ -12,6 +13,9 @@ MODEL_RUNNER = ROOT / "tinyvllm/engine/model_runner.py"
 LLM_ENGINE = ROOT / "tinyvllm/engine/llm_engine.py"
 LINEAR = ROOT / "tinyvllm/layers/linear.py"
 EMBED_HEAD = ROOT / "tinyvllm/layers/embed_head.py"
+TENSOR_PARALLEL_GREEDY = (
+    ROOT / "tinyvllm/engine/tensor_parallel_greedy.py"
+)
 QWEN35_COMPONENTS = ROOT / "tinyvllm/models/qwen35_components.py"
 QWEN35_PACKED_MODEL = ROOT / "tinyvllm/models/qwen35_packed.py"
 QWEN35_PACKED_STACK = (
@@ -89,6 +93,32 @@ def _profile_scope_calls(node, role):
             continue
         result.extend(_called_names(statement) for statement in child.body)
     return result
+
+
+def _profile_collective_metadata(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    rows = []
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or node.func.id != "profile_collective"
+        ):
+            continue
+        operation = node.args[0]
+        keywords = {
+            keyword.arg: keyword.value
+            for keyword in node.keywords
+        }
+        rows.append({
+            "operation": (
+                operation.value
+                if isinstance(operation, ast.Constant)
+                else None
+            ),
+            "keywords": keywords,
+        })
+    return rows
 
 
 def test_model_runner_exposes_profile_lifecycle_and_wraps_run():
@@ -310,30 +340,83 @@ def test_collective_call_sites_use_profile_helper():
 
 
 def test_linear_collectives_emit_frozen_synchronous_metadata():
-    tree = ast.parse(LINEAR.read_text(encoding="utf-8"))
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "profile_collective"
-    ]
+    calls = _profile_collective_metadata(LINEAR)
 
     assert len(calls) == 4
-    for call in calls:
-        keywords = {
-            keyword.arg: keyword.value
-            for keyword in call.keywords
-        }
+    for row in calls:
+        keywords = row["keywords"]
         assert {
+            "site_role",
             "collective_kind",
             "process_group",
+            "execution_phase",
             "async_mode",
         } <= keywords.keys()
         assert (
             isinstance(keywords["async_mode"], ast.Constant)
             and keywords["async_mode"].value is False
         )
+    assert Counter(
+        row["keywords"]["site_role"].value
+        for row in calls
+    ) == Counter({
+        "row_parallel_prefill_materialization": 1,
+        "row_parallel_output": 2,
+        "replicated_weight_input_materialization": 1,
+    })
+
+
+def test_embedding_and_sampling_collectives_emit_frozen_metadata():
+    embedding_calls = _profile_collective_metadata(EMBED_HEAD)
+    greedy_calls = _profile_collective_metadata(TENSOR_PARALLEL_GREEDY)
+
+    metadata_by_operation = {
+        row["operation"]: {
+            name: value.value
+            for name, value in row["keywords"].items()
+            if isinstance(value, ast.Constant)
+        }
+        for row in embedding_calls
+    }
+    assert metadata_by_operation == {
+        "vocab_parallel_embedding_all_reduce": {
+            "site_role": "vocab_parallel_embedding",
+            "collective_kind": "all_reduce",
+            "process_group": "tensor_parallel",
+            "execution_phase": "decode_or_prefill",
+            "async_mode": False,
+        },
+        "lm_head_weight_gather": {
+            "site_role": "lm_head_parameter_materialization",
+            "collective_kind": "gather",
+            "process_group": "tensor_parallel",
+            "execution_phase": "startup",
+            "async_mode": False,
+            "destination_rank": 0,
+        },
+        "lm_head_bias_gather": {
+            "site_role": "lm_head_parameter_materialization",
+            "collective_kind": "gather",
+            "process_group": "tensor_parallel",
+            "execution_phase": "startup",
+            "async_mode": False,
+            "destination_rank": 0,
+        },
+        "vocab_parallel_lm_head_gather": {
+            "site_role": "vocab_parallel_logits_materialization",
+            "collective_kind": "gather",
+            "process_group": "tensor_parallel",
+            "execution_phase": "decode_or_prefill",
+            "async_mode": False,
+            "destination_rank": 0,
+        },
+    }
+    assert len(greedy_calls) == 1
+    assert (
+        greedy_calls[0]["keywords"]["site_role"].value
+        == "greedy_token_broadcast"
+    )
+    assert greedy_calls[0]["keywords"]["source_rank"].value == 0
 
 
 def test_linear_gemm_and_packed_layer_boundaries_are_profiled():

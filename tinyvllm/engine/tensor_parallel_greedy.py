@@ -1,7 +1,28 @@
 from __future__ import annotations
 
+import sys
+
 import torch
 import torch.distributed as dist
+
+
+def profile_collective(operation, tensor, call, **metadata):
+    profiler_module = sys.modules.get(
+        "tinyvllm.engine.decode_internal_profiler"
+    )
+    helper = getattr(
+        profiler_module,
+        "profile_collective",
+        None,
+    )
+    if helper is None:
+        return call(tensor)
+    return helper(
+        operation,
+        tensor,
+        call,
+        **metadata,
+    )
 
 
 def _positive_integer(value, name: str) -> int:
@@ -104,7 +125,17 @@ def select_tensor_parallel_greedy_tokens(
         operation = dist.broadcast if broadcast is None else broadcast
         if not callable(operation):
             raise ValueError("broadcast must be callable")
-        operation(token_ids, src=0)
+        profile_collective(
+            "greedy_token_broadcast",
+            token_ids,
+            lambda tensor: operation(tensor, src=0),
+            site_role="greedy_token_broadcast",
+            collective_kind="broadcast",
+            process_group="tensor_parallel",
+            execution_phase="decode",
+            async_mode=False,
+            source_rank=0,
+        )
     return _validate_token_ids(
         token_ids,
         batch_size=batch_size,

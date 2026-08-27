@@ -1030,8 +1030,10 @@ class RowParallelLinear(LinearBase):
                 "row_parallel_prefill_all_gather",
                 x,
                 lambda tensor: dist.all_gather(gathered, tensor),
+                site_role="row_parallel_prefill_materialization",
                 collective_kind="all_gather",
                 process_group="tensor_parallel",
+                execution_phase="decode_or_prefill",
                 async_mode=False,
             )
             x = torch.cat(gathered, dim=-1)
@@ -1058,8 +1060,10 @@ class RowParallelLinear(LinearBase):
                         "row_parallel_all_reduce",
                         output,
                         dist.all_reduce,
+                        site_role="row_parallel_output",
                         collective_kind="all_reduce",
                         process_group="tensor_parallel",
+                        execution_phase="decode_or_prefill",
                         async_mode=False,
                     )
                 if output.dtype != output_dtype:
@@ -1073,8 +1077,10 @@ class RowParallelLinear(LinearBase):
                 "row_parallel_all_reduce",
                 y,
                 dist.all_reduce,
+                site_role="row_parallel_output",
                 collective_kind="all_reduce",
                 process_group="tensor_parallel",
+                execution_phase="decode_or_prefill",
                 async_mode=False,
             )
         if y.dtype != output_dtype:
@@ -1122,8 +1128,10 @@ class ReplicatedWeightRowParallelLinear(LinearBase):
                 "replicated_weight_row_parallel_all_gather",
                 x,
                 lambda tensor: dist.all_gather(gathered, tensor),
+                site_role="replicated_weight_input_materialization",
                 collective_kind="all_gather",
                 process_group="tensor_parallel",
+                execution_phase="decode_or_prefill",
                 async_mode=False,
             )
             x = torch.cat(gathered, dim=-1)

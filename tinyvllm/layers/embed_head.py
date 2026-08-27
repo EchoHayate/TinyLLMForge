@@ -51,6 +51,11 @@ class VocabParallelEmbedding(nn.Module):
                 "vocab_parallel_embedding_all_reduce",
                 y,
                 dist.all_reduce,
+                site_role="vocab_parallel_embedding",
+                collective_kind="all_reduce",
+                process_group="tensor_parallel",
+                execution_phase="decode_or_prefill",
+                async_mode=False,
             )
         return y
     
@@ -86,7 +91,21 @@ class ParallelLMHead(VocabParallelEmbedding):
             ]
         else:
             weight_shards = None
-        dist.gather(self.weight, weight_shards, 0)
+        profile_collective(
+            "lm_head_weight_gather",
+            self.weight,
+            lambda tensor: dist.gather(
+                tensor,
+                weight_shards,
+                0,
+            ),
+            site_role="lm_head_parameter_materialization",
+            collective_kind="gather",
+            process_group="tensor_parallel",
+            execution_phase="startup",
+            async_mode=False,
+            destination_rank=0,
+        )
         if self.tp_rank == 0:
             self._exact_full_weight = torch.cat(weight_shards, dim=0)
         if self.bias is not None:
@@ -97,7 +116,21 @@ class ParallelLMHead(VocabParallelEmbedding):
                 ]
             else:
                 bias_shards = None
-            dist.gather(self.bias, bias_shards, 0)
+            profile_collective(
+                "lm_head_bias_gather",
+                self.bias,
+                lambda tensor: dist.gather(
+                    tensor,
+                    bias_shards,
+                    0,
+                ),
+                site_role="lm_head_parameter_materialization",
+                collective_kind="gather",
+                process_group="tensor_parallel",
+                execution_phase="startup",
+                async_mode=False,
+                destination_rank=0,
+            )
             if self.tp_rank == 0:
                 self._exact_full_bias = torch.cat(bias_shards, dim=0)
         self._exact_weight_ready = True
@@ -132,7 +165,21 @@ class ParallelLMHead(VocabParallelEmbedding):
                 all_logits = self._gather_bufs
             else:
                 all_logits = None
-            dist.gather(logits, all_logits, 0)
+            profile_collective(
+                "vocab_parallel_lm_head_gather",
+                logits,
+                lambda tensor: dist.gather(
+                    tensor,
+                    all_logits,
+                    0,
+                ),
+                site_role="vocab_parallel_logits_materialization",
+                collective_kind="gather",
+                process_group="tensor_parallel",
+                execution_phase="decode_or_prefill",
+                async_mode=False,
+                destination_rank=0,
+            )
             # logits 形状是 [N, vocab/tp]，要沿 vocab 维（dim=1）拼回 [N, vocab]，
             # 而不是沿 batch 维（dim=0）—— 否则下游 sampler 的 temperatures[N] 维度对不上
             logits = torch.cat(all_logits, 1) if self.tp_rank == 0 else None

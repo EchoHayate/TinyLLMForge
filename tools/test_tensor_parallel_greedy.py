@@ -15,8 +15,11 @@ for package_name in (
     package.__path__ = [str(ROOT / package_name.replace(".", "/"))]
     sys.modules.setdefault(package_name, package)
 
-from tinyvllm.engine.tensor_parallel_greedy import (
-    select_tensor_parallel_greedy_tokens,
+from tinyvllm.engine import tensor_parallel_greedy
+
+
+select_tensor_parallel_greedy_tokens = (
+    tensor_parallel_greedy.select_tensor_parallel_greedy_tokens
 )
 
 
@@ -113,6 +116,47 @@ def test_tp4_root_selects_and_workers_receive_only_token_ids():
         (torch.int64, (2,), [1, 0]),
         (torch.int64, (2,), [1, 0]),
     ]
+
+
+def test_tp_greedy_broadcast_uses_profile_collective_once(monkeypatch):
+    profile_calls = []
+    broadcast_calls = []
+
+    def profile_collective(operation, tensor, call, **metadata):
+        profile_calls.append((operation, tensor, metadata))
+        return call(tensor)
+
+    def broadcast(tensor, src):
+        broadcast_calls.append((tensor.clone(), src))
+
+    monkeypatch.setattr(
+        tensor_parallel_greedy,
+        "profile_collective",
+        profile_collective,
+    )
+    token_ids = select_tensor_parallel_greedy_tokens(
+        torch.tensor([[0.0, 2.0]]),
+        rank=0,
+        world_size=4,
+        batch_size=1,
+        device=torch.device("cpu"),
+        broadcast=broadcast,
+    )
+
+    assert token_ids.tolist() == [1]
+    assert len(profile_calls) == 1
+    assert profile_calls[0][0] == "greedy_token_broadcast"
+    assert profile_calls[0][1] is token_ids
+    assert profile_calls[0][2] == {
+        "site_role": "greedy_token_broadcast",
+        "collective_kind": "broadcast",
+        "process_group": "tensor_parallel",
+        "execution_phase": "decode",
+        "async_mode": False,
+        "source_rank": 0,
+    }
+    assert len(broadcast_calls) == 1
+    assert broadcast_calls[0][1] == 0
 
 
 def test_selector_rejects_invalid_topology_and_root_logits():
