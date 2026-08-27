@@ -774,3 +774,272 @@ def test_cli_persists_source_and_blocked_kerberos_receipts(
     )
     assert dry_run["worker_started"] is False
     assert json.loads(capsys.readouterr().out) == dry_run
+
+
+def test_cli_auto_wires_production_adapter_for_real_execution(
+    tmp_path,
+    capsys,
+):
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    source_revision = "a" * 40
+    model_revision = "b" * 40
+    source_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=source_revision,
+        source_files={"tinyvllm/config.py": "c" * 64},
+    )
+    selected = [_gpu(index) for index in range(4)]
+    factory_calls = []
+    events = []
+
+    class FakeAdapter:
+        def worker_runner(self, _plan):
+            events.append("worker")
+            return _worker_result()
+
+        def assembler(self, _plan, _worker):
+            events.append("assemble")
+            return {"classification": "GO_SYNC_COLLECTIVE_REDUCTION"}
+
+        def remote_verifier(self, _plan):
+            events.append("remote")
+            return {"classification": "GO_SYNC_COLLECTIVE_REDUCTION"}
+
+        def downloader(self, _plan):
+            events.append("download")
+            return {"downloaded": True}
+
+        def local_verifier(self, _plan):
+            events.append("local")
+            return {"classification": "GO_SYNC_COLLECTIVE_REDUCTION"}
+
+        def cleanup_validator(self, _plan, _worker):
+            events.append("cleanup")
+            return {
+                "complete": True,
+                "owned_children_remaining": [],
+            }
+
+    return_code = main(
+        [
+            "--attempt-tag",
+            attempt,
+            "--source-revision",
+            source_revision,
+            "--model-revision",
+            model_revision,
+            "--local-attempt-root",
+            str(tmp_path / "attempt"),
+        ],
+        source_identity_builder=lambda **_kwargs: source_identity,
+        kerberos_query=lambda: {"classification": "READY"},
+        path_state_query=lambda **_kwargs: _remote_query_state(
+            attempt=attempt,
+            model_revision=model_revision,
+        ),
+        inventory_query=lambda **_kwargs: selected,
+        gpu_monitor=lambda **_kwargs: {
+            "classification": "READY",
+            "selected_gpus": selected,
+        },
+        production_adapter_factory=lambda **kwargs: (
+            factory_calls.append(kwargs) or FakeAdapter()
+        ),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert return_code == 0
+    assert payload["classification"] == "GO_SYNC_COLLECTIVE_REDUCTION"
+    assert events == [
+        "worker",
+        "assemble",
+        "remote",
+        "download",
+        "local",
+        "cleanup",
+    ]
+    assert len(factory_calls) == 1
+    assert factory_calls[0]["source_identity"] == source_identity
+    assert factory_calls[0]["model_manifest"]["revision"] == model_revision
+
+
+def test_existing_attempt_is_allowed_only_for_real_execution_resume(
+    tmp_path,
+    capsys,
+):
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    source_revision = "a" * 40
+    model_revision = "b" * 40
+    source_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=source_revision,
+        source_files={"tinyvllm/config.py": "c" * 64},
+    )
+    selected = [_gpu(index) for index in range(4)]
+    path_state = _remote_query_state(
+        attempt=attempt,
+        model_revision=model_revision,
+    )
+    path_state["attempt_exists"] = True
+    local_attempt_root = tmp_path / "attempt"
+    controller_root = local_attempt_root / "controller"
+    controller_root.mkdir(parents=True)
+    frozen_plan = build_attempt_plan(
+        attempt_tag=attempt,
+        source_revision=source_revision,
+        model_revision=model_revision,
+        selected_gpus=selected,
+        remote_path_state={
+            "attempt_exists": False,
+            "attempt_parent_is_symlink": False,
+            "remote_root_is_symlink": False,
+        },
+    )
+    (controller_root / "plan.json").write_text(
+        json.dumps(frozen_plan),
+        encoding="utf-8",
+    )
+    (controller_root / "source_identity.json").write_text(
+        json.dumps(source_identity),
+        encoding="utf-8",
+    )
+
+    class ResumeAdapter:
+        def worker_runner(self, _plan):
+            return _worker_result()
+
+        def assembler(self, _plan, _worker):
+            return {"classification": "GO_SYNC_COLLECTIVE_REDUCTION"}
+
+        def remote_verifier(self, _plan):
+            return {"classification": "GO_SYNC_COLLECTIVE_REDUCTION"}
+
+        def downloader(self, _plan):
+            return {"downloaded": True}
+
+        def local_verifier(self, _plan):
+            return {"classification": "GO_SYNC_COLLECTIVE_REDUCTION"}
+
+        def cleanup_validator(self, _plan, _worker):
+            return {
+                "complete": True,
+                "owned_children_remaining": [],
+            }
+
+    return_code = main(
+        [
+            "--attempt-tag",
+            attempt,
+            "--source-revision",
+            source_revision,
+            "--model-revision",
+            model_revision,
+            "--local-attempt-root",
+            str(local_attempt_root),
+        ],
+        source_identity_builder=lambda **_kwargs: source_identity,
+        kerberos_query=lambda: {"classification": "READY"},
+        path_state_query=lambda **_kwargs: path_state,
+        inventory_query=lambda **_kwargs: selected,
+        gpu_monitor=lambda **_kwargs: {
+            "classification": "READY",
+            "selected_gpus": selected,
+        },
+        production_adapter_factory=lambda **_kwargs: ResumeAdapter(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert return_code == 0
+    assert payload["classification"] == "GO_SYNC_COLLECTIVE_REDUCTION"
+
+    with pytest.raises(ValueError, match="already in use"):
+        main(
+            [
+                "--attempt-tag",
+                attempt,
+                "--source-revision",
+                source_revision,
+                "--model-revision",
+                model_revision,
+                "--dry-run",
+            ],
+            kerberos_query=lambda: {"classification": "READY"},
+            path_state_query=lambda **_kwargs: path_state,
+            inventory_query=lambda **_kwargs: selected,
+            gpu_monitor=lambda **_kwargs: {
+                "classification": "READY",
+                "selected_gpus": selected,
+            },
+        )
+
+
+def test_existing_attempt_never_overwrites_frozen_source_identity(tmp_path):
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    frozen_revision = "a" * 40
+    requested_revision = "d" * 40
+    model_revision = "b" * 40
+    selected = [_gpu(index) for index in range(4)]
+    local_attempt_root = tmp_path / "attempt"
+    controller_root = local_attempt_root / "controller"
+    controller_root.mkdir(parents=True)
+    frozen_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=frozen_revision,
+        source_files={"tinyvllm/config.py": "c" * 64},
+    )
+    requested_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=requested_revision,
+        source_files={"tinyvllm/config.py": "e" * 64},
+    )
+    (controller_root / "source_identity.json").write_text(
+        json.dumps(frozen_identity),
+        encoding="utf-8",
+    )
+    (controller_root / "plan.json").write_text(
+        json.dumps(build_attempt_plan(
+            attempt_tag=attempt,
+            source_revision=frozen_revision,
+            model_revision=model_revision,
+            selected_gpus=selected,
+            remote_path_state={
+                "attempt_exists": False,
+                "attempt_parent_is_symlink": False,
+                "remote_root_is_symlink": False,
+            },
+        )),
+        encoding="utf-8",
+    )
+    path_state = _remote_query_state(
+        attempt=attempt,
+        model_revision=model_revision,
+    )
+    path_state["attempt_exists"] = True
+
+    with pytest.raises(
+        ValueError,
+        match="frozen local source identity mismatch",
+    ):
+        main(
+            [
+                "--attempt-tag",
+                attempt,
+                "--source-revision",
+                requested_revision,
+                "--model-revision",
+                model_revision,
+                "--local-attempt-root",
+                str(local_attempt_root),
+            ],
+            source_identity_builder=lambda **_kwargs: requested_identity,
+            kerberos_query=lambda: {"classification": "READY"},
+            path_state_query=lambda **_kwargs: path_state,
+            inventory_query=lambda **_kwargs: selected,
+            gpu_monitor=lambda **_kwargs: pytest.fail(
+                "must not monitor for an existing attempt"
+            ),
+        )
+
+    assert json.loads(
+        (controller_root / "source_identity.json").read_text()
+    ) == frozen_identity

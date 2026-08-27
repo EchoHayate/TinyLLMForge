@@ -314,7 +314,10 @@ def _validate_collective_path_state(
     model_root,
     model_revision,
     attempt_root,
+    allow_existing_attempt=False,
 ):
+    if type(allow_existing_attempt) is not bool:
+        raise ValueError("attempt resume policy is invalid")
     if (
         not isinstance(path_state, dict)
         or set(path_state) != {
@@ -356,6 +359,8 @@ def _validate_collective_path_state(
         or resolved.get("attempt_root") != attempt_root
     ):
         raise ValueError("remote path preflight result is invalid")
+    if path_state["attempt_exists"] and not allow_existing_attempt:
+        raise ValueError("attempt tag is already in use")
     return {
         "attempt_exists": path_state["attempt_exists"],
         "attempt_parent_is_symlink": False,
@@ -363,7 +368,11 @@ def _validate_collective_path_state(
     }
 
 
-def _validate_remote_path_state(state):
+def _validate_remote_path_state(
+    state,
+    *,
+    allow_existing_attempt=False,
+):
     expected = {
         "attempt_exists",
         "attempt_parent_is_symlink",
@@ -375,7 +384,7 @@ def _validate_remote_path_state(state):
         or any(type(state[name]) is not bool for name in expected)
     ):
         raise ValueError("remote path state is invalid")
-    if state["attempt_exists"]:
+    if state["attempt_exists"] and not allow_existing_attempt:
         raise ValueError("attempt tag is already in use")
     if (
         state["attempt_parent_is_symlink"]
@@ -399,6 +408,7 @@ def build_attempt_plan(
     selected_gpus,
     remote_path_state,
     remote_root=APPROVED_REMOTE_ROOT,
+    allow_existing_attempt=False,
 ):
     if remote_root != APPROVED_REMOTE_ROOT:
         raise ValueError("remote_root is not approved")
@@ -416,7 +426,12 @@ def build_attempt_plan(
         model_revision,
         "model_revision",
     )
-    _validate_remote_path_state(remote_path_state)
+    if type(allow_existing_attempt) is not bool:
+        raise ValueError("attempt resume policy is invalid")
+    _validate_remote_path_state(
+        remote_path_state,
+        allow_existing_attempt=allow_existing_attempt,
+    )
     selected = _validate_selected_gpus(selected_gpus)
 
     attempt_root = f"{remote_root}/attempts/{attempt_tag}"
@@ -469,6 +484,9 @@ def build_attempt_plan(
         "minimum_lower_bound_opportunity": 0.05,
         "overlap_design_authorized": False,
         "async_collectives_authorized": False,
+        "resume_existing_attempt": (
+            remote_path_state["attempt_exists"]
+        ),
         "remote_commands": [
             {
                 "purpose": "create attempt directories",
@@ -516,6 +534,7 @@ def _validate_plan(plan):
         or plan.get("overlap_design_authorized") is not False
         or plan.get("async_collectives_authorized") is not False
         or plan.get("event_budgets") != list(EVENT_BUDGETS)
+        or type(plan.get("resume_existing_attempt")) is not bool
     ):
         raise ValueError("collective reduction plan is invalid")
     for key in (
@@ -642,13 +661,14 @@ def run_attempt(
             "worker_started": False,
             "kerberos": kerberos,
         }
-    observed = list(gpu_probe())
-    select_strict_clean_gpus(observed)
-    validate_selected_gpu_processes(
-        selected=selected,
-        observed=observed,
-        owned_pids=set(),
-    )
+    if not plan["resume_existing_attempt"]:
+        observed = list(gpu_probe())
+        select_strict_clean_gpus(observed)
+        validate_selected_gpu_processes(
+            selected=selected,
+            observed=observed,
+            owned_pids=set(),
+        )
     if dry_run:
         return {
             "classification": "DRY_RUN_READY",
@@ -788,6 +808,7 @@ def main(
     downloader=None,
     local_verifier=None,
     cleanup_validator=None,
+    production_adapter_factory=None,
 ):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -802,6 +823,8 @@ def main(
     ):
         raise ValueError("CLI query dependency is invalid")
     local_controller_root = None
+    source_identity = None
+    source_identity_path = None
     if args.local_attempt_root is not None:
         if not callable(source_identity_builder):
             raise ValueError("source identity dependency is invalid")
@@ -812,9 +835,8 @@ def main(
             attempt=args.attempt_tag,
             source_revision=args.source_revision,
         )
-        write_json_atomic(
-            local_controller_root / "source_identity.json",
-            source_identity,
+        source_identity_path = (
+            local_controller_root / "source_identity.json"
         )
 
     model_root = (
@@ -847,6 +869,33 @@ def main(
                 "kerberos": raw_kerberos,
             }
             if local_controller_root is not None:
+                if source_identity_path.exists():
+                    if (
+                        source_identity_path.is_symlink()
+                        or not source_identity_path.is_file()
+                    ):
+                        raise ValueError(
+                            "frozen local source identity is invalid"
+                        )
+                    try:
+                        frozen_source_identity = json.loads(
+                            source_identity_path.read_text(
+                                encoding="utf-8"
+                            )
+                        )
+                    except json.JSONDecodeError as error:
+                        raise ValueError(
+                            "frozen local source identity is invalid"
+                        ) from error
+                    if frozen_source_identity != source_identity:
+                        raise ValueError(
+                            "frozen local source identity mismatch"
+                        )
+                else:
+                    write_json_atomic(
+                        source_identity_path,
+                        source_identity,
+                    )
                 write_json_atomic(
                     local_controller_root
                     / "ssh_storage_preflight.json",
@@ -882,9 +931,62 @@ def main(
         model_root=model_root,
         model_revision=args.model_revision,
         attempt_root=attempt_root,
+        allow_existing_attempt=(
+            not args.plan_only and not args.dry_run
+        ),
     )
+    if (
+        not path_state["attempt_exists"]
+        and source_identity_path is not None
+    ):
+        write_json_atomic(source_identity_path, source_identity)
 
-    if args.plan_only:
+    if path_state["attempt_exists"]:
+        if local_controller_root is None:
+            raise ValueError(
+                "existing attempt resume requires local attempt root"
+            )
+        if (
+            source_identity_path is None
+            or not source_identity_path.is_file()
+            or source_identity_path.is_symlink()
+        ):
+            raise ValueError(
+                "existing attempt resume requires frozen source identity"
+            )
+        try:
+            frozen_source_identity = json.loads(
+                source_identity_path.read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                "frozen local source identity is invalid"
+            ) from error
+        if frozen_source_identity != source_identity:
+            raise ValueError("frozen local source identity mismatch")
+        plan_path = local_controller_root / "plan.json"
+        if not plan_path.is_file() or plan_path.is_symlink():
+            raise ValueError(
+                "existing attempt resume requires frozen local plan"
+            )
+        try:
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError("frozen local plan is invalid") from error
+        plan = dict(plan)
+        plan["resume_existing_attempt"] = True
+        _validate_plan(plan)
+        if (
+            plan.get("attempt_tag") != args.attempt_tag
+            or plan.get("source_revision") != args.source_revision
+            or plan.get("model_revision") != args.model_revision
+            or plan.get("remote_root") != args.remote_root
+        ):
+            raise ValueError("frozen local plan identity mismatch")
+        selected = tuple(
+            dict(row) for row in plan["selected_gpus"]
+        )
+    elif args.plan_only:
         selected = select_strict_clean_gpus(query_inventory())
     else:
         monitor = gpu_monitor(
@@ -908,23 +1010,71 @@ def main(
             monitor["selected_gpus"]
         )
 
-    plan = build_attempt_plan(
-        attempt_tag=args.attempt_tag,
-        source_revision=args.source_revision,
-        model_revision=args.model_revision,
-        selected_gpus=selected,
-        remote_path_state=remote_path_state,
-        remote_root=args.remote_root,
-    )
+    if not path_state["attempt_exists"]:
+        plan = build_attempt_plan(
+            attempt_tag=args.attempt_tag,
+            source_revision=args.source_revision,
+            model_revision=args.model_revision,
+            selected_gpus=selected,
+            remote_path_state=remote_path_state,
+            remote_root=args.remote_root,
+        )
+    if (
+        local_controller_root is not None
+        and not args.plan_only
+        and not args.dry_run
+        and not path_state["attempt_exists"]
+    ):
+        write_json_atomic(local_controller_root / "plan.json", plan)
     if not args.plan_only and not args.dry_run:
-        adapters = (
+        adapters = [
             worker_runner,
             assembler,
             remote_verifier,
             downloader,
             local_verifier,
             cleanup_validator,
-        )
+        ]
+        if not any(callable(callback) for callback in adapters):
+            if (
+                local_controller_root is not None
+                and source_identity is not None
+            ):
+                if production_adapter_factory is None:
+                    from tools.qwen38_tp4_collective_reduction_production import (
+                        create_production_adapter,
+                    )
+
+                    production_adapter_factory = (
+                        create_production_adapter
+                    )
+                adapter = production_adapter_factory(
+                    plan=plan,
+                    source_identity=source_identity,
+                    model_manifest=dict(path_state["model_manifest"]),
+                    repo_root=Path(__file__).resolve().parents[1],
+                    local_attempt_root=args.local_attempt_root,
+                    ssh_target=args.ssh_target,
+                    control_path=args.control_path,
+                    command_timeout_s=args.command_timeout_s,
+                    retry_count=args.retry_count,
+                )
+                adapters = [
+                    adapter.worker_runner,
+                    adapter.assembler,
+                    adapter.remote_verifier,
+                    adapter.downloader,
+                    adapter.local_verifier,
+                    adapter.cleanup_validator,
+                ]
+                (
+                    worker_runner,
+                    assembler,
+                    remote_verifier,
+                    downloader,
+                    local_verifier,
+                    cleanup_validator,
+                ) = adapters
         if not all(callable(callback) for callback in adapters):
             result = {
                 "classification": "EXECUTION_ADAPTER_UNAVAILABLE",
