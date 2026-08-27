@@ -190,6 +190,7 @@ def validate_collective_census(rows, catalog):
 
     snapshots = {}
     reference = None
+    reference_bytes = None
     for snapshot in rows:
         if (
             not isinstance(snapshot, dict)
@@ -207,22 +208,59 @@ def validate_collective_census(rows, catalog):
         ):
             raise ValueError("collective census rank inventory mismatch")
         collectives = snapshot.get("collectives")
-        if not isinstance(collectives, list):
+        steps = snapshot.get("steps")
+        if (
+            not isinstance(collectives, list)
+            or not isinstance(steps, list)
+            or not steps
+        ):
             raise ValueError("collective sequence must be a list")
-        site_ids = tuple(row.get("site_id") for row in collectives)
-        if site_ids != expected_site_ids:
-            raise ValueError(
-                "collective sequence does not match static catalog"
-            )
+        decode_ordinals = tuple(range(len(steps)))
         if tuple(
-            row.get("collective_ordinal") for row in collectives
-        ) != tuple(range(len(collectives))):
-            raise ValueError("collective sequence ordinals are invalid")
-        signature = tuple(
-            _collective_signature(row) for row in collectives
-        )
+            step.get("decode_ordinal") for step in steps
+        ) != decode_ordinals or any(
+            step.get("collective_count")
+            != EXPECTED_DECODE_COLLECTIVE_COUNT
+            or step.get("status", "completed") != "completed"
+            for step in steps
+        ):
+            raise ValueError("collective step inventory is invalid")
+        by_step = {ordinal: [] for ordinal in decode_ordinals}
+        for row in collectives:
+            decode_ordinal = row.get("decode_ordinal")
+            if decode_ordinal not in by_step:
+                raise ValueError(
+                    "collective sequence decode ordinal is invalid"
+                )
+            by_step[decode_ordinal].append(row)
+        signature = []
+        byte_totals = []
+        for decode_ordinal in decode_ordinals:
+            step_rows = by_step[decode_ordinal]
+            site_ids = tuple(row.get("site_id") for row in step_rows)
+            if site_ids != expected_site_ids:
+                raise ValueError(
+                    "collective sequence does not match static catalog"
+                )
+            if tuple(
+                row.get("collective_ordinal") for row in step_rows
+            ) != tuple(range(EXPECTED_DECODE_COLLECTIVE_COUNT)):
+                raise ValueError(
+                    "collective sequence ordinals are invalid"
+                )
+            step_signature = tuple(
+                _collective_signature(row) for row in step_rows
+            )
+            signature.append(step_signature)
+            byte_totals.append(sum(
+                row_signature[-1]
+                for row_signature in step_signature
+            ))
+        signature = tuple(signature)
+        byte_totals = tuple(byte_totals)
         if reference is None:
             reference = signature
+            reference_bytes = byte_totals
         elif signature != reference:
             raise ValueError("rank collective sequence mismatch")
         snapshots[rank] = snapshot
@@ -231,10 +269,15 @@ def validate_collective_census(rows, catalog):
     return {
         "coverage_complete": True,
         "rank_inventory": [0, 1, 2, 3],
-        "collective_count_per_rank": len(reference),
-        "tensor_bytes_per_rank": sum(
-            signature[-1] for signature in reference
+        "decode_step_count_per_rank": len(reference),
+        "collective_count_per_decode_step": (
+            EXPECTED_DECODE_COLLECTIVE_COUNT
         ),
+        "collective_count_per_rank": (
+            len(reference) * EXPECTED_DECODE_COLLECTIVE_COUNT
+        ),
+        "tensor_bytes_per_decode_step": list(reference_bytes),
+        "tensor_bytes_per_rank": sum(reference_bytes),
         "ordered_site_ids": list(expected_site_ids),
     }
 

@@ -28,23 +28,31 @@ def _catalog():
     )
 
 
-def _rank_snapshot(rank):
+def _rank_snapshot(rank, *, decode_steps=1):
     rows = []
-    for ordinal, site in enumerate(_catalog()):
-        rows.append({
-            "collective_ordinal": ordinal,
-            "site_id": site["site_id"],
-            "collective_kind": site["collective_kind"],
-            "tensor_shape": [1, 5120],
-            "tensor_dtype": "torch.bfloat16",
-            "tensor_bytes": 10240,
+    steps = []
+    for decode_ordinal in range(decode_steps):
+        steps.append({
+            "decode_ordinal": decode_ordinal,
+            "collective_count": 130,
+            "status": "completed",
         })
+        for ordinal, site in enumerate(_catalog()):
+            rows.append({
+                "decode_ordinal": decode_ordinal,
+                "collective_ordinal": ordinal,
+                "site_id": site["site_id"],
+                "collective_kind": site["collective_kind"],
+                "tensor_shape": [1, 5120],
+                "tensor_dtype": "torch.bfloat16",
+                "tensor_bytes": 10240,
+            })
     return {
         "schema": "tinyllmforge.synchronous-collective-census.v1",
         "rank": rank,
         "enabled": True,
         "finalization_status": "complete",
-        "steps": [{"decode_ordinal": 0, "collective_count": 130}],
+        "steps": steps,
         "collectives": rows,
     }
 
@@ -133,6 +141,22 @@ def test_census_requires_four_identical_rank_sequences():
     assert result["rank_inventory"] == [0, 1, 2, 3]
     assert result["collective_count_per_rank"] == 130
     rows[-1]["collectives"][7]["tensor_bytes"] += 2
+    with pytest.raises(ValueError, match="rank collective sequence"):
+        validate_collective_census(rows, _catalog())
+
+
+def test_census_reconciles_each_decode_step_across_four_ranks():
+    rows = [
+        _rank_snapshot(rank, decode_steps=2)
+        for rank in range(4)
+    ]
+
+    result = validate_collective_census(rows, _catalog())
+
+    assert result["decode_step_count_per_rank"] == 2
+    assert result["collective_count_per_decode_step"] == 130
+    assert result["collective_count_per_rank"] == 260
+    rows[-1]["collectives"][137]["tensor_bytes"] += 2
     with pytest.raises(ValueError, match="rank collective sequence"):
         validate_collective_census(rows, _catalog())
 
