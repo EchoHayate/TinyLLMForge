@@ -469,6 +469,7 @@ def run_attempt(
             "worker_started": False,
             "kerberos": kerberos,
             "selected_gpus": [dict(row) for row in selected],
+            "plan": plan,
         }
     required = {
         "worker_runner": worker_runner,
@@ -768,6 +769,74 @@ def main(
         local_verifier=local_verifier,
         cleanup_validator=cleanup_validator,
     )
+    if local_controller_root is not None and args.dry_run:
+        write_json_atomic(
+            local_controller_root / "plan.json",
+            plan,
+        )
+        write_json_atomic(
+            local_controller_root / "plan_audit.json",
+            {
+                "schema_version": (
+                    "qwen38.tp4-collective-reduction-plan-audit.v1"
+                ),
+                "classification": "PASS",
+                "attempt_tag": plan["attempt_tag"],
+                "source_revision": plan["source_revision"],
+                "remote_paths_below_approved_root": all(
+                    _path_below(plan[key], APPROVED_REMOTE_ROOT)
+                    for key in (
+                        "attempt_root",
+                        "source_root",
+                        "model_root",
+                        "case_root",
+                        "bundle_root",
+                        "controller_log_path",
+                    )
+                ),
+                "attempt_absent": not path_state["attempt_exists"],
+                "overlap_design_authorized": (
+                    plan["overlap_design_authorized"]
+                ),
+                "async_collectives_authorized": (
+                    plan["async_collectives_authorized"]
+                ),
+            },
+        )
+        write_json_atomic(
+            local_controller_root / "ssh_storage_preflight.json",
+            {
+                "schema_version": (
+                    "qwen38.tp4-collective-reduction-preflight.v1"
+                ),
+                "classification": "PASS",
+                "kerberos": kerberos,
+                "resolved_paths": dict(path_state["resolved_paths"]),
+                "attempt_exists": path_state["attempt_exists"],
+                "remote_query_performed": True,
+                "remote_write_performed": False,
+            },
+        )
+        write_json_atomic(
+            local_controller_root / "strict_clean_admission.json",
+            {
+                "schema_version": (
+                    "qwen38.tp4-collective-reduction-gpu-admission.v1"
+                ),
+                "classification": "READY",
+                "selected_gpus": [dict(row) for row in selected],
+                "maximum_memory_used_mib": MAX_GPU_MEMORY_USED_MIB,
+                "maximum_utilization_percent": (
+                    MAX_GPU_UTILIZATION_PERCENT
+                ),
+                "compute_processes_required_empty": True,
+                "worker_started": False,
+            },
+        )
+        write_json_atomic(
+            local_controller_root / "dry_run.json",
+            result,
+        )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["classification"] in {
         "PLAN_ONLY",

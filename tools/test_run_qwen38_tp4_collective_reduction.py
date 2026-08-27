@@ -475,6 +475,128 @@ def test_cli_dry_run_performs_bounded_preflight_without_worker(capsys):
     assert events == ["kerberos", "paths", "monitor", "inventory", "inventory"]
 
 
+def test_cli_persists_successful_dry_run_preflight_receipts(
+    tmp_path,
+    capsys,
+):
+    local_attempt_root = tmp_path / "attempt"
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    source_revision = "a" * 40
+    model_revision = "b" * 40
+    model_root = (
+        f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/"
+        f"snapshots/{model_revision}"
+    )
+    attempt_root = f"{APPROVED_REMOTE_ROOT}/attempts/{attempt}"
+    source_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=source_revision,
+        source_files={"tinyvllm/config.py": "c" * 64},
+    )
+    selected_gpus = [_gpu(index) for index in range(4)]
+
+    return_code = main(
+        [
+            "--attempt-tag",
+            attempt,
+            "--source-revision",
+            source_revision,
+            "--model-revision",
+            model_revision,
+            "--dry-run",
+            "--local-attempt-root",
+            str(local_attempt_root),
+        ],
+        source_identity_builder=lambda **_kwargs: source_identity,
+        kerberos_query=lambda: {
+            "classification": "READY",
+            "principal": "sitian@BYTEDANCE.COM",
+            "remaining_lifetime_seconds": 7200,
+        },
+        path_state_query=lambda **_kwargs: {
+            "resolved_paths": {
+                "remote_root": APPROVED_REMOTE_ROOT,
+                "model_root": model_root,
+                "attempt_root": attempt_root,
+            },
+            "attempt_exists": False,
+        },
+        inventory_query=lambda **_kwargs: selected_gpus,
+        gpu_monitor=lambda **_kwargs: {
+            "classification": "READY",
+            "selected_gpus": selected_gpus,
+        },
+        worker_runner=lambda _plan: pytest.fail(
+            "dry-run must not start a worker"
+        ),
+    )
+
+    controller_root = local_attempt_root / "controller"
+    persisted = {
+        path.name: json.loads(path.read_text())
+        for path in controller_root.iterdir()
+    }
+    payload = json.loads(capsys.readouterr().out)
+
+    assert return_code == 0
+    assert set(persisted) == {
+        "dry_run.json",
+        "plan.json",
+        "plan_audit.json",
+        "source_identity.json",
+        "ssh_storage_preflight.json",
+        "strict_clean_admission.json",
+    }
+    assert persisted["source_identity.json"] == source_identity
+    assert persisted["plan.json"] == payload["plan"]
+    assert persisted["plan_audit.json"] == {
+        "schema_version": (
+            "qwen38.tp4-collective-reduction-plan-audit.v1"
+        ),
+        "classification": "PASS",
+        "attempt_tag": attempt,
+        "source_revision": source_revision,
+        "remote_paths_below_approved_root": True,
+        "attempt_absent": True,
+        "overlap_design_authorized": False,
+        "async_collectives_authorized": False,
+    }
+    assert persisted["ssh_storage_preflight.json"] == {
+        "schema_version": (
+            "qwen38.tp4-collective-reduction-preflight.v1"
+        ),
+        "classification": "PASS",
+        "kerberos": {
+            "classification": "PASS",
+            "principal": "sitian@BYTEDANCE.COM",
+            "remaining_lifetime_seconds": 7200,
+        },
+        "resolved_paths": {
+            "remote_root": APPROVED_REMOTE_ROOT,
+            "model_root": model_root,
+            "attempt_root": attempt_root,
+        },
+        "attempt_exists": False,
+        "remote_query_performed": True,
+        "remote_write_performed": False,
+    }
+    assert persisted["strict_clean_admission.json"] == {
+        "schema_version": (
+            "qwen38.tp4-collective-reduction-gpu-admission.v1"
+        ),
+        "classification": "READY",
+        "selected_gpus": selected_gpus,
+        "maximum_memory_used_mib": 1024,
+        "maximum_utilization_percent": 5,
+        "compute_processes_required_empty": True,
+        "worker_started": False,
+    }
+    assert persisted["dry_run.json"] == payload
+    assert payload["classification"] == "DRY_RUN_READY"
+    assert payload["worker_started"] is False
+    assert payload["plan"]["attempt_tag"] == attempt
+
+
 def test_cli_persists_source_and_blocked_kerberos_receipts(
     tmp_path,
     capsys,
