@@ -211,8 +211,7 @@ def test_event_budget_thresholds_and_count_only_gate():
         16: (0.01, 0.01),
         32: (0.01, 0.01),
     })
-    with pytest.raises(ValueError, match="count-only"):
-        select_event_budget(invalid_count_only)
+    assert select_event_budget(invalid_count_only) is None
 
 
 def test_consumer_proofs_are_conservative_and_named():

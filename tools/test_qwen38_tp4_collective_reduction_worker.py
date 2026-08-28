@@ -521,6 +521,54 @@ def test_full_campaign_calls_case_matrix_builder_by_keyword():
     assert selected_budgets == [16, 16]
 
 
+def test_full_campaign_finishes_after_calibration_when_no_budget_passes():
+    worker = _load()
+    phase_calls = []
+    selected_budgets = []
+
+    def build_matrix(*, selected_budget):
+        selected_budgets.append(selected_budget)
+        return {
+            "calibration": ({"case_id": "calibration-case"},),
+            "terminal": ({"case_id": "terminal-case"},),
+        }
+
+    def run_phase(**kwargs):
+        phase_calls.append(tuple(kwargs["cases"]))
+        return {
+            "schema_version": worker.WORKER_SCHEMA,
+            "classification": "PASS",
+            "attempt": "attempt-r1",
+            "source_revision": "a" * 40,
+            "cases": [{
+                "case_id": "calibration-case",
+                "classification": "PASS",
+            }],
+            "cleanup": {
+                "process_group_destroyed": True,
+                "rank_exit_codes": [0, 0, 0, 0],
+                "owned_children_remaining": [],
+            },
+        }
+
+    result = worker.run_full_collective_reduction_campaign(
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        model_root=Path("/model"),
+        timeout_s=30.0,
+        phase_runner=run_phase,
+        case_matrix_builder=build_matrix,
+        budget_selector=lambda _rows: None,
+        pid_resolver=lambda: 4242,
+    )
+
+    assert result["classification"] == "PASS"
+    assert result["selected_budget"] is None
+    assert selected_budgets == [16]
+    assert phase_calls == [({"case_id": "calibration-case"},)]
+    assert len(result["phase_cleanups"]) == 1
+
+
 def test_worker_cli_full_campaign_selects_budget_internally(
     tmp_path,
     monkeypatch,

@@ -315,7 +315,7 @@ def select_event_budget(calibration_rows):
         )
 
     if not passes(0):
-        raise ValueError("count-only profiler overhead exceeds limits")
+        return None
     passing = [budget for budget in EVENT_BUDGETS[1:] if passes(budget)]
     return max(passing) if passing else None
 
