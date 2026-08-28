@@ -64,7 +64,13 @@ def test_runtime_sample_accepts_only_attempt_owned_gpu_processes():
         "process_name": "foreign",
         "used_memory_mib": 1,
     })
-    with pytest.raises(ValueError, match="foreign GPU process"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            "foreign GPU process detected: "
+            "gpu_uuid=GPU-0 pid=999 process_name=foreign"
+        ),
+    ):
         supervisor.build_runtime_sample(
             case_id="case-1",
             selected_gpus=_selected(),

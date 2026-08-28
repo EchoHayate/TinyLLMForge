@@ -126,7 +126,12 @@ def build_runtime_sample(
             ):
                 raise ValueError("runtime GPU process telemetry is invalid")
             if process["pid"] not in owned_pids:
-                raise ValueError("foreign GPU process detected")
+                raise ValueError(
+                    "foreign GPU process detected: "
+                    f"gpu_uuid={current['gpu_uuid']} "
+                    f"pid={process['pid']} "
+                    f"process_name={process['process_name']}"
+                )
         normalized.append(dict(current))
     return {
         "case_id": case_id,
