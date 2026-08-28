@@ -38,6 +38,9 @@ class _FakeEngine:
         self.exit_calls = 0
         self.arm = None
 
+    def clear_reusable_prefix_cache(self):
+        return 0
+
     def configure_decode_internal_profile(
         self,
         enabled,
@@ -197,6 +200,55 @@ def test_worker_preserves_exact_request_outputs_across_pair():
     assert engine.configurations[0] == {"enabled": False}
     assert engine.configurations[1]["sample_budget"] == 8
     assert engine.configurations[1]["expected_collective_count"] == 130
+
+
+def test_worker_clears_reusable_prefix_cache_before_each_arm():
+    worker = _load()
+
+    class PrefixSensitiveEngine(_FakeEngine):
+
+        def __init__(self):
+            super().__init__({
+                "control": [7, 8],
+                "instrumented": [7, 8],
+            })
+            self.prefix_cache_dirty = True
+            self.prefix_cache_clear_calls = 0
+
+        def clear_reusable_prefix_cache(self):
+            self.prefix_cache_dirty = False
+            self.prefix_cache_clear_calls += 1
+            return 1
+
+        def run_requests(self, requests, *, timeout_s):
+            if self.prefix_cache_dirty:
+                raise RuntimeError(
+                    "hybrid prefix reuse requires aligned state snapshot"
+                )
+            result = super().run_requests(
+                requests,
+                timeout_s=timeout_s,
+            )
+            self.prefix_cache_dirty = True
+            return result
+
+    engine = PrefixSensitiveEngine()
+
+    result = worker.run_collective_reduction_pair(
+        engine=engine,
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        campaign_phase="calibration",
+        workload="P1",
+        phase="warmup",
+        repetition=0,
+        budget=0,
+        timeout_s=30.0,
+        reset_sequence_ids=lambda: None,
+    )
+
+    assert result["classification"] == "PASS"
+    assert engine.prefix_cache_clear_calls == 2
 
 
 def test_worker_rejects_output_mismatch_and_closes_once():

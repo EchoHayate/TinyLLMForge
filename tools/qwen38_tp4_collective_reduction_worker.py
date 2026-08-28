@@ -319,6 +319,7 @@ def _run_arm(
     )
     if configured.get("rank_inventory") != list(RANKS):
         raise RuntimeError("collective census setup rank mismatch")
+    engine.clear_reusable_prefix_cache()
     reset_sequence_ids()
     engine.reset_peak_memory_stats(timeout_s=float(timeout_s))
     requests = build_request_specs(
