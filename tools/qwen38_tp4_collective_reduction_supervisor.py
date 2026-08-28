@@ -20,6 +20,7 @@ SUPERVISOR_SCHEMA = (
 )
 CLEANUP_SCHEMA = "qwen38.tp4-collective-reduction-cleanup.v1"
 WORKER_SCRIPT = "qwen38_tp4_collective_reduction_worker.py"
+RUNTIME_LIBRARY_DIR = "/data00/home/sitian/tllm/miniforge/lib"
 
 
 def _is_int(value):
@@ -169,6 +170,10 @@ def build_worker_environment(
     pythonpath = str(attempt_root / "source")
     if existing_pythonpath:
         pythonpath = pythonpath + os.pathsep + existing_pythonpath
+    existing_library_path = base_environment.get("LD_LIBRARY_PATH")
+    library_path = RUNTIME_LIBRARY_DIR
+    if existing_library_path:
+        library_path = library_path + os.pathsep + existing_library_path
     environment = dict(base_environment)
     environment.update({
         "CUDA_VISIBLE_DEVICES": ",".join(
@@ -176,7 +181,9 @@ def build_worker_environment(
         ),
         "TINYVLLM_DIST_PORT": str(dist_port),
         "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
         "PYTHONPATH": pythonpath,
+        "LD_LIBRARY_PATH": library_path,
         **{name: str(path) for name, path in paths.items()},
     })
     return environment

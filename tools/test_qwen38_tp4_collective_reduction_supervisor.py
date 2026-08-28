@@ -80,13 +80,21 @@ def test_worker_environment_keeps_writable_paths_below_attempt(tmp_path):
     environment = supervisor.build_worker_environment(
         attempt_root=attempt_root,
         selected_gpus=_selected(),
-        base_environment={"PATH": "/usr/bin"},
+        base_environment={
+            "PATH": "/usr/bin",
+            "LD_LIBRARY_PATH": "/approved/existing/lib",
+        },
         dist_port=29671,
     )
 
     assert environment["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
     assert environment["TINYVLLM_DIST_PORT"] == "29671"
     assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert environment["PYTHONNOUSERSITE"] == "1"
+    assert environment["LD_LIBRARY_PATH"] == (
+        "/data00/home/sitian/tllm/miniforge/lib"
+        ":/approved/existing/lib"
+    )
     assert environment["PYTHONPATH"] == str(attempt_root / "source")
     for name in (
         "TMPDIR",
