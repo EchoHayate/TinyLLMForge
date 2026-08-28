@@ -202,6 +202,34 @@ def test_worker_preserves_exact_request_outputs_across_pair():
     assert engine.configurations[1]["expected_collective_count"] == 130
 
 
+def test_worker_case_carries_static_workload_identity_for_assembler():
+    worker = _load()
+    engine = _FakeEngine({
+        "control": [7, 8],
+        "instrumented": [7, 8],
+    })
+
+    result = worker.run_collective_reduction_pair(
+        engine=engine,
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        campaign_phase="calibration",
+        workload="P0",
+        phase="measured",
+        repetition=0,
+        budget=8,
+        timeout_s=30.0,
+        reset_sequence_ids=lambda: None,
+    )
+
+    assert (
+        result["workload_family"],
+        result["prompt_tokens"],
+        result["output_tokens"],
+        result["concurrency"],
+    ) == worker.WORKLOADS["P0"]
+
+
 def test_worker_clears_reusable_prefix_cache_before_each_arm():
     worker = _load()
 
