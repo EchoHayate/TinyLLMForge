@@ -881,6 +881,83 @@ def test_cli_persists_source_and_blocked_kerberos_receipts(
     assert json.loads(capsys.readouterr().out) == dry_run
 
 
+def test_cli_blocked_resume_preserves_existing_preflight_receipts(
+    tmp_path,
+    capsys,
+):
+    local_attempt_root = tmp_path / "attempt"
+    controller_root = local_attempt_root / "controller"
+    controller_root.mkdir(parents=True)
+    attempt = "20260827-qwen38-tp4-collective-reduction-r1"
+    source_revision = "a" * 40
+    source_identity = build_source_identity(
+        attempt=attempt,
+        source_revision=source_revision,
+        source_files={"tinyvllm/config.py": "b" * 64},
+    )
+    frozen_preflight = {
+        "schema_version": (
+            "qwen38.tp4-collective-reduction-preflight.v1"
+        ),
+        "classification": "PASS",
+        "remote_query_performed": True,
+        "remote_write_performed": False,
+    }
+    frozen_dry_run = {
+        "classification": "DRY_RUN_READY",
+        "worker_started": False,
+    }
+    (controller_root / "source_identity.json").write_text(
+        json.dumps(source_identity),
+        encoding="utf-8",
+    )
+    (controller_root / "ssh_storage_preflight.json").write_text(
+        json.dumps(frozen_preflight),
+        encoding="utf-8",
+    )
+    (controller_root / "dry_run.json").write_text(
+        json.dumps(frozen_dry_run),
+        encoding="utf-8",
+    )
+
+    return_code = main(
+        [
+            "--attempt-tag",
+            attempt,
+            "--source-revision",
+            source_revision,
+            "--model-revision",
+            "b" * 40,
+            "--local-attempt-root",
+            str(local_attempt_root),
+        ],
+        source_identity_builder=lambda **_kwargs: source_identity,
+        kerberos_query=lambda: {
+            "classification": "BLOCKED_KERBEROS_TTL",
+            "reason": "test",
+        },
+        path_state_query=lambda **_kwargs: pytest.fail(
+            "remote path query must not run"
+        ),
+        inventory_query=lambda **_kwargs: pytest.fail(
+            "GPU query must not run"
+        ),
+    )
+
+    blocked = json.loads(capsys.readouterr().out)
+    assert return_code == 2
+    assert blocked["classification"] == "BLOCKED_KERBEROS"
+    assert json.loads(
+        (controller_root / "ssh_storage_preflight.json").read_text()
+    ) == frozen_preflight
+    assert json.loads(
+        (controller_root / "dry_run.json").read_text()
+    ) == frozen_dry_run
+    assert json.loads(
+        (controller_root / "resume_blocked.json").read_text()
+    ) == blocked
+
+
 def test_cli_auto_wires_production_adapter_for_real_execution(
     tmp_path,
     capsys,

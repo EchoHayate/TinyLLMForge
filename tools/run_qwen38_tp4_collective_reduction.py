@@ -901,20 +901,35 @@ def main(
                         source_identity_path,
                         source_identity,
                     )
-                write_json_atomic(
+                preflight_path = (
                     local_controller_root
-                    / "ssh_storage_preflight.json",
-                    {
-                        "classification": "BLOCKED_KERBEROS",
-                        "kerberos": raw_kerberos,
-                        "remote_query_performed": False,
-                        "remote_write_performed": False,
-                    },
+                    / "ssh_storage_preflight.json"
                 )
-                write_json_atomic(
-                    local_controller_root / "dry_run.json",
-                    result,
-                )
+                dry_run_path = local_controller_root / "dry_run.json"
+                canonical_receipts = (preflight_path, dry_run_path)
+                if any(path.exists() for path in canonical_receipts):
+                    for path in canonical_receipts:
+                        if path.exists() and (
+                            path.is_symlink() or not path.is_file()
+                        ):
+                            raise ValueError(
+                                "frozen local preflight receipt is invalid"
+                            )
+                    write_json_atomic(
+                        local_controller_root / "resume_blocked.json",
+                        result,
+                    )
+                else:
+                    write_json_atomic(
+                        preflight_path,
+                        {
+                            "classification": "BLOCKED_KERBEROS",
+                            "kerberos": raw_kerberos,
+                            "remote_query_performed": False,
+                            "remote_write_performed": False,
+                        },
+                    )
+                    write_json_atomic(dry_run_path, result)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 2
         kerberos = dict(raw_kerberos)
