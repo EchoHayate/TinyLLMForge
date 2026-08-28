@@ -98,6 +98,30 @@ def test_process_group_scan_ignores_process_exit_race(monkeypatch):
     assert supervisor.process_group_pids(101) == []
 
 
+def test_exact_tag_scan_ignores_process_exit_race(monkeypatch):
+    class VanishedProcess:
+        name = "123"
+
+        def __truediv__(self, name):
+            assert name == "cmdline"
+            return self
+
+        def read_bytes(self):
+            raise ProcessLookupError(3, "No such process")
+
+    class ProcRoot:
+        def __init__(self, path):
+            assert path == "/proc"
+
+        def iterdir(self):
+            return [VanishedProcess()]
+
+    monkeypatch.setattr(supervisor, "Path", ProcRoot)
+    monkeypatch.setattr(supervisor.os, "getpid", lambda: 999)
+
+    assert supervisor.exact_tag_processes(ATTEMPT) == []
+
+
 def test_worker_environment_keeps_writable_paths_below_attempt(tmp_path):
     attempt_root = tmp_path / ATTEMPT
 

@@ -283,7 +283,11 @@ def exact_tag_processes(attempt):
             continue
         try:
             command = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
-        except (FileNotFoundError, PermissionError):
+        except (
+            FileNotFoundError,
+            PermissionError,
+            ProcessLookupError,
+        ):
             continue
         if (
             attempt.encode("utf-8") in command
