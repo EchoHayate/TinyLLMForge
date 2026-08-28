@@ -433,6 +433,36 @@ def test_missing_download_and_verifier_disagreement_still_cleanup():
         assert events == ["cleanup"]
 
 
+def test_cleanup_failure_does_not_mask_the_original_operation_error():
+    with pytest.raises(ValueError, match="case identity is invalid"):
+        run_attempt(
+            _build_plan(),
+            plan_only=False,
+            kerberos_probe=lambda: {"classification": "PASS"},
+            gpu_probe=lambda: [_gpu(index) for index in range(4)],
+            worker_runner=lambda _plan: _worker_result(),
+            assembler=lambda *_args: (
+                (_ for _ in ()).throw(
+                    ValueError("case identity is invalid")
+                )
+            ),
+            remote_verifier=lambda _plan: pytest.fail(
+                "verification must not run"
+            ),
+            downloader=lambda _plan: pytest.fail(
+                "download must not run"
+            ),
+            local_verifier=lambda _plan: pytest.fail(
+                "local verification must not run"
+            ),
+            cleanup_validator=lambda *_args: (
+                (_ for _ in ()).throw(
+                    FileNotFoundError("cleanup.json")
+                )
+            ),
+        )
+
+
 def test_incomplete_cleanup_overrides_success():
     with pytest.raises(RuntimeError, match="cleanup is incomplete"):
         run_attempt(

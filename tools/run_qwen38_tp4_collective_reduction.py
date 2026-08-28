@@ -721,7 +721,12 @@ def run_attempt(
             )
     except Exception as error:
         operation_error = error
-    cleanup = cleanup_validator(plan, worker)
+    try:
+        cleanup = cleanup_validator(plan, worker)
+    except Exception as cleanup_error:
+        if operation_error is not None:
+            raise operation_error from cleanup_error
+        raise
     if (
         not isinstance(cleanup, dict)
         or cleanup.get("complete") is not True
