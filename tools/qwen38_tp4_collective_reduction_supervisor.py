@@ -395,6 +395,7 @@ def supervise_worker(
     ]
     snapshots = []
     violations = []
+    known_owned_pids = set()
     timed_out = False
     started_ns = clock_ns()
     started_monotonic = monotonic()
@@ -417,14 +418,15 @@ def supervise_worker(
         pgid = pgid_resolver(process.pid)
         while process.poll() is None:
             owned_before = set(process_group_pids(pgid))
+            known_owned_pids.update(owned_before)
             try:
                 observed = inventory_query()
-                owned = owned_before | set(process_group_pids(pgid))
+                known_owned_pids.update(process_group_pids(pgid))
                 snapshots.append(build_runtime_sample(
                     case_id="__runtime__",
                     selected_gpus=selected,
                     observed_gpus=observed,
-                    owned_pids=owned,
+                    owned_pids=known_owned_pids,
                     captured_at_unix_ns=clock_ns(),
                 ))
             except Exception as error:

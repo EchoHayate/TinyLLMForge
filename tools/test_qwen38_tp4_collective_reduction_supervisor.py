@@ -168,6 +168,91 @@ class _FakeProcess:
         return 0
 
 
+class _TwoPollProcess:
+    def __init__(self):
+        self.pid = 101
+        self._polls = iter((None, None, 0))
+
+    def poll(self):
+        return next(self._polls)
+
+    def wait(self):
+        return 0
+
+
+def test_supervisor_retains_known_owned_pids_during_gpu_telemetry_lag(
+    tmp_path,
+):
+    attempt_root = tmp_path / ATTEMPT
+    controller = attempt_root / "controller"
+    cases = attempt_root / "cases"
+    source = attempt_root / "source"
+    controller.mkdir(parents=True)
+    cases.mkdir()
+    source.mkdir()
+    (attempt_root / "worker.json").write_text(
+        json.dumps({
+            "classification": "PASS",
+            "attempt": ATTEMPT,
+            "source_revision": "a" * 40,
+            "selected_budget": None,
+            "owned_pids": [101],
+            "cases": [{
+                "case_id": "case-1",
+                "classification": "PASS",
+            }],
+            "phase_cleanups": [{
+                "process_group_destroyed": True,
+                "rank_exit_codes": [0, 0, 0, 0],
+                "owned_children_remaining": [],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    process_groups = iter((
+        [101, 102],
+        [101, 102],
+        [101],
+        [101],
+        [],
+    ))
+
+    receipt = supervisor.supervise_worker(
+        attempt=ATTEMPT,
+        source_revision="a" * 40,
+        attempt_root=attempt_root,
+        source_root=source,
+        model_root=tmp_path / "model",
+        python_path=Path("/approved/read-only/python"),
+        selected_gpus=_selected(),
+        dist_port=29671,
+        poll_interval_s=1,
+        worker_timeout_s=10,
+        launcher=lambda *_args, **_kwargs: _TwoPollProcess(),
+        inventory_query=lambda: [
+            _gpu(
+                index,
+                processes=[{
+                    "pid": 102,
+                    "process_name": "python",
+                    "used_memory_mib": 20_000,
+                }],
+            )
+            if index == 0 else _gpu(index)
+            for index in range(4)
+        ],
+        pgid_resolver=lambda pid: pid,
+        process_group_pids=lambda _pgid: next(process_groups),
+        exact_tag_scan=lambda _tag: [],
+        sleep=lambda _seconds: None,
+        clock_ns=iter(range(100, 1000)).__next__,
+        monotonic=iter((0.0, 1.0, 2.0, 3.0, 4.0)).__next__,
+    )
+
+    assert receipt["classification"] == "PASS"
+    assert receipt["violations"] == []
+
+
 def test_supervisor_writes_resource_and_cleanup_evidence_without_signals(
     tmp_path,
 ):
