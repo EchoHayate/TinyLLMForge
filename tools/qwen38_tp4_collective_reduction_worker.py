@@ -472,7 +472,16 @@ def run_collective_reduction_campaign(
                 sampling_params_factory=sampling_params_factory,
                 clock_ns=clock_ns,
                 reset_sequence_ids=reset_sequence_ids,
-                **case,
+                **{
+                    key: case[key]
+                    for key in (
+                        "campaign_phase",
+                        "workload",
+                        "phase",
+                        "repetition",
+                        "budget",
+                    )
+                },
             )
             if case_sink is not None:
                 case_sink(result)

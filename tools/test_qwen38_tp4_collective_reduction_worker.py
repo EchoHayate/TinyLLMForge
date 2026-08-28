@@ -261,6 +261,34 @@ def test_campaign_streams_full_cases_and_retains_bounded_receipts():
     assert engine.exit_calls == 1
 
 
+def test_campaign_executes_generated_case_rows():
+    worker = _load()
+    engine = _FakeEngine({
+        "control": [7, 8],
+        "instrumented": [7, 8],
+    })
+    case = worker.build_collective_reduction_cases(
+        selected_budget=16
+    )["calibration"][0]
+
+    result = worker.run_collective_reduction_campaign(
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        cases=[case],
+        model_root=Path("/model"),
+        timeout_s=30.0,
+        engine_factory=lambda *_args, **_kwargs: engine,
+        reset_sequence_ids=lambda: None,
+    )
+
+    assert result["cases"] == [{
+        "case_id": "calibration__P0__budget0__warmup__r0",
+        "classification": "PASS",
+        "budget": 0,
+    }]
+    assert engine.exit_calls == 1
+
+
 def test_calibration_cases_select_largest_budget_within_overhead_limits():
     worker = _load()
     cases = []
