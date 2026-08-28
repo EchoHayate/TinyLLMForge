@@ -376,6 +376,43 @@ def test_full_campaign_merges_actual_phase_receipts():
     assert len(result["phase_cleanups"]) == 2
 
 
+def test_full_campaign_calls_case_matrix_builder_by_keyword():
+    worker = _load()
+    selected_budgets = []
+
+    def build_matrix(*, selected_budget):
+        selected_budgets.append(selected_budget)
+        return {
+            "calibration": (),
+            "terminal": (),
+        }
+
+    result = worker.run_full_collective_reduction_campaign(
+        attempt="attempt-r1",
+        source_revision="a" * 40,
+        model_root=Path("/model"),
+        timeout_s=30.0,
+        phase_runner=lambda **_kwargs: {
+            "schema_version": worker.WORKER_SCHEMA,
+            "classification": "PASS",
+            "attempt": "attempt-r1",
+            "source_revision": "a" * 40,
+            "cases": [],
+            "cleanup": {
+                "process_group_destroyed": True,
+                "rank_exit_codes": [0, 0, 0, 0],
+                "owned_children_remaining": [],
+            },
+        },
+        case_matrix_builder=build_matrix,
+        budget_selector=lambda _rows: 16,
+        pid_resolver=lambda: 4242,
+    )
+
+    assert result["classification"] == "PASS"
+    assert selected_budgets == [16, 16]
+
+
 def test_worker_cli_full_campaign_selects_budget_internally(
     tmp_path,
     monkeypatch,

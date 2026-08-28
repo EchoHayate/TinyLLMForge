@@ -575,7 +575,7 @@ def run_full_collective_reduction_campaign(
         if case_sink is not None:
             case_sink(row)
 
-    matrix = case_matrix_builder(16)
+    matrix = case_matrix_builder(selected_budget=16)
     calibration = phase_runner(
         attempt=attempt,
         source_revision=source_revision,
@@ -594,7 +594,9 @@ def run_full_collective_reduction_campaign(
         terminal = phase_runner(
             attempt=attempt,
             source_revision=source_revision,
-            cases=case_matrix_builder(selected_budget)["terminal"],
+            cases=case_matrix_builder(
+                selected_budget=selected_budget
+            )["terminal"],
             model_root=model_root,
             timeout_s=timeout_s,
             engine_factory=engine_factory,
