@@ -265,6 +265,7 @@ def process_group_pids(pgid):
         except (
             FileNotFoundError,
             PermissionError,
+            ProcessLookupError,
             ValueError,
             IndexError,
         ):

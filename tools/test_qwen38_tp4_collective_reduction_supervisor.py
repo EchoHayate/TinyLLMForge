@@ -74,6 +74,30 @@ def test_runtime_sample_accepts_only_attempt_owned_gpu_processes():
         )
 
 
+def test_process_group_scan_ignores_process_exit_race(monkeypatch):
+    class VanishedProcess:
+        name = "123"
+
+        def __truediv__(self, name):
+            assert name == "stat"
+            return self
+
+        def read_text(self, *, encoding):
+            assert encoding == "utf-8"
+            raise ProcessLookupError(3, "No such process")
+
+    class ProcRoot:
+        def __init__(self, path):
+            assert path == "/proc"
+
+        def iterdir(self):
+            return [VanishedProcess()]
+
+    monkeypatch.setattr(supervisor, "Path", ProcRoot)
+
+    assert supervisor.process_group_pids(101) == []
+
+
 def test_worker_environment_keeps_writable_paths_below_attempt(tmp_path):
     attempt_root = tmp_path / ATTEMPT
 
