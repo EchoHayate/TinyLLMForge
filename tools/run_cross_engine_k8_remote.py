@@ -142,6 +142,33 @@ def pending_vllm_versions(
     return tuple(version for version in versions if version not in attempted)
 
 
+def build_vllm_install_argv(
+    *,
+    candidate_build: str,
+    candidate_version: str,
+    environment: Mapping[str, str],
+) -> list[str]:
+    if _STABLE_VERSION.fullmatch(candidate_version) is None:
+        raise ValueError("vLLM candidate version is invalid")
+    return [
+        "env",
+        *(f"{key}={value}" for key, value in environment.items()),
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30s",
+        "300s",
+        f"{candidate_build}/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--only-binary=:all:",
+        "--prefer-binary",
+        "--no-deps",
+        f"vllm=={candidate_version}",
+    ]
+
+
 def _validate_gpu_row(row: Mapping) -> dict:
     required = (
         "index",
@@ -789,10 +816,6 @@ class RemoteController:
             **cache_env,
             "PYTHONNOUSERSITE": "1",
         }
-        env_arguments = [
-            f"{key}={value}"
-            for key, value in runtime_environment.items()
-        ]
         for probe in vllm_probes:
             if probe.get("compatible") is not True:
                 continue
@@ -830,22 +853,11 @@ class RemoteController:
                     candidate_build,
                 ], retry_transport=False)
                 install = self.remote(
-                    [
-                        "env",
-                        *env_arguments,
-                        "timeout",
-                        "--signal=TERM",
-                        "--kill-after=30s",
-                        "600s",
-                        f"{candidate_build}/bin/python",
-                        "-m",
-                        "pip",
-                        "install",
-                        "--disable-pip-version-check",
-                        "--only-binary=:all:",
-                        "--prefer-binary",
-                        f"vllm=={candidate_version}",
-                    ],
+                    build_vllm_install_argv(
+                        candidate_build=candidate_build,
+                        candidate_version=candidate_version,
+                        environment=runtime_environment,
+                    ),
                     check=False,
                     retry_transport=False,
                 )
@@ -866,7 +878,10 @@ class RemoteController:
             import_probe = self.remote(
                 [
                     "env",
-                    *env_arguments,
+                    *(
+                        f"{key}={value}"
+                        for key, value in runtime_environment.items()
+                    ),
                     candidate_python,
                     "-c",
                     probe_script,

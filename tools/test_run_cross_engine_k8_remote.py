@@ -13,6 +13,7 @@ from tools.run_cross_engine_k8_remote import (
     ControllerConfig,
     RemoteController,
     build_committed_source_archive,
+    build_vllm_install_argv,
     build_worker_plan,
     pending_vllm_versions,
     stable_versions_from_pip_index,
@@ -194,6 +195,19 @@ def test_candidate_resume_skips_versions_already_journaled():
             {"version": "0.27.1", "compatible": False},
         ],
     ) == ("0.27.0",)
+
+
+def test_vllm_candidate_install_is_binary_only_bounded_and_no_deps():
+    argv = build_vllm_install_argv(
+        candidate_build="/campaign/envs/vllm-0.28.0.building",
+        candidate_version="0.28.0",
+        environment={"PIP_CACHE_DIR": "/campaign/cache"},
+    )
+
+    assert argv[:3] == ["env", "PIP_CACHE_DIR=/campaign/cache", "timeout"]
+    assert "--only-binary=:all:" in argv
+    assert "--no-deps" in argv
+    assert argv[-1] == "vllm==0.28.0"
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
