@@ -129,6 +129,19 @@ def stable_versions_from_pip_index(output: str) -> tuple[str, ...]:
     )
 
 
+def pending_vllm_versions(
+    versions: Sequence[str],
+    probes: Sequence[Mapping],
+) -> tuple[str, ...]:
+    attempted = {
+        probe.get("version")
+        for probe in probes
+        if isinstance(probe, Mapping)
+        and isinstance(probe.get("version"), str)
+    }
+    return tuple(version for version in versions if version not in attempted)
+
+
 def _validate_gpu_row(row: Mapping) -> dict:
     required = (
         "index",
@@ -761,7 +774,15 @@ class RemoteController:
         vllm_versions = stable_versions_from_pip_index(
             index_result.stdout
         )
-        vllm_probes = []
+        probe_journal = (
+            f"{self.config.attempt_root}/controller/"
+            "vllm_candidate_probes.jsonl"
+        )
+        vllm_probes = (
+            self.read_remote_jsonl(probe_journal)
+            if self._attempt_exists(probe_journal)
+            else []
+        )
         vllm_env = None
         vllm_version = None
         runtime_environment = {
@@ -772,7 +793,25 @@ class RemoteController:
             f"{key}={value}"
             for key, value in runtime_environment.items()
         ]
-        for candidate_version in vllm_versions:
+        for probe in vllm_probes:
+            if probe.get("compatible") is not True:
+                continue
+            candidate_version = probe["version"]
+            candidate_env = (
+                f"{self.config.remote_root}/envs/"
+                f"vllm-{candidate_version}"
+            )
+            if not self._attempt_exists(candidate_env):
+                raise RuntimeError("VLLM_PROBE_JOURNAL_ENV_MISSING")
+            vllm_env = candidate_env
+            vllm_version = candidate_version
+            break
+        for candidate_version in pending_vllm_versions(
+            vllm_versions,
+            vllm_probes,
+        ):
+            if vllm_env is not None:
+                break
             candidate_env = (
                 f"{self.config.remote_root}/envs/"
                 f"vllm-{candidate_version}"
@@ -797,7 +836,7 @@ class RemoteController:
                         "timeout",
                         "--signal=TERM",
                         "--kill-after=30s",
-                        "900s",
+                        "600s",
                         f"{candidate_build}/bin/python",
                         "-m",
                         "pip",
@@ -811,13 +850,15 @@ class RemoteController:
                     retry_transport=False,
                 )
                 if install.returncode != 0:
-                    vllm_probes.append({
+                    probe = {
                         "version": candidate_version,
                         "compatible": False,
                         "phase": "binary_install",
                         "returncode": install.returncode,
                         "reason": str(install.stderr or "")[-4000:],
-                    })
+                    }
+                    self._record_vllm_probe(probe_journal, probe)
+                    vllm_probes.append(probe)
                     self._remove_owned_tree(candidate_build)
                     self._require_storage_available()
                     continue
@@ -834,13 +875,15 @@ class RemoteController:
                 retry_transport=False,
             )
             if import_probe.returncode != 0:
-                vllm_probes.append({
+                probe = {
                     "version": candidate_version,
                     "compatible": False,
                     "phase": "import_probe",
                     "returncode": import_probe.returncode,
                     "reason": str(import_probe.stderr or "")[-4000:],
-                })
+                }
+                self._record_vllm_probe(probe_journal, probe)
+                vllm_probes.append(probe)
                 if candidate_python.startswith(candidate_build + "/"):
                     self._remove_owned_tree(candidate_build)
                 self._require_storage_available()
@@ -852,11 +895,13 @@ class RemoteController:
                 )
             vllm_env = candidate_env
             vllm_version = candidate_version
-            vllm_probes.append({
+            probe = {
                 "version": candidate_version,
                 "compatible": True,
                 "phase": "import_probe",
-            })
+            }
+            self._record_vllm_probe(probe_journal, probe)
+            vllm_probes.append(probe)
             break
         if vllm_env is None or vllm_version is None:
             raise RuntimeError(
@@ -1204,6 +1249,36 @@ class RemoteController:
             "os.replace(temporary,path)",
         ))
         self.remote_python(script, path, encoded)
+
+    def _record_vllm_probe(self, path: str, probe: Mapping) -> None:
+        CampaignPaths.create(
+            remote_root=self.config.remote_root,
+            model_path=self.config.model_path,
+        ).require_owned_remote(path)
+        payload = base64.b64encode(
+            (json.dumps(dict(probe), sort_keys=True) + "\n").encode("utf-8")
+        ).decode("ascii")
+        script = "\n".join((
+            "import base64,json,os,sys",
+            "path=sys.argv[1]",
+            "row=json.loads(base64.b64decode(sys.argv[2]))",
+            "os.makedirs(os.path.dirname(path),exist_ok=True)",
+            "existing=[]",
+            "if os.path.isfile(path):",
+            " existing=[json.loads(line) for line in open(path)",
+            "           if line.strip()]",
+            "same=[item for item in existing",
+            "      if item.get('version')==row.get('version')]",
+            "if same:",
+            " if same[-1] != row:",
+            "  raise RuntimeError('vLLM probe journal collision')",
+            " sys.exit(0)",
+            "with open(path,'ab') as handle:",
+            " handle.write(base64.b64decode(sys.argv[2]))",
+            " handle.flush()",
+            " os.fsync(handle.fileno())",
+        ))
+        self.remote_python(script, path, payload)
 
     @staticmethod
     def _build_comparison(aggregates: Mapping, vllm_arm: str) -> dict:

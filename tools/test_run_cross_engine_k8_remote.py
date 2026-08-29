@@ -14,6 +14,7 @@ from tools.run_cross_engine_k8_remote import (
     RemoteController,
     build_committed_source_archive,
     build_worker_plan,
+    pending_vllm_versions,
     stable_versions_from_pip_index,
     select_admitted_gpu,
 )
@@ -183,6 +184,16 @@ def test_pip_index_versions_rejects_output_without_stable_release():
         stable_versions_from_pip_index(
             "Available versions: 0.28.0rc1, nightly"
         )
+
+
+def test_candidate_resume_skips_versions_already_journaled():
+    assert pending_vllm_versions(
+        ("0.28.0", "0.27.1", "0.27.0"),
+        [
+            {"version": "0.28.0", "compatible": False},
+            {"version": "0.27.1", "compatible": False},
+        ],
+    ) == ("0.27.0",)
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
