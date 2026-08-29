@@ -1,0 +1,1 @@
+{"repository":"Qwen/Qwen3.8-27B","revision":"1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0","schema_version":"tinyllmforge.qwen38-model-manifest.v1","text_profile":{"dtype":"bfloat16","hidden_size":5120,"num_hidden_layers":64,"vocab_size":248320}}

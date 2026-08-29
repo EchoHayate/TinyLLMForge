@@ -1,0 +1,1 @@
+{"classification":"INCONCLUSIVE_PROFILER_OVERHEAD","cleanup_pass":true,"correctness_pass":true,"coverage_complete":false,"minimum_lower_bound_opportunity":0.05,"profiler_overhead_pass":false,"resource_identity_pass":true,"schema_version":"qwen38.tp4-collective-reduction-classification.v1","selected_event_budget":null}

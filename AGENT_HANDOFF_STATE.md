@@ -51234,3 +51234,73 @@ not establish a TinyLLMForge speedup. It measures a communication-exposure
 signal whose profiler perturbation is too large for promotion. Do not create
 the conditional overlap design or modify collective execution from this
 evidence.
+
+## 2026-08-29 Qwen3.8-27B TP4 synchronous collective-reduction terminal reconciliation
+
+The immutable r10 qualification is complete in the authoritative checkout:
+
+```text
+authoritative checkout:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+attempt:
+  20260828-qwen38-tp4-collective-reduction-r10
+frozen runtime source:
+  f4f6ee7a9182f47d5e4f6577c217db1aa9793391
+frozen source-tree SHA-256:
+  b478a9b3c59d11f7b1fb94f2d2530110d40d3f44cc77b4341b6a5c85eed4f83a
+post-gate controller timeout hardening:
+  d8d85da9479a06f122a93987b1d87b9a5f8e0cd0
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+remote root:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818
+```
+
+The only worker completed 84/84 calibration cases and exited zero. The
+supervisor recorded 8,106 resource snapshots, 84 resource samples, zero
+violations, process-group destruction, no owned children, and three empty
+argv-aware exact-tag scans.
+
+No nonzero event budget passed both frozen overhead ceilings:
+
+```text
+budget 0:  median 2.773087%, maximum 6.320970%
+budget 8:  median 3.042056%, maximum 4.561507%
+budget 16: median 2.579423%, maximum 5.042663%
+budget 32: median 3.099692%, maximum 8.660734%
+required:  median <= 3.000000%, maximum <= 5.000000%
+selected event budget: null
+terminal cases: 0, correctly skipped
+```
+
+The static catalog and dependency proof each contain all 130 expected sites.
+Only the embedding-input all-reduce is statically removable, at the cost of
+1,907,097,600 additional persistent and peak device bytes per rank. This is
+not a measured latency or throughput benefit.
+
+The producer, remote verifier, and local verifier all classify the result as
+`INCONCLUSIVE_PROFILER_OVERHEAD`. The verifier JSON files are byte-identical
+with SHA-256
+`c115dee20a4700ae71d316df45878b7fae2973aa3a28058c1e0b720e7dc8223d`.
+The final manifest covers 16 hashed artifacts and has SHA-256
+`11c09aeea95a3a722b692b9f31ffdec9ea4367561f2e997a1649d52b0d020383`.
+
+The initial postprocess invocation timed out locally after 120 seconds while
+the remote assembler continued and completed atomically at about 153
+seconds. A read-only query proved `POSTPROCESS`, no live tagged PIDs, and a
+valid producer-only bundle. The same attempt was resumed with a 600-second
+timeout; it reused the existing producer and launched no worker. Commit
+`d8d85da` gives future postprocess commands a minimum 600-second timeout.
+
+```text
+QWEN38_TP4_COLLECTIVE_REDUCTION_QUALIFICATION=COMPLETE
+PRODUCER_CLASSIFICATION=INCONCLUSIVE_PROFILER_OVERHEAD
+REMOTE_VERIFIER=PASS
+LOCAL_VERIFIER=PASS
+OVERLAP_DESIGN_AUTHORIZED=false
+ASYNC_COLLECTIVES_AUTHORIZED=false
+SYNC_COLLECTIVE_CANDIDATE_DESIGN_AUTHORIZED=false
+NEXT_COMMAND=select another optimization
+```

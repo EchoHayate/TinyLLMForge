@@ -4394,3 +4394,54 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-29 latest reconciliation: Qwen3.8-27B TP4 synchronous collective reduction
+
+The source-bound r10 qualification completed against Qwen3.8-27B on four
+A100 GPUs. It preserves the existing Phase-1 result above and classifies only
+the proposed synchronous collective-reduction direction.
+
+### Prompt-to-artifact checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Frozen identity | source `f4f6ee7...`, tree `b478a9b3...`, model `1d4bf0f...` | `PASS` |
+| Strict-clean TP4 launch | physical GPUs 1-4 at 3 MiB, 0%, no compute processes | `PASS` |
+| Calibration completeness | 84 cases, 60 measured pairs, all exact-correctness checks valid | `PASS` |
+| Profiling cost | budgets 8/16/32 each violate at least one 3% median / 5% maximum ceiling | `FAIL_COST_GATE` |
+| Terminal timing | correctly skipped because selected event budget is `null` | `PASS_CONDITIONAL_SKIP` |
+| Static opportunity | one removable embedding all-reduce among 130 sites | `BOUNDED_STATIC_ONLY` |
+| Candidate memory cost | 1,907,097,600 additional persistent and peak device bytes per rank | `RECORDED` |
+| Resource and cleanup | 8,106 snapshots, 84 samples, zero violations, three empty exact-tag scans | `PASS` |
+| Independent closure | producer, remote verifier, and local verifier agree; verifier bytes identical | `PASS` |
+| Manifest | 16 artifact hashes independently verified | `PASS` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Synchronous collective reduction | Complete source-bound qualification with dual-verifier agreement | `INCONCLUSIVE_PROFILER_OVERHEAD` |
+| Measured performance benefit | Terminal timing was not authorized | `NOT_ESTABLISHED` |
+| Profiling overhead | budget 8 median `3.042056%`; budget 16 maximum `5.042663%`; budget 32 median/max `3.099692%`/`8.660734%` | `ABOVE_FROZEN_LIMITS` |
+| Static reducibility | 1 of 130 sites is removable by full embedding replication | `ONE_SITE_ONLY` |
+| Memory tradeoff | about 1.776 GiB additional device memory per rank | `MATERIAL_COST` |
+| Correctness, resources, cleanup | all validated; no resource violations | `PASS` |
+| Promotion boundary | no overlap, async, or synchronous candidate implementation authorized | `NOT_AUTHORIZED` |
+
+Detailed evidence is in
+`docs/superpowers/audits/2026-08-27-qwen38-tp4-synchronous-collective-reduction-audit.md`.
+
+```text
+QWEN38_TP4_COLLECTIVE_REDUCTION_QUALIFICATION=COMPLETE
+PRODUCER_CLASSIFICATION=INCONCLUSIVE_PROFILER_OVERHEAD
+REMOTE_VERIFIER=PASS
+LOCAL_VERIFIER=PASS
+OVERLAP_DESIGN_AUTHORIZED=false
+ASYNC_COLLECTIVES_AUTHORIZED=false
+SYNC_COLLECTIVE_CANDIDATE_DESIGN_AUTHORIZED=false
+NEXT_COMMAND=select another optimization
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
