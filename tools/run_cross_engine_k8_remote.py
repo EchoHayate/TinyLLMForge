@@ -237,16 +237,13 @@ def build_vllm_probe_script() -> str:
         " payload['flash_attn_version']=flash_attn.__version__",
         "except Exception:",
         " payload['flash_attn_version']='NOT_EXPOSED'",
-        "try:",
-        " import vllm",
-        " from vllm import EngineArgs",
-        " payload['vllm_version']=vllm.__version__",
-        " names=set(getattr(EngineArgs,'__annotations__',{}))",
-        " payload['public_multi_step']=(",
-        "  'num_scheduler_steps' in names",
-        " )",
-        "except Exception:",
-        " pass",
+        "import vllm",
+        "from vllm import EngineArgs",
+        "payload['vllm_version']=vllm.__version__",
+        "names=set(getattr(EngineArgs,'__annotations__',{}))",
+        "payload['public_multi_step']=(",
+        " 'num_scheduler_steps' in names",
+        ")",
         "print(json.dumps(payload,sort_keys=True))",
     ))
 
@@ -265,6 +262,39 @@ def _retryable_vllm_probe(probe: Mapping) -> bool:
             and "SyntaxError: invalid syntax" in reason
         )
     )
+
+
+def build_vllm_probe_append_script() -> str:
+    return "\n".join((
+        "import base64,json,os,sys",
+        "path=sys.argv[1]",
+        "row=json.loads(base64.b64decode(sys.argv[2]))",
+        "os.makedirs(os.path.dirname(path),exist_ok=True)",
+        "existing=[]",
+        "if os.path.isfile(path):",
+        " existing=[json.loads(line) for line in open(path)",
+        "           if line.strip()]",
+        "same=[item for item in existing",
+        "      if item.get('version')==row.get('version')]",
+        "if same:",
+        " if same[-1] == row:",
+        "  sys.exit(0)",
+        " reason=str(same[-1].get('reason') or '')",
+        " retryable=(",
+        "  same[-1].get('returncode')==255",
+        "  or (same[-1].get('phase')=='binary_install'",
+        "      and same[-1].get('returncode')==124)",
+        "  or (same[-1].get('phase')=='import_probe'",
+        "      and \"payload['public_multi_step']=\" in reason",
+        "      and 'SyntaxError: invalid syntax' in reason)",
+        " )",
+        " if not retryable:",
+        "  raise RuntimeError('vLLM probe journal collision')",
+        "with open(path,'ab') as handle:",
+        " handle.write(base64.b64decode(sys.argv[2]))",
+        " handle.flush()",
+        " os.fsync(handle.fileno())",
+    ))
 
 
 def pending_vllm_versions(
@@ -1665,32 +1695,7 @@ class RemoteController:
         payload = base64.b64encode(
             (json.dumps(dict(probe), sort_keys=True) + "\n").encode("utf-8")
         ).decode("ascii")
-        script = "\n".join((
-            "import base64,json,os,sys",
-            "path=sys.argv[1]",
-            "row=json.loads(base64.b64decode(sys.argv[2]))",
-            "os.makedirs(os.path.dirname(path),exist_ok=True)",
-            "existing=[]",
-            "if os.path.isfile(path):",
-            " existing=[json.loads(line) for line in open(path)",
-            "           if line.strip()]",
-            "same=[item for item in existing",
-            "      if item.get('version')==row.get('version')]",
-            "if same:",
-            " if same[-1] == row:",
-            "  sys.exit(0)",
-            " retryable=(",
-            "  same[-1].get('returncode')==255",
-            "  or (same[-1].get('phase')=='binary_install'",
-            "      and same[-1].get('returncode')==124)",
-            " )",
-            " if not retryable:",
-            "  raise RuntimeError('vLLM probe journal collision')",
-            "with open(path,'ab') as handle:",
-            " handle.write(base64.b64decode(sys.argv[2]))",
-            " handle.flush()",
-            " os.fsync(handle.fileno())",
-        ))
+        script = build_vllm_probe_append_script()
         self.remote_python(script, path, payload)
 
     @staticmethod

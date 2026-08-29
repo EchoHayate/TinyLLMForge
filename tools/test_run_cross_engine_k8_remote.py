@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +18,7 @@ from tools.run_cross_engine_k8_remote import (
     build_committed_source_archive,
     build_byte_ranges,
     build_vllm_install_argv,
+    build_vllm_probe_append_script,
     build_vllm_probe_script,
     build_worker_plan,
     pending_vllm_versions,
@@ -295,6 +299,37 @@ def test_vllm_probe_script_is_valid_python():
     compile(build_vllm_probe_script(), "<vllm-probe>", "exec")
 
 
+def test_vllm_probe_script_fails_when_vllm_import_fails(tmp_path):
+    (tmp_path / "torch.py").write_text(
+        "__version__='2.4.1'\n"
+        "class _Version:\n"
+        "    cuda='12.1'\n"
+        "version=_Version()\n"
+        "class _Cuda:\n"
+        "    @staticmethod\n"
+        "    def is_available(): return True\n"
+        "cuda=_Cuda()\n"
+    )
+    vllm_package = tmp_path / "vllm"
+    vllm_package.mkdir()
+    (vllm_package / "__init__.py").write_text(
+        "raise ImportError('incompatible torch')\n"
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.fspath(tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, "-c", build_vllm_probe_script()],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "incompatible torch" in result.stderr
+
+
 def test_candidate_resume_retries_controller_probe_syntax_error():
     broken_probe = {
         "version": "0.25.0",
@@ -319,6 +354,48 @@ def test_candidate_resume_retries_controller_probe_syntax_error():
         [broken_probe],
     ) == ("0.25.0", "0.21.0")
     assert vllm_probe_append_action([broken_probe], terminal) == "append"
+
+
+def test_remote_probe_journal_retries_controller_probe_syntax_error(
+    tmp_path,
+):
+    journal = tmp_path / "vllm_candidate_probes.jsonl"
+    broken_probe = {
+        "version": "0.25.0",
+        "compatible": False,
+        "phase": "import_probe",
+        "returncode": 1,
+        "reason": (
+            "payload['public_multi_step']=\n"
+            "SyntaxError: invalid syntax\n"
+        ),
+    }
+    terminal = {
+        "version": "0.25.0",
+        "compatible": False,
+        "phase": "import_probe",
+        "returncode": 1,
+        "reason": "ImportError: incompatible torch",
+    }
+    journal.write_text(json.dumps(broken_probe) + "\n")
+    encoded = base64.b64encode(
+        (json.dumps(terminal, sort_keys=True) + "\n").encode()
+    ).decode()
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            build_vllm_probe_append_script(),
+            os.fspath(journal),
+            encoded,
+        ],
+        check=True,
+    )
+
+    assert [
+        json.loads(line) for line in journal.read_text().splitlines()
+    ] == [broken_probe, terminal]
 
 
 def test_resolve_vllm_wheel_selects_linux_abi3_and_sha256():
