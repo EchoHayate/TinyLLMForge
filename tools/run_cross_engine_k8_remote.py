@@ -44,7 +44,7 @@ REMOTE_HOST = "sitian@10.232.195.203"
 KRB5_CACHE = "FILE:/Users/bytedance/krb5cc_sitian"
 TRACKING_REF = "origin/feat/kv-sparse-attention"
 COMMITTED_SOURCE_PATHS = ("tinyvllm", "tools")
-PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+PIP_INDEX_URL = "https://mirrors.aliyun.com/pypi/simple"
 _SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _STABLE_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 
