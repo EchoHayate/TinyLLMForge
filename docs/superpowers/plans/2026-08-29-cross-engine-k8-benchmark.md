@@ -66,6 +66,11 @@ SSH, Git.
   `tinyllmforge_exact_k8`, and `vllm_default_greedy`.
 - `vllm_public_multi_step` is conditional on a supported public control in
   the pinned stable release. Do not monkeypatch vLLM to create it.
+- On the admitted driver `535.261.03`, cap candidate discovery at vLLM
+  `0.11.2`, create its venv without system site-packages, and install the
+  verified wheel with declared binary dependencies under campaign-scoped
+  cache/temp paths. This is the highest retained pre-CUDA-13 candidate after
+  host wheel-tag filtering.
 - Thresholds are frozen before measured rows exist:
   TinyLLMForge K8 must improve aggregate median TPOT and throughput by at
   least 5%, have no bucket median-TPOT regression, keep TTFT/E2E/P95/P99/peak

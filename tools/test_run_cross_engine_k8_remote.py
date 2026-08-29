@@ -23,6 +23,7 @@ from tools.run_cross_engine_k8_remote import (
     build_vllm_probe_append_script,
     build_vllm_probe_script,
     build_worker_plan,
+    bounded_vllm_versions,
     pending_vllm_versions,
     resolve_vllm_wheel,
     stable_versions_from_pip_index,
@@ -174,6 +175,17 @@ def test_remote_venv_creation_routes_temporary_files_under_campaign():
     assert all(not value.startswith("HOME=") for value in argv)
 
 
+def test_remote_vllm_venv_isolated_from_system_site_packages():
+    argv = build_remote_venv_argv(
+        base_python="/data00/base/bin/python",
+        destination="/data00/campaign/envs/vllm.building",
+        environment={"TMPDIR": "/data00/campaign/shared/tmp"},
+        system_site_packages=False,
+    )
+
+    assert "--system-site-packages" not in argv
+
+
 def test_controller_retries_transient_ssh_transport_failure():
     runner = FlakyRunner()
     controller = RemoteController(
@@ -278,6 +290,12 @@ def test_pip_index_versions_rejects_output_without_stable_release():
         stable_versions_from_pip_index(
             "Available versions: 0.28.0rc1, nightly"
         )
+
+
+def test_vllm_versions_are_bounded_to_newest_host_compatible_release():
+    assert bounded_vllm_versions(
+        ("0.28.0", "0.12.0", "0.11.2", "0.11.1", "0.10.2")
+    ) == ("0.11.2", "0.11.1", "0.10.2")
 
 
 def test_candidate_resume_skips_versions_already_journaled():
@@ -399,6 +417,29 @@ def test_candidate_resume_retries_controller_probe_syntax_error():
     assert vllm_probe_append_action([broken_probe], terminal) == "append"
 
 
+def test_candidate_resume_retries_legacy_no_deps_import_failure():
+    legacy_probe = {
+        "version": "0.11.2",
+        "compatible": False,
+        "phase": "import_probe",
+        "returncode": 1,
+        "reason": "ModuleNotFoundError: No module named 'msgspec'",
+    }
+    resolved_probe = {
+        **legacy_probe,
+        "dependency_strategy": "isolated_full_deps_v1",
+    }
+
+    assert pending_vllm_versions(("0.11.2",), [legacy_probe]) == (
+        "0.11.2",
+    )
+    assert pending_vllm_versions(("0.11.2",), [resolved_probe]) == ()
+    assert vllm_probe_append_action(
+        [legacy_probe],
+        resolved_probe,
+    ) == "append"
+
+
 def test_remote_probe_journal_retries_controller_probe_syntax_error(
     tmp_path,
 ):
@@ -506,7 +547,7 @@ def test_byte_ranges_cover_file_without_overlap():
     )
 
 
-def test_vllm_candidate_install_is_binary_only_bounded_and_no_deps():
+def test_vllm_candidate_install_is_binary_only_bounded_and_resolves_deps():
     argv = build_vllm_install_argv(
         candidate_build="/campaign/envs/vllm-0.28.0.building",
         candidate_version="0.28.0",
@@ -515,7 +556,8 @@ def test_vllm_candidate_install_is_binary_only_bounded_and_no_deps():
 
     assert argv[:3] == ["env", "PIP_CACHE_DIR=/campaign/cache", "timeout"]
     assert "--only-binary=:all:" in argv
-    assert "--no-deps" in argv
+    assert "--no-deps" not in argv
+    assert "--no-cache-dir" in argv
     assert "https://mirrors.aliyun.com/pypi/simple" in argv
     assert argv[-1] == "vllm==0.28.0"
 
@@ -528,9 +570,9 @@ def test_vllm_candidate_install_accepts_verified_local_wheel():
         wheel_path="/campaign/wheelhouse/vllm-0.28.0.whl",
     )
 
-    assert "--index-url" not in argv
+    assert "--index-url" in argv
     assert argv[-1] == "/campaign/wheelhouse/vllm-0.28.0.whl"
-    assert "900s" in argv
+    assert "1800s" in argv
 
 
 def test_controller_downloads_verified_wheel_under_campaign_root():

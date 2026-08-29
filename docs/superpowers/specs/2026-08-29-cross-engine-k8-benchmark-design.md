@@ -198,6 +198,15 @@ and complete `pip freeze`. If no stable release passes, the campaign is
 `INCOMPLETE_VLLM_COMPATIBILITY`; the controller must not silently patch vLLM
 or fall back to an unpinned development head.
 
+For the admitted host with NVIDIA driver `535.261.03`, candidate discovery is
+bounded at vLLM `0.11.2`. Newer discovered releases either require a CUDA 13
+dependency generation that the admitted driver cannot support or expose no
+wheel matching the host's supported Python/platform tags. The vLLM candidate
+environment is fully isolated from system site-packages and installs the
+verified wheel together with its declared binary dependencies. `pip` caching
+is disabled to avoid retaining both archives and installed files; all
+temporary extraction remains under the campaign `TMPDIR`.
+
 If the pinned public vLLM version exposes a supported multi-step toggle, the
 matrix includes both disabled and enabled arms. Otherwise it records
 `VLLM_MULTI_STEP_NOT_PUBLICLY_AVAILABLE` and retains only the strongest

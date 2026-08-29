@@ -52,6 +52,8 @@ _STABLE_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 VLLM_WHEEL_CHUNK_BYTES = 8 * 1024**2
 VLLM_WHEEL_DOWNLOAD_WORKERS = 8
+VLLM_MAX_HOST_VERSION = "0.11.2"
+VLLM_DEPENDENCY_STRATEGY = "isolated_full_deps_v1"
 SSH_CONTROL_PATH = os.fspath(
     Path.home() / ".ssh" / "tinyllmforge-k8-%C"
 )
@@ -137,6 +139,17 @@ def stable_versions_from_pip_index(output: str) -> tuple[str, ...]:
             ),
             reverse=True,
         )
+    )
+
+
+def bounded_vllm_versions(
+    versions: Sequence[str],
+) -> tuple[str, ...]:
+    maximum = tuple(int(part) for part in VLLM_MAX_HOST_VERSION.split("."))
+    return tuple(
+        version
+        for version in versions
+        if tuple(int(part) for part in version.split(".")) <= maximum
     )
 
 
@@ -255,6 +268,17 @@ def build_vllm_probe_script() -> str:
 
 def _retryable_vllm_probe(probe: Mapping) -> bool:
     reason = str(probe.get("reason") or "")
+    legacy_dependency_failure = (
+        "dependency_strategy" not in probe
+        and any(
+            marker in reason
+            for marker in (
+                "ModuleNotFoundError: No module named",
+                "torch._inductor' has no attribute 'config",
+                "cannot import name 'infer_schema' from 'torch.library'",
+            )
+        )
+    )
     return (
         probe.get("returncode") == 255
         or (
@@ -263,8 +287,13 @@ def _retryable_vllm_probe(probe: Mapping) -> bool:
         )
         or (
             probe.get("phase") == "import_probe"
-            and "payload['public_multi_step']=" in reason
-            and "SyntaxError: invalid syntax" in reason
+            and (
+                (
+                    "payload['public_multi_step']=" in reason
+                    and "SyntaxError: invalid syntax" in reason
+                )
+                or legacy_dependency_failure
+            )
         )
     )
 
@@ -285,13 +314,24 @@ def build_vllm_probe_append_script() -> str:
         " if same[-1] == row:",
         "  sys.exit(0)",
         " reason=str(same[-1].get('reason') or '')",
+        " legacy_dependency_failure=(",
+        "  'dependency_strategy' not in same[-1]",
+        "  and any(marker in reason for marker in (",
+        "   'ModuleNotFoundError: No module named',",
+        "   \"torch._inductor' has no attribute 'config\",",
+        "   \"cannot import name 'infer_schema' from 'torch.library'\",",
+        "  ))",
+        " )",
         " retryable=(",
         "  same[-1].get('returncode')==255",
         "  or (same[-1].get('phase')=='binary_install'",
         "      and same[-1].get('returncode')==124)",
         "  or (same[-1].get('phase')=='import_probe'",
-        "      and \"payload['public_multi_step']=\" in reason",
-        "      and 'SyntaxError: invalid syntax' in reason)",
+        "      and (",
+        "       (\"payload['public_multi_step']=\" in reason",
+        "        and 'SyntaxError: invalid syntax' in reason)",
+        "       or legacy_dependency_failure",
+        "      ))",
         " )",
         " if not retryable:",
         "  raise RuntimeError('vLLM probe journal collision')",
@@ -348,6 +388,7 @@ def build_remote_venv_argv(
     base_python: str,
     destination: str,
     environment: Mapping[str, str],
+    system_site_packages: bool = True,
 ) -> list[str]:
     if not PurePosixPath(base_python).is_absolute():
         raise ValueError("base Python path must be absolute")
@@ -355,15 +396,17 @@ def build_remote_venv_argv(
         raise ValueError("venv destination must be absolute")
     if "HOME" in environment:
         raise ValueError("venv environment must not override HOME")
-    return [
+    argv = [
         "env",
         *(f"{key}={value}" for key, value in environment.items()),
         base_python,
         "-m",
         "venv",
-        "--system-site-packages",
-        destination,
     ]
+    if system_site_packages:
+        argv.append("--system-site-packages")
+    argv.append(destination)
+    return argv
 
 
 def build_vllm_install_argv(
@@ -386,7 +429,7 @@ def build_vllm_install_argv(
         "timeout",
         "--signal=TERM",
         "--kill-after=30s",
-        "900s" if wheel_path is not None else "300s",
+        "1800s",
         f"{candidate_build}/bin/python",
         "-m",
         "pip",
@@ -394,10 +437,10 @@ def build_vllm_install_argv(
         "--disable-pip-version-check",
         "--only-binary=:all:",
         "--prefer-binary",
-        "--no-deps",
+        "--no-cache-dir",
+        "--index-url",
+        PIP_INDEX_URL,
     ]
-    if wheel_path is None:
-        argv.extend(("--index-url", PIP_INDEX_URL))
     argv.append(
         wheel_path
         if wheel_path is not None
@@ -1209,9 +1252,11 @@ class RemoteController:
             "vllm",
         ])
         probe_script = build_vllm_probe_script()
-        vllm_versions = stable_versions_from_pip_index(
-            index_result.stdout
+        vllm_versions = bounded_vllm_versions(
+            stable_versions_from_pip_index(index_result.stdout)
         )
+        if not vllm_versions:
+            raise RuntimeError("VLLM_HOST_COMPATIBLE_VERSION_NOT_FOUND")
         probe_journal = (
             f"{self.config.attempt_root}/controller/"
             "vllm_candidate_probes.jsonl"
@@ -1269,6 +1314,7 @@ class RemoteController:
                         "compatible": False,
                         "phase": "wheel_resolution",
                         "reason": str(error),
+                        "dependency_strategy": VLLM_DEPENDENCY_STRATEGY,
                     }
                     self._record_vllm_probe(probe_journal, probe)
                     vllm_probes.append(probe)
@@ -1280,6 +1326,7 @@ class RemoteController:
                         base_python=base_python,
                         destination=candidate_build,
                         environment=runtime_environment,
+                        system_site_packages=False,
                     ),
                     retry_transport=False,
                 )
@@ -1304,6 +1351,7 @@ class RemoteController:
                         "compatible": False,
                         "phase": "binary_install",
                         "returncode": install.returncode,
+                        "dependency_strategy": VLLM_DEPENDENCY_STRATEGY,
                         "reason": (
                             str(install.stdout or "")
                             + "\n"
@@ -1346,6 +1394,7 @@ class RemoteController:
                     "compatible": False,
                     "phase": "import_probe",
                     "returncode": import_probe.returncode,
+                    "dependency_strategy": VLLM_DEPENDENCY_STRATEGY,
                     "reason": str(import_probe.stderr or "")[-4000:],
                 }
                 self._record_vllm_probe(probe_journal, probe)
@@ -1367,6 +1416,7 @@ class RemoteController:
                 "version": candidate_version,
                 "compatible": True,
                 "phase": "import_probe",
+                "dependency_strategy": VLLM_DEPENDENCY_STRATEGY,
                 "wheel": wheel_receipt,
             }
             self._record_vllm_probe(probe_journal, probe)
@@ -1420,6 +1470,7 @@ class RemoteController:
             "vllm": {
                 **vllm_probe,
                 "version": vllm_version,
+                "dependency_strategy": VLLM_DEPENDENCY_STRATEGY,
                 "candidate_probes": vllm_probes,
                 "compatibility_scope": "IMPORT_ONLY_PENDING_MODEL_SMOKE",
             },
