@@ -56,6 +56,9 @@ SSH, Git.
   design, and total no more than 50 MiB.
 - Do not signal, terminate, reserve, or take over unrelated processes or
   GPUs. Cleanup is limited to the controller-recorded process group.
+- Serialize every controller stage for the same host and attempt with a
+  non-blocking local file lock so resumed sessions cannot concurrently mutate
+  one remote environment or result bundle.
 - GPU admission requires one A100 80GB PCIe, zero foreign compute processes,
   zero utilization at both admission samples, and no unauthorized memory
   occupancy.

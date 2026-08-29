@@ -366,20 +366,22 @@ No threshold may be changed after measured rows exist.
 The local controller:
 
 1. requires `KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian`;
-2. fails fast when the Kerberos lifetime cannot cover the estimated remaining
+2. acquires a non-blocking local file lock keyed by remote host and immutable
+   attempt tag before any stage can mutate remote state;
+3. fails fast when the Kerberos lifetime cannot cover the estimated remaining
    campaign duration plus 30 minutes;
-3. performs read-only remote storage and environment discovery;
-4. creates only the approved campaign root;
-5. builds environments and source snapshots atomically;
-6. checks storage and strict-clean GPU admission before every worker;
-7. launches one owned process group;
-8. records bounded heartbeat and resource state;
-9. terminates only owned processes after timeout;
-10. finalizes immutable artifacts under a fresh run tag;
-11. runs the remote independent verifier;
-12. streams the allowlisted evidence and any one-at-a-time verifier inputs;
-13. runs the frozen-source local verifier; and
-14. confirms zero local temporary retention and remote/local receipt equality.
+4. performs read-only remote storage and environment discovery;
+5. creates only the approved campaign root;
+6. builds environments and source snapshots atomically;
+7. checks storage and strict-clean GPU admission before every worker;
+8. launches one owned process group;
+9. records bounded heartbeat and resource state;
+10. terminates only owned processes after timeout;
+11. finalizes immutable artifacts under a fresh run tag;
+12. runs the remote independent verifier;
+13. streams the allowlisted evidence and any one-at-a-time verifier inputs;
+14. runs the frozen-source local verifier; and
+15. confirms zero local temporary retention and remote/local receipt equality.
 
 An interrupted immutable run is never overwritten or resumed unless its
 controller protocol explicitly supports safe resumption. A new attempt uses a

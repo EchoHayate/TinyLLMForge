@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import fcntl
+import hashlib
 from html.parser import HTMLParser
 import json
 import os
@@ -57,6 +60,57 @@ VLLM_DEPENDENCY_STRATEGY = "isolated_full_deps_v1"
 SSH_CONTROL_PATH = os.fspath(
     Path.home() / ".ssh" / "tinyllmforge-k8-%C"
 )
+CAMPAIGN_LOCK_ROOT = Path.home() / ".ssh"
+
+
+@contextmanager
+def campaign_stage_lock(
+    *,
+    host: str,
+    run_tag: str,
+    stage: str,
+    lock_root: Path = CAMPAIGN_LOCK_ROOT,
+):
+    validate_attempt_tag(run_tag)
+    lock_root = Path(lock_root)
+    lock_root.mkdir(parents=True, exist_ok=True)
+    identity = hashlib.sha256(
+        f"{host}\0{run_tag}".encode("utf-8")
+    ).hexdigest()[:20]
+    lock_path = lock_root / f"tinyllmforge-k8-{identity}.lock"
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(
+                lock_file.fileno(),
+                fcntl.LOCK_EX | fcntl.LOCK_NB,
+            )
+        except BlockingIOError as error:
+            lock_file.seek(0)
+            owner = lock_file.read().strip()
+            raise RuntimeError(
+                "CAMPAIGN_STAGE_ALREADY_RUNNING"
+                + (f":{owner}" if owner else "")
+            ) from error
+        os.chmod(lock_path, 0o600)
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(json.dumps(
+            {
+                "host": host,
+                "pid": os.getpid(),
+                "run_tag": run_tag,
+                "stage": stage,
+            },
+            sort_keys=True,
+        ))
+        lock_file.flush()
+        yield lock_path
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
 
 def _ssh_argv(host: str, remote_command: str) -> list[str]:
@@ -1998,21 +2052,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--source-revision", default=None)
     args = parser.parse_args(argv)
     source_revision = args.source_revision or _git_source_revision()
-    controller = RemoteController(
-        ControllerConfig(
-            run_tag=args.run_tag,
-            source_revision=source_revision,
-            host=args.host,
+    with campaign_stage_lock(
+        host=args.host,
+        run_tag=args.run_tag,
+        stage=args.stage,
+    ):
+        controller = RemoteController(
+            ControllerConfig(
+                run_tag=args.run_tag,
+                source_revision=source_revision,
+                host=args.host,
+            )
         )
-    )
-    if args.stage == "preflight":
-        result = controller.preflight()
-    elif args.stage == "prepare-environments":
-        result = controller.prepare_environments()
-    elif args.stage in {"smoke", "canonical"}:
-        result = controller.run_stage(args.stage)
-    else:
-        result = controller.finalize()
+        if args.stage == "preflight":
+            result = controller.preflight()
+        elif args.stage == "prepare-environments":
+            result = controller.prepare_environments()
+        elif args.stage in {"smoke", "canonical"}:
+            result = controller.run_stage(args.stage)
+        else:
+            result = controller.finalize()
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

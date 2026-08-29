@@ -148,6 +148,34 @@ def test_ssh_argv_uses_persistent_campaign_control_master():
     assert "ControlPath=none" not in argv
 
 
+def test_campaign_lock_rejects_concurrent_stage_for_same_attempt(tmp_path):
+    with controller_module.campaign_stage_lock(
+        host="sitian@example",
+        run_tag="20260829-cross-engine-k8-qwen3-06b-r1",
+        stage="prepare-environments",
+        lock_root=tmp_path,
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="CAMPAIGN_STAGE_ALREADY_RUNNING",
+        ):
+            with controller_module.campaign_stage_lock(
+                host="sitian@example",
+                run_tag="20260829-cross-engine-k8-qwen3-06b-r1",
+                stage="smoke",
+                lock_root=tmp_path,
+            ):
+                pass
+
+    with controller_module.campaign_stage_lock(
+        host="sitian@example",
+        run_tag="20260829-cross-engine-k8-qwen3-06b-r1",
+        stage="finalize",
+        lock_root=tmp_path,
+    ):
+        pass
+
+
 def test_remote_venv_creation_routes_temporary_files_under_campaign():
     environment = {
         "TMPDIR": "/data00/campaign/shared/tmp",
