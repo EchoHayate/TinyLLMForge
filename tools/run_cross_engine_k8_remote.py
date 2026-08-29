@@ -43,6 +43,7 @@ from tools.cross_engine_k8_workload import (
 REMOTE_HOST = "sitian@10.232.195.203"
 KRB5_CACHE = "FILE:/Users/bytedance/krb5cc_sitian"
 TRACKING_REF = "origin/feat/kv-sparse-attention"
+COMMITTED_SOURCE_PATHS = ("tinyvllm", "tools")
 _SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -74,6 +75,32 @@ def _require_success(
             f"{context} failed" + (f": {detail}" if detail else "")
         )
     return result
+
+
+def build_committed_source_archive(
+    repository_root: Path,
+    source_revision: str,
+    *,
+    command_runner: Callable = subprocess.run,
+) -> bytes:
+    if _SOURCE_REVISION.fullmatch(source_revision) is None:
+        raise ValueError("source revision is invalid")
+    result = command_runner(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            source_revision,
+            *COMMITTED_SOURCE_PATHS,
+        ],
+        cwd=Path(repository_root),
+        capture_output=True,
+        check=False,
+    )
+    _require_success(result, "build committed source archive")
+    if not isinstance(result.stdout, bytes) or not result.stdout:
+        raise ValueError("committed source archive is empty")
+    return result.stdout
 
 
 def _validate_gpu_row(row: Mapping) -> dict:
@@ -257,6 +284,36 @@ class RemoteController:
         *arguments: str,
     ) -> subprocess.CompletedProcess:
         return self.remote(["python3", "-c", script, *arguments])
+
+    def remote_with_input(
+        self,
+        argv: Sequence[str],
+        payload: bytes,
+        *,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess:
+        if (
+            not isinstance(argv, Sequence)
+            or isinstance(argv, (str, bytes))
+            or not argv
+            or any(not isinstance(value, str) for value in argv)
+        ):
+            raise ValueError("remote argv must be a non-empty string list")
+        if not isinstance(payload, bytes):
+            raise ValueError("remote input payload must be bytes")
+        environment = dict(os.environ)
+        environment["KRB5CCNAME"] = KRB5_CACHE
+        result = self._command_runner(
+            _ssh_argv(self.config.host, shlex.join(list(argv))),
+            env=environment,
+            input=payload,
+            text=False,
+            capture_output=True,
+            check=False,
+        )
+        if check:
+            _require_success(result, "remote command with input")
+        return result
 
     def write_remote_json(self, path: str, value: Mapping) -> None:
         CampaignPaths.create(
@@ -540,27 +597,46 @@ class RemoteController:
             f"tinyllmforge-{self.config.source_revision}"
         )
         source_build = source_root + ".building"
+        archive = build_committed_source_archive(
+            REPOSITORY_ROOT,
+            self.config.source_revision,
+        )
         source_script = "\n".join((
-            "set -euo pipefail",
-            f"final={shlex.quote(source_root)}",
-            f"build={shlex.quote(source_build)}",
-            f"revision={shlex.quote(self.config.source_revision)}",
-            "if [ -d \"$final/.git\" ]; then",
-            "  test \"$(git -C \"$final\" rev-parse HEAD)\" = \"$revision\"",
-            "elif [ -e \"$final\" ] || [ -e \"$build\" ]; then",
-            "  echo source destination collision >&2; exit 41",
-            "else",
-            "  mkdir -p \"$(dirname \"$final\")\"",
-            "  git clone --filter=blob:none --no-checkout "
-            "https://github.com/EchoHayate/TinyLLMForge.git \"$build\"",
-            "  git -C \"$build\" checkout --detach \"$revision\"",
-            "  test \"$(git -C \"$build\" rev-parse HEAD)\" = \"$revision\"",
-            "  mv \"$build\" \"$final\"",
-            "fi",
+            "import io,os,pathlib,sys,tarfile",
+            "final=pathlib.Path(sys.argv[1])",
+            "build=pathlib.Path(sys.argv[2])",
+            "revision=sys.argv[3]",
+            "marker=final/'.source_revision'",
+            "if final.exists():",
+            " if not marker.is_file() or marker.read_text().strip()!=revision:",
+            "  raise RuntimeError('source destination collision')",
+            " sys.exit(0)",
+            "if build.exists():",
+            " raise RuntimeError('source build destination collision')",
+            "final.parent.mkdir(parents=True,exist_ok=True)",
+            "payload=sys.stdin.buffer.read()",
+            "with tarfile.open(fileobj=io.BytesIO(payload),mode='r:') as bundle:",
+            " members=bundle.getmembers()",
+            " for member in members:",
+            "  path=pathlib.PurePosixPath(member.name)",
+            "  if (path.is_absolute() or '..' in path.parts",
+            "      or member.issym() or member.islnk()):",
+            "   raise ValueError('unsafe source archive member')",
+            " build.mkdir(parents=False,exist_ok=False)",
+            " bundle.extractall(str(build))",
+            "(build/'.source_revision').write_text(revision+'\\n')",
+            "os.replace(str(build),str(final))",
         ))
-        self.remote(
-            ["bash", "-lc", source_script],
-            retry_transport=False,
+        self.remote_with_input(
+            [
+                "python3",
+                "-c",
+                source_script,
+                source_root,
+                source_build,
+                self.config.source_revision,
+            ],
+            archive,
         )
         paths = CampaignPaths.create(
             remote_root=self.config.remote_root,

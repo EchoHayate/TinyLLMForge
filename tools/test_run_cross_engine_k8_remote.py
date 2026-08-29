@@ -8,9 +8,11 @@ import pytest
 
 from tools import run_cross_engine_k8_remote as controller_module
 from tools.run_cross_engine_k8_remote import (
+    COMMITTED_SOURCE_PATHS,
     KRB5_CACHE,
     ControllerConfig,
     RemoteController,
+    build_committed_source_archive,
     build_worker_plan,
     select_admitted_gpu,
 )
@@ -44,6 +46,21 @@ class FlakyRunner(RecordingRunner):
                 if len(self.calls) == 1
                 else ""
             ),
+        )
+
+
+class BinaryRecordingRunner:
+    def __init__(self, stdout=b"archive"):
+        self.calls = []
+        self.stdout = stdout
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((list(argv), dict(kwargs)))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=self.stdout,
+            stderr=b"",
         )
 
 
@@ -100,6 +117,44 @@ def test_controller_retries_transient_ssh_transport_failure():
 
     assert result.stdout == "ok\n"
     assert len(runner.calls) == 2
+
+
+def test_committed_source_archive_contains_only_runtime_paths(tmp_path):
+    runner = BinaryRecordingRunner()
+
+    archive = build_committed_source_archive(
+        tmp_path,
+        "a" * 40,
+        command_runner=runner,
+    )
+
+    assert archive == b"archive"
+    assert runner.calls[0][0] == [
+        "git",
+        "archive",
+        "--format=tar",
+        "a" * 40,
+        *COMMITTED_SOURCE_PATHS,
+    ]
+
+
+def test_remote_binary_input_uses_ssh_stdin_without_text_mode():
+    runner = BinaryRecordingRunner(stdout=b"ok\n")
+    controller = RemoteController(
+        _config(),
+        command_runner=runner,
+        sleep=lambda _seconds: None,
+    )
+
+    result = controller.remote_with_input(
+        ["python3", "-c", "print('ok')"],
+        b"payload",
+    )
+
+    assert result.stdout == b"ok\n"
+    assert runner.calls[0][1]["input"] == b"payload"
+    assert runner.calls[0][1]["text"] is False
+    assert runner.calls[0][1]["env"]["KRB5CCNAME"] == KRB5_CACHE
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
