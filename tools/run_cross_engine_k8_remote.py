@@ -4,6 +4,7 @@ import argparse
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import time
 from typing import Callable, Mapping, Optional, Sequence
+from urllib.parse import urldefrag, urljoin
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if os.fspath(REPOSITORY_ROOT) not in sys.path:
@@ -47,6 +49,9 @@ COMMITTED_SOURCE_PATHS = ("tinyvllm", "tools")
 PIP_INDEX_URL = "https://mirrors.aliyun.com/pypi/simple"
 _SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _STABLE_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+VLLM_WHEEL_CHUNK_BYTES = 8 * 1024**2
+VLLM_WHEEL_DOWNLOAD_WORKERS = 8
 
 
 def _ssh_argv(host: str, remote_command: str) -> list[str]:
@@ -130,16 +135,88 @@ def stable_versions_from_pip_index(output: str) -> tuple[str, ...]:
     )
 
 
+class _LinkCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, Optional[str]]],
+    ) -> None:
+        if tag != "a":
+            return
+        href = dict(attrs).get("href")
+        if href:
+            self.hrefs.append(href)
+
+
+def resolve_vllm_wheel(
+    index_html: str,
+    *,
+    version: str,
+    index_url: str,
+) -> dict[str, str]:
+    if _STABLE_VERSION.fullmatch(version) is None:
+        raise ValueError("vLLM candidate version is invalid")
+    parser = _LinkCollector()
+    parser.feed(index_html)
+    prefix = f"vllm-{version}-cp38-abi3-manylinux"
+    suffix = "_x86_64.whl"
+    for href in parser.hrefs:
+        url, fragment = urldefrag(urljoin(index_url, href))
+        filename = url.rsplit("/", 1)[-1]
+        if not filename.startswith(prefix) or not filename.endswith(suffix):
+            continue
+        if not fragment.startswith("sha256="):
+            continue
+        digest = fragment.removeprefix("sha256=")
+        if _SHA256.fullmatch(digest) is None:
+            continue
+        return {
+            "filename": filename,
+            "sha256": digest,
+            "url": url,
+        }
+    raise RuntimeError(f"VLLM_BINARY_WHEEL_NOT_FOUND:{version}")
+
+
+def build_byte_ranges(
+    *,
+    total_bytes: int,
+    chunk_bytes: int,
+) -> tuple[tuple[int, int], ...]:
+    if total_bytes <= 0 or chunk_bytes <= 0:
+        raise ValueError("byte range sizes must be positive")
+    return tuple(
+        (
+            start,
+            min(total_bytes - 1, start + chunk_bytes - 1),
+        )
+        for start in range(0, total_bytes, chunk_bytes)
+    )
+
+
 def pending_vllm_versions(
     versions: Sequence[str],
     probes: Sequence[Mapping],
 ) -> tuple[str, ...]:
-    attempted = {
-        probe.get("version")
-        for probe in probes
-        if isinstance(probe, Mapping)
-        and isinstance(probe.get("version"), str)
-    }
+    latest = {}
+    for probe in probes:
+        if (
+            isinstance(probe, Mapping)
+            and isinstance(probe.get("version"), str)
+        ):
+            latest[probe["version"]] = probe
+    attempted = set()
+    for version, probe in latest.items():
+        retryable_timeout = (
+            probe.get("phase") == "binary_install"
+            and probe.get("returncode") == 124
+        )
+        if not retryable_timeout:
+            attempted.add(version)
     return tuple(version for version in versions if version not in attempted)
 
 
@@ -148,28 +225,39 @@ def build_vllm_install_argv(
     candidate_build: str,
     candidate_version: str,
     environment: Mapping[str, str],
+    wheel_path: Optional[str] = None,
 ) -> list[str]:
     if _STABLE_VERSION.fullmatch(candidate_version) is None:
         raise ValueError("vLLM candidate version is invalid")
-    return [
+    if wheel_path is not None and (
+        not PurePosixPath(wheel_path).is_absolute()
+        or not wheel_path.endswith(".whl")
+    ):
+        raise ValueError("vLLM wheel path is invalid")
+    argv = [
         "env",
         *(f"{key}={value}" for key, value in environment.items()),
         "timeout",
         "--signal=TERM",
         "--kill-after=30s",
-        "300s",
+        "900s" if wheel_path is not None else "300s",
         f"{candidate_build}/bin/python",
         "-m",
         "pip",
         "install",
         "--disable-pip-version-check",
-        "--index-url",
-        PIP_INDEX_URL,
         "--only-binary=:all:",
         "--prefer-binary",
         "--no-deps",
-        f"vllm=={candidate_version}",
     ]
+    if wheel_path is None:
+        argv.extend(("--index-url", PIP_INDEX_URL))
+    argv.append(
+        wheel_path
+        if wheel_path is not None
+        else f"vllm=={candidate_version}"
+    )
+    return argv
 
 
 def _validate_gpu_row(row: Mapping) -> dict:
@@ -734,6 +822,136 @@ class RemoteController:
         )
         return source_root
 
+    def ensure_vllm_wheel(self, candidate_version: str) -> dict:
+        index_url = f"{PIP_INDEX_URL.rstrip('/')}/vllm/"
+        index_html = self.remote(
+            [
+                "curl",
+                "-fsSL",
+                "--connect-timeout",
+                "10",
+                "--retry",
+                "5",
+                index_url,
+            ],
+            retry_transport=False,
+        ).stdout
+        wheel = resolve_vllm_wheel(
+            index_html,
+            version=candidate_version,
+            index_url=index_url,
+        )
+        wheel_root = f"{self.config.remote_root}/shared/wheelhouse"
+        wheel_path = f"{wheel_root}/{wheel['filename']}"
+        CampaignPaths.create(
+            remote_root=self.config.remote_root,
+            model_path=self.config.model_path,
+        ).require_owned_remote(wheel_path)
+        download_script = "\n".join((
+            "import concurrent.futures,hashlib,json,os,pathlib,shutil,"
+            "subprocess,sys",
+            "url,path_text,expected_sha,chunk_text,workers_text=sys.argv[1:6]",
+            "path=pathlib.Path(path_text)",
+            "chunk_bytes=int(chunk_text)",
+            "workers=int(workers_text)",
+            "path.parent.mkdir(parents=True,exist_ok=True)",
+            "def digest(candidate):",
+            " value=hashlib.sha256()",
+            " with candidate.open('rb') as handle:",
+            "  for block in iter(lambda:handle.read(1024*1024),b''):",
+            "   value.update(block)",
+            " return value.hexdigest()",
+            "if path.is_file() and digest(path)==expected_sha:",
+            " print(json.dumps({",
+            "  'download_strategy':'parallel_range_v1',",
+            "  'filename':path.name,'path':str(path),",
+            "  'sha256':expected_sha,'size_bytes':path.stat().st_size,",
+            "  'url':url,",
+            " },sort_keys=True))",
+            " sys.exit(0)",
+            "head=subprocess.run([",
+            " 'curl','-fsSIL','--connect-timeout','10','--retry','5',url",
+            "],text=True,capture_output=True,check=False)",
+            "if head.returncode!=0:",
+            " raise RuntimeError('wheel HEAD failed:'+head.stderr[-1000:])",
+            "lengths=[]",
+            "for line in head.stdout.splitlines():",
+            " if line.lower().startswith('content-length:'):",
+            "  lengths.append(int(line.split(':',1)[1].strip()))",
+            "if not lengths or lengths[-1]<=0:",
+            " raise RuntimeError('wheel content length missing')",
+            "total=lengths[-1]",
+            "ranges=[",
+            " (start,min(total-1,start+chunk_bytes-1))",
+            " for start in range(0,total,chunk_bytes)",
+            "]",
+            "parts=pathlib.Path(str(path)+'.parts')",
+            "parts.mkdir(parents=True,exist_ok=True)",
+            "def download(item):",
+            " index,(start,end)=item",
+            " expected=end-start+1",
+            " part=parts/f'part-{index:06d}'",
+            " if part.is_file() and part.stat().st_size==expected:",
+            "  return str(part)",
+            " temporary=pathlib.Path(str(part)+'.writing')",
+            " temporary.unlink(missing_ok=True)",
+            " result=subprocess.run([",
+            "  'curl','-fsSL','--connect-timeout','10','--retry','5',",
+            "  '--retry-all-errors','--max-time','300',",
+            "  '--max-filesize',str(expected),",
+            "  '--range',f'{start}-{end}',url,'-o',str(temporary),",
+            " ],text=True,capture_output=True,check=False)",
+            " if result.returncode!=0:",
+            "  raise RuntimeError(",
+            "   f'wheel range {start}-{end} failed:'+result.stderr[-1000:])",
+            " if temporary.stat().st_size!=expected:",
+            "  raise RuntimeError(f'wheel range size mismatch:{start}-{end}')",
+            " os.replace(temporary,part)",
+            " return str(part)",
+            "with concurrent.futures.ThreadPoolExecutor(",
+            " max_workers=workers",
+            ") as pool:",
+            " list(pool.map(download,enumerate(ranges)))",
+            "temporary=pathlib.Path(str(path)+'.writing')",
+            "with temporary.open('wb') as output:",
+            " for index,_range in enumerate(ranges):",
+            "  with (parts/f'part-{index:06d}').open('rb') as source:",
+            "   shutil.copyfileobj(source,output,1024*1024)",
+            " output.flush()",
+            " os.fsync(output.fileno())",
+            "if temporary.stat().st_size!=total:",
+            " raise RuntimeError('assembled wheel size mismatch')",
+            "actual_sha=digest(temporary)",
+            "if actual_sha!=expected_sha:",
+            " raise RuntimeError('assembled wheel sha256 mismatch')",
+            "os.replace(temporary,path)",
+            "shutil.rmtree(parts)",
+            "print(json.dumps({",
+            " 'download_strategy':'parallel_range_v1',",
+            " 'filename':path.name,'path':str(path),",
+            " 'sha256':actual_sha,'size_bytes':total,",
+            " 'url':url,",
+            "},sort_keys=True))",
+        ))
+        result = self.remote_python(
+            download_script,
+            wheel["url"],
+            wheel_path,
+            wheel["sha256"],
+            str(VLLM_WHEEL_CHUNK_BYTES),
+            str(VLLM_WHEEL_DOWNLOAD_WORKERS),
+        )
+        receipt = json.loads(result.stdout)
+        if (
+            receipt.get("path") != wheel_path
+            or receipt.get("sha256") != wheel["sha256"]
+            or receipt.get("filename") != wheel["filename"]
+            or receipt.get("url") != wheel["url"]
+            or receipt.get("download_strategy") != "parallel_range_v1"
+        ):
+            raise RuntimeError("VLLM_WHEEL_RECEIPT_INVALID")
+        return receipt
+
     def prepare_environments(self) -> dict:
         if not self._attempt_exists(self.config.attempt_root):
             raise RuntimeError("PREFLIGHT_ATTEMPT_MISSING")
@@ -853,6 +1071,7 @@ class RemoteController:
         ):
             if vllm_env is not None:
                 break
+            wheel_receipt = None
             candidate_env = (
                 f"{self.config.remote_root}/envs/"
                 f"vllm-{candidate_version}"
@@ -861,6 +1080,9 @@ class RemoteController:
             if self._attempt_exists(candidate_env):
                 candidate_python = f"{candidate_env}/bin/python"
             else:
+                wheel_receipt = self.ensure_vllm_wheel(
+                    candidate_version
+                )
                 if self._attempt_exists(candidate_build):
                     self._remove_owned_tree(candidate_build)
                 self.remote([
@@ -875,6 +1097,7 @@ class RemoteController:
                         candidate_build=candidate_build,
                         candidate_version=candidate_version,
                         environment=runtime_environment,
+                        wheel_path=wheel_receipt["path"],
                     ),
                     check=False,
                     retry_transport=False,
@@ -885,7 +1108,12 @@ class RemoteController:
                         "compatible": False,
                         "phase": "binary_install",
                         "returncode": install.returncode,
-                        "reason": str(install.stderr or "")[-4000:],
+                        "reason": (
+                            str(install.stdout or "")
+                            + "\n"
+                            + str(install.stderr or "")
+                        )[-4000:],
+                        "wheel": wheel_receipt,
                     }
                     self._record_vllm_probe(probe_journal, probe)
                     vllm_probes.append(probe)
@@ -932,6 +1160,7 @@ class RemoteController:
                 "version": candidate_version,
                 "compatible": True,
                 "phase": "import_probe",
+                "wheel": wheel_receipt,
             }
             self._record_vllm_probe(probe_journal, probe)
             vllm_probes.append(probe)

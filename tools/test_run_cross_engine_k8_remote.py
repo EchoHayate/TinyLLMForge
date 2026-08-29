@@ -13,9 +13,11 @@ from tools.run_cross_engine_k8_remote import (
     ControllerConfig,
     RemoteController,
     build_committed_source_archive,
+    build_byte_ranges,
     build_vllm_install_argv,
     build_worker_plan,
     pending_vllm_versions,
+    resolve_vllm_wheel,
     stable_versions_from_pip_index,
     select_admitted_gpu,
 )
@@ -49,6 +51,21 @@ class FlakyRunner(RecordingRunner):
                 if len(self.calls) == 1
                 else ""
             ),
+        )
+
+
+class SequencedRunner(RecordingRunner):
+    def __init__(self, outputs):
+        super().__init__()
+        self.outputs = iter(outputs)
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((list(argv), dict(kwargs)))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=next(self.outputs),
+            stderr="",
         )
 
 
@@ -224,6 +241,59 @@ def test_candidate_resume_skips_versions_already_journaled():
     ) == ("0.27.0",)
 
 
+def test_candidate_resume_retries_timeout_after_download_strategy_change():
+    assert pending_vllm_versions(
+        ("0.28.0", "0.27.1"),
+        [
+            {
+                "version": "0.28.0",
+                "compatible": False,
+                "phase": "binary_install",
+                "returncode": 124,
+            },
+        ],
+    ) == ("0.28.0", "0.27.1")
+
+
+def test_resolve_vllm_wheel_selects_linux_abi3_and_sha256():
+    digest = "a" * 64
+    html = (
+        '<a href="../../packages/wrong/vllm-0.28.0-cp312-cp312-'
+        'macosx_14_0_arm64.whl#sha256='
+        + "b" * 64
+        + '">wrong</a>'
+        '<a href="../../packages/right/vllm-0.28.0-cp38-abi3-'
+        'manylinux_2_28_x86_64.whl#sha256='
+        + digest
+        + '">right</a>'
+    )
+
+    wheel = resolve_vllm_wheel(
+        html,
+        version="0.28.0",
+        index_url="https://mirrors.aliyun.com/pypi/simple/vllm/",
+    )
+
+    assert wheel == {
+        "filename": (
+            "vllm-0.28.0-cp38-abi3-manylinux_2_28_x86_64.whl"
+        ),
+        "sha256": digest,
+        "url": (
+            "https://mirrors.aliyun.com/pypi/packages/right/"
+            "vllm-0.28.0-cp38-abi3-manylinux_2_28_x86_64.whl"
+        ),
+    }
+
+
+def test_byte_ranges_cover_file_without_overlap():
+    assert build_byte_ranges(total_bytes=10, chunk_bytes=4) == (
+        (0, 3),
+        (4, 7),
+        (8, 9),
+    )
+
+
 def test_vllm_candidate_install_is_binary_only_bounded_and_no_deps():
     argv = build_vllm_install_argv(
         candidate_build="/campaign/envs/vllm-0.28.0.building",
@@ -236,6 +306,62 @@ def test_vllm_candidate_install_is_binary_only_bounded_and_no_deps():
     assert "--no-deps" in argv
     assert "https://mirrors.aliyun.com/pypi/simple" in argv
     assert argv[-1] == "vllm==0.28.0"
+
+
+def test_vllm_candidate_install_accepts_verified_local_wheel():
+    argv = build_vllm_install_argv(
+        candidate_build="/campaign/envs/vllm-0.28.0.building",
+        candidate_version="0.28.0",
+        environment={"PIP_CACHE_DIR": "/campaign/cache"},
+        wheel_path="/campaign/wheelhouse/vllm-0.28.0.whl",
+    )
+
+    assert "--index-url" not in argv
+    assert argv[-1] == "/campaign/wheelhouse/vllm-0.28.0.whl"
+    assert "900s" in argv
+
+
+def test_controller_downloads_verified_wheel_under_campaign_root():
+    digest = "a" * 64
+    filename = (
+        "vllm-0.28.0-cp38-abi3-manylinux_2_28_x86_64.whl"
+    )
+    html = (
+        f'<a href="../../packages/right/{filename}'
+        f'#sha256={digest}">wheel</a>'
+    )
+    wheel_path = (
+        "/data00/home/sitian/tinyllmforge-workspaces/"
+        "command-timeline-20260818/cross-engine-k8-qwen3-06b/"
+        f"shared/wheelhouse/{filename}"
+    )
+    runner = SequencedRunner(
+        [
+            html,
+            (
+                '{"download_strategy":"parallel_range_v1",'
+                f'"filename":"{filename}","path":"{wheel_path}",'
+                f'"sha256":"{digest}","size_bytes":314500103,'
+                '"url":"https://mirrors.aliyun.com/pypi/packages/right/'
+                f'{filename}"}}'
+            ),
+        ]
+    )
+    controller = RemoteController(
+        _config(),
+        command_runner=runner,
+        sleep=lambda _seconds: None,
+    )
+
+    receipt = controller.ensure_vllm_wheel("0.28.0")
+
+    assert receipt["path"] == wheel_path
+    assert receipt["sha256"] == digest
+    assert receipt["url"].endswith(filename)
+    assert len(runner.calls) == 2
+    assert "/simple/vllm/" in runner.calls[0][0][-1]
+    assert "shared/wheelhouse" in runner.calls[1][0][-1]
+    assert "/tmp" not in runner.calls[1][0][-1]
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
