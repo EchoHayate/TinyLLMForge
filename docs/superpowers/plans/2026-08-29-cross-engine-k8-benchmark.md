@@ -881,9 +881,13 @@ receipt.
 Smoke uses one context, one measured repetition, and all eligible arms; mark
 it non-performance evidence. Canonical uses fresh engine processes per arm
 and repetition, seven repetitions, deterministic balanced arm rotation, and
-storage/admission checks before every worker. Finalization assembles the
-allowlisted bundle, writes `manifest.sha256`, invokes the remote verifier,
-and writes an immutable terminal receipt.
+storage/admission checks before every worker. Smoke freezes the short
+host-greedy reference. Canonical repetition zero runs host-greedy first,
+extends the reference with medium and long outputs, and persists all three
+contexts before launching any non-host canonical worker. Reject host
+reference drift and fail closed if any context reference is still missing.
+Finalization assembles the allowlisted bundle, writes `manifest.sha256`,
+invokes the remote verifier, and writes an immutable terminal receipt.
 
 - [ ] **Step 6: Run focused tests and confirm GREEN**
 

@@ -654,6 +654,27 @@ def build_worker_plan(
     }
 
 
+def merge_host_reference_tokens(
+    expected_tokens: Mapping[str, Sequence[int]],
+    correctness_rows: Sequence[Mapping],
+) -> dict[str, list[int]]:
+    merged = {
+        str(context): list(tokens)
+        for context, tokens in expected_tokens.items()
+    }
+    for row in correctness_rows:
+        context = row.get("context")
+        tokens = row.get("token_ids")
+        if not isinstance(context, str) or not isinstance(tokens, list):
+            raise RuntimeError("HOST_REFERENCE_ROW_INVALID")
+        candidate = list(tokens)
+        existing = merged.get(context)
+        if existing is not None and existing != candidate:
+            raise RuntimeError(f"HOST_REFERENCE_DRIFT:{context}")
+        merged[context] = candidate
+    return merged
+
+
 def build_worker_environment(
     *,
     cache_environment: Mapping[str, str],
@@ -1873,6 +1894,20 @@ class RemoteController:
             else:
                 order = arm_order(repetition, eligible_arms)
             for arm in order:
+                if (
+                    stage == "canonical"
+                    and arm != "tinyllmforge_host_greedy"
+                ):
+                    missing_contexts = sorted(
+                        case["context"]
+                        for case in workload["cases"]
+                        if case["context"] not in expected_tokens
+                    )
+                    if missing_contexts:
+                        raise RuntimeError(
+                            "CANONICAL_REFERENCE_INCOMPLETE:"
+                            + ",".join(missing_contexts)
+                        )
                 worker = self._load_completed_worker(
                     stage=stage,
                     repetition=repetition,
@@ -1901,14 +1936,11 @@ class RemoteController:
                         plan=plan,
                         stage=stage,
                     )
-                if (
-                    stage == "smoke"
-                    and arm == "tinyllmforge_host_greedy"
-                ):
-                    expected_tokens = {
-                        row["context"]: row["token_ids"]
-                        for row in worker["correctness_rows"]
-                    }
+                if arm == "tinyllmforge_host_greedy":
+                    expected_tokens = merge_host_reference_tokens(
+                        expected_tokens,
+                        worker["correctness_rows"],
+                    )
                     self.write_remote_json(
                         reference_path,
                         expected_tokens,

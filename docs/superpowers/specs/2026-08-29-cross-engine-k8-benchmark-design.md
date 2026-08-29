@@ -332,6 +332,14 @@ For every context bucket:
 - Any cross-engine token mismatch is a correctness failure, not a performance
   sample.
 
+The one-context smoke freezes the short host-greedy reference. Before any
+non-host canonical worker runs, canonical repetition zero must run
+TinyLLMForge host-greedy first, extend that reference with the medium and long
+outputs, and persist the complete three-context reference. An existing
+reference may only be extended; a conflicting host token sequence is
+`HOST_REFERENCE_DRIFT`. A non-host canonical worker may not start while any
+context reference is missing.
+
 Performance rows from a failed correctness arm remain diagnostic and are
 excluded from advantage classification.
 

@@ -816,6 +816,39 @@ def test_worker_plan_carries_frozen_prompts_and_gpu_identity():
     assert plan["expected_tokens"]["short"] == list(range(128))
 
 
+def test_host_reference_merge_completes_all_contexts_and_rejects_drift():
+    rows = [
+        {"context": "short", "token_ids": [1, 2]},
+        {"context": "medium", "token_ids": [3, 4]},
+        {"context": "long", "token_ids": [5, 6]},
+    ]
+
+    merged = controller_module.merge_host_reference_tokens(
+        {"short": [1, 2]},
+        rows,
+    )
+
+    assert merged == {
+        "short": [1, 2],
+        "medium": [3, 4],
+        "long": [5, 6],
+    }
+    with pytest.raises(RuntimeError, match="HOST_REFERENCE_DRIFT"):
+        controller_module.merge_host_reference_tokens(
+            {"short": [9, 9]},
+            rows,
+        )
+
+
+def test_first_canonical_arm_can_complete_the_host_reference():
+    assert controller_module.arm_order(
+        0,
+        controller_module.REQUIRED_ARMS,
+    )[0] == (
+        "tinyllmforge_host_greedy"
+    )
+
+
 def test_vllm_worker_uses_short_abstract_rpc_path():
     common = {
         "cache_environment": {
