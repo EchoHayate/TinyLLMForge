@@ -157,6 +157,7 @@ def resolve_vllm_wheel(
     *,
     version: str,
     index_url: str,
+    supported_tags: Optional[Sequence[str]] = None,
 ) -> dict[str, str]:
     if _STABLE_VERSION.fullmatch(version) is None:
         raise ValueError("vLLM candidate version is invalid")
@@ -164,21 +165,39 @@ def resolve_vllm_wheel(
     parser.feed(index_html)
     prefix = f"vllm-{version}-cp38-abi3-manylinux"
     suffix = "_x86_64.whl"
+    supported = (
+        None
+        if supported_tags is None
+        else {value: index for index, value in enumerate(supported_tags)}
+    )
+    candidates = []
     for href in parser.hrefs:
         url, fragment = urldefrag(urljoin(index_url, href))
         filename = url.rsplit("/", 1)[-1]
         if not filename.startswith(prefix) or not filename.endswith(suffix):
+            continue
+        tag = filename[
+            len(f"vllm-{version}-") : -len(".whl")
+        ]
+        if supported is not None and tag not in supported:
             continue
         if not fragment.startswith("sha256="):
             continue
         digest = fragment.removeprefix("sha256=")
         if _SHA256.fullmatch(digest) is None:
             continue
-        return {
+        candidates.append({
             "filename": filename,
             "sha256": digest,
+            "tag": tag,
             "url": url,
-        }
+        })
+    if candidates:
+        if supported is not None:
+            candidates.sort(key=lambda value: supported[value["tag"]])
+        selected = dict(candidates[0])
+        selected.pop("tag")
+        return selected
     raise RuntimeError(f"VLLM_BINARY_WHEEL_NOT_FOUND:{version}")
 
 
@@ -212,8 +231,11 @@ def pending_vllm_versions(
     attempted = set()
     for version, probe in latest.items():
         retryable_timeout = (
-            probe.get("phase") == "binary_install"
-            and probe.get("returncode") == 124
+            probe.get("returncode") == 255
+            or (
+                probe.get("phase") == "binary_install"
+                and probe.get("returncode") == 124
+            )
         )
         if not retryable_timeout:
             attempted.add(version)
@@ -239,8 +261,11 @@ def vllm_probe_append_action(
     if dict(previous) == dict(row):
         return "noop"
     retryable_timeout = (
-        previous.get("phase") == "binary_install"
-        and previous.get("returncode") == 124
+        previous.get("returncode") == 255
+        or (
+            previous.get("phase") == "binary_install"
+            and previous.get("returncode") == 124
+        )
     )
     if retryable_timeout:
         return "append"
@@ -403,6 +428,7 @@ class RemoteController:
         command_runner: Callable = subprocess.run,
         gpu_inventory: Optional[Callable[[], Sequence[Mapping]]] = None,
         attempt_exists: Optional[Callable[[str], bool]] = None,
+        supported_vllm_tags: Optional[Sequence[str]] = None,
         signal_process_group: Optional[Callable[[int, str], None]] = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -418,6 +444,11 @@ class RemoteController:
             self.remote_path_exists
             if attempt_exists is None
             else attempt_exists
+        )
+        self._supported_vllm_tags = (
+            None
+            if supported_vllm_tags is None
+            else tuple(supported_vllm_tags)
         )
         self._signal_process_group = (
             self._signal_owned_remote_group
@@ -867,6 +898,7 @@ class RemoteController:
             index_html,
             version=candidate_version,
             index_url=index_url,
+            supported_tags=self.supported_vllm_wheel_tags(),
         )
         wheel_root = f"{self.config.remote_root}/shared/wheelhouse"
         wheel_path = f"{wheel_root}/{wheel['filename']}"
@@ -979,6 +1011,53 @@ class RemoteController:
         ):
             raise RuntimeError("VLLM_WHEEL_RECEIPT_INVALID")
         return receipt
+
+    def supported_vllm_wheel_tags(self) -> tuple[str, ...]:
+        if self._supported_vllm_tags is not None:
+            return self._supported_vllm_tags
+        base_python = "/data00/home/sitian/tllm/env/bin/python"
+        script = "\n".join((
+            "import json",
+            "from packaging.tags import sys_tags",
+            "print(json.dumps([str(tag) for tag in sys_tags()]))",
+        ))
+        payload = json.loads(self.remote([
+            base_python,
+            "-c",
+            script,
+        ]).stdout)
+        if (
+            not isinstance(payload, list)
+            or not payload
+            or any(not isinstance(value, str) for value in payload)
+        ):
+            raise RuntimeError("VLLM_SUPPORTED_TAGS_INVALID")
+        self._supported_vllm_tags = tuple(payload)
+        return self._supported_vllm_tags
+
+    def remove_vllm_wheel(self, path: str) -> None:
+        candidate = CampaignPaths.create(
+            remote_root=self.config.remote_root,
+            model_path=self.config.model_path,
+        ).require_owned_remote(path)
+        wheelhouse = (
+            PurePosixPath(self.config.remote_root)
+            / "shared"
+            / "wheelhouse"
+        )
+        if candidate.parent != wheelhouse or candidate.suffix != ".whl":
+            raise ValueError("vLLM wheel must be an owned wheelhouse file")
+        script = "\n".join((
+            "import pathlib,sys",
+            "path=pathlib.Path(sys.argv[1])",
+            "if path.is_symlink():",
+            " raise RuntimeError('refusing to remove wheel symlink')",
+            "if path.exists():",
+            " if not path.is_file():",
+            "  raise RuntimeError('wheel path is not a file')",
+            " path.unlink()",
+        ))
+        self.remote_python(script, path)
 
     def prepare_environments(self) -> dict:
         if not self._attempt_exists(self.config.attempt_root):
@@ -1108,9 +1187,24 @@ class RemoteController:
             if self._attempt_exists(candidate_env):
                 candidate_python = f"{candidate_env}/bin/python"
             else:
-                wheel_receipt = self.ensure_vllm_wheel(
-                    candidate_version
-                )
+                try:
+                    wheel_receipt = self.ensure_vllm_wheel(
+                        candidate_version
+                    )
+                except RuntimeError as error:
+                    if not str(error).startswith(
+                        "VLLM_BINARY_WHEEL_NOT_FOUND:"
+                    ):
+                        raise
+                    probe = {
+                        "version": candidate_version,
+                        "compatible": False,
+                        "phase": "wheel_resolution",
+                        "reason": str(error),
+                    }
+                    self._record_vllm_probe(probe_journal, probe)
+                    vllm_probes.append(probe)
+                    continue
                 if self._attempt_exists(candidate_build):
                     self._remove_owned_tree(candidate_build)
                 self.remote([
@@ -1130,6 +1224,11 @@ class RemoteController:
                     check=False,
                     retry_transport=False,
                 )
+                if install.returncode == 255:
+                    raise RuntimeError(
+                        "VLLM_INSTALL_SSH_TRANSPORT:"
+                        + str(install.stderr or "")[-1000:]
+                    )
                 if install.returncode != 0:
                     probe = {
                         "version": candidate_version,
@@ -1145,6 +1244,10 @@ class RemoteController:
                     }
                     self._record_vllm_probe(probe_journal, probe)
                     vllm_probes.append(probe)
+                    if wheel_receipt is not None:
+                        self.remove_vllm_wheel(
+                            wheel_receipt["path"]
+                        )
                     self._remove_owned_tree(candidate_build)
                     self._require_storage_available()
                     continue
@@ -1163,6 +1266,11 @@ class RemoteController:
                 check=False,
                 retry_transport=False,
             )
+            if import_probe.returncode == 255:
+                raise RuntimeError(
+                    "VLLM_IMPORT_SSH_TRANSPORT:"
+                    + str(import_probe.stderr or "")[-1000:]
+                )
             if import_probe.returncode != 0:
                 probe = {
                     "version": candidate_version,
@@ -1173,6 +1281,8 @@ class RemoteController:
                 }
                 self._record_vllm_probe(probe_journal, probe)
                 vllm_probes.append(probe)
+                if wheel_receipt is not None:
+                    self.remove_vllm_wheel(wheel_receipt["path"])
                 if candidate_python.startswith(candidate_build + "/"):
                     self._remove_owned_tree(candidate_build)
                 self._require_storage_available()
@@ -1563,8 +1673,9 @@ class RemoteController:
             " if same[-1] == row:",
             "  sys.exit(0)",
             " retryable=(",
-            "  same[-1].get('phase')=='binary_install'",
-            "  and same[-1].get('returncode')==124",
+            "  same[-1].get('returncode')==255",
+            "  or (same[-1].get('phase')=='binary_install'",
+            "      and same[-1].get('returncode')==124)",
             " )",
             " if not retryable:",
             "  raise RuntimeError('vLLM probe journal collision')",

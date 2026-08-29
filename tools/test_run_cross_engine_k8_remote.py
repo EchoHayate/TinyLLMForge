@@ -256,6 +256,20 @@ def test_candidate_resume_retries_timeout_after_download_strategy_change():
     ) == ("0.28.0", "0.27.1")
 
 
+def test_candidate_resume_retries_ssh_transport_failure():
+    assert pending_vllm_versions(
+        ("0.17.1", "0.17.0"),
+        [
+            {
+                "version": "0.17.1",
+                "compatible": False,
+                "phase": "binary_install",
+                "returncode": 255,
+            },
+        ],
+    ) == ("0.17.1", "0.17.0")
+
+
 def test_probe_journal_allows_timeout_to_terminal_transition():
     timeout = {
         "version": "0.28.0",
@@ -305,6 +319,32 @@ def test_resolve_vllm_wheel_selects_linux_abi3_and_sha256():
             "vllm-0.28.0-cp38-abi3-manylinux_2_28_x86_64.whl"
         ),
     }
+
+
+def test_resolve_vllm_wheel_skips_unsupported_manylinux_tag():
+    digest = "a" * 64
+    html = (
+        '<a href="../../packages/new/vllm-0.17.1-cp38-abi3-'
+        'manylinux_2_31_x86_64.whl#sha256='
+        + "b" * 64
+        + '">unsupported</a>'
+        '<a href="../../packages/old/vllm-0.17.1-cp38-abi3-'
+        'manylinux_2_28_x86_64.whl#sha256='
+        + digest
+        + '">supported</a>'
+    )
+
+    wheel = resolve_vllm_wheel(
+        html,
+        version="0.17.1",
+        index_url="https://mirrors.aliyun.com/pypi/simple/vllm/",
+        supported_tags=("cp38-abi3-manylinux_2_28_x86_64",),
+    )
+
+    assert wheel["url"].endswith(
+        "vllm-0.17.1-cp38-abi3-manylinux_2_28_x86_64.whl"
+    )
+    assert wheel["sha256"] == digest
 
 
 def test_byte_ranges_cover_file_without_overlap():
@@ -371,6 +411,9 @@ def test_controller_downloads_verified_wheel_under_campaign_root():
     controller = RemoteController(
         _config(),
         command_runner=runner,
+        supported_vllm_tags=(
+            "cp38-abi3-manylinux_2_28_x86_64",
+        ),
         sleep=lambda _seconds: None,
     )
 
@@ -385,6 +428,27 @@ def test_controller_downloads_verified_wheel_under_campaign_root():
     assert "/tmp" not in runner.calls[1][0][-1]
     assert "missing_ok" not in runner.calls[1][0][-1]
     assert "--retry-all-errors" not in runner.calls[1][0][-1]
+
+
+def test_controller_removes_only_owned_wheelhouse_files():
+    runner = RecordingRunner()
+    controller = RemoteController(
+        _config(),
+        command_runner=runner,
+        sleep=lambda _seconds: None,
+    )
+    wheel = (
+        f"{controller.config.remote_root}/shared/wheelhouse/"
+        "vllm-0.28.0-cp38-abi3-manylinux_2_28_x86_64.whl"
+    )
+
+    controller.remove_vllm_wheel(wheel)
+
+    assert wheel in runner.calls[0][0][-1]
+    with pytest.raises(ValueError, match="wheelhouse"):
+        controller.remove_vllm_wheel(
+            f"{controller.config.remote_root}/shared/tmp/not-a-wheel.whl"
+        )
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
