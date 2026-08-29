@@ -381,11 +381,23 @@ exist.
 
 - [ ] **Step 3: Implement the frozen manifest and pure gate**
 
-Use a fixed prompt seed, vocabulary-safe token range, and explicit BOS token
-from the checkpoint metadata. Store prompt token IDs directly in the
-manifest. Percentiles use nearest-rank. Aggregate each arm by first taking
-the median within each context bucket, then the unweighted median across the
-three buckets.
+Use the checkpoint model config's explicit BOS token `151643`, followed by
+the checkpoint-bound token cycle for
+`" The quick brown fox jumps over the lazy dog."`:
+
+```python
+[576, 3974, 13876, 38835, 34208, 916, 279, 15678, 5562, 13]
+```
+
+Repeat and truncate that cycle after BOS to exactly 256, 2048, and 8192
+tokens. Store the strategy, text, BOS, cycle, and complete prompt token IDs
+directly in the manifest. The prior hash-derived pseudo-random prompt is
+ineligible because diagnostic logits exposed zero/near-zero greedy margins
+and cross-stack output divergence. The replacement was frozen only after
+all three context buckets matched public vLLM for 128 generated tokens and
+were reproduced by a second independent TinyLLMForge process. Percentiles
+use nearest-rank. Aggregate each arm by first taking the median within each
+context bucket, then the unweighted median across the three buckets.
 
 The strongest eligible vLLM arm is the one with the lower aggregate median
 TPOT among correctness-valid vLLM arms. `classify_comparison` must return

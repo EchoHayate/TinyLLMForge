@@ -21,9 +21,21 @@ CONTEXTS = (
 OUTPUT_TOKENS = 128
 WARMUPS = 2
 MEASURED_REPETITIONS = 7
-_PROMPT_SEED = b"tinyllmforge-cross-engine-k8-qwen3-06b-v1"
-_PROMPT_TOKEN_MIN = 100
-_PROMPT_TOKEN_SPAN = 30_000
+_PROMPT_STRATEGY = "periodic_natural_sentence_model_config_bos"
+_PROMPT_BOS_TOKEN_ID = 151643
+_PROMPT_PATTERN_TEXT = " The quick brown fox jumps over the lazy dog."
+_PROMPT_PATTERN_TOKEN_IDS = (
+    576,
+    3974,
+    13876,
+    38835,
+    34208,
+    916,
+    279,
+    15678,
+    5562,
+    13,
+)
 _PROTECTED_RATIO_FIELDS = (
     "ttft_ratio",
     "e2e_ratio",
@@ -45,23 +57,15 @@ def _validate_digest(value: str, name: str) -> str:
 
 
 def _prompt_token_ids(context: str, length: int) -> list[int]:
-    tokens = []
-    counter = 0
-    while len(tokens) < length:
-        block = hashlib.sha256(
-            _PROMPT_SEED
-            + b"\0"
-            + context.encode("ascii")
-            + b"\0"
-            + str(counter).encode("ascii")
-        ).digest()
-        for offset in range(0, len(block), 2):
-            value = int.from_bytes(block[offset : offset + 2], "big")
-            tokens.append(_PROMPT_TOKEN_MIN + value % _PROMPT_TOKEN_SPAN)
-            if len(tokens) == length:
-                break
-        counter += 1
-    return tokens
+    del context
+    body_length = length - 1
+    repeats = (
+        body_length + len(_PROMPT_PATTERN_TOKEN_IDS) - 1
+    ) // len(_PROMPT_PATTERN_TOKEN_IDS)
+    return [
+        _PROMPT_BOS_TOKEN_ID,
+        *(_PROMPT_PATTERN_TOKEN_IDS * repeats)[:body_length],
+    ]
 
 
 def build_workload_manifest(model_inventory_sha256: str) -> dict:
@@ -87,6 +91,10 @@ def build_workload_manifest(model_inventory_sha256: str) -> dict:
         "batch_size": 1,
         "temperature": 0.0,
         "ignore_eos": True,
+        "prompt_strategy": _PROMPT_STRATEGY,
+        "prompt_bos_token_id": _PROMPT_BOS_TOKEN_ID,
+        "prompt_pattern_text": _PROMPT_PATTERN_TEXT,
+        "prompt_pattern_token_ids": list(_PROMPT_PATTERN_TOKEN_IDS),
         "prompt_lengths": [
             prompt_tokens for _context, prompt_tokens in CONTEXTS
         ],

@@ -34,6 +34,28 @@ def test_workload_is_frozen_and_prompt_tokens_are_deterministic():
     )
 
 
+def test_workload_uses_model_bos_and_frozen_natural_sentence_cycle():
+    manifest = build_workload_manifest("a" * 64)
+    pattern = [576, 3974, 13876, 38835, 34208, 916, 279, 15678, 5562, 13]
+
+    assert manifest["prompt_strategy"] == (
+        "periodic_natural_sentence_model_config_bos"
+    )
+    assert manifest["prompt_bos_token_id"] == 151643
+    assert manifest["prompt_pattern_text"] == (
+        " The quick brown fox jumps over the lazy dog."
+    )
+    assert manifest["prompt_pattern_token_ids"] == pattern
+    for case in manifest["cases"]:
+        prompt = case["prompt_token_ids"]
+        assert prompt[0] == manifest["prompt_bos_token_id"]
+        expected_body = (
+            pattern
+            * ((case["prompt_tokens"] - 1 + len(pattern) - 1) // len(pattern))
+        )[: case["prompt_tokens"] - 1]
+        assert prompt[1:] == expected_body
+
+
 def test_workload_rejects_invalid_model_inventory_digest():
     with pytest.raises(ValueError, match="model_inventory_sha256"):
         build_workload_manifest("not-a-digest")

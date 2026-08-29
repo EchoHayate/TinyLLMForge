@@ -256,7 +256,27 @@ measured repetitions: 7 per arm and context bucket
 
 Prompt token IDs are generated once, stored in `workload_manifest.json`, and
 passed directly to both engines. No engine-specific tokenizer invocation may
-change the measured prompt.
+change the measured prompt. The frozen prompt starts with the checkpoint
+model config's BOS token `151643`, followed by a repeated natural-language
+sentence:
+
+```text
+ The quick brown fox jumps over the lazy dog.
+```
+
+Its checkpoint-bound token cycle is
+`[576, 3974, 13876, 38835, 34208, 916, 279, 15678, 5562, 13]`.
+Each context bucket truncates that cycle to exactly the required length after
+the BOS token.
+
+The original hash-derived pseudo-random token workload is not eligible for
+the benchmark. Diagnostic traces showed zero or near-zero top-logit margins,
+including a BF16 tie, and produced different greedy continuations across the
+two public numerical stacks. Before freezing the replacement, the periodic
+natural-language workload produced exact 128-token equality for all three
+context buckets across TinyLLMForge and public vLLM, and a second independent
+TinyLLMForge process reproduced all three outputs exactly. This changes only
+the shared prompt workload; it does not relax the exact-output gate.
 
 Each repetition uses one fresh engine process per arm. One process runs all
 three context buckets after its warmups. Arm order follows a deterministic
