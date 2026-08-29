@@ -8,7 +8,7 @@ import csv
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import tempfile
 import time
@@ -287,17 +287,19 @@ def exact_tag_processes(attempt):
         if not entry.name.isdigit() or int(entry.name) == own_pid:
             continue
         try:
-            command = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
+            args = [
+                part.decode(errors="replace")
+                for part in (entry / "cmdline").read_bytes().split(b"\0")
+                if part
+            ]
         except (
             FileNotFoundError,
             PermissionError,
             ProcessLookupError,
         ):
             continue
-        if (
-            attempt.encode("utf-8") in command
-            and WORKER_SCRIPT.encode("utf-8") in command
-        ):
+        basenames = {PurePosixPath(arg).name for arg in args}
+        if attempt in args and WORKER_SCRIPT in basenames:
             matches.append(int(entry.name))
     return sorted(matches)
 

@@ -128,6 +128,42 @@ def test_exact_tag_scan_ignores_process_exit_race(monkeypatch):
     assert supervisor.exact_tag_processes(ATTEMPT) == []
 
 
+def test_exact_tag_scan_ignores_probe_source_containing_worker_identity(
+    monkeypatch,
+):
+    class ProbeProcess:
+        name = "123"
+
+        def __truediv__(self, name):
+            assert name == "cmdline"
+            return self
+
+        def read_bytes(self):
+            script = (
+                "tag = "
+                f"{ATTEMPT!r}; "
+                "worker = 'qwen38_tp4_collective_reduction_worker.py'"
+            )
+            return (
+                b"/data00/home/sitian/tllm/env/bin/python\0"
+                b"-c\0"
+                + script.encode("utf-8")
+                + b"\0"
+            )
+
+    class ProcRoot:
+        def __init__(self, path):
+            assert path == "/proc"
+
+        def iterdir(self):
+            return [ProbeProcess()]
+
+    monkeypatch.setattr(supervisor, "Path", ProcRoot)
+    monkeypatch.setattr(supervisor.os, "getpid", lambda: 999)
+
+    assert supervisor.exact_tag_processes(ATTEMPT) == []
+
+
 def test_worker_environment_keeps_writable_paths_below_attempt(tmp_path):
     attempt_root = tmp_path / ATTEMPT
 
