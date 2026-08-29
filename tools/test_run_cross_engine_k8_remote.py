@@ -207,6 +207,7 @@ def test_vllm_candidate_install_is_binary_only_bounded_and_no_deps():
     assert argv[:3] == ["env", "PIP_CACHE_DIR=/campaign/cache", "timeout"]
     assert "--only-binary=:all:" in argv
     assert "--no-deps" in argv
+    assert "https://pypi.tuna.tsinghua.edu.cn/simple" in argv
     assert argv[-1] == "vllm==0.28.0"
 
 
