@@ -676,15 +676,21 @@ class RemoteController:
         ))
         self.remote_python(script, path)
 
-    def prepare_environments(self) -> dict:
-        if not self._attempt_exists(self.config.attempt_root):
-            raise RuntimeError("PREFLIGHT_ATTEMPT_MISSING")
-        before = self._require_storage_available()
+    def ensure_remote_source(self) -> str:
         source_root = (
             f"{self.config.remote_root}/sources/"
             f"tinyllmforge-{self.config.source_revision}"
         )
         source_build = source_root + ".building"
+        source_marker = f"{source_root}/.source_revision"
+        if self._attempt_exists(source_root):
+            marker = self.remote(
+                ["cat", source_marker],
+                retry_transport=False,
+            ).stdout.strip()
+            if marker != self.config.source_revision:
+                raise RuntimeError("source destination collision")
+            return source_root
         archive = build_committed_source_archive(
             REPOSITORY_ROOT,
             self.config.source_revision,
@@ -695,6 +701,7 @@ class RemoteController:
             "build=pathlib.Path(sys.argv[2])",
             "revision=sys.argv[3]",
             "marker=final/'.source_revision'",
+            "payload=sys.stdin.buffer.read()",
             "if final.exists():",
             " if not marker.is_file() or marker.read_text().strip()!=revision:",
             "  raise RuntimeError('source destination collision')",
@@ -702,7 +709,6 @@ class RemoteController:
             "if build.exists():",
             " raise RuntimeError('source build destination collision')",
             "final.parent.mkdir(parents=True,exist_ok=True)",
-            "payload=sys.stdin.buffer.read()",
             "with tarfile.open(fileobj=io.BytesIO(payload),mode='r:') as bundle:",
             " members=bundle.getmembers()",
             " for member in members:",
@@ -726,6 +732,13 @@ class RemoteController:
             ],
             archive,
         )
+        return source_root
+
+    def prepare_environments(self) -> dict:
+        if not self._attempt_exists(self.config.attempt_root):
+            raise RuntimeError("PREFLIGHT_ATTEMPT_MISSING")
+        before = self._require_storage_available()
+        source_root = self.ensure_remote_source()
         paths = CampaignPaths.create(
             remote_root=self.config.remote_root,
             model_path=self.config.model_path,

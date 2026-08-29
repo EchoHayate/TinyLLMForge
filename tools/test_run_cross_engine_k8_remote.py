@@ -160,6 +160,33 @@ def test_remote_binary_input_uses_ssh_stdin_without_text_mode():
     assert runner.calls[0][1]["env"]["KRB5CCNAME"] == KRB5_CACHE
 
 
+def test_existing_frozen_source_is_verified_without_restreaming(
+    monkeypatch,
+):
+    controller = RemoteController(
+        _config(),
+        command_runner=RecordingRunner(stdout="a" * 40 + "\n"),
+        attempt_exists=lambda path: path.endswith("a" * 40),
+        sleep=lambda _seconds: None,
+    )
+
+    def fail_if_archived(*_args, **_kwargs):
+        raise AssertionError("existing frozen source must not be archived")
+
+    monkeypatch.setattr(
+        controller_module,
+        "build_committed_source_archive",
+        fail_if_archived,
+    )
+
+    source_root = controller.ensure_remote_source()
+
+    assert source_root.endswith("a" * 40)
+    assert controller._command_runner.calls[0][0][-1].endswith(
+        "/.source_revision"
+    )
+
+
 def test_pip_index_versions_are_filtered_stable_and_newest_first():
     output = "\n".join(
         (
