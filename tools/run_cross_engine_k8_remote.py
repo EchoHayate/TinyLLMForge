@@ -289,8 +289,8 @@ def build_byte_ranges(
     )
 
 
-def build_vllm_probe_script() -> str:
-    return "\n".join((
+def _base_environment_probe_lines() -> tuple[str, ...]:
+    return (
         "import json,platform,sys",
         "import torch",
         "payload={",
@@ -309,6 +309,19 @@ def build_vllm_probe_script() -> str:
         " payload['flash_attn_version']=flash_attn.__version__",
         "except Exception:",
         " payload['flash_attn_version']='NOT_EXPOSED'",
+    )
+
+
+def build_tinyllmforge_probe_script() -> str:
+    return "\n".join((
+        *_base_environment_probe_lines(),
+        "print(json.dumps(payload,sort_keys=True))",
+    ))
+
+
+def build_vllm_probe_script() -> str:
+    return "\n".join((
+        *_base_environment_probe_lines(),
         "import vllm",
         "from vllm import EngineArgs",
         "payload['vllm_version']=vllm.__version__",
@@ -1305,7 +1318,8 @@ class RemoteController:
             PIP_INDEX_URL,
             "vllm",
         ])
-        probe_script = build_vllm_probe_script()
+        tinyllmforge_probe_script = build_tinyllmforge_probe_script()
+        vllm_probe_script = build_vllm_probe_script()
         vllm_versions = bounded_vllm_versions(
             stable_versions_from_pip_index(index_result.stdout)
         )
@@ -1432,7 +1446,7 @@ class RemoteController:
                     ),
                     candidate_python,
                     "-c",
-                    probe_script,
+                    vllm_probe_script,
                 ],
                 check=False,
                 retry_transport=False,
@@ -1488,7 +1502,7 @@ class RemoteController:
             f"PYTHONPATH={source_root}",
             f"{tiny_env}/bin/python",
             "-c",
-            probe_script,
+            tinyllmforge_probe_script,
         ]).stdout)
         vllm_probe = json.loads(self.remote([
             "env",
@@ -1496,7 +1510,7 @@ class RemoteController:
             f"PYTHONPATH={source_root}",
             f"{vllm_env}/bin/python",
             "-c",
-            probe_script,
+            vllm_probe_script,
         ]).stdout)
         inventory_script = "\n".join((
             "import json,sys",

@@ -179,7 +179,8 @@ envs/vllm
 
 The TinyLLMForge environment is pinned to the authoritative source commit and
 records Python, PyTorch, CUDA runtime, Triton, FlashAttention, and package
-versions.
+versions. Its probe is engine-specific and must not import vLLM from the
+separate comparison environment.
 
 The vLLM environment uses the newest stable upstream release that satisfies
 all of the following compatibility checks on the target host:

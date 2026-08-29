@@ -388,6 +388,38 @@ def test_vllm_probe_script_is_valid_python():
     compile(build_vllm_probe_script(), "<vllm-probe>", "exec")
 
 
+def test_tinyllmforge_probe_does_not_require_vllm(tmp_path):
+    (tmp_path / "torch.py").write_text(
+        "__version__='2.4.1'\n"
+        "class _Version:\n"
+        "    cuda='12.1'\n"
+        "version=_Version()\n"
+        "class _Cuda:\n"
+        "    @staticmethod\n"
+        "    def is_available(): return True\n"
+        "cuda=_Cuda()\n"
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.fspath(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            controller_module.build_tinyllmforge_probe_script(),
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["torch_version"] == "2.4.1"
+    assert "vllm_version" not in payload
+
+
 def test_vllm_probe_script_fails_when_vllm_import_fails(tmp_path):
     (tmp_path / "torch.py").write_text(
         "__version__='2.4.1'\n"
