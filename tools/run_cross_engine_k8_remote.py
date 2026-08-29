@@ -220,6 +220,33 @@ def pending_vllm_versions(
     return tuple(version for version in versions if version not in attempted)
 
 
+def vllm_probe_append_action(
+    existing: Sequence[Mapping],
+    row: Mapping,
+) -> str:
+    version = row.get("version")
+    if not isinstance(version, str):
+        raise ValueError("vLLM probe version is invalid")
+    same = [
+        item
+        for item in existing
+        if isinstance(item, Mapping)
+        and item.get("version") == version
+    ]
+    if not same:
+        return "append"
+    previous = same[-1]
+    if dict(previous) == dict(row):
+        return "noop"
+    retryable_timeout = (
+        previous.get("phase") == "binary_install"
+        and previous.get("returncode") == 124
+    )
+    if retryable_timeout:
+        return "append"
+    raise RuntimeError("vLLM probe journal collision")
+
+
 def build_vllm_install_argv(
     *,
     candidate_build: str,
@@ -1533,9 +1560,14 @@ class RemoteController:
             "same=[item for item in existing",
             "      if item.get('version')==row.get('version')]",
             "if same:",
-            " if same[-1] != row:",
+            " if same[-1] == row:",
+            "  sys.exit(0)",
+            " retryable=(",
+            "  same[-1].get('phase')=='binary_install'",
+            "  and same[-1].get('returncode')==124",
+            " )",
+            " if not retryable:",
             "  raise RuntimeError('vLLM probe journal collision')",
-            " sys.exit(0)",
             "with open(path,'ab') as handle:",
             " handle.write(base64.b64decode(sys.argv[2]))",
             " handle.flush()",

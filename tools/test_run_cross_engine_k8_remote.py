@@ -20,6 +20,7 @@ from tools.run_cross_engine_k8_remote import (
     resolve_vllm_wheel,
     stable_versions_from_pip_index,
     select_admitted_gpu,
+    vllm_probe_append_action,
 )
 from tools.cross_engine_k8_workload import build_workload_manifest
 
@@ -253,6 +254,26 @@ def test_candidate_resume_retries_timeout_after_download_strategy_change():
             },
         ],
     ) == ("0.28.0", "0.27.1")
+
+
+def test_probe_journal_allows_timeout_to_terminal_transition():
+    timeout = {
+        "version": "0.28.0",
+        "compatible": False,
+        "phase": "binary_install",
+        "returncode": 124,
+    }
+    terminal = {
+        "version": "0.28.0",
+        "compatible": False,
+        "phase": "import_probe",
+        "returncode": 1,
+    }
+
+    assert vllm_probe_append_action([timeout], terminal) == "append"
+    assert vllm_probe_append_action([timeout], timeout) == "noop"
+    with pytest.raises(RuntimeError, match="journal collision"):
+        vllm_probe_append_action([terminal], {**terminal, "returncode": 2})
 
 
 def test_resolve_vllm_wheel_selects_linux_abi3_and_sha256():
