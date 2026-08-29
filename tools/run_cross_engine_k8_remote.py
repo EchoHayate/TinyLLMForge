@@ -409,6 +409,36 @@ def build_vllm_probe_append_script() -> str:
     ))
 
 
+def build_failed_worker_archive_script() -> str:
+    return "\n".join((
+        "from pathlib import Path",
+        "import os,sys,uuid",
+        "output=Path(sys.argv[1])",
+        "plan=Path(sys.argv[2])",
+        "if output.exists():",
+        " raise RuntimeError('completed worker output already exists')",
+        "suffixes=('.exitcode','.pgid','.stderr.log','.stdout.log')",
+        "sidecars=[Path(str(output)+suffix) for suffix in suffixes]",
+        "existing=[path for path in sidecars if path.exists()]",
+        "if plan.exists():",
+        " existing.append(plan)",
+        "if not existing:",
+        " print('')",
+        " sys.exit(0)",
+        "exit_path=Path(str(output)+'.exitcode')",
+        "if not exit_path.is_file():",
+        " raise RuntimeError('failed worker exit receipt is missing')",
+        "if int(exit_path.read_text().strip()) == 0:",
+        " raise RuntimeError('successful worker output is missing')",
+        "archive=(output.parent/'failed-workers'/",
+        "         (output.name+'-'+uuid.uuid4().hex))",
+        "archive.mkdir(parents=True,exist_ok=False)",
+        "for path in existing:",
+        " os.replace(path,archive/path.name)",
+        "print(archive)",
+    ))
+
+
 def pending_vllm_versions(
     versions: Sequence[str],
     probes: Sequence[Mapping],
@@ -621,6 +651,65 @@ def build_worker_plan(
             if context in {case["context"] for case in cases}
         },
         "smoke": smoke,
+    }
+
+
+def build_worker_environment(
+    *,
+    cache_environment: Mapping[str, str],
+    source_root: str,
+    gpu_index: int,
+    arm: str,
+    run_tag: str,
+) -> dict[str, str]:
+    if arm not in REQUIRED_ARMS + (OPTIONAL_ARM,):
+        raise ValueError("worker arm is invalid")
+    validate_attempt_tag(run_tag)
+    environment = {
+        **dict(cache_environment),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": source_root,
+        "CUDA_VISIBLE_DEVICES": str(gpu_index),
+    }
+    if arm.startswith("vllm_"):
+        identity = hashlib.sha256(
+            run_tag.encode("utf-8")
+        ).hexdigest()[:16]
+        environment["VLLM_RPC_BASE_PATH"] = f"@tinyllmforge-{identity}"
+    return environment
+
+
+def completed_worker_result(
+    *,
+    receipt: Mapping,
+    case_rows: Sequence[Mapping],
+    correctness_rows: Sequence[Mapping],
+    config: ControllerConfig,
+    arm: str,
+    repetition: int,
+) -> dict:
+    expected_identity = {
+        "arm": arm,
+        "repetition": repetition,
+        "run_tag": config.run_tag,
+        "source_revision": config.source_revision,
+        "terminal": True,
+    }
+    if any(
+        receipt.get(key) != value
+        for key, value in expected_identity.items()
+    ):
+        raise RuntimeError("RESUMED_WORKER_IDENTITY_MISMATCH")
+    if receipt.get("measured_rows") != len(case_rows):
+        raise RuntimeError("RESUMED_WORKER_ROW_COUNT_MISMATCH")
+    if not case_rows or len(correctness_rows) != len(case_rows):
+        raise RuntimeError("RESUMED_WORKER_ROWS_INCOMPLETE")
+    return {
+        "receipt": dict(receipt),
+        "case_rows": [dict(row) for row in case_rows],
+        "correctness_rows": [
+            dict(row) for row in correctness_rows
+        ],
     }
 
 
@@ -1618,6 +1707,11 @@ class RemoteController:
             f"{self.config.attempt_root}/controller/plans/"
             f"{stage}-r{repetition:02d}-{arm}.json"
         )
+        self.remote_python(
+            build_failed_worker_archive_script(),
+            output_root,
+            plan_path,
+        )
         self.write_remote_json(plan_path, plan)
         gpu = plan["gpu_index"]
         env_path = (
@@ -1646,12 +1740,13 @@ class RemoteController:
             "--output",
             output_root,
         ])
-        exports = {
-            **cache_env,
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONPATH": source_root,
-            "CUDA_VISIBLE_DEVICES": str(gpu),
-        }
+        exports = build_worker_environment(
+            cache_environment=cache_env,
+            source_root=source_root,
+            gpu_index=gpu,
+            arm=arm,
+            run_tag=self.config.run_tag,
+        )
         inner = (
             f"{' '.join(f'{key}={shlex.quote(value)}' for key, value in exports.items())} "
             f"{command} >{shlex.quote(stdout_path)} "
@@ -1715,6 +1810,39 @@ class RemoteController:
             ),
         }
 
+    def _load_completed_worker(
+        self,
+        *,
+        stage: str,
+        repetition: int,
+        arm: str,
+    ) -> Optional[dict]:
+        output_root = self._worker_root(
+            stage=stage,
+            repetition=repetition,
+            arm=arm,
+        )
+        if not self._attempt_exists(output_root):
+            return None
+        completed = completed_worker_result(
+            receipt=self.read_remote_json(
+                f"{output_root}/worker_receipt.json"
+            ),
+            case_rows=self.read_remote_jsonl(
+                f"{output_root}/case_rows.jsonl"
+            ),
+            correctness_rows=self.read_remote_jsonl(
+                f"{output_root}/correctness_rows.jsonl"
+            ),
+            config=self.config,
+            arm=arm,
+            repetition=repetition,
+        )
+        return {
+            "output_root": output_root,
+            **completed,
+        }
+
     def run_stage(self, stage: str) -> dict:
         if stage not in {"smoke", "canonical"}:
             raise ValueError("benchmark stage is invalid")
@@ -1745,28 +1873,34 @@ class RemoteController:
             else:
                 order = arm_order(repetition, eligible_arms)
             for arm in order:
-                self.validate_local_kerberos(
-                    estimated=timedelta(minutes=45)
-                )
-                self._require_storage_available()
-                admission = self.wait_for_admitted_gpu(
-                    timeout_seconds=6 * 60 * 60,
-                    interval_seconds=15,
-                )
-                plan = build_worker_plan(
-                    config=self.config,
-                    workload=workload,
-                    arm=arm,
-                    repetition=repetition,
-                    gpu=admission["gpu"],
-                    expected_tokens=expected_tokens,
-                    smoke=stage == "smoke",
-                )
-                worker = self._launch_worker(
-                    environment=environment,
-                    plan=plan,
+                worker = self._load_completed_worker(
                     stage=stage,
+                    repetition=repetition,
+                    arm=arm,
                 )
+                if worker is None:
+                    self.validate_local_kerberos(
+                        estimated=timedelta(minutes=45)
+                    )
+                    self._require_storage_available()
+                    admission = self.wait_for_admitted_gpu(
+                        timeout_seconds=6 * 60 * 60,
+                        interval_seconds=15,
+                    )
+                    plan = build_worker_plan(
+                        config=self.config,
+                        workload=workload,
+                        arm=arm,
+                        repetition=repetition,
+                        gpu=admission["gpu"],
+                        expected_tokens=expected_tokens,
+                        smoke=stage == "smoke",
+                    )
+                    worker = self._launch_worker(
+                        environment=environment,
+                        plan=plan,
+                        stage=stage,
+                    )
                 if (
                     stage == "smoke"
                     and arm == "tinyllmforge_host_greedy"

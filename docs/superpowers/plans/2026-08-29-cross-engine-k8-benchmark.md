@@ -59,6 +59,11 @@ SSH, Git.
 - Serialize every controller stage for the same host and attempt with a
   non-blocking local file lock so resumed sessions cannot concurrently mutate
   one remote environment or result bundle.
+- Route vLLM ZeroMQ sockets through a short Linux abstract namespace via the
+  public `VLLM_RPC_BASE_PATH` setting; do not create a short path outside the
+  campaign root.
+- On safe stage resumption, reuse only source-matching terminal worker output
+  and preserve nonzero-exit sidecars under `failed-workers/` before retrying.
 - GPU admission requires one A100 80GB PCIe, zero foreign compute processes,
   zero utilization at both admission samples, and no unauthorized memory
   occupancy.

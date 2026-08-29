@@ -208,6 +208,11 @@ verified wheel together with its declared binary dependencies. `pip` caching
 is disabled to avoid retaining both archives and installed files; all
 temporary extraction remains under the campaign `TMPDIR`.
 
+vLLM ZeroMQ control sockets use its public `VLLM_RPC_BASE_PATH` setting with
+a short Linux abstract-namespace name. This avoids the Unix-domain socket
+path limit without creating task files in `/tmp` or outside the campaign
+storage boundary.
+
 If the pinned public vLLM version exposes a supported multi-step toggle, the
 matrix includes both disabled and enabled arms. Otherwise it records
 `VLLM_MULTI_STEP_NOT_PUBLICLY_AVAILABLE` and retains only the strongest
@@ -384,9 +389,11 @@ The local controller:
 14. runs the frozen-source local verifier; and
 15. confirms zero local temporary retention and remote/local receipt equality.
 
-An interrupted immutable run is never overwritten or resumed unless its
-controller protocol explicitly supports safe resumption. A new attempt uses a
-new tag and reuses the already installed, source-identified environments.
+An interrupted immutable run is never overwritten. The controller may safely
+resume an attempt by reusing only source-matching terminal worker bundles and
+by moving nonzero-exit sidecars into an immutable `failed-workers/` archive
+before relaunching that worker. A new attempt uses a new tag and reuses the
+already installed, source-identified environments.
 
 ## Testing Strategy
 

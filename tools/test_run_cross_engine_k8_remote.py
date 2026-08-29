@@ -816,6 +816,100 @@ def test_worker_plan_carries_frozen_prompts_and_gpu_identity():
     assert plan["expected_tokens"]["short"] == list(range(128))
 
 
+def test_vllm_worker_uses_short_abstract_rpc_path():
+    common = {
+        "cache_environment": {
+            "TMPDIR": "/data00/campaign/shared/tmp",
+        },
+        "source_root": "/data00/campaign/source",
+        "gpu_index": 2,
+        "run_tag": "20260829-cross-engine-k8-qwen3-06b-r7",
+    }
+
+    tiny = controller_module.build_worker_environment(
+        arm="tinyllmforge_exact_k8",
+        **common,
+    )
+    vllm = controller_module.build_worker_environment(
+        arm="vllm_default_greedy",
+        **common,
+    )
+
+    assert "VLLM_RPC_BASE_PATH" not in tiny
+    assert vllm["VLLM_RPC_BASE_PATH"].startswith("@")
+    assert "/" not in vllm["VLLM_RPC_BASE_PATH"]
+    assert len(vllm["VLLM_RPC_BASE_PATH"] + "/" + "0" * 36) <= 107
+
+
+def test_completed_worker_result_requires_matching_terminal_receipt():
+    receipt = {
+        "arm": "tinyllmforge_host_greedy",
+        "correctness_valid": True,
+        "measured_rows": 1,
+        "repetition": 0,
+        "run_tag": "20260829-cross-engine-k8-qwen3-06b-r1",
+        "source_revision": "a" * 40,
+        "terminal": True,
+    }
+    case_rows = [{"case_id": "short"}]
+    correctness_rows = [{"context": "short", "token_ids": [1, 2]}]
+
+    result = controller_module.completed_worker_result(
+        receipt=receipt,
+        case_rows=case_rows,
+        correctness_rows=correctness_rows,
+        config=_config(),
+        arm="tinyllmforge_host_greedy",
+        repetition=0,
+    )
+
+    assert result["receipt"] == receipt
+    assert result["case_rows"] == case_rows
+    with pytest.raises(RuntimeError, match="RESUMED_WORKER_IDENTITY_MISMATCH"):
+        controller_module.completed_worker_result(
+            receipt={**receipt, "arm": "tinyllmforge_exact_k8"},
+            case_rows=case_rows,
+            correctness_rows=correctness_rows,
+            config=_config(),
+            arm="tinyllmforge_host_greedy",
+            repetition=0,
+        )
+
+
+def test_failed_worker_archive_preserves_nonzero_sidecars(tmp_path):
+    output_root = tmp_path / "r00-vllm_default_greedy"
+    plan_path = tmp_path / "smoke-r00-vllm_default_greedy.json"
+    exit_path = Path(str(output_root) + ".exitcode")
+    stderr_path = Path(str(output_root) + ".stderr.log")
+    plan_path.write_text('{"arm":"vllm_default_greedy"}\n')
+    exit_path.write_text("1\n")
+    stderr_path.write_text("zmq path too long\n")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            controller_module.build_failed_worker_archive_script(),
+            os.fspath(output_root),
+            os.fspath(plan_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    archive = Path(result.stdout.strip())
+    assert archive.parent == tmp_path / "failed-workers"
+    assert (archive / exit_path.name).read_text() == "1\n"
+    assert (archive / stderr_path.name).read_text() == "zmq path too long\n"
+    assert (archive / plan_path.name).read_text() == (
+        '{"arm":"vllm_default_greedy"}\n'
+    )
+    assert not exit_path.exists()
+    assert not stderr_path.exists()
+    assert not plan_path.exists()
+
+
 @pytest.mark.parametrize(
     ("stage", "method_name"),
     [
