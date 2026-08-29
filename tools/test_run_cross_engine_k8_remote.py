@@ -15,6 +15,7 @@ from tools.run_cross_engine_k8_remote import (
     KRB5_CACHE,
     ControllerConfig,
     RemoteController,
+    _ssh_argv,
     build_committed_source_archive,
     build_byte_ranges,
     build_vllm_install_argv,
@@ -129,6 +130,20 @@ def test_controller_injects_file_cache_into_every_ssh_command():
     assert result.stdout == "n232-195-203\n"
     assert runner.calls[0][1]["env"]["KRB5CCNAME"] == KRB5_CACHE
     assert runner.calls[0][0][-1] == "hostname"
+
+
+def test_ssh_argv_uses_persistent_campaign_control_master():
+    argv = _ssh_argv("sitian@example", "true")
+
+    assert "ControlMaster=auto" in argv
+    assert "ControlPersist=600" in argv
+    control_path = next(
+        value for value in argv if value.startswith("ControlPath=")
+    )
+    assert "tinyllmforge-k8-" in control_path
+    assert control_path.endswith("%C")
+    assert "ControlMaster=no" not in argv
+    assert "ControlPath=none" not in argv
 
 
 def test_controller_retries_transient_ssh_transport_failure():

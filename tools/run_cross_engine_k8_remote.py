@@ -52,15 +52,20 @@ _STABLE_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 VLLM_WHEEL_CHUNK_BYTES = 8 * 1024**2
 VLLM_WHEEL_DOWNLOAD_WORKERS = 8
+SSH_CONTROL_PATH = os.fspath(
+    Path.home() / ".ssh" / "tinyllmforge-k8-%C"
+)
 
 
 def _ssh_argv(host: str, remote_command: str) -> list[str]:
     return [
         "ssh",
         "-o",
-        "ControlMaster=no",
+        "ControlMaster=auto",
         "-o",
-        "ControlPath=none",
+        f"ControlPath={SSH_CONTROL_PATH}",
+        "-o",
+        "ControlPersist=600",
         "-o",
         "BatchMode=yes",
         "-o",
