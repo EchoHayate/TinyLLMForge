@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -266,3 +268,22 @@ def test_main_dispatches_each_post_preflight_stage(
     )
     assert expected_call in calls
     assert f'"stage": "{stage}"' in capsys.readouterr().out
+
+
+def test_controller_supports_documented_direct_script_entrypoint():
+    repository_root = Path(__file__).resolve().parent.parent
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repository_root / "tools" / "run_cross_engine_k8_remote.py"),
+            "--help",
+        ],
+        cwd=repository_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--stage" in result.stdout
