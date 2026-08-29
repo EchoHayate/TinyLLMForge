@@ -45,6 +45,7 @@ KRB5_CACHE = "FILE:/Users/bytedance/krb5cc_sitian"
 TRACKING_REF = "origin/feat/kv-sparse-attention"
 COMMITTED_SOURCE_PATHS = ("tinyvllm", "tools")
 _SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
+_STABLE_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 
 
 def _ssh_argv(host: str, remote_command: str) -> list[str]:
@@ -101,6 +102,31 @@ def build_committed_source_archive(
     if not isinstance(result.stdout, bytes) or not result.stdout:
         raise ValueError("committed source archive is empty")
     return result.stdout
+
+
+def stable_versions_from_pip_index(output: str) -> tuple[str, ...]:
+    if not isinstance(output, str):
+        raise ValueError("pip index output must be text")
+    versions = set()
+    for line in output.splitlines():
+        if "Available versions:" not in line:
+            continue
+        _prefix, values = line.split("Available versions:", 1)
+        for value in values.split(","):
+            version = value.strip()
+            if _STABLE_VERSION.fullmatch(version):
+                versions.add(version)
+    if not versions:
+        raise RuntimeError("VLLM_STABLE_VERSION_DISCOVERY_FAILED")
+    return tuple(
+        sorted(
+            versions,
+            key=lambda version: tuple(
+                int(part) for part in version.split(".")
+            ),
+            reverse=True,
+        )
+    )
 
 
 def _validate_gpu_row(row: Mapping) -> dict:
@@ -588,6 +614,25 @@ class RemoteController:
             raise RuntimeError("INCOMPLETE_STORAGE_BUDGET")
         return allocated
 
+    def _remove_owned_tree(self, path: str) -> None:
+        CampaignPaths.create(
+            remote_root=self.config.remote_root,
+            model_path=self.config.model_path,
+        ).require_owned_remote(path)
+        if not path.endswith(".building"):
+            raise ValueError("only owned building directories may be removed")
+        script = "\n".join((
+            "import pathlib,shutil,sys",
+            "path=pathlib.Path(sys.argv[1])",
+            "if path.is_symlink():",
+            " raise RuntimeError('refusing to remove symlink')",
+            "if path.exists():",
+            " if not path.is_dir():",
+            "  raise RuntimeError('owned build path is not a directory')",
+            " shutil.rmtree(str(path))",
+        ))
+        self.remote_python(script, path)
+
     def prepare_environments(self) -> dict:
         if not self._attempt_exists(self.config.attempt_root):
             raise RuntimeError("PREFLIGHT_ATTEMPT_MISSING")
@@ -647,8 +692,10 @@ class RemoteController:
             ["mkdir", "-p", *sorted(set(cache_env.values()))],
             retry_transport=False,
         )
-        tiny_env = f"{self.config.remote_root}/envs/tinyllmforge"
-        vllm_env = f"{self.config.remote_root}/envs/vllm"
+        tiny_env = (
+            f"{self.config.remote_root}/envs/"
+            f"tinyllmforge-{self.config.source_revision[:12]}"
+        )
         base_python = "/data00/home/sitian/tllm/env/bin/python"
         tiny_script = "\n".join((
             "set -euo pipefail",
@@ -681,42 +728,6 @@ class RemoteController:
             "versions",
             "vllm",
         ])
-        first_line = index_result.stdout.splitlines()[0]
-        match = re.search(r"\(([0-9]+(?:\.[0-9]+)+)\)", first_line)
-        if match is None:
-            raise RuntimeError("VLLM_STABLE_VERSION_DISCOVERY_FAILED")
-        vllm_version = match.group(1)
-        env_assignments = " ".join(
-            f"{key}={shlex.quote(value)}"
-            for key, value in {
-                **cache_env,
-                "PYTHONNOUSERSITE": "1",
-            }.items()
-        )
-        vllm_script = "\n".join((
-            "set -euo pipefail",
-            f"final={shlex.quote(vllm_env)}",
-            f"build={shlex.quote(vllm_env + '.building')}",
-            "if [ -x \"$final/bin/python\" ]; then exit 0; fi",
-            "test ! -e \"$final\"",
-            "test ! -e \"$build\"",
-            f"{shlex.quote(base_python)} -m venv "
-            "--system-site-packages \"$build\"",
-            f"{env_assignments} \"$build/bin/python\" -m pip install "
-            f"--disable-pip-version-check vllm=={shlex.quote(vllm_version)}",
-            f"{env_assignments} \"$build/bin/python\" -c "
-            + shlex.quote(
-                "import torch,vllm;"
-                "from vllm import EngineArgs;"
-                "print(torch.__version__,vllm.__version__,EngineArgs)"
-            ),
-            "mv \"$build\" \"$final\"",
-        ))
-        self.remote(
-            ["bash", "-lc", vllm_script],
-            retry_transport=False,
-        )
-        after_vllm = self._require_storage_available()
         probe_script = "\n".join((
             "import json,platform,sys",
             "import torch",
@@ -747,6 +758,112 @@ class RemoteController:
             " pass",
             "print(json.dumps(payload,sort_keys=True))",
         ))
+        vllm_versions = stable_versions_from_pip_index(
+            index_result.stdout
+        )
+        vllm_probes = []
+        vllm_env = None
+        vllm_version = None
+        runtime_environment = {
+            **cache_env,
+            "PYTHONNOUSERSITE": "1",
+        }
+        env_arguments = [
+            f"{key}={value}"
+            for key, value in runtime_environment.items()
+        ]
+        for candidate_version in vllm_versions:
+            candidate_env = (
+                f"{self.config.remote_root}/envs/"
+                f"vllm-{candidate_version}"
+            )
+            candidate_build = candidate_env + ".building"
+            if self._attempt_exists(candidate_env):
+                candidate_python = f"{candidate_env}/bin/python"
+            else:
+                if self._attempt_exists(candidate_build):
+                    self._remove_owned_tree(candidate_build)
+                self.remote([
+                    base_python,
+                    "-m",
+                    "venv",
+                    "--system-site-packages",
+                    candidate_build,
+                ], retry_transport=False)
+                install = self.remote(
+                    [
+                        "env",
+                        *env_arguments,
+                        "timeout",
+                        "--signal=TERM",
+                        "--kill-after=30s",
+                        "900s",
+                        f"{candidate_build}/bin/python",
+                        "-m",
+                        "pip",
+                        "install",
+                        "--disable-pip-version-check",
+                        "--only-binary=:all:",
+                        "--prefer-binary",
+                        f"vllm=={candidate_version}",
+                    ],
+                    check=False,
+                    retry_transport=False,
+                )
+                if install.returncode != 0:
+                    vllm_probes.append({
+                        "version": candidate_version,
+                        "compatible": False,
+                        "phase": "binary_install",
+                        "returncode": install.returncode,
+                        "reason": str(install.stderr or "")[-4000:],
+                    })
+                    self._remove_owned_tree(candidate_build)
+                    self._require_storage_available()
+                    continue
+                candidate_python = f"{candidate_build}/bin/python"
+            import_probe = self.remote(
+                [
+                    "env",
+                    *env_arguments,
+                    candidate_python,
+                    "-c",
+                    probe_script,
+                ],
+                check=False,
+                retry_transport=False,
+            )
+            if import_probe.returncode != 0:
+                vllm_probes.append({
+                    "version": candidate_version,
+                    "compatible": False,
+                    "phase": "import_probe",
+                    "returncode": import_probe.returncode,
+                    "reason": str(import_probe.stderr or "")[-4000:],
+                })
+                if candidate_python.startswith(candidate_build + "/"):
+                    self._remove_owned_tree(candidate_build)
+                self._require_storage_available()
+                continue
+            if candidate_python.startswith(candidate_build + "/"):
+                self.remote(
+                    ["mv", candidate_build, candidate_env],
+                    retry_transport=False,
+                )
+            vllm_env = candidate_env
+            vllm_version = candidate_version
+            vllm_probes.append({
+                "version": candidate_version,
+                "compatible": True,
+                "phase": "import_probe",
+            })
+            break
+        if vllm_env is None or vllm_version is None:
+            raise RuntimeError(
+                "INCOMPLETE_VLLM_COMPATIBILITY:"
+                + json.dumps(vllm_probes, sort_keys=True)
+            )
+        after_vllm = self._require_storage_available()
         tiny_probe = json.loads(self.remote([
             "env",
             "PYTHONNOUSERSITE=1",
@@ -789,6 +906,8 @@ class RemoteController:
             "vllm": {
                 **vllm_probe,
                 "version": vllm_version,
+                "candidate_probes": vllm_probes,
+                "compatibility_scope": "IMPORT_ONLY_PENDING_MODEL_SMOKE",
             },
             "paths": {
                 "source_root": source_root,

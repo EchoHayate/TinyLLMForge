@@ -14,6 +14,7 @@ from tools.run_cross_engine_k8_remote import (
     RemoteController,
     build_committed_source_archive,
     build_worker_plan,
+    stable_versions_from_pip_index,
     select_admitted_gpu,
 )
 from tools.cross_engine_k8_workload import build_workload_manifest
@@ -155,6 +156,33 @@ def test_remote_binary_input_uses_ssh_stdin_without_text_mode():
     assert runner.calls[0][1]["input"] == b"payload"
     assert runner.calls[0][1]["text"] is False
     assert runner.calls[0][1]["env"]["KRB5CCNAME"] == KRB5_CACHE
+
+
+def test_pip_index_versions_are_filtered_stable_and_newest_first():
+    output = "\n".join(
+        (
+            "vllm (0.28.0)",
+            "Available versions: 0.28.0, 0.27.1, 0.28.0rc1, "
+            "0.10.2, garbage, 0.9.9",
+        )
+    )
+
+    assert stable_versions_from_pip_index(output) == (
+        "0.28.0",
+        "0.27.1",
+        "0.10.2",
+        "0.9.9",
+    )
+
+
+def test_pip_index_versions_rejects_output_without_stable_release():
+    with pytest.raises(
+        RuntimeError,
+        match="VLLM_STABLE_VERSION_DISCOVERY_FAILED",
+    ):
+        stable_versions_from_pip_index(
+            "Available versions: 0.28.0rc1, nightly"
+        )
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
