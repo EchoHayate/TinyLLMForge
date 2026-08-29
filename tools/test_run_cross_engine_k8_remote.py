@@ -15,6 +15,7 @@ from tools.run_cross_engine_k8_remote import (
     build_committed_source_archive,
     build_byte_ranges,
     build_vllm_install_argv,
+    build_vllm_probe_script,
     build_worker_plan,
     pending_vllm_versions,
     resolve_vllm_wheel,
@@ -288,6 +289,36 @@ def test_probe_journal_allows_timeout_to_terminal_transition():
     assert vllm_probe_append_action([timeout], timeout) == "noop"
     with pytest.raises(RuntimeError, match="journal collision"):
         vllm_probe_append_action([terminal], {**terminal, "returncode": 2})
+
+
+def test_vllm_probe_script_is_valid_python():
+    compile(build_vllm_probe_script(), "<vllm-probe>", "exec")
+
+
+def test_candidate_resume_retries_controller_probe_syntax_error():
+    broken_probe = {
+        "version": "0.25.0",
+        "compatible": False,
+        "phase": "import_probe",
+        "returncode": 1,
+        "reason": (
+            "  File \"<string>\", line 24\n"
+            "    payload['public_multi_step']=\n"
+            "                                 ^\n"
+            "SyntaxError: invalid syntax\n"
+        ),
+    }
+    terminal = {
+        "version": "0.25.0",
+        "compatible": True,
+        "phase": "import_probe",
+    }
+
+    assert pending_vllm_versions(
+        ("0.25.0", "0.21.0"),
+        [broken_probe],
+    ) == ("0.25.0", "0.21.0")
+    assert vllm_probe_append_action([broken_probe], terminal) == "append"
 
 
 def test_resolve_vllm_wheel_selects_linux_abi3_and_sha256():

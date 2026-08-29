@@ -217,6 +217,56 @@ def build_byte_ranges(
     )
 
 
+def build_vllm_probe_script() -> str:
+    return "\n".join((
+        "import json,platform,sys",
+        "import torch",
+        "payload={",
+        " 'python_version':platform.python_version(),",
+        " 'python_executable':sys.executable,",
+        " 'torch_version':torch.__version__,",
+        " 'cuda_runtime_version':torch.version.cuda,",
+        " 'cuda_available':torch.cuda.is_available(),",
+        "}",
+        "try:",
+        " import triton; payload['triton_version']=triton.__version__",
+        "except Exception:",
+        " payload['triton_version']='NOT_EXPOSED'",
+        "try:",
+        " import flash_attn",
+        " payload['flash_attn_version']=flash_attn.__version__",
+        "except Exception:",
+        " payload['flash_attn_version']='NOT_EXPOSED'",
+        "try:",
+        " import vllm",
+        " from vllm import EngineArgs",
+        " payload['vllm_version']=vllm.__version__",
+        " names=set(getattr(EngineArgs,'__annotations__',{}))",
+        " payload['public_multi_step']=(",
+        "  'num_scheduler_steps' in names",
+        " )",
+        "except Exception:",
+        " pass",
+        "print(json.dumps(payload,sort_keys=True))",
+    ))
+
+
+def _retryable_vllm_probe(probe: Mapping) -> bool:
+    reason = str(probe.get("reason") or "")
+    return (
+        probe.get("returncode") == 255
+        or (
+            probe.get("phase") == "binary_install"
+            and probe.get("returncode") == 124
+        )
+        or (
+            probe.get("phase") == "import_probe"
+            and "payload['public_multi_step']=" in reason
+            and "SyntaxError: invalid syntax" in reason
+        )
+    )
+
+
 def pending_vllm_versions(
     versions: Sequence[str],
     probes: Sequence[Mapping],
@@ -230,14 +280,7 @@ def pending_vllm_versions(
             latest[probe["version"]] = probe
     attempted = set()
     for version, probe in latest.items():
-        retryable_timeout = (
-            probe.get("returncode") == 255
-            or (
-                probe.get("phase") == "binary_install"
-                and probe.get("returncode") == 124
-            )
-        )
-        if not retryable_timeout:
+        if not _retryable_vllm_probe(probe):
             attempted.add(version)
     return tuple(version for version in versions if version not in attempted)
 
@@ -260,14 +303,7 @@ def vllm_probe_append_action(
     previous = same[-1]
     if dict(previous) == dict(row):
         return "noop"
-    retryable_timeout = (
-        previous.get("returncode") == 255
-        or (
-            previous.get("phase") == "binary_install"
-            and previous.get("returncode") == 124
-        )
-    )
-    if retryable_timeout:
+    if _retryable_vllm_probe(previous):
         return "append"
     raise RuntimeError("vLLM probe journal collision")
 
@@ -1111,36 +1147,7 @@ class RemoteController:
             PIP_INDEX_URL,
             "vllm",
         ])
-        probe_script = "\n".join((
-            "import json,platform,sys",
-            "import torch",
-            "payload={",
-            " 'python_version':platform.python_version(),",
-            " 'python_executable':sys.executable,",
-            " 'torch_version':torch.__version__,",
-            " 'cuda_runtime_version':torch.version.cuda,",
-            " 'cuda_available':torch.cuda.is_available(),",
-            "}",
-            "try:",
-            " import triton; payload['triton_version']=triton.__version__",
-            "except Exception as error:",
-            " payload['triton_version']='NOT_EXPOSED'",
-            "try:",
-            " import flash_attn",
-            " payload['flash_attn_version']=flash_attn.__version__",
-            "except Exception as error:",
-            " payload['flash_attn_version']='NOT_EXPOSED'",
-            "try:",
-            " import vllm",
-            " from vllm import EngineArgs",
-            " payload['vllm_version']=vllm.__version__",
-            " names=set(getattr(EngineArgs,'__annotations__',{}))",
-            " payload['public_multi_step']=",
-            "  'num_scheduler_steps' in names",
-            "except Exception:",
-            " pass",
-            "print(json.dumps(payload,sort_keys=True))",
-        ))
+        probe_script = build_vllm_probe_script()
         vllm_versions = stable_versions_from_pip_index(
             index_result.stdout
         )
