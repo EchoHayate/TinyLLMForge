@@ -18,6 +18,7 @@ from tools.run_cross_engine_k8_remote import (
     _ssh_argv,
     build_committed_source_archive,
     build_byte_ranges,
+    build_remote_venv_argv,
     build_vllm_install_argv,
     build_vllm_probe_append_script,
     build_vllm_probe_script,
@@ -144,6 +145,33 @@ def test_ssh_argv_uses_persistent_campaign_control_master():
     assert control_path.endswith("%C")
     assert "ControlMaster=no" not in argv
     assert "ControlPath=none" not in argv
+
+
+def test_remote_venv_creation_routes_temporary_files_under_campaign():
+    environment = {
+        "TMPDIR": "/data00/campaign/shared/tmp",
+        "PIP_CACHE_DIR": "/data00/campaign/shared/pip",
+    }
+
+    argv = build_remote_venv_argv(
+        base_python="/data00/base/bin/python",
+        destination="/data00/campaign/envs/vllm.building",
+        environment=environment,
+    )
+
+    assert argv[:3] == [
+        "env",
+        "TMPDIR=/data00/campaign/shared/tmp",
+        "PIP_CACHE_DIR=/data00/campaign/shared/pip",
+    ]
+    assert argv[-5:] == [
+        "/data00/base/bin/python",
+        "-m",
+        "venv",
+        "--system-site-packages",
+        "/data00/campaign/envs/vllm.building",
+    ]
+    assert all(not value.startswith("HOME=") for value in argv)
 
 
 def test_controller_retries_transient_ssh_transport_failure():

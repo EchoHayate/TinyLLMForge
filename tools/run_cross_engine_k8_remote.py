@@ -343,6 +343,29 @@ def vllm_probe_append_action(
     raise RuntimeError("vLLM probe journal collision")
 
 
+def build_remote_venv_argv(
+    *,
+    base_python: str,
+    destination: str,
+    environment: Mapping[str, str],
+) -> list[str]:
+    if not PurePosixPath(base_python).is_absolute():
+        raise ValueError("base Python path must be absolute")
+    if not PurePosixPath(destination).is_absolute():
+        raise ValueError("venv destination must be absolute")
+    if "HOME" in environment:
+        raise ValueError("venv environment must not override HOME")
+    return [
+        "env",
+        *(f"{key}={value}" for key, value in environment.items()),
+        base_python,
+        "-m",
+        "venv",
+        "--system-site-packages",
+        destination,
+    ]
+
+
 def build_vllm_install_argv(
     *,
     candidate_build: str,
@@ -1156,8 +1179,11 @@ class RemoteController:
             "if [ -x \"$final/bin/python\" ]; then exit 0; fi",
             "test ! -e \"$final\"",
             "test ! -e \"$build\"",
-            f"{shlex.quote(base_python)} -m venv "
-            "--system-site-packages \"$build\"",
+            shlex.join(build_remote_venv_argv(
+                base_python=base_python,
+                destination=tiny_env + ".building",
+                environment=cache_env,
+            )),
             "\"$build/bin/python\" -c "
             + shlex.quote(
                 "import pathlib,site,sys;"
@@ -1249,13 +1275,14 @@ class RemoteController:
                     continue
                 if self._attempt_exists(candidate_build):
                     self._remove_owned_tree(candidate_build)
-                self.remote([
-                    base_python,
-                    "-m",
-                    "venv",
-                    "--system-site-packages",
-                    candidate_build,
-                ], retry_transport=False)
+                self.remote(
+                    build_remote_venv_argv(
+                        base_python=base_python,
+                        destination=candidate_build,
+                        environment=runtime_environment,
+                    ),
+                    retry_transport=False,
+                )
                 install = self.remote(
                     build_vllm_install_argv(
                         candidate_build=candidate_build,
