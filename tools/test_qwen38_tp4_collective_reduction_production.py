@@ -19,6 +19,7 @@ from tools.qwen38_tp4_collective_reduction_production import (
     build_stage_payload,
     build_supervisor_argv,
     classify_attempt_state,
+    create_production_adapter,
     extract_bounded_archive,
     fetch_remote_bundle,
     launch_remote_supervisor,
@@ -1114,3 +1115,60 @@ def test_remote_json_helpers_and_exact_bundle_fetch():
     fetch_script = calls[2]["remote_argv"][2]
     assert "is_symlink" in fetch_script
     assert "/tmp" not in fetch_script
+
+
+def test_production_adapter_gives_postprocess_commands_extended_timeout(
+    tmp_path,
+):
+    plan = _plan()
+    observed_timeouts = []
+
+    def command_runner(
+        _argv,
+        *,
+        input,
+        text,
+        capture_output,
+        check,
+        timeout,
+    ):
+        assert input is None
+        assert text is False
+        assert capture_output is True
+        assert check is False
+        observed_timeouts.append(timeout)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                b'{"classification":"INCONCLUSIVE_PROFILER_OVERHEAD"}\n'
+            ),
+            stderr=b"",
+        )
+
+    adapter = create_production_adapter(
+        plan=plan,
+        source_identity={
+            "attempt": ATTEMPT,
+            "source_revision": SOURCE_REVISION,
+            "source_tree_sha256": "c" * 64,
+        },
+        model_manifest={"revision": MODEL_REVISION},
+        repo_root=tmp_path,
+        local_attempt_root=tmp_path / "attempt",
+        ssh_target="sitian@example",
+        control_path=None,
+        command_timeout_s=120,
+        retry_count=1,
+        command_runner=command_runner,
+    )
+    adapter.postprocess_state = {
+        "producer": None,
+        "verification": None,
+    }
+
+    result = adapter.assembler(plan, {"classification": "PASS"})
+
+    assert result["classification"] == (
+        "INCONCLUSIVE_PROFILER_OVERHEAD"
+    )
+    assert observed_timeouts == [600]

@@ -31,6 +31,7 @@ from tools.verify_qwen38_tp4_collective_reduction import verify_bundle
 
 REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
 SOURCE_ARCHIVE_PATHS = ("tinyvllm", "tools")
+MIN_POSTPROCESS_COMMAND_TIMEOUT_S = 600
 
 
 def _sha256(payload):
@@ -1466,6 +1467,13 @@ def create_production_adapter(
         "retry_count": retry_count,
         "control_path": control_path,
     }
+    postprocess_common = {
+        **common,
+        "timeout_s": max(
+            command_timeout_s,
+            MIN_POSTPROCESS_COMMAND_TIMEOUT_S,
+        ),
+    }
 
     def launch_guard():
         kerberos = query_local_kerberos(
@@ -1532,13 +1540,13 @@ def create_production_adapter(
         remote_command_runner=lambda argv: run_remote_json_command(
             remote_argv=argv,
             remote_runner=remote_runner,
-            **common,
+            **postprocess_common,
         ),
         bundle_fetcher=lambda current_plan, names: fetch_remote_bundle(
             plan=current_plan,
             names=names,
             remote_runner=remote_runner,
-            **common,
+            **postprocess_common,
         ),
         local_verifier_runner=verify_bundle,
         sleep=sleep,
