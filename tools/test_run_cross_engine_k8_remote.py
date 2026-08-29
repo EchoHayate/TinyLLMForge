@@ -362,6 +362,7 @@ def test_controller_downloads_verified_wheel_under_campaign_root():
     assert "/simple/vllm/" in runner.calls[0][0][-1]
     assert "shared/wheelhouse" in runner.calls[1][0][-1]
     assert "/tmp" not in runner.calls[1][0][-1]
+    assert "missing_ok" not in runner.calls[1][0][-1]
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
