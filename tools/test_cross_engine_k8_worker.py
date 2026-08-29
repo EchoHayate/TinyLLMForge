@@ -38,6 +38,22 @@ class FakeAdapter:
         self.calls.append(("close", "close"))
 
 
+class FakeSampler:
+    def __init__(self):
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+        return {
+            "peak_gpu_memory_bytes": 9_000,
+            "peak_rss_bytes": 8_000,
+        }
+
+
 def _worker_plan(arm="tinyllmforge_host_greedy"):
     cases = [
         {
@@ -57,6 +73,7 @@ def _worker_plan(arm="tinyllmforge_host_greedy"):
         "run_tag": "20260829-cross-engine-k8-qwen3-06b-r1",
         "source_revision": "a" * 40,
         "arm": arm,
+        "gpu_uuid": "GPU-test",
         "repetition": 0,
         "warmups": 2,
         "cases": cases,
@@ -74,6 +91,7 @@ def test_worker_emits_one_terminal_receipt_per_arm(arm):
     result = run_worker(
         _worker_plan(arm),
         adapter_factory=lambda _plan: adapter,
+        sampler_factory=FakeSampler,
     )
 
     assert result["terminal"] is True
@@ -90,6 +108,7 @@ def test_worker_runs_two_warmups_then_three_measured_cases():
     run_worker(
         _worker_plan(),
         adapter_factory=lambda _plan: adapter,
+        sampler_factory=FakeSampler,
     )
 
     assert len(adapter.calls[:-1]) == 5
@@ -104,18 +123,46 @@ def test_worker_rejects_engine_tokenizer_substitution():
     plan["cases"][0].pop("prompt_token_ids")
 
     with pytest.raises(ValueError, match="prompt_token_ids"):
-        run_worker(plan, adapter_factory=lambda _plan: FakeAdapter())
+        run_worker(
+            plan,
+            adapter_factory=lambda _plan: FakeAdapter(),
+            sampler_factory=FakeSampler,
+        )
 
 
 def test_cross_engine_mismatch_excludes_performance():
     result = run_worker(
         _worker_plan("vllm_default_greedy"),
         adapter_factory=lambda _plan: FakeAdapter(token_offset=1),
+        sampler_factory=FakeSampler,
     )
 
     assert result["correctness_valid"] is False
     assert result["performance_eligible"] is False
     assert result["case_rows"][0]["performance_eligible"] is False
+
+
+def test_worker_merges_external_resource_peaks_into_each_case():
+    samplers = []
+
+    def sampler_factory():
+        sampler = FakeSampler()
+        samplers.append(sampler)
+        return sampler
+
+    result = run_worker(
+        _worker_plan(),
+        adapter_factory=lambda _plan: FakeAdapter(),
+        sampler_factory=sampler_factory,
+    )
+
+    assert len(samplers) == 3
+    assert all(sampler.started and sampler.stopped for sampler in samplers)
+    assert all(
+        row["peak_gpu_memory_bytes"] == 9_000
+        and row["peak_rss_bytes"] == 8_000
+        for row in result["case_rows"]
+    )
 
 
 def test_engine_result_rejects_nonmonotonic_timestamps():

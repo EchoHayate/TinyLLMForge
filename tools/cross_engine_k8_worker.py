@@ -5,11 +5,12 @@ from dataclasses import dataclass
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
 import time
 from typing import Callable, Mapping, Optional, Sequence
 
-from tools.cross_engine_k8_resources import NOT_EXPOSED
+from tools.cross_engine_k8_resources import NOT_EXPOSED, ProcessResourceSession
 from tools.cross_engine_k8_workload import (
     OPTIONAL_ARM,
     REQUIRED_ARMS,
@@ -322,6 +323,7 @@ def run_worker(
     plan: Mapping,
     *,
     adapter_factory: Callable[[Mapping], object] = _default_adapter_factory,
+    sampler_factory: Optional[Callable[[], object]] = None,
 ) -> dict:
     _validate_plan(plan)
     arm = plan["arm"]
@@ -336,9 +338,21 @@ def run_worker(
                 expected_output_tokens=warmup_case["output_tokens"]
             )
         for case in plan["cases"]:
-            result = adapter.run_case(case, arm).validate(
-                expected_output_tokens=case["output_tokens"]
+            sampler = (
+                ProcessResourceSession(
+                    pid=os.getpid(),
+                    gpu_uuid=plan["gpu_uuid"],
+                )
+                if sampler_factory is None
+                else sampler_factory()
             )
+            sampler.start()
+            try:
+                result = adapter.run_case(case, arm).validate(
+                    expected_output_tokens=case["output_tokens"]
+                )
+            finally:
+                external_resources = sampler.stop()
             metrics = reconstruct_metrics(
                 request_start_ns=result.request_start_ns,
                 token_timestamps_ns=result.token_timestamps_ns,
@@ -367,14 +381,21 @@ def run_worker(
                 ),
                 "request_end_ns": result.request_end_ns,
                 **metrics,
-                "peak_gpu_memory_bytes": result.resource_summary.get(
+                "peak_gpu_memory_bytes": external_resources.get(
                     "peak_gpu_memory_bytes",
-                    NOT_EXPOSED,
+                    result.resource_summary.get(
+                        "peak_gpu_memory_bytes",
+                        NOT_EXPOSED,
+                    ),
                 ),
-                "peak_rss_bytes": result.resource_summary.get(
+                "peak_rss_bytes": external_resources.get(
                     "peak_rss_bytes",
-                    NOT_EXPOSED,
+                    result.resource_summary.get(
+                        "peak_rss_bytes",
+                        NOT_EXPOSED,
+                    ),
                 ),
+                "resource_summary": external_resources,
                 "engine_metrics": dict(result.engine_metrics),
                 "performance_eligible": matches,
             }
