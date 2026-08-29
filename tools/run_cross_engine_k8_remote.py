@@ -898,7 +898,7 @@ class RemoteController:
             "  temporary.unlink()",
             " result=subprocess.run([",
             "  'curl','-fsSL','--connect-timeout','10','--retry','5',",
-            "  '--retry-all-errors','--max-time','300',",
+            "  '--max-time','300',",
             "  '--max-filesize',str(expected),",
             "  '--range',f'{start}-{end}',url,'-o',str(temporary),",
             " ],text=True,capture_output=True,check=False)",

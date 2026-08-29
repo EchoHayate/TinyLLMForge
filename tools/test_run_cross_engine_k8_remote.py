@@ -363,6 +363,7 @@ def test_controller_downloads_verified_wheel_under_campaign_root():
     assert "shared/wheelhouse" in runner.calls[1][0][-1]
     assert "/tmp" not in runner.calls[1][0][-1]
     assert "missing_ok" not in runner.calls[1][0][-1]
+    assert "--retry-all-errors" not in runner.calls[1][0][-1]
 
 
 def test_select_admitted_gpu_requires_exactly_clean_a100_80gb_pcie():
