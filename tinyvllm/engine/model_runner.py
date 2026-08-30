@@ -97,6 +97,13 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
 from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
     ExactBurstSplitPhaseMailboxBackend,
 )
+from tinyvllm.engine.phase_stitched_exact_graph import (
+    PhaseStitchExecutionFallback,
+    PhaseStitchExecutionResult,
+    PhaseStitchLease,
+    PhaseStitchMailboxBackend,
+    build_phase_stitch_source_identity,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_restore_ticket import (
     Qwen35HybridPrefixRestoreParticipant,
 )
@@ -2489,6 +2496,9 @@ class ModelRunner:
         self.exact_greedy_decode_burst_stats = (
             ExactGreedyDecodeBurstStats()
         )
+        self.phase_stitch_mailbox_backend = None
+        self._phase_stitch_stats = None
+        self._phase_stitch_quarantined_joint_identities = set()
         self.elastic_exact_burst_width_health = (
             ElasticBurstWidthHealth()
         )
@@ -9689,6 +9699,444 @@ class ModelRunner:
     def exact_greedy_decode_burst_summary(self) -> dict:
         return self.exact_greedy_decode_burst_stats.summary()
 
+    def _phase_stitch_state(self) -> dict[str, object]:
+        state = getattr(self, "_phase_stitch_stats", None)
+        if state is None:
+            state = {
+                "attempts": 0,
+                "successes": 0,
+                "fallback_counts": {},
+                "prefill_graph_replays": 0,
+                "decode_graph_replays": 0,
+                "target_model_forwards": 0,
+                "failures": 0,
+                "last_authoritative_phase": None,
+                "last_completed_decode_replays": 0,
+            }
+            self._phase_stitch_stats = state
+        if not hasattr(
+            self,
+            "_phase_stitch_quarantined_joint_identities",
+        ):
+            self._phase_stitch_quarantined_joint_identities = set()
+        return state
+
+    def phase_stitch_summary(self) -> dict[str, object]:
+        state = self._phase_stitch_state()
+        return {
+            **state,
+            "fallback_counts": dict(state["fallback_counts"]),
+            "quarantined_joint_identities": sorted(
+                self._phase_stitch_quarantined_joint_identities
+            ),
+        }
+
+    def _phase_stitch_fallback(
+        self,
+        reason: str,
+    ) -> PhaseStitchExecutionFallback:
+        state = self._phase_stitch_state()
+        counts = state["fallback_counts"]
+        counts[reason] = counts.get(reason, 0) + 1
+        return PhaseStitchExecutionFallback(reason)
+
+    @staticmethod
+    def _phase_stitch_tensor_identity(tensor) -> dict[str, object]:
+        return {
+            "data_ptr": int(tensor.data_ptr()),
+            "shape": list(tensor.shape),
+            "stride": list(tensor.stride()),
+            "storage_offset": int(tensor.storage_offset()),
+            "dtype": str(tensor.dtype),
+            "device": str(tensor.device),
+        }
+
+    def _phase_stitch_prefill_entry(
+        self,
+        prompt_token_count: int,
+        identity_sha256: str | None = None,
+    ):
+        cache = getattr(
+            self,
+            "exact_prefill_cuda_graph_cache",
+            None,
+        )
+        if cache is None:
+            return None
+        if identity_sha256 is not None:
+            entry = cache.ready_entries.get(identity_sha256)
+            if (
+                entry is None
+                or entry.state != "ready"
+                or int(entry.identity.token_count)
+                != int(prompt_token_count)
+            ):
+                return None
+            return entry
+        return next(
+            (
+                entry
+                for entry in cache.ready_entries.values()
+                if int(entry.identity.token_count)
+                == int(prompt_token_count)
+                and entry.state == "ready"
+            ),
+            None,
+        )
+
+    def phase_stitch_capability(
+        self,
+        prompt_token_count: int,
+    ) -> dict[str, object]:
+        entry = self._phase_stitch_prefill_entry(
+            prompt_token_count
+        )
+        graph = getattr(
+            self,
+            "exact_greedy_decode_burst_graph",
+            None,
+        )
+        backend = getattr(
+            self,
+            "phase_stitch_mailbox_backend",
+            None,
+        )
+        reason = None
+        decode = None if graph is None else graph.capability()
+        if not getattr(
+            self.config,
+            "phase_stitched_exact_graph_runtime",
+            False,
+        ):
+            reason = "disabled"
+        elif self.enforce_eager:
+            reason = "enforce_eager"
+        elif self.world_size != 1:
+            reason = "tensor_parallel_unsupported"
+        elif self.rank != 0:
+            reason = "non_root_rank"
+        elif entry is None:
+            reason = "prefill_graph_unavailable"
+        elif graph is None or not decode["available"]:
+            reason = "decode_graph_unavailable"
+        elif backend is None:
+            reason = "mailbox_backend_unavailable"
+        else:
+            source_identity = build_phase_stitch_source_identity(
+                prefill_graph_identity_sha256=(
+                    entry.identity_sha256
+                ),
+                prefill_graph_generation=int(
+                    self._ordinary_graph_generation
+                ),
+                decode_graph_identity_sha256=decode[
+                    "graph_identity_sha256"
+                ],
+                decode_graph_generation=int(
+                    decode["graph_generation"]
+                ),
+            )
+            self._phase_stitch_state()
+            if (
+                source_identity
+                in self._phase_stitch_quarantined_joint_identities
+            ):
+                reason = "identity_quarantined"
+        return {
+            "available": reason is None,
+            "fallback_reason": reason,
+            "prefill_graph_identity_sha256": (
+                None if entry is None else entry.identity_sha256
+            ),
+            "prefill_graph_generation": int(
+                self._ordinary_graph_generation
+            ),
+            "decode_graph_identity_sha256": (
+                None
+                if decode is None
+                else decode["graph_identity_sha256"]
+            ),
+            "decode_graph_generation": (
+                None
+                if decode is None
+                else int(decode["graph_generation"])
+            ),
+        }
+
+    def _validate_phase_stitch_before_replay(
+        self,
+        *,
+        seqs,
+        lease,
+        entry,
+        graph,
+        input_ids,
+        positions,
+        context,
+        current_block_table_identity,
+    ) -> str | None:
+        if not isinstance(lease, PhaseStitchLease):
+            return "lease_type_invalid"
+        if not isinstance(seqs, tuple) or len(seqs) != 1:
+            return "sequence_count_unsupported"
+        sequence = seqs[0]
+        if int(sequence.seq_id) != lease.sequence_id:
+            return "sequence_identity_drift"
+        if (
+            tuple(current_block_table_identity)
+            != lease.block_table_identity
+        ):
+            return "block_identity_drift"
+        if tuple(
+            int(block_id) for block_id in sequence.block_table
+        ) != tuple(
+            block_id
+            for block_id, _generation
+            in lease.block_table_identity
+        ):
+            return "block_table_drift"
+        if entry is None:
+            return "prefill_graph_unavailable"
+        if (
+            entry.identity_sha256
+            != lease.prefill_graph_identity_sha256
+            or entry.state != "ready"
+            or int(entry.identity.token_count)
+            != lease.prompt_token_count
+            or int(self._ordinary_graph_generation)
+            != lease.prefill_graph_generation
+        ):
+            return "prefill_identity_drift"
+        if not self._exact_prefill_replay_tensor_shapes_match(
+            entry=entry,
+            input_ids=input_ids,
+            positions=positions,
+            context=context,
+        ):
+            return "prefill_tensor_identity_drift"
+        capability = graph.capability()
+        if not capability["available"]:
+            return "decode_graph_unavailable"
+        if (
+            capability["graph_identity_sha256"]
+            != lease.decode_graph_identity_sha256
+            or int(capability["graph_generation"])
+            != lease.decode_graph_generation
+            or int(capability["rank"]) != self.rank
+            or int(capability["tensor_parallel_size"])
+            != self.world_size
+            or int(capability["block_size"]) != self.block_size
+            or int(capability["history_capacity"])
+            < lease.parent_token_count
+        ):
+            return "decode_identity_drift"
+        try:
+            current_tensor_identities = {
+                name: self._phase_stitch_tensor_identity(tensor)
+                for name, tensor in sorted(graph.tensors.items())
+            }
+        except (AttributeError, TypeError, ValueError):
+            return "decode_tensor_identity_invalid"
+        if current_tensor_identities != graph.tensor_identities:
+            return "decode_tensor_identity_drift"
+        expected_source = build_phase_stitch_source_identity(
+            prefill_graph_identity_sha256=(
+                entry.identity_sha256
+            ),
+            prefill_graph_generation=int(
+                self._ordinary_graph_generation
+            ),
+            decode_graph_identity_sha256=capability[
+                "graph_identity_sha256"
+            ],
+            decode_graph_generation=int(
+                capability["graph_generation"]
+            ),
+        )
+        if expected_source != lease.source_identity_sha256:
+            return "source_identity_drift"
+        self._phase_stitch_state()
+        if (
+            expected_source
+            in self._phase_stitch_quarantined_joint_identities
+        ):
+            return "identity_quarantined"
+        return None
+
+    def run_phase_stitched_exact_graph(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: PhaseStitchLease,
+        *,
+        input_ids,
+        positions,
+        context,
+        current_block_table_identity,
+    ):
+        state = self._phase_stitch_state()
+        state["attempts"] += 1
+        if not isinstance(lease, PhaseStitchLease):
+            return self._phase_stitch_fallback(
+                "lease_type_invalid"
+            )
+        entry = self._phase_stitch_prefill_entry(
+            lease.prompt_token_count,
+            lease.prefill_graph_identity_sha256,
+        )
+        graph = getattr(
+            self,
+            "exact_greedy_decode_burst_graph",
+            None,
+        )
+        if graph is None:
+            return self._phase_stitch_fallback(
+                "decode_graph_unavailable"
+            )
+        reason = self._validate_phase_stitch_before_replay(
+            seqs=seqs,
+            lease=lease,
+            entry=entry,
+            graph=graph,
+            input_ids=input_ids,
+            positions=positions,
+            context=context,
+            current_block_table_identity=(
+                current_block_table_identity
+            ),
+        )
+        if reason is not None:
+            return self._phase_stitch_fallback(reason)
+
+        capability = graph.capability()
+        block_ids = [
+            int(block_id) for block_id in seqs[0].block_table
+        ]
+        block_table_width = int(
+            capability["block_table_width"]
+        )
+        if len(block_ids) > block_table_width:
+            return self._phase_stitch_fallback(
+                "block_table_width_unsupported"
+            )
+        backend = getattr(
+            self,
+            "phase_stitch_mailbox_backend",
+            None,
+        )
+        if backend is None:
+            return self._phase_stitch_fallback(
+                "mailbox_backend_unavailable"
+            )
+        try:
+            block_table = self.prepare_block_tables_from_rows(
+                [
+                    block_ids
+                    + [-1] * (
+                        block_table_width - len(block_ids)
+                    )
+                ],
+                "phase_stitch_decode_block_table",
+            )
+        except Exception:
+            return self._phase_stitch_fallback(
+                "block_table_materialization_failed"
+            )
+        try:
+            mailbox_generation = backend.begin_transaction(
+                lease.identity_sha256
+            )
+        except Exception:
+            return self._phase_stitch_fallback(
+                "mailbox_acquire_failed"
+            )
+
+        completed_decode_replays = 0
+        phase = "prefill_replay"
+        try:
+            hidden = self._replay_exact_prefill_graph(
+                entry,
+                input_ids=input_ids,
+                positions=positions,
+                context=context,
+            )
+            state["prefill_graph_replays"] += 1
+            state["target_model_forwards"] += 1
+            hidden = hidden[-1:]
+            token_zero = (
+                self.model.compute_logits(hidden)
+                .to(torch.float32)
+                .argmax(dim=-1)
+            )
+            tensors = graph.tensors
+            type(graph)._reset_static_state(
+                tensors,
+                scratch_block_id=None,
+                block_size=self.block_size,
+            )
+            tensors["token_history"][0:1].copy_(token_zero)
+            prefix = backend.enqueue_first_token(
+                parent_lease_identity_sha256=(
+                    lease.identity_sha256
+                ),
+                token_slice=tensors["token_history"][0:1],
+                mailbox_generation=mailbox_generation,
+            )
+            tensors["input_token"].copy_(token_zero)
+            tensors["position"].fill_(
+                lease.decode_first_write_position
+            )
+            tensors["context_length"].fill_(
+                lease.prompt_token_count + 1
+            )
+            tensors["slot_mapping"].fill_(
+                lease.decode_first_physical_slot
+            )
+            tensors["block_table"].copy_(block_table)
+            tensors["history_index"].fill_(1)
+
+            phase = "decode_replay"
+            for _ in range(lease.authorized_decode_replay_count):
+                graph.graph.replay()
+                completed_decode_replays += 1
+                state["decode_graph_replays"] += 1
+                state["target_model_forwards"] += 1
+            phase = "suffix_d2h"
+            suffix = backend.enqueue_suffix(
+                parent_lease_identity_sha256=(
+                    lease.identity_sha256
+                ),
+                token_slice=tensors["token_history"][1:8],
+                mailbox_generation=mailbox_generation,
+            )
+        except Exception:
+            state["failures"] += 1
+            state["last_authoritative_phase"] = phase
+            state["last_completed_decode_replays"] = (
+                completed_decode_replays
+            )
+            self._phase_stitch_quarantined_joint_identities.add(
+                lease.source_identity_sha256
+            )
+            if mailbox_generation is not None:
+                try:
+                    backend.abort_transaction(
+                        mailbox_generation
+                    )
+                except Exception:
+                    pass
+            raise
+
+        state["successes"] += 1
+        state["last_authoritative_phase"] = "suffix_d2h"
+        state["last_completed_decode_replays"] = (
+            completed_decode_replays
+        )
+        return PhaseStitchExecutionResult(
+            prefix=prefix,
+            suffix=suffix,
+            mailbox_generation=mailbox_generation,
+        )
+
     @staticmethod
     def _exact_greedy_decode_burst_fallback(
         stats,
@@ -10070,6 +10518,32 @@ class ModelRunner:
             ),
             suffix_mailbox=torch.empty(
                 (4,),
+                dtype=torch.int64,
+                device="cpu",
+                pin_memory=True,
+            ),
+            event_factory=lambda _label: torch.cuda.Event(),
+            current_stream=lambda: torch.cuda.current_stream(
+                device=static_device
+            ),
+            stream_context=torch.cuda.stream,
+            synchronize=torch.cuda.synchronize,
+        )
+
+    def _create_phase_stitch_mailbox_backend(
+        self,
+    ) -> PhaseStitchMailboxBackend:
+        static_device = self.kv_cache.device
+        return PhaseStitchMailboxBackend(
+            copy_stream=torch.cuda.Stream(device=static_device),
+            first_token_mailbox=torch.empty(
+                (1,),
+                dtype=torch.int64,
+                device="cpu",
+                pin_memory=True,
+            ),
+            suffix_mailbox=torch.empty(
+                (7,),
                 dtype=torch.int64,
                 device="cpu",
                 pin_memory=True,
@@ -11465,3 +11939,14 @@ class ModelRunner:
         self._ordinary_graph_generation += 1
         self._capture_graph_resident_greedy_tail()
         self._capture_exact_greedy_decode_burst()
+        if (
+            getattr(
+                self.config,
+                "phase_stitched_exact_graph_runtime",
+                False,
+            )
+            and self.exact_greedy_decode_burst_graph is not None
+        ):
+            self.phase_stitch_mailbox_backend = (
+                self._create_phase_stitch_mailbox_backend()
+            )

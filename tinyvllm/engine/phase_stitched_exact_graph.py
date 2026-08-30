@@ -91,6 +91,35 @@ def _canonical_identity(values: dict) -> str:
     ).hexdigest()
 
 
+def build_phase_stitch_source_identity(
+    *,
+    prefill_graph_identity_sha256: str,
+    prefill_graph_generation: int,
+    decode_graph_identity_sha256: str,
+    decode_graph_generation: int,
+) -> str:
+    """Bind the reusable prefill and decode graphs into one source."""
+    return _canonical_identity({
+        "schema": "phase_stitch_source_v1",
+        "prefill_graph_identity_sha256": _require_digest(
+            prefill_graph_identity_sha256,
+            "prefill_graph_identity_sha256",
+        ),
+        "prefill_graph_generation": _require_non_negative_int(
+            prefill_graph_generation,
+            "prefill_graph_generation",
+        ),
+        "decode_graph_identity_sha256": _require_digest(
+            decode_graph_identity_sha256,
+            "decode_graph_identity_sha256",
+        ),
+        "decode_graph_generation": _require_non_negative_int(
+            decode_graph_generation,
+            "decode_graph_generation",
+        ),
+    })
+
+
 @dataclass(frozen=True)
 class PhaseStitchLease:
     sequence_id: int
@@ -125,6 +154,53 @@ class PhaseStitchLease:
 class PhaseStitchDecision:
     optimized: bool
     fallback_reason: Optional[str]
+
+
+@dataclass(frozen=True)
+class PhaseStitchExecutionFallback:
+    fallback_reason: str
+    replay_count: int = 0
+
+    def __post_init__(self) -> None:
+        _require_reason(self.fallback_reason, "fallback_reason")
+        if _require_non_negative_int(
+            self.replay_count,
+            "replay_count",
+        ):
+            raise ValueError(
+                "phase stitch fallback cannot follow a replay"
+            )
+
+
+@dataclass(frozen=True)
+class PhaseStitchExecutionResult:
+    prefix: "PhaseStitchPrefixResult"
+    suffix: "PhaseStitchSuffixResult"
+    mailbox_generation: int
+    prefill_forward_count: int = 1
+    decode_replay_count: int = AUTHORIZED_DECODE_REPLAY_COUNT
+    target_model_forward_count: int = PARENT_TOKEN_COUNT
+
+    def __post_init__(self) -> None:
+        _require_positive_int(
+            self.mailbox_generation,
+            "mailbox_generation",
+        )
+        if self.prefill_forward_count != 1:
+            raise ValueError(
+                "phase stitch requires one prefill forward"
+            )
+        if (
+            self.decode_replay_count
+            != AUTHORIZED_DECODE_REPLAY_COUNT
+        ):
+            raise ValueError(
+                "phase stitch decode replay count mismatch"
+            )
+        if self.target_model_forward_count != PARENT_TOKEN_COUNT:
+            raise ValueError(
+                "phase stitch target forward count mismatch"
+            )
 
 
 def decide_phase_stitch_admission(

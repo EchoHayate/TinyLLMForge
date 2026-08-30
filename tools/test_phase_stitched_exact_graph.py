@@ -916,3 +916,695 @@ def test_scheduler_phase_stitch_failure_after_prefix_keeps_visibility():
         "failed_after_prefix"
     )
     assert summary["last_failure_reason"] == "suffix_copy_failed"
+
+
+class _RunnerTensor:
+    _next_pointer = 1000
+
+    def __init__(
+        self,
+        name,
+        values,
+        events,
+        *,
+        shape=None,
+        dtype="torch.int64",
+        device="cuda:0",
+    ):
+        self.name = name
+        self.values = list(values)
+        self.events = events
+        self.shape = (
+            tuple(shape)
+            if shape is not None
+            else (len(self.values),)
+        )
+        self.dtype = dtype
+        self.device = device
+        self._pointer = _RunnerTensor._next_pointer
+        _RunnerTensor._next_pointer += 1
+
+    def data_ptr(self):
+        return self._pointer
+
+    def stride(self):
+        if len(self.shape) == 1:
+            return (1,)
+        if len(self.shape) == 2:
+            return (self.shape[1], 1)
+        return tuple(1 for _ in self.shape)
+
+    def storage_offset(self):
+        return 0
+
+    def size(self):
+        return self.shape
+
+    def numel(self):
+        result = 1
+        for dimension in self.shape:
+            result *= dimension
+        return result
+
+    def element_size(self):
+        return 8 if "int64" in str(self.dtype) else 4
+
+    def fill_(self, value):
+        self.events.append(("fill", self.name, value))
+        self.values = [value for _ in self.values]
+        return self
+
+    def zero_(self):
+        return self.fill_(0)
+
+    def copy_(self, source):
+        source_values = list(source.values)
+        self.events.append(
+            ("copy", self.name, source.name)
+        )
+        self.values = source_values
+        return self
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return _RunnerTensorView(self, index)
+        return self.values[index]
+
+
+class _RunnerTensorView:
+    def __init__(self, parent, index):
+        self.parent = parent
+        self.index = index
+        self.name = f"{parent.name}[{index.start}:{index.stop}]"
+
+    @property
+    def values(self):
+        return self.parent.values[self.index]
+
+    def copy_(self, source):
+        self.parent.events.append(
+            ("copy", self.name, source.name)
+        )
+        self.parent.values[self.index] = list(source.values)
+        return self
+
+
+class _RunnerHidden:
+    def __init__(self, events):
+        self.events = events
+
+    def __getitem__(self, index):
+        self.events.append(("select_hidden", index))
+        return self
+
+
+class _RunnerLogits:
+    def __init__(self, events, token):
+        self.events = events
+        self.token = token
+
+    def to(self, dtype):
+        self.events.append(("float32_logits", dtype))
+        return self
+
+    def argmax(self, *, dim):
+        self.events.append(("argmax", dim))
+        return self.token
+
+
+class _RunnerModel:
+    def __init__(self, events, token):
+        self.events = events
+        self.token = token
+
+    def compute_logits(self, hidden):
+        del hidden
+        self.events.append(("lm_head",))
+        return _RunnerLogits(self.events, self.token)
+
+
+class _RunnerReplay:
+    def __init__(self, tensors, events, fail_at=None):
+        self.tensors = tensors
+        self.events = events
+        self.fail_at = fail_at
+        self.count = 0
+
+    def replay(self):
+        self.count += 1
+        self.events.append(("decode_replay", self.count))
+        if self.count == self.fail_at:
+            raise RuntimeError("decode exploded")
+        history_index = self.tensors["history_index"].values[0]
+        token = 101 + self.count
+        self.tensors["token_history"].values[history_index] = token
+        self.tensors["input_token"].values[0] = token
+        self.tensors["history_index"].values[0] += 1
+
+
+class _RunnerDecodeGraph:
+    def __init__(self, events, *, fail_at=None):
+        self.events = events
+        self.block_size = 16
+        self.tensors = {
+            "input_token": _RunnerTensor(
+                "decode_input",
+                [-1],
+                events,
+            ),
+            "position": _RunnerTensor(
+                "decode_position",
+                [-1],
+                events,
+            ),
+            "context_length": _RunnerTensor(
+                "decode_context",
+                [-1],
+                events,
+                dtype="torch.int32",
+            ),
+            "slot_mapping": _RunnerTensor(
+                "decode_slot",
+                [-1],
+                events,
+                dtype="torch.int32",
+            ),
+            "block_table": _RunnerTensor(
+                "decode_block_table",
+                [-1, -1, -1, -1],
+                events,
+                shape=(1, 4),
+                dtype="torch.int32",
+            ),
+            "token_history": _RunnerTensor(
+                "history",
+                [-1] * 8,
+                events,
+            ),
+            "history_index": _RunnerTensor(
+                "history_index",
+                [0],
+                events,
+            ),
+        }
+        self.tensor_identities = {
+            name: {
+                "data_ptr": tensor.data_ptr(),
+                "shape": list(tensor.shape),
+                "stride": list(tensor.stride()),
+                "storage_offset": tensor.storage_offset(),
+                "dtype": str(tensor.dtype),
+                "device": str(tensor.device),
+            }
+            for name, tensor in sorted(self.tensors.items())
+        }
+        self.graph = _RunnerReplay(
+            self.tensors,
+            events,
+            fail_at=fail_at,
+        )
+
+    def capability(self):
+        return {
+            "available": True,
+            "graph_identity_sha256": "b" * 64,
+            "graph_generation": 13,
+            "rank": 0,
+            "tensor_parallel_size": 1,
+            "block_size": 16,
+            "block_table_width": 4,
+            "history_capacity": 8,
+            "correctness_trace": False,
+            "quarantine_reason": None,
+        }
+
+    @classmethod
+    def _reset_static_state(
+        cls,
+        tensors,
+        *,
+        scratch_block_id,
+        block_size,
+    ):
+        del cls, scratch_block_id, block_size
+        tensors["input_token"].fill_(-1)
+        tensors["position"].fill_(-1)
+        tensors["context_length"].fill_(-1)
+        tensors["slot_mapping"].fill_(-1)
+        tensors["block_table"].fill_(-1)
+        tensors["token_history"].fill_(-1)
+        tensors["history_index"].zero_()
+
+
+class _RunnerCompletion:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+
+    def synchronize(self):
+        self.events.append(("synchronize", self.label))
+
+
+class _RunnerMailboxValues:
+    def __init__(self, label, values, events):
+        self.label = label
+        self.values = tuple(values)
+        self.events = events
+
+    def tolist(self):
+        self.events.append(("tolist", self.label))
+        return list(self.values)
+
+
+class _RunnerMailboxBackend:
+    def __init__(self, canonical, events):
+        self.canonical = canonical
+        self.events = events
+        self.active_generation = None
+
+    def begin_transaction(self, parent_identity):
+        self.events.append(("begin_mailbox", parent_identity))
+        self.active_generation = 1
+        return 1
+
+    def enqueue_first_token(
+        self,
+        *,
+        parent_lease_identity_sha256,
+        token_slice,
+        mailbox_generation,
+    ):
+        assert mailbox_generation == self.active_generation
+        self.events.append(("enqueue_first_token",))
+        return self.canonical.PhaseStitchPrefixResult(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            token=None,
+            token_ordinal=0,
+            replay_count=0,
+            d2h_calls=1,
+            d2h_bytes=8,
+            completion=_RunnerCompletion("prefix", self.events),
+            mailbox=_RunnerMailboxValues(
+                "prefix",
+                token_slice.values,
+                self.events,
+            ),
+        )
+
+    def enqueue_suffix(
+        self,
+        *,
+        parent_lease_identity_sha256,
+        token_slice,
+        mailbox_generation,
+    ):
+        assert mailbox_generation == self.active_generation
+        self.events.append(("enqueue_suffix",))
+        return self.canonical.PhaseStitchSuffixResult(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            tokens=None,
+            first_token_ordinal=1,
+            replay_count=7,
+            d2h_calls=1,
+            d2h_bytes=56,
+            completion=_RunnerCompletion("suffix", self.events),
+            mailbox=_RunnerMailboxValues(
+                "suffix",
+                token_slice.values,
+                self.events,
+            ),
+        )
+
+    def abort_transaction(self, generation):
+        self.events.append(("abort_mailbox", generation))
+        self.active_generation = None
+
+
+def _model_runner_phase_stitch_fixture():
+    canonical_name = "tinyvllm.engine.phase_stitched_exact_graph"
+    if canonical_name not in sys.modules:
+        canonical_spec = importlib.util.spec_from_file_location(
+            canonical_name,
+            MODULE_PATH,
+        )
+        canonical = importlib.util.module_from_spec(canonical_spec)
+        sys.modules[canonical_name] = canonical
+        canonical_spec.loader.exec_module(canonical)
+    from tools import test_model_runner_spec_verify as fixture
+
+    canonical = sys.modules[canonical_name]
+    return fixture, canonical
+
+
+def _model_runner_phase_stitch_case(*, fail_at=None):
+    fixture, canonical = _model_runner_phase_stitch_fixture()
+    events = []
+    runner = object.__new__(fixture.ModelRunner)
+    runner.config = types.SimpleNamespace(
+        phase_stitched_exact_graph_runtime=True,
+        tensor_parallel_size=1,
+        cpu_offload=False,
+        kv_offload_mvp0=False,
+        kv_quant_bits=0,
+        quest_top_k_blocks=-1,
+        am_compact_blocks=0,
+    )
+    runner.enforce_eager = False
+    runner.rank = 0
+    runner.world_size = 1
+    runner.block_size = 16
+    runner._ordinary_graph_generation = 13
+    runner._prefill_cuda_graph_step_id = 0
+    prefill_entry = types.SimpleNamespace(
+        identity=types.SimpleNamespace(token_count=16),
+        identity_sha256="a" * 64,
+        state="ready",
+        tensors={"outputs": _RunnerHidden(events)},
+    )
+    runner.exact_prefill_cuda_graph_cache = types.SimpleNamespace(
+        ready_entries={"a" * 64: prefill_entry},
+    )
+    runner.exact_greedy_decode_burst_graph = _RunnerDecodeGraph(
+        events,
+        fail_at=fail_at,
+    )
+    runner.phase_stitch_mailbox_backend = _RunnerMailboxBackend(
+        canonical,
+        events,
+    )
+    first_token = _RunnerTensor(
+        "token0",
+        [101],
+        events,
+    )
+    runner.model = _RunnerModel(events, first_token)
+    runner._exact_prefill_replay_tensor_shapes_match = (
+        lambda **_kwargs: (
+            events.append(("validate_prefill_tensors",))
+            or True
+        )
+    )
+
+    def replay_prefill(entry, **_kwargs):
+        assert entry is prefill_entry
+        events.append(("bind_prefill_live_tensors",))
+        events.append(("prefill_replay",))
+        return entry.tensors["outputs"]
+
+    runner._replay_exact_prefill_graph = replay_prefill
+
+    def prepare_block_tables(rows, name):
+        events.append(("materialize_block_table", name))
+        return _RunnerTensor(
+            "live_block_table",
+            list(rows[0]),
+            events,
+            shape=(1, len(rows[0])),
+            dtype="torch.int32",
+        )
+
+    runner.prepare_block_tables_from_rows = prepare_block_tables
+    sequence = types.SimpleNamespace(
+        seq_id=7,
+        block_table=[5, 6],
+        num_prompt_tokens=16,
+        num_completion_tokens=0,
+    )
+    lease = canonical.build_phase_stitch_lease(
+        sequence_id=7,
+        sequence_generation=0,
+        schedule_generation=1,
+        prefill_graph_identity_sha256="a" * 64,
+        prefill_graph_generation=13,
+        decode_graph_identity_sha256="b" * 64,
+        decode_graph_generation=13,
+        prompt_token_count=16,
+        final_prefill_first_position=0,
+        final_prefill_last_position=15,
+        initial_completion_count=0,
+        remaining_output_tokens=8,
+        decode_first_write_position=16,
+        decode_last_write_position=22,
+        decode_first_physical_slot=6 * 16,
+        decode_last_physical_slot=6 * 16 + 6,
+        block_table_identity=((5, 2), (6, 4)),
+        completion_only=True,
+        source_identity_sha256=canonical.build_phase_stitch_source_identity(
+            prefill_graph_identity_sha256="a" * 64,
+            prefill_graph_generation=13,
+            decode_graph_identity_sha256="b" * 64,
+            decode_graph_generation=13,
+        ),
+    )
+    input_ids = _RunnerTensor(
+        "live_input_ids",
+        list(range(16)),
+        events,
+    )
+    positions = _RunnerTensor(
+        "live_positions",
+        list(range(16)),
+        events,
+    )
+    context = types.SimpleNamespace(
+        slot_mapping=_RunnerTensor(
+            "live_slots",
+            list(range(16)),
+            events,
+            dtype="torch.int32",
+        ),
+        cu_seqlens_q=_RunnerTensor(
+            "live_cu_q",
+            [0, 16],
+            events,
+            dtype="torch.int32",
+        ),
+        cu_seqlens_k=_RunnerTensor(
+            "live_cu_k",
+            [0, 16],
+            events,
+            dtype="torch.int32",
+        ),
+    )
+    return (
+        runner,
+        canonical,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    )
+
+
+def test_model_runner_phase_stitch_composes_one_plus_seven_replays():
+    (
+        runner,
+        _,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+
+    result = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        input_ids=input_ids,
+        positions=positions,
+        context=context,
+        current_block_table_identity=((5, 2), (6, 4)),
+    )
+
+    labels = [event[0] for event in events]
+    assert labels.index("validate_prefill_tensors") < labels.index(
+        "prefill_replay"
+    )
+    assert labels.index("bind_prefill_live_tensors") < labels.index(
+        "prefill_replay"
+    )
+    assert labels.index("prefill_replay") < labels.index("lm_head")
+    assert labels.index("lm_head") < labels.index("float32_logits")
+    assert labels.index("float32_logits") < labels.index("argmax")
+    history_copy = events.index(
+        ("copy", "history[0:1]", "token0")
+    )
+    first_enqueue = events.index(("enqueue_first_token",))
+    input_seed = events.index(
+        ("copy", "decode_input", "token0")
+    )
+    assert history_copy < first_enqueue < input_seed
+    replay_events = [
+        event for event in events if event[0] == "decode_replay"
+    ]
+    assert replay_events == [
+        ("decode_replay", ordinal) for ordinal in range(1, 8)
+    ]
+    assert events.index(("enqueue_suffix",)) > events.index(
+        ("decode_replay", 7)
+    )
+    assert not any(
+        event[0] in ("synchronize", "tolist")
+        for event in events
+    )
+    assert result.prefill_forward_count == 1
+    assert result.decode_replay_count == 7
+    assert result.target_model_forward_count == 8
+    assert result.prefix.wait_token() == 101
+    assert result.suffix.wait_tokens() == (
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+    )
+    summary = runner.phase_stitch_summary()
+    assert summary["prefill_graph_replays"] == 1
+    assert summary["decode_graph_replays"] == 7
+    assert summary["target_model_forwards"] == 8
+
+
+def test_model_runner_phase_stitch_rejects_identity_before_replay():
+    (
+        runner,
+        _,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+
+    fallback = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        input_ids=input_ids,
+        positions=positions,
+        context=context,
+        current_block_table_identity=((5, 2), (6, 5)),
+    )
+
+    assert fallback.fallback_reason == "block_identity_drift"
+    assert fallback.replay_count == 0
+    assert not any(
+        event[0] in ("prefill_replay", "decode_replay")
+        for event in events
+    )
+
+
+def test_model_runner_phase_stitch_selects_bound_prefill_identity():
+    (
+        runner,
+        _,
+        _events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+    bound_entry = next(
+        iter(runner.exact_prefill_cuda_graph_cache.ready_entries.values())
+    )
+    decoy_entry = types.SimpleNamespace(
+        identity=types.SimpleNamespace(token_count=16),
+        identity_sha256="d" * 64,
+        state="ready",
+        tensors=bound_entry.tensors,
+    )
+    runner.exact_prefill_cuda_graph_cache.ready_entries = {
+        decoy_entry.identity_sha256: decoy_entry,
+        bound_entry.identity_sha256: bound_entry,
+    }
+
+    result = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        input_ids=input_ids,
+        positions=positions,
+        context=context,
+        current_block_table_identity=((5, 2), (6, 4)),
+    )
+
+    assert result.prefill_forward_count == 1
+    assert result.decode_replay_count == 7
+
+
+def test_model_runner_phase_stitch_mailbox_busy_falls_back_before_replay():
+    (
+        runner,
+        _,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+
+    def reject_mailbox_ownership(_parent_identity):
+        raise RuntimeError("mailbox busy")
+
+    runner.phase_stitch_mailbox_backend.begin_transaction = (
+        reject_mailbox_ownership
+    )
+    fallback = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        input_ids=input_ids,
+        positions=positions,
+        context=context,
+        current_block_table_identity=((5, 2), (6, 4)),
+    )
+
+    assert fallback.fallback_reason == "mailbox_acquire_failed"
+    assert fallback.replay_count == 0
+    assert not any(
+        event[0] in ("prefill_replay", "decode_replay")
+        for event in events
+    )
+    summary = runner.phase_stitch_summary()
+    assert summary["failures"] == 0
+    assert summary["quarantined_joint_identities"] == []
+
+
+def test_model_runner_phase_stitch_quarantines_post_replay_failure():
+    (
+        runner,
+        _,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case(fail_at=3)
+
+    with pytest.raises(RuntimeError, match="decode exploded"):
+        runner.run_phase_stitched_exact_graph(
+            (sequence,),
+            lease,
+            input_ids=input_ids,
+            positions=positions,
+            context=context,
+            current_block_table_identity=((5, 2), (6, 4)),
+        )
+
+    assert ("abort_mailbox", 1) in events
+    summary = runner.phase_stitch_summary()
+    assert summary["failures"] == 1
+    assert summary["last_authoritative_phase"] == "decode_replay"
+    assert summary["last_completed_decode_replays"] == 2
+    assert summary["quarantined_joint_identities"] == [
+        lease.source_identity_sha256,
+    ]
