@@ -116,7 +116,9 @@ def test_ssh_command_supports_an_explicit_control_socket():
         else:
             os.environ[variable] = previous
 
-    assert "ControlMaster=no" in command
+    assert "ControlMaster=auto" in command
+    assert "ControlPersist=600" in command
+    assert "ControlMaster=no" not in command
     assert "ControlPath=/tmp/tinyllmforge-test-master.sock" in command
     assert "ControlPath=none" not in command
 

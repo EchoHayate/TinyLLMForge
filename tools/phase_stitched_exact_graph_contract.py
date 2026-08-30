@@ -48,6 +48,8 @@ SOURCE_FILES = (
     "tools/phase_stitched_exact_graph_gate.py",
     "tools/phase_stitched_exact_graph_verify.py",
     "tools/run_phase_stitched_exact_graph_remote.py",
+    "tools/run_staged_inference_benchmark_remote.py",
+    "tools/run_zero_temperature_greedy_fast_path_remote.py",
 )
 
 BASE_ENGINE_CONFIG = {

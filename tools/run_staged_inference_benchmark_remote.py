@@ -405,12 +405,20 @@ def _ssh_command(remote_command: str) -> list[str]:
         "TINYLLMFORGE_SSH_CONTROL_PATH",
         "none",
     )
-    return [
+    command = [
         "ssh",
         "-o",
-        "ControlMaster=no",
+        (
+            "ControlMaster=auto"
+            if control_path != "none"
+            else "ControlMaster=no"
+        ),
         "-o",
         f"ControlPath={control_path}",
+    ]
+    if control_path != "none":
+        command.extend(("-o", "ControlPersist=600"))
+    return command + [
         "-o",
         "BatchMode=yes",
         "-o",

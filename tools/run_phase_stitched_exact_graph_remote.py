@@ -257,6 +257,33 @@ def _run_remote_with_input(command: str, payload: bytes):
     return base._run_remote_with_input(command, payload)
 
 
+def establish_ssh_control_master(
+    *,
+    attempts: int = 3,
+    retry_delay_seconds: int = 2,
+    command_runner=None,
+    sleep=time.sleep,
+) -> None:
+    if (
+        isinstance(attempts, bool)
+        or not isinstance(attempts, int)
+        or attempts <= 0
+        or isinstance(retry_delay_seconds, bool)
+        or not isinstance(retry_delay_seconds, int)
+        or retry_delay_seconds < 0
+    ):
+        raise ValueError("SSH control-master retry policy is invalid")
+    run = _run_remote if command_runner is None else command_runner
+    last_result = None
+    for attempt in range(attempts):
+        last_result = run("true")
+        if last_result.returncode == 0:
+            return
+        if attempt + 1 < attempts:
+            sleep(retry_delay_seconds)
+    require_success(last_result, "establish SSH control master")
+
+
 def upload_source_archive(*, staging: str, archive: bytes) -> str:
     if not staging.startswith(TASK_REMOTE_ROOT + "/staging/"):
         raise ValueError("remote staging path is invalid")
@@ -559,6 +586,7 @@ def run_controller(args) -> dict:
             + MINIMUM_LAUNCH_KERBEROS_SECONDS
         )
     )
+    establish_ssh_control_master()
     source_hashes = _source_hashes(REPO_ROOT)
     paths = remote_paths(args.run_tag)
     require_remote_destinations_absent(paths)

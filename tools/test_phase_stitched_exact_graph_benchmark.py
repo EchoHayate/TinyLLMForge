@@ -451,6 +451,10 @@ def test_contract_freezes_four_arm_balanced_matrix():
     assert contract.WARMUP_REPETITIONS == 2
     assert contract.MEASURED_REPETITIONS == 5
     assert contract.GENERATED_TOKENS == 128
+    assert {
+        "tools/run_staged_inference_benchmark_remote.py",
+        "tools/run_zero_temperature_greedy_fast_path_remote.py",
+    } <= set(contract.SOURCE_FILES)
     assert len(cases) == 16
     assert [row["arm"] for row in cases[:4]] == list(contract.ARMS)
     assert [row["arm"] for row in cases[8:12]] == list(

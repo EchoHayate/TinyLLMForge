@@ -170,6 +170,36 @@ def test_remote_commands_run_all_cases_and_both_verifiers():
     assert "download" not in joined.lower()
 
 
+def test_controller_establishes_control_master_before_remote_mutation():
+    remote = _remote()
+    attempts = []
+    responses = iter((
+        subprocess.CompletedProcess(
+            args=["ssh"],
+            returncode=255,
+            stdout="",
+            stderr="Connection closed by UNKNOWN port 65535",
+        ),
+        subprocess.CompletedProcess(
+            args=["ssh"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    ))
+
+    remote.establish_ssh_control_master(
+        attempts=3,
+        retry_delay_seconds=0,
+        command_runner=lambda command: (
+            attempts.append(command) or next(responses)
+        ),
+        sleep=lambda _seconds: None,
+    )
+
+    assert attempts == ["true", "true"]
+
+
 def test_controller_requires_ticket_to_outlive_wait_and_rechecks_head(
     tmp_path: Path,
 ):
@@ -183,6 +213,7 @@ def test_controller_requires_ticket_to_outlive_wait_and_rechecks_head(
             "validate_kerberos",
             "require_pushed_head",
             "_source_hashes",
+            "establish_ssh_control_master",
             "require_remote_destinations_absent",
             "wait_for_clean_a100",
             "build_source_archive",
@@ -205,6 +236,7 @@ def test_controller_requires_ticket_to_outlive_wait_and_rechecks_head(
         path: hashlib.sha256(path.encode()).hexdigest()
         for path in remote.contract.SOURCE_FILES
     }
+    remote.establish_ssh_control_master = lambda: calls.append("ssh")
     remote.require_remote_destinations_absent = (
         lambda _paths: calls.append("destinations")
     )
@@ -253,6 +285,7 @@ def test_controller_requires_ticket_to_outlive_wait_and_rechecks_head(
             setattr(remote, name, value)
 
     assert calls.count("head") == 2
+    assert calls.index("ssh") < calls.index("destinations")
     assert calls.index("wait") < calls.index("head", 1)
     assert lifetimes[0] >= (
         7200 + remote.MINIMUM_LAUNCH_KERBEROS_SECONDS
