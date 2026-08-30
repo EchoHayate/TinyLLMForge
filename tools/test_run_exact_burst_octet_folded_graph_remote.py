@@ -369,6 +369,102 @@ def test_controller_runs_all_preconditions_before_pipeline(
     ]
 
 
+def test_controller_preserves_partial_bundle_when_pipeline_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls = []
+    selected = _gpu_row(1)
+    monkeypatch.setenv("KRB5CCNAME", remote.KRB5_CACHE)
+    monkeypatch.setattr(
+        remote,
+        "require_pushed_head",
+        lambda _root: "a" * 40,
+    )
+    monkeypatch.setattr(
+        remote,
+        "validate_kerberos",
+        lambda **_kwargs: {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        remote,
+        "establish_ssh_control_master",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        remote,
+        "probe_remote_requirements",
+        lambda: {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        remote,
+        "require_remote_destinations_absent",
+        lambda _paths: None,
+    )
+    monkeypatch.setattr(
+        remote,
+        "wait_for_clean_a100",
+        lambda **_kwargs: ([selected], selected),
+    )
+    monkeypatch.setattr(
+        remote,
+        "committed_source_archive",
+        lambda _root, _commit: b"archive",
+    )
+    monkeypatch.setattr(
+        remote,
+        "_prepare_remote_source",
+        lambda **kwargs: kwargs["paths"]["staging"] + "/source",
+    )
+    monkeypatch.setattr(
+        remote,
+        "run_remote_preflight",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        remote,
+        "validate_selected_gpu_still_clean",
+        lambda gpu: gpu,
+    )
+    monkeypatch.setattr(
+        remote,
+        "create_remote_controller_manifest",
+        lambda **_kwargs: None,
+    )
+
+    def fail_pipeline(**_kwargs):
+        raise RuntimeError("remote producer failed")
+
+    monkeypatch.setattr(remote, "run_remote_pipeline", fail_pipeline)
+    monkeypatch.setattr(
+        remote,
+        "download_partial_bundle",
+        lambda **kwargs: calls.append(
+            ("partial", kwargs["local_destination"])
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="producer"):
+        remote.run_controller(
+            remote.parse_args([
+                "--run-tag",
+                "20260830-octet-folded-r6",
+                "--source-commit",
+                "a" * 40,
+                "--local-artifact-root",
+                str(tmp_path),
+            ])
+        )
+
+    assert calls == [
+        (
+            "partial",
+            tmp_path / "20260830-octet-folded-r6",
+        )
+    ]
+
+
 def test_download_requires_worker_identity_and_receipt_agreement(
     monkeypatch,
     tmp_path: Path,

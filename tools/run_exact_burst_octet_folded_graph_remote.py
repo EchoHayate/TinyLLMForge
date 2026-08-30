@@ -662,6 +662,43 @@ def download_bundle(
     return local_receipt
 
 
+def download_partial_bundle(
+    *,
+    paths: dict[str, str],
+    local_destination: Path,
+) -> dict[str, dict]:
+    destination = Path(local_destination)
+    receipts = {}
+    targets = (
+        ("primary", paths["primary"], destination),
+        (
+            "controller",
+            paths["controller"],
+            destination / "controller",
+        ),
+    )
+    for name, remote_root, local_root in targets:
+        try:
+            inventory = (
+                download.download_remote_tree_preserving_partial(
+                    remote_root,
+                    local_root,
+                )
+            )
+        except Exception as error:
+            receipts[name] = {
+                "downloaded": False,
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+        else:
+            receipts[name] = {
+                "downloaded": True,
+                "file_count": len(inventory),
+            }
+    return receipts
+
+
 def run_controller(args) -> dict:
     if args.host != REMOTE_HOST or args.model != MODEL_PATH:
         raise ValueError("remote target is not approved")
@@ -715,14 +752,21 @@ def run_controller(args) -> dict:
         },
         remote_requirements=remote_requirements,
     )
-    receipts = run_remote_pipeline(
-        source=source,
-        paths=paths,
-        model=args.model,
-        gpu_index=selected["index"],
-        run_tag=args.run_tag,
-        source_commit=source_commit,
-    )
+    try:
+        receipts = run_remote_pipeline(
+            source=source,
+            paths=paths,
+            model=args.model,
+            gpu_index=selected["index"],
+            run_tag=args.run_tag,
+            source_commit=source_commit,
+        )
+    except Exception:
+        download_partial_bundle(
+            paths=paths,
+            local_destination=destination,
+        )
+        raise
     verification = download_bundle(
         paths=paths,
         local_destination=destination,
