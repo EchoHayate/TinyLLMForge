@@ -4,24 +4,55 @@ Date: 2026-08-30
 
 ## Executive Verdict
 
-The source-bound Qwen3-0.6B BF16 TP1 batch-one qualification completed on a
-strict-clean NVIDIA A100 80GB PCIe and returned:
+The corrected source-bound Qwen3-0.6B BF16 TP1 batch-one qualification
+completed on a strict-clean NVIDIA A100 80GB PCIe and returned:
 
 ```text
-GO_PERSISTENT_DECODE_CEILING
+NO_GO_PERSISTENT_DECODE_CEILING
 ```
 
-The result authorizes a separate runtime design for a default-disabled,
-lease-scoped persistent decode segment. It does not authorize an immediate
-CUDA or Triton implementation without that design, and it is not a measured
-runtime speedup.
+The canonical run is r6. It includes CUDA Graph execution intervals from
+Nsight's `CUPTI_ACTIVITY_KIND_GRAPH_TRACE` table and treats each interval as
+a `RUNTIME_OR_GRAPH` barrier. The resulting aggregate optimistic median TPOT
+ceiling is only `0.960747%`, and candidate kernels account for only
+`0.226829%` of traced execution duration. Both are below the frozen
+implementation-authorization thresholds.
 
-The frozen optimistic model estimates an aggregate median TPOT ceiling of
-`82.155817%` if all eligible segment time could be removed at zero cost.
-Per-context optimistic ceilings are `82.736802%`, `82.155817%`, and
-`81.051352%` for 256, 2,048, and 8,192 prompt tokens. These numbers establish
-headroom only. They do not include persistent-kernel launch, synchronization,
-state retention, scheduling, register, occupancy, or fallback cost.
+No persistent CUDA/Triton runtime implementation is authorized. The useful
+outcome is negative evidence: the apparent host-side gaps in r5 were occupied
+by CUDA Graph executions and are not removable candidate time.
+
+## Superseded r5 Result
+
+r5 reported `GO_PERSISTENT_DECODE_CEILING` and an `82.155817%` optimistic
+ceiling. That result is invalid and superseded.
+
+The r5 parser read `CUPTI_ACTIVITY_KIND_KERNEL` but omitted
+`CUPTI_ACTIVITY_KIND_GRAPH_TRACE`. Inside a representative 17.619347 ms NVTX
+decode transaction, the ordinary kernel table contained only 27 short fill
+kernels while the graph-trace table contained eight approximately 2 ms CUDA
+Graph executions. The old segment builder therefore stretched one candidate
+segment across those executions and counted the occupied intervals as
+eliminable internal gaps.
+
+A read-only reparse of all three immutable r5 SQLite files with the corrected
+parser produced:
+
+```text
+aggregate optimistic median TPOT improvement: 1.000027%
+minimum per-context optimistic improvement:   0.814129%
+aggregate candidate CUDA-duration share:      0.228078%
+```
+
+The corrected independent verifier also rejects the old r5 compact bundle
+with:
+
+```text
+graph execution inventory is incomplete
+```
+
+r5 remains immutable historical evidence. It is not canonical and must not
+be used to authorize implementation or advertise headroom.
 
 ## Canonical Evidence
 
@@ -33,63 +64,65 @@ Desktop alias:
 branch:
   feat/kv-sparse-attention
 source commit:
-  9bf07719e1344ebf3865e255691b619b1ae9a3aa
+  23b0a5e3b243873e77362a233c38d4e9a37bda66
 source tree SHA-256:
-  8aa60f9b9f8fa07a5237557673bfda034fed8328a50828ec561248790a61f3bd
+  f63aec8f5cecdd296fcdf75301a00281914900365855761a188726b30fa0c1d3
 run tag:
-  20260830-qwen3-06b-persistent-decode-ceiling-r5
+  20260830-qwen3-06b-persistent-decode-ceiling-r6
 classification:
-  GO_PERSISTENT_DECODE_CEILING
+  NO_GO_PERSISTENT_DECODE_CEILING
 local compact evidence:
   artifacts/lease_sealed_persistent_decode/
-    20260830-qwen3-06b-persistent-decode-ceiling-r5/
-remote staging:
-  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
-    persistent-decode-ceiling/staging/
-    20260830-qwen3-06b-persistent-decode-ceiling-r5
+    20260830-qwen3-06b-persistent-decode-ceiling-r6/
 remote primary:
   /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
     persistent-decode-ceiling/runs/
-    20260830-qwen3-06b-persistent-decode-ceiling-r5
+    20260830-qwen3-06b-persistent-decode-ceiling-r6
 remote controller:
   /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
     persistent-decode-ceiling/controller-verification/
-    20260830-qwen3-06b-persistent-decode-ceiling-r5
+    20260830-qwen3-06b-persistent-decode-ceiling-r6
 ```
 
-The selected device was physical GPU 0,
-`GPU-57be086f-e967-c022-3832-93df4fc77bd0`. Both admissions observed an
-NVIDIA A100 80GB PCIe at `0 MiB`, `0%` utilization, and zero compute
-processes. The controller used the explicit Kerberos cache
-`FILE:/Users/bytedance/krb5cc_sitian`, applied the frozen TTL guard, and wrote
-all remote task data below the approved mounted `/data00/home/sitian/...`
+The controller selected physical GPU 0,
+`GPU-57be086f-e967-c022-3832-93df4fc77bd0`. Both admissions observed all
+eight A100s as clean and selected GPU 0 at 0 MiB, 0% utilization, with zero
+compute processes. All task data, scratch files, caches, source staging, and
+profiler output remained below the approved mounted `/data00/home/sitian/`
 root.
 
-## Prompt-to-Artifact Checklist
+## Corrected Trace Model
 
-| Requirement | Implementation file and symbol | Test and result | Artifact or verifier evidence | Consequence |
-| --- | --- | --- | --- | --- |
-| Source and pushed-HEAD identity | `run_lease_sealed_persistent_decode_ceiling_remote.py::{require_pushed_head,validate_source_commit,committed_source_archive}`; `profile_lease_sealed_persistent_decode_ceiling.py::build_source_manifest` | qualification suite `101 passed` | `source_manifest.json`: commit `9bf0771...`, tree `8aa60f9...`; local and remote branch heads matched before launch | `PASS` |
-| Kerberos cache and TTL fail-fast | controller `validate_kerberos` calls before staging and launch | `test_validate_kerberos_uses_fixed_file_cache_and_ttl` | explicit cache was valid through 2026-08-31 06:51:02 Asia/Shanghai; no `kinit` or `krenew` | `PASS` |
-| Approved mounted storage only | `remote_paths`, `build_worker_plan` | `test_remote_paths_stay_below_approved_task_root`; `test_nsys_command_is_bounded_and_mounted_only`; source leakage test | all staging, primary, controller, scratch, cache, and profiler paths are below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | `PASS` |
-| Two strict-clean admissions | `wait_for_clean_a100`; `validate_selected_gpu_still_clean`; `run_controller` | `test_strict_clean_a100_requires_zero_everything`; `test_run_controller_rechecks_gpu_immediately_before_launch` | `gpu_admission.json`, remote `gpu_admission_second.json`, and `controller/launch_admission.json` agree on GPU 0 at 0 MiB, 0%, no process | `PASS` |
-| Frozen timing inventory | `profile_lease_sealed_persistent_decode_ceiling.py::TIMING_CASES` | `test_timing_inventory_is_five_repetitions_for_three_contexts` | `timing_summary.json`: 15 rows; contexts 256/2,048/8,192; repetitions 0-4 | `PASS_15_OF_15` |
-| Frozen trace inventory | structural producer and `persistent_decode_kernel_trace.py::read_decode_trace` | `test_structural_inventory_is_one_matched_case_per_context`; SQLite parser tests | `trace_inventory.json`: three contexts, 16 decode transactions and 430 kernels per context | `PASS_3_OF_3` |
-| Exact output token and text identity | producer finalizer and independent verifier | `test_finalize_rejects_structural_output_mismatch`; verifier mutation tests | all five timing repetitions match the structural token IDs and text digest within each context | `PASS_EXACT` |
-| Forward and commit accounting | producer row validation and ceiling classifier | runtime-failure and mutation tests | every timing and structural row has 127 target forwards and 127 committed tokens; timing totals are 1,905/1,905; structural totals are 381/381 | `PASS` |
-| Kernel launch and duration coverage | `classify_kernel_rows`; `summarize_trace_coverage` | role, unknown-kernel, and coverage tests | 1,290 kernel rows; minimum launch coverage `1.0`; minimum duration coverage `1.0` | `PASS` |
-| Candidate-segment reconstruction | `build_candidate_segments`; `finalize_evidence` | segment boundary, stream, signature, interval, and global-ID tests | 48 globally numbered segments; two signatures are stable across all three contexts | `PASS` |
-| Profiler perturbation | `lease_sealed_persistent_decode_ceiling.py::build_ceiling_report` | median/P95 perturbation boundary tests | maximum median perturbation `1.710314%` <= `10%`; maximum P95 perturbation `1.405524%` <= `15%` | `PASS` |
-| Aggregate headroom | `classify_ceiling` | `test_complete_headroom_returns_go`; aggregate-boundary test | aggregate optimistic median TPOT improvement `82.155817%` >= `5%` | `PASS` |
-| Per-context headroom | `classify_ceiling` | per-context boundary test | minimum context ceiling `81.051352%` >= `3%` | `PASS` |
-| Candidate CUDA share | `classify_ceiling` | candidate-share boundary test | aggregate candidate CUDA-duration share `100%` >= `4%` within the selected decode transactions | `PASS` |
-| Raw trace remote-only handling | `_download_inventory_record`; `stream_and_verify_raw_traces`; compact filter | temporary-file and compact-filter tests; transient-download RED then GREEN | three SQLite traces were streamed, hash checked, and removed; no local `.sqlite` or `.nsys-rep` remains | `PASS` |
-| Download resilience and integrity | `_download_inventory_record`; `download_compact_bundle`; `write_controller_receipts` | `test_download_inventory_record_retries_transient_chunk_failure`; manifest tests | every compact file is rehashed in `controller/download_manifest.json`; three attempts allowed per chunk | `PASS` |
-| Independent verification | `verify_lease_sealed_persistent_decode_ceiling.py::verify_artifact_directory` | reconstruction, tamper, source-drift, manifest, non-finite, and controller-receipt tests | remote verifier and local verifier agree on classification, 15 timing rows, three contexts, 1,290 kernels, and 48 segments; local verifier also confirms three raw traces | `PASS` |
-| Stop-rule compliance | ceiling design and plan | terminal-classification tests | qualification-only work stopped before any persistent CUDA/Triton kernel was implemented | `PASS` |
-| Originality and claim boundary | design and this audit | documentation review | TinyLLMForge-specific lease sealing, segmentation, source binding, and verification protocol; persistent kernels and kernel fusion are not claimed as new primitives | `PASS_SCOPED` |
+Commit `23b0a5e` closes both producer and verifier failure modes:
 
-## Frozen Workload
+- the parser requires and reads `CUPTI_ACTIVITY_KIND_GRAPH_TRACE`;
+- graph intervals become JSON-safe `cuda_graph_execution` rows;
+- those rows classify as `RUNTIME_OR_GRAPH`;
+- graph execution duration contributes to total traced duration;
+- graph rows terminate candidate segments instead of becoming internal gaps;
+- the independent verifier requires graph execution evidence in every decode
+  transaction.
+
+TDD and regression evidence:
+
+```text
+graph-barrier RED:
+  parser omitted cuda_graph_execution and failed the new expectation
+graph-barrier GREEN:
+  33 passed
+qualification suite:
+  104 passed
+adjacent Exact Burst / Phase-Stitched suite:
+  243 passed, 1 deselected
+known unrelated repository defect:
+  dependency-light preflight references the absent function
+  test_model_runner_invalidates_both_burst_graphs
+```
+
+The unrelated preflight defect is present in committed HEAD and was not
+introduced or modified by this correction.
+
+## Frozen Workload and Evidence Closure
 
 ```text
 model: Qwen3-0.6B
@@ -104,117 +137,97 @@ timing repetitions: 5 per context
 timing rows: 15 / 15
 structural rows: 3 / 3
 decode transactions: 48
-kernel rows: 1,290
-candidate segment rows: 48
+execution rows: 1,671
+ordinary candidate rows: 1,290
+CUDA Graph execution rows: 381
+candidate segment rows: 381
 failures / fallbacks / rollbacks: 0 / 0 / 0
+worker stages: 10 / 10 exit 0
+remote verifier: PASS
+streamed raw-trace verification: PASS, 3 / 3
+standalone local verifier: PASS
 ```
+
+The 381 graph executions are 127 executions per context. Their presence
+explains the long intervals that r5 incorrectly treated as candidate gaps.
 
 ## Benefit and Cost
 
-| Context | Baseline median TPOT | Candidate CUDA duration | Optimistic zero-cost improvement | Profile median perturbation | Profile P95 perturbation |
+| Context | Baseline median TPOT | Eligible zero-cost time/token | Optimistic improvement | Candidate CUDA share | Profile median / P95 perturbation |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 256 | `2.164975 ms` | `0.679268 ms` per traced transaction | `82.736802%` | `1.710314%` | `0.000000%` |
-| 2,048 | `2.450711 ms` | `0.677612 ms` per traced transaction | `82.155817%` | `1.405990%` | `1.405524%` |
-| 8,192 | `2.999532 ms` | `0.684488 ms` per traced transaction | `81.051352%` | `1.609426%` | `0.381280%` |
+| 256 | `2.166331 ms` | `0.024230 ms` | `1.118496%` | `0.264442%` | `1.610125% / 0.000000%` |
+| 2,048 | `2.454015 ms` | `0.023577 ms` | `0.960747%` | `0.231296%` | `1.452253% / 1.466947%` |
+| 8,192 | `3.003892 ms` | `0.023589 ms` | `0.785290%` | `0.195604%` | `1.570916% / 3.745591%` |
 
-Aggregate and coverage metrics:
-
-```text
-aggregate optimistic median TPOT improvement: 82.1558174155%
-minimum per-context optimistic improvement:   81.0513518849%
-aggregate candidate CUDA-duration share:     100.0000000000%
-minimum classified launch ratio:               1.0000000000
-minimum classified duration ratio:             1.0000000000
-stable cross-context signatures:               2
-```
-
-The measured cost of producing this qualification was:
+Aggregate gate:
 
 ```text
-uninstrumented measured E2E sum:                 5.757451201 s
-profiled measured E2E sum:                       1.184095697 s
-post-timing profile/export/finalize wall span: 367.855818 s
-producer wall span:                           1,641.953568 s
-remote .nsys-rep bytes:                         126,209,606
-remote SQLite bytes:                            505,884,672
-total remote raw-profiler bytes:                632,094,278
-total remote raw-profiler size:                 602.812078 MiB
-local compact evidence bytes:                       703,682
-local compact evidence size:                      0.671083 MiB
+aggregate optimistic median TPOT improvement:
+  0.9607474565% < 5.0%       FAIL
+minimum per-context optimistic improvement:
+  0.7852899440% < 3.0%       FAIL
+aggregate candidate CUDA-duration share:
+  0.2268287748% < 4.0%       FAIL
+minimum classified launch ratio:
+  1.0 >= 0.98                PASS
+minimum classified duration ratio:
+  1.0 >= 0.99                PASS
+maximum profiler median perturbation:
+  1.6101247242% <= 10.0%     PASS
+maximum profiler P95 perturbation:
+  3.7455911383% <= 15.0%     PASS
+stable cross-context signatures:
+  2 >= 1                     PASS
 ```
 
-The `100%` candidate share is scoped to CUDA kernel duration inside the
-selected, bounded decode transaction ranges. It is not a claim that the
-whole request, model, or serving stack can be eliminated. Likewise, the
-`82.155817%` result is an intentionally optimistic zero-cost ceiling, not an
-observed acceleration.
-
-## Verifier Closure
-
-The remote independent verifier reports:
+Qualification/storage cost:
 
 ```text
-verified: true
-classification: GO_PERSISTENT_DECODE_CEILING
-timing rows: 15
-structural contexts: 3
-kernel rows: 1,290
-segment rows: 48
-source commit: 9bf07719e1344ebf3865e255691b619b1ae9a3aa
+remote .nsys-rep plus SQLite:
+  627,392,539 bytes / approximately 598.33 MiB
+local compact evidence:
+  1,019,145 bytes / 0.971932 MiB
+local SQLite or .nsys-rep:
+  none
 ```
 
-The local independent verifier reconstructs the same fields from the compact
-bundle and additionally validates all three streamed raw SQLite digests.
-The standalone local verifier also exits zero with the same classification.
-The compact manifest contains 11 producer artifacts, while the controller
-download manifest independently hashes all 12 compact files including
-`manifest.json`.
+## Prompt-to-Artifact Checklist
 
-## Attempt History
+| Requirement | Canonical evidence | Verdict |
+| --- | --- | --- |
+| Source and workload identity | pushed source `23b0a5e...`; tree `f63aec8...`; frozen 3-context workload | `PASS` |
+| Approved mounted storage only | all remote paths below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | `PASS` |
+| Strict-clean launch | two admissions; selected GPU 0 at 0 MiB, 0%, no process | `PASS` |
+| Complete execution inventory | 1,290 candidate rows plus 381 graph executions | `PASS_CORRECTED` |
+| Graph barriers | every transaction contains `RUNTIME_OR_GRAPH`; 381 separate candidate segments | `PASS` |
+| Exact behavior | token IDs/text match; 127 forwards and commits per context; zero anomalies | `PASS_EXACT` |
+| Coverage | launch and duration classification both 100% | `PASS` |
+| Profiler perturbation | median maximum `1.610125%`; P95 maximum `3.745591%` | `PASS` |
+| Aggregate headroom | `0.960747%` against `5%` | `FAIL_THRESHOLD` |
+| Per-context headroom | minimum `0.785290%` against `3%` | `FAIL_THRESHOLD` |
+| Candidate CUDA share | `0.226829%` against `4%` | `FAIL_THRESHOLD` |
+| Independent closure | remote, streamed-raw, and local verifiers agree on r6 | `PASS` |
+| Stop rule | no persistent CUDA/Triton runtime implemented | `PASS` |
 
-- r1 was consumed by a second-admission race before workload launch.
-- r2 completed measurements but exposed timing-prompt drift.
-- r3 completed the producer but exposed per-context versus global segment-ID
-  numbering.
-- r4 completed the producer and remote verifier, then a transient SSH close
-  interrupted the first compact download. It is retained as partial and is
-  not canonical.
-- r5 includes the chunk-level retry fix and completed the complete producer,
-  remote verifier, streamed raw-trace verification, compact download, and
-  local verifier lifecycle.
-
-## Classification and Next Boundary
-
-Every frozen threshold passes and `failed_conditions` is empty. Therefore:
+## Final Classification and Boundary
 
 ```text
-PERSISTENT_DECODE_CEILING=GO_PERSISTENT_DECODE_CEILING
-RUNTIME_DESIGN_AUTHORIZED=true
-RUNTIME_IMPLEMENTED=false
-MEASURED_RUNTIME_SPEEDUP_ESTABLISHED=false
-PRODUCTION_PROMOTION_AUTHORIZED=false
-NEXT_COMMAND=write docs/superpowers/specs/2026-08-30-lease-sealed-persistent-decode-megakernel-runtime-design.md before any CUDA or Triton implementation
+PERSISTENT_DECODE_CEILING_RUN=20260830-qwen3-06b-persistent-decode-ceiling-r6
+PERSISTENT_DECODE_CEILING_SOURCE_COMMIT=23b0a5e3b243873e77362a233c38d4e9a37bda66
+PERSISTENT_DECODE_CEILING_CLASSIFICATION=NO_GO_PERSISTENT_DECODE_CEILING
+PERSISTENT_DECODE_CEILING_CORRECTNESS=PASS_EXACT
+PERSISTENT_DECODE_CEILING_REMOTE_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_LOCAL_VERIFIER=PASS
+PERSISTENT_DECODE_RUNTIME_DESIGN_AUTHORIZED=false
+PERSISTENT_DECODE_RUNTIME_IMPLEMENTED=false
+PERSISTENT_DECODE_MEASURED_SPEEDUP=false
+PERSISTENT_DECODE_PRODUCTION_PROMOTION=false
+R5_RESULT=SUPERSEDED_INVALID_TRACE_MODEL
+NEXT_COMMAND=select a different optimization target with measurable runtime headroom
 ```
 
-The next stage must define a realizable subset of the two stable segment
-signatures, execution ownership, persistent-state lifetime, synchronization,
-fallback and quarantine behavior, retained-memory limits, correctness
-authority, and a measured benefit/cost gate. Only that later runtime gate can
-establish actual TPOT or throughput improvement.
-
-## Claim Boundary
-
-This qualification proves substantial theoretical headroom in the selected
-Exact Greedy K8 decode transactions on one Qwen3-0.6B BF16 TP1 batch-one A100
-workload. It proves complete trace coverage, stable candidate signatures,
-exact output/accounting behavior, bounded profiler perturbation, and
-independent evidence reconstruction.
-
-It does not prove that a persistent kernel can realize the full ceiling, that
-the implementation will improve end-to-end latency, or that the result
-generalizes to Qwen3-8B, Qwen3.8-27B, tensor parallelism, batching,
-non-greedy sampling, variable output lengths, other GPUs, or production
-traffic. The underlying persistent-kernel and fusion concepts are prior art;
-the original contribution claimed here is the TinyLLMForge-specific
-lease-sealed composition and its source-bound execution and verification
-protocol.
+This campaign establishes that a lease-sealed persistent decode megakernel is
+not a worthwhile next implementation for this frozen workload. It does not
+show that persistent kernels are universally ineffective; it shows that this
+specific TinyLLMForge target leaves less than 1% optimistic TPOT headroom once
+CUDA Graph execution is represented correctly.

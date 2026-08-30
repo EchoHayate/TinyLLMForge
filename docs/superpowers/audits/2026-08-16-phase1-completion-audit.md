@@ -4510,7 +4510,11 @@ PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
 
-## 2026-08-30 latest reconciliation: Lease-Sealed Persistent Decode MegaKernel Ceiling
+## 2026-08-30 superseded reconciliation: Lease-Sealed Persistent Decode r5
+
+> Superseded: this r5 section used a parser that omitted Nsight CUDA Graph
+> execution intervals. The authoritative result is the corrected r6
+> reconciliation below.
 
 The qualification-only persistent-decode campaign completed against
 Qwen3-0.6B BF16 TP1 batch one on a strict-clean A100:
@@ -4574,6 +4578,89 @@ PERSISTENT_DECODE_CEILING_RUNTIME_DESIGN_AUTHORIZED=true
 PERSISTENT_DECODE_CEILING_RUNTIME_IMPLEMENTED=false
 PERSISTENT_DECODE_CEILING_PRODUCTION_PROMOTION=false
 NEXT_COMMAND=write docs/superpowers/specs/2026-08-30-lease-sealed-persistent-decode-megakernel-runtime-design.md before any CUDA or Triton implementation
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
+
+## 2026-08-30 latest reconciliation: corrected Persistent Decode r6
+
+The r5 `GO_PERSISTENT_DECODE_CEILING` result is invalid. Its parser read only
+`CUPTI_ACTIVITY_KIND_KERNEL`; it did not read
+`CUPTI_ACTIVITY_KIND_GRAPH_TRACE`. As a result, 381 CUDA Graph executions
+were absent from the compact execution inventory and their occupied time was
+misclassified as removable internal gap.
+
+Commit `23b0a5e3b243873e77362a233c38d4e9a37bda66` adds graph-trace parsing,
+`RUNTIME_OR_GRAPH` barriers, graph duration coverage, and an independent
+verifier requirement that every decode transaction contain graph execution
+evidence. The correction used TDD and passed the 104-test qualification
+suite. The adjacent Exact Burst / Phase-Stitched suite passed 243 tests with
+one known unrelated dependency-light preflight deselected.
+
+The fresh immutable campaign completed:
+
+```text
+source commit:
+  23b0a5e3b243873e77362a233c38d4e9a37bda66
+source tree SHA-256:
+  f63aec8f5cecdd296fcdf75301a00281914900365855761a188726b30fa0c1d3
+run tag:
+  20260830-qwen3-06b-persistent-decode-ceiling-r6
+selected GPU:
+  GPU-57be086f-e967-c022-3832-93df4fc77bd0
+classification:
+  NO_GO_PERSISTENT_DECODE_CEILING
+```
+
+### Corrected prompt-to-artifact checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Strict-clean, mounted-only execution | two clean admissions; all task data below approved `/data00/home/sitian/...` root | `PASS` |
+| Complete frozen workload | 15 timing rows, 3 structural rows, 48 transactions | `PASS` |
+| Correct graph-aware trace | 1,290 candidate rows plus 381 CUDA Graph execution rows | `PASS_CORRECTED` |
+| Exact behavior | token IDs/text match; 127 forwards and commits per context; zero failure/fallback/rollback | `PASS_EXACT` |
+| Trace coverage and stability | 100% launch/duration classification; two stable signatures | `PASS` |
+| Profiler perturbation | maximum median `1.610125%`; maximum P95 `3.745591%` | `PASS` |
+| Aggregate optimistic headroom | `0.960747%` against `5%` threshold | `FAIL_THRESHOLD` |
+| Minimum context headroom | `0.785290%` against `3%` threshold | `FAIL_THRESHOLD` |
+| Candidate CUDA-duration share | `0.226829%` against `4%` threshold | `FAIL_THRESHOLD` |
+| Independent closure | 10/10 worker stages, remote verifier, 3/3 streamed raw traces, local verifier | `PASS` |
+| Storage boundary | approximately 598.33 MiB raw remains remote; local compact is 0.971932 MiB with no profiler database | `PASS` |
+| Stop rule | no persistent CUDA/Triton runtime implemented | `PASS` |
+
+### Corrected executive matrix
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Lease-Sealed Persistent Decode ceiling | Complete graph-aware source-bound A100 qualification | `NO_GO_PERSISTENT_DECODE_CEILING` |
+| Optimistic median TPOT headroom | aggregate `0.960747%`; per-context minimum `0.785290%` | `INSUFFICIENT` |
+| Candidate CUDA share | aggregate `0.226829%` after graph execution duration is included | `INSUFFICIENT` |
+| Correctness and accounting | exact tokens/text; forwards equal commits; zero anomalies | `PASS` |
+| Evidence closure | remote, streamed-raw, and local verifiers agree | `PASS` |
+| Measured runtime improvement | no persistent runtime exists | `NOT_ESTABLISHED` |
+| Promotion boundary | persistent runtime design and implementation are not authorized | `STOP` |
+
+Detailed evidence is in
+`docs/superpowers/audits/2026-08-30-lease-sealed-persistent-decode-megakernel-ceiling-audit.md`.
+
+```text
+PERSISTENT_DECODE_CEILING_RUN=20260830-qwen3-06b-persistent-decode-ceiling-r6
+PERSISTENT_DECODE_CEILING_SOURCE_COMMIT=23b0a5e3b243873e77362a233c38d4e9a37bda66
+PERSISTENT_DECODE_CEILING_CLASSIFICATION=NO_GO_PERSISTENT_DECODE_CEILING
+PERSISTENT_DECODE_CEILING_REMOTE_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_LOCAL_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_RAW_TRACE_COUNT=3
+PERSISTENT_DECODE_CEILING_AGGREGATE_OPTIMISTIC_TPOT=0_960747_PERCENT
+PERSISTENT_DECODE_CEILING_MINIMUM_CONTEXT_OPTIMISTIC_TPOT=0_785290_PERCENT
+PERSISTENT_DECODE_CEILING_CANDIDATE_CUDA_SHARE=0_226829_PERCENT
+PERSISTENT_DECODE_CEILING_RUNTIME_DESIGN_AUTHORIZED=false
+PERSISTENT_DECODE_CEILING_RUNTIME_IMPLEMENTED=false
+PERSISTENT_DECODE_CEILING_PRODUCTION_PROMOTION=false
+R5_RESULT=SUPERSEDED_INVALID_TRACE_MODEL
+NEXT_COMMAND=select a different optimization target with measurable runtime headroom
 
 PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED

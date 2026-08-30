@@ -51666,7 +51666,11 @@ NEXT_OPTIMIZATION=LEASE_SEALED_PERSISTENT_DECODE_MEGAKERNEL_DESIGN
 NEXT_COMMAND=write a source-grounded design and ceiling-first plan before runtime implementation
 ```
 
-## 2026-08-30 Lease-Sealed Persistent Decode MegaKernel ceiling reconciliation
+## 2026-08-30 superseded Persistent Decode r5 reconciliation
+
+The r5 conclusion in this section is superseded. Its parser omitted
+`CUPTI_ACTIVITY_KIND_GRAPH_TRACE`, so CUDA Graph execution time was counted
+as removable candidate gap. Use the corrected r6 reconciliation at EOF.
 
 The qualification-only campaign is complete in the authoritative checkout:
 
@@ -51774,4 +51778,115 @@ PERSISTENT_DECODE_RUNTIME_IMPLEMENTED=false
 PERSISTENT_DECODE_MEASURED_SPEEDUP=false
 PERSISTENT_DECODE_PRODUCTION_PROMOTION=false
 NEXT_COMMAND=write docs/superpowers/specs/2026-08-30-lease-sealed-persistent-decode-megakernel-runtime-design.md before any CUDA or Triton implementation
+```
+
+## 2026-08-30 corrected Persistent Decode r6 reconciliation
+
+The graph-aware correction is committed and pushed:
+
+```text
+commit:
+  23b0a5e3b243873e77362a233c38d4e9a37bda66
+branch:
+  feat/kv-sparse-attention
+remote:
+  origin/feat/kv-sparse-attention
+```
+
+The parser now requires and reads
+`CUPTI_ACTIVITY_KIND_GRAPH_TRACE`, emits `cuda_graph_execution` rows,
+classifies them as `RUNTIME_OR_GRAPH`, includes their duration in coverage,
+and uses them as candidate-segment barriers. The independent verifier
+requires graph execution evidence in every decode transaction. The focused
+qualification suite passed 104 tests. The adjacent suite passed 243 tests
+with the unrelated broken dependency-light preflight deselected; that
+preflight references the absent
+`test_model_runner_invalidates_both_burst_graphs` function in committed HEAD.
+
+Read-only corrected r5 diagnostics already reduced the apparent result from
+`82.155817%` to approximately `1.000027%` optimistic median headroom and
+`0.228078%` candidate CUDA share. The old compact r5 bundle is now rejected
+with `graph execution inventory is incomplete`.
+
+The fresh immutable r6 campaign then completed all ten worker stages, remote
+verification, three streamed raw-SQLite checks, compact download, and local
+verification:
+
+```text
+canonical run:
+  20260830-qwen3-06b-persistent-decode-ceiling-r6
+source commit:
+  23b0a5e3b243873e77362a233c38d4e9a37bda66
+source tree SHA-256:
+  f63aec8f5cecdd296fcdf75301a00281914900365855761a188726b30fa0c1d3
+classification:
+  NO_GO_PERSISTENT_DECODE_CEILING
+worker stages:
+  10 / 10 exit 0
+timing / structural rows:
+  15 / 3
+execution rows:
+  1,671
+candidate / graph rows:
+  1,290 / 381
+candidate segments:
+  381
+aggregate optimistic median TPOT:
+  0.9607474565% < 5.0%
+minimum context optimistic TPOT:
+  0.7852899440% < 3.0%
+aggregate candidate CUDA-duration share:
+  0.2268287748% < 4.0%
+maximum profiler median / P95 perturbation:
+  1.6101247242% / 3.7455911383%
+remote / local verifier:
+  PASS / PASS
+streamed raw traces:
+  3 / 3 PASS
+```
+
+All eight A100s were clean at admission, and GPU 0 was selected at 0 MiB,
+0% utilization, and zero compute processes. All remote task data remained
+below:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+```
+
+Heavy profiler data remains remote:
+
+```text
+remote .nsys-rep plus SQLite:
+  627,392,539 bytes / approximately 598.33 MiB
+local compact bundle:
+  1,019,145 bytes / 0.971932 MiB
+local SQLite or .nsys-rep:
+  none
+```
+
+Canonical evidence:
+
+```text
+local:
+  artifacts/lease_sealed_persistent_decode/
+    20260830-qwen3-06b-persistent-decode-ceiling-r6/
+remote:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+    persistent-decode-ceiling/
+audit:
+  docs/superpowers/audits/
+    2026-08-30-lease-sealed-persistent-decode-megakernel-ceiling-audit.md
+```
+
+```text
+PERSISTENT_DECODE_CEILING=NO_GO_PERSISTENT_DECODE_CEILING
+PERSISTENT_DECODE_CEILING_CORRECTNESS=PASS_EXACT
+PERSISTENT_DECODE_CEILING_REMOTE_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_LOCAL_VERIFIER=PASS
+PERSISTENT_DECODE_RUNTIME_DESIGN_AUTHORIZED=false
+PERSISTENT_DECODE_RUNTIME_IMPLEMENTED=false
+PERSISTENT_DECODE_MEASURED_SPEEDUP=false
+PERSISTENT_DECODE_PRODUCTION_PROMOTION=false
+R5_RESULT=SUPERSEDED_INVALID_TRACE_MODEL
+NEXT_COMMAND=select a different optimization target with measurable runtime headroom
 ```

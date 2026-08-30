@@ -1,0 +1,65 @@
+{
+  "artifacts": [
+    {
+      "byte_length": 3722,
+      "path": "ceiling.json",
+      "sha256": "ffedb203757d5f20b5d35e1d76b8f6c6425a8df15690d1858a4d72b45e990957"
+    },
+    {
+      "byte_length": 240,
+      "path": "gpu_admission.json",
+      "sha256": "7f974baf04a27e7b192a74f50fd5ec00c4666ec43891ccbd6f4758dbe73160eb"
+    },
+    {
+      "byte_length": 717511,
+      "path": "kernel_rows.jsonl",
+      "sha256": "1b16fca1d78880fbb9555501d792db97c26b690e7661a5600ddd572b7796ef11"
+    },
+    {
+      "byte_length": 1848,
+      "path": "manifest.json",
+      "sha256": "1e93cfb57cc87c0b99a9c4ae4fe48e253e3b97f39087714791435bd01cb72f57"
+    },
+    {
+      "byte_length": 484,
+      "path": "runtime_manifest.json",
+      "sha256": "c31d7f28f0dfaa3e330be39c432cad434bfeb9b0db0e77f41ffd69452988fbe7"
+    },
+    {
+      "byte_length": 196836,
+      "path": "segment_rows.jsonl",
+      "sha256": "fa727eddcd7dd81d445fd80763cb043cc75f07594837fb881e9ca43b37b12df2"
+    },
+    {
+      "byte_length": 2493,
+      "path": "source_manifest.json",
+      "sha256": "ae743d898dc0357e4457548da1d4a761d4b4e01da761b7606763451f21f4579f"
+    },
+    {
+      "byte_length": 5042,
+      "path": "structural_rows.jsonl",
+      "sha256": "d40d14400c85f3229d5984cf959936d340ae63b4d95951c0c56b5e8067af7e49"
+    },
+    {
+      "byte_length": 49362,
+      "path": "timing_rows.jsonl",
+      "sha256": "e91a4f1869a329cc1d502a0d816a98870095b522b28323517145902962c4d188"
+    },
+    {
+      "byte_length": 135,
+      "path": "timing_summary.json",
+      "sha256": "fbc5a371ec8a79dec070be385725658e58f536c865b3c2cab87b118ccd5bd2e1"
+    },
+    {
+      "byte_length": 10584,
+      "path": "trace_inventory.json",
+      "sha256": "bd80262ea08931d5e77b07861ccb381f384f9dace7a5997cbc49f979464be816"
+    },
+    {
+      "byte_length": 198,
+      "path": "workload_manifest.json",
+      "sha256": "39baa539936e96fccb553bc485682aee32e4c846dbfc3a3f1ffeeb3b628b2b54"
+    }
+  ],
+  "schema_version": "lease-sealed-persistent-decode.download-manifest.v1"
+}
