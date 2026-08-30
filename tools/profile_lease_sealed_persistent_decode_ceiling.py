@@ -618,7 +618,10 @@ def finalize_evidence(
         )
         context_rows.append(context_row)
         all_kernels.extend(kernels)
-        all_segments.extend(segments)
+        for segment in segments:
+            normalized_segment = dict(segment)
+            normalized_segment["segment_id"] = len(all_segments)
+            all_segments.append(normalized_segment)
         trace_inventory.append({
             "context_length": context,
             "remote_path": str(trace_path),

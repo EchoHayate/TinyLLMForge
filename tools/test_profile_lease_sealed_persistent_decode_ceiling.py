@@ -362,7 +362,10 @@ def test_finalize_writes_raw_trace_inventory_and_manifest(
                 "quarantine_reason": None,
             },
             [],
-            [],
+            [{
+                "context": structural["context_length"],
+                "segment_id": 0,
+            }],
         ),
     )
     monkeypatch.setattr(
@@ -406,6 +409,11 @@ def test_finalize_writes_raw_trace_inventory_and_manifest(
     assert {
         row["path"] for row in manifest["artifacts"]
     } == set(profile.MANIFEST_FILES)
+    segments = [
+        json.loads(line)
+        for line in (output / "segment_rows.jsonl").read_text().splitlines()
+    ]
+    assert [row["segment_id"] for row in segments] == [0, 1, 2]
 
 
 def test_finalize_rejects_structural_output_mismatch(tmp_path):
