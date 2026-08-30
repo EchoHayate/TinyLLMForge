@@ -140,7 +140,7 @@ For each request, record synchronized timestamps for:
 The primary removable interval is:
 
 ```text
-first K8 replay submission - final prefill CUDA completion
+first K8 replay submission - first token available on the host
 ```
 
 Secondary decomposition reports:
@@ -151,6 +151,10 @@ Secondary decomposition reports:
 - K8 lease preparation;
 - decode metadata landing;
 - unclassified residual.
+
+The final-prefill-CUDA-completion timestamp is diagnostic context only. The
+gate does not count the first-token D2H interval as removable because the
+stitched design must preserve first-token host visibility.
 
 Instrumentation must be disabled by default and must not add a synchronization
 to either benchmark arm.
