@@ -1986,15 +1986,18 @@ class RemoteController:
         path: str,
         rows: Sequence[Mapping],
     ) -> None:
+        CampaignPaths.create(
+            remote_root=self.config.remote_root,
+            model_path=self.config.model_path,
+        ).require_owned_remote(path)
         payload = "".join(
             json.dumps(dict(row), sort_keys=True) + "\n"
             for row in rows
         ).encode("utf-8")
-        encoded = base64.b64encode(payload).decode("ascii")
         script = "\n".join((
-            "import base64,os,sys",
+            "import os,sys",
             "path=sys.argv[1]",
-            "payload=base64.b64decode(sys.argv[2])",
+            "payload=sys.stdin.buffer.read()",
             "os.makedirs(os.path.dirname(path),exist_ok=True)",
             "temporary=path+'.writing'",
             "with open(temporary,'wb') as handle:",
@@ -2003,7 +2006,10 @@ class RemoteController:
             " os.fsync(handle.fileno())",
             "os.replace(temporary,path)",
         ))
-        self.remote_python(script, path, encoded)
+        self.remote_with_input(
+            ["python3", "-c", script, path],
+            payload,
+        )
 
     def _record_vllm_probe(self, path: str, probe: Mapping) -> None:
         CampaignPaths.create(

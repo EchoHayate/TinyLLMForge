@@ -301,6 +301,28 @@ def test_remote_binary_input_uses_ssh_stdin_without_text_mode():
     assert runner.calls[0][1]["env"]["KRB5CCNAME"] == KRB5_CACHE
 
 
+def test_remote_jsonl_write_streams_payload_over_stdin():
+    runner = BinaryRecordingRunner(stdout=b"")
+    controller = RemoteController(
+        _config(),
+        command_runner=runner,
+        sleep=lambda _seconds: None,
+    )
+    path = (
+        f"{controller.config.attempt_root}/canonical-aggregate/"
+        "case_rows.jsonl"
+    )
+
+    controller._write_remote_jsonl(path, [{"value": "x" * 1024}])
+
+    argv, kwargs = runner.calls[0]
+    assert kwargs["input"] == (
+        json.dumps({"value": "x" * 1024}, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    assert kwargs["text"] is False
+    assert "x" * 128 not in " ".join(argv)
+
+
 def test_existing_frozen_source_is_verified_without_restreaming(
     monkeypatch,
 ):
