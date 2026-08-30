@@ -42,6 +42,7 @@ MINIMUM_KERBEROS_LIFETIME_SECONDS = 5_400
 NSYS_PATH = "/usr/local/bin/nsys"
 CONTEXT_LENGTHS = (256, 2048, 8192)
 GENERATED_TOKENS = 128
+DOWNLOAD_RETRIES = 3
 COMPACT_FILES = frozenset({
     "source_manifest.json",
     "runtime_manifest.json",
@@ -647,12 +648,22 @@ def _download_inventory_record(
     digest = hashlib.sha256()
     with target.open("xb") as handle:
         for chunk in record["chunks"]:
-            payload = base.download_chunk(
-                remote_root + "/" + record["path"],
-                offset=chunk["offset"],
-                length=chunk["length"],
-                expected_sha256=chunk["sha256"],
-            )
+            last_error = None
+            for _attempt in range(DOWNLOAD_RETRIES):
+                try:
+                    payload = base.download_chunk(
+                        remote_root + "/" + record["path"],
+                        offset=chunk["offset"],
+                        length=chunk["length"],
+                        expected_sha256=chunk["sha256"],
+                    )
+                    break
+                except (RuntimeError, ValueError) as error:
+                    last_error = error
+            else:
+                raise RuntimeError(
+                    "artifact chunk download failed: " + record["path"]
+                ) from last_error
             handle.write(payload)
             digest.update(payload)
     if (

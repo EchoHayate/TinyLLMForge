@@ -355,6 +355,45 @@ def test_download_compact_bundle_rejects_existing_destination(
         )
 
 
+def test_download_inventory_record_retries_transient_chunk_failure(
+    monkeypatch,
+    tmp_path: Path,
+):
+    payload = b"compact evidence"
+    record = {
+        "path": "ceiling.json",
+        "size_bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "chunks": [{
+            "offset": 0,
+            "length": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }],
+    }
+    attempts = []
+
+    def download_chunk(_path, **_kwargs):
+        attempts.append("download")
+        if len(attempts) == 1:
+            raise RuntimeError(
+                "remote artifact chunk download failed: "
+                "Connection closed by UNKNOWN port 65535"
+            )
+        return payload
+
+    monkeypatch.setattr(remote.base, "download_chunk", download_chunk)
+
+    target = tmp_path / "ceiling.json"
+    remote._download_inventory_record(
+        remote_root=remote.TASK_REMOTE_ROOT + "/runs/run-a",
+        record=record,
+        target=target,
+    )
+
+    assert attempts == ["download", "download"]
+    assert target.read_bytes() == payload
+
+
 def test_write_controller_receipts_records_plan_admission_and_download(
     tmp_path: Path,
 ):
