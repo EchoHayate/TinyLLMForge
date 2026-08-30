@@ -234,7 +234,7 @@ def run_timing_case(
             llm,
             prompt=_make_prompt(
                 prompt_tokens,
-                offset=repetition * 10_007,
+                offset=0,
             ),
             generated_tokens=generated_tokens,
             policy="decode_burst_k8",

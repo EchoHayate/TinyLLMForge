@@ -149,7 +149,7 @@ def test_timing_case_uses_uninstrumented_exact_path(monkeypatch):
         source_tree_sha256="b" * 64,
         runtime_identity_sha256="c" * 64,
         workload_identity_sha256="d" * 64,
-        repetition=0,
+        repetition=3,
         prompt_tokens=256,
         generated_tokens=128,
         gpu_memory_utilization=0.5,
@@ -158,6 +158,7 @@ def test_timing_case_uses_uninstrumented_exact_path(monkeypatch):
     assert len(calls) == 3
     assert all(call["profile_label"] is None for call in calls)
     assert all(call["policy"] == "decode_burst_k8" for call in calls)
+    assert calls[-1]["prompt"] == profile._make_prompt(256, offset=0)
     assert row["arm"] == "uninstrumented"
     assert row["tpot_median_ns"] == 2_000_000
     assert row["target_model_forwards"] == 127
