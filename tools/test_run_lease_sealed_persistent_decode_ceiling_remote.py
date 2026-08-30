@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 from tempfile import TemporaryDirectory
 
@@ -16,6 +17,18 @@ import pytest
 
 from tools import profile_lease_sealed_persistent_decode_ceiling as profile
 from tools import run_lease_sealed_persistent_decode_ceiling_remote as remote
+
+
+def test_direct_script_entrypoint_can_import_tools():
+    result = subprocess.run(
+        [sys.executable, str(Path(remote.__file__)), "--help"],
+        cwd=Path(remote.__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _gpu(

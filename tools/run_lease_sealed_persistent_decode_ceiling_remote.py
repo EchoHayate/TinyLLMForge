@@ -11,8 +11,12 @@ from pathlib import Path, PurePosixPath
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import profile_lease_sealed_persistent_decode_ceiling as profile
 from tools import run_staged_inference_benchmark_remote as base
