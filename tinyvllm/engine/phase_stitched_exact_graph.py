@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from typing import Optional
@@ -412,22 +412,43 @@ def build_phase_stitch_lease(
     )
 
 
-@dataclass(frozen=True)
+@dataclass
 class PhaseStitchPrefixResult:
     parent_lease_identity_sha256: str
-    token: int
+    token: Optional[int]
     token_ordinal: int
     replay_count: int
     d2h_calls: int
     d2h_bytes: int
+    completion: object = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    mailbox: object = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         _require_digest(
             self.parent_lease_identity_sha256,
             "parent_lease_identity_sha256",
         )
+        if self.token is not None:
+            _require_non_negative_int(self.token, "token")
+        elif (
+            not callable(
+                getattr(self.completion, "synchronize", None)
+            )
+            or not callable(getattr(self.mailbox, "tolist", None))
+        ):
+            raise ValueError(
+                "unresolved prefix result requires completion "
+                "and mailbox"
+            )
         for name in (
-            "token",
             "token_ordinal",
             "replay_count",
             "d2h_calls",
@@ -435,32 +456,62 @@ class PhaseStitchPrefixResult:
         ):
             _require_non_negative_int(getattr(self, name), name)
 
+    @property
+    def resolved(self) -> bool:
+        return self.token is not None
 
-@dataclass(frozen=True)
+    def wait_token(self) -> int:
+        if self.token is None:
+            self.completion.synchronize()
+            values = self.mailbox.tolist()
+            if (
+                not isinstance(values, (list, tuple))
+                or len(values) != 1
+            ):
+                raise RuntimeError(
+                    "first-token mailbox inventory is invalid"
+                )
+            token = values[0]
+            _require_non_negative_int(token, "token")
+            self.token = token
+        return self.token
+
+
+@dataclass
 class PhaseStitchSuffixResult:
     parent_lease_identity_sha256: str
-    tokens: tuple[int, ...]
+    tokens: Optional[tuple[int, ...]]
     first_token_ordinal: int
     replay_count: int
     d2h_calls: int
     d2h_bytes: int
+    completion: object = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    mailbox: object = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         _require_digest(
             self.parent_lease_identity_sha256,
             "parent_lease_identity_sha256",
         )
-        if (
-            not isinstance(self.tokens, tuple)
-            or any(
-                isinstance(token, bool)
-                or not isinstance(token, int)
-                or token < 0
-                for token in self.tokens
+        if self.tokens is not None:
+            self._validate_tokens(self.tokens)
+        elif (
+            not callable(
+                getattr(self.completion, "synchronize", None)
             )
+            or not callable(getattr(self.mailbox, "tolist", None))
         ):
             raise ValueError(
-                "suffix tokens must be a tuple of non-negative integers"
+                "unresolved suffix result requires completion "
+                "and mailbox"
             )
         for name in (
             "first_token_ordinal",
@@ -469,6 +520,44 @@ class PhaseStitchSuffixResult:
             "d2h_bytes",
         ):
             _require_non_negative_int(getattr(self, name), name)
+
+    @staticmethod
+    def _validate_tokens(tokens) -> tuple[int, ...]:
+        if (
+            not isinstance(tokens, tuple)
+            or any(
+                isinstance(token, bool)
+                or not isinstance(token, int)
+                or token < 0
+                for token in tokens
+            )
+        ):
+            raise ValueError(
+                "suffix tokens must be a tuple of non-negative integers"
+            )
+        return tokens
+
+    @property
+    def resolved(self) -> bool:
+        return self.tokens is not None
+
+    def wait_tokens(self) -> tuple[int, ...]:
+        if self.tokens is None:
+            self.completion.synchronize()
+            values = self.mailbox.tolist()
+            if not isinstance(values, (list, tuple)):
+                raise RuntimeError(
+                    "suffix mailbox inventory is invalid"
+                )
+            tokens = tuple(values)
+            try:
+                self._validate_tokens(tokens)
+            except ValueError as error:
+                raise RuntimeError(
+                    "suffix mailbox inventory is invalid"
+                ) from error
+            self.tokens = tokens
+        return self.tokens
 
 
 def validate_phase_stitch_prefix(
@@ -481,6 +570,7 @@ def validate_phase_stitch_prefix(
         raise ValueError("phase stitch prefix has an invalid type")
     if result.parent_lease_identity_sha256 != lease.identity_sha256:
         raise ValueError("prefix parent lease identity mismatch")
+    result.wait_token()
     if result.token_ordinal != lease.first_token_ordinal:
         raise ValueError("prefix token ordinal mismatch")
     if result.replay_count != 0:
@@ -500,15 +590,252 @@ def validate_phase_stitch_suffix(
         raise ValueError("phase stitch suffix has an invalid type")
     if result.parent_lease_identity_sha256 != lease.identity_sha256:
         raise ValueError("suffix parent lease identity mismatch")
+    tokens = result.wait_tokens()
     if result.first_token_ordinal != lease.suffix_start_ordinal:
         raise ValueError("suffix first token ordinal mismatch")
-    if len(result.tokens) != lease.authorized_decode_replay_count:
+    if len(tokens) != lease.authorized_decode_replay_count:
         raise ValueError("suffix token count mismatch")
     if result.replay_count != lease.authorized_decode_replay_count:
         raise ValueError("suffix replay count mismatch")
     if result.d2h_calls != 1 or result.d2h_bytes != 56:
         raise ValueError("suffix D2H accounting mismatch")
     return result
+
+
+class PhaseStitchMailboxBackend:
+    """Own independent pinned mailboxes for one 1/7 transaction."""
+
+    def __init__(
+        self,
+        *,
+        copy_stream,
+        first_token_mailbox,
+        suffix_mailbox,
+        event_factory,
+        current_stream,
+        stream_context,
+        synchronize=None,
+    ):
+        if not callable(event_factory):
+            raise ValueError("event_factory must be callable")
+        if not callable(current_stream):
+            raise ValueError("current_stream must be callable")
+        if not callable(stream_context):
+            raise ValueError("stream_context must be callable")
+        if synchronize is not None and not callable(synchronize):
+            raise ValueError("synchronize must be callable or None")
+        if not callable(getattr(copy_stream, "wait_event", None)):
+            raise ValueError("copy_stream must wait on events")
+        for mailbox, name in (
+            (first_token_mailbox, "first_token_mailbox"),
+            (suffix_mailbox, "suffix_mailbox"),
+        ):
+            if not callable(getattr(mailbox, "copy_", None)):
+                raise ValueError(f"{name} must expose copy_")
+            if not callable(getattr(mailbox, "tolist", None)):
+                raise ValueError(f"{name} must expose tolist")
+        self.copy_stream = copy_stream
+        self.first_token_mailbox = first_token_mailbox
+        self.suffix_mailbox = suffix_mailbox
+        self._event_factory = event_factory
+        self._current_stream = current_stream
+        self._stream_context = stream_context
+        self._synchronize = synchronize
+        self._generation = 0
+        self._active_generation: Optional[int] = None
+        self._active_parent_identity_sha256: Optional[str] = None
+        self._enqueued_phases: set[str] = set()
+        self._owned_results: dict[
+            str,
+            PhaseStitchPrefixResult | PhaseStitchSuffixResult,
+        ] = {}
+
+    @property
+    def active_generation(self) -> Optional[int]:
+        return self._active_generation
+
+    def begin_transaction(
+        self,
+        parent_lease_identity_sha256: str,
+    ) -> int:
+        _require_digest(
+            parent_lease_identity_sha256,
+            "parent_lease_identity_sha256",
+        )
+        if self._active_generation is not None:
+            raise RuntimeError(
+                "phase stitch mailboxes are already owned"
+            )
+        self._generation += 1
+        self._active_generation = self._generation
+        self._active_parent_identity_sha256 = (
+            parent_lease_identity_sha256
+        )
+        self._enqueued_phases.clear()
+        self._owned_results.clear()
+        return self._generation
+
+    def _validate_enqueue(
+        self,
+        *,
+        phase: str,
+        parent_lease_identity_sha256: str,
+        mailbox_generation: int,
+    ) -> None:
+        _require_digest(
+            parent_lease_identity_sha256,
+            "parent_lease_identity_sha256",
+        )
+        if mailbox_generation != self._active_generation:
+            raise ValueError(
+                "mailbox generation does not own the active "
+                "transaction"
+            )
+        if (
+            parent_lease_identity_sha256
+            != self._active_parent_identity_sha256
+        ):
+            raise ValueError(
+                "parent lease identity does not own the active "
+                "transaction"
+            )
+        if phase in self._enqueued_phases:
+            raise ValueError(
+                f"{phase} transfer was already enqueued"
+            )
+
+    def _enqueue_copy(
+        self,
+        *,
+        phase: str,
+        token_slice,
+        mailbox,
+    ):
+        producer = self._event_factory(
+            f"{phase}_compute_done"
+        )
+        producer.record(self._current_stream())
+        self.copy_stream.wait_event(producer)
+        completion = self._event_factory(
+            f"{phase}_copy_done"
+        )
+        with self._stream_context(self.copy_stream):
+            mailbox.copy_(token_slice, non_blocking=True)
+            completion.record(self.copy_stream)
+        self._enqueued_phases.add(phase)
+        return completion
+
+    def enqueue_first_token(
+        self,
+        *,
+        parent_lease_identity_sha256: str,
+        token_slice,
+        mailbox_generation: int,
+    ) -> PhaseStitchPrefixResult:
+        phase = "first_token"
+        self._validate_enqueue(
+            phase=phase,
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            mailbox_generation=mailbox_generation,
+        )
+        completion = self._enqueue_copy(
+            phase=phase,
+            token_slice=token_slice,
+            mailbox=self.first_token_mailbox,
+        )
+        result = PhaseStitchPrefixResult(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            token=None,
+            token_ordinal=FIRST_TOKEN_ORDINAL,
+            replay_count=0,
+            d2h_calls=1,
+            d2h_bytes=8,
+            completion=completion,
+            mailbox=self.first_token_mailbox,
+        )
+        self._owned_results[phase] = result
+        return result
+
+    def enqueue_suffix(
+        self,
+        *,
+        parent_lease_identity_sha256: str,
+        token_slice,
+        mailbox_generation: int,
+    ) -> PhaseStitchSuffixResult:
+        phase = "suffix"
+        self._validate_enqueue(
+            phase=phase,
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            mailbox_generation=mailbox_generation,
+        )
+        completion = self._enqueue_copy(
+            phase=phase,
+            token_slice=token_slice,
+            mailbox=self.suffix_mailbox,
+        )
+        result = PhaseStitchSuffixResult(
+            parent_lease_identity_sha256=(
+                parent_lease_identity_sha256
+            ),
+            tokens=None,
+            first_token_ordinal=SUFFIX_START_ORDINAL,
+            replay_count=AUTHORIZED_DECODE_REPLAY_COUNT,
+            d2h_calls=1,
+            d2h_bytes=AUTHORIZED_DECODE_REPLAY_COUNT * 8,
+            completion=completion,
+            mailbox=self.suffix_mailbox,
+        )
+        self._owned_results[phase] = result
+        return result
+
+    def _validate_owner(self, mailbox_generation: int) -> None:
+        if mailbox_generation != self._active_generation:
+            raise ValueError(
+                "mailbox generation does not own the active "
+                "transaction"
+            )
+
+    def _release_unchecked(self) -> None:
+        self._active_generation = None
+        self._active_parent_identity_sha256 = None
+        self._enqueued_phases.clear()
+        self._owned_results.clear()
+
+    def release_transaction(
+        self,
+        mailbox_generation: int,
+    ) -> None:
+        self._validate_owner(mailbox_generation)
+        if set(self._owned_results) != {
+            "first_token",
+            "suffix",
+        } or not all(
+            result.resolved
+            for result in self._owned_results.values()
+        ):
+            raise RuntimeError(
+                "phase stitch mailboxes have unfinished transfers"
+            )
+        self._release_unchecked()
+
+    def abort_transaction(
+        self,
+        mailbox_generation: int,
+    ) -> None:
+        self._validate_owner(mailbox_generation)
+        if self._synchronize is not None:
+            self._synchronize()
+        else:
+            for result in self._owned_results.values():
+                result.completion.synchronize()
+        self._release_unchecked()
 
 
 class PhaseStitchTransaction:

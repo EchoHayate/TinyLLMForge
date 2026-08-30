@@ -28,6 +28,7 @@ SPEC.loader.exec_module(module)
 PhaseStitchPrefixResult = module.PhaseStitchPrefixResult
 PhaseStitchSuffixResult = module.PhaseStitchSuffixResult
 PhaseStitchTransaction = module.PhaseStitchTransaction
+PhaseStitchMailboxBackend = module.PhaseStitchMailboxBackend
 build_phase_stitch_lease = module.build_phase_stitch_lease
 decide_phase_stitch_admission = module.decide_phase_stitch_admission
 validate_phase_stitch_prefix = module.validate_phase_stitch_prefix
@@ -380,6 +381,214 @@ def test_phase_stitch_admission_matrix(overrides, reason):
 
     assert decision.optimized is False
     assert decision.fallback_reason == reason
+
+
+class _Mailbox:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+        self.values = ()
+        self.tolist_calls = 0
+
+    def copy_(self, source, *, non_blocking):
+        self.events.append(
+            (
+                "copy",
+                self.label,
+                tuple(source.values),
+                non_blocking,
+            )
+        )
+        self.values = tuple(source.values)
+        return self
+
+    def tolist(self):
+        self.tolist_calls += 1
+        self.events.append(("tolist", self.label))
+        return list(self.values)
+
+
+class _TokenSlice:
+    def __init__(self, values):
+        self.values = tuple(values)
+
+
+class _MailboxEvent:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+
+    def record(self, stream):
+        self.events.append(
+            ("record", self.label, stream.label)
+        )
+
+    def synchronize(self):
+        self.events.append(("synchronize", self.label))
+
+
+class _MailboxStream:
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+
+    def wait_event(self, event):
+        self.events.append(
+            ("wait_event", self.label, event.label)
+        )
+
+
+class _MailboxStreamContext:
+    def __init__(self, stream, events):
+        self.stream = stream
+        self.events = events
+
+    def __enter__(self):
+        self.events.append(("enter_stream", self.stream.label))
+
+    def __exit__(self, *_args):
+        self.events.append(("exit_stream", self.stream.label))
+
+
+def _mailbox_backend(events):
+    compute_stream = _MailboxStream("compute", events)
+    copy_stream = _MailboxStream("copy", events)
+    first_token_mailbox = _Mailbox("first", events)
+    suffix_mailbox = _Mailbox("suffix", events)
+    backend = PhaseStitchMailboxBackend(
+        copy_stream=copy_stream,
+        first_token_mailbox=first_token_mailbox,
+        suffix_mailbox=suffix_mailbox,
+        event_factory=lambda label: _MailboxEvent(label, events),
+        current_stream=lambda: compute_stream,
+        stream_context=lambda stream: _MailboxStreamContext(
+            stream,
+            events,
+        ),
+        synchronize=lambda: events.append(("synchronize_all",)),
+    )
+    return backend, first_token_mailbox, suffix_mailbox
+
+
+def test_phase_stitch_mailboxes_copy_one_then_seven_independently():
+    events = []
+    backend, first_mailbox, suffix_mailbox = _mailbox_backend(
+        events
+    )
+    parent_identity = "a" * 64
+    generation = backend.begin_transaction(parent_identity)
+
+    prefix = backend.enqueue_first_token(
+        parent_lease_identity_sha256=parent_identity,
+        token_slice=_TokenSlice((101,)),
+        mailbox_generation=generation,
+    )
+    suffix = backend.enqueue_suffix(
+        parent_lease_identity_sha256=parent_identity,
+        token_slice=_TokenSlice(
+            (102, 103, 104, 105, 106, 107, 108)
+        ),
+        mailbox_generation=generation,
+    )
+
+    assert prefix.d2h_calls == 1
+    assert prefix.d2h_bytes == 8
+    assert suffix.d2h_calls == 1
+    assert suffix.d2h_bytes == 56
+    assert prefix.wait_token() == 101
+    assert (
+        "synchronize",
+        "suffix_copy_done",
+    ) not in events
+    assert suffix.wait_tokens() == (
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+    )
+    assert prefix.wait_token() == 101
+    assert suffix.wait_tokens() == (
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+    )
+    assert first_mailbox.tolist_calls == 1
+    assert suffix_mailbox.tolist_calls == 1
+    assert events[:10] == [
+        ("record", "first_token_compute_done", "compute"),
+        ("wait_event", "copy", "first_token_compute_done"),
+        ("enter_stream", "copy"),
+        ("copy", "first", (101,), True),
+        ("record", "first_token_copy_done", "copy"),
+        ("exit_stream", "copy"),
+        ("record", "suffix_compute_done", "compute"),
+        ("wait_event", "copy", "suffix_compute_done"),
+        ("enter_stream", "copy"),
+        (
+            "copy",
+            "suffix",
+            (102, 103, 104, 105, 106, 107, 108),
+            True,
+        ),
+    ]
+    backend.release_transaction(generation)
+    assert backend.active_generation is None
+
+
+def test_phase_stitch_mailbox_rejects_duplicate_and_stale_enqueue():
+    events = []
+    backend, _, _ = _mailbox_backend(events)
+    parent_identity = "a" * 64
+    generation = backend.begin_transaction(parent_identity)
+    backend.enqueue_first_token(
+        parent_lease_identity_sha256=parent_identity,
+        token_slice=_TokenSlice((101,)),
+        mailbox_generation=generation,
+    )
+
+    with pytest.raises(ValueError, match="already enqueued"):
+        backend.enqueue_first_token(
+            parent_lease_identity_sha256=parent_identity,
+            token_slice=_TokenSlice((102,)),
+            mailbox_generation=generation,
+        )
+    with pytest.raises(ValueError, match="mailbox generation"):
+        backend.enqueue_suffix(
+            parent_lease_identity_sha256=parent_identity,
+            token_slice=_TokenSlice(tuple(range(7))),
+            mailbox_generation=generation + 1,
+        )
+    with pytest.raises(ValueError, match="parent lease identity"):
+        backend.enqueue_suffix(
+            parent_lease_identity_sha256="b" * 64,
+            token_slice=_TokenSlice(tuple(range(7))),
+            mailbox_generation=generation,
+        )
+
+
+def test_phase_stitch_mailbox_abort_synchronizes_before_release():
+    events = []
+    backend, _, _ = _mailbox_backend(events)
+    generation = backend.begin_transaction("a" * 64)
+    backend.enqueue_first_token(
+        parent_lease_identity_sha256="a" * 64,
+        token_slice=_TokenSlice((101,)),
+        mailbox_generation=generation,
+    )
+
+    backend.abort_transaction(generation)
+
+    assert events[-1] == ("synchronize_all",)
+    assert backend.active_generation is None
+    with pytest.raises(ValueError, match="mailbox generation"):
+        backend.release_transaction(generation)
 
 
 def _scheduler_phase_stitch_fixture():
