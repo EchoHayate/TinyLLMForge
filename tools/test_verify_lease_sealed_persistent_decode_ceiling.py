@@ -547,3 +547,22 @@ def test_verifier_accepts_complete_bundle(tmp_path: Path) -> None:
         "kernel_row_count": 6,
         "segment_row_count": 3,
     }
+
+
+def test_verifier_allows_fixed_local_controller_receipts(
+    tmp_path: Path,
+) -> None:
+    run_dir = make_complete_artifact(tmp_path)
+    controller = run_dir / "controller"
+    controller.mkdir()
+    for name in (
+        "plan.json",
+        "launch_admission.json",
+        "download_manifest.json",
+        "local-verification.json",
+    ):
+        _write_json(controller / name, {"receipt": name})
+
+    result = verifier.verify_artifact_directory(run_dir)
+
+    assert result["verified"] is True

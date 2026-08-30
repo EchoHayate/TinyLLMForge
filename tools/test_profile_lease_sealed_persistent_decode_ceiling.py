@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -293,6 +294,117 @@ def test_source_manifest_hashes_every_qualification_source(tmp_path):
         len(value) == 64
         for value in manifest["source_sha256"].values()
     )
+    assert {
+        "tools/verify_lease_sealed_persistent_decode_ceiling.py",
+        "tools/test_verify_lease_sealed_persistent_decode_ceiling.py",
+        "tools/run_lease_sealed_persistent_decode_ceiling_remote.py",
+        "tools/test_run_lease_sealed_persistent_decode_ceiling_remote.py",
+    }.issubset(manifest["source_sha256"])
+
+
+def test_finalize_writes_raw_trace_inventory_and_manifest(
+    monkeypatch,
+    tmp_path,
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    timing_path = output / "timing_rows.jsonl"
+    structural_path = output / "structural_rows.jsonl"
+    timing_path.write_text(
+        "".join(
+            json.dumps(row) + "\n"
+            for row in profile.synthetic_timing_rows_for_test()
+        ),
+        encoding="utf-8",
+    )
+    structural_path.write_text(
+        "".join(
+            json.dumps(row) + "\n"
+            for row in profile.synthetic_structural_rows_for_test()
+        ),
+        encoding="utf-8",
+    )
+    trace_paths = {}
+    for context in profile.CONTEXT_LENGTHS:
+        path = tmp_path / f"context-{context}.sqlite"
+        path.write_bytes(f"sqlite-{context}".encode())
+        trace_paths[context] = path
+
+    monkeypatch.setattr(
+        profile,
+        "read_decode_trace",
+        lambda _path: {"ranges": [{}], "kernels": [{}]},
+    )
+    monkeypatch.setattr(
+        profile,
+        "_trace_context_summary",
+        lambda structural, _parsed: (
+            {
+                "context_length": structural["context_length"],
+                "profiled_tpot_median_ns": 2_100_000,
+                "profiled_tpot_p95_ns": 2_200_000,
+                "output_token_ids": structural["output_token_ids"],
+                "output_text_sha256": structural["output_text_sha256"],
+                "transaction_count": 1,
+                "logical_token_count": 127,
+                "eligible_zero_cost_ns_per_token": 100_000,
+                "candidate_cuda_duration_ns": 10_000_000,
+                "total_kernel_duration_ns": 20_000_000,
+                "classified_launch_ratio": 1.0,
+                "classified_duration_ratio": 1.0,
+                "segment_signatures": ["e" * 64],
+                "target_model_forwards": 127,
+                "committed_tokens": 127,
+                "fallback_count": 0,
+                "failure_count": 0,
+                "rollback_count": 0,
+                "quarantine_reason": None,
+            },
+            [],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        profile,
+        "compute_ceiling",
+        lambda _timing, _summary: {"classification": "NO_GO"},
+    )
+    for name in (
+        "source_manifest.json",
+        "runtime_manifest.json",
+        "gpu_admission.json",
+        "workload_manifest.json",
+    ):
+        _write_json(output / name, {"fixture": name})
+
+    profile.finalize_evidence(
+        timing_path=timing_path,
+        structural_path=structural_path,
+        trace_paths=trace_paths,
+        output_dir=output,
+    )
+
+    inventory = json.loads(
+        (output / "trace_inventory.json").read_text(encoding="utf-8")
+    )
+    assert "traces" not in inventory
+    assert [row["context_length"] for row in inventory["raw_traces"]] == [
+        256,
+        2048,
+        8192,
+    ]
+    for row in inventory["raw_traces"]:
+        path = trace_paths[row["context_length"]]
+        assert row["remote_path"] == str(path)
+        assert row["byte_length"] == path.stat().st_size
+        assert row["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+    manifest = json.loads(
+        (output / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert {
+        row["path"] for row in manifest["artifacts"]
+    } == set(profile.MANIFEST_FILES)
 
 
 def test_finalize_rejects_structural_output_mismatch(tmp_path):

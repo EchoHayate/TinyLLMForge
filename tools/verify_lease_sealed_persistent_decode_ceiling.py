@@ -52,6 +52,12 @@ REQUIRED_FILES = {
     "segment_rows.jsonl",
     "ceiling.json",
 }
+OPTIONAL_CONTROLLER_FILES = {
+    "controller/plan.json",
+    "controller/launch_admission.json",
+    "controller/download_manifest.json",
+    "controller/local-verification.json",
+}
 IDENTITY_FIELDS = (
     "source_commit",
     "source_tree_sha256",
@@ -228,7 +234,11 @@ def _verify_manifest(run_dir: Path) -> None:
         for path in run_dir.rglob("*")
         if path.is_file()
     }
-    expected = REQUIRED_FILES | {"manifest.json"}
+    expected = (
+        REQUIRED_FILES
+        | {"manifest.json"}
+        | OPTIONAL_CONTROLLER_FILES
+    )
     extras = present - expected
     if extras:
         raise ValueError(f"undeclared artifact: {sorted(extras)[0]}")

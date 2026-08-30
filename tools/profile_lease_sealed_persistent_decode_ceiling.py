@@ -53,6 +53,10 @@ SOURCE_FILES = (
     "tools/test_lease_sealed_persistent_decode_ceiling.py",
     "tools/profile_lease_sealed_persistent_decode_ceiling.py",
     "tools/test_profile_lease_sealed_persistent_decode_ceiling.py",
+    "tools/verify_lease_sealed_persistent_decode_ceiling.py",
+    "tools/test_verify_lease_sealed_persistent_decode_ceiling.py",
+    "tools/run_lease_sealed_persistent_decode_ceiling_remote.py",
+    "tools/test_run_lease_sealed_persistent_decode_ceiling_remote.py",
     (
         "docs/superpowers/specs/"
         "2026-08-30-lease-sealed-persistent-decode-"
@@ -63,6 +67,19 @@ SOURCE_FILES = (
         "2026-08-30-lease-sealed-persistent-decode-"
         "megakernel-ceiling.md"
     ),
+)
+MANIFEST_FILES = (
+    "source_manifest.json",
+    "runtime_manifest.json",
+    "gpu_admission.json",
+    "workload_manifest.json",
+    "timing_rows.jsonl",
+    "structural_rows.jsonl",
+    "timing_summary.json",
+    "trace_inventory.json",
+    "kernel_rows.jsonl",
+    "segment_rows.jsonl",
+    "ceiling.json",
 )
 
 
@@ -604,8 +621,9 @@ def finalize_evidence(
         all_segments.extend(segments)
         trace_inventory.append({
             "context_length": context,
-            "sqlite_path": str(trace_path),
-            "sqlite_sha256": sha256_file(trace_path),
+            "remote_path": str(trace_path),
+            "byte_length": trace_path.stat().st_size,
+            "sha256": sha256_file(trace_path),
             "transaction_count": len(parsed["ranges"]),
             "kernel_count": len(kernels),
         })
@@ -639,7 +657,7 @@ def finalize_evidence(
         {
             "schema_version":
                 "lease-sealed-persistent-decode.trace-inventory.v1",
-            "traces": trace_inventory,
+            "raw_traces": trace_inventory,
             "trace_summary": trace_summary,
         },
     )
@@ -652,6 +670,21 @@ def finalize_evidence(
         all_segments,
     )
     _write_json(_output_path(output, "ceiling.json"), ceiling)
+    _write_json(
+        _output_path(output, "manifest.json"),
+        {
+            "schema_version":
+                "lease-sealed-persistent-decode.manifest.v1",
+            "artifacts": [
+                {
+                    "path": relative,
+                    "byte_length": (output / relative).stat().st_size,
+                    "sha256": sha256_file(output / relative),
+                }
+                for relative in MANIFEST_FILES
+            ],
+        },
+    )
     return ceiling
 
 
