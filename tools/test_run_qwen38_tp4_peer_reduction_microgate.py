@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -120,6 +123,23 @@ def test_remote_worker_commands_launch_exactly_four_ranks():
         for command in commands
     )
     assert all(plan["raw_root"] in command for command in commands)
+
+
+def test_controller_supports_direct_script_execution():
+    script = (
+        Path(__file__).with_name(
+            "run_qwen38_tp4_peer_reduction_microgate.py"
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_expired_kerberos_stops_before_any_remote_access():

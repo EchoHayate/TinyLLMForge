@@ -13,14 +13,24 @@ import shlex
 import subprocess
 import time
 
-from tools.run_qwen38_tp4_communication_profile import (
-    parse_nvidia_smi_inventory,
-    query_local_kerberos,
-    select_strict_clean_gpus,
-    validate_selected_gpu_processes,
-    wait_for_strict_clean_gpus,
-    write_json_atomic,
-)
+if __package__:
+    from tools.run_qwen38_tp4_communication_profile import (
+        parse_nvidia_smi_inventory,
+        query_local_kerberos,
+        select_strict_clean_gpus,
+        validate_selected_gpu_processes,
+        wait_for_strict_clean_gpus,
+        write_json_atomic,
+    )
+else:
+    from run_qwen38_tp4_communication_profile import (
+        parse_nvidia_smi_inventory,
+        query_local_kerberos,
+        select_strict_clean_gpus,
+        validate_selected_gpu_processes,
+        wait_for_strict_clean_gpus,
+        write_json_atomic,
+    )
 
 
 APPROVED_REMOTE_ROOT = (
@@ -1259,9 +1269,14 @@ def main(argv=None):
         )
 
     def verify_local(_current_plan):
-        from tools.verify_qwen38_tp4_peer_reduction_microgate import (
-            verify_bundle,
-        )
+        if __package__:
+            from tools.verify_qwen38_tp4_peer_reduction_microgate import (
+                verify_bundle,
+            )
+        else:
+            from verify_qwen38_tp4_peer_reduction_microgate import (
+                verify_bundle,
+            )
 
         payload = verify_bundle(local_attempt_root / "final_bundle")
         return {
