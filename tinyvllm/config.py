@@ -46,6 +46,8 @@ class Config:
     exact_greedy_decode_burst_medium_split_k: bool = False
     exact_greedy_decode_burst_elastic_k16: bool = False
     exact_greedy_decode_burst_tokens: int = 4
+    prefill_cuda_graphs: bool = False
+    prefill_cuda_graph_token_allowlist: tuple = (256, 2048)
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
     multi_sequence_cuda_graph_min_observations: int = 3
@@ -346,6 +348,15 @@ class Config:
                     "generation-sealed identity requires "
                     "lease-local delta journal"
                 )
+        if not isinstance(self.prefill_cuda_graphs, bool):
+            raise ValueError("prefill_cuda_graphs must be a bool")
+        self.prefill_cuda_graph_token_allowlist = (
+            _normalize_positive_int_tuple(
+                self.prefill_cuda_graph_token_allowlist,
+                name="prefill_cuda_graph_token_allowlist",
+                allow_empty=False,
+            )
+        )
         if self.exact_greedy_decode_burst_lease_local_delta_journal:
             if not self.exact_greedy_decode_burst:
                 raise ValueError(

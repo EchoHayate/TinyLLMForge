@@ -51338,3 +51338,90 @@ FORMAL_GATE_REASON=metric_unavailable:peak_gpu_memory_ratio
 GO_CROSS_ENGINE_ADVANTAGE=false
 NEXT_ACTION=do not claim a horizontal win; select the next optimization or add a separately designed public-memory measurement campaign
 ```
+
+## 2026-08-30 Exact-shape prefill CUDA Graph terminal reconciliation
+
+The opt-in exact-shape prefill CUDA Graph implementation completed its frozen
+Qwen3-0.6B BF16 TP1 batch-one paired gate. The feature remains disabled by
+default and supports only dense, single-sequence prefill at explicitly
+allowlisted token counts. Unsupported paths fail closed to eager execution.
+Failures after graph replay starts quarantine the identity and propagate
+without an eager retry, avoiding a second transformer forward after possible
+live KV mutation.
+
+The immutable GPU measurements were produced by
+`exact-prefill-graph-paired-20260830-r3`. The finalized r5 bundle reuses
+those raw measurements unchanged and reruns producer plus independent
+verification after the `summary.json` schema correction, stricter invalid
+metric rejection, and post-replay no-retry hardening. The latter changes only
+the failure path, not the successful measured path:
+
+```text
+authoritative checkout:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+source base commit:
+  62c417782d08c88198c8e912b204ae8cd861ce50
+measurement run:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+    exact-prefill-graph-paired-20260830-r3
+finalized run:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+    exact-prefill-graph-paired-20260830-r5
+local compact evidence:
+  artifacts/exact_prefill_cuda_graph/20260830-qwen3-06b-paired-r5/
+contract SHA-256:
+  49f065418a2f17018857970232c77b7055145c4e0e891f60b966fc740f0a82a8
+GPU:
+  physical index 1, NVIDIA A100 80GB PCIe
+GPU UUID:
+  GPU-7dc22583-df04-6c76-4ba5-ea32c428c130
+```
+
+The two-round AB/BA gate retained ten measured samples per arm and prompt
+shape after two warmups per case. Every candidate sample replayed its graph,
+all generated token IDs matched eager, and capture failures, replay failures,
+and quarantines were all zero.
+
+```text
+256 tokens:
+  median TTFT: 32.4475 ms eager -> 5.2900 ms graph, 83.70% lower
+  median TPOT: 3.3879 ms eager -> 3.3413 ms graph, 1.38% lower
+  median E2E: 84.3913 ms eager -> 56.2728 ms graph, 33.32% lower
+
+2048 tokens:
+  median TTFT: 34.9052 ms eager -> 21.7850 ms graph, 37.59% lower
+  median TPOT: 3.5442 ms eager -> 3.5205 ms graph, 0.67% lower
+  median E2E: 89.0353 ms eager -> 75.4464 ms graph, 15.26% lower
+
+cost:
+  median capture duration: 727.917 ms
+  maximum capture duration: 736.033 ms
+  retained static tensors: 4,764,704 bytes
+  allocated-memory delta: 0 bytes
+  reserved-memory delta: 41,943,040 bytes
+```
+
+The producer, remote independent verifier, and local independent verifier all
+classify the bundle as `GO_EXACT_PREFILL_GRAPH`. The remote and local
+verifier receipts are byte-identical with SHA-256
+`80a24ce3658d97f17d9731affdf1cce3d500dba0192b4a88730a9b7c4c5687de`.
+The full audit is
+`docs/superpowers/audits/2026-08-30-exact-prefill-cuda-graph-audit.md`.
+
+The result is a within-TinyLLMForge exact-shape mechanism result. It does not
+establish cross-engine advantage, arbitrary-length buckets, TP greater than
+one, multi-sequence prefill, prefix-cache replay, offload/quantized-KV
+compatibility, compact-attention compatibility, or a one-shot startup win.
+
+```text
+EXACT_PREFILL_CUDA_GRAPH_IMPLEMENTATION=COMPLETE
+PRODUCER_CLASSIFICATION=GO_EXACT_PREFILL_GRAPH
+REMOTE_INDEPENDENT_VERIFIER=PASS
+LOCAL_INDEPENDENT_VERIFIER=PASS
+EXACT_OUTPUT_PARITY=PASS
+FEATURE_DEFAULT=OFF
+SENTINEL_BUCKET_CLAIM=false
+NEXT_ACTION=run fresh local verification, exact-path commit, push, and remote-SHA verification
+```

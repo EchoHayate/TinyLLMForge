@@ -1,0 +1,68 @@
+{
+  "classification": "GO_EXACT_PREFILL_GRAPH",
+  "correctness": {
+    "all_token_ids_exact": true,
+    "mismatches": []
+  },
+  "cost": {
+    "allocated_delta_bytes": {
+      "available": true,
+      "maximum": 0,
+      "median": 0.0,
+      "samples": 4
+    },
+    "capture_duration_ns": {
+      "available": true,
+      "maximum": 736032778,
+      "median": 727916919.0,
+      "samples": 4
+    },
+    "reserved_delta_bytes": {
+      "available": true,
+      "maximum": 41943040,
+      "median": 41943040.0,
+      "samples": 4
+    },
+    "static_bytes": {
+      "available": true,
+      "maximum": 4764704,
+      "median": 4764704.0,
+      "samples": 4
+    }
+  },
+  "incomplete_evidence": [],
+  "mechanism": {
+    "candidate_replayed_every_sample": true,
+    "failures": []
+  },
+  "performance": {
+    "2048": {
+      "e2e_regression_fraction": -0.15262365343930462,
+      "eager_e2e_median_ns": 89035301.5,
+      "eager_tpot_median_ns": 3544240.5,
+      "eager_ttft_median_ns": 34905165.0,
+      "graph_e2e_median_ns": 75446408.5,
+      "graph_tpot_median_ns": 3520514.5,
+      "graph_ttft_median_ns": 21784985.0,
+      "sample_count_per_arm": 10,
+      "tpot_regression_fraction": -0.006694240980542943,
+      "ttft_improvement_fraction": 0.37588076148615823,
+      "ttft_regression_fraction": -0.37588076148615823
+    },
+    "256": {
+      "e2e_regression_fraction": -0.33319189297050655,
+      "eager_e2e_median_ns": 84391280.5,
+      "eager_tpot_median_ns": 3387935.5,
+      "eager_ttft_median_ns": 32447451.5,
+      "graph_e2e_median_ns": 56272790.0,
+      "graph_tpot_median_ns": 3341347.5,
+      "graph_ttft_median_ns": 5290045.0,
+      "sample_count_per_arm": 10,
+      "tpot_regression_fraction": -0.013751147269480235,
+      "ttft_improvement_fraction": 0.8369657783447184,
+      "ttft_regression_fraction": -0.8369657783447184
+    }
+  },
+  "performance_failures": [],
+  "schema_version": "exact-prefill-cuda-graph.comparison.v1"
+}

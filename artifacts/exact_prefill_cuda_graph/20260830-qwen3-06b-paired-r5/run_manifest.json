@@ -1,0 +1,41 @@
+{
+  "case_order": [
+    "r0-p256-eager",
+    "r0-p256-exact-prefill-graph",
+    "r0-p2048-eager",
+    "r0-p2048-exact-prefill-graph",
+    "r1-p256-exact-prefill-graph",
+    "r1-p256-eager",
+    "r1-p2048-exact-prefill-graph",
+    "r1-p2048-eager"
+  ],
+  "clean_gpu_admission": true,
+  "contract_sha256": "49f065418a2f17018857970232c77b7055145c4e0e891f60b966fc740f0a82a8",
+  "cuda_visible_devices": "1",
+  "gpu_inventory": [
+    {
+      "compute_processes": [],
+      "index": 1,
+      "memory_total_mb": 81920,
+      "memory_used_mb": 0,
+      "name": "NVIDIA A100 80GB PCIe",
+      "utilization_gpu_percent": 0,
+      "uuid": "GPU-7dc22583-df04-6c76-4ba5-ea32c428c130"
+    }
+  ],
+  "measurement_parent_run_tag": "exact-prefill-graph-paired-20260830-r3",
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+  "python": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/cross-engine-k8-qwen3-06b/envs/tinyllmforge-c6e73cab00b6/bin/python",
+  "run_tag": "exact-prefill-graph-paired-20260830-r5",
+  "schema_version": "exact-prefill-cuda-graph.run.v1",
+  "source_base_commit": "62c417782d08c88198c8e912b204ae8cd861ce50",
+  "source_files": {
+    "tinyvllm/config.py": "27f74c27d1453076da28e161679bcd8ebeeb7a74cb4a0c328acabcf3e3dcd21f",
+    "tinyvllm/engine/exact_prefill_cuda_graph.py": "f3e6b5907ad126371f4641e73d9fee7bebbe1c96a2256fb93e5ac2646c66675c",
+    "tinyvllm/engine/model_runner.py": "1ef07e5c2ac4766dd48e062415262a6a0784e889dda04e38c6740c25559de33f",
+    "tools/exact_prefill_cuda_graph_benchmark_contract.py": "41e5e1a5e22e7eb6d6443e17a6f211c7d92ddc50611690f3a32456d038b526f7",
+    "tools/exact_prefill_cuda_graph_benchmark_worker.py": "f3de2f2d17bc28e7e08dfadb2acdfd76d86086c0ebf22eb8ae4eab223801fc22",
+    "tools/exact_prefill_cuda_graph_gate.py": "ece5d54d40fea4e3af96270687ab739e166f12799ea521947c3242e47a72bc1e",
+    "tools/exact_prefill_cuda_graph_verify.py": "74eb7891d9bc61c2d61700337ea94cbf0d68ca83e9c91516fb9c7fda47595534"
+  }
+}

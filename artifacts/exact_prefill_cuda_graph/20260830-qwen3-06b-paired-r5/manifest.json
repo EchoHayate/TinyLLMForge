@@ -1,0 +1,17 @@
+{
+  "artifacts": {
+    "cases/r0-p2048-eager/result.json": "37bcffe5e45f947216ad4c144c162b2f73648bab21d6d8e347055f260f8f2179",
+    "cases/r0-p2048-exact-prefill-graph/result.json": "e4d56228c11bf43f3d21daaa4091f62ab72c806d9c14420b2ef7abe23638ab6b",
+    "cases/r0-p256-eager/result.json": "df58e45f52d102fde4a702f550d558878fee52cf6fd461d107fcd020b1d6dba5",
+    "cases/r0-p256-exact-prefill-graph/result.json": "101f58c6df55f2fc0e99f75e721bacc18f3c3ae8f2d04347e1a5f0e2f139de22",
+    "cases/r1-p2048-eager/result.json": "3b388661102ce62a18781a4f8d66b0f9ec10c3a9d5f43e421d470bcd7378ee0e",
+    "cases/r1-p2048-exact-prefill-graph/result.json": "d45c5ff296906ac6b10987c101b6bd8abf9ec7dc94de3981c1175d75d1da1047",
+    "cases/r1-p256-eager/result.json": "ce6934275515a517c32c691356645d8e289577977137b50f0c5a6b046cfe0765",
+    "cases/r1-p256-exact-prefill-graph/result.json": "07abdccbead33e6fa9e71a4a9638dfb9574b328c644a1b5ad91afa0c251e6432",
+    "comparison.json": "96ae27ce5a7d54f459c1e767aee3415f8b68cde0224b48a4a49170149bff7293",
+    "report.md": "158aaf200270384b15c59a0c988fb563a8d99d1fc7c3e403aee3f278311a034e",
+    "run_manifest.json": "5c929134c8a4fcfe87bd6ed7d080d021b24ff6a36c38bdb17c4935bce7aa0869",
+    "summary.json": "c345661a851465732d173e7a9b07b2e932633295515a85d3c8bff1dde26a7ecd"
+  },
+  "schema_version": "exact-prefill-cuda-graph.manifest.v1"
+}

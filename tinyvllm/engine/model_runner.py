@@ -18,6 +18,15 @@ from tinyvllm.engine.exact_cuda_graph_cache import (
     ExactCudaGraphCacheConfig,
     ExactCudaGraphEntry,
 )
+from tinyvllm.engine.exact_prefill_cuda_graph import (
+    ExactPrefillCudaGraphCache,
+    ExactPrefillCudaGraphCacheConfig,
+    ExactPrefillCudaGraphEntry,
+    ExactPrefillGraphReplayError,
+    ExactPrefillGraphEligibility,
+    ExactPrefillGraphIdentity,
+    check_exact_prefill_graph_eligibility,
+)
 from tinyvllm.engine.spec_verify_exact_cuda_graph_cache import (
     SpecVerifyCaptureScratchPool,
     SpecVerifyExactCudaGraphCache,
@@ -2611,6 +2620,17 @@ class ModelRunner:
                 )
             )
         )
+        self.exact_prefill_cuda_graph_cache = (
+            ExactPrefillCudaGraphCache(
+                ExactPrefillCudaGraphCacheConfig(
+                    enabled=config.prefill_cuda_graphs,
+                    token_allowlist=(
+                        config.prefill_cuda_graph_token_allowlist
+                    ),
+                )
+            )
+        )
+        self._prefill_cuda_graph_step_id = 0
 
         self.last_cuda_graph_dispatch_event = None
         self._cuda_graph_step_id = 0
@@ -2653,6 +2673,7 @@ class ModelRunner:
         )
         if not skip_cudagraph:
             self.capture_cudagraph()
+        self.capture_exact_prefill_cudagraphs()
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
 
@@ -6532,6 +6553,474 @@ class ModelRunner:
             return "incompatible_feature"
         return None
 
+    def _exact_prefill_model_forward_kind(self) -> str:
+        return (
+            "run_step"
+            if callable(getattr(self.model, "run_step", None))
+            else "forward"
+        )
+
+    def _exact_prefill_compact_attention_active(self) -> bool:
+        config = self.config
+        return bool(
+            getattr(config, "am_compact_blocks", 0) > 0
+            or getattr(config, "quest_top_k_blocks", -1) > 0
+            or getattr(config, "kv_cartridge_blocks", 0) > 0
+            or getattr(
+                config,
+                "max_num_prefill_tokens_per_step",
+                0,
+            )
+            > 0
+        )
+
+    def _exact_prefill_graph_eligibility(
+        self,
+        *,
+        input_ids,
+        is_prefill: bool,
+        input_embeds,
+        return_hidden: bool,
+        context,
+    ):
+        try:
+            sequence_count = int(context.cu_seqlens_q.numel()) - 1
+            input_token_count = int(input_ids.numel())
+            query_len = int(context.max_seqlen_q)
+            key_len = int(context.max_seqlen_k)
+        except (AttributeError, TypeError, ValueError):
+            self.exact_prefill_cuda_graph_cache.record_fallback(
+                "length_mismatch"
+            )
+            return ExactPrefillGraphEligibility(
+                False,
+                "length_mismatch",
+            )
+        decision = check_exact_prefill_graph_eligibility(
+            enabled=bool(
+                getattr(
+                    self.config,
+                    "prefill_cuda_graphs",
+                    False,
+                )
+            ),
+            is_prefill=is_prefill,
+            tensor_parallel_size=int(
+                getattr(
+                    self.config,
+                    "tensor_parallel_size",
+                    self.world_size,
+                )
+            ),
+            world_size=int(self.world_size),
+            sequence_count=sequence_count,
+            input_token_count=input_token_count,
+            query_len=query_len,
+            key_len=key_len,
+            has_prefix_block_table=(
+                context.block_tables is not None
+            ),
+            token_allowlist=tuple(
+                getattr(
+                    self.config,
+                    "prefill_cuda_graph_token_allowlist",
+                    (),
+                )
+            ),
+            input_embeddings_requested=input_embeds is not None,
+            return_hidden_states=return_hidden,
+            cpu_offload=bool(
+                getattr(self.config, "cpu_offload", False)
+            ),
+            kv_offload=bool(
+                getattr(self.config, "kv_offload_mvp0", False)
+            ),
+            kv_quant_bits=int(
+                getattr(self.config, "kv_quant_bits", 0)
+            ),
+            compact_attention=(
+                self._exact_prefill_compact_attention_active()
+            ),
+            model_forward_kind=(
+                self._exact_prefill_model_forward_kind()
+            ),
+        )
+        if not decision.eligible:
+            self.exact_prefill_cuda_graph_cache.record_fallback(
+                decision.fallback_reason
+            )
+        return decision
+
+    def _build_exact_prefill_graph_identity(
+        self,
+        *,
+        input_ids,
+        outputs,
+        context,
+    ) -> ExactPrefillGraphIdentity:
+        token_count = int(input_ids.numel())
+        try:
+            input_shape = tuple(input_ids.size())
+            output_shape = tuple(outputs.size())
+            slot_mapping_shape = tuple(context.slot_mapping.size())
+            cu_seqlens_q_shape = tuple(
+                context.cu_seqlens_q.size()
+            )
+            cu_seqlens_k_shape = tuple(
+                context.cu_seqlens_k.size()
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid exact prefill graph tensor shape"
+            ) from exc
+        hf_config = self.config.hf_config
+        hidden_size = int(hf_config.hidden_size)
+        if input_shape != (token_count,):
+            raise ValueError("input_ids shape drift")
+        if output_shape != (token_count, hidden_size):
+            raise ValueError("output shape drift")
+        if slot_mapping_shape != (token_count,):
+            raise ValueError("slot_mapping shape drift")
+        if cu_seqlens_q_shape != (2,):
+            raise ValueError("cu_seqlens_q shape drift")
+        if cu_seqlens_k_shape != (2,):
+            raise ValueError("cu_seqlens_k shape drift")
+        if context.block_tables is not None:
+            raise ValueError("prefix block table is not exact prefill")
+        num_query_heads = int(hf_config.num_attention_heads)
+        num_kv_heads = int(hf_config.num_key_value_heads)
+        head_dim = int(
+            getattr(
+                hf_config,
+                "head_dim",
+                hidden_size // num_query_heads,
+            )
+        )
+        return ExactPrefillGraphIdentity(
+            token_count=token_count,
+            active_batch_size=1,
+            world_size=int(self.world_size),
+            model_forward_kind=(
+                self._exact_prefill_model_forward_kind()
+            ),
+            attention_backend="flash_attn_varlen",
+            attention_backend_version=str(
+                getattr(flash_attn, "__version__", "unknown")
+            ),
+            input_dtype=str(input_ids.dtype),
+            hidden_dtype=str(outputs.dtype),
+            num_layers=int(hf_config.num_hidden_layers),
+            hidden_size=hidden_size,
+            num_query_heads=num_query_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_block_size=int(self.block_size),
+            device_compute_capability=tuple(
+                int(value)
+                for value in torch.cuda.get_device_capability(
+                    self.kv_cache.device
+                )
+            ),
+        )
+
+    def _capture_exact_prefill_graph(
+        self,
+        token_count: int,
+    ) -> ExactPrefillCudaGraphEntry | None:
+        token_count = int(token_count)
+        device = self.kv_cache.device
+        hidden_size = int(self.config.hf_config.hidden_size)
+        hidden_dtype = self.config.hf_config.torch_dtype
+        tensors = {
+            "input_ids": torch.zeros(
+                token_count,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "positions": torch.arange(
+                token_count,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "slot_mapping": torch.arange(
+                token_count,
+                dtype=torch.int32,
+                device=device,
+            ),
+            "cu_seqlens_q": torch.tensor(
+                [0, token_count],
+                dtype=torch.int32,
+                device=device,
+            ),
+            "cu_seqlens_k": torch.tensor(
+                [0, token_count],
+                dtype=torch.int32,
+                device=device,
+            ),
+            "outputs": torch.zeros(
+                token_count,
+                hidden_size,
+                dtype=hidden_dtype,
+                device=device,
+            ),
+        }
+        identity = None
+        try:
+            set_context(
+                mode="prefill",
+                cu_seqlens_q=tensors["cu_seqlens_q"],
+                cu_seqlens_k=tensors["cu_seqlens_k"],
+                max_seqlen_q=token_count,
+                max_seqlen_k=token_count,
+                slot_mapping=tensors["slot_mapping"],
+                block_tables=None,
+            )
+            tensors["outputs"].copy_(
+                self.model(
+                    tensors["input_ids"],
+                    tensors["positions"],
+                )
+            )
+            torch.cuda.synchronize()
+            identity = self._build_exact_prefill_graph_identity(
+                input_ids=tensors["input_ids"],
+                outputs=tensors["outputs"],
+                context=get_context(),
+            )
+            if not self.exact_prefill_cuda_graph_cache.begin_capture(
+                identity
+            ):
+                return None
+            static_bytes = sum(
+                int(tensor.numel() * tensor.element_size())
+                for tensor in tensors.values()
+            )
+            allocated_before = int(torch.cuda.memory_allocated())
+            reserved_before = int(torch.cuda.memory_reserved())
+            graph = torch.cuda.CUDAGraph()
+            capture_started_ns = time.perf_counter_ns()
+            with torch.cuda.graph(graph):
+                tensors["outputs"].copy_(
+                    self.model(
+                        tensors["input_ids"],
+                        tensors["positions"],
+                    )
+                )
+            torch.cuda.synchronize()
+            capture_duration_ns = (
+                time.perf_counter_ns() - capture_started_ns
+            )
+            entry = ExactPrefillCudaGraphEntry(
+                identity=identity,
+                identity_sha256=identity.sha256,
+                graph=graph,
+                tensors=tensors,
+                static_bytes=static_bytes,
+                capture_duration_ns=capture_duration_ns,
+                allocated_delta_bytes=max(
+                    0,
+                    int(torch.cuda.memory_allocated())
+                    - allocated_before,
+                ),
+                reserved_delta_bytes=max(
+                    0,
+                    int(torch.cuda.memory_reserved())
+                    - reserved_before,
+                ),
+            )
+            self.exact_prefill_cuda_graph_cache.commit_capture(entry)
+            return entry
+        except Exception as error:
+            if identity is not None:
+                self.exact_prefill_cuda_graph_cache.quarantine(
+                    identity,
+                    "capture_failed",
+                )
+            else:
+                self.exact_prefill_cuda_graph_cache.record_capture_error(
+                    token_count,
+                    f"{type(error).__name__}: {error}",
+                )
+            return None
+        finally:
+            reset_context()
+
+    @torch.inference_mode()
+    def capture_exact_prefill_cudagraphs(self) -> None:
+        config = self.config
+        if not getattr(config, "prefill_cuda_graphs", False):
+            return
+        if (
+            self.enforce_eager
+            or int(self.world_size) != 1
+            or int(config.tensor_parallel_size) != 1
+            or bool(getattr(config, "cpu_offload", False))
+            or bool(getattr(config, "kv_offload_mvp0", False))
+            or int(getattr(config, "kv_quant_bits", 0)) != 0
+            or self._exact_prefill_compact_attention_active()
+            or self._exact_prefill_model_forward_kind() != "forward"
+        ):
+            return
+        kv_token_capacity = (
+            int(self.kv_cache.size(2)) * int(self.block_size)
+        )
+        for token_count in config.prefill_cuda_graph_token_allowlist:
+            if (
+                int(token_count) > int(config.max_model_len)
+                or int(token_count) > kv_token_capacity
+            ):
+                continue
+            self._capture_exact_prefill_graph(int(token_count))
+
+    def _exact_prefill_replay_tensor_shapes_match(
+        self,
+        *,
+        entry,
+        input_ids,
+        positions,
+        context,
+    ) -> bool:
+        live_tensors = {
+            "input_ids": input_ids,
+            "positions": positions,
+            "slot_mapping": context.slot_mapping,
+            "cu_seqlens_q": context.cu_seqlens_q,
+            "cu_seqlens_k": context.cu_seqlens_k,
+        }
+        for name, live_tensor in live_tensors.items():
+            static_tensor = entry.tensors.get(name)
+            if static_tensor is None or live_tensor is None:
+                return False
+            if (
+                tuple(static_tensor.size())
+                != tuple(live_tensor.size())
+                or static_tensor.dtype != live_tensor.dtype
+                or str(static_tensor.device)
+                != str(live_tensor.device)
+            ):
+                return False
+        return True
+
+    def _replay_exact_prefill_graph(
+        self,
+        entry: ExactPrefillCudaGraphEntry,
+        *,
+        input_ids,
+        positions,
+        context,
+    ):
+        cache = self.exact_prefill_cuda_graph_cache
+        identity = self._build_exact_prefill_graph_identity(
+            input_ids=input_ids,
+            outputs=entry.tensors["outputs"],
+            context=context,
+        )
+        if (
+            entry.identity_sha256 != entry.identity.sha256
+            or identity != entry.identity
+            or entry.state != "ready"
+            or cache.ready_entries.get(entry.identity_sha256) is not entry
+            or not self._exact_prefill_replay_tensor_shapes_match(
+                entry=entry,
+                input_ids=input_ids,
+                positions=positions,
+                context=context,
+            )
+        ):
+            cache.quarantine(entry.identity, "identity_drift")
+            raise RuntimeError(
+                "exact prefill CUDA Graph identity drift"
+            )
+        tensors = entry.tensors
+        tensors["input_ids"].copy_(input_ids)
+        tensors["positions"].copy_(positions)
+        tensors["slot_mapping"].copy_(context.slot_mapping)
+        tensors["cu_seqlens_q"].copy_(context.cu_seqlens_q)
+        tensors["cu_seqlens_k"].copy_(context.cu_seqlens_k)
+        try:
+            entry.graph.replay()
+        except Exception as error:
+            cache.quarantine(entry.identity, "replay_failed")
+            raise ExactPrefillGraphReplayError(
+                entry.identity_sha256,
+                error,
+            ) from error
+        self._prefill_cuda_graph_step_id += 1
+        cache.record_replay(
+            entry,
+            step=self._prefill_cuda_graph_step_id,
+        )
+        return tensors["outputs"]
+
+    def _try_replay_exact_prefill_graph(
+        self,
+        *,
+        input_ids,
+        positions,
+        is_prefill: bool,
+        input_embeds,
+        return_hidden: bool,
+        context,
+    ):
+        decision = self._exact_prefill_graph_eligibility(
+            input_ids=input_ids,
+            is_prefill=is_prefill,
+            input_embeds=input_embeds,
+            return_hidden=return_hidden,
+            context=context,
+        )
+        if not decision.eligible:
+            return None
+        token_count = int(input_ids.numel())
+        try:
+            candidate = next(
+                entry
+                for entry in (
+                    self.exact_prefill_cuda_graph_cache
+                    .ready_entries.values()
+                )
+                if entry.identity.token_count == token_count
+            )
+        except StopIteration:
+            self.exact_prefill_cuda_graph_cache.record_fallback(
+                "entry_missing"
+            )
+            return None
+        try:
+            identity = self._build_exact_prefill_graph_identity(
+                input_ids=input_ids,
+                outputs=candidate.tensors["outputs"],
+                context=context,
+            )
+        except ValueError:
+            self.exact_prefill_cuda_graph_cache.record_fallback(
+                "identity_drift"
+            )
+            return None
+        entry = self.exact_prefill_cuda_graph_cache.ready_entry(
+            identity
+        )
+        if entry is None:
+            reason = (
+                "entry_quarantined"
+                if identity.sha256
+                in self.exact_prefill_cuda_graph_cache.quarantined
+                else "entry_missing"
+            )
+            self.exact_prefill_cuda_graph_cache.record_fallback(reason)
+            return None
+        try:
+            return self._replay_exact_prefill_graph(
+                entry,
+                input_ids=input_ids,
+                positions=positions,
+                context=context,
+            )
+        except ExactPrefillGraphReplayError:
+            raise
+        except Exception:
+            return None
+
     def _run_eager_logits(
         self,
         *,
@@ -10269,6 +10758,19 @@ class ModelRunner:
                 self.graph_resident_greedy_tail_stats.record_fallback(
                     graph_tail_decision.fallback_reason
                 )
+        if is_prefill and not spec_verify_active:
+            prefill_outputs = (
+                self._try_replay_exact_prefill_graph(
+                    input_ids=input_ids,
+                    positions=positions,
+                    is_prefill=is_prefill,
+                    input_embeds=input_embeds,
+                    return_hidden=return_hidden,
+                    context=get_context(),
+                )
+            )
+            if prefill_outputs is not None:
+                return self.model.compute_logits(prefill_outputs)
         if input_ids.size(0) > 1:
             context = get_context()
             reason = self._multi_sequence_graph_incompatible_reason(
