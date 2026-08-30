@@ -18,6 +18,8 @@ def _modules():
         for name in (
             "tools.phase_stitch_profile_contract",
             "tools.phase_stitch_profile_worker",
+            "tools.phase_stitch_profile_gate",
+            "tools.phase_stitch_profile_verify",
         )
     )
 
@@ -203,7 +205,7 @@ class FakeEngine:
 
 
 def test_contract_freezes_balanced_pair_matrix_and_engine_controls():
-    contract, _worker = _modules()
+    contract, _worker, _gate, _verifier = _modules()
     cases = contract.build_case_matrix()
 
     assert contract.ARMS == (
@@ -243,7 +245,7 @@ def test_contract_freezes_balanced_pair_matrix_and_engine_controls():
 
 
 def test_contract_hash_and_case_validation_fail_closed():
-    contract, _worker = _modules()
+    contract, _worker, _gate, _verifier = _modules()
     first = contract.build_case_matrix()[0]
 
     assert len(contract.contract_sha256()) == 64
@@ -263,7 +265,7 @@ def test_worker_runs_isolated_case_and_writes_valid_result(
     tmp_path,
     arm,
 ):
-    contract, worker = _modules()
+    contract, worker, _gate, _verifier = _modules()
     spec = next(
         case
         for case in contract.build_case_matrix()
@@ -316,7 +318,7 @@ def test_worker_runs_isolated_case_and_writes_valid_result(
 
 
 def test_worker_rejects_existing_output_directory(tmp_path):
-    contract, worker = _modules()
+    contract, worker, _gate, _verifier = _modules()
     spec = contract.build_case_matrix()[0]
     output_dir = tmp_path / "existing"
     output_dir.mkdir()
@@ -335,7 +337,7 @@ def test_worker_rejects_existing_output_directory(tmp_path):
 def test_result_validation_rejects_missing_profile_and_bad_tokens(
     tmp_path,
 ):
-    contract, worker = _modules()
+    contract, worker, _gate, _verifier = _modules()
     spec = next(
         case
         for case in contract.build_case_matrix()
@@ -360,3 +362,265 @@ def test_result_validation_rejects_missing_profile_and_bad_tokens(
     bad_tokens["rows"][0]["output_token_ids"] = [1]
     with pytest.raises(ValueError, match="token"):
         contract.validate_case_result(bad_tokens)
+
+
+def _profile_row(contract, output_token_ids, prompt_tokens, gap_ns):
+    first_token_ns = 10_100_000
+    interval_ns = gap_ns // 5
+    timestamps = {
+        "prefill_dispatch_finished_ns": 10_000_000,
+        "first_token_host_available_ns": first_token_ns,
+        "prefill_scheduler_commit_finished_ns": (
+            first_token_ns + interval_ns
+        ),
+        "next_schedule_started_ns": (
+            first_token_ns + 2 * interval_ns
+        ),
+        "next_schedule_finished_ns": (
+            first_token_ns + 3 * interval_ns
+        ),
+        "k8_lease_prepare_finished_ns": (
+            first_token_ns + 4 * interval_ns
+        ),
+        "first_k8_dispatch_started_ns": first_token_ns + gap_ns,
+    }
+    return {
+        "sequence_id": 7,
+        "prompt_tokens": prompt_tokens,
+        "status": "complete",
+        "events": list(contract.PHASE_STITCH_EVENTS),
+        **timestamps,
+        "adjacent_intervals_ns": {},
+        "removable_host_gap_ns": gap_ns,
+        "output_token_ids_sha256": contract.canonical_json_sha256(
+            output_token_ids
+        ),
+        "event_coverage_complete": True,
+    }
+
+
+def _case_result(
+    contract,
+    case,
+    *,
+    gap_ns,
+    e2e_ns,
+):
+    rows = []
+    output_token_ids = list(range(contract.GENERATED_TOKENS))
+    for sample_index in range(contract.MEASURED_REPETITIONS):
+        profile = (
+            _profile_row(
+                contract,
+                output_token_ids,
+                case["prompt_tokens"],
+                gap_ns,
+            )
+            if case["arm"] == "instrumentation_on"
+            else None
+        )
+        rows.append({
+            "schema_version": contract.ROW_SCHEMA_VERSION,
+            "case_id": case["case_id"],
+            "round": case["round"],
+            "order_position": case["order_position"],
+            "arm": case["arm"],
+            "prompt_tokens": case["prompt_tokens"],
+            "sample_index": sample_index,
+            "generated_tokens": contract.GENERATED_TOKENS,
+            "prompt_sha256": f"{sample_index + 1:064x}",
+            "output_token_ids": output_token_ids,
+            "output_token_ids_sha256": (
+                contract.canonical_json_sha256(output_token_ids)
+            ),
+            "output_text_sha256": "c" * 64,
+            "ttft_ns": 5_000_000,
+            "tpot_samples_ns": [100_000.0] * 127,
+            "tpot_median_ns": 100_000.0,
+            "e2e_ns": e2e_ns,
+            "output_tokens_per_second": 128 / (e2e_ns / 1e9),
+            "prefill_graph_replay_delta": 1,
+            "exact_burst_replay_delta": 16,
+            "exact_burst_acceptance_delta": 16,
+            "phase_stitch_profile": profile,
+            "cuda_peak_allocated_bytes": 2_010_000_000,
+            "cuda_peak_reserved_bytes": 2_120_000_000,
+        })
+    return {
+        "schema_version": contract.RESULT_SCHEMA_VERSION,
+        "case": deepcopy(case),
+        "model": "/models/Qwen3-0.6B",
+        "rows": rows,
+        "prefill_graph_summary": {
+            "capture_failures": 0,
+            "replay_failures": 0,
+            "quarantines": 0,
+            "replays": 7,
+        },
+        "exact_burst_summary": {
+            "attempts": 112,
+            "acceptances": 112,
+            "graph_replays": 112,
+            "failures": 0,
+            "quarantines": 0,
+            "pending_leases": 0,
+            "fallback_counts": {},
+            "quarantine_reason": None,
+        },
+    }
+
+
+def _write_profile_fixture(
+    root,
+    *,
+    median_gap_ns=700_000,
+    profile_overhead_fraction=0.005,
+):
+    contract, _worker, _gate, _verifier = _modules()
+    run_dir = root / "run"
+    cases_dir = run_dir / "cases"
+    cases_dir.mkdir(parents=True)
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps({
+            "schema_version": contract.RUN_SCHEMA_VERSION,
+            "run_tag": "synthetic-phase-stitch-r1",
+            "source_base_commit": "1" * 40,
+            "source_files": {
+                relative: "a" * 64
+                for relative in contract.SOURCE_FILES
+            },
+            "model": "/models/Qwen3-0.6B",
+            "python": "/env/bin/python",
+            "cuda_visible_devices": "0",
+            "clean_gpu_admission": True,
+            "gpu_inventory": [{
+                "index": 0,
+                "uuid": "GPU-fixture",
+                "name": "NVIDIA A100 80GB PCIe",
+                "memory_total_mb": 81920,
+                "memory_used_mb": 0,
+                "utilization_gpu_percent": 0,
+                "compute_processes": [],
+            }],
+            "case_order": list(contract.expected_case_ids()),
+            "contract_sha256": contract.contract_sha256(),
+        }, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    for case in contract.build_case_matrix():
+        e2e_ns = 20_000_000
+        if case["arm"] == "instrumentation_on":
+            e2e_ns = int(
+                e2e_ns * (1.0 + profile_overhead_fraction)
+            )
+        result = _case_result(
+            contract,
+            case,
+            gap_ns=median_gap_ns,
+            e2e_ns=e2e_ns,
+        )
+        destination = cases_dir / case["case_id"]
+        destination.mkdir()
+        (destination / "result.json").write_text(
+            json.dumps(result, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return contract, run_dir
+
+
+def test_gate_returns_go_only_when_ceiling_and_overhead_pass(tmp_path):
+    _contract, run_dir = _write_profile_fixture(
+        tmp_path,
+        median_gap_ns=700_000,
+        profile_overhead_fraction=0.005,
+    )
+    _contract, _worker, gate, _verifier = _modules()
+
+    result = gate.produce_gate(run_dir)
+
+    assert result["classification"] == "GO_PHASE_STITCH_PROFILE"
+    assert result["checks"]["ceiling_pass"] is True
+    assert result["checks"]["overhead_pass"] is True
+
+
+def test_gate_returns_no_go_when_gap_is_below_ceiling(tmp_path):
+    _contract, run_dir = _write_profile_fixture(
+        tmp_path,
+        median_gap_ns=100_000,
+        profile_overhead_fraction=0.005,
+    )
+    _contract, _worker, gate, _verifier = _modules()
+
+    result = gate.produce_gate(run_dir)
+
+    assert result["classification"] == "NO_GO_PHASE_STITCH_CEILING"
+    assert result["checks"]["ceiling_pass"] is False
+
+
+def test_gate_rejects_missing_or_nonfinite_timestamps(tmp_path):
+    contract, run_dir = _write_profile_fixture(tmp_path)
+    _contract, _worker, gate, _verifier = _modules()
+    case = next(
+        case
+        for case in contract.build_case_matrix()
+        if case["arm"] == "instrumentation_on"
+    )
+    result_path = run_dir / "cases" / case["case_id"] / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["rows"][0]["phase_stitch_profile"][
+        "first_k8_dispatch_started_ns"
+    ] = float("nan")
+    result_path.write_text(
+        json.dumps(result, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="integer|finite"):
+        gate.produce_gate(run_dir)
+
+
+def test_gate_rejects_token_or_source_hash_drift(tmp_path):
+    contract, run_dir = _write_profile_fixture(tmp_path)
+    _contract, _worker, gate, _verifier = _modules()
+    case = next(
+        case
+        for case in contract.build_case_matrix()
+        if case["arm"] == "instrumentation_on"
+    )
+    result_path = run_dir / "cases" / case["case_id"] / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["rows"][0]["phase_stitch_profile"][
+        "output_token_ids_sha256"
+    ] = "0" * 64
+    result_path.write_text(
+        json.dumps(result, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="hash"):
+        gate.produce_gate(run_dir)
+
+    contract, run_dir = _write_profile_fixture(tmp_path / "source")
+    run_manifest_path = run_dir / "run_manifest.json"
+    run_manifest = json.loads(
+        run_manifest_path.read_text(encoding="utf-8")
+    )
+    del run_manifest["source_files"][contract.SOURCE_FILES[0]]
+    run_manifest_path.write_text(
+        json.dumps(run_manifest, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="source"):
+        gate.produce_gate(run_dir)
+
+
+def test_verifier_reconstructs_without_importing_producer(tmp_path):
+    _contract, run_dir = _write_profile_fixture(tmp_path)
+    _contract, _worker, gate, verifier = _modules()
+    gate.produce_gate(run_dir)
+    source = Path(verifier.__file__).read_text(encoding="utf-8")
+
+    assert "phase_stitch_profile_gate import" not in source
+    verified = verifier.verify_bundle(run_dir)
+    assert verified["verified"] is True
+    assert verified["classification"] == "GO_PHASE_STITCH_PROFILE"
