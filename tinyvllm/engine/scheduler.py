@@ -4313,7 +4313,7 @@ class Scheduler:
             )
             return
         seq.status = SequenceStatus.RUNNING
-        if requeue:
+        if requeue and seq not in self.running:
             self.running.append(seq)
 
     def _apply_prepared_chunked_prefill_postprocess(

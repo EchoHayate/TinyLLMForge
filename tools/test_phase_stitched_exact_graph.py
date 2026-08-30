@@ -835,6 +835,66 @@ def test_scheduler_phase_stitch_requeues_nonterminal_suffix():
     assert list(scheduler.running) == [sequence]
 
 
+def test_scheduler_phase_stitch_does_not_duplicate_running_sequence():
+    fixture, canonical = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=12,
+    )
+    sequence.ignore_eos = True
+    scheduler.running.append(sequence)
+    scheduler.schedule_generation = 1
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+    scheduler.mark_phase_stitch_replay_started(lease)
+    prefix = canonical.PhaseStitchPrefixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        token=101,
+        token_ordinal=0,
+        replay_count=0,
+        d2h_calls=1,
+        d2h_bytes=8,
+    )
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_phase_stitch_prefix_commit(
+            (sequence,),
+            lease,
+            prefix,
+        )
+    )
+    suffix = canonical.PhaseStitchSuffixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        tokens=(102, 103, 104, 105, 106, 107, 108),
+        first_token_ordinal=1,
+        replay_count=7,
+        d2h_calls=1,
+        d2h_bytes=56,
+    )
+
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_phase_stitch_suffix_commit(
+            (sequence,),
+            lease,
+            suffix,
+        )
+    )
+
+    assert list(scheduler.running) == [sequence]
+
+
 def test_scheduler_chunked_phase_stitch_requeues_only_after_suffix():
     fixture, canonical = _scheduler_phase_stitch_fixture()
     fixture.Sequence.block_size = 16
