@@ -51582,3 +51582,86 @@ PHASE_STITCHED_EXACT_GRAPH_PROMOTION=NOT_AUTHORIZED
 NEXT_OPTIMIZATION=EXACT_BURST_OCTET_FOLDED_REPLAY_GRAPH
 NEXT_COMMAND=execute docs/superpowers/plans/2026-08-24-exact-burst-octet-folded-replay-graph.md from the first unchecked task
 ```
+
+## 2026-08-30 Exact-Burst Octet-Folded Replay Graph terminal reconciliation
+
+The default-disabled runtime and its strict Qwen3-0.6B ceiling gate are
+complete in the authoritative checkout:
+
+```text
+authoritative checkout:
+  /Users/bytedance/dev/TinyLLMForge
+Desktop alias:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+source commit:
+  b61fe9d6350aa4ada2569feff09f7d6fb7d80a6b
+run tag:
+  20260830-qwen3-06b-octet-folded-ceiling-r4
+classification:
+  NO_GO_CEILING
+```
+
+The source-bound run contains 30/30 performance rows, 24/24 correctness rows,
+and 24 float32 logits sidecars. Exact token IDs, decoded text, sampled logits,
+argmax, logical forwards, logical replays, D2H accounting, and scheduler
+transaction behavior all pass. There are zero fallbacks, rollbacks, or
+quarantines.
+
+The mechanism works as designed. Across the 15 measured requests per arm,
+the one-token arm uses 1,905 physical launches. The folded arm uses 225
+folded launches plus 105 one-token tail launches, or 330 total. Eligible K8
+regions therefore reduce launches by 87.5%, while whole-request launches fall
+by 82.677165%.
+
+The optimization does not produce a promotable end-to-end benefit:
+
+```text
+aggregate median TPOT improvement:       0.0194117368%
+aggregate P95 TPOT improvement:          0.7078639514%
+maximum context median TPOT regression:  0.1816156952%
+maximum context P95 TPOT regression:     0.0094847753%
+maximum paired TPOT-P99 regression:      0.4665124143%
+maximum paired TTFT regression:          2.0833962547%
+maximum paired E2E regression:           0.5962847137%
+minimum paired throughput improvement:  -0.5927502346%
+```
+
+The aggregate median TPOT threshold is 1.0%, and the protected TTFT limit is
+2.0%; both fail. The frozen stop rule therefore prohibits Task 7 terminal
+gate construction or execution.
+
+The initial controller connection returned nonzero after the producer had
+already completed all artifacts and written `producer_exitcode=0`.
+Partial-preserving download recovered the complete primary bundle. Recovery
+ran only the remote verifier from the immutable r4 source, then a fresh local
+independent verifier. Both receipts are byte-identical with SHA-256
+`bb73798076528c5dae6d5e66d96b2bc1e030b8972d982faeb68d42f546a2ad02`.
+No replacement producer was launched.
+
+Canonical evidence:
+
+```text
+local:
+  artifacts/exact_burst_octet_folded_graph/
+    20260830-qwen3-06b-octet-folded-ceiling-r4/
+remote:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+    exact-burst-octet-folded-graph/
+audit:
+  docs/superpowers/audits/
+    2026-08-24-exact-burst-octet-folded-replay-graph-audit.md
+```
+
+```text
+OCTET_FOLDED_REPLAY_GRAPH=NO_GO_CEILING_COMPLETE
+OCTET_FOLDED_REPLAY_GRAPH_CORRECTNESS=PASS_EXACT
+OCTET_FOLDED_REPLAY_GRAPH_MECHANISM=PASS
+OCTET_FOLDED_REPLAY_GRAPH_REMOTE_VERIFIER=PASS
+OCTET_FOLDED_REPLAY_GRAPH_LOCAL_VERIFIER=PASS
+OCTET_FOLDED_REPLAY_GRAPH_TERMINAL_GATE=SKIPPED
+OCTET_FOLDED_REPLAY_GRAPH_PROMOTION=NOT_AUTHORIZED
+NEXT_OPTIMIZATION=LEASE_SEALED_PERSISTENT_DECODE_MEGAKERNEL_DESIGN
+NEXT_COMMAND=write a source-grounded design and ceiling-first plan before runtime implementation
+```

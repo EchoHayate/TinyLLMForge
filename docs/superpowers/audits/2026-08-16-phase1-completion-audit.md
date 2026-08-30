@@ -4445,3 +4445,67 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-30 latest reconciliation: Exact-Burst Octet-Folded Replay Graph
+
+The default-disabled octet-folded replay graph completed a source-bound
+Qwen3-0.6B BF16 TP1 batch-one ceiling gate. It captures eight ordered
+complete-token steps in one CUDA Graph and preserves the one-token graph as
+the fallback.
+
+### Prompt-to-artifact checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Frozen source | commit `b61fe9d6350aa4ada2569feff09f7d6fb7d80a6b`; empty patch SHA256 | `PASS` |
+| Strict-clean A100 | GPU 0, 0 MiB, 0%, no compute process | `PASS` |
+| Mounted-only storage | all remote paths below the approved `/data00/home/sitian/.../command-timeline-20260818` root | `PASS` |
+| Complete performance matrix | two policies x three contexts x five repetitions | `PASS_30_OF_30` |
+| Complete correctness matrix | two policies x three contexts x four sampling points | `PASS_24_OF_24` |
+| Exact outputs | token IDs, decoded text, sampled logits, and argmax match | `PASS_EXACT` |
+| Logical execution | 1,905 forwards and 1,905 logical replays per arm | `PASS` |
+| Physical launch reduction | eligible K8 regions reduce `120 -> 15` launches per request (`87.5%`); total launches reduce `1,905 -> 330` | `PASS` |
+| D2H contract | 240 calls and 15,240 bytes per arm | `PASS` |
+| Runtime safety | zero fallback, rollback, or quarantine | `PASS` |
+| Independent closure | producer exit 0; remote verifier exit 0; local verifier pass; receipts byte-identical | `PASS` |
+| Aggregate median TPOT | improvement `0.019412%`, threshold `1.0%` | `FAIL` |
+| Aggregate P95 TPOT | improvement `0.707864%`, threshold `0.5%` | `PASS` |
+| Protected TTFT | maximum regression `2.083396%`, limit `2.0%` | `FAIL` |
+| Other protected metrics | context TPOT, P99, E2E, throughput, memory, and capture-time limits | `PASS` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Exact-Burst Octet-Folded Replay Graph | Complete source-bound ceiling with exact correctness and dual-verifier agreement | `NO_GO_CEILING` |
+| Launch consolidation | eligible K8 launch reduction `87.5%`; whole-request reduction `82.677165%` | `MECHANISM_ESTABLISHED` |
+| Aggregate median TPOT | improves only `0.019412%` | `BELOW_THRESHOLD` |
+| Aggregate P95 TPOT | improves `0.707864%` | `PASS` |
+| Protected TTFT | worst pair regresses `2.083396%` | `ABOVE_LIMIT` |
+| Correctness and runtime safety | exact outputs and accounting; zero fallback/rollback/quarantine | `PASS` |
+| Promotion boundary | terminal gate and production promotion are not authorized | `STOPPED_AT_CEILING` |
+
+Detailed evidence is in
+`docs/superpowers/audits/2026-08-24-exact-burst-octet-folded-replay-graph-audit.md`.
+
+```text
+OCTET_FOLDED_REPLAY_GRAPH_RUN=20260830-qwen3-06b-octet-folded-ceiling-r4
+OCTET_FOLDED_REPLAY_GRAPH_SOURCE_COMMIT=b61fe9d6350aa4ada2569feff09f7d6fb7d80a6b
+OCTET_FOLDED_REPLAY_GRAPH_CLASSIFICATION=NO_GO_CEILING
+OCTET_FOLDED_REPLAY_GRAPH_PERFORMANCE_ROWS=30_OF_30
+OCTET_FOLDED_REPLAY_GRAPH_CORRECTNESS_ROWS=24_OF_24
+OCTET_FOLDED_REPLAY_GRAPH_PRODUCER_EXITCODE=0
+OCTET_FOLDED_REPLAY_GRAPH_REMOTE_VERIFIER=PASS
+OCTET_FOLDED_REPLAY_GRAPH_LOCAL_VERIFIER=PASS
+OCTET_FOLDED_REPLAY_GRAPH_CORRECTNESS=PASS_EXACT
+OCTET_FOLDED_REPLAY_GRAPH_ELIGIBLE_LAUNCH_REDUCTION=87_5_PERCENT
+OCTET_FOLDED_REPLAY_GRAPH_AGGREGATE_MEDIAN_TPOT=IMPROVEMENT_0_019412_PERCENT
+OCTET_FOLDED_REPLAY_GRAPH_AGGREGATE_P95_TPOT=IMPROVEMENT_0_707864_PERCENT
+OCTET_FOLDED_REPLAY_GRAPH_MAXIMUM_TTFT=REGRESSION_2_083396_PERCENT
+OCTET_FOLDED_REPLAY_GRAPH_TERMINAL_GATE=SKIPPED_BY_STOP_RULE
+OCTET_FOLDED_REPLAY_GRAPH_PROMOTION=NOT_AUTHORIZED
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
