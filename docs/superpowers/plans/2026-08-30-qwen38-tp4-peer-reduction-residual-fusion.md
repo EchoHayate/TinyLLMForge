@@ -503,9 +503,13 @@ Compilation flags are:
 
 ```python
 extra_cflags=["-O3"]
-extra_cuda_cflags=["-O3", "--use_fast_math=false", "-lineinfo"]
+extra_cuda_cflags=["-O3", "-lineinfo"]
 with_cuda=True
 ```
+
+NVCC defaults to precise division/square-root behavior when
+`--use_fast_math` is absent. The spelling `--use_fast_math=false` is invalid
+and must not be used.
 
 - [ ] **Step 5: Run local GREEN and source-contract checks**
 
@@ -592,10 +596,11 @@ For each active-token count:
 4. record complete transaction CUDA events without synchronizing inside the
    transaction;
 5. synchronize only after both arm launches for the pair;
-6. record host submission and CUDA durations;
-7. gather compact correctness digests and max errors;
-8. record allocator deltas and timeout status; and
-9. close the peer group in `finally`.
+6. call `candidate_group.check_status()` after that synchronization;
+7. record host submission and CUDA durations;
+8. gather compact correctness digests and max errors;
+9. record allocator deltas and timeout status; and
+10. close the peer group in `finally`.
 
 The baseline is exactly:
 
