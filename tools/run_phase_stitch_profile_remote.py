@@ -289,6 +289,14 @@ def remote_runtime_prelude(*, source, gpu_index):
 
 
 def run_remote_preflight(*, source, gpu_index):
+    smoke = "; ".join((
+        "from tools import phase_stitch_profile_contract as contract",
+        "from tools import phase_stitch_profile_gate",
+        "from tools import phase_stitch_profile_verify",
+        "from tools import phase_stitch_profile_worker",
+        "assert len(contract.build_case_matrix()) == 8",
+        "assert len(contract.expected_case_ids()) == 8",
+    ))
     command = (
         "set -eu; "
         f"cd {shlex.quote(source)}; "
@@ -298,9 +306,9 @@ def run_remote_preflight(*, source, gpu_index):
         )
         + f"test -x {shlex.quote(REMOTE_PYTHON)}; "
         + f"test -d {shlex.quote(MODEL_PATH)}; "
-        + f"{shlex.quote(REMOTE_PYTHON)} -m pytest -q "
-        + "tools/test_phase_stitch_profile.py "
-        + "tools/test_phase_stitch_profile_benchmark.py"
+        + f"{shlex.quote(REMOTE_PYTHON)} -m compileall -q "
+        + "tinyvllm tools; "
+        + f"{shlex.quote(REMOTE_PYTHON)} -c {shlex.quote(smoke)}"
     )
     require_success(
         _run_remote(command),

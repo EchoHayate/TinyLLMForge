@@ -296,6 +296,36 @@ def test_create_remote_run_places_specs_outside_measurement_dirs():
             ).exists()
 
 
+def test_remote_preflight_does_not_require_pytest_in_runtime_env():
+    remote = _remote()
+    paths = remote.remote_paths("preflight-fixture-r1")
+    commands = []
+    original_runner = remote._run_remote
+    remote._run_remote = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(
+            args=["ssh"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+    )
+    try:
+        remote.run_remote_preflight(
+            source=paths["staging"] + "/source",
+            gpu_index=0,
+        )
+    finally:
+        remote._run_remote = original_runner
+
+    assert len(commands) == 1
+    command = commands[0]
+    assert "pytest" not in command
+    assert "compileall" in command
+    assert "phase_stitch_profile_contract" in command
+    assert "phase_stitch_profile_verify" in command
+
+
 def test_controller_waits_then_auto_launches_without_overwrite():
     remote = _remote()
     selected = _gpu_row(2)
