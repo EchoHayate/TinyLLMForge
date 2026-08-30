@@ -1,0 +1,6 @@
+{
+  "classification": "NO_GO_PERFORMANCE",
+  "manifest_sha256": "201655637ecb6be0870bec67acffb7d51c1ae08828e86623c2321fcdeccc75fd",
+  "producer": "phase_stitched_exact_graph_gate",
+  "schema_version": "phase-stitched-exact-graph.receipt.v1"
+}

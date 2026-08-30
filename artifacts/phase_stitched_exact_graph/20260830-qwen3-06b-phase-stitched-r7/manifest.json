@@ -1,0 +1,25 @@
+{
+  "contract_sha256": "3c6a3cb7db0cefa2f3b7e76f55a6673061149940b8acbbe3bb20b2a65cdcce44",
+  "files": {
+    "cases/r0-p2048-eager/result.json": "c70fde7d5ba01529ed2849671919515dfa4cb23da6747921e4c409d4bd91433b",
+    "cases/r0-p2048-independent-composition/result.json": "a6597927b02db54821d2acd554b01a2d7c28918239067191a966d0b8b82307fa",
+    "cases/r0-p2048-prefill-only/result.json": "0bbeadf5df4d5383eb9c74bfd3a835a79600bd0c50b8ea73d5a8cad2e971fea5",
+    "cases/r0-p2048-stitched-composition/result.json": "98fdad993fdc73a6321168ed7abf71aa6eb7e057366f0ad98250b320b1a53ab3",
+    "cases/r0-p256-eager/result.json": "2ae9469df3400e33026dcf29cd2c1717f0a164055e71eb9eb6fdae34a76ff532",
+    "cases/r0-p256-independent-composition/result.json": "0e6623a0285edc0b4c69f16ace0e1a314b3e32358388114c62f25b42ca717fcf",
+    "cases/r0-p256-prefill-only/result.json": "5be5355e3019217fc8cc198d5a1397bedf354efc2774b938b699943dfc2320ea",
+    "cases/r0-p256-stitched-composition/result.json": "e29db13189b82835d20f8e3c2af1059ef9433724b8bcc1e827475ca42c314f72",
+    "cases/r1-p2048-eager/result.json": "21b49ae921c97b25529721dbc4d3ff47f06a11f047e72f48962993f2d5a4563c",
+    "cases/r1-p2048-independent-composition/result.json": "25bbe69e74db2f544759ac122e74b62e6dc87ee10757dd0e350ba38562d8ee41",
+    "cases/r1-p2048-prefill-only/result.json": "b9ba0acfc319be4a2816c9d3f13a709f7f1abdf92770762eb90b898e963eeb27",
+    "cases/r1-p2048-stitched-composition/result.json": "bee980fd3a99546399da4f758facf4964fec61e2cb623ba1481fb2e0d29c032e",
+    "cases/r1-p256-eager/result.json": "a89dda196e206c3c2a3b2ffd5276e720e7d9f3304344ba73c82cf529372894c5",
+    "cases/r1-p256-independent-composition/result.json": "8d1d6b444da66198a6167043bebdef553f5c584b2639c02b8235ac00e9a80ee4",
+    "cases/r1-p256-prefill-only/result.json": "ba48dbb0237dee4f620bf46e201cb73ea0f74959654ebffb26d2f5828febb1ca",
+    "cases/r1-p256-stitched-composition/result.json": "3cff51f9a4b6c4f7b6cbed505e61df806d41e59c1c41e8a2e235722fbafb35fa",
+    "gate.json": "b3e90281ed318b56e2881f220a629ba24059618d20ab44aa288f7a57cfaa931e",
+    "run_manifest.json": "438ebc447804457a63c9375a50a19cd3b73eda3796a58f47b37fa784b77c93f7",
+    "summary.json": "b90b344d0a7f802a87a0567adeab9908be3c10ff72e158cb7b4c09150017ae96"
+  },
+  "schema_version": "phase-stitched-exact-graph.manifest.v1"
+}

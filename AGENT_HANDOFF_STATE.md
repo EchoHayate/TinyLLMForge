@@ -51498,3 +51498,87 @@ The compact evidence is retained at
 `artifacts/phase_stitch_profile/20260830-qwen3-06b-r4/`. The full completion
 audit is
 `docs/superpowers/audits/2026-08-30-phase-stitch-profile-audit.md`.
+
+## 2026-08-30 Phase-Stitched Exact Graph terminal reconciliation
+
+The complete default-disabled Phase-Stitched Exact Graph runtime was
+evaluated with a fresh immutable Qwen3-0.6B BF16 TP1 batch-one gate:
+
+```text
+terminal source:
+  54ce310203446e954ebcaf52a9ddb8de225d62f1
+run tag:
+  20260830-qwen3-06b-phase-stitched-r7
+contract SHA-256:
+  3c6a3cb7db0cefa2f3b7e76f55a6673061149940b8acbbe3bb20b2a65cdcce44
+manifest SHA-256:
+  201655637ecb6be0870bec67acffb7d51c1ae08828e86623c2321fcdeccc75fd
+classification:
+  NO_GO_PERFORMANCE
+```
+
+The source-bound controller admitted physical GPU 0,
+`GPU-57be086f-e967-c022-3832-93df4fc77bd0`, as a strict-clean NVIDIA A100
+80GB PCIe at 0 MiB, 0% utilization, and no compute process. All writes stayed
+under the approved `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/phase-stitched-exact-graph/`
+root.
+
+The 16-case reversed-order four-arm matrix produced 80 measured rows.
+All 20 prompt/sample groups have exact four-arm token-ID and decoded-text
+parity. Every stitched request records exactly one attempt, one success, one
+prefill replay, seven decode replays, eight target forwards, one prefix
+commit, one suffix commit, one 8-byte prefix D2H, one 56-byte suffix D2H, and
+zero failures, quarantines, fallbacks, or pending leases.
+
+The r6 mechanism failure was telemetry-only. Prefix and suffix engine steps
+both repeated the same transaction-level D2H counters, so the worker summed
+them to `2/2` calls and `16/112` bytes. Commit `54ce310` makes suffix-drain
+observations step-local by reporting zero newly issued D2H operations.
+Focused RED→GREEN coverage, the complete 228-test local gate suite, static
+compilation, and diff checks pass.
+
+Measured D-versus-C result:
+
+```text
+256 E2E improvement:                  0.415890%
+2048 E2E improvement:                1.162159%
+aggregate E2E improvement:           1.047063%
+aggregate token-0-to-1 gap gain:    20.148586%
+256 TTFT improvement:                1.285430%
+2048 TTFT improvement:              10.903066%
+256 peak-reserved improvement:       0.192172%
+2048 peak-reserved improvement:      1.482554%
+```
+
+Mechanism, exactness, gap, TTFT, tail, and memory checks pass. The frozen
+performance gate requires at least one 3% per-shape E2E win and a 2%
+aggregate E2E win; neither passes. Producer, remote verifier, and resumed
+local verifier agree on `NO_GO_PERFORMANCE`.
+
+The first controller process completed all remote workers, producer, and
+verifier, then lost SSH while downloading the final inventory. Recovery
+reused the immutable completed r7 run and resumed only download plus local
+verification. No replacement benchmark worker was launched.
+
+Canonical evidence:
+
+```text
+local:
+  artifacts/phase_stitched_exact_graph/
+    20260830-qwen3-06b-phase-stitched-r7/
+remote:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+    phase-stitched-exact-graph/
+audit:
+  docs/superpowers/audits/
+    2026-08-30-phase-stitched-exact-graph-audit.md
+```
+
+```text
+PHASE_STITCHED_EXACT_GRAPH=NO_GO_PERFORMANCE_COMPLETE
+PHASE_STITCHED_EXACT_GRAPH_CORRECTNESS=PASS_EXACT
+PHASE_STITCHED_EXACT_GRAPH_MECHANISM=PASS
+PHASE_STITCHED_EXACT_GRAPH_PROMOTION=NOT_AUTHORIZED
+NEXT_OPTIMIZATION=EXACT_BURST_OCTET_FOLDED_REPLAY_GRAPH
+NEXT_COMMAND=execute docs/superpowers/plans/2026-08-24-exact-burst-octet-folded-replay-graph.md from the first unchecked task
+```
