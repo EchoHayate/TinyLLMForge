@@ -45,6 +45,7 @@ class Config:
     exact_greedy_decode_burst_generation_sealed_identity: bool = False
     exact_greedy_decode_burst_medium_split_k: bool = False
     exact_greedy_decode_burst_elastic_k16: bool = False
+    exact_greedy_decode_burst_octet_folded_graph: bool = False
     exact_greedy_decode_burst_tokens: int = 4
     prefill_cuda_graphs: bool = False
     prefill_cuda_graph_token_allowlist: tuple = (256, 2048)
@@ -280,6 +281,14 @@ class Config:
                 "exact_greedy_decode_burst_elastic_k16 "
                 "must be a bool"
             )
+        if not isinstance(
+            self.exact_greedy_decode_burst_octet_folded_graph,
+            bool,
+        ):
+            raise ValueError(
+                "exact_greedy_decode_burst_octet_folded_graph "
+                "must be a bool"
+            )
         if (
             self.exact_greedy_decode_burst_medium_split_k
             and not self.exact_greedy_decode_burst
@@ -302,6 +311,25 @@ class Config:
                 "exact_greedy_decode_burst_tokens must be an "
                 "integer in [2, 8]"
             )
+        if self.exact_greedy_decode_burst_octet_folded_graph:
+            if not self.exact_greedy_decode_burst:
+                raise ValueError(
+                    "octet-folded graph requires "
+                    "exact_greedy_decode_burst"
+                )
+            if self.exact_greedy_decode_burst_tokens != 8:
+                raise ValueError(
+                    "octet-folded graph requires K8 base width"
+                )
+            if self.exact_greedy_decode_burst_ragged_coalescing:
+                raise ValueError(
+                    "octet-folded graph requires "
+                    "ragged coalescing off"
+                )
+            if self.exact_greedy_decode_burst_split_phase:
+                raise ValueError(
+                    "octet-folded graph requires split phase off"
+                )
         if self.exact_greedy_decode_burst_elastic_k16:
             if not self.exact_greedy_decode_burst:
                 raise ValueError(

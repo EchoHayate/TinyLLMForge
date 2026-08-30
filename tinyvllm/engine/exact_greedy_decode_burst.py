@@ -16,6 +16,9 @@ MEDIUM_SPLIT_K_NUM_SPLITS = 12
 MEDIUM_SPLIT_K_MIN_CONTEXT_LENGTH = 1537
 MEDIUM_SPLIT_K_MAX_CONTEXT_LENGTH = 4097
 MAX_ELASTIC_BURST_WIDTH_HEALTH_GENERATION = (1 << 63) - 1
+MAX_EXACT_GREEDY_DECODE_BURST_FOLDED_HEALTH_GENERATION = (
+    (1 << 63) - 1
+)
 IDENTITY_SEAL_FALLBACK_REASONS = frozenset({
     "untracked_block_table",
 })
@@ -262,6 +265,78 @@ class ElasticBurstWidthHealth:
             "shared_graph_history_capacity": history_capacity,
             "incremental_retained_static_bytes": 0,
         }
+
+
+@dataclass
+class ExactGreedyDecodeBurstFoldedHealth:
+    generation: int = 0
+    quarantine_reason: Optional[str] = None
+    attempts: int = 0
+    launches: int = 0
+    logical_steps: int = 0
+
+    def __post_init__(self) -> None:
+        for name in (
+            "generation",
+            "attempts",
+            "launches",
+            "logical_steps",
+        ):
+            _require_non_negative_int(getattr(self, name), name)
+        if (
+            self.generation
+            > MAX_EXACT_GREEDY_DECODE_BURST_FOLDED_HEALTH_GENERATION
+        ):
+            raise ValueError(
+                "generation exceeds the supported maximum"
+            )
+        if self.quarantine_reason is not None:
+            _require_reason(
+                self.quarantine_reason,
+                "folded quarantine reason",
+            )
+
+    @property
+    def healthy(self) -> bool:
+        return self.quarantine_reason is None
+
+    def record_attempt(self, *, width: int) -> None:
+        if (
+            isinstance(width, bool)
+            or not isinstance(width, int)
+            or width not in (8, 16)
+        ):
+            raise ValueError(
+                "folded burst width must be eight or sixteen"
+            )
+        self.attempts += 1
+
+    def record_launch(self, *, logical_steps: int) -> None:
+        _require_positive_int(logical_steps, "logical_steps")
+        self.launches += 1
+        self.logical_steps += logical_steps
+
+    def quarantine(self, reason: str) -> None:
+        reason = _require_reason(
+            reason,
+            "folded quarantine reason",
+        )
+        if self.quarantine_reason is not None:
+            if self.quarantine_reason != reason:
+                raise ValueError(
+                    "folded graph is already quarantined "
+                    "for a different reason"
+                )
+            return
+        if (
+            self.generation
+            >= MAX_EXACT_GREEDY_DECODE_BURST_FOLDED_HEALTH_GENERATION
+        ):
+            raise OverflowError(
+                "folded graph health generation exhausted"
+            )
+        self.generation += 1
+        self.quarantine_reason = reason
 
 
 def select_context_gated_elastic_exact_burst_width(
@@ -1231,6 +1306,11 @@ class ExactGreedyDecodeBurstStats:
     acceptances: int = 0
     target_model_forwards: int = 0
     graph_replays: int = 0
+    one_token_cuda_graph_launches: int = 0
+    folded_cuda_graph_launches: int = 0
+    folded_logical_steps: int = 0
+    folded_k8_bursts: int = 0
+    folded_k16_bursts: int = 0
     intermediate_token_d2h_calls: int = 0
     final_token_d2h_calls: int = 0
     final_token_d2h_bytes: int = 0
@@ -1312,6 +1392,9 @@ class ExactGreedyDecodeBurstStats:
     elastic_k16_fallback_counts: dict[str, int] = field(
         default_factory=dict
     )
+    folded_fallback_counts: dict[str, int] = field(
+        default_factory=dict
+    )
     per_width_commits: dict[int, int] = field(
         default_factory=dict
     )
@@ -1319,6 +1402,9 @@ class ExactGreedyDecodeBurstStats:
     capture_receipts: list[
         ExactGreedyDecodeBurstCaptureReceipt
     ] = field(default_factory=list)
+    folded_health: ExactGreedyDecodeBurstFoldedHealth = field(
+        default_factory=ExactGreedyDecodeBurstFoldedHealth
+    )
 
     def record_attempt(self) -> None:
         self.attempts += 1
@@ -1541,6 +1627,54 @@ class ExactGreedyDecodeBurstStats:
         self.graph_replays += count
         self.target_model_forwards += count
 
+    def record_one_token_cuda_graph_launches(
+        self,
+        count: int,
+    ) -> None:
+        _require_positive_int(count, "launch count")
+        self.one_token_cuda_graph_launches += count
+
+    def record_folded_burst(
+        self,
+        *,
+        width: int,
+        launch_count: int,
+    ) -> None:
+        if (
+            isinstance(width, bool)
+            or not isinstance(width, int)
+            or width not in (8, 16)
+        ):
+            raise ValueError(
+                "folded burst width must be eight or sixteen"
+            )
+        _require_positive_int(launch_count, "launch_count")
+        expected_launch_count = width // 8
+        if launch_count != expected_launch_count:
+            launch_count_name = (
+                "one" if expected_launch_count == 1 else "two"
+            )
+            raise ValueError(
+                f"K{width} folded burst must use "
+                f"{launch_count_name} physical "
+                f"launch{'es' if expected_launch_count != 1 else ''}"
+            )
+        self.folded_cuda_graph_launches += launch_count
+        self.folded_logical_steps += width
+        if width == 8:
+            self.folded_k8_bursts += 1
+        else:
+            self.folded_k16_bursts += 1
+
+    def record_folded_fallback(self, reason: str) -> None:
+        reason = _require_reason(
+            reason,
+            "folded fallback reason",
+        )
+        self.folded_fallback_counts[reason] = (
+            self.folded_fallback_counts.get(reason, 0) + 1
+        )
+
     def record_final_token_d2h(
         self,
         *,
@@ -1751,6 +1885,15 @@ class ExactGreedyDecodeBurstStats:
             "acceptances": self.acceptances,
             "target_model_forwards": self.target_model_forwards,
             "graph_replays": self.graph_replays,
+            "one_token_cuda_graph_launches": (
+                self.one_token_cuda_graph_launches
+            ),
+            "folded_cuda_graph_launches": (
+                self.folded_cuda_graph_launches
+            ),
+            "folded_logical_steps": self.folded_logical_steps,
+            "folded_k8_bursts": self.folded_k8_bursts,
+            "folded_k16_bursts": self.folded_k16_bursts,
             "intermediate_token_d2h_calls": (
                 self.intermediate_token_d2h_calls
             ),
@@ -1883,6 +2026,15 @@ class ExactGreedyDecodeBurstStats:
             ),
             "elastic_k16_fallback_counts": dict(
                 sorted(self.elastic_k16_fallback_counts.items())
+            ),
+            "folded_fallback_counts": dict(
+                sorted(self.folded_fallback_counts.items())
+            ),
+            "folded_health_generation": (
+                self.folded_health.generation
+            ),
+            "folded_quarantine_reason": (
+                self.folded_health.quarantine_reason
             ),
             "per_width_commits": {
                 str(key): value

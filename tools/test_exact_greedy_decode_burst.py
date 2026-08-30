@@ -81,6 +81,11 @@ ElasticBurstWidthHealth = getattr(
     "ElasticBurstWidthHealth",
     None,
 )
+ExactGreedyDecodeBurstFoldedHealth = getattr(
+    module,
+    "ExactGreedyDecodeBurstFoldedHealth",
+    None,
+)
 BlockTableIdentitySeal = module.BlockTableIdentitySeal
 ExactGreedyDecodeBurstResult = module.ExactGreedyDecodeBurstResult
 ExactGreedyDecodeBurstStats = module.ExactGreedyDecodeBurstStats
@@ -1290,6 +1295,136 @@ def test_elastic_width_health_is_monotonic_and_fail_closed() -> None:
     assert exhausted.k16_quarantine_reason is None
 
 
+def test_folded_health_tracks_attempts_launches_and_quarantine() -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedHealth)
+    health = ExactGreedyDecodeBurstFoldedHealth()
+    assert health.generation == 0
+    assert health.quarantine_reason is None
+    assert health.attempts == 0
+    assert health.launches == 0
+    assert health.logical_steps == 0
+    assert health.healthy is True
+
+    health.record_attempt(width=8)
+    health.record_launch(logical_steps=8)
+    health.quarantine("replay_failure:RuntimeError")
+
+    assert health.generation == 1
+    assert (
+        health.quarantine_reason
+        == "replay_failure:RuntimeError"
+    )
+    assert health.attempts == 1
+    assert health.launches == 1
+    assert health.logical_steps == 8
+    assert health.healthy is False
+
+    health.quarantine("replay_failure:RuntimeError")
+    assert health.generation == 1
+
+
+def test_folded_health_validates_before_mutation() -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedHealth)
+    for invalid in (True, False, 0, 7, 9, 15, 17):
+        health = ExactGreedyDecodeBurstFoldedHealth()
+        _assert_raises(
+            ValueError,
+            "folded burst width must be eight or sixteen",
+            lambda invalid=invalid, health=health: (
+                health.record_attempt(width=invalid)
+            ),
+        )
+        assert health.attempts == 0
+
+    for invalid in (True, False, 0, -1):
+        health = ExactGreedyDecodeBurstFoldedHealth()
+        _assert_raises(
+            ValueError,
+            "logical_steps must be a positive integer",
+            lambda invalid=invalid, health=health: (
+                health.record_launch(logical_steps=invalid)
+            ),
+        )
+        assert health.launches == 0
+        assert health.logical_steps == 0
+
+    for invalid in ("", None, 1):
+        health = ExactGreedyDecodeBurstFoldedHealth()
+        _assert_raises(
+            ValueError,
+            (
+                "folded quarantine reason must be a "
+                "non-empty string"
+            ),
+            lambda invalid=invalid, health=health: (
+                health.quarantine(invalid)
+            ),
+        )
+        assert health.generation == 0
+        assert health.quarantine_reason is None
+
+    health = ExactGreedyDecodeBurstFoldedHealth()
+    health.quarantine("replay_failure:RuntimeError")
+    _assert_raises(
+        ValueError,
+        "folded graph is already quarantined for a different reason",
+        lambda: health.quarantine("final_d2h_failure:RuntimeError"),
+    )
+    assert health.generation == 1
+    assert (
+        health.quarantine_reason
+        == "replay_failure:RuntimeError"
+    )
+
+    maximum = (
+        module
+        .MAX_EXACT_GREEDY_DECODE_BURST_FOLDED_HEALTH_GENERATION
+    )
+    exhausted = ExactGreedyDecodeBurstFoldedHealth(
+        generation=maximum,
+    )
+    _assert_raises(
+        OverflowError,
+        "folded graph health generation exhausted",
+        lambda: exhausted.quarantine("replay_failure:RuntimeError"),
+    )
+    assert exhausted.generation == maximum
+    assert exhausted.quarantine_reason is None
+
+
+def test_folded_health_constructor_rejects_invalid_state() -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedHealth)
+    for field_name in (
+        "generation",
+        "attempts",
+        "launches",
+        "logical_steps",
+    ):
+        for invalid in (True, False, -1, 1.5):
+            _assert_raises(
+                ValueError,
+                (
+                    f"{field_name} must be a "
+                    "non-negative integer"
+                ),
+                lambda field_name=field_name, invalid=invalid: (
+                    ExactGreedyDecodeBurstFoldedHealth(
+                        **{field_name: invalid}
+                    )
+                ),
+            )
+    _assert_raises(
+        ValueError,
+        (
+            "folded quarantine reason must be a "
+            "non-empty string"
+        ),
+        lambda: ExactGreedyDecodeBurstFoldedHealth(
+            quarantine_reason="",
+        ),
+    )
+
+
 def test_elastic_width_health_capability_reuses_shared_graph() -> None:
     assert callable(ElasticBurstWidthHealth)
     shared = {
@@ -1994,6 +2129,7 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
         block_boundary_clipped=True,
     )
     stats.record_capture(receipt)
+    stats.record_one_token_cuda_graph_launches(4)
     stats.record_replays(4)
     stats.record_final_token_d2h(token_count=4, byte_count=32)
     stats.record_commit(token_count=4, host_visible_gap_ns=12_000_000)
@@ -2004,6 +2140,14 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
     assert summary["acceptances"] == 1
     assert summary["target_model_forwards"] == 4
     assert summary["graph_replays"] == 4
+    assert summary["one_token_cuda_graph_launches"] == 4
+    assert summary["folded_cuda_graph_launches"] == 0
+    assert summary["folded_logical_steps"] == 0
+    assert summary["folded_k8_bursts"] == 0
+    assert summary["folded_k16_bursts"] == 0
+    assert summary["folded_fallback_counts"] == {}
+    assert summary["folded_health_generation"] == 0
+    assert summary["folded_quarantine_reason"] is None
     assert summary["intermediate_token_d2h_calls"] == 0
     assert summary["final_token_d2h_calls"] == 1
     assert summary["final_token_d2h_bytes"] == 32
@@ -2014,6 +2158,78 @@ def test_stats_track_benefit_cost_and_terminal_state() -> None:
     assert summary["capture_receipts"][0][
         "scratch_block_count"
     ] == 1
+
+
+def test_stats_separate_folded_physical_launches_from_logical_replays(
+) -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    stats.record_folded_burst(width=8, launch_count=1)
+    stats.record_folded_burst(width=16, launch_count=2)
+    stats.record_replays(24)
+    stats.record_folded_fallback("identity_mismatch")
+    stats.folded_health.record_attempt(width=8)
+    stats.folded_health.record_launch(logical_steps=8)
+    stats.folded_health.quarantine("replay_failure:RuntimeError")
+
+    summary = stats.summary()
+
+    assert summary["graph_replays"] == 24
+    assert summary["target_model_forwards"] == 24
+    assert summary["one_token_cuda_graph_launches"] == 0
+    assert summary["folded_cuda_graph_launches"] == 3
+    assert summary["folded_logical_steps"] == 24
+    assert summary["folded_k8_bursts"] == 1
+    assert summary["folded_k16_bursts"] == 1
+    assert summary["folded_fallback_counts"] == {
+        "identity_mismatch": 1,
+    }
+    assert summary["folded_health_generation"] == 1
+    assert summary["folded_quarantine_reason"] == (
+        "replay_failure:RuntimeError"
+    )
+
+
+def test_folded_stats_recorders_validate_before_mutation() -> None:
+    stats = ExactGreedyDecodeBurstStats()
+    for width, launch_count, message in (
+        (True, 1, "folded burst width must be eight or sixteen"),
+        (7, 1, "folded burst width must be eight or sixteen"),
+        (8, True, "launch_count must be a positive integer"),
+        (8, 0, "launch_count must be a positive integer"),
+        (8, 2, "K8 folded burst must use one physical launch"),
+        (16, 1, "K16 folded burst must use two physical launches"),
+    ):
+        _assert_raises(
+            ValueError,
+            message,
+            lambda width=width, launch_count=launch_count: (
+                stats.record_folded_burst(
+                    width=width,
+                    launch_count=launch_count,
+                )
+            ),
+        )
+        assert stats.folded_cuda_graph_launches == 0
+        assert stats.folded_logical_steps == 0
+        assert stats.folded_k8_bursts == 0
+        assert stats.folded_k16_bursts == 0
+
+    for invalid in (True, False, 0, -1):
+        _assert_raises(
+            ValueError,
+            "launch count must be a positive integer",
+            lambda invalid=invalid: (
+                stats.record_one_token_cuda_graph_launches(invalid)
+            ),
+        )
+        assert stats.one_token_cuda_graph_launches == 0
+
+    _assert_raises(
+        ValueError,
+        "folded fallback reason must be a non-empty string",
+        lambda: stats.record_folded_fallback(""),
+    )
+    assert stats.folded_fallback_counts == {}
 
 
 def test_stats_track_elastic_k16_selection_and_per_width_commits() -> None:

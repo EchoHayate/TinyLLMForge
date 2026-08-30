@@ -736,7 +736,10 @@ def make_runner(**overrides):
         "exact_greedy_decode_burst_ragged_coalescing": False,
         "exact_greedy_decode_burst_medium_split_k": False,
         "exact_greedy_decode_burst_elastic_k16": False,
+        "exact_greedy_decode_burst_octet_folded_graph": False,
         "exact_greedy_decode_burst_tokens": 4,
+        "prefill_cuda_graphs": False,
+        "prefill_cuda_graph_token_allowlist": (256, 2048),
         "multi_sequence_cuda_graphs": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "spec_verify_cuda_graphs": False,
@@ -758,6 +761,18 @@ def make_runner(**overrides):
             max_single_capture_ns=2_000_000_000,
         )
     )
+    prefill_cache_module = sys.modules[
+        "tinyvllm.engine.exact_prefill_cuda_graph"
+    ]
+    runner.exact_prefill_cuda_graph_cache = (
+        prefill_cache_module.ExactPrefillCudaGraphCache(
+            prefill_cache_module.ExactPrefillCudaGraphCacheConfig(
+                enabled=False,
+                token_allowlist=(256, 2048),
+            )
+        )
+    )
+    runner._prefill_cuda_graph_step_id = 0
     runner.last_cuda_graph_dispatch_event = None
     runner._cuda_graph_step_id = 0
     runner._cuda_graph_request_ids_hash = "request-hash"
@@ -6357,6 +6372,12 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         ].default
         is False
     )
+    assert (
+        fields[
+            "exact_greedy_decode_burst_octet_folded_graph"
+        ].default
+        is False
+    )
     assert fields["exact_greedy_decode_burst_tokens"].default == 4
     with tempfile.TemporaryDirectory() as model:
         for invalid in (0, 1, None, "true"):
@@ -6460,6 +6481,20 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
                     model=model,
                     exact_greedy_decode_burst_elastic_k16=invalid,
                 )
+        for invalid in (0, 1, None, "true"):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "^exact_greedy_decode_burst_octet_folded_"
+                    "graph must be a bool$"
+                ),
+            ):
+                Config(
+                    model=model,
+                    exact_greedy_decode_burst_octet_folded_graph=(
+                        invalid
+                    ),
+                )
         for invalid in (False, True, 1, 9, 4.0, None):
             with pytest.raises(
                 ValueError,
@@ -6507,6 +6542,53 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
             )
         with pytest.raises(
             ValueError,
+            match=(
+                "^octet-folded graph requires "
+                "exact_greedy_decode_burst$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst_octet_folded_graph=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^octet-folded graph requires K8 base width$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=4,
+                exact_greedy_decode_burst_octet_folded_graph=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match="^octet-folded graph requires split phase off$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_split_phase=True,
+                exact_greedy_decode_burst_octet_folded_graph=True,
+            )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^octet-folded graph requires "
+                "ragged coalescing off$"
+            ),
+        ):
+            Config(
+                model=model,
+                exact_greedy_decode_burst=True,
+                exact_greedy_decode_burst_tokens=8,
+                exact_greedy_decode_burst_split_phase=True,
+                exact_greedy_decode_burst_ragged_coalescing=True,
+                exact_greedy_decode_burst_octet_folded_graph=True,
+            )
+        with pytest.raises(
+            ValueError,
             match="^elastic K16 requires K8 base width$",
         ):
             Config(
@@ -6543,6 +6625,19 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
             exact_greedy_decode_burst=True,
             exact_greedy_decode_burst_tokens=8,
             exact_greedy_decode_burst_elastic_k16=True,
+        )
+        folded_k8 = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_tokens=8,
+            exact_greedy_decode_burst_octet_folded_graph=True,
+        )
+        folded_k16 = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_decode_burst_tokens=8,
+            exact_greedy_decode_burst_elastic_k16=True,
+            exact_greedy_decode_burst_octet_folded_graph=True,
         )
         Config(
             model=model,
@@ -6713,6 +6808,22 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
         is True
     )
     assert elastic_k16.exact_greedy_decode_burst_elastic_k16 is True
+    assert (
+        folded_k8.exact_greedy_decode_burst_octet_folded_graph
+        is True
+    )
+    assert (
+        folded_k8.exact_greedy_decode_burst_elastic_k16
+        is False
+    )
+    assert (
+        folded_k16.exact_greedy_decode_burst_octet_folded_graph
+        is True
+    )
+    assert (
+        folded_k16.exact_greedy_decode_burst_elastic_k16
+        is True
+    )
     assert enabled.exact_greedy_decode_burst is True
     assert enabled.exact_greedy_decode_burst_continuation is False
     assert enabled.exact_greedy_decode_burst_split_phase is True
