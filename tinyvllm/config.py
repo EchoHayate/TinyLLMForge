@@ -49,6 +49,7 @@ class Config:
     prefill_cuda_graphs: bool = False
     prefill_cuda_graph_token_allowlist: tuple = (256, 2048)
     phase_stitch_profile: bool = False
+    phase_stitched_exact_graph_runtime: bool = False
     multi_sequence_cuda_graphs: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
     multi_sequence_cuda_graph_min_observations: int = 3
@@ -353,6 +354,13 @@ class Config:
             raise ValueError("prefill_cuda_graphs must be a bool")
         if not isinstance(self.phase_stitch_profile, bool):
             raise ValueError("phase_stitch_profile must be a bool")
+        if not isinstance(
+            self.phase_stitched_exact_graph_runtime,
+            bool,
+        ):
+            raise ValueError(
+                "phase_stitched_exact_graph_runtime must be a bool"
+            )
         self.prefill_cuda_graph_token_allowlist = (
             _normalize_positive_int_tuple(
                 self.prefill_cuda_graph_token_allowlist,

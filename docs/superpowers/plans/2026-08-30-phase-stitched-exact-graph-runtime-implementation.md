@@ -250,8 +250,7 @@ Run:
 
 ```bash
 python3 -m pytest -q \
-  tools/test_phase_stitched_exact_graph.py \
-  tools/test_config_validation.py
+  tools/test_phase_stitched_exact_graph.py
 ```
 
 Expected: all tests pass.
