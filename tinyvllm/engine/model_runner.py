@@ -170,7 +170,12 @@ from tinyvllm.layers.linear import (
     set_quant_config,
 )
 from tinyvllm.layers.sampler import Sampler
-from tinyvllm.utils.context import reset_context, set_context, get_context
+from tinyvllm.utils.context import (
+    get_context,
+    reset_context,
+    set_context,
+    temporary_context,
+)
 from tinyvllm.engine.kv_cartridge import compress_decode_block_table_rows, should_use_kv_cartridge
 from tinyvllm.engine.light_doc_cache_runtime import (
     build_model_runner_light_doc_cache_summary,
@@ -10081,11 +10086,16 @@ class ModelRunner:
             state["prefill_graph_replays"] += 1
             state["target_model_forwards"] += 1
             hidden = hidden[-1:]
-            token_zero = (
-                self.model.compute_logits(hidden)
-                .to(torch.float32)
-                .argmax(dim=-1)
-            )
+            with temporary_context(
+                mode="decode",
+                is_prefill=False,
+                logits_indices=None,
+            ):
+                token_zero = (
+                    self.model.compute_logits(hidden)
+                    .to(torch.float32)
+                    .argmax(dim=-1)
+                )
             tensors = graph.tensors
             type(graph)._reset_static_state(
                 tensors,

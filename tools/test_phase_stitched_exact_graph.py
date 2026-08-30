@@ -1625,6 +1625,95 @@ def test_model_runner_phase_stitch_replay_enters_inference_mode():
     ]
 
 
+def test_model_runner_phase_stitch_lm_head_ignores_prefill_row_indices():
+    (
+        runner,
+        _canonical,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        _context,
+    ) = _model_runner_phase_stitch_case()
+    context_getter = (
+        runner.run_phase_stitched_exact_graph.__globals__["get_context"]
+    )
+    context_module = sys.modules[context_getter.__module__]
+    live_slots = _RunnerTensor(
+        "live_slots",
+        list(range(16)),
+        events,
+        dtype="torch.int32",
+    )
+    live_cu_q = _RunnerTensor(
+        "live_cu_q",
+        [0, 16],
+        events,
+        dtype="torch.int32",
+    )
+    live_cu_k = _RunnerTensor(
+        "live_cu_k",
+        [0, 16],
+        events,
+        dtype="torch.int32",
+    )
+    live_logits_indices = _RunnerTensor(
+        "live_logits_indices",
+        [15],
+        events,
+    )
+    context_module.set_context(
+        True,
+        live_cu_q,
+        live_cu_k,
+        16,
+        16,
+        live_slots,
+        None,
+        None,
+        live_logits_indices,
+    )
+    prefill_context = context_module.get_context()
+
+    class ContextCheckingModel(_RunnerModel):
+        def compute_logits(self, hidden):
+            active_context = context_module.get_context()
+            events.append(
+                (
+                    "lm_head_context",
+                    active_context.is_prefill,
+                    active_context.logits_indices,
+                )
+            )
+            if active_context.is_prefill:
+                raise IndexError(
+                    "prefill row 15 cannot index one-row hidden state"
+                )
+            return super().compute_logits(hidden)
+
+    runner.model = ContextCheckingModel(
+        events,
+        _RunnerTensor("token0", [101], events),
+    )
+    try:
+        result = runner.run_phase_stitched_exact_graph(
+            (sequence,),
+            lease,
+            input_ids=input_ids,
+            positions=positions,
+            context=prefill_context,
+            current_block_table_identity=((5, 2), (6, 4)),
+        )
+    finally:
+        restored_context = context_module.get_context()
+        context_module.reset_context()
+
+    assert result.target_model_forward_count == 8
+    assert ("lm_head_context", False, None) in events
+    assert restored_context is prefill_context
+
+
 def test_model_runner_phase_stitch_prepares_final_prefill_from_sequences(
     monkeypatch,
 ):
