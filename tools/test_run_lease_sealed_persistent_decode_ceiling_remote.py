@@ -106,6 +106,37 @@ def test_strict_clean_a100_requires_zero_everything():
     assert remote.strict_clean_a100s(rows) == [rows[0]]
 
 
+def test_wait_for_clean_a100_retries_transient_inventory_failure(
+    monkeypatch,
+):
+    calls = []
+    selected = _gpu(1)
+    monkeypatch.setattr(
+        remote,
+        "validate_kerberos",
+        lambda **_kwargs: calls.append("kerberos"),
+    )
+
+    def query():
+        calls.append("query")
+        if calls.count("query") == 1:
+            raise RuntimeError("transient SSH failure")
+        return [selected]
+
+    monkeypatch.setattr(remote.base, "query_remote_gpu_rows", query)
+    monkeypatch.setattr(remote.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(remote.time, "monotonic", lambda: 0.0)
+
+    inventory, gpu = remote.wait_for_clean_a100(
+        timeout_seconds=60,
+        poll_interval_seconds=1,
+    )
+
+    assert inventory == [selected]
+    assert gpu == selected
+    assert calls == ["kerberos", "query", "kerberos", "query"]
+
+
 def test_committed_source_archive_contains_exact_qualification_sources():
     with TemporaryDirectory() as temporary:
         root = Path(temporary)

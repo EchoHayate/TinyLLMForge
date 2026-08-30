@@ -156,7 +156,15 @@ def wait_for_clean_a100(
         validate_kerberos(
             minimum_lifetime_seconds=MINIMUM_KERBEROS_LIFETIME_SECONDS
         )
-        rows = base.query_remote_gpu_rows()
+        try:
+            rows = base.query_remote_gpu_rows()
+        except RuntimeError as error:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "remote GPU inventory remained unavailable"
+                ) from error
+            time.sleep(poll_interval_seconds)
+            continue
         clean = strict_clean_a100s(rows)
         if clean:
             return rows, clean[0]
