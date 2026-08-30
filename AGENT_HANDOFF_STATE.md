@@ -51304,3 +51304,37 @@ ASYNC_COLLECTIVES_AUTHORIZED=false
 SYNC_COLLECTIVE_CANDIDATE_DESIGN_AUTHORIZED=false
 NEXT_COMMAND=select another optimization
 ```
+
+## 2026-08-30 Exact Greedy K8 cross-engine benchmark terminal reconciliation
+
+The existing attempt `20260829-cross-engine-k8-qwen3-06b-r7` completed the
+frozen Qwen3-0.6B BF16 TP1 batch-1 canonical matrix from runtime source
+`c6e73cab00b61101ec8a0bfd3ac8a3c3cd1c8bbb`. The selected compatible public
+engine was vLLM 0.11.2; it exposed only `vllm_default_greedy`, not a public
+multi-step arm.
+
+The campaign produced 21 fresh workers, 63 performance rows, and 63/63 exact
+correctness matches on one admitted A100 80GB PCIe. Exact K8 improved the
+TinyLLMForge host baseline by 26.52% in median TPOT and 34.46% in throughput,
+with 0.05% higher peak GPU memory and 0.33% higher RSS.
+
+Against vLLM default greedy, Exact K8 had 3.20% lower median TPOT, 2.68% lower
+throughput, 105.89% higher TTFT, 2.75% higher E2E, and 36.06% higher RSS.
+vLLM peak GPU memory remained `NOT_EXPOSED`, so the sole formal gate reason is
+`metric_unavailable:peak_gpu_memory_ratio`.
+
+Producer, repaired remote verifier, and local streaming verifier agree on
+`INCOMPLETE`; both verifier files are `valid=true` and byte-identical. The
+compact evidence is retained at
+`artifacts/cross_engine_k8/20260829-cross-engine-k8-qwen3-06b-r7/`
+(582,150 bytes). The full audit is
+`docs/superpowers/audits/2026-08-29-cross-engine-k8-benchmark-audit.md`.
+
+```text
+CROSS_ENGINE_K8_CANONICAL=COMPLETE
+CORRECTNESS=63_OF_63_EXACT
+PRODUCER_CLASSIFICATION=INCOMPLETE
+FORMAL_GATE_REASON=metric_unavailable:peak_gpu_memory_ratio
+GO_CROSS_ENGINE_ADVANTAGE=false
+NEXT_ACTION=do not claim a horizontal win; select the next optimization or add a separately designed public-memory measurement campaign
+```

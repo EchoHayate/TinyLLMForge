@@ -1,0 +1,40 @@
+{
+  "comparison": {
+    "aggregate": {
+      "e2e_ratio": 1.0275195856722255,
+      "median_tpot_ratio": 0.9680398539192869,
+      "p95_tpot_ratio": 0.9774029624824305,
+      "p99_tpot_ratio": 0.9507194929570575,
+      "peak_gpu_memory_ratio": "NOT_EXPOSED",
+      "peak_rss_ratio": 1.3605937102217656,
+      "throughput_ratio": 0.9732174587657894,
+      "ttft_ratio": 2.058907690730952
+    },
+    "complete": true,
+    "contexts": {
+      "long": {
+        "median_tpot_ratio": 0.9363524828745523
+      },
+      "medium": {
+        "median_tpot_ratio": 0.9680398539192869
+      },
+      "short": {
+        "median_tpot_ratio": 0.9161311470726328
+      }
+    },
+    "correctness_valid": true,
+    "storage_valid": true,
+    "terminal_receipts_valid": true,
+    "verifiers_agree": true
+  },
+  "gate_reasons": [
+    "metric_unavailable:peak_gpu_memory_ratio"
+  ],
+  "producer_agrees": true,
+  "producer_classification": "INCOMPLETE",
+  "reasons": [],
+  "recomputed_classification": "INCOMPLETE",
+  "schema_version": "cross-engine-k8.verification.v1",
+  "strongest_vllm_arm": "vllm_default_greedy",
+  "valid": true
+}
