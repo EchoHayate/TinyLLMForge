@@ -9963,6 +9963,7 @@ class ModelRunner:
             return "identity_quarantined"
         return None
 
+    @torch.inference_mode()
     def run_phase_stitched_exact_graph(
         self,
         seqs: tuple[Sequence, ...],

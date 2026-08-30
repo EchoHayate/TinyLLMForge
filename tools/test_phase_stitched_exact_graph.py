@@ -1602,6 +1602,29 @@ def test_model_runner_phase_stitch_composes_one_plus_seven_replays():
     assert summary["target_model_forwards"] == 8
 
 
+def test_model_runner_phase_stitch_replay_enters_inference_mode():
+    model_runner_path = (
+        REPO_ROOT / "tinyvllm" / "engine" / "model_runner.py"
+    )
+    tree = ast.parse(model_runner_path.read_text(encoding="utf-8"))
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_phase_stitched_exact_graph"
+    )
+
+    assert "torch.inference_mode()" in [
+        ast.unparse(node) for node in method.decorator_list
+    ]
+
+
 def test_model_runner_phase_stitch_prepares_final_prefill_from_sequences(
     monkeypatch,
 ):
