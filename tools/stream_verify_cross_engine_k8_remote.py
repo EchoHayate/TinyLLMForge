@@ -7,8 +7,13 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import time
 from typing import Callable, Mapping, Optional, Sequence
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if os.fspath(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, os.fspath(REPOSITORY_ROOT))
 
 from tools.cross_engine_k8_contract import (
     LOCAL_ALLOWLIST,

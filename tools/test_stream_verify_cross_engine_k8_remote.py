@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -9,6 +12,21 @@ from tools.stream_verify_cross_engine_k8_remote import (
     StreamVerificationConfig,
     stream_verify,
 )
+
+
+def test_script_entrypoint_can_import_tools_package():
+    script = Path(__file__).with_name(
+        "stream_verify_cross_engine_k8_remote.py"
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 class FakeRemote:
