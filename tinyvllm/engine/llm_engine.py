@@ -62,6 +62,10 @@ from tinyvllm.engine.model_runner_command_ack import (
 from tinyvllm.engine.engine_step_timeline import (
     EngineStepTimelineRecorder,
 )
+from tinyvllm.engine.phase_stitch_profile import (
+    PHASE_STITCH_EVENTS,
+    PhaseStitchProfileRecorder,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_engine_restore import (
     Qwen35HybridPrefixEngineRestoreCoordinator,
 )
@@ -487,6 +491,9 @@ class LLMEngine:
         )
         self._command_timeline_repeat_index = None
         self._command_timeline_request_set_sha256 = None
+        self.phase_stitch_profile = PhaseStitchProfileRecorder(
+            enabled=config.phase_stitch_profile,
+        )
         self.model_runner_ack_collector = (
             ModelRunnerCommandAckCollector(
                 self.model_runner_ack_receivers
@@ -950,6 +957,22 @@ class LLMEngine:
 
     def engine_step_timeline_snapshot(self):
         return self.engine_step_timeline.snapshot()
+
+    def configure_phase_stitch_profile(self, enabled):
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                "phase stitch profile enabled must be a bool"
+            )
+        self.phase_stitch_profile = PhaseStitchProfileRecorder(
+            enabled=enabled,
+        )
+        return {
+            "enabled": enabled,
+            "schema_version": 1,
+        }
+
+    def phase_stitch_profile_snapshot(self):
+        return self.phase_stitch_profile.snapshot()
 
     def _call_speculative_side_state_phase(
         self,
@@ -3934,6 +3957,33 @@ class LLMEngine:
                         pending_split,
                         completion_only=completion_only,
                     )
+            phase_stitch_profile = getattr(
+                self,
+                "phase_stitch_profile",
+                None,
+            )
+            phase_stitch_pending_sequence_id = None
+            if (
+                phase_stitch_profile is not None
+                and phase_stitch_profile.enabled
+            ):
+                active_rows = (
+                    phase_stitch_profile.snapshot()["active"]
+                )
+                awaiting_schedule = [
+                    row
+                    for row in active_rows
+                    if row["events"]
+                    == list(PHASE_STITCH_EVENTS[:3])
+                ]
+                if len(awaiting_schedule) == 1:
+                    phase_stitch_pending_sequence_id = (
+                        awaiting_schedule[0]["sequence_id"]
+                    )
+                    phase_stitch_profile.mark(
+                        phase_stitch_pending_sequence_id,
+                        "next_schedule_started",
+                    )
             queue_before = self.scheduler.observation_snapshot()
             decision_now_ns = self._clock_ns()
             with step_phase("scheduler_schedule"):
@@ -3944,6 +3994,24 @@ class LLMEngine:
                 else:
                     seqs, is_prefill, do_sample = scheduled
                     batch_kind = None
+                if phase_stitch_pending_sequence_id is not None:
+                    if (
+                        len(seqs) == 1
+                        and seqs[0].seq_id
+                        == phase_stitch_pending_sequence_id
+                        and not is_prefill
+                    ):
+                        phase_stitch_profile.mark(
+                            phase_stitch_pending_sequence_id,
+                            "next_schedule_finished",
+                        )
+                    else:
+                        phase_stitch_profile.finish_ineligible(
+                            phase_stitch_pending_sequence_id,
+                            reason="next_schedule_identity_mismatch",
+                            output_token_ids=(),
+                        )
+                        phase_stitch_pending_sequence_id = None
                 partition = build_engine_speculative_partition(
                     self.scheduler.last_speculative_selection,
                     tuple(seqs),
@@ -4001,6 +4069,21 @@ class LLMEngine:
                 seq.seq_id: len(seq.completion_token_ids)
                 for seq in seqs
             }
+            phase_stitch_prefill_sequence_id = None
+            if (
+                phase_stitch_profile is not None
+                and phase_stitch_profile.enabled
+                and len(seqs) == 1
+                and bool(is_prefill)
+                and bool(do_sample)
+                and batch_kind is None
+                and bool(seqs[0].prefill_chunk_final)
+            ):
+                phase_stitch_prefill_sequence_id = seqs[0].seq_id
+                phase_stitch_profile.begin_request(
+                    phase_stitch_prefill_sequence_id,
+                    seqs[0].num_prompt_tokens,
+                )
             scheduled_rows = [{
                 "seq_id": seq.seq_id,
                 "is_decode": bool(
@@ -4800,6 +4883,21 @@ class LLMEngine:
                             ),
                         )
                     )
+                    if phase_stitch_pending_sequence_id is not None:
+                        if exact_burst_lease is None:
+                            phase_stitch_profile.finish_ineligible(
+                                phase_stitch_pending_sequence_id,
+                                reason="exact_k8_lease_unavailable",
+                                output_token_ids=tuple(
+                                    seqs[0].completion_token_ids
+                                ),
+                            )
+                            phase_stitch_pending_sequence_id = None
+                        else:
+                            phase_stitch_profile.mark(
+                                phase_stitch_pending_sequence_id,
+                                "k8_lease_prepare_finished",
+                            )
                     if exact_burst_lease is None:
                         scheduler_burst_summary = (
                             self.scheduler
@@ -4841,6 +4939,11 @@ class LLMEngine:
                         split_transaction = None
                         split_result = None
                         try:
+                            if phase_stitch_pending_sequence_id is not None:
+                                phase_stitch_profile.mark(
+                                    phase_stitch_pending_sequence_id,
+                                    "first_k8_dispatch_started",
+                                )
                             with step_phase(
                                 "ordinary_or_first_target_dispatch"
                             ):
@@ -4861,6 +4964,21 @@ class LLMEngine:
                                     exact_burst_lease,
                                     burst_result.fallback_reason,
                                 )
+                                if (
+                                    phase_stitch_pending_sequence_id
+                                    is not None
+                                ):
+                                    phase_stitch_profile.finish_ineligible(
+                                        phase_stitch_pending_sequence_id,
+                                        reason=(
+                                            "exact_k8_runtime_fallback:"
+                                            + burst_result.fallback_reason
+                                        ),
+                                        output_token_ids=tuple(
+                                            seqs[0].completion_token_ids
+                                        ),
+                                    )
+                                    phase_stitch_pending_sequence_id = None
                             elif isinstance(
                                 burst_result,
                                 ExactGreedyDecodeBurstSplitResult,
@@ -5273,6 +5391,15 @@ class LLMEngine:
                                     do_sample,
                                     batch_kind,
                                 )
+                        if phase_stitch_prefill_sequence_id is not None:
+                            phase_stitch_profile.mark(
+                                phase_stitch_prefill_sequence_id,
+                                "prefill_dispatch_finished",
+                            )
+                            phase_stitch_profile.mark(
+                                phase_stitch_prefill_sequence_id,
+                                "first_token_host_available",
+                            )
                     except BaseException:
                         restore_releases = getattr(
                             self.scheduler,
@@ -5294,6 +5421,11 @@ class LLMEngine:
                             batch_kind,
                             decision_now_ns=decision_now_ns,
                             step_end_ns=step_end_ns,
+                        )
+                    if phase_stitch_prefill_sequence_id is not None:
+                        phase_stitch_profile.mark(
+                            phase_stitch_prefill_sequence_id,
+                            "prefill_scheduler_commit_finished",
                         )
                 lifecycle = (
                     None
@@ -5375,6 +5507,22 @@ class LLMEngine:
                             f"failed: {error}"
                         )
                         raise
+            if (
+                phase_stitch_profile is not None
+                and phase_stitch_profile.enabled
+            ):
+                active_ids = {
+                    row["sequence_id"]
+                    for row in phase_stitch_profile.snapshot()["active"]
+                    if row["events"]
+                    == list(PHASE_STITCH_EVENTS)
+                }
+                for seq in seqs:
+                    if seq.seq_id in active_ids and seq.is_finished:
+                        phase_stitch_profile.finish_request(
+                            seq.seq_id,
+                            tuple(seq.completion_token_ids),
+                        )
             outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]       #output包含seq_id和已经生成的token列表
             token_deltas = {
                 seq.seq_id: list(

@@ -169,6 +169,47 @@ class PhaseStitchProfileRecorder:
         self._rows.append(row)
         return copy.deepcopy(row)
 
+    def finish_ineligible(
+        self,
+        sequence_id,
+        *,
+        reason,
+        output_token_ids,
+    ):
+        if not self.enabled:
+            return {}
+        _nonnegative_int(sequence_id, "sequence_id")
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("reason must be a non-empty string")
+        if sequence_id in self._finalized_sequence_ids:
+            raise ValueError(f"sequence_id {sequence_id} is finalized")
+        request = self._active.get(sequence_id)
+        if request is None:
+            raise ValueError(
+                f"sequence_id {sequence_id} has no active request"
+            )
+        output_sha256 = _token_ids_sha256(output_token_ids)
+        timestamps = request["timestamps_ns"]
+        row = {
+            "sequence_id": sequence_id,
+            "prompt_tokens": request["prompt_tokens"],
+            "status": "ineligible",
+            "ineligible_reason": reason,
+            "events": list(request["events"]),
+            **{
+                f"{event}_ns": timestamps.get(event)
+                for event in PHASE_STITCH_EVENTS
+            },
+            "adjacent_intervals_ns": {},
+            "removable_host_gap_ns": None,
+            "output_token_ids_sha256": output_sha256,
+            "event_coverage_complete": False,
+        }
+        del self._active[sequence_id]
+        self._finalized_sequence_ids.add(sequence_id)
+        self._rows.append(row)
+        return copy.deepcopy(row)
+
     def snapshot(self):
         if not self.enabled:
             return {
