@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import replace
+from dataclasses import fields, replace
 import hashlib
 import importlib.util
 from itertools import count
@@ -479,6 +479,53 @@ def _exact_burst_result(lease, tokens):
         graph_identity_sha256="a" * 64,
         token_d2h_calls=1,
         sampled_logit_d2h_calls=0,
+    )
+
+
+def test_folded_runtime_preserves_scheduler_lease_and_result_schema():
+    assert tuple(
+        field.name
+        for field in fields(
+            exact_burst_module.ExactGreedyDecodeBurstLease
+        )
+    ) == (
+        "sequence_id",
+        "schedule_generation",
+        "graph_generation",
+        "requested_token_count",
+        "authorized_token_count",
+        "initial_completion_count",
+        "initial_sequence_length",
+        "block_table_identity",
+        "write_block_id",
+        "write_block_generation",
+        "first_write_position",
+        "last_write_position",
+        "first_physical_slot",
+        "last_physical_slot",
+        "remaining_output_tokens",
+        "completion_only",
+        "identity_sha256",
+        "block_table_identity_seal",
+        "width_health_generation",
+    )
+    assert tuple(
+        field.name
+        for field in fields(
+            exact_burst_module.ExactGreedyDecodeBurstResult
+        )
+    ) == (
+        "lease_identity_sha256",
+        "tokens",
+        "replay_count",
+        "final_input_token",
+        "final_position",
+        "final_context_length",
+        "final_physical_slot",
+        "graph_identity_sha256",
+        "token_d2h_calls",
+        "sampled_logit_d2h_calls",
+        "sampled_logits",
     )
 
 

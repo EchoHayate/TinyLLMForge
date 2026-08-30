@@ -1685,6 +1685,22 @@ class ExactGreedyDecodeBurstStats:
             self.folded_fallback_counts.get(reason, 0) + 1
         )
 
+    def record_folded_partial_launches(
+        self,
+        *,
+        launch_count: int,
+        logical_steps: int,
+    ) -> None:
+        _require_positive_int(launch_count, "launch_count")
+        _require_positive_int(logical_steps, "logical_steps")
+        if logical_steps != launch_count * 8:
+            raise ValueError(
+                "folded partial logical steps must equal "
+                "eight per completed launch"
+            )
+        self.folded_cuda_graph_launches += launch_count
+        self.folded_logical_steps += logical_steps
+
     def record_final_token_d2h(
         self,
         *,
@@ -2576,7 +2592,15 @@ class ExactGreedyDecodeBurstGraph:
         expected_graph_identity_sha256: Optional[str],
         expected_width_health_generation: Optional[int],
     ) -> Optional[str]:
-        if self.stats.quarantine_reason is not None:
+        if (
+            self.receipt.steps_per_launch > 1
+            and not self.stats.folded_health.healthy
+        ):
+            return "quarantined"
+        if (
+            self.receipt.steps_per_launch == 1
+            and self.stats.quarantine_reason is not None
+        ):
             return "quarantined"
         if not isinstance(lease, ExactGreedyDecodeBurstLease):
             return "lease_type_invalid"
@@ -2669,6 +2693,26 @@ class ExactGreedyDecodeBurstGraph:
         expected_width_health_generation: Optional[int] = None,
         width_health: Optional[ElasticBurstWidthHealth] = None,
     ) -> ExactGreedyDecodeBurstResult | ExactGreedyDecodeBurstFallback:
+        steps_per_launch = self.receipt.steps_per_launch
+        is_folded = steps_per_launch > 1
+
+        def record_prelaunch_fallback(reason: str) -> None:
+            if is_folded:
+                self.stats.record_folded_fallback(reason)
+            else:
+                self.stats.record_fallback(reason)
+
+        def quarantine_replay_path(reason: str) -> None:
+            if is_folded:
+                self.stats.folded_health.quarantine(reason)
+            elif (
+                lease.authorized_token_count == 16
+                and width_health is not None
+            ):
+                width_health.quarantine_k16(reason)
+            else:
+                self.stats.quarantine(reason)
+
         reason = self._pre_replay_fallback(
             lease=lease,
             graph_generation=graph_generation,
@@ -2682,14 +2726,21 @@ class ExactGreedyDecodeBurstGraph:
             ),
         )
         if reason is not None:
-            self.stats.record_fallback(reason)
+            record_prelaunch_fallback(reason)
+            return ExactGreedyDecodeBurstFallback(reason)
+        if is_folded and (
+            lease.authorized_token_count not in (8, 16)
+            or lease.authorized_token_count % steps_per_launch != 0
+        ):
+            reason = "folded_width_unsupported"
+            record_prelaunch_fallback(reason)
             return ExactGreedyDecodeBurstFallback(reason)
         if (
             isinstance(initial_token, bool)
             or not isinstance(initial_token, int)
             or initial_token < 0
         ):
-            self.stats.record_fallback("initial_token_invalid")
+            record_prelaunch_fallback("initial_token_invalid")
             return ExactGreedyDecodeBurstFallback(
                 "initial_token_invalid"
             )
@@ -2733,7 +2784,7 @@ class ExactGreedyDecodeBurstGraph:
                 )
             if block_table_factory is not None:
                 if not callable(block_table_factory):
-                    self.stats.record_fallback(
+                    record_prelaunch_fallback(
                         "block_table_factory_invalid"
                     )
                     return ExactGreedyDecodeBurstFallback(
@@ -2742,7 +2793,7 @@ class ExactGreedyDecodeBurstGraph:
                 try:
                     block_table = block_table_factory()
                 except Exception:
-                    self.stats.record_fallback(
+                    record_prelaunch_fallback(
                         "block_table_materialization_failure"
                     )
                     return ExactGreedyDecodeBurstFallback(
@@ -2750,7 +2801,7 @@ class ExactGreedyDecodeBurstGraph:
                     )
             reason = self._block_table_fallback(block_table)
             if reason is not None:
-                self.stats.record_fallback(reason)
+                record_prelaunch_fallback(reason)
                 return ExactGreedyDecodeBurstFallback(reason)
             try:
                 cls = type(self)
@@ -2760,7 +2811,7 @@ class ExactGreedyDecodeBurstGraph:
                     block_size=self.block_size,
                 )
             except Exception:
-                self.stats.record_fallback(
+                record_prelaunch_fallback(
                     "static_state_reset_failure"
                 )
                 return ExactGreedyDecodeBurstFallback(
@@ -2779,12 +2830,12 @@ class ExactGreedyDecodeBurstGraph:
                     tensors[name].fill_(value)
                 except Exception:
                     reason = f"{name}_bind_failure"
-                    self.stats.record_fallback(reason)
+                    record_prelaunch_fallback(reason)
                     return ExactGreedyDecodeBurstFallback(reason)
             try:
                 tensors["block_table"].copy_(block_table)
             except Exception:
-                self.stats.record_fallback(
+                record_prelaunch_fallback(
                     "block_table_bind_failure"
                 )
                 return ExactGreedyDecodeBurstFallback(
@@ -2794,16 +2845,46 @@ class ExactGreedyDecodeBurstGraph:
                 self.stats.record_cold_bind()
 
         completed_replays = 0
+        if is_folded:
+            self.stats.folded_health.record_attempt(
+                width=lease.authorized_token_count
+            )
+        launch_count = (
+            lease.authorized_token_count // steps_per_launch
+        )
         try:
-            for _ in range(lease.authorized_token_count):
+            for _ in range(launch_count):
                 self.graph.replay()
-                completed_replays += 1
-                self.stats.record_replays(1)
+                completed_replays += steps_per_launch
+                self.stats.record_replays(steps_per_launch)
+                if is_folded:
+                    self.stats.folded_health.record_launch(
+                        logical_steps=steps_per_launch
+                    )
+                else:
+                    self.stats.record_one_token_cuda_graph_launches(
+                        1
+                    )
         except Exception as error:
             reason = "replay_failure:" + type(error).__name__
             self.invalidate_continuation(reason)
-            self.stats.quarantine(reason)
+            if is_folded:
+                if completed_replays:
+                    self.stats.record_folded_partial_launches(
+                        launch_count=(
+                            completed_replays // steps_per_launch
+                        ),
+                        logical_steps=completed_replays,
+                    )
+                self.stats.folded_health.quarantine(reason)
+            else:
+                self.stats.quarantine(reason)
             raise
+        if is_folded:
+            self.stats.record_folded_burst(
+                width=lease.authorized_token_count,
+                launch_count=launch_count,
+            )
 
         try:
             token_values = tensors["token_history"][
@@ -2817,13 +2898,7 @@ class ExactGreedyDecodeBurstGraph:
                 + type(error).__name__
             )
             self.invalidate_continuation(reason)
-            if (
-                lease.authorized_token_count == 16
-                and width_health is not None
-            ):
-                width_health.quarantine_k16(reason)
-            else:
-                self.stats.quarantine(reason)
+            quarantine_replay_path(reason)
             raise
         self.stats.record_final_token_d2h(
             token_count=len(tokens),
@@ -2866,13 +2941,7 @@ class ExactGreedyDecodeBurstGraph:
                         + type(error).__name__
                     )
                     self.invalidate_continuation(reason)
-                    if (
-                        lease.authorized_token_count == 16
-                        and width_health is not None
-                    ):
-                        width_health.quarantine_k16(reason)
-                    else:
-                        self.stats.quarantine(reason)
+                    quarantine_replay_path(reason)
                     raise
                 sampled_logit_d2h_calls = 1
                 self.stats.record_sampled_logit_d2h()
@@ -2948,13 +3017,7 @@ class ExactGreedyDecodeBurstGraph:
                 + type(error).__name__
             )
             self.invalidate_continuation(reason)
-            if (
-                lease.authorized_token_count == 16
-                and width_health is not None
-            ):
-                width_health.quarantine_k16(reason)
-            else:
-                self.stats.quarantine(reason)
+            quarantine_replay_path(reason)
             raise
 
     def replay_split_phase(
@@ -3198,3 +3261,15 @@ class ExactGreedyDecodeBurstFoldedGraph(
             steps_per_launch=steps_per_launch,
             **kwargs,
         )
+
+    def capability(self) -> dict[str, object]:
+        capability = super().capability()
+        quarantine_reason = (
+            self.stats.folded_health.quarantine_reason
+        )
+        return {
+            **capability,
+            "available": quarantine_reason is None,
+            "quarantine_reason": quarantine_reason,
+            "steps_per_launch": self.receipt.steps_per_launch,
+        }

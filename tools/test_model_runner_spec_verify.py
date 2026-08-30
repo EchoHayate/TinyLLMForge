@@ -806,6 +806,8 @@ def make_runner(**overrides):
     ]
     runner.exact_greedy_decode_burst_graph = None
     runner.exact_greedy_decode_burst_correctness_graph = None
+    runner.exact_greedy_decode_burst_folded_graph = None
+    runner.exact_greedy_decode_burst_folded_correctness_graph = None
     runner.exact_greedy_decode_burst_medium_split_k_graph = None
     runner.exact_greedy_decode_burst_medium_split_k_correctness_graph = (
         None
@@ -4561,6 +4563,321 @@ def test_model_runner_exact_burst_delegates_once_with_padded_block_table():
     assert call["expected_graph_identity_sha256"] == "b" * 64
 
 
+def test_model_runner_routes_only_k8_and_k16_to_healthy_folded_graph():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_octet_folded_graph=True,
+    )
+    calls = []
+
+    class FakeGraph:
+        def __init__(self, label, identity):
+            self.label = label
+            self.identity = identity
+
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": self.identity,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 16,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **kwargs):
+            calls.append((self.label, kwargs))
+            return self.label
+
+    one_token = FakeGraph("one-token", "b" * 64)
+    folded = FakeGraph("folded", "f" * 64)
+    runner.exact_greedy_decode_burst_graph = one_token
+    runner.exact_greedy_decode_burst_folded_graph = folded
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables": FakeTensor(
+            [list(row) for row in rows]
+        )
+    )
+
+    def lease(width):
+        return burst_module.build_exact_greedy_decode_burst_lease(
+            sequence_id=7,
+            schedule_generation=3,
+            graph_generation=4,
+            requested_token_count=width,
+            authorized_token_count=width,
+            initial_completion_count=1,
+            initial_sequence_length=257 - width,
+            block_table_identity=((5, 9),),
+            write_block_id=5,
+            write_block_generation=9,
+            first_write_position=256 - width,
+            last_write_position=255,
+            first_physical_slot=5 * 256 + 256 - width,
+            last_physical_slot=5 * 256 + 255,
+            remaining_output_tokens=width,
+            completion_only=True,
+            width_health_generation=(
+                runner.elastic_exact_burst_width_health.generation
+                if width == 16
+                else None
+            ),
+        )
+
+    seq = SimpleNamespace(
+        seq_id=7,
+        last_token=31,
+        block_table=[5],
+    )
+    for width, expected_graph in (
+        (8, "folded"),
+        (16, "folded"),
+        (7, "one-token"),
+        (15, "one-token"),
+    ):
+        calls.clear()
+        result = runner.run_exact_greedy_decode_burst(
+            (seq,),
+            lease(width),
+        )
+        assert result == expected_graph
+        assert [label for label, _kwargs in calls] == [
+            expected_graph
+        ]
+
+
+def test_model_runner_folded_prelaunch_fallback_uses_one_token_graph():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_octet_folded_graph=True,
+    )
+    calls = []
+    expected = object()
+
+    class OneTokenGraph:
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": "b" * 64,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 16,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **kwargs):
+            calls.append(("one-token", kwargs))
+            return expected
+
+    class FoldedGraph(OneTokenGraph):
+        def capability(self):
+            return {
+                **super().capability(),
+                "graph_identity_sha256": "f" * 64,
+            }
+
+        def replay(self, **kwargs):
+            calls.append(("folded", kwargs))
+            return burst_module.ExactGreedyDecodeBurstFallback(
+                "graph_identity_drift"
+            )
+
+    runner.exact_greedy_decode_burst_graph = OneTokenGraph()
+    runner.exact_greedy_decode_burst_folded_graph = FoldedGraph()
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables": FakeTensor(
+            [list(row) for row in rows]
+        )
+    )
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=8,
+        authorized_token_count=8,
+        initial_completion_count=1,
+        initial_sequence_length=249,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=248,
+        last_write_position=255,
+        first_physical_slot=5 * 256 + 248,
+        last_physical_slot=5 * 256 + 255,
+        remaining_output_tokens=8,
+        completion_only=True,
+    )
+    result = runner.run_exact_greedy_decode_burst(
+        (
+            SimpleNamespace(
+                seq_id=7,
+                last_token=31,
+                block_table=[5],
+            ),
+        ),
+        lease,
+    )
+
+    assert result is expected
+    assert [label for label, _kwargs in calls] == [
+        "folded",
+        "one-token",
+    ]
+    assert runner.exact_greedy_decode_burst_stats.folded_fallback_counts == {
+        "graph_identity_drift": 1,
+    }
+
+
+def test_model_runner_never_retries_after_folded_launch_failure():
+    burst_module = sys.modules[
+        "tinyvllm.engine.exact_greedy_decode_burst"
+    ]
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_octet_folded_graph=True,
+    )
+    calls = []
+
+    class FakeGraph:
+        def __init__(self, label, identity):
+            self.label = label
+            self.identity = identity
+
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": self.identity,
+                "graph_generation": 4,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 16,
+                "correctness_trace": False,
+                "sampled_logit_ordinals": [],
+                "quarantine_reason": None,
+            }
+
+        def replay(self, **_kwargs):
+            calls.append(self.label)
+            if self.label == "folded":
+                raise RuntimeError("folded launch failed")
+            raise AssertionError("same-step one-token retry")
+
+    runner.exact_greedy_decode_burst_graph = FakeGraph(
+        "one-token",
+        "b" * 64,
+    )
+    runner.exact_greedy_decode_burst_folded_graph = FakeGraph(
+        "folded",
+        "f" * 64,
+    )
+    runner.prepare_block_tables_from_rows = (
+        lambda rows, name="block_tables": FakeTensor(
+            [list(row) for row in rows]
+        )
+    )
+    lease = burst_module.build_exact_greedy_decode_burst_lease(
+        sequence_id=7,
+        schedule_generation=3,
+        graph_generation=4,
+        requested_token_count=8,
+        authorized_token_count=8,
+        initial_completion_count=1,
+        initial_sequence_length=249,
+        block_table_identity=((5, 9),),
+        write_block_id=5,
+        write_block_generation=9,
+        first_write_position=248,
+        last_write_position=255,
+        first_physical_slot=5 * 256 + 248,
+        last_physical_slot=5 * 256 + 255,
+        remaining_output_tokens=8,
+        completion_only=True,
+    )
+    with pytest.raises(RuntimeError, match="folded launch failed"):
+        runner.run_exact_greedy_decode_burst(
+            (
+                SimpleNamespace(
+                    seq_id=7,
+                    last_token=31,
+                    block_table=[5],
+                ),
+            ),
+            lease,
+        )
+    assert calls == ["folded"]
+
+
+def test_model_runner_exposes_folded_production_and_correctness_capability():
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_octet_folded_graph=True,
+    )
+    assert hasattr(
+        runner,
+        "exact_greedy_decode_burst_folded_graph",
+    )
+    assert hasattr(
+        runner,
+        "exact_greedy_decode_burst_folded_correctness_graph",
+    )
+    assert hasattr(
+        runner,
+        "exact_greedy_decode_burst_folded_capability",
+    )
+
+    class FakeGraph:
+        def __init__(self, correctness_trace):
+            self.correctness_trace = correctness_trace
+
+        def capability(self):
+            return {
+                "available": True,
+                "graph_identity_sha256": (
+                    "c" if self.correctness_trace else "d"
+                ) * 64,
+                "graph_generation": 5,
+                "rank": 0,
+                "tensor_parallel_size": 1,
+                "block_size": 256,
+                "block_table_width": 4,
+                "history_capacity": 16,
+                "correctness_trace": self.correctness_trace,
+                "sampled_logit_ordinals": (
+                    [0, 7] if self.correctness_trace else []
+                ),
+                "quarantine_reason": None,
+            }
+
+    runner.exact_greedy_decode_burst_folded_graph = FakeGraph(False)
+    runner.exact_greedy_decode_burst_folded_correctness_graph = (
+        FakeGraph(True)
+    )
+    assert runner.exact_greedy_decode_burst_folded_capability()[
+        "available"
+    ] is True
+    assert runner.exact_greedy_decode_burst_folded_capability(
+        correctness_trace=True,
+    )["correctness_trace"] is True
+
+
 def test_model_runner_exact_burst_accepts_scheduler_validated_sealed_identity():
     burst_module = sys.modules[
         "tinyvllm.engine.exact_greedy_decode_burst"
@@ -5409,6 +5726,180 @@ def test_model_runner_exact_burst_capture_owns_static_state_and_pool():
     assert runner.exact_greedy_decode_burst_stats.fallback_counts[
         "medium_split_k_capture_unavailable"
     ] == 1
+
+
+def test_model_runner_captures_distinct_folded_production_graph(
+    monkeypatch,
+):
+    runner = make_runner(
+        exact_greedy_decode_burst=True,
+        exact_greedy_decode_burst_octet_folded_graph=True,
+    )
+    runner.config.max_model_len = 512
+    runner.config.num_kvcache_blocks = 100
+    runner.config.hf_config = SimpleNamespace(vocab_size=32)
+    runner._ordinary_graph_generation = 6
+    runner._exact_greedy_burst_scratch_block_ids = (100,)
+    runner.model = SimpleNamespace(
+        compute_logits=lambda hidden: hidden,
+    )
+    observed = []
+    graph_pools = iter(
+        (
+            "one-token-pool",
+            "folded-pool",
+            "one-token-correctness-pool",
+            "folded-correctness-pool",
+        )
+    )
+
+    class StaticTensor(FakeCaptureTensor):
+        def __init__(self, shape, *, dtype):
+            super().__init__(shape)
+            self.dtype = dtype
+            self.device = "cuda:0"
+
+    class KVView(StaticTensor):
+        def data_ptr(self):
+            return 1234
+
+        def stride(self):
+            return (1, 1, 1)
+
+        def storage_offset(self):
+            return 0
+
+    class KVCache:
+        device = "cuda:0"
+
+        def __getitem__(self, _index):
+            return KVView((2, 1, 100), dtype="float16")
+
+    class OneTokenCapture:
+        @classmethod
+        def capture(cls, **kwargs):
+            observed.append(("one-token", kwargs))
+            return (
+                "one-token-correctness-graph"
+                if kwargs["correctness_trace"]
+                else "one-token-graph"
+            )
+
+    class FoldedCapture:
+        @classmethod
+        def capture(cls, **kwargs):
+            observed.append(("folded", kwargs))
+            return (
+                "folded-correctness-graph"
+                if kwargs["correctness_trace"]
+                else "folded-graph"
+            )
+
+    runner.kv_cache = KVCache()
+    monkeypatch.setattr(
+        model_runner,
+        "ExactGreedyDecodeBurstGraph",
+        OneTokenCapture,
+    )
+    monkeypatch.setattr(
+        model_runner,
+        "ExactGreedyDecodeBurstFoldedGraph",
+        FoldedCapture,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        model_runner.torch,
+        "full",
+        lambda shape, _value, dtype, device=None: StaticTensor(
+            shape,
+            dtype=dtype,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        model_runner.torch,
+        "zeros",
+        lambda shape, dtype, device=None: StaticTensor(
+            shape,
+            dtype=dtype,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        model_runner.torch,
+        "cuda",
+        SimpleNamespace(
+            graph_pool_handle=lambda: next(graph_pools),
+            CUDAGraph=lambda: object(),
+            graph=lambda graph, pool=None: (graph, pool),
+            synchronize=lambda: None,
+            memory_allocated=lambda: 0,
+            memory_reserved=lambda: 0,
+        ),
+    )
+    monkeypatch.setattr(
+        model_runner,
+        "set_context",
+        lambda _is_prefill, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        model_runner,
+        "reset_context",
+        lambda: None,
+    )
+
+    result = runner._capture_exact_greedy_decode_burst()
+    correctness_result = runner._capture_exact_greedy_decode_burst(
+        correctness_trace=True,
+        sampled_logit_ordinals=(0, 7),
+    )
+
+    assert result == "one-token-graph"
+    assert correctness_result == "one-token-correctness-graph"
+    assert runner.exact_greedy_decode_burst_graph == (
+        "one-token-graph"
+    )
+    assert runner.exact_greedy_decode_burst_folded_graph == (
+        "folded-graph"
+    )
+    assert runner.exact_greedy_decode_burst_correctness_graph == (
+        "one-token-correctness-graph"
+    )
+    assert (
+        runner.exact_greedy_decode_burst_folded_correctness_graph
+        == "folded-correctness-graph"
+    )
+    assert [label for label, _kwargs in observed] == [
+        "one-token",
+        "folded",
+        "one-token",
+        "folded",
+    ]
+    one_token_kwargs = observed[0][1]
+    folded_kwargs = observed[1][1]
+    assert one_token_kwargs["tensors"] is not folded_kwargs["tensors"]
+    assert one_token_kwargs["graph_pool"] == "one-token-pool"
+    assert folded_kwargs["graph_pool"] == "folded-pool"
+    assert "steps_per_launch" not in one_token_kwargs
+    assert folded_kwargs["steps_per_launch"] == 8
+    correctness_kwargs = observed[2][1]
+    folded_correctness_kwargs = observed[3][1]
+    assert correctness_kwargs["correctness_trace"] is True
+    assert folded_correctness_kwargs["correctness_trace"] is True
+    assert correctness_kwargs["sampled_logit_ordinals"] == (0, 7)
+    assert folded_correctness_kwargs[
+        "sampled_logit_ordinals"
+    ] == (0, 7)
+    assert (
+        correctness_kwargs["tensors"]
+        is not folded_correctness_kwargs["tensors"]
+    )
+    assert correctness_kwargs["graph_pool"] == (
+        "one-token-correctness-pool"
+    )
+    assert folded_correctness_kwargs["graph_pool"] == (
+        "folded-correctness-pool"
+    )
 
 
 def test_scratch_blocks_are_above_scheduler_visible_range():

@@ -1154,6 +1154,28 @@ def _k8_lease() -> ExactGreedyDecodeBurstLease:
     )
 
 
+def _folded_lease(width: int) -> ExactGreedyDecodeBurstLease:
+    return build_exact_greedy_decode_burst_lease(
+        sequence_id=17,
+        schedule_generation=9,
+        graph_generation=4,
+        requested_token_count=width,
+        authorized_token_count=width,
+        initial_completion_count=3,
+        initial_sequence_length=257 - width,
+        block_table_identity=((7, 2),),
+        write_block_id=7,
+        write_block_generation=2,
+        first_write_position=256 - width,
+        last_write_position=255,
+        first_physical_slot=7 * 256 + 256 - width,
+        last_physical_slot=7 * 256 + 255,
+        remaining_output_tokens=width,
+        completion_only=True,
+        width_health_generation=1 if width == 16 else None,
+    )
+
+
 class _SplitCompletion:
     def synchronize(self):
         return None
@@ -2777,6 +2799,205 @@ def test_folded_capture_requires_scratch_and_history_capacity() -> None:
             steps_per_launch=8,
         ),
     )
+
+
+def test_folded_replay_uses_one_launch_per_eight_logical_steps(
+) -> None:
+    for width, expected_launches in ((8, 1), (16, 2)):
+        graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+        )
+        cursors_before_launch = []
+
+        def replay_octet(_launch_ordinal):
+            history_start = tensors["history_index"].values[0]
+            cursors_before_launch.append(history_start)
+            for logical_ordinal in range(8):
+                history_index = history_start + logical_ordinal
+                token = 100 + history_index
+                tensors["token_history"].values[
+                    history_index
+                ] = token
+                tensors["input_token"].values = [token]
+                tensors["position"].values[0] += 1
+                tensors["context_length"].values[0] += 1
+                tensors["slot_mapping"].values[0] += 1
+                tensors["history_index"].values[0] += 1
+
+        fake_graph.on_replay = replay_octet
+        result = graph.replay(
+            lease=_folded_lease(width),
+            initial_token=99,
+            block_table=_BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=[],
+                dtype="int32",
+                element_size=4,
+            ),
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+            expected_width_health_generation=(
+                1 if width == 16 else None
+            ),
+        )
+
+        assert fake_graph.replay_calls == expected_launches
+        assert cursors_before_launch == list(
+            range(0, width, 8)
+        )
+        assert tensors["history_index"].values == [width]
+        assert tensors["token_history"].tolist_calls == 1
+        assert result.tokens == tuple(range(100, 100 + width))
+        assert result.replay_count == width
+        assert result.token_d2h_calls == 1
+        summary = graph.summary()
+        assert summary["graph_replays"] == width
+        assert summary["target_model_forwards"] == width
+        assert summary["one_token_cuda_graph_launches"] == 0
+        assert summary["folded_cuda_graph_launches"] == (
+            expected_launches
+        )
+        assert summary["folded_logical_steps"] == width
+
+
+def test_folded_replay_failure_quarantines_only_folded_health(
+) -> None:
+    for failed_launch in (1, 2):
+        graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+        )
+
+        def replay_octet(_launch_ordinal):
+            history_start = tensors["history_index"].values[0]
+            for logical_ordinal in range(8):
+                history_index = history_start + logical_ordinal
+                tensors["token_history"].values[
+                    history_index
+                ] = 200 + history_index
+                tensors["history_index"].values[0] += 1
+
+        fake_graph.on_replay = replay_octet
+        fake_graph.replay_error_at = failed_launch
+        _assert_raises(
+            RuntimeError,
+            f"replay {failed_launch} failed",
+            lambda: graph.replay(
+                lease=_folded_lease(16),
+                initial_token=199,
+                block_table=_BurstTensor(
+                    [[7, -1]],
+                    label="live_block_table",
+                    events=[],
+                    dtype="int32",
+                    element_size=4,
+                ),
+                graph_generation=4,
+                rank=0,
+                tensor_parallel_size=1,
+                expected_width_health_generation=1,
+            ),
+        )
+
+        assert fake_graph.replay_calls == failed_launch
+        assert tensors["token_history"].tolist_calls == 0
+        summary = graph.summary()
+        assert summary["quarantine_reason"] is None
+        assert summary["folded_quarantine_reason"] == (
+            "replay_failure:RuntimeError"
+        )
+        assert summary["folded_health_generation"] == 1
+        assert summary["graph_replays"] == 8 * (
+            failed_launch - 1
+        )
+        assert summary["folded_cuda_graph_launches"] == (
+            failed_launch - 1
+        )
+        assert summary["folded_logical_steps"] == 8 * (
+            failed_launch - 1
+        )
+
+
+def test_folded_final_d2h_failure_quarantines_only_folded_health(
+) -> None:
+    graph, tensors, fake_graph, _events, _slots = _graph_fixture(
+        history_capacity=16,
+        graph_class=ExactGreedyDecodeBurstFoldedGraph,
+        steps_per_launch=8,
+    )
+
+    def replay_octet(_launch_ordinal):
+        history_start = tensors["history_index"].values[0]
+        for logical_ordinal in range(8):
+            history_index = history_start + logical_ordinal
+            tensors["token_history"].values[history_index] = (
+                300 + history_index
+            )
+            tensors["history_index"].values[0] += 1
+
+    fake_graph.on_replay = replay_octet
+    tensors["token_history"].fail_tolist = True
+    _assert_raises(
+        RuntimeError,
+        "final D2H failed",
+        lambda: graph.replay(
+            lease=_folded_lease(16),
+            initial_token=299,
+            block_table=_BurstTensor(
+                [[7, -1]],
+                label="live_block_table",
+                events=[],
+                dtype="int32",
+                element_size=4,
+            ),
+            graph_generation=4,
+            rank=0,
+            tensor_parallel_size=1,
+            expected_width_health_generation=1,
+        ),
+    )
+
+    assert fake_graph.replay_calls == 2
+    assert tensors["token_history"].tolist_calls == 1
+    summary = graph.summary()
+    assert summary["quarantine_reason"] is None
+    assert summary["folded_quarantine_reason"] == (
+        "final_token_d2h_failure:RuntimeError"
+    )
+    assert summary["final_token_d2h_calls"] == 0
+
+
+def test_folded_prelaunch_identity_failure_has_zero_launches() -> None:
+    graph, _tensors, fake_graph, _events, _slots = _graph_fixture(
+        history_capacity=16,
+        graph_class=ExactGreedyDecodeBurstFoldedGraph,
+        steps_per_launch=8,
+    )
+    fallback = graph.replay(
+        lease=_folded_lease(8),
+        initial_token=99,
+        block_table=_BurstTensor(
+            [[7, -1]],
+            label="live_block_table",
+            events=[],
+            dtype="int32",
+            element_size=4,
+        ),
+        graph_generation=4,
+        rank=0,
+        tensor_parallel_size=1,
+        expected_graph_identity_sha256="f" * 64,
+    )
+
+    assert isinstance(fallback, ExactGreedyDecodeBurstFallback)
+    assert fallback.fallback_reason == "graph_identity_drift"
+    assert fake_graph.replay_calls == 0
+    assert graph.summary()["folded_quarantine_reason"] is None
 
 
 def test_capture_binds_flash_attention_split_to_identity_and_receipt() -> None:

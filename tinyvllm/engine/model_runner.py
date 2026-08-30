@@ -89,6 +89,7 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     MEDIUM_SPLIT_K_NUM_SPLITS,
     ElasticBurstWidthHealth,
     ExactGreedyDecodeBurstFallback,
+    ExactGreedyDecodeBurstFoldedGraph,
     ExactGreedyDecodeBurstGraph,
     ExactGreedyDecodeBurstLease,
     ExactGreedyDecodeBurstStats,
@@ -2490,6 +2491,8 @@ class ModelRunner:
         )
         self.exact_greedy_decode_burst_graph = None
         self.exact_greedy_decode_burst_correctness_graph = None
+        self.exact_greedy_decode_burst_folded_graph = None
+        self.exact_greedy_decode_burst_folded_correctness_graph = None
         self.exact_greedy_decode_burst_medium_split_k_graph = None
         self.exact_greedy_decode_burst_medium_split_k_correctness_graph = (
             None
@@ -10338,6 +10341,45 @@ class ModelRunner:
             }
         )
 
+    def exact_greedy_decode_burst_folded_capability(
+        self,
+        *,
+        correctness_trace: bool = False,
+    ) -> dict[str, object]:
+        graph = (
+            self.exact_greedy_decode_burst_folded_correctness_graph
+            if correctness_trace
+            else self.exact_greedy_decode_burst_folded_graph
+        )
+        if not getattr(
+            self.config,
+            "exact_greedy_decode_burst_octet_folded_graph",
+            False,
+        ):
+            return {
+                "available": False,
+                "fallback_reason": "folded_disabled",
+                "graph_identity_sha256": None,
+                "graph_generation": int(
+                    self._ordinary_graph_generation
+                ),
+                "correctness_trace": correctness_trace,
+                "steps_per_launch": 8,
+            }
+        capability = self.exact_greedy_decode_burst_capability(
+            correctness_trace=correctness_trace,
+            graph=graph,
+        )
+        steps_per_launch = 8
+        if graph is not None:
+            steps_per_launch = int(
+                graph.capability().get("steps_per_launch", 8)
+            )
+        return {
+            **capability,
+            "steps_per_launch": steps_per_launch,
+        }
+
     def _select_exact_greedy_decode_burst_graph(
         self,
         lease: ExactGreedyDecodeBurstLease,
@@ -10381,20 +10423,56 @@ class ModelRunner:
         lease: ExactGreedyDecodeBurstLease,
         correctness_trace: bool = False,
     ):
-        graph = self._select_exact_greedy_decode_burst_graph(
+        one_token_graph = self._select_exact_greedy_decode_burst_graph(
             lease,
             correctness_trace=correctness_trace,
         )
-        capability = self.exact_greedy_decode_burst_capability(
-            correctness_trace=correctness_trace,
-            graph=graph,
+        one_token_capability = (
+            self.exact_greedy_decode_burst_capability(
+                correctness_trace=correctness_trace,
+                graph=one_token_graph,
+            )
         )
-        if not capability["available"] or graph is None:
+        if (
+            not one_token_capability["available"]
+            or one_token_graph is None
+        ):
             return self._exact_greedy_decode_burst_fallback(
                 self.exact_greedy_decode_burst_stats,
-                capability["fallback_reason"]
+                one_token_capability["fallback_reason"]
                 or "capture_unavailable",
             )
+
+        graph = one_token_graph
+        capability = one_token_capability
+        folded_graph = (
+            self.exact_greedy_decode_burst_folded_correctness_graph
+            if correctness_trace
+            else self.exact_greedy_decode_burst_folded_graph
+        )
+        folded_selected = False
+        if lease.authorized_token_count in (8, 16):
+            folded_capability = (
+                self.exact_greedy_decode_burst_folded_capability(
+                    correctness_trace=correctness_trace,
+                )
+            )
+            if (
+                folded_capability["available"]
+                and folded_graph is not None
+            ):
+                graph = folded_graph
+                capability = folded_capability
+                folded_selected = True
+            elif getattr(
+                self.config,
+                "exact_greedy_decode_burst_octet_folded_graph",
+                False,
+            ):
+                self.exact_greedy_decode_burst_stats.record_folded_fallback(
+                    folded_capability["fallback_reason"]
+                    or "capture_unavailable"
+                )
         if not isinstance(seqs, tuple) or len(seqs) != 1:
             return self._exact_greedy_decode_burst_fallback(
                 self.exact_greedy_decode_burst_stats,
@@ -10437,91 +10515,129 @@ class ModelRunner:
                 self.exact_greedy_decode_burst_stats,
                 "block_table_identity_drift",
             )
-        graph_capability = graph.capability()
-        block_table_width = int(
-            graph_capability["block_table_width"]
-        )
-        if len(block_ids) > block_table_width:
-            return self._exact_greedy_decode_burst_fallback(
-                self.exact_greedy_decode_burst_stats,
-                "block_table_width_unsupported",
+        def replay_graph(selected_graph, selected_capability):
+            graph_capability = selected_graph.capability()
+            block_table_width = int(
+                graph_capability["block_table_width"]
             )
-        padded_block_table = [
-            list(block_ids)
-            + [-1] * (block_table_width - len(block_ids))
-        ]
-
-        def materialize_block_table():
-            return self.prepare_block_tables_from_rows(
-                padded_block_table,
-                "exact_greedy_burst_block_table",
-            )
-
-        if (
-            self.config.exact_greedy_decode_burst_split_phase
-            and (
-                not getattr(
-                    self.config,
-                    (
-                        "exact_greedy_decode_burst_"
-                        "ragged_coalescing"
-                    ),
-                    False,
-                )
-                or lease.authorized_token_count == 8
-            )
-        ):
-            backend = (
-                self
-                .exact_greedy_decode_burst_split_phase_correctness_backend
-                if correctness_trace
-                else self.exact_greedy_decode_burst_split_phase_backend
-            )
-            if backend is None:
+            if len(block_ids) > block_table_width:
                 return self._exact_greedy_decode_burst_fallback(
                     self.exact_greedy_decode_burst_stats,
-                    "split_phase_backend_unavailable",
+                    "block_table_width_unsupported",
                 )
-            return graph.replay_split_phase(
+            padded_block_table = [
+                list(block_ids)
+                + [-1] * (block_table_width - len(block_ids))
+            ]
+
+            def materialize_block_table():
+                return self.prepare_block_tables_from_rows(
+                    padded_block_table,
+                    "exact_greedy_burst_block_table",
+                )
+
+            if (
+                self.config.exact_greedy_decode_burst_split_phase
+                and (
+                    not getattr(
+                        self.config,
+                        (
+                            "exact_greedy_decode_burst_"
+                            "ragged_coalescing"
+                        ),
+                        False,
+                    )
+                    or lease.authorized_token_count == 8
+                )
+            ):
+                backend = (
+                    self
+                    .exact_greedy_decode_burst_split_phase_correctness_backend
+                    if correctness_trace
+                    else self
+                    .exact_greedy_decode_burst_split_phase_backend
+                )
+                if backend is None:
+                    return self._exact_greedy_decode_burst_fallback(
+                        self.exact_greedy_decode_burst_stats,
+                        "split_phase_backend_unavailable",
+                    )
+                return selected_graph.replay_split_phase(
+                    lease=lease,
+                    initial_token=int(seq.last_token),
+                    block_table=None,
+                    block_table_factory=materialize_block_table,
+                    mailbox_backend=backend,
+                    graph_generation=int(
+                        selected_capability["graph_generation"]
+                    ),
+                    rank=self.rank,
+                    tensor_parallel_size=self.world_size,
+                    expected_graph_identity_sha256=(
+                        selected_capability[
+                            "graph_identity_sha256"
+                        ]
+                    ),
+                    expected_width_health_generation=(
+                        self
+                        .elastic_exact_burst_width_health
+                        .generation
+                    ),
+                )
+            return selected_graph.replay(
                 lease=lease,
                 initial_token=int(seq.last_token),
                 block_table=None,
                 block_table_factory=materialize_block_table,
-                mailbox_backend=backend,
+                continuation_enabled=(
+                    self.config
+                    .exact_greedy_decode_burst_continuation
+                ),
                 graph_generation=int(
-                    capability["graph_generation"]
+                    selected_capability["graph_generation"]
                 ),
                 rank=self.rank,
                 tensor_parallel_size=self.world_size,
-                expected_graph_identity_sha256=capability[
-                    "graph_identity_sha256"
-                ],
+                expected_graph_identity_sha256=(
+                    selected_capability[
+                        "graph_identity_sha256"
+                    ]
+                ),
                 expected_width_health_generation=(
                     self.elastic_exact_burst_width_health.generation
                 ),
+                width_health=self.elastic_exact_burst_width_health,
             )
-        return graph.replay(
-            lease=lease,
-            initial_token=int(seq.last_token),
-            block_table=None,
-            block_table_factory=materialize_block_table,
-            continuation_enabled=(
-                self.config
-                .exact_greedy_decode_burst_continuation
-            ),
-            graph_generation=int(
-                capability["graph_generation"]
-            ),
-            rank=self.rank,
-            tensor_parallel_size=self.world_size,
-            expected_graph_identity_sha256=capability[
-                "graph_identity_sha256"
-            ],
-            expected_width_health_generation=(
-                self.elastic_exact_burst_width_health.generation
-            ),
-            width_health=self.elastic_exact_burst_width_health,
+
+        folded_fallback_counts_before = dict(
+            self.exact_greedy_decode_burst_stats.folded_fallback_counts
         )
+        result = replay_graph(graph, capability)
+        if (
+            folded_selected
+            and (
+                isinstance(
+                    result,
+                    ExactGreedyDecodeBurstFallback,
+                )
+                or type(result).__name__
+                == "ExactGreedyDecodeBurstFallback"
+            )
+        ):
+            reason = result.fallback_reason
+            if (
+                self.exact_greedy_decode_burst_stats
+                .folded_fallback_counts.get(reason, 0)
+                == folded_fallback_counts_before.get(reason, 0)
+            ):
+                self.exact_greedy_decode_burst_stats.record_folded_fallback(
+                    reason
+                )
+            return replay_graph(
+                one_token_graph,
+                one_token_capability,
+            )
+        return result
 
     def invalidate_exact_greedy_decode_burst_continuation(
         self,
@@ -10531,6 +10647,8 @@ class ModelRunner:
         for graph in (
             self.exact_greedy_decode_burst_graph,
             self.exact_greedy_decode_burst_correctness_graph,
+            self.exact_greedy_decode_burst_folded_graph,
+            self.exact_greedy_decode_burst_folded_correctness_graph,
             self.exact_greedy_decode_burst_medium_split_k_graph,
             (
                 self
@@ -10659,6 +10777,7 @@ class ModelRunner:
         correctness_trace: bool = False,
         sampled_logit_ordinals: tuple[int, ...] = (),
         flash_attn_num_splits: int | None = None,
+        folded: bool = False,
     ):
         if flash_attn_num_splits is None:
             auto_graph = self._capture_exact_greedy_decode_burst(
@@ -10678,24 +10797,48 @@ class ModelRunner:
                         MEDIUM_SPLIT_K_NUM_SPLITS
                     ),
                 )
+            if getattr(
+                self.config,
+                "exact_greedy_decode_burst_octet_folded_graph",
+                False,
+            ):
+                self._capture_exact_greedy_decode_burst(
+                    correctness_trace=correctness_trace,
+                    sampled_logit_ordinals=sampled_logit_ordinals,
+                    flash_attn_num_splits=0,
+                    folded=True,
+                )
             return auto_graph
+        if folded and flash_attn_num_splits != 0:
+            raise ValueError(
+                "folded exact burst requires automatic split policy"
+            )
         is_medium_split_k = (
             flash_attn_num_splits
             == MEDIUM_SPLIT_K_NUM_SPLITS
         )
         target_attribute = (
             (
-                "exact_greedy_decode_burst_medium_split_k_"
+                "exact_greedy_decode_burst_folded_"
                 "correctness_graph"
             )
-            if correctness_trace and is_medium_split_k
+            if folded and correctness_trace
             else (
-                "exact_greedy_decode_burst_medium_split_k_graph"
-                if is_medium_split_k
+                "exact_greedy_decode_burst_folded_graph"
+                if folded
                 else (
-                    "exact_greedy_decode_burst_correctness_graph"
-                    if correctness_trace
-                    else "exact_greedy_decode_burst_graph"
+                "exact_greedy_decode_burst_medium_split_k_"
+                "correctness_graph"
+                )
+                if correctness_trace and is_medium_split_k
+                else (
+                    "exact_greedy_decode_burst_medium_split_k_graph"
+                    if is_medium_split_k
+                    else (
+                        "exact_greedy_decode_burst_correctness_graph"
+                        if correctness_trace
+                        else "exact_greedy_decode_burst_graph"
+                    )
                 )
             )
         )
@@ -10705,7 +10848,7 @@ class ModelRunner:
             else "exact_greedy_decode_burst_split_phase_backend"
         )
         setattr(self, target_attribute, None)
-        if not is_medium_split_k:
+        if not is_medium_split_k and not folded:
             setattr(self, target_backend_attribute, None)
         if not self.config.exact_greedy_decode_burst:
             return None
@@ -10829,7 +10972,12 @@ class ModelRunner:
             )
 
         try:
-            graph = ExactGreedyDecodeBurstGraph.capture(
+            graph_class = (
+                ExactGreedyDecodeBurstFoldedGraph
+                if folded
+                else ExactGreedyDecodeBurstGraph
+            )
+            capture_kwargs = dict(
                 tensors=tensors,
                 model=self.model,
                 compute_logits=self.model.compute_logits,
@@ -10865,18 +11013,27 @@ class ModelRunner:
                 flash_attn_num_splits=flash_attn_num_splits,
                 stats=self.exact_greedy_decode_burst_stats,
             )
+            if folded:
+                capture_kwargs["steps_per_launch"] = 8
+            graph = graph_class.capture(**capture_kwargs)
         except Exception as error:
             self.exact_greedy_decode_burst_stats.record_fallback(
                 (
+                    "folded_capture_unavailable"
+                    if folded
+                    else (
                     "medium_split_k_capture_unavailable"
                     if is_medium_split_k
                     else "capture_failure:" + type(error).__name__
+                    )
                 )
             )
             setattr(self, target_attribute, None)
             return None
         setattr(self, target_attribute, graph)
         if (
+            not folded
+            and
             flash_attn_num_splits == 0
             and self.config.exact_greedy_decode_burst_split_phase
         ):
