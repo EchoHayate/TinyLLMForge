@@ -66,6 +66,11 @@ from tinyvllm.engine.phase_stitch_profile import (
     PHASE_STITCH_EVENTS,
     PhaseStitchProfileRecorder,
 )
+from tinyvllm.engine.phase_stitched_exact_graph import (
+    PhaseStitchExecutionFallback,
+    PhaseStitchExecutionResult,
+    build_phase_stitch_source_identity,
+)
 from tinyvllm.engine.qwen35_hybrid_prefix_engine_restore import (
     Qwen35HybridPrefixEngineRestoreCoordinator,
 )
@@ -535,6 +540,7 @@ class LLMEngine:
         self.last_scheduled_seqs = []
         self.last_step_observation = None
         self._exact_burst_split_phase_transaction = None
+        self._phase_stitch_transaction = None
         self.speculative_runtime = None
         self.speculative_runtime_poisoned = False
         self.speculative_runtime_poison_reason = None
@@ -3880,6 +3886,147 @@ class LLMEngine:
         }
         return outputs, -len(suffix_tokens)
 
+    def _drain_phase_stitch_suffix(
+        self,
+        pending,
+        *,
+        completion_only: bool,
+    ):
+        if not isinstance(completion_only, bool):
+            raise ValueError("completion_only must be a bool")
+        if not completion_only:
+            raise ValueError(
+                "phase stitch suffix requires completion-only authority"
+            )
+        if pending is not self._phase_stitch_transaction:
+            raise ValueError(
+                "phase stitch suffix transaction is not active"
+            )
+        lease = pending["lease"]
+        sequence = pending["sequence"]
+        result = pending["result"]
+        started_ns = self._clock_ns()
+        try:
+            suffix_tokens = result.suffix.wait_tokens()
+            ready_ns = self._clock_ns()
+            prepared = (
+                self.scheduler.prepare_phase_stitch_suffix_commit(
+                    (sequence,),
+                    lease,
+                    result.suffix,
+                    decision_now_ns=started_ns,
+                    step_end_ns=ready_ns,
+                )
+            )
+            self.model_runner.call(
+                "release_phase_stitch_mailbox",
+                result.mailbox_generation,
+            )
+            self.scheduler.commit_prepared_postprocess(prepared)
+            self._phase_stitch_transaction = None
+        except BaseException as error:
+            try:
+                self.model_runner.call(
+                    "fail_phase_stitch_execution",
+                    result.mailbox_generation,
+                    lease.source_identity_sha256,
+                    "suffix_failure:" + type(error).__name__,
+                )
+            except BaseException:
+                pass
+            try:
+                summary = self.scheduler.phase_stitch_summary()
+                if summary.get(
+                    "pending_parent_identity_sha256"
+                ) == lease.identity_sha256:
+                    self.scheduler.fail_phase_stitch(
+                        lease,
+                        "suffix_failure:"
+                        + type(error).__name__,
+                    )
+            except BaseException:
+                pass
+            finally:
+                self._phase_stitch_transaction = None
+            raise
+        outputs = (
+            [(sequence.seq_id, sequence.completion_token_ids)]
+            if sequence.is_finished
+            else []
+        )
+        scheduler_summary = self.scheduler.phase_stitch_summary()
+        model_runner_summary = self.model_runner.phase_stitch_summary()
+        self.last_scheduled_seqs = [sequence]
+        self.last_batch_kind = None
+        self.last_step_observation = {
+            "policy_branch": "phase_stitch_suffix_drain",
+            "batch_kind": None,
+            "is_prefill": False,
+            "do_sample": True,
+            "scheduled": [],
+            "queue_before": pending["queue_after_prefix"],
+            "queue_after": self.scheduler.observation_snapshot(),
+            "new_completion_tokens_by_seq": {
+                sequence.seq_id: list(suffix_tokens)
+            },
+            "finished_seq_ids": (
+                [sequence.seq_id] if sequence.is_finished else []
+            ),
+            "phase_stitch_attempted": True,
+            "phase_stitch_accepted": True,
+            "phase_stitch_parent_identity_sha256": (
+                lease.identity_sha256
+            ),
+            "phase_stitch_source_identity_sha256": (
+                lease.source_identity_sha256
+            ),
+            "phase_stitch_prefill_replay_count": (
+                result.prefill_forward_count
+            ),
+            "phase_stitch_decode_replay_count": (
+                result.decode_replay_count
+            ),
+            "phase_stitch_target_model_forward_count": (
+                result.target_model_forward_count
+            ),
+            "phase_stitch_scheduler_summary": scheduler_summary,
+            "phase_stitch_model_runner_summary": (
+                model_runner_summary
+            ),
+            "parent_lease_identity_sha256": (
+                lease.identity_sha256
+            ),
+            "source_identity_sha256": (
+                lease.source_identity_sha256
+            ),
+            "phase_published": "suffix",
+            "phase_token_count": len(suffix_tokens),
+            "prefill_replay_count": result.prefill_forward_count,
+            "decode_replay_count": (
+                result.decode_replay_count
+            ),
+            "target_model_forward_count": (
+                result.target_model_forward_count
+            ),
+            "prefix_d2h_calls": result.prefix.d2h_calls,
+            "suffix_d2h_calls": result.suffix.d2h_calls,
+            "prefix_d2h_bytes": result.prefix.d2h_bytes,
+            "suffix_d2h_bytes": result.suffix.d2h_bytes,
+            "prefix_wait_ns": pending["prefix_wait_ns"],
+            "suffix_wait_ns": max(0, ready_ns - started_ns),
+            "host_visible_gap_ns": max(
+                0,
+                ready_ns - pending["prefix_published_ns"],
+            ),
+            "pending_suffix": False,
+            "scheduler_schedule_calls": 0,
+            "fallback_reason": None,
+            "scheduler_phase_stitch": scheduler_summary,
+            "model_runner_phase_stitch": model_runner_summary,
+            "memory": self.model_runner.memory_snapshot(),
+        }
+        return outputs, -len(suffix_tokens)
+
     def step(
         self,
         *,
@@ -3946,6 +4093,17 @@ class LLMEngine:
 
         step_error = None
         try:
+            pending_phase_stitch = getattr(
+                self,
+                "_phase_stitch_transaction",
+                None,
+            )
+            if pending_phase_stitch is not None:
+                with step_phase("phase_stitch_suffix_drain"):
+                    return self._drain_phase_stitch_suffix(
+                        pending_phase_stitch,
+                        completion_only=completion_only,
+                    )
             pending_split = getattr(
                 self,
                 "_exact_burst_split_phase_transaction",
@@ -4157,6 +4315,23 @@ class LLMEngine:
             split_prefix_wait_ns = 0
             split_suffix_wait_ns = 0
             split_pending_suffix = False
+            phase_stitch_attempted = False
+            phase_stitch_accepted = False
+            phase_stitch_committed = False
+            phase_stitch_fallback_reason = None
+            phase_stitch_parent_identity = None
+            phase_stitch_source_identity = None
+            phase_stitch_prefill_replay_count = 0
+            phase_stitch_decode_replay_count = 0
+            phase_stitch_target_forward_count = 0
+            phase_stitch_prefix_d2h_calls = 0
+            phase_stitch_suffix_d2h_calls = 0
+            phase_stitch_prefix_d2h_bytes = 0
+            phase_stitch_suffix_d2h_bytes = 0
+            phase_stitch_prefix_wait_ns = 0
+            phase_stitch_phase_published = None
+            phase_stitch_phase_token_count = 0
+            phase_stitch_pending_suffix = False
             if partition.selected_sequences:
                 model_runner_config = getattr(
                     self.model_runner,
@@ -4714,6 +4889,401 @@ class LLMEngine:
                     "config",
                     None,
                 )
+                phase_stitch_enabled = bool(
+                    getattr(
+                        model_runner_config,
+                        "phase_stitched_exact_graph_runtime",
+                        False,
+                    )
+                )
+                phase_stitch_candidate = (
+                    phase_stitch_enabled
+                    and completion_only
+                    and exact_burst_gate_width is None
+                    and not exact_burst_correctness_trace
+                    and len(seqs) == 1
+                    and bool(is_prefill)
+                    and bool(do_sample)
+                    and batch_kind is None
+                    and bool(seqs[0].prefill_chunk_final)
+                )
+                phase_stitch_lease = None
+                if phase_stitch_candidate:
+                    phase_stitch_attempted = True
+                    capability = (
+                        self.model_runner.phase_stitch_capability(
+                            int(seqs[0].num_prompt_tokens)
+                        )
+                    )
+                    capability_available = bool(
+                        capability.get("available", False)
+                    )
+                    prefill_identity = capability.get(
+                        "prefill_graph_identity_sha256"
+                    )
+                    decode_identity = capability.get(
+                        "decode_graph_identity_sha256"
+                    )
+                    prefill_generation = capability.get(
+                        "prefill_graph_generation"
+                    )
+                    decode_generation = capability.get(
+                        "decode_graph_generation"
+                    )
+                    identities_available = (
+                        isinstance(prefill_identity, str)
+                        and isinstance(decode_identity, str)
+                        and isinstance(prefill_generation, int)
+                        and isinstance(decode_generation, int)
+                    )
+                    source_identity = (
+                        build_phase_stitch_source_identity(
+                            prefill_graph_identity_sha256=(
+                                prefill_identity
+                            ),
+                            prefill_graph_generation=(
+                                prefill_generation
+                            ),
+                            decode_graph_identity_sha256=(
+                                decode_identity
+                            ),
+                            decode_graph_generation=(
+                                decode_generation
+                            ),
+                        )
+                        if identities_available
+                        else "0" * 64
+                    )
+                    incompatible_modes = []
+                    if runtime is not None:
+                        incompatible_modes.append(
+                            "speculative_runtime"
+                        )
+                    if (
+                        phase_stitch_profile is not None
+                        and phase_stitch_profile.enabled
+                    ):
+                        incompatible_modes.append(
+                            "phase_stitch_profile"
+                        )
+                    for mode_name, active in (
+                        (
+                            "cpu_offload",
+                            bool(
+                                getattr(
+                                    model_runner_config,
+                                    "cpu_offload",
+                                    False,
+                                )
+                            ),
+                        ),
+                        (
+                            "kv_offload",
+                            bool(
+                                getattr(
+                                    model_runner_config,
+                                    "kv_offload_mvp0",
+                                    False,
+                                )
+                            ),
+                        ),
+                        (
+                            "quantized_kv",
+                            int(
+                                getattr(
+                                    model_runner_config,
+                                    "kv_quant_bits",
+                                    0,
+                                )
+                            )
+                            != 0,
+                        ),
+                        (
+                            "quest_sparse_attention",
+                            int(
+                                getattr(
+                                    model_runner_config,
+                                    "quest_top_k_blocks",
+                                    -1,
+                                )
+                            )
+                            >= 0,
+                        ),
+                        (
+                            "compact_attention",
+                            int(
+                                getattr(
+                                    model_runner_config,
+                                    "am_compact_blocks",
+                                    0,
+                                )
+                            )
+                            > 0,
+                        ),
+                    ):
+                        if active:
+                            incompatible_modes.append(mode_name)
+                    phase_stitch_lease = (
+                        self.scheduler.prepare_phase_stitch(
+                            tuple(seqs),
+                            schedule_generation=(
+                                self.scheduler.schedule_generation
+                            ),
+                            enabled=phase_stitch_enabled,
+                            prefill_graph_available=(
+                                capability_available
+                                and prefill_identity is not None
+                            ),
+                            decode_graph_available=(
+                                capability_available
+                                and decode_identity is not None
+                            ),
+                            prefill_graph_identity_sha256=(
+                                prefill_identity or "0" * 64
+                            ),
+                            prefill_graph_generation=int(
+                                prefill_generation or 0
+                            ),
+                            decode_graph_identity_sha256=(
+                                decode_identity or "0" * 64
+                            ),
+                            decode_graph_generation=int(
+                                decode_generation or 0
+                            ),
+                            prompt_token_allowlist=tuple(
+                                getattr(
+                                    model_runner_config,
+                                    (
+                                        "prefill_cuda_graph_"
+                                        "token_allowlist"
+                                    ),
+                                    (256, 2048),
+                                )
+                            ),
+                            is_prefill=bool(is_prefill),
+                            do_sample=bool(do_sample),
+                            batch_kind=batch_kind,
+                            completion_only=completion_only,
+                            tensor_parallel_size=int(
+                                self.model_runner.world_size
+                            ),
+                            rank=int(self.model_runner.rank),
+                            incompatible_modes=tuple(
+                                incompatible_modes
+                            ),
+                            source_identity_sha256=source_identity,
+                            quarantined=(
+                                capability.get("fallback_reason")
+                                == "identity_quarantined"
+                            ),
+                        )
+                    )
+                    if phase_stitch_lease is not None:
+                        phase_stitch_accepted = True
+                        phase_stitch_parent_identity = (
+                            phase_stitch_lease.identity_sha256
+                        )
+                        phase_stitch_source_identity = (
+                            phase_stitch_lease
+                            .source_identity_sha256
+                        )
+                        try:
+                            current_block_table_identity = (
+                                self.scheduler.block_manager
+                                .block_identities(
+                                    tuple(seqs[0].block_table)
+                                )
+                            )
+                        except BaseException:
+                            self.scheduler.cancel_phase_stitch(
+                                phase_stitch_lease,
+                                "block_identity_unavailable",
+                            )
+                            phase_stitch_fallback_reason = (
+                                "block_identity_unavailable"
+                            )
+                            phase_stitch_accepted = False
+                            phase_stitch_lease = None
+                    if phase_stitch_lease is not None:
+                        phase_result = None
+                        try:
+                            with step_phase(
+                                "ordinary_or_first_target_dispatch"
+                            ):
+                                phase_result = self.model_runner.call(
+                                    "run_phase_stitched_exact_graph",
+                                    tuple(seqs),
+                                    phase_stitch_lease,
+                                    current_block_table_identity,
+                                )
+                            if isinstance(
+                                phase_result,
+                                PhaseStitchExecutionFallback,
+                            ):
+                                phase_stitch_fallback_reason = (
+                                    phase_result.fallback_reason
+                                )
+                                self.scheduler.cancel_phase_stitch(
+                                    phase_stitch_lease,
+                                    phase_result.fallback_reason,
+                                )
+                                phase_stitch_accepted = False
+                            else:
+                                if not isinstance(
+                                    phase_result,
+                                    PhaseStitchExecutionResult,
+                                ):
+                                    raise TypeError(
+                                        "phase stitch runner returned "
+                                        "an invalid result"
+                                    )
+                                self.scheduler.mark_phase_stitch_replay_started(
+                                    phase_stitch_lease
+                                )
+                                prefix_wait_started_ns = (
+                                    self._clock_ns()
+                                )
+                                phase_result.prefix.wait_token()
+                                prefix_ready_ns = self._clock_ns()
+                                phase_stitch_prefix_wait_ns = max(
+                                    0,
+                                    prefix_ready_ns
+                                    - prefix_wait_started_ns,
+                                )
+                                prepared_phase_stitch = (
+                                    self.scheduler
+                                    .prepare_phase_stitch_prefix_commit(
+                                        tuple(seqs),
+                                        phase_stitch_lease,
+                                        phase_result.prefix,
+                                        decision_now_ns=(
+                                            decision_now_ns
+                                        ),
+                                        step_end_ns=prefix_ready_ns,
+                                    )
+                                )
+                                self.scheduler.commit_prepared_postprocess(
+                                    prepared_phase_stitch
+                                )
+                                self._phase_stitch_transaction = {
+                                    "lease": phase_stitch_lease,
+                                    "sequence": seqs[0],
+                                    "result": phase_result,
+                                    "prefix_published_ns": (
+                                        prefix_ready_ns
+                                    ),
+                                    "prefix_wait_ns": (
+                                        phase_stitch_prefix_wait_ns
+                                    ),
+                                    "queue_after_prefix": (
+                                        self.scheduler
+                                        .observation_snapshot()
+                                    ),
+                                }
+                                phase_stitch_prefill_replay_count = (
+                                    phase_result
+                                    .prefill_forward_count
+                                )
+                                phase_stitch_decode_replay_count = (
+                                    phase_result.decode_replay_count
+                                )
+                                phase_stitch_target_forward_count = (
+                                    phase_result
+                                    .target_model_forward_count
+                                )
+                                phase_stitch_prefix_d2h_calls = (
+                                    phase_result.prefix.d2h_calls
+                                )
+                                phase_stitch_suffix_d2h_calls = (
+                                    phase_result.suffix.d2h_calls
+                                )
+                                phase_stitch_prefix_d2h_bytes = (
+                                    phase_result.prefix.d2h_bytes
+                                )
+                                phase_stitch_suffix_d2h_bytes = (
+                                    phase_result.suffix.d2h_bytes
+                                )
+                                phase_stitch_phase_published = (
+                                    "prefix"
+                                )
+                                phase_stitch_phase_token_count = 1
+                                phase_stitch_pending_suffix = True
+                                num_tokens = -1
+                                phase_stitch_committed = True
+                                token_ids = ()
+                                if (
+                                    phase_stitch_prefill_sequence_id
+                                    is not None
+                                ):
+                                    phase_stitch_profile.mark(
+                                        phase_stitch_prefill_sequence_id,
+                                        "prefill_dispatch_finished",
+                                    )
+                                    phase_stitch_profile.mark(
+                                        phase_stitch_prefill_sequence_id,
+                                        "first_token_host_available",
+                                    )
+                                    phase_stitch_profile.mark(
+                                        phase_stitch_prefill_sequence_id,
+                                        (
+                                            "prefill_scheduler_"
+                                            "commit_finished"
+                                        ),
+                                    )
+                        except BaseException as error:
+                            if not isinstance(
+                                phase_result,
+                                PhaseStitchExecutionFallback,
+                            ):
+                                try:
+                                    self.scheduler.mark_phase_stitch_replay_started(
+                                        phase_stitch_lease
+                                    )
+                                except BaseException:
+                                    pass
+                                if isinstance(
+                                    phase_result,
+                                    PhaseStitchExecutionResult,
+                                ):
+                                    try:
+                                        self.model_runner.call(
+                                            "fail_phase_stitch_execution",
+                                            (
+                                                phase_result
+                                                .mailbox_generation
+                                            ),
+                                            (
+                                                phase_stitch_lease
+                                                .source_identity_sha256
+                                            ),
+                                            "prefix_failure:"
+                                            + type(error).__name__,
+                                        )
+                                    except BaseException:
+                                        pass
+                                try:
+                                    summary = (
+                                        self.scheduler
+                                        .phase_stitch_summary()
+                                    )
+                                    if summary.get(
+                                        (
+                                            "pending_parent_"
+                                            "identity_sha256"
+                                        )
+                                    ) == (
+                                        phase_stitch_lease
+                                        .identity_sha256
+                                    ):
+                                        self.scheduler.fail_phase_stitch(
+                                            phase_stitch_lease,
+                                            "prefix_failure:"
+                                            + type(error).__name__,
+                                        )
+                                except BaseException:
+                                    pass
+                            self._phase_stitch_transaction = None
+                            raise
                 exact_burst_enabled = bool(
                     getattr(
                         model_runner_config,
@@ -5360,7 +5930,10 @@ class LLMEngine:
                     "drain_hybrid_state_release_events",
                     None,
                 )
-                if not exact_burst_committed:
+                if (
+                    not exact_burst_committed
+                    and not phase_stitch_committed
+                ):
                     released_leases = (
                         drain_releases()
                         if drain_releases is not None
@@ -5411,7 +5984,10 @@ class LLMEngine:
                         raise
                     step_end_ns = self._clock_ns()
             if not partition.selected_sequences:
-                if not exact_burst_committed:
+                if (
+                    not exact_burst_committed
+                    and not phase_stitch_committed
+                ):
                     with step_phase("ordinary_scheduler_postprocess"):
                         self.scheduler.postprocess(
                             seqs,
@@ -5543,6 +6119,16 @@ class LLMEngine:
                 "exact_greedy_decode_burst_summary",
                 lambda: {},
             )()
+            scheduler_phase_stitch_summary = getattr(
+                self.scheduler,
+                "phase_stitch_summary",
+                lambda: {},
+            )()
+            model_runner_phase_stitch_summary = getattr(
+                self.model_runner,
+                "phase_stitch_summary",
+                lambda: {},
+            )()
             self.last_step_observation = {
                 "policy_branch": self.scheduler.last_policy_branch,
                 "batch_kind": batch_kind,
@@ -5643,8 +6229,33 @@ class LLMEngine:
                 ),
                 "split_phase_attempted": split_phase_attempted,
                 "split_phase_accepted": split_phase_accepted,
+                "phase_stitch_attempted": phase_stitch_attempted,
+                "phase_stitch_accepted": phase_stitch_accepted,
+                "phase_stitch_parent_identity_sha256": (
+                    phase_stitch_parent_identity
+                ),
+                "phase_stitch_source_identity_sha256": (
+                    phase_stitch_source_identity
+                ),
+                "phase_stitch_prefill_replay_count": (
+                    phase_stitch_prefill_replay_count
+                ),
+                "phase_stitch_decode_replay_count": (
+                    phase_stitch_decode_replay_count
+                ),
+                "phase_stitch_target_model_forward_count": (
+                    phase_stitch_target_forward_count
+                ),
+                "phase_stitch_scheduler_summary": (
+                    scheduler_phase_stitch_summary
+                ),
+                "phase_stitch_model_runner_summary": (
+                    model_runner_phase_stitch_summary
+                ),
                 "parent_lease_identity_sha256": (
-                    split_parent_lease_identity
+                    phase_stitch_parent_identity
+                    if phase_stitch_attempted
+                    else split_parent_lease_identity
                 ),
                 "prefix_ticket_identity_sha256": (
                     split_prefix_ticket_identity
@@ -5652,25 +6263,68 @@ class LLMEngine:
                 "suffix_ticket_identity_sha256": (
                     split_suffix_ticket_identity
                 ),
-                "phase_published": split_phase_published,
-                "phase_token_count": split_phase_token_count,
-                "replay_count": (
-                    exact_burst_replay_count
-                    if split_phase_attempted
-                    else 0
+                "phase_published": (
+                    phase_stitch_phase_published
+                    if phase_stitch_attempted
+                    else split_phase_published
                 ),
-                "prefix_d2h_calls": split_prefix_d2h_calls,
-                "suffix_d2h_calls": split_suffix_d2h_calls,
-                "prefix_d2h_bytes": split_prefix_d2h_bytes,
-                "suffix_d2h_bytes": split_suffix_d2h_bytes,
-                "prefix_wait_ns": split_prefix_wait_ns,
+                "phase_token_count": (
+                    phase_stitch_phase_token_count
+                    if phase_stitch_attempted
+                    else split_phase_token_count
+                ),
+                "replay_count": (
+                    phase_stitch_decode_replay_count
+                    if phase_stitch_attempted
+                    else (
+                        exact_burst_replay_count
+                        if split_phase_attempted
+                        else 0
+                    )
+                ),
+                "prefill_replay_count": (
+                    phase_stitch_prefill_replay_count
+                ),
+                "prefix_d2h_calls": (
+                    phase_stitch_prefix_d2h_calls
+                    if phase_stitch_attempted
+                    else split_prefix_d2h_calls
+                ),
+                "suffix_d2h_calls": (
+                    phase_stitch_suffix_d2h_calls
+                    if phase_stitch_attempted
+                    else split_suffix_d2h_calls
+                ),
+                "prefix_d2h_bytes": (
+                    phase_stitch_prefix_d2h_bytes
+                    if phase_stitch_attempted
+                    else split_prefix_d2h_bytes
+                ),
+                "suffix_d2h_bytes": (
+                    phase_stitch_suffix_d2h_bytes
+                    if phase_stitch_attempted
+                    else split_suffix_d2h_bytes
+                ),
+                "prefix_wait_ns": (
+                    phase_stitch_prefix_wait_ns
+                    if phase_stitch_attempted
+                    else split_prefix_wait_ns
+                ),
                 "suffix_wait_ns": split_suffix_wait_ns,
-                "pending_suffix": split_pending_suffix,
+                "pending_suffix": (
+                    phase_stitch_pending_suffix
+                    if phase_stitch_attempted
+                    else split_pending_suffix
+                ),
                 "scheduler_schedule_calls": 1,
                 "fallback_reason": (
-                    exact_burst_fallback_reason
-                    if split_phase_attempted
-                    else None
+                    phase_stitch_fallback_reason
+                    if phase_stitch_attempted
+                    else (
+                        exact_burst_fallback_reason
+                        if split_phase_attempted
+                        else None
+                    )
                 ),
                 "memory": self.model_runner.memory_snapshot(),
                 **timing_observation,
@@ -5746,7 +6400,21 @@ class LLMEngine:
                     raise telemetry_error
 
     def is_finished(self):
-        return self.scheduler.is_finished()
+        return (
+            self.scheduler.is_finished()
+            and getattr(
+                self,
+                "_phase_stitch_transaction",
+                None,
+            )
+            is None
+            and getattr(
+                self,
+                "_exact_burst_split_phase_transaction",
+                None,
+            )
+            is None
+        )
 
     def hybrid_state_release_event_count(self):
         events = getattr(

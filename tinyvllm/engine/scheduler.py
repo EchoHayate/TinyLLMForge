@@ -4031,12 +4031,16 @@ class Scheduler:
                         finished_progress_entries_removed
                     ),
                 )
-            elif prepared.is_prefill and (
-                self.chunked_prefill_enabled
-                or not prepared.do_sample
-                or any(
-                    seq.status == SequenceStatus.PREFILLING
-                    for seq in seqs
+            elif (
+                prepared.is_prefill
+                and prepared.phase_stitch_phase is None
+                and (
+                    self.chunked_prefill_enabled
+                    or not prepared.do_sample
+                    or any(
+                        seq.status == SequenceStatus.PREFILLING
+                        for seq in seqs
+                    )
                 )
             ):
                 self._apply_prepared_chunked_prefill_postprocess(
@@ -4081,7 +4085,9 @@ class Scheduler:
                         finished_progress_entries_removed=(
                             finished_progress_entries_removed
                         ),
-                        requeue=False,
+                        requeue=(
+                            prepared.phase_stitch_phase == "suffix"
+                        ),
                         publication_journal=(
                             journal
                             if isinstance(

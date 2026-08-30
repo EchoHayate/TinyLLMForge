@@ -1,3 +1,4 @@
+import ast
 from dataclasses import replace
 import importlib.util
 import os
@@ -772,6 +773,130 @@ def test_scheduler_phase_stitch_commits_prefix_then_suffix():
     }
 
 
+def test_scheduler_phase_stitch_requeues_nonterminal_suffix():
+    fixture, canonical = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=12,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+    scheduler.mark_phase_stitch_replay_started(lease)
+    prefix = canonical.PhaseStitchPrefixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        token=101,
+        token_ordinal=0,
+        replay_count=0,
+        d2h_calls=1,
+        d2h_bytes=8,
+    )
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_phase_stitch_prefix_commit(
+            (sequence,),
+            lease,
+            prefix,
+        )
+    )
+    assert sequence not in scheduler.running
+
+    suffix = canonical.PhaseStitchSuffixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        tokens=(102, 103, 104, 105, 106, 107, 108),
+        first_token_ordinal=1,
+        replay_count=7,
+        d2h_calls=1,
+        d2h_bytes=56,
+    )
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_phase_stitch_suffix_commit(
+            (sequence,),
+            lease,
+            suffix,
+        )
+    )
+
+    assert sequence.num_completion_tokens == 8
+    assert sequence.is_finished is False
+    assert list(scheduler.running) == [sequence]
+
+
+def test_scheduler_chunked_phase_stitch_requeues_only_after_suffix():
+    fixture, canonical = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            max_num_prefill_tokens_per_step=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=12,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+    scheduler.mark_phase_stitch_replay_started(lease)
+    prefix = canonical.PhaseStitchPrefixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        token=101,
+        token_ordinal=0,
+        replay_count=0,
+        d2h_calls=1,
+        d2h_bytes=8,
+    )
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_phase_stitch_prefix_commit(
+            (sequence,),
+            lease,
+            prefix,
+        )
+    )
+
+    assert list(scheduler.running) == []
+
+    suffix = canonical.PhaseStitchSuffixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        tokens=(102, 103, 104, 105, 106, 107, 108),
+        first_token_ordinal=1,
+        replay_count=7,
+        d2h_calls=1,
+        d2h_bytes=56,
+    )
+    scheduler.commit_prepared_postprocess(
+        scheduler.prepare_phase_stitch_suffix_commit(
+            (sequence,),
+            lease,
+            suffix,
+        )
+    )
+
+    assert list(scheduler.running) == [sequence]
+
+
 def test_scheduler_phase_stitch_failure_quarantines_parent_identity():
     fixture, canonical = _scheduler_phase_stitch_fixture()
     fixture.Sequence.block_size = 16
@@ -1243,6 +1368,10 @@ class _RunnerMailboxBackend:
         self.events.append(("abort_mailbox", generation))
         self.active_generation = None
 
+    def release_transaction(self, generation):
+        self.events.append(("release_mailbox", generation))
+        self.active_generation = None
+
 
 def _model_runner_phase_stitch_fixture():
     canonical_name = "tinyvllm.engine.phase_stitched_exact_graph"
@@ -1473,6 +1602,39 @@ def test_model_runner_phase_stitch_composes_one_plus_seven_replays():
     assert summary["target_model_forwards"] == 8
 
 
+def test_model_runner_phase_stitch_prepares_final_prefill_from_sequences(
+    monkeypatch,
+):
+    (
+        runner,
+        fixture,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+    runner.prepare_prefill = lambda seqs: (
+        events.append(("prepare_prefill", tuple(seqs)))
+        or (input_ids, positions)
+    )
+    monkeypatch.setitem(
+        runner.run_phase_stitched_exact_graph.__globals__,
+        "get_context",
+        lambda: context,
+    )
+
+    result = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        ((5, 2), (6, 4)),
+    )
+
+    assert result.prefill_forward_count == 1
+    assert ("prepare_prefill", (sequence,)) in events
+
+
 def test_model_runner_phase_stitch_rejects_identity_before_replay():
     (
         runner,
@@ -1608,3 +1770,956 @@ def test_model_runner_phase_stitch_quarantines_post_replay_failure():
     assert summary["quarantined_joint_identities"] == [
         lease.source_identity_sha256,
     ]
+
+
+def test_model_runner_phase_stitch_releases_resolved_mailboxes():
+    (
+        runner,
+        _,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+    result = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        input_ids=input_ids,
+        positions=positions,
+        context=context,
+        current_block_table_identity=((5, 2), (6, 4)),
+    )
+    result.prefix.wait_token()
+    result.suffix.wait_tokens()
+
+    runner.release_phase_stitch_mailbox(
+        result.mailbox_generation
+    )
+
+    assert ("release_mailbox", 1) in events
+    assert runner.phase_stitch_mailbox_backend.active_generation is None
+
+
+def test_model_runner_phase_stitch_host_failure_quarantines_source():
+    (
+        runner,
+        _,
+        events,
+        sequence,
+        lease,
+        input_ids,
+        positions,
+        context,
+    ) = _model_runner_phase_stitch_case()
+    result = runner.run_phase_stitched_exact_graph(
+        (sequence,),
+        lease,
+        input_ids=input_ids,
+        positions=positions,
+        context=context,
+        current_block_table_identity=((5, 2), (6, 4)),
+    )
+
+    runner.fail_phase_stitch_execution(
+        result.mailbox_generation,
+        lease.source_identity_sha256,
+        "suffix_failure:RuntimeError",
+    )
+
+    summary = runner.phase_stitch_summary()
+    assert ("abort_mailbox", 1) in events
+    assert summary["failures"] == 1
+    assert summary["last_authoritative_phase"] == (
+        "suffix_failure:RuntimeError"
+    )
+    assert summary["quarantined_joint_identities"] == [
+        lease.source_identity_sha256,
+    ]
+
+
+LLM_ENGINE_PATH = (
+    REPO_ROOT / "tinyvllm" / "engine" / "llm_engine.py"
+)
+
+
+def _engine_partition(
+    record,
+    seqs,
+    *,
+    expected_schedule_generation,
+):
+    del record
+    return types.SimpleNamespace(
+        schedule_generation=expected_schedule_generation,
+        selected_sequence_ids=(),
+        suppressed_sequence_ids=tuple(
+            sequence.seq_id for sequence in seqs
+        ),
+        selected_sequences=(),
+        suppressed_sequences=tuple(seqs),
+    )
+
+
+def _load_phase_stitch_engine_method(name):
+    tree = ast.parse(
+        LLM_ENGINE_PATH.read_text(encoding="utf-8"),
+        filename=os.fspath(LLM_ENGINE_PATH),
+    )
+    engine_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "LLMEngine"
+    )
+    method = next(
+        (
+            node
+            for node in engine_class.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == name
+        ),
+        None,
+    )
+    if method is None:
+        return None
+    function = ast.FunctionDef(
+        name=method.name,
+        args=method.args,
+        body=method.body,
+        decorator_list=[],
+        returns=method.returns,
+        type_comment=method.type_comment,
+    )
+    namespace = {
+        "PhaseStitchExecutionFallback": (
+            module.PhaseStitchExecutionFallback
+        ),
+        "PhaseStitchExecutionResult": (
+            module.PhaseStitchExecutionResult
+        ),
+        "build_phase_stitch_source_identity": (
+            module.build_phase_stitch_source_identity
+        ),
+        "build_engine_speculative_partition": _engine_partition,
+    }
+    exec(
+        compile(
+            ast.fix_missing_locations(
+                ast.Module(
+                    body=[
+                        ast.ImportFrom(
+                            module="__future__",
+                            names=[
+                                ast.alias(
+                                    name="annotations",
+                                    asname=None,
+                                )
+                            ],
+                            level=0,
+                        ),
+                        function,
+                    ],
+                    type_ignores=[],
+                )
+            ),
+            os.fspath(LLM_ENGINE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+    return namespace[name]
+
+
+class _EngineClock:
+
+    def __init__(self):
+        self.value = 0
+
+    def __call__(self):
+        self.value += 10
+        return self.value
+
+
+class _EngineSequence:
+    seq_id = 7
+    num_prompt_tokens = 16
+    prefill_chunk_start = 0
+    prefill_chunk_end = 16
+    prefill_chunk_final = True
+    step_is_decode = False
+    step_do_sample = True
+    sequence_epoch = 0
+    temperature = 0.0
+    ignore_eos = True
+    max_tokens = 8
+
+    def __init__(self):
+        self.token_ids = list(range(self.num_prompt_tokens))
+        self.block_table = [5, 6]
+        self.status = "running"
+
+    def __len__(self):
+        return len(self.token_ids)
+
+    @property
+    def completion_token_ids(self):
+        return self.token_ids[self.num_prompt_tokens :]
+
+    @property
+    def num_completion_tokens(self):
+        return len(self.completion_token_ids)
+
+    @property
+    def is_finished(self):
+        return self.status == "finished"
+
+
+class _EngineBlockManager:
+    block_size = 16
+
+    @staticmethod
+    def block_identities(block_ids):
+        generations = {5: 2, 6: 4}
+        return tuple(
+            (block_id, generations[block_id])
+            for block_id in block_ids
+        )
+
+
+class _EngineScheduler:
+    last_policy_branch = "prefill"
+    last_speculative_selection = None
+    schedule_generation = 1
+
+    def __init__(
+        self,
+        sequence,
+        lease,
+        events,
+        *,
+        admit=True,
+        prefix_commit_error=None,
+        suffix_commit_error=None,
+    ):
+        self.sequence = sequence
+        self.lease = lease
+        self.events = events
+        self.admit = admit
+        self.prefix_commit_error = prefix_commit_error
+        self.suffix_commit_error = suffix_commit_error
+        self.block_manager = _EngineBlockManager()
+        self.pending = False
+        self.failed = False
+        self.cancelled = False
+        self.prefix_commits = 0
+        self.suffix_commits = 0
+
+    def observation_snapshot(self):
+        return {
+            "running_seq_ids": [self.sequence.seq_id],
+            "pending_phase_stitch": self.pending,
+        }
+
+    def schedule(self, decision_now_ns):
+        self.events.append(("schedule", decision_now_ns))
+        return [self.sequence], True, True
+
+    def prepare_phase_stitch(self, seqs, **kwargs):
+        self.events.append(
+            ("prepare_phase_stitch", tuple(seqs), kwargs)
+        )
+        if (
+            not self.admit
+            or not kwargs["enabled"]
+            or not kwargs["prefill_graph_available"]
+            or not kwargs["decode_graph_available"]
+            or kwargs["incompatible_modes"]
+            or kwargs["quarantined"]
+        ):
+            return None
+        self.pending = True
+        return self.lease
+
+    def mark_phase_stitch_replay_started(self, lease):
+        assert lease is self.lease
+        self.events.append(("mark_replay_started",))
+
+    def cancel_phase_stitch(self, lease, reason):
+        assert lease is self.lease
+        self.events.append(("cancel_phase_stitch", reason))
+        self.pending = False
+        self.cancelled = True
+
+    def fail_phase_stitch(self, lease, reason):
+        assert lease is self.lease
+        self.events.append(("fail_phase_stitch", reason))
+        self.pending = False
+        self.failed = True
+
+    def prepare_phase_stitch_prefix_commit(
+        self,
+        seqs,
+        lease,
+        result,
+        **kwargs,
+    ):
+        self.events.append(("prepare_prefix", kwargs))
+        return types.SimpleNamespace(
+            phase="prefix",
+            seqs=tuple(seqs),
+            lease=lease,
+            result=result,
+        )
+
+    def prepare_phase_stitch_suffix_commit(
+        self,
+        seqs,
+        lease,
+        result,
+        **kwargs,
+    ):
+        self.events.append(("prepare_suffix", kwargs))
+        return types.SimpleNamespace(
+            phase="suffix",
+            seqs=tuple(seqs),
+            lease=lease,
+            result=result,
+        )
+
+    def commit_prepared_postprocess(self, prepared):
+        self.events.append(("commit_" + prepared.phase,))
+        if prepared.phase == "prefix":
+            if self.prefix_commit_error is not None:
+                raise self.prefix_commit_error
+            self.sequence.token_ids.append(prepared.result.token)
+            self.prefix_commits += 1
+            return
+        if self.suffix_commit_error is not None:
+            raise self.suffix_commit_error
+        self.sequence.token_ids.extend(prepared.result.tokens)
+        self.suffix_commits += 1
+        self.pending = False
+        if (
+            self.sequence.num_completion_tokens
+            == self.sequence.max_tokens
+        ):
+            self.sequence.status = "finished"
+
+    def drain_hybrid_state_release_events(self):
+        return ()
+
+    def postprocess(
+        self,
+        seqs,
+        token_ids,
+        is_prefill,
+        do_sample,
+        batch_kind,
+        *,
+        decision_now_ns,
+        step_end_ns,
+    ):
+        del seqs, is_prefill, do_sample, batch_kind
+        del decision_now_ns, step_end_ns
+        self.events.append(("ordinary_postprocess",))
+        self.sequence.token_ids.extend(token_ids)
+
+    def last_slo_observation(self):
+        return {
+            "decision_now_ns": 10,
+            "step_end_ns": 20,
+            "actual_step_duration_ns": 10,
+        }
+
+    def exact_greedy_decode_burst_summary(self):
+        return {"pending_leases": 0, "fallback_counts": {}}
+
+    def phase_stitch_summary(self):
+        return {
+            "attempts": 1,
+            "acceptances": int(self.admit),
+            "prefix_commits": self.prefix_commits,
+            "suffix_commits": self.suffix_commits,
+            "last_authoritative_phase": (
+                "suffix_committed"
+                if self.suffix_commits
+                else (
+                    "prefix_committed"
+                    if self.prefix_commits
+                    else None
+                )
+            ),
+            "pending_parent_identity_sha256": (
+                self.lease.identity_sha256 if self.pending else None
+            ),
+            "failures_after_prefix": int(
+                self.failed and self.prefix_commits == 1
+            ),
+        }
+
+
+class _EngineModelRunner:
+    rank = 0
+    world_size = 1
+
+    def __init__(
+        self,
+        outcome,
+        events,
+        *,
+        capability_available=True,
+        capability_reason=None,
+    ):
+        self.outcome = outcome
+        self.events = events
+        self.capability_available = capability_available
+        self.capability_reason = capability_reason
+        self.failed_source_identities = []
+        self.release_error = None
+        self.config = types.SimpleNamespace(
+            phase_stitched_exact_graph_runtime=True,
+            exact_greedy_decode_burst=False,
+            exact_greedy_decode_burst_split_phase=False,
+            exact_greedy_decode_burst_ragged_coalescing=False,
+            exact_greedy_decode_burst_elastic_k16=False,
+            exact_greedy_decode_burst_tokens=8,
+            kv_offload_mvp0=False,
+            cpu_offload=False,
+            kv_quant_bits=0,
+            quest_top_k_blocks=-1,
+            am_compact_blocks=0,
+        )
+
+    def phase_stitch_capability(self, prompt_token_count):
+        self.events.append(
+            ("phase_stitch_capability", prompt_token_count)
+        )
+        return {
+            "available": self.capability_available,
+            "fallback_reason": self.capability_reason,
+            "prefill_graph_identity_sha256": "a" * 64,
+            "prefill_graph_generation": 13,
+            "decode_graph_identity_sha256": "b" * 64,
+            "decode_graph_generation": 13,
+        }
+
+    def call(self, method_name, *args):
+        self.events.append((method_name,) + tuple(args))
+        if method_name == "run_phase_stitched_exact_graph":
+            if isinstance(self.outcome, BaseException):
+                raise self.outcome
+            return self.outcome
+        if method_name == "run":
+            return [99]
+        if method_name in (
+            "release_phase_stitch_mailbox",
+            "abort_phase_stitch_mailbox",
+        ):
+            if (
+                method_name == "release_phase_stitch_mailbox"
+                and self.release_error is not None
+            ):
+                raise self.release_error
+            return None
+        if method_name == "fail_phase_stitch_execution":
+            (
+                mailbox_generation,
+                source_identity_sha256,
+                reason,
+            ) = args
+            self.failed_source_identities.append(
+                source_identity_sha256
+            )
+            self.events.append(
+                (
+                    "phase_stitch_runtime_failed",
+                    mailbox_generation,
+                    source_identity_sha256,
+                    reason,
+                )
+            )
+            return None
+        raise AssertionError(
+            f"unexpected ModelRunner method {method_name}"
+        )
+
+    def exact_greedy_decode_burst_summary(self):
+        return {"quarantine_reason": None}
+
+    def phase_stitch_summary(self):
+        return {
+            "attempts": 1,
+            "successes": int(
+                isinstance(
+                    self.outcome,
+                    module.PhaseStitchExecutionResult,
+                )
+            ),
+            "prefill_graph_replays": 1,
+            "decode_graph_replays": 7,
+            "target_model_forwards": 8,
+            "quarantined_joint_identities": [],
+        }
+
+    @staticmethod
+    def memory_snapshot():
+        return {"cuda_allocated_bytes": 123}
+
+
+def _engine_phase_result(
+    lease,
+    events,
+    *,
+    suffix_error=None,
+):
+    class Completion:
+
+        def __init__(self, phase, error=None):
+            self.phase = phase
+            self.error = error
+
+        def synchronize(self):
+            events.append((self.phase + "_wait",))
+            if self.error is not None:
+                raise self.error
+
+    class Mailbox:
+
+        def __init__(self, values):
+            self.values = values
+
+        def tolist(self):
+            return list(self.values)
+
+    return module.PhaseStitchExecutionResult(
+        prefix=module.PhaseStitchPrefixResult(
+            parent_lease_identity_sha256=lease.identity_sha256,
+            token=None,
+            token_ordinal=0,
+            replay_count=0,
+            d2h_calls=1,
+            d2h_bytes=8,
+            completion=Completion("prefix"),
+            mailbox=Mailbox((101,)),
+        ),
+        suffix=module.PhaseStitchSuffixResult(
+            parent_lease_identity_sha256=lease.identity_sha256,
+            tokens=None,
+            first_token_ordinal=1,
+            replay_count=7,
+            d2h_calls=1,
+            d2h_bytes=56,
+            completion=Completion("suffix", suffix_error),
+            mailbox=Mailbox(tuple(range(102, 109))),
+        ),
+        mailbox_generation=9,
+    )
+
+
+def _phase_stitch_engine(
+    outcome,
+    *,
+    admit=True,
+    suffix_commit_error=None,
+    capability_available=True,
+    capability_reason=None,
+):
+    sequence = _EngineSequence()
+    lease = _lease(
+        prompt_token_count=16,
+        final_prefill_last_position=15,
+        decode_first_write_position=16,
+        decode_last_write_position=22,
+        decode_first_physical_slot=96,
+        decode_last_physical_slot=102,
+        block_table_identity=((5, 2), (6, 4)),
+        prefill_graph_generation=13,
+        decode_graph_generation=13,
+        source_identity_sha256=(
+            module.build_phase_stitch_source_identity(
+                prefill_graph_identity_sha256="a" * 64,
+                prefill_graph_generation=13,
+                decode_graph_identity_sha256="b" * 64,
+                decode_graph_generation=13,
+            )
+        ),
+    )
+    events = []
+    if outcome == "success":
+        outcome = _engine_phase_result(lease, events)
+    scheduler = _EngineScheduler(
+        sequence,
+        lease,
+        events,
+        admit=admit,
+        suffix_commit_error=suffix_commit_error,
+    )
+    model_runner = _EngineModelRunner(
+        outcome,
+        events,
+        capability_available=capability_available,
+        capability_reason=capability_reason,
+    )
+    engine = types.SimpleNamespace(
+        _clock_ns=_EngineClock(),
+        scheduler=scheduler,
+        model_runner=model_runner,
+        speculative_runtime=None,
+        speculative_runtime_poisoned=False,
+        speculative_runtime_poison_reason=None,
+        last_batch_kind=None,
+        last_scheduled_seqs=[],
+        last_step_observation=None,
+        _exact_burst_split_phase_transaction=None,
+        _phase_stitch_transaction=None,
+    )
+    drain = _load_phase_stitch_engine_method(
+        "_drain_phase_stitch_suffix"
+    )
+    if drain is not None:
+        engine._drain_phase_stitch_suffix = types.MethodType(
+            drain,
+            engine,
+        )
+    exact_drain = _load_phase_stitch_engine_method(
+        "_drain_exact_burst_split_phase_suffix"
+    )
+    engine._drain_exact_burst_split_phase_suffix = (
+        types.MethodType(exact_drain, engine)
+    )
+    return (
+        engine,
+        sequence,
+        scheduler,
+        model_runner,
+        events,
+        _load_phase_stitch_engine_method("step"),
+    )
+
+
+def test_engine_phase_stitch_commits_prefix_then_drains_suffix():
+    (
+        engine,
+        sequence,
+        scheduler,
+        _model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine("success")
+
+    outputs, num_tokens = step(engine, completion_only=True)
+
+    assert outputs == []
+    assert num_tokens == -1
+    assert sequence.completion_token_ids == [101]
+    assert engine._phase_stitch_transaction is not None
+    labels = [event[0] for event in events]
+    assert labels.index("phase_stitch_capability") < labels.index(
+        "prepare_phase_stitch"
+    )
+    assert labels.index("prepare_phase_stitch") < labels.index(
+        "run_phase_stitched_exact_graph"
+    )
+    assert labels.index("prefix_wait") < labels.index(
+        "prepare_prefix"
+    )
+    assert labels.index("prepare_prefix") < labels.index(
+        "commit_prefix"
+    )
+    assert "suffix_wait" not in labels
+    assert scheduler.prefix_commits == 1
+    assert engine.last_step_observation["phase_published"] == (
+        "prefix"
+    )
+    assert engine.last_step_observation["pending_suffix"] is True
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_parent_identity_sha256"
+        ]
+        == scheduler.lease.identity_sha256
+    )
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_source_identity_sha256"
+        ]
+        == scheduler.lease.source_identity_sha256
+    )
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_scheduler_summary"
+        ]["prefix_commits"]
+        == 1
+    )
+
+    event_count = len(events)
+    outputs, num_tokens = step(engine, completion_only=True)
+    drain_events = events[event_count:]
+
+    assert [event[0] for event in drain_events[:4]] == [
+        "suffix_wait",
+        "prepare_suffix",
+        "release_phase_stitch_mailbox",
+        "commit_suffix",
+    ]
+    assert not any(
+        event[0] == "schedule" for event in drain_events
+    )
+    assert not any(
+        event[0] == "run_phase_stitched_exact_graph"
+        for event in drain_events
+    )
+    assert outputs == [(7, list(range(101, 109)))]
+    assert num_tokens == -7
+    assert engine._phase_stitch_transaction is None
+    assert scheduler.suffix_commits == 1
+    assert engine.last_step_observation["phase_published"] == (
+        "suffix"
+    )
+    assert engine.last_step_observation["pending_suffix"] is False
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_parent_identity_sha256"
+        ]
+        == scheduler.lease.identity_sha256
+    )
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_source_identity_sha256"
+        ]
+        == scheduler.lease.source_identity_sha256
+    )
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_scheduler_summary"
+        ]["last_authoritative_phase"]
+        == "suffix_committed"
+    )
+    assert (
+        engine.last_step_observation[
+            "phase_stitch_model_runner_summary"
+        ]["decode_graph_replays"]
+        == 7
+    )
+
+
+def test_engine_pending_suffix_keeps_generate_loop_alive():
+    is_finished = _load_phase_stitch_engine_method("is_finished")
+    engine = types.SimpleNamespace(
+        scheduler=types.SimpleNamespace(
+            is_finished=lambda: True
+        ),
+        _phase_stitch_transaction={"pending": True},
+        _exact_burst_split_phase_transaction=None,
+    )
+
+    assert is_finished(engine) is False
+    engine._phase_stitch_transaction = None
+    assert is_finished(engine) is True
+    engine._exact_burst_split_phase_transaction = {
+        "pending": True
+    }
+    assert is_finished(engine) is False
+
+
+def test_engine_phase_stitch_pre_replay_fallback_runs_ordinary_path():
+    fallback = module.PhaseStitchExecutionFallback(
+        "mailbox_acquire_failed"
+    )
+    (
+        engine,
+        sequence,
+        scheduler,
+        _model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine(fallback)
+
+    outputs, num_tokens = step(engine, completion_only=True)
+
+    assert outputs == []
+    assert num_tokens == 16
+    assert sequence.completion_token_ids == [99]
+    assert scheduler.cancelled is True
+    assert ("cancel_phase_stitch", "mailbox_acquire_failed") in events
+    assert any(event[0] == "run" for event in events)
+    assert engine._phase_stitch_transaction is None
+
+
+def test_engine_phase_stitch_unavailable_capability_never_dispatches():
+    (
+        engine,
+        sequence,
+        scheduler,
+        _model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine(
+        "success",
+        capability_available=False,
+        capability_reason="enforce_eager",
+    )
+
+    outputs, num_tokens = step(engine, completion_only=True)
+
+    assert outputs == []
+    assert num_tokens == 16
+    assert sequence.completion_token_ids == [99]
+    assert scheduler.pending is False
+    assert not any(
+        event[0] == "run_phase_stitched_exact_graph"
+        for event in events
+    )
+    assert any(event[0] == "run" for event in events)
+
+
+@pytest.mark.parametrize(
+    "step_kwargs",
+    (
+        {"exact_burst_gate_width": 1},
+        {"exact_burst_correctness_trace": True},
+    ),
+)
+def test_engine_phase_stitch_does_not_intercept_exact_burst_gate(
+    step_kwargs,
+):
+    (
+        engine,
+        sequence,
+        scheduler,
+        _model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine("success")
+
+    outputs, num_tokens = step(
+        engine,
+        completion_only=True,
+        **step_kwargs,
+    )
+
+    assert outputs == []
+    assert num_tokens == 16
+    assert sequence.completion_token_ids == [99]
+    assert scheduler.pending is False
+    assert not any(
+        event[0] == "run_phase_stitched_exact_graph"
+        for event in events
+    )
+
+
+def test_engine_phase_stitch_post_replay_failure_is_terminal():
+    error = RuntimeError("phase stitch replay failed")
+    (
+        engine,
+        sequence,
+        scheduler,
+        _model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine(error)
+
+    with pytest.raises(
+        RuntimeError,
+        match="phase stitch replay failed",
+    ):
+        step(engine, completion_only=True)
+
+    assert sequence.completion_token_ids == []
+    assert scheduler.failed is True
+    assert ("mark_replay_started",) in events
+    assert any(
+        event[0] == "fail_phase_stitch" for event in events
+    )
+    assert not any(event[0] == "run" for event in events)
+
+
+def test_engine_phase_stitch_suffix_failure_keeps_prefix_visible():
+    suffix_error = RuntimeError("suffix copy failed")
+    (
+        engine,
+        sequence,
+        scheduler,
+        _model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine(
+        _engine_phase_result(
+            _lease(
+                prompt_token_count=16,
+                final_prefill_last_position=15,
+                decode_first_write_position=16,
+                decode_last_write_position=22,
+                decode_first_physical_slot=96,
+                decode_last_physical_slot=102,
+                block_table_identity=((5, 2), (6, 4)),
+                prefill_graph_generation=13,
+                decode_graph_generation=13,
+                source_identity_sha256=(
+                    module.build_phase_stitch_source_identity(
+                        prefill_graph_identity_sha256="a" * 64,
+                        prefill_graph_generation=13,
+                        decode_graph_identity_sha256="b" * 64,
+                        decode_graph_generation=13,
+                    )
+                ),
+            ),
+            [],
+            suffix_error=suffix_error,
+        )
+    )
+    # Rebuild the result with this engine's event stream and lease.
+    engine.model_runner.outcome = _engine_phase_result(
+        scheduler.lease,
+        events,
+        suffix_error=suffix_error,
+    )
+
+    step(engine, completion_only=True)
+    assert sequence.completion_token_ids == [101]
+
+    with pytest.raises(RuntimeError, match="suffix copy failed"):
+        step(engine, completion_only=True)
+
+    assert sequence.completion_token_ids == [101]
+    assert scheduler.failed is True
+    assert any(
+        event[0] == "phase_stitch_runtime_failed"
+        for event in events
+    )
+    assert engine.model_runner.failed_source_identities == [
+        scheduler.lease.source_identity_sha256
+    ]
+    assert not any(
+        event[0] == "schedule"
+        for event in events[
+            events.index(("prefix_wait",)) + 1 :
+        ]
+    )
+
+
+def test_engine_phase_stitch_mailbox_release_precedes_suffix_commit():
+    (
+        engine,
+        sequence,
+        scheduler,
+        model_runner,
+        events,
+        step,
+    ) = _phase_stitch_engine("success")
+    model_runner.release_error = RuntimeError(
+        "mailbox release failed"
+    )
+
+    step(engine, completion_only=True)
+
+    with pytest.raises(RuntimeError, match="mailbox release failed"):
+        step(engine, completion_only=True)
+
+    assert sequence.completion_token_ids == [101]
+    assert scheduler.suffix_commits == 0
+    assert scheduler.failed is True
+    labels = [event[0] for event in events]
+    assert "release_phase_stitch_mailbox" in labels
+    assert "commit_suffix" not in labels

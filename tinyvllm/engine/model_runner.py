@@ -9967,17 +9967,35 @@ class ModelRunner:
         self,
         seqs: tuple[Sequence, ...],
         lease: PhaseStitchLease,
+        current_block_table_identity=None,
         *,
-        input_ids,
-        positions,
-        context,
-        current_block_table_identity,
+        input_ids=None,
+        positions=None,
+        context=None,
     ):
         state = self._phase_stitch_state()
         state["attempts"] += 1
         if not isinstance(lease, PhaseStitchLease):
             return self._phase_stitch_fallback(
                 "lease_type_invalid"
+            )
+        prepared_values = (
+            input_ids is not None,
+            positions is not None,
+            context is not None,
+        )
+        if any(prepared_values) and not all(prepared_values):
+            return self._phase_stitch_fallback(
+                "prefill_inputs_incomplete"
+            )
+        if not any(prepared_values):
+            input_ids, positions = self.prepare_prefill(
+                list(seqs)
+            )
+            context = get_context()
+        if current_block_table_identity is None:
+            return self._phase_stitch_fallback(
+                "block_identity_unavailable"
             )
         entry = self._phase_stitch_prefill_entry(
             lease.prompt_token_count,
@@ -10136,6 +10154,74 @@ class ModelRunner:
             suffix=suffix,
             mailbox_generation=mailbox_generation,
         )
+
+    def release_phase_stitch_mailbox(
+        self,
+        mailbox_generation: int,
+    ) -> None:
+        backend = getattr(
+            self,
+            "phase_stitch_mailbox_backend",
+            None,
+        )
+        if backend is None:
+            raise RuntimeError(
+                "phase stitch mailbox backend is unavailable"
+            )
+        backend.release_transaction(mailbox_generation)
+
+    def abort_phase_stitch_mailbox(
+        self,
+        mailbox_generation: int,
+    ) -> None:
+        backend = getattr(
+            self,
+            "phase_stitch_mailbox_backend",
+            None,
+        )
+        if backend is None:
+            raise RuntimeError(
+                "phase stitch mailbox backend is unavailable"
+            )
+        backend.abort_transaction(mailbox_generation)
+
+    def fail_phase_stitch_execution(
+        self,
+        mailbox_generation: int,
+        source_identity_sha256: str,
+        reason: str,
+    ) -> None:
+        if (
+            not isinstance(source_identity_sha256, str)
+            or len(source_identity_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in source_identity_sha256
+            )
+        ):
+            raise ValueError(
+                "phase stitch source identity must be a SHA-256 digest"
+            )
+        if not isinstance(reason, str) or not reason:
+            raise ValueError(
+                "phase stitch failure reason must be non-empty"
+            )
+        state = self._phase_stitch_state()
+        state["failures"] += 1
+        state["last_authoritative_phase"] = reason
+        self._phase_stitch_quarantined_joint_identities.add(
+            source_identity_sha256
+        )
+        backend = getattr(
+            self,
+            "phase_stitch_mailbox_backend",
+            None,
+        )
+        if backend is None:
+            raise RuntimeError(
+                "phase stitch mailbox backend is unavailable"
+            )
+        backend.abort_transaction(mailbox_generation)
 
     @staticmethod
     def _exact_greedy_decode_burst_fallback(
