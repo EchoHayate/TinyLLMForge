@@ -2606,6 +2606,10 @@ def test_engine_phase_stitch_commits_prefix_then_drains_suffix():
         "prefix"
     )
     assert engine.last_step_observation["pending_suffix"] is True
+    assert engine.last_step_observation["prefix_d2h_calls"] == 1
+    assert engine.last_step_observation["suffix_d2h_calls"] == 1
+    assert engine.last_step_observation["prefix_d2h_bytes"] == 8
+    assert engine.last_step_observation["suffix_d2h_bytes"] == 56
     assert (
         engine.last_step_observation[
             "phase_stitch_parent_identity_sha256"
@@ -2650,6 +2654,10 @@ def test_engine_phase_stitch_commits_prefix_then_drains_suffix():
         "suffix"
     )
     assert engine.last_step_observation["pending_suffix"] is False
+    assert engine.last_step_observation["prefix_d2h_calls"] == 0
+    assert engine.last_step_observation["suffix_d2h_calls"] == 0
+    assert engine.last_step_observation["prefix_d2h_bytes"] == 0
+    assert engine.last_step_observation["suffix_d2h_bytes"] == 0
     assert (
         engine.last_step_observation[
             "phase_stitch_parent_identity_sha256"

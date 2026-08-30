@@ -4008,10 +4008,10 @@ class LLMEngine:
             "target_model_forward_count": (
                 result.target_model_forward_count
             ),
-            "prefix_d2h_calls": result.prefix.d2h_calls,
-            "suffix_d2h_calls": result.suffix.d2h_calls,
-            "prefix_d2h_bytes": result.prefix.d2h_bytes,
-            "suffix_d2h_bytes": result.suffix.d2h_bytes,
+            "prefix_d2h_calls": 0,
+            "suffix_d2h_calls": 0,
+            "prefix_d2h_bytes": 0,
+            "suffix_d2h_bytes": 0,
             "prefix_wait_ns": pending["prefix_wait_ns"],
             "suffix_wait_ns": max(0, ready_ns - started_ns),
             "host_visible_gap_ns": max(
