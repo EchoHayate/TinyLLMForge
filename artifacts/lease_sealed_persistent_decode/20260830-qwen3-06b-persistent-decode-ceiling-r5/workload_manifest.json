@@ -1,0 +1,1 @@
+{"contexts": [256, 2048, 8192], "generated_tokens": 128, "ignore_eos": true, "max_num_seqs": 1, "repetitions": 5, "schema_version": "lease-sealed-persistent-decode.workload.v1", "temperature": 0.0}

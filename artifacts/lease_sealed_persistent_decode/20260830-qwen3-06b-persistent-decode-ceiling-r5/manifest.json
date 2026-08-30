@@ -1,0 +1,60 @@
+{
+  "artifacts": [
+    {
+      "byte_length": 2493,
+      "path": "source_manifest.json",
+      "sha256": "ddcd21bd3ed11aca78a68e760c5a30f551ff445793a5a3bb0838c05d98b1ba55"
+    },
+    {
+      "byte_length": 484,
+      "path": "runtime_manifest.json",
+      "sha256": "c31d7f28f0dfaa3e330be39c432cad434bfeb9b0db0e77f41ffd69452988fbe7"
+    },
+    {
+      "byte_length": 240,
+      "path": "gpu_admission.json",
+      "sha256": "7f974baf04a27e7b192a74f50fd5ec00c4666ec43891ccbd6f4758dbe73160eb"
+    },
+    {
+      "byte_length": 198,
+      "path": "workload_manifest.json",
+      "sha256": "39baa539936e96fccb553bc485682aee32e4c846dbfc3a3f1ffeeb3b628b2b54"
+    },
+    {
+      "byte_length": 49350,
+      "path": "timing_rows.jsonl",
+      "sha256": "5d88cccfe0106d4690c310c6b9512fc369ab165c81d26b4b6807bba84a3ba067"
+    },
+    {
+      "byte_length": 5040,
+      "path": "structural_rows.jsonl",
+      "sha256": "b75a4044a2bfd4b08ed5008601d87e147c4534bcc1b42bef7d10ac6c51cd3f24"
+    },
+    {
+      "byte_length": 135,
+      "path": "timing_summary.json",
+      "sha256": "fbc5a371ec8a79dec070be385725658e58f536c865b3c2cab87b118ccd5bd2e1"
+    },
+    {
+      "byte_length": 10572,
+      "path": "trace_inventory.json",
+      "sha256": "74d33277a80fb8456b0f821d8aac4fff77396da95665a386a74db5a0a06a955b"
+    },
+    {
+      "byte_length": 573860,
+      "path": "kernel_rows.jsonl",
+      "sha256": "acc4c29e128190b3d95cd1e5ee4a76f7c60bd6d9aa0736f8d0b403cd23909a41"
+    },
+    {
+      "byte_length": 25240,
+      "path": "segment_rows.jsonl",
+      "sha256": "14c18d51821ebf21d096f480263e03fc1e0da023bb373300ed3ba04502cb6c41"
+    },
+    {
+      "byte_length": 3538,
+      "path": "ceiling.json",
+      "sha256": "ba9ca00fe9e019bada4fe6e0fda113f6dc1c65e9cb4b045f695c51c941d588d7"
+    }
+  ],
+  "schema_version": "lease-sealed-persistent-decode.manifest.v1"
+}

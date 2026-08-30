@@ -51665,3 +51665,113 @@ OCTET_FOLDED_REPLAY_GRAPH_PROMOTION=NOT_AUTHORIZED
 NEXT_OPTIMIZATION=LEASE_SEALED_PERSISTENT_DECODE_MEGAKERNEL_DESIGN
 NEXT_COMMAND=write a source-grounded design and ceiling-first plan before runtime implementation
 ```
+
+## 2026-08-30 Lease-Sealed Persistent Decode MegaKernel ceiling reconciliation
+
+The qualification-only campaign is complete in the authoritative checkout:
+
+```text
+authoritative checkout:
+  /Users/bytedance/dev/TinyLLMForge
+Desktop alias:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+source commit:
+  9bf07719e1344ebf3865e255691b619b1ae9a3aa
+source tree SHA-256:
+  8aa60f9b9f8fa07a5237557673bfda034fed8328a50828ec561248790a61f3bd
+canonical run:
+  20260830-qwen3-06b-persistent-decode-ceiling-r5
+classification:
+  GO_PERSISTENT_DECODE_CEILING
+```
+
+The controller selected physical GPU 0,
+`GPU-57be086f-e967-c022-3832-93df4fc77bd0`, after two strict-clean
+admissions at 0 MiB, 0% utilization, and zero compute processes. It used the
+explicit Kerberos FILE cache and wrote only below the approved mounted
+`/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/`
+root.
+
+The complete evidence contains 15/15 timing rows, 3/3 structural rows, 48
+decode transactions, 1,290 classified kernels, and 48 globally numbered
+candidate segments. Each row has exact token/text identity, 127 target
+forwards, 127 committed tokens, and zero failures, fallbacks, or rollbacks.
+Two candidate signatures are stable across all three contexts.
+
+All frozen thresholds pass:
+
+```text
+aggregate optimistic median TPOT improvement:
+  82.1558174155% >= 5.0%
+minimum per-context optimistic improvement:
+  81.0513518849% >= 3.0%
+aggregate candidate CUDA-duration share:
+  100.0% >= 4.0%
+minimum classified launch ratio:
+  1.0 >= 0.98
+minimum classified duration ratio:
+  1.0 >= 0.99
+maximum profiler median perturbation:
+  1.7103141081% <= 10.0%
+maximum profiler P95 perturbation:
+  1.4055243687% <= 15.0%
+stable cross-context segment signatures:
+  2 >= 1
+failed conditions:
+  none
+```
+
+Qualification cost and storage:
+
+```text
+post-timing profile/export/finalize wall span:
+  367.855818 s
+producer wall span:
+  1,641.953568 s
+remote raw .nsys-rep plus SQLite:
+  632,094,278 bytes / 602.812078 MiB
+local compact bundle:
+  703,682 bytes / 0.671083 MiB
+local heavy profiler files:
+  none
+```
+
+The r4 producer and remote verifier completed, but a transient
+`Connection closed by UNKNOWN port 65535` interrupted compact download.
+Commit `9bf0771` adds a TDD-covered three-attempt chunk retry. r4 remains
+partial and immutable. Fresh r5 then completed all ten worker stages, the
+remote verifier, three streamed raw-SQLite digest checks, compact download,
+controller receipts, and the local verifier.
+
+This is a ceiling result, not a realized performance result. The
+`82.155817%` figure assumes eligible work becomes zero-cost and therefore
+must not be advertised as an achieved speedup. No persistent CUDA/Triton
+kernel has been implemented, and no production promotion is authorized.
+
+Canonical evidence:
+
+```text
+local:
+  artifacts/lease_sealed_persistent_decode/
+    20260830-qwen3-06b-persistent-decode-ceiling-r5/
+remote:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+    persistent-decode-ceiling/
+audit:
+  docs/superpowers/audits/
+    2026-08-30-lease-sealed-persistent-decode-megakernel-ceiling-audit.md
+```
+
+```text
+PERSISTENT_DECODE_CEILING=GO_PERSISTENT_DECODE_CEILING
+PERSISTENT_DECODE_CEILING_CORRECTNESS=PASS_EXACT
+PERSISTENT_DECODE_CEILING_REMOTE_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_LOCAL_VERIFIER=PASS
+PERSISTENT_DECODE_RUNTIME_DESIGN_AUTHORIZED=true
+PERSISTENT_DECODE_RUNTIME_IMPLEMENTED=false
+PERSISTENT_DECODE_MEASURED_SPEEDUP=false
+PERSISTENT_DECODE_PRODUCTION_PROMOTION=false
+NEXT_COMMAND=write docs/superpowers/specs/2026-08-30-lease-sealed-persistent-decode-megakernel-runtime-design.md before any CUDA or Triton implementation
+```

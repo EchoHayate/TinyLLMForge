@@ -1,0 +1,12 @@
+{
+  "classification": "GO_PERSISTENT_DECODE_CEILING",
+  "kernel_row_count": 1290,
+  "raw_trace_count": 3,
+  "run_tag": "20260830-qwen3-06b-persistent-decode-ceiling-r5",
+  "schema_version": "lease-sealed-persistent-decode.verification.v1",
+  "segment_row_count": 48,
+  "source_commit": "9bf07719e1344ebf3865e255691b619b1ae9a3aa",
+  "structural_context_count": 3,
+  "timing_row_count": 15,
+  "verified": true
+}

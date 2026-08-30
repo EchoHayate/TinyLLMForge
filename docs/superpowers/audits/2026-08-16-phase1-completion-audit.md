@@ -4509,3 +4509,73 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-08-30 latest reconciliation: Lease-Sealed Persistent Decode MegaKernel Ceiling
+
+The qualification-only persistent-decode campaign completed against
+Qwen3-0.6B BF16 TP1 batch one on a strict-clean A100:
+
+```text
+source commit:
+  9bf07719e1344ebf3865e255691b619b1ae9a3aa
+run tag:
+  20260830-qwen3-06b-persistent-decode-ceiling-r5
+selected GPU:
+  GPU-57be086f-e967-c022-3832-93df4fc77bd0
+classification:
+  GO_PERSISTENT_DECODE_CEILING
+```
+
+### Prompt-to-artifact checklist
+
+| Requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Source and workload identity | pushed source `9bf0771...`; source tree `8aa60f9...`; contexts 256/2,048/8,192; 128 generated tokens; five repetitions | `PASS` |
+| Kerberos and mounted-only execution | fixed FILE cache with TTL guard; every task path below the approved `/data00/home/sitian/.../command-timeline-20260818` root | `PASS` |
+| Strict-clean launch | two admissions; GPU 0 at 0 MiB, 0%, no compute process | `PASS` |
+| Complete evidence | 15 timing rows, three structural rows, 1,290 kernels, 48 transactions, 48 segments | `PASS` |
+| Exact behavior | token IDs and text digests match; every row has 127 target forwards and 127 committed tokens; zero failure/fallback/rollback | `PASS_EXACT` |
+| Trace classification | launch and duration coverage both 100%; two segment signatures stable across all contexts | `PASS` |
+| Profiler perturbation | maximum median `1.710314%`; maximum P95 `1.405524%` | `PASS` |
+| Aggregate optimistic headroom | `82.155817%` against `5%` threshold | `PASS` |
+| Minimum context headroom | `81.051352%` against `3%` threshold | `PASS` |
+| Candidate CUDA-duration share | `100%` inside the selected decode transactions against `4%` threshold | `PASS` |
+| Raw/local storage | 602.812078 MiB raw profiler data remains remote; local compact bundle is 0.671083 MiB and contains no SQLite or `.nsys-rep` | `PASS` |
+| Independent closure | remote verifier, streamed raw-trace verifier, and standalone local verifier agree | `PASS` |
+| Stop rule | no production persistent kernel was implemented during qualification | `PASS` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Lease-Sealed Persistent Decode ceiling | Complete source-bound A100 qualification with remote and local verifier closure | `GO_PERSISTENT_DECODE_CEILING` |
+| Optimistic median TPOT headroom | aggregate `82.155817%`; per-context minimum `81.051352%` | `LARGE_THEORETICAL_HEADROOM` |
+| Trace coverage and stability | 100% launch/duration classification; two signatures stable across all contexts | `PASS` |
+| Correctness and accounting | exact tokens/text; forwards equal committed tokens; zero runtime anomalies | `PASS` |
+| Qualification cost | profiler/export/finalize span `367.855818 s`; 602.812078 MiB remote raw data; maximum perturbation `1.710314%` median / `1.405524%` P95 | `RECORDED` |
+| Measured runtime improvement | no persistent kernel exists yet | `NOT_ESTABLISHED` |
+| Promotion boundary | separate runtime design is authorized; implementation and production promotion are not yet authorized | `DESIGN_ONLY_AUTHORIZED` |
+
+Detailed evidence is in
+`docs/superpowers/audits/2026-08-30-lease-sealed-persistent-decode-megakernel-ceiling-audit.md`.
+
+```text
+PERSISTENT_DECODE_CEILING_RUN=20260830-qwen3-06b-persistent-decode-ceiling-r5
+PERSISTENT_DECODE_CEILING_SOURCE_COMMIT=9bf07719e1344ebf3865e255691b619b1ae9a3aa
+PERSISTENT_DECODE_CEILING_CLASSIFICATION=GO_PERSISTENT_DECODE_CEILING
+PERSISTENT_DECODE_CEILING_REMOTE_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_LOCAL_VERIFIER=PASS
+PERSISTENT_DECODE_CEILING_RAW_TRACE_COUNT=3
+PERSISTENT_DECODE_CEILING_AGGREGATE_OPTIMISTIC_TPOT=82_155817_PERCENT
+PERSISTENT_DECODE_CEILING_MINIMUM_CONTEXT_OPTIMISTIC_TPOT=81_051352_PERCENT
+PERSISTENT_DECODE_CEILING_MAXIMUM_PROFILE_MEDIAN_PERTURBATION=1_710314_PERCENT
+PERSISTENT_DECODE_CEILING_MAXIMUM_PROFILE_P95_PERTURBATION=1_405524_PERCENT
+PERSISTENT_DECODE_CEILING_RUNTIME_DESIGN_AUTHORIZED=true
+PERSISTENT_DECODE_CEILING_RUNTIME_IMPLEMENTED=false
+PERSISTENT_DECODE_CEILING_PRODUCTION_PROMOTION=false
+NEXT_COMMAND=write docs/superpowers/specs/2026-08-30-lease-sealed-persistent-decode-megakernel-runtime-design.md before any CUDA or Triton implementation
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
+```
