@@ -77,6 +77,28 @@ def _counter(summary, name):
     return value
 
 
+def _exact_burst_snapshots(engine):
+    return (
+        engine.model_runner.exact_greedy_decode_burst_summary(),
+        engine.scheduler.exact_greedy_decode_burst_summary(),
+    )
+
+
+def _combined_exact_burst_summary(engine):
+    runner, scheduler = _exact_burst_snapshots(engine)
+    return {
+        "failures": (
+            _counter(runner, "failures")
+            + _counter(scheduler, "failures")
+        ),
+        "quarantines": _counter(runner, "quarantines"),
+        "pending_leases": _counter(scheduler, "pending_leases"),
+        "quarantine_reason": runner.get("quarantine_reason"),
+        "runner": json.loads(json.dumps(runner)),
+        "scheduler": json.loads(json.dumps(scheduler)),
+    }
+
+
 def _run_request(
     engine,
     *,
@@ -91,8 +113,8 @@ def _run_request(
     prefill_before = (
         engine.model_runner.exact_prefill_cuda_graph_cache.summary()
     )
-    burst_before = (
-        engine.model_runner.exact_greedy_decode_burst_summary()
+    burst_runner_before, burst_scheduler_before = (
+        _exact_burst_snapshots(engine)
     )
     synchronize()
     started_ns = clock_ns()
@@ -139,8 +161,8 @@ def _run_request(
     prefill_after = (
         engine.model_runner.exact_prefill_cuda_graph_cache.summary()
     )
-    burst_after = (
-        engine.model_runner.exact_greedy_decode_burst_summary()
+    burst_runner_after, burst_scheduler_after = (
+        _exact_burst_snapshots(engine)
     )
     profile_after = engine.phase_stitch_profile_snapshot()
     profile_rows = profile_after["rows"][profile_row_count_before:]
@@ -177,12 +199,12 @@ def _run_request(
             - _counter(prefill_before, "replays")
         ),
         "exact_burst_replay_delta": (
-            _counter(burst_after, "graph_replays")
-            - _counter(burst_before, "graph_replays")
+            _counter(burst_runner_after, "graph_replays")
+            - _counter(burst_runner_before, "graph_replays")
         ),
         "exact_burst_acceptance_delta": (
-            _counter(burst_after, "acceptances")
-            - _counter(burst_before, "acceptances")
+            _counter(burst_scheduler_after, "acceptances")
+            - _counter(burst_scheduler_before, "acceptances")
         ),
         "phase_stitch_profile": profile_row,
     }
@@ -290,9 +312,7 @@ def run_worker(
                 engine.model_runner
                 .exact_prefill_cuda_graph_cache.summary()
             )),
-            "exact_burst_summary": json.loads(json.dumps(
-                engine.model_runner.exact_greedy_decode_burst_summary()
-            )),
+            "exact_burst_summary": _combined_exact_burst_summary(engine),
         }
         contract.validate_case_result(result)
         _atomic_write_json(destination / "result.json", result)

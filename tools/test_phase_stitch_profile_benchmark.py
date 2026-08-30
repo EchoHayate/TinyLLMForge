@@ -87,6 +87,23 @@ class FakeRunner:
         }
 
 
+class FakeScheduler:
+
+    def __init__(self):
+        self.acceptances = 0
+
+    def exact_greedy_decode_burst_summary(self):
+        return {
+            "attempts": self.acceptances,
+            "acceptances": self.acceptances,
+            "failures": 0,
+            "quarantines": 0,
+            "pending_leases": 0,
+            "fallback_counts": {},
+            "quarantine_reason": None,
+        }
+
+
 class FakeEngine:
 
     def __init__(self, spec):
@@ -94,6 +111,7 @@ class FakeEngine:
             spec["arm"] == "instrumentation_on"
         )
         self.model_runner = FakeRunner()
+        self.scheduler = FakeScheduler()
         self.tokenizer = SimpleNamespace(
             decode=lambda token_ids: " ".join(map(str, token_ids))
         )
@@ -133,7 +151,7 @@ class FakeEngine:
             self.model_runner.exact_prefill_cuda_graph_cache.replays += 1
         else:
             self.model_runner.graph_replays += 1
-            self.model_runner.acceptances += 1
+            self.scheduler.acceptances += 1
         self.last_step_observation = {
             "is_prefill": first_step,
             "new_completion_tokens_by_seq": {1: tokens},
@@ -235,6 +253,7 @@ def test_contract_freezes_balanced_pair_matrix_and_engine_controls():
         config = case["engine_config"]
         assert config["tensor_parallel_size"] == 1
         assert config["max_num_seqs"] == 1
+        assert config["zero_temperature_greedy_fast_path"] is True
         assert config["prefill_cuda_graphs"] is True
         assert config["prefill_cuda_graph_token_allowlist"] == [256, 2048]
         assert config["exact_greedy_decode_burst"] is True

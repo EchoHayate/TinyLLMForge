@@ -56,6 +56,7 @@ ENGINE_CONFIG = {
     "max_num_batched_tokens": 2304,
     "max_num_seqs": 1,
     "gpu_memory_utilization": 0.5,
+    "zero_temperature_greedy_fast_path": True,
     "prefill_cuda_graphs": True,
     "prefill_cuda_graph_token_allowlist": [256, 2048],
     "exact_greedy_decode_burst": True,
