@@ -5,7 +5,10 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
+import re
 import sqlite3
 
 
@@ -42,6 +45,114 @@ REQUIRED_TABLES = {
         "shortName",
     },
 }
+KERNEL_ROLES = (
+    "MATMUL",
+    "ATTENTION",
+    "NORMALIZATION",
+    "ELEMENTWISE",
+    "REDUCTION",
+    "INDEX_OR_STATE_UPDATE",
+    "TOKEN_SELECTION",
+    "COPY_OR_FILL",
+    "RUNTIME_OR_GRAPH",
+    "UNKNOWN",
+)
+CANDIDATE_ROLES = frozenset({
+    "NORMALIZATION",
+    "ELEMENTWISE",
+    "REDUCTION",
+    "INDEX_OR_STATE_UPDATE",
+    "TOKEN_SELECTION",
+})
+_ROLE_PATTERNS = (
+    (
+        "TOKEN_SELECTION",
+        (
+            "argmax",
+            "topk",
+            "sampling",
+            "sample_token",
+        ),
+    ),
+    (
+        "ATTENTION",
+        (
+            "flash",
+            "attention",
+            "fmha",
+            "paged_attn",
+        ),
+    ),
+    (
+        "MATMUL",
+        (
+            "gemm",
+            "matmul",
+            "cublas",
+            "cutlass",
+            "sgemm",
+            "bgemm",
+        ),
+    ),
+    (
+        "NORMALIZATION",
+        (
+            "rms_norm",
+            "rmsnorm",
+            "layer_norm",
+            "layernorm",
+            "norm_kernel",
+        ),
+    ),
+    (
+        "COPY_OR_FILL",
+        (
+            "memcpy",
+            "memset",
+            "vectorized_copy",
+            "vectorized_mem",
+            "fill_kernel",
+        ),
+    ),
+    (
+        "INDEX_OR_STATE_UPDATE",
+        (
+            "index_put",
+            "index_select",
+            "scatter",
+            "slot_mapping",
+            "cache_store",
+            "state_update",
+        ),
+    ),
+    (
+        "ELEMENTWISE",
+        (
+            "silu",
+            "gelu",
+            "elementwise",
+            "pointwise",
+            "add_kernel",
+            "mul_kernel",
+        ),
+    ),
+    (
+        "REDUCTION",
+        (
+            "reduce",
+            "softmax",
+        ),
+    ),
+    (
+        "RUNTIME_OR_GRAPH",
+        (
+            "cudagraph",
+            "cuda_graph",
+            "graphlaunch",
+            "barrier",
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -289,4 +400,212 @@ def read_decode_trace(path: Path) -> dict:
         "classification": "COMPLETE",
         "ranges": ranges,
         "kernel_rows": assign_kernels_to_ranges(ranges, kernels),
+    }
+
+
+def classify_kernel(name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError("kernel name must be a string")
+    normalized = name.strip().lower().replace(" ", "_")
+    for role, patterns in _ROLE_PATTERNS:
+        if any(pattern in normalized for pattern in patterns):
+            return role
+    return "UNKNOWN"
+
+
+def classify_kernel_rows(rows: list[dict]) -> list[dict]:
+    if not isinstance(rows, list):
+        raise ValueError("kernel rows must be a list")
+    classified = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("kernel row must be an object")
+        start_ns = _require_integer(
+            row.get("start_ns"),
+            "kernel start",
+            minimum=0,
+        )
+        end_ns = _require_integer(
+            row.get("end_ns"),
+            "kernel end",
+            minimum=0,
+        )
+        if end_ns <= start_ns:
+            raise ValueError("kernel interval must be positive")
+        duration_ns = row.get("duration_ns", end_ns - start_ns)
+        _require_integer(
+            duration_ns,
+            "kernel duration",
+            minimum=1,
+        )
+        if duration_ns != end_ns - start_ns:
+            raise ValueError("kernel duration does not match interval")
+        stream_id = _require_integer(
+            row.get("stream_id"),
+            "kernel stream",
+            minimum=0,
+        )
+        name = row.get("name")
+        if not isinstance(name, str):
+            raise ValueError("kernel name must be a string")
+        identity = {}
+        for field in TRACE_FIELDS:
+            if field not in row:
+                raise ValueError(
+                    f"kernel row missing identity field {field}"
+                )
+            identity[field] = row[field]
+        classified.append({
+            **row,
+            **identity,
+            "start_ns": start_ns,
+            "end_ns": end_ns,
+            "duration_ns": duration_ns,
+            "stream_id": stream_id,
+            "role": classify_kernel(name),
+        })
+    return classified
+
+
+def _normalized_kernel_name(name: str) -> str:
+    normalized = " ".join(name.strip().lower().split())
+    normalized = re.sub(r"0x[0-9a-f]+", "0x#", normalized)
+    return normalized
+
+
+def _segment_from_rows(
+    rows: list[dict],
+    *,
+    ordinal: int,
+) -> dict:
+    first = rows[0]
+    last = rows[-1]
+    duration_ns = sum(row["duration_ns"] for row in rows)
+    wall_union_ns = last["end_ns"] - first["start_ns"]
+    role_histogram = {}
+    signature_rows = []
+    for row in rows:
+        role = row["role"]
+        role_histogram[role] = role_histogram.get(role, 0) + 1
+        signature_rows.append((
+            role,
+            _normalized_kernel_name(row["name"]),
+        ))
+    signature = hashlib.sha256(
+        json.dumps(
+            signature_rows,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        **{
+            field: first[field] for field in TRACE_FIELDS
+        },
+        "segment_id": ordinal,
+        "stream_id": first["stream_id"],
+        "first_kernel_start_ns": first["start_ns"],
+        "last_kernel_end_ns": last["end_ns"],
+        "kernel_count": len(rows),
+        "kernel_duration_sum_ns": duration_ns,
+        "internal_gap_sum_ns": wall_union_ns - duration_ns,
+        "wall_union_ns": wall_union_ns,
+        "role_histogram": dict(sorted(role_histogram.items())),
+        "normalized_kernel_signature_sha256": signature,
+    }
+
+
+def build_candidate_segments(rows: list[dict]) -> list[dict]:
+    if not isinstance(rows, list):
+        raise ValueError("classified kernel rows must be a list")
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            tuple(row[field] for field in TRACE_FIELDS),
+            row["start_ns"],
+            row["end_ns"],
+            row["stream_id"],
+        ),
+    )
+    previous_by_stream = {}
+    active_by_stream = {}
+    segments = []
+    segment_ordinal = 0
+    active_identity = None
+
+    def flush(stream_id):
+        nonlocal segment_ordinal
+        active = active_by_stream.pop(stream_id, None)
+        if active:
+            segments.append(
+                _segment_from_rows(
+                    active,
+                    ordinal=segment_ordinal,
+                )
+            )
+            segment_ordinal += 1
+
+    for row in ordered:
+        identity = tuple(row[field] for field in TRACE_FIELDS)
+        if active_identity is None:
+            active_identity = identity
+        elif identity != active_identity:
+            for stream in tuple(active_by_stream):
+                flush(stream)
+            previous_by_stream.clear()
+            active_identity = identity
+        stream_id = row["stream_id"]
+        previous = previous_by_stream.get(stream_id)
+        if previous is not None and row["start_ns"] < previous["end_ns"]:
+            raise ValueError("kernel intervals overlap on one stream")
+        previous_by_stream[stream_id] = row
+        if row.get("role") not in KERNEL_ROLES:
+            raise ValueError("kernel role is invalid")
+        if row["role"] not in CANDIDATE_ROLES:
+            flush(stream_id)
+            continue
+        active_by_stream.setdefault(stream_id, []).append(row)
+    for stream in tuple(active_by_stream):
+        flush(stream)
+    return sorted(
+        segments,
+        key=lambda row: (
+            tuple(row[field] for field in TRACE_FIELDS),
+            row["first_kernel_start_ns"],
+            row["stream_id"],
+        ),
+    )
+
+
+def summarize_trace_coverage(rows: list[dict]) -> dict:
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("classified kernel rows must be non-empty")
+    duration_ns = 0
+    classified_duration_ns = 0
+    classified_launches = 0
+    histogram = {}
+    for row in rows:
+        role = row.get("role")
+        if role not in KERNEL_ROLES:
+            raise ValueError("kernel role is invalid")
+        row_duration = _require_integer(
+            row.get("duration_ns"),
+            "kernel duration",
+            minimum=1,
+        )
+        duration_ns += row_duration
+        histogram[role] = histogram.get(role, 0) + 1
+        if role != "UNKNOWN":
+            classified_launches += 1
+            classified_duration_ns += row_duration
+    launch_count = len(rows)
+    return {
+        "kernel_launch_count": launch_count,
+        "classified_kernel_launch_count": classified_launches,
+        "classified_launch_ratio": classified_launches / launch_count,
+        "kernel_duration_ns": duration_ns,
+        "classified_kernel_duration_ns": classified_duration_ns,
+        "classified_duration_ratio": (
+            classified_duration_ns / duration_ns
+        ),
+        "role_histogram": dict(sorted(histogram.items())),
     }

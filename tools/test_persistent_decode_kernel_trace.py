@@ -9,8 +9,12 @@ import pytest
 
 from tools.persistent_decode_kernel_trace import (
     assign_kernels_to_ranges,
+    build_candidate_segments,
+    classify_kernel,
+    classify_kernel_rows,
     parse_trace_label,
     read_decode_trace,
+    summarize_trace_coverage,
 )
 
 
@@ -287,3 +291,161 @@ def test_assign_kernels_rejects_non_positive_intervals():
                 "name": "kernel",
             }],
         )
+
+
+@pytest.mark.parametrize(
+    ("name", "role"),
+    [
+        ("ampere_bf16_s16816gemm", "MATMUL"),
+        ("flash_fwd_splitkv_kernel", "ATTENTION"),
+        ("rms_norm_kernel", "NORMALIZATION"),
+        ("silu_and_mul_kernel", "ELEMENTWISE"),
+        ("reduce_kernel", "REDUCTION"),
+        ("index_put_kernel", "INDEX_OR_STATE_UPDATE"),
+        ("argmax_reduce_kernel", "TOKEN_SELECTION"),
+        ("vectorized_memcpy", "COPY_OR_FILL"),
+        ("cudaGraphLaunch", "RUNTIME_OR_GRAPH"),
+        ("unrecognized_vendor_kernel", "UNKNOWN"),
+    ],
+)
+def test_classify_kernel_uses_generic_roles(name, role):
+    assert classify_kernel(name) == role
+
+
+def _kernel_rows(*roles, timestamp_shift=0, streams=None):
+    streams = streams or [7] * len(roles)
+    names = {
+        "MATMUL": "ampere_bf16_gemm",
+        "ATTENTION": "flash_attention_kernel",
+        "NORMALIZATION": "rms_norm_kernel",
+        "ELEMENTWISE": "silu_and_mul_kernel",
+        "REDUCTION": "reduce_kernel",
+        "INDEX_OR_STATE_UPDATE": "index_put_kernel",
+        "TOKEN_SELECTION": "argmax_kernel",
+        "COPY_OR_FILL": "vectorized_memcpy",
+        "RUNTIME_OR_GRAPH": "cudaGraphLaunch",
+        "UNKNOWN": "mystery_kernel",
+    }
+    rows = []
+    cursor = 100 + timestamp_shift
+    for role, stream_id in zip(roles, streams):
+        rows.append({
+            "attempt": "attempt-a",
+            "workload": "exact",
+            "repetition": 0,
+            "context": 256,
+            "burst": 0,
+            "logical_tokens": 8,
+            "start_ns": cursor,
+            "end_ns": cursor + 10,
+            "duration_ns": 10,
+            "stream_id": stream_id,
+            "global_pid": 0x1000000,
+            "name": names[role],
+        })
+        cursor += 15
+    return rows
+
+
+def test_candidate_segment_stops_at_excluded_roles():
+    rows = classify_kernel_rows(_kernel_rows(
+        "NORMALIZATION",
+        "ELEMENTWISE",
+        "MATMUL",
+        "INDEX_OR_STATE_UPDATE",
+        "ATTENTION",
+        "TOKEN_SELECTION",
+        "UNKNOWN",
+    ))
+
+    segments = build_candidate_segments(rows)
+
+    assert [row["kernel_count"] for row in segments] == [2, 1, 1]
+    assert [row["kernel_duration_sum_ns"] for row in segments] == [
+        20,
+        10,
+        10,
+    ]
+    assert [row["internal_gap_sum_ns"] for row in segments] == [
+        5,
+        0,
+        0,
+    ]
+
+
+def test_candidate_segment_does_not_cross_streams():
+    rows = classify_kernel_rows(_kernel_rows(
+        "NORMALIZATION",
+        "ELEMENTWISE",
+        streams=[7, 9],
+    ))
+
+    segments = build_candidate_segments(rows)
+
+    assert len(segments) == 2
+    assert [row["stream_id"] for row in segments] == [7, 9]
+
+
+def test_candidate_segment_signature_ignores_absolute_timestamps():
+    base = build_candidate_segments(classify_kernel_rows(_kernel_rows(
+        "NORMALIZATION",
+        "ELEMENTWISE",
+    )))
+    shifted = build_candidate_segments(classify_kernel_rows(_kernel_rows(
+        "NORMALIZATION",
+        "ELEMENTWISE",
+        timestamp_shift=100_000,
+    )))
+
+    assert base[0]["normalized_kernel_signature_sha256"] == (
+        shifted[0]["normalized_kernel_signature_sha256"]
+    )
+
+
+def test_kernel_rows_reject_overlapping_intervals_on_one_stream():
+    rows = _kernel_rows("NORMALIZATION", "ELEMENTWISE")
+    rows[1]["start_ns"] = rows[0]["end_ns"] - 1
+    rows[1]["duration_ns"] = (
+        rows[1]["end_ns"] - rows[1]["start_ns"]
+    )
+
+    with pytest.raises(ValueError, match="kernel intervals overlap"):
+        build_candidate_segments(classify_kernel_rows(rows))
+
+
+def test_trace_coverage_counts_unknown_launches_and_duration():
+    rows = classify_kernel_rows(_kernel_rows(
+        "NORMALIZATION",
+        "UNKNOWN",
+        "MATMUL",
+    ))
+
+    coverage = summarize_trace_coverage(rows)
+
+    assert coverage == {
+        "kernel_launch_count": 3,
+        "classified_kernel_launch_count": 2,
+        "classified_launch_ratio": pytest.approx(2 / 3),
+        "kernel_duration_ns": 30,
+        "classified_kernel_duration_ns": 20,
+        "classified_duration_ratio": pytest.approx(2 / 3),
+        "role_histogram": {
+            "MATMUL": 1,
+            "NORMALIZATION": 1,
+            "UNKNOWN": 1,
+        },
+    }
+
+
+def test_generic_trace_module_has_no_profile_specific_terms():
+    source = (
+        __import__(
+            "tools.persistent_decode_kernel_trace",
+            fromlist=["__file__"],
+        )
+        .__file__
+    )
+    text = open(source, encoding="utf-8").read().lower()
+
+    for prohibited in ("qwen", "llama", "k8", "octet", "a100"):
+        assert prohibited not in text
