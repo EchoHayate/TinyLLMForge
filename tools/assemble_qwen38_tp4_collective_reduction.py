@@ -15,6 +15,7 @@ import tempfile
 if __package__:
     from tools.qwen38_collective_reduction import (
         EVENT_BUDGETS,
+        EXPECTED_DECODE_COLLECTIVE_COUNT,
         build_consumer_dependency_proofs,
         build_qwen38_static_collective_catalog,
         classify_collective_reduction,
@@ -30,6 +31,7 @@ if __package__:
 else:
     from qwen38_collective_reduction import (
         EVENT_BUDGETS,
+        EXPECTED_DECODE_COLLECTIVE_COUNT,
         build_consumer_dependency_proofs,
         build_qwen38_static_collective_catalog,
         classify_collective_reduction,
@@ -541,7 +543,8 @@ def _validate_sampling(snapshot):
         or type(snapshot.get("repetition")) is not int
         or snapshot.get("sample_budget") not in EVENT_BUDGETS
         or snapshot.get("cohort_count") != 17
-        or snapshot.get("expected_collective_count") != 130
+        or snapshot.get("expected_collective_count")
+        != EXPECTED_DECODE_COLLECTIVE_COUNT
     ):
         raise ValueError("timing cohort identity is invalid")
     for row in snapshot["collectives"]:

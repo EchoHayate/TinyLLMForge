@@ -25,6 +25,12 @@ def _catalog():
     return build_qwen38_static_collective_catalog(
         _profile(),
         tensor_parallel_size=4,
+        layer_roles=tuple(
+            "full_attention"
+            if index % 4 == 3
+            else "linear_attention"
+            for index in range(64)
+        ),
     )
 
 
@@ -34,18 +40,35 @@ def _rank_snapshot(rank, *, decode_steps=1):
     for decode_ordinal in range(decode_steps):
         steps.append({
             "decode_ordinal": decode_ordinal,
-            "collective_count": 130,
+            "collective_count": 66,
             "status": "completed",
         })
         for ordinal, site in enumerate(_catalog()):
+            is_token = site["site_role"] == "greedy_token_broadcast"
+            is_attention = (
+                site["site_role"]
+                == "row_parallel_attention_output"
+            )
             rows.append({
                 "decode_ordinal": decode_ordinal,
                 "collective_ordinal": ordinal,
                 "site_id": site["site_id"],
                 "collective_kind": site["collective_kind"],
-                "tensor_shape": [1, 5120],
-                "tensor_dtype": "torch.bfloat16",
-                "tensor_bytes": 10240,
+                "tensor_shape": [1] if is_token else [1, 5120],
+                "tensor_dtype": (
+                    "torch.float32"
+                    if is_attention
+                    else (
+                        "torch.int64"
+                        if is_token
+                        else "torch.bfloat16"
+                    )
+                ),
+                "tensor_bytes": (
+                    20480
+                    if is_attention
+                    else (8 if is_token else 10240)
+                ),
             })
     return {
         "schema": "tinyllmforge.synchronous-collective-census.v1",
@@ -72,34 +95,53 @@ def _calibration_rows(values):
     ]
 
 
-def test_qwen38_catalog_contains_exactly_130_decode_sites():
+def test_qwen38_catalog_contains_exactly_66_decode_sites():
     catalog = _catalog()
 
-    assert len(catalog) == 130
+    assert len(catalog) == 66
     assert catalog[0]["site_role"] == "vocab_parallel_embedding"
     assert sum(
-        row["site_role"] == "row_parallel_output"
+        row["site_role"] == "row_parallel_attention_output"
         for row in catalog
-    ) == 128
+    ) == 64
+    assert not any(row["layer_role"] == "mlp" for row in catalog)
     assert catalog[-1]["site_role"] == "greedy_token_broadcast"
     assert [row["site_id"] for row in catalog[:4]] == [
         "embedding.input",
         "layer.000.attention.output",
-        "layer.000.mlp.output",
         "layer.001.attention.output",
+        "layer.002.attention.output",
     ]
+
+
+def test_qwen38_catalog_preserves_checkpoint_layer_roles():
+    catalog = _catalog()
+    roles = [
+        "full_attention"
+        if index % 4 == 3
+        else "linear_attention"
+        for index in range(64)
+    ]
+
+    assert [
+        row["layer_role"] for row in catalog[1:-1]
+    ] == roles
+    assert all(
+        row["local_tensor_dtype"] == "torch.float32"
+        for row in catalog[1:-1]
+    )
 
 
 def test_catalog_assigns_conservative_consumer_classes():
     catalog = _catalog()
     row_parallel = [
         row for row in catalog
-        if row["site_role"] == "row_parallel_output"
+        if row["site_role"] == "row_parallel_attention_output"
     ]
 
     assert {
         row["classification"] for row in row_parallel
-    } == {"MANDATORY_IMMEDIATE_CONSUMER"}
+    } == {"MATERIALIZATION_ALTERNATIVE"}
     assert catalog[0]["classification"] == "MATERIALIZATION_ALTERNATIVE"
     assert (
         catalog[-1]["classification"]
@@ -139,7 +181,7 @@ def test_census_requires_four_identical_rank_sequences():
     result = validate_collective_census(rows, _catalog())
 
     assert result["rank_inventory"] == [0, 1, 2, 3]
-    assert result["collective_count_per_rank"] == 130
+    assert result["collective_count_per_rank"] == 66
     rows[-1]["collectives"][7]["tensor_bytes"] += 2
     with pytest.raises(ValueError, match="rank collective sequence"):
         validate_collective_census(rows, _catalog())
@@ -154,9 +196,9 @@ def test_census_reconciles_each_decode_step_across_four_ranks():
     result = validate_collective_census(rows, _catalog())
 
     assert result["decode_step_count_per_rank"] == 2
-    assert result["collective_count_per_decode_step"] == 130
-    assert result["collective_count_per_rank"] == 260
-    rows[-1]["collectives"][137]["tensor_bytes"] += 2
+    assert result["collective_count_per_decode_step"] == 66
+    assert result["collective_count_per_rank"] == 132
+    rows[-1]["collectives"][71]["tensor_bytes"] += 2
     with pytest.raises(ValueError, match="rank collective sequence"):
         validate_collective_census(rows, _catalog())
 
@@ -217,7 +259,7 @@ def test_event_budget_thresholds_and_count_only_gate():
 def test_consumer_proofs_are_conservative_and_named():
     proofs = build_consumer_dependency_proofs(_catalog())
 
-    assert len(proofs) == 130
+    assert len(proofs) == 66
     embedding = proofs[0]
     assert embedding["candidate_id"] == "replicate_embedding"
     assert embedding["status"] == "PASS"
@@ -225,7 +267,7 @@ def test_consumer_proofs_are_conservative_and_named():
     assert {
         row["status"]
         for row in proofs
-        if row["site_role"] == "row_parallel_output"
+        if row["site_role"] == "row_parallel_attention_output"
     } == {"FAIL_IMMEDIATE_CONSUMER"}
 
 

@@ -11,7 +11,7 @@ EXPECTED_PROFILE = {
     "dtype": "bfloat16",
 }
 EXPECTED_TENSOR_PARALLEL_SIZE = 4
-EXPECTED_DECODE_COLLECTIVE_COUNT = 130
+EXPECTED_DECODE_COLLECTIVE_COUNT = 66
 MEDIAN_OVERHEAD_LIMIT = 0.03
 MAXIMUM_OVERHEAD_LIMIT = 0.05
 MINIMUM_OPPORTUNITY_RATIO = 0.05
@@ -67,6 +67,7 @@ def build_qwen38_static_collective_catalog(
     text_profile,
     *,
     tensor_parallel_size: int,
+    layer_roles=None,
 ):
     for name, expected in EXPECTED_PROFILE.items():
         actual = _field(text_profile, name)
@@ -76,6 +77,27 @@ def build_qwen38_static_collective_catalog(
             )
     if tensor_parallel_size != EXPECTED_TENSOR_PARALLEL_SIZE:
         raise ValueError("tensor_parallel_size must be 4")
+    if layer_roles is None:
+        layer_roles = tuple(
+            "full_attention"
+            if layer_index % 4 == 3
+            else "linear_attention"
+            for layer_index in range(
+                EXPECTED_PROFILE["num_hidden_layers"]
+            )
+        )
+    if (
+        not isinstance(layer_roles, (list, tuple))
+        or len(layer_roles) != EXPECTED_PROFILE["num_hidden_layers"]
+        or any(
+            layer_role
+            not in ("linear_attention", "full_attention")
+            for layer_role in layer_roles
+        )
+    ):
+        raise ValueError(
+            "layer_roles must describe all 64 attention layers"
+        )
 
     rows = [
         _catalog_row(
@@ -98,7 +120,7 @@ def build_qwen38_static_collective_catalog(
             site_role="vocab_parallel_embedding",
         )
     ]
-    for layer_index in range(EXPECTED_PROFILE["num_hidden_layers"]):
+    for layer_index, layer_role in enumerate(layer_roles):
         rows.append(
             _catalog_row(
                 site_id=(
@@ -108,41 +130,22 @@ def build_qwen38_static_collective_catalog(
                     f"model.layers.{layer_index}.self_attn.o_proj"
                 ),
                 layer_index=layer_index,
-                layer_role="full_attention",
+                layer_role=layer_role,
                 operation_name="row_parallel_all_reduce",
                 collective_kind="all_reduce",
                 local_tensor_shape_formula=(
                     "[active_tokens, hidden_size]"
                 ),
-                local_tensor_dtype="torch.bfloat16",
+                local_tensor_dtype="torch.float32",
                 producer="row-parallel attention output projection",
                 first_consumer="attention residual addition",
                 requires_replicated_result=True,
                 packing_window=None,
-                elimination_precondition=None,
-                classification="MANDATORY_IMMEDIATE_CONSUMER",
-                site_role="row_parallel_output",
-            )
-        )
-        rows.append(
-            _catalog_row(
-                site_id=f"layer.{layer_index:03d}.mlp.output",
-                module_path=f"model.layers.{layer_index}.mlp.down_proj",
-                layer_index=layer_index,
-                layer_role="mlp",
-                operation_name="row_parallel_all_reduce",
-                collective_kind="all_reduce",
-                local_tensor_shape_formula=(
-                    "[active_tokens, hidden_size]"
+                elimination_precondition=(
+                    "qualified peer-reduction residual-fusion group"
                 ),
-                local_tensor_dtype="torch.bfloat16",
-                producer="row-parallel MLP down projection",
-                first_consumer="MLP residual addition",
-                requires_replicated_result=True,
-                packing_window=None,
-                elimination_precondition=None,
-                classification="MANDATORY_IMMEDIATE_CONSUMER",
-                site_role="row_parallel_output",
+                classification="MATERIALIZATION_ALTERNATIVE",
+                site_role="row_parallel_attention_output",
             )
         )
     rows.append(

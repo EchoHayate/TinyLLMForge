@@ -199,7 +199,7 @@ def test_worker_preserves_exact_request_outputs_across_pair():
     ] == ["control", "instrumented"]
     assert engine.configurations[0] == {"enabled": False}
     assert engine.configurations[1]["sample_budget"] == 8
-    assert engine.configurations[1]["expected_collective_count"] == 130
+    assert engine.configurations[1]["expected_collective_count"] == 66
 
 
 def test_worker_case_carries_static_workload_identity_for_assembler():

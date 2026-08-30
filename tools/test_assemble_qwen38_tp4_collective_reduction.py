@@ -49,11 +49,11 @@ def _sampled_ordinals(workload, repetition, budget):
         hashlib.sha256(seed).digest()[:8],
         "big",
     ) % 17
-    width = math.ceil(130 / 17)
-    start = cohort * width % 130
+    width = math.ceil(66 / 17)
+    start = cohort * width % 66
     return {
-        (start + offset) % 130
-        for offset in range(min(budget, 130))
+        (start + offset) % 66
+        for offset in range(min(budget, 66))
     }
 
 
@@ -71,6 +71,9 @@ def _rank_snapshot(rank, row):
         )
     ):
         is_token = site["site_role"] == "greedy_token_broadcast"
+        is_attention = (
+            site["site_role"] == "row_parallel_attention_output"
+        )
         collectives.append({
             "attempt": ATTEMPT,
             "workload": row["workload"],
@@ -84,9 +87,19 @@ def _rank_snapshot(rank, row):
             "process_group": "tensor_parallel",
             "tensor_shape": [1] if is_token else [1, 5120],
             "tensor_dtype": (
-                "torch.int64" if is_token else "torch.bfloat16"
+                "torch.float32"
+                if is_attention
+                else (
+                    "torch.int64"
+                    if is_token
+                    else "torch.bfloat16"
+                )
             ),
-            "tensor_bytes": 8 if is_token else 10240,
+            "tensor_bytes": (
+                20480
+                if is_attention
+                else (8 if is_token else 10240)
+            ),
             "event_sampled": ordinal in sampled,
             "cuda_ns": 2_000 if ordinal in sampled else None,
             "status": "completed",
@@ -102,10 +115,10 @@ def _rank_snapshot(rank, row):
         "repetition": row["repetition"],
         "sample_budget": row["budget"],
         "cohort_count": 17,
-        "expected_collective_count": 130,
+        "expected_collective_count": 66,
         "steps": [{
             "decode_ordinal": 0,
-            "collective_count": 130,
+            "collective_count": 66,
             "status": "completed",
         }],
         "collectives": collectives,
@@ -171,7 +184,7 @@ def _arm(row, arm):
                 "enabled": True,
                 "sample_budget": row["budget"],
                 "cohort_count": 17,
-                "expected_collective_count": 130,
+                "expected_collective_count": 66,
                 "source_revision": SOURCE_REVISION,
                 "attempt": ATTEMPT,
                 "workload": row["workload"],
