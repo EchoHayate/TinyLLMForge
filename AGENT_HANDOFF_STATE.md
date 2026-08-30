@@ -51425,3 +51425,76 @@ FEATURE_DEFAULT=OFF
 SENTINEL_BUCKET_CLAIM=false
 NEXT_ACTION=run fresh local verification, exact-path commit, push, and remote-SHA verification
 ```
+
+## 2026-08-30 Phase-Stitched Exact Graph Stage 0 terminal reconciliation
+
+The profile-only admission gate for joining Exact Prefill Graph execution to
+Exact Greedy K8 completed in the authoritative checkout:
+
+```text
+authoritative checkout:
+  /Users/bytedance/dev/TinyLLMForge
+Desktop alias:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+source base commit:
+  aa3fe145c8187eeee5d1ef8b6aeaf25bbb43b44f
+run tag:
+  20260830-qwen3-06b-r4
+contract SHA-256:
+  57897bbd8a083f3c519bb7d7dfa31d7ef1633217483f117072b3d5bb068ba6a6
+manifest SHA-256:
+  13bdc2aecb15ed1baede9044cfa32895b9541a3ddbb407448c75cd5ad36c484c
+```
+
+The immutable 8-case AB/BA matrix ran on physical GPU 0, an NVIDIA A100
+80GB PCIe with UUID
+`GPU-57be086f-e967-c022-3832-93df4fc77bd0`. Admission observed 0 MiB,
+0% utilization, and no compute processes. The run used the existing remote
+Python and Qwen3-0.6B model and wrote only under the approved `/data00` task
+root.
+
+```text
+256 prompt tokens:
+  samples per arm:                 10
+  median removable host gap:      817423 ns
+  P95 removable host gap:         860333 ns
+  median gap / E2E:               0.268231%
+  profile-off median E2E:         303023175 ns
+  profile-on median E2E:          304745801.5 ns
+  profiling overhead:             +0.568480%
+
+2048 prompt tokens:
+  samples per arm:                 10
+  median removable host gap:       989159.5 ns
+  P95 removable host gap:          1276389 ns
+  median gap / E2E:                0.293850%
+  profile-off median E2E:          333823797 ns
+  profile-on median E2E:           336620629 ns
+  profiling overhead:              +0.837817%
+```
+
+The gate passes through the P95 branch: both medians exceed 0.15 ms and both
+P95 values exceed 0.50 ms. The median gap share itself is below 3%, so Stage 1
+still faces a strict end-to-end benefit gate and must not be advertised before
+the four-arm measurement.
+
+All seven lifecycle events were present, every paired output token sequence
+and text hash matched, both Exact Prefill and K8 replay evidence were
+positive, and capture/replay/lease/quarantine failures were zero. Producer,
+remote verifier, and a fresh local independent verifier agree:
+
+```text
+PHASE_STITCH_PROFILE=COMPLETE
+PRODUCER_CLASSIFICATION=GO_PHASE_STITCH_PROFILE
+INDEPENDENT_VERIFIER=PASS
+RUNTIME_IMPLEMENTATION_AUTHORIZED=true
+RUNTIME_IMPLEMENTED=false
+NEXT_ACTION=execute docs/superpowers/plans/2026-08-30-phase-stitched-exact-graph-runtime-implementation.md
+```
+
+The compact evidence is retained at
+`artifacts/phase_stitch_profile/20260830-qwen3-06b-r4/`. The full completion
+audit is
+`docs/superpowers/audits/2026-08-30-phase-stitch-profile-audit.md`.

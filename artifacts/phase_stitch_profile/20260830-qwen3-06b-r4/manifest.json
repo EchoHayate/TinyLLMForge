@@ -1,0 +1,17 @@
+{
+  "contract_sha256": "57897bbd8a083f3c519bb7d7dfa31d7ef1633217483f117072b3d5bb068ba6a6",
+  "files": {
+    "cases/r0-p2048-instrumentation-off/result.json": "f755510f134a57e87a3d650d004bce8915394d7257665eb518136bd1b2f4b88e",
+    "cases/r0-p2048-instrumentation-on/result.json": "69eb34b36e285f706432c1af26b5aa81c812bd8d26dfc947dec4532c88bcee64",
+    "cases/r0-p256-instrumentation-off/result.json": "930607bd28f21121addccfc6ecf06346b5e12f1ae8c5683575aad41b2f4c1429",
+    "cases/r0-p256-instrumentation-on/result.json": "cbc64d5cb6aa74a923a3a10d20af0d015b42b3c3437d0c0b315a0f52679134aa",
+    "cases/r1-p2048-instrumentation-off/result.json": "7a35c279cda6953d5ad37f4902cd745bb2d64951875caa9924f762b8b10d1653",
+    "cases/r1-p2048-instrumentation-on/result.json": "fccc1573060d041829e71fc1aa29bfeb678d4c6857dbd4a6f19bb356469d5ea4",
+    "cases/r1-p256-instrumentation-off/result.json": "e2c033637e5956f806ac3380e7feba68eefa03c8caf2a4b4ce9da38402c64c5e",
+    "cases/r1-p256-instrumentation-on/result.json": "27d5fd924c22c1e2f2aa0f6fd7ba41087ef96f1e8fee1475995a8bafa4d87404",
+    "gate.json": "cf9187d27bdedc3896428e661d7acd4a9d9b5828000ddd497d7ea24255556c64",
+    "run_manifest.json": "7b5f68cc2e3e8ee42335c747e56b3240e45509062c833186b15828aed6bb2fdb",
+    "summary.json": "a0ffb137e7bd5eb95b5d71cabdea55213a17571b66eb2c67433877fd3140b87f"
+  },
+  "schema_version": "phase-stitch-profile.manifest.v1"
+}

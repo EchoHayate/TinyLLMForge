@@ -1,0 +1,16 @@
+{
+  "checks": {
+    "ceiling_pass": true,
+    "complete_case_inventory": true,
+    "event_coverage_pass": true,
+    "exact_output_equality": true,
+    "graph_evidence_pass": true,
+    "overhead_pass": true,
+    "zero_failures_pass": true
+  },
+  "classification": "GO_PHASE_STITCH_PROFILE",
+  "contract_sha256": "57897bbd8a083f3c519bb7d7dfa31d7ef1633217483f117072b3d5bb068ba6a6",
+  "run_tag": "20260830-qwen3-06b-r4",
+  "schema_version": "phase-stitch-profile.gate.v1",
+  "summary_sha256": "d45f48347e4214fa96fc60eda810ab21d55f3235a1032467992888a7ce353493"
+}
