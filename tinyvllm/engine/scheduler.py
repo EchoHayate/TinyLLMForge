@@ -29,6 +29,16 @@ from tinyvllm.engine.hybrid_state import (
     HybridStateLease,
     HybridStateSlotAllocator,
 )
+from tinyvllm.engine.phase_stitched_exact_graph import (
+    PhaseStitchLease,
+    PhaseStitchPrefixResult,
+    PhaseStitchSuffixResult,
+    PhaseStitchTransaction,
+    build_phase_stitch_lease,
+    decide_phase_stitch_admission,
+    validate_phase_stitch_prefix,
+    validate_phase_stitch_suffix,
+)
 from tinyvllm.engine.speculative_selection import (
     SpeculativeSelectionConfig,
     build_speculative_selection_record,
@@ -68,6 +78,10 @@ class PreparedSchedulerPostprocess:
     ) = None
     exact_burst_correctness_trace: bool = False
     exact_burst_host_visible_gap_ns: int = 0
+    phase_stitch_lease: PhaseStitchLease | None = None
+    phase_stitch_prefix_result: PhaseStitchPrefixResult | None = None
+    phase_stitch_suffix_result: PhaseStitchSuffixResult | None = None
+    phase_stitch_phase: str | None = None
     state: str = "prepared"
 
 
@@ -965,6 +979,34 @@ class Scheduler:
         self._speculative_selection_installed = False
         self.schedule_generation = 0
         self.last_speculative_selection = None
+        self.phase_stitched_exact_graph_runtime = bool(
+            getattr(
+                config,
+                "phase_stitched_exact_graph_runtime",
+                False,
+            )
+        )
+        self._phase_stitch_pending_lease = None
+        self._phase_stitch_transaction = None
+        self._phase_stitch_sequence = None
+        self._phase_stitch_reserved_block_ids = ()
+        self._phase_stitch_sequence_generations: dict[int, int] = {}
+        self._phase_stitch_quarantined_parent_identities: set[str] = (
+            set()
+        )
+        self._phase_stitch_fallback_counts: dict[str, int] = {}
+        self._phase_stitch_attempts = 0
+        self._phase_stitch_acceptances = 0
+        self._phase_stitch_reserved_decode_write_positions = 0
+        self._phase_stitch_prefix_commits = 0
+        self._phase_stitch_suffix_commits = 0
+        self._phase_stitch_closed_transactions = 0
+        self._phase_stitch_cancellations = 0
+        self._phase_stitch_failures_before_prefix = 0
+        self._phase_stitch_failures_after_prefix = 0
+        self._phase_stitch_last_authoritative_phase = None
+        self._phase_stitch_last_completed_decode_replays = 0
+        self._phase_stitch_last_failure_reason = None
         self._exact_greedy_decode_burst_pending_lease = None
         self._exact_greedy_decode_burst_split_phase = "idle"
         self._exact_greedy_decode_burst_lease_local_delta_journal = (
@@ -1264,6 +1306,600 @@ class Scheduler:
         raise RuntimeError(
             "speculative selection config is already installed"
         )
+
+    def _record_phase_stitch_fallback(self, reason: str) -> None:
+        self._phase_stitch_fallback_counts[reason] = (
+            self._phase_stitch_fallback_counts.get(reason, 0) + 1
+        )
+
+    def _advance_phase_stitch_sequence_generation(
+        self,
+        sequence_id: int,
+    ) -> None:
+        generation = self._phase_stitch_sequence_generations.get(
+            sequence_id,
+            0,
+        )
+        if generation >= INT64_MAX:
+            raise OverflowError(
+                "phase stitch sequence generation exhausted"
+            )
+        self._phase_stitch_sequence_generations[sequence_id] = (
+            generation + 1
+        )
+
+    def _clear_phase_stitch_runtime_state(self) -> None:
+        self._phase_stitch_pending_lease = None
+        self._phase_stitch_transaction = None
+        self._phase_stitch_sequence = None
+        self._phase_stitch_reserved_block_ids = ()
+
+    def prepare_phase_stitch(
+        self,
+        seqs: tuple[Sequence, ...],
+        *,
+        schedule_generation: int,
+        enabled: bool,
+        prefill_graph_available: bool,
+        decode_graph_available: bool,
+        prefill_graph_identity_sha256: str,
+        prefill_graph_generation: int,
+        decode_graph_identity_sha256: str,
+        decode_graph_generation: int,
+        prompt_token_allowlist: tuple[int, ...],
+        is_prefill: bool,
+        do_sample: bool,
+        batch_kind: str | None,
+        completion_only: bool,
+        tensor_parallel_size: int,
+        rank: int,
+        incompatible_modes: tuple[str, ...],
+        source_identity_sha256: str,
+        quarantined: bool = False,
+    ) -> PhaseStitchLease | None:
+        if not isinstance(seqs, tuple):
+            raise ValueError(
+                "phase stitch sequences must be a tuple"
+            )
+        if schedule_generation != self.schedule_generation:
+            raise ValueError(
+                "phase stitch schedule generation is stale"
+            )
+        self._phase_stitch_attempts += 1
+        sequence = seqs[0] if len(seqs) == 1 else None
+        prompt_token_count = (
+            int(sequence.num_prompt_tokens)
+            if sequence is not None
+            else 0
+        )
+        remaining_output_tokens = (
+            max(
+                0,
+                int(sequence.max_tokens)
+                - int(sequence.num_completion_tokens),
+            )
+            if sequence is not None
+            else 0
+        )
+        block_size = self.block_manager.block_size
+        decode_first_write_position = prompt_token_count
+        decode_last_write_position = (
+            decode_first_write_position + 6
+        )
+        same_write_block = (
+            prompt_token_count > 0
+            and (
+                decode_first_write_position // block_size
+                == decode_last_write_position // block_size
+            )
+        )
+        needed_blocks = 0
+        if sequence is not None and same_write_block:
+            final_length = len(sequence) + 7
+            needed_blocks = max(
+                0,
+                (
+                    final_length + block_size - 1
+                ) // block_size
+                - len(sequence.block_table),
+            )
+        decode_kv_capacity_tokens = (
+            7
+            if (
+                same_write_block
+                and needed_blocks
+                <= len(self.block_manager.free_block_ids)
+            )
+            else 0
+        )
+        effective_incompatible_modes = incompatible_modes
+        if batch_kind is not None:
+            effective_incompatible_modes += (
+                f"batch_kind:{batch_kind}",
+            )
+        if not is_prefill:
+            effective_incompatible_modes += (
+                "not_final_prefill",
+            )
+        if sequence is not None and (
+            sequence.num_completion_tokens != 0
+            or len(sequence) != prompt_token_count
+        ):
+            effective_incompatible_modes += (
+                "completion_already_visible",
+            )
+        if sequence is not None and sequence.status not in (
+            SequenceStatus.WAITING,
+            SequenceStatus.PREFILLING,
+            SequenceStatus.RUNNING,
+        ):
+            effective_incompatible_modes += (
+                "sequence_not_live",
+            )
+        if self._exact_greedy_decode_burst_pending_lease is not None:
+            effective_incompatible_modes += (
+                "exact_burst_lease_pending",
+            )
+        decision = decide_phase_stitch_admission(
+            enabled=(
+                bool(enabled)
+                and self.phase_stitched_exact_graph_runtime
+            ),
+            prefill_graph_available=prefill_graph_available,
+            decode_graph_available=decode_graph_available,
+            prompt_token_count=prompt_token_count,
+            prompt_token_allowlist=prompt_token_allowlist,
+            sequence_count=len(seqs),
+            waiting_count=sum(
+                waiting is not sequence for waiting in self.waiting
+            ),
+            prefilling_count=sum(
+                prefilling is not sequence
+                for prefilling in self.prefilling
+            ),
+            do_sample=do_sample,
+            temperatures=tuple(
+                current.temperature for current in seqs
+            ),
+            ignore_eos=tuple(
+                current.ignore_eos for current in seqs
+            ),
+            completion_only=completion_only,
+            remaining_output_tokens=remaining_output_tokens,
+            decode_kv_capacity_tokens=decode_kv_capacity_tokens,
+            tensor_parallel_size=tensor_parallel_size,
+            rank=rank,
+            incompatible_modes=effective_incompatible_modes,
+            pending_lease=(
+                self._phase_stitch_pending_lease is not None
+            ),
+            quarantined=quarantined,
+        )
+        if not decision.optimized:
+            self._record_phase_stitch_fallback(
+                decision.fallback_reason
+            )
+            return None
+        reserved_block_ids = tuple(
+            self.block_manager.reserve_append_blocks(
+                sequence,
+                7,
+            )
+        )
+        try:
+            sequence.block_table.extend(reserved_block_ids)
+            write_block_index = (
+                decode_first_write_position // block_size
+            )
+            if write_block_index >= len(sequence.block_table):
+                raise RuntimeError(
+                    "phase stitch write block is unavailable"
+                )
+            write_block_id = sequence.block_table[
+                write_block_index
+            ]
+            first_physical_slot = (
+                write_block_id * block_size
+                + decode_first_write_position % block_size
+            )
+            last_physical_slot = first_physical_slot + 6
+            block_table_identity = (
+                self.block_manager.block_identities(
+                    tuple(sequence.block_table)
+                )
+            )
+            sequence_generation = (
+                self._phase_stitch_sequence_generations.setdefault(
+                    sequence.seq_id,
+                    0,
+                )
+            )
+            lease = build_phase_stitch_lease(
+                sequence_id=sequence.seq_id,
+                sequence_generation=sequence_generation,
+                schedule_generation=schedule_generation,
+                prefill_graph_identity_sha256=(
+                    prefill_graph_identity_sha256
+                ),
+                prefill_graph_generation=prefill_graph_generation,
+                decode_graph_identity_sha256=(
+                    decode_graph_identity_sha256
+                ),
+                decode_graph_generation=decode_graph_generation,
+                prompt_token_count=prompt_token_count,
+                final_prefill_first_position=0,
+                final_prefill_last_position=(
+                    prompt_token_count - 1
+                ),
+                initial_completion_count=(
+                    sequence.num_completion_tokens
+                ),
+                remaining_output_tokens=remaining_output_tokens,
+                decode_first_write_position=(
+                    decode_first_write_position
+                ),
+                decode_last_write_position=(
+                    decode_last_write_position
+                ),
+                decode_first_physical_slot=first_physical_slot,
+                decode_last_physical_slot=last_physical_slot,
+                block_table_identity=block_table_identity,
+                completion_only=completion_only,
+                source_identity_sha256=source_identity_sha256,
+            )
+        except BaseException:
+            if reserved_block_ids:
+                del sequence.block_table[
+                    -len(reserved_block_ids):
+                ]
+                self.block_manager.release_reserved_blocks(
+                    list(reserved_block_ids)
+                )
+            raise
+        self._phase_stitch_pending_lease = lease
+        self._phase_stitch_transaction = PhaseStitchTransaction(
+            lease
+        )
+        self._phase_stitch_sequence = sequence
+        self._phase_stitch_reserved_block_ids = reserved_block_ids
+        self._phase_stitch_acceptances += 1
+        self._phase_stitch_reserved_decode_write_positions += 7
+        return lease
+
+    def _validate_pending_phase_stitch(
+        self,
+        lease: PhaseStitchLease,
+        sequence: Sequence | None = None,
+        *,
+        require_current_generation: bool = True,
+        committed_token_offset: int = 0,
+    ) -> None:
+        if not isinstance(lease, PhaseStitchLease):
+            raise ValueError(
+                "phase stitch lease has an invalid type"
+            )
+        if self._phase_stitch_pending_lease != lease:
+            raise ValueError(
+                "phase stitch lease does not match the pending lease"
+            )
+        transaction = self._phase_stitch_transaction
+        if transaction is None or transaction.lease != lease:
+            raise ValueError(
+                "phase stitch transaction does not match the lease"
+            )
+        if (
+            require_current_generation
+            and lease.schedule_generation != self.schedule_generation
+        ):
+            raise ValueError("phase stitch lease is stale")
+        current_generation = (
+            self._phase_stitch_sequence_generations.get(
+                lease.sequence_id,
+                0,
+            )
+        )
+        if current_generation != lease.sequence_generation:
+            raise ValueError(
+                "phase stitch sequence generation is stale"
+            )
+        if sequence is None:
+            return
+        if (
+            isinstance(committed_token_offset, bool)
+            or not isinstance(committed_token_offset, int)
+            or committed_token_offset < 0
+        ):
+            raise ValueError(
+                "committed_token_offset must be a non-negative integer"
+            )
+        if sequence is not self._phase_stitch_sequence:
+            raise ValueError(
+                "phase stitch sequence object changed"
+            )
+        if sequence.seq_id != lease.sequence_id:
+            raise ValueError(
+                "phase stitch sequence ID mismatch"
+            )
+        if len(sequence) != (
+            lease.prompt_token_count + committed_token_offset
+        ):
+            raise ValueError(
+                "phase stitch sequence length changed"
+            )
+        if sequence.num_completion_tokens != (
+            lease.initial_completion_count
+            + committed_token_offset
+        ):
+            raise ValueError(
+                "phase stitch completion count changed"
+            )
+        self.block_manager.validate_block_identities(
+            lease.block_table_identity
+        )
+        if tuple(sequence.block_table) != tuple(
+            block_id
+            for block_id, _ in lease.block_table_identity
+        ):
+            raise ValueError(
+                "phase stitch sequence block table changed"
+            )
+
+    def mark_phase_stitch_replay_started(
+        self,
+        lease: PhaseStitchLease,
+    ) -> None:
+        self._validate_pending_phase_stitch(lease)
+        self._phase_stitch_transaction.mark_replay_started()
+
+    def _fail_active_phase_stitch(
+        self,
+        lease: PhaseStitchLease,
+        reason: str,
+    ) -> None:
+        self._validate_pending_phase_stitch(
+            lease,
+            require_current_generation=False,
+        )
+        transaction = self._phase_stitch_transaction
+        transaction.fail(reason)
+        if transaction.partial_visibility:
+            self._phase_stitch_failures_after_prefix += 1
+        else:
+            self._phase_stitch_failures_before_prefix += 1
+        self._phase_stitch_quarantined_parent_identities.add(
+            lease.identity_sha256
+        )
+        self._phase_stitch_last_authoritative_phase = (
+            transaction.last_authoritative_phase
+        )
+        self._phase_stitch_last_completed_decode_replays = (
+            transaction.completed_decode_replays
+        )
+        self._phase_stitch_last_failure_reason = reason
+        self._advance_phase_stitch_sequence_generation(
+            lease.sequence_id
+        )
+        self._clear_phase_stitch_runtime_state()
+
+    def fail_phase_stitch(
+        self,
+        lease: PhaseStitchLease,
+        reason: str,
+    ) -> None:
+        self._fail_active_phase_stitch(lease, reason)
+
+    def cancel_phase_stitch(
+        self,
+        lease: PhaseStitchLease,
+        reason: str,
+    ) -> None:
+        self._validate_pending_phase_stitch(
+            lease,
+            require_current_generation=False,
+        )
+        transaction = self._phase_stitch_transaction
+        transaction.cancel(reason)
+        sequence = self._phase_stitch_sequence
+        reserved_block_ids = (
+            self._phase_stitch_reserved_block_ids
+        )
+        if reserved_block_ids:
+            if tuple(
+                sequence.block_table[
+                    -len(reserved_block_ids):
+                ]
+            ) != reserved_block_ids:
+                raise RuntimeError(
+                    "phase stitch reserved block ownership changed"
+                )
+            del sequence.block_table[-len(reserved_block_ids):]
+            self.block_manager.release_reserved_blocks(
+                list(reserved_block_ids)
+            )
+        self._phase_stitch_cancellations += 1
+        self._phase_stitch_last_authoritative_phase = "cancelled"
+        self._phase_stitch_last_failure_reason = reason
+        self._advance_phase_stitch_sequence_generation(
+            lease.sequence_id
+        )
+        self._clear_phase_stitch_runtime_state()
+
+    def _prepare_phase_stitch_commit(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: PhaseStitchLease,
+        *,
+        phase: str,
+        output_tokens: tuple[int, ...],
+        prefix_result: PhaseStitchPrefixResult | None = None,
+        suffix_result: PhaseStitchSuffixResult | None = None,
+        decision_now_ns: int | None = None,
+        step_end_ns: int | None = None,
+    ) -> PreparedSchedulerPostprocess:
+        sequence = seqs[0]
+        return PreparedSchedulerPostprocess(
+            scheduled_sequence_ids=(sequence.seq_id,),
+            rows=(
+                ScheduledOutputRow(
+                    sequence_id=sequence.seq_id,
+                    output_tokens=output_tokens,
+                    speculative=False,
+                ),
+            ),
+            is_prefill=(phase == "prefix"),
+            do_sample=True,
+            batch_kind=None,
+            decision_now_ns=decision_now_ns,
+            step_end_ns=step_end_ns,
+            snapshot=SchedulerPostprocessJournal.capture(
+                self,
+                seqs,
+            ),
+            phase_stitch_lease=lease,
+            phase_stitch_prefix_result=prefix_result,
+            phase_stitch_suffix_result=suffix_result,
+            phase_stitch_phase=phase,
+        )
+
+    def prepare_phase_stitch_prefix_commit(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: PhaseStitchLease,
+        result: PhaseStitchPrefixResult,
+        *,
+        decision_now_ns: int | None = None,
+        step_end_ns: int | None = None,
+    ) -> PreparedSchedulerPostprocess:
+        try:
+            if not isinstance(seqs, tuple) or len(seqs) != 1:
+                raise ValueError(
+                    "phase stitch prefix commit requires one sequence"
+                )
+            self._validate_pending_phase_stitch(
+                lease,
+                seqs[0],
+            )
+            validate_phase_stitch_prefix(lease, result)
+            self._phase_stitch_transaction.mark_prefix_ready()
+            return self._prepare_phase_stitch_commit(
+                seqs,
+                lease,
+                phase="prefix",
+                output_tokens=(result.token,),
+                prefix_result=result,
+                decision_now_ns=decision_now_ns,
+                step_end_ns=step_end_ns,
+            )
+        except BaseException as error:
+            if self._phase_stitch_pending_lease == lease:
+                transaction = self._phase_stitch_transaction
+                if transaction is not None and transaction.state in (
+                    "replay_started",
+                    "prefix_ready",
+                ):
+                    self._fail_active_phase_stitch(
+                        lease,
+                        f"{type(error).__name__}: {error}",
+                    )
+            raise
+
+    def prepare_phase_stitch_suffix_commit(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: PhaseStitchLease,
+        result: PhaseStitchSuffixResult,
+        *,
+        decision_now_ns: int | None = None,
+        step_end_ns: int | None = None,
+    ) -> PreparedSchedulerPostprocess:
+        try:
+            if not isinstance(seqs, tuple) or len(seqs) != 1:
+                raise ValueError(
+                    "phase stitch suffix commit requires one sequence"
+                )
+            self._validate_pending_phase_stitch(
+                lease,
+                seqs[0],
+                committed_token_offset=1,
+            )
+            validate_phase_stitch_suffix(lease, result)
+            self._phase_stitch_transaction.mark_suffix_ready(
+                replay_count=result.replay_count
+            )
+            return self._prepare_phase_stitch_commit(
+                seqs,
+                lease,
+                phase="suffix",
+                output_tokens=result.tokens,
+                suffix_result=result,
+                decision_now_ns=decision_now_ns,
+                step_end_ns=step_end_ns,
+            )
+        except BaseException as error:
+            if self._phase_stitch_pending_lease == lease:
+                transaction = self._phase_stitch_transaction
+                if transaction is not None and transaction.state in (
+                    "prefix_committed",
+                    "suffix_ready",
+                ):
+                    self._fail_active_phase_stitch(
+                        lease,
+                        f"{type(error).__name__}: {error}",
+                    )
+            raise
+
+    def phase_stitch_summary(self) -> dict[str, object]:
+        transaction = self._phase_stitch_transaction
+        return {
+            "attempts": self._phase_stitch_attempts,
+            "acceptances": self._phase_stitch_acceptances,
+            "reserved_decode_write_positions": (
+                self._phase_stitch_reserved_decode_write_positions
+            ),
+            "prefix_commits": self._phase_stitch_prefix_commits,
+            "suffix_commits": self._phase_stitch_suffix_commits,
+            "closed_transactions": (
+                self._phase_stitch_closed_transactions
+            ),
+            "cancellations": self._phase_stitch_cancellations,
+            "failures_before_prefix": (
+                self._phase_stitch_failures_before_prefix
+            ),
+            "failures_after_prefix": (
+                self._phase_stitch_failures_after_prefix
+            ),
+            "fallback_counts": dict(
+                sorted(self._phase_stitch_fallback_counts.items())
+            ),
+            "pending_parent_identity_sha256": (
+                self._phase_stitch_pending_lease.identity_sha256
+                if self._phase_stitch_pending_lease is not None
+                else None
+            ),
+            "transaction_state": (
+                transaction.state
+                if transaction is not None
+                else None
+            ),
+            "quarantined_parent_identities": sorted(
+                self._phase_stitch_quarantined_parent_identities
+            ),
+            "last_authoritative_phase": (
+                self._phase_stitch_last_authoritative_phase
+            ),
+            "last_completed_decode_replays": (
+                self._phase_stitch_last_completed_decode_replays
+            ),
+            "last_failure_reason": (
+                self._phase_stitch_last_failure_reason
+            ),
+            "sequence_generations": {
+                str(sequence_id): generation
+                for sequence_id, generation in sorted(
+                    self._phase_stitch_sequence_generations.items()
+                )
+            },
+        }
 
     def prepare_exact_greedy_decode_burst(
         self,
@@ -3212,6 +3848,61 @@ class Scheduler:
                 "prepared Scheduler snapshot must be a "
                 "supported postprocess journal"
             )
+        if prepared.phase_stitch_lease is not None:
+            if len(seqs) != 1:
+                raise ValueError(
+                    "phase stitch commit requires one sequence"
+                )
+            phase = prepared.phase_stitch_phase
+            if phase == "prefix":
+                if prepared.phase_stitch_prefix_result is None:
+                    raise ValueError(
+                        "phase stitch prefix commit requires "
+                        "a validated result"
+                    )
+                if (
+                    self._phase_stitch_transaction is None
+                    or self._phase_stitch_transaction.state
+                    != "prefix_ready"
+                ):
+                    raise ValueError(
+                        "phase stitch prefix is not ready to commit"
+                    )
+                self._validate_pending_phase_stitch(
+                    prepared.phase_stitch_lease,
+                    seqs[0],
+                )
+                validate_phase_stitch_prefix(
+                    prepared.phase_stitch_lease,
+                    prepared.phase_stitch_prefix_result,
+                )
+            elif phase == "suffix":
+                if prepared.phase_stitch_suffix_result is None:
+                    raise ValueError(
+                        "phase stitch suffix commit requires "
+                        "a validated result"
+                    )
+                if (
+                    self._phase_stitch_transaction is None
+                    or self._phase_stitch_transaction.state
+                    != "suffix_ready"
+                ):
+                    raise ValueError(
+                        "phase stitch suffix is not ready to commit"
+                    )
+                self._validate_pending_phase_stitch(
+                    prepared.phase_stitch_lease,
+                    seqs[0],
+                    committed_token_offset=1,
+                )
+                validate_phase_stitch_suffix(
+                    prepared.phase_stitch_lease,
+                    prepared.phase_stitch_suffix_result,
+                )
+            else:
+                raise ValueError(
+                    "phase stitch phase must be prefix or suffix"
+                )
         if prepared.exact_burst_lease is not None:
             if len(seqs) != 1:
                 raise ValueError(
@@ -3432,6 +4123,15 @@ class Scheduler:
                     prefill_hook_error
                 )
             prepared.state = "commit_failed"
+            if (
+                prepared.phase_stitch_lease is not None
+                and self._phase_stitch_pending_lease
+                == prepared.phase_stitch_lease
+            ):
+                self._fail_active_phase_stitch(
+                    prepared.phase_stitch_lease,
+                    f"{type(commit_error).__name__}: {commit_error}",
+                )
             raise
         journal.state = "committed"
         if isinstance(
@@ -3450,6 +4150,30 @@ class Scheduler:
                     ),
                 )
         prepared.state = "committed"
+        if prepared.phase_stitch_lease is not None:
+            transaction = self._phase_stitch_transaction
+            if prepared.phase_stitch_phase == "prefix":
+                transaction.mark_prefix_committed()
+                self._phase_stitch_prefix_commits += 1
+                self._phase_stitch_last_authoritative_phase = (
+                    transaction.last_authoritative_phase
+                )
+                return
+            transaction.mark_suffix_committed()
+            transaction.close()
+            self._phase_stitch_suffix_commits += 1
+            self._phase_stitch_closed_transactions += 1
+            self._phase_stitch_last_authoritative_phase = (
+                transaction.last_authoritative_phase
+            )
+            self._phase_stitch_last_completed_decode_replays = (
+                transaction.completed_decode_replays
+            )
+            self._advance_phase_stitch_sequence_generation(
+                prepared.phase_stitch_lease.sequence_id
+            )
+            self._clear_phase_stitch_runtime_state()
+            return
         if prepared.exact_burst_lease is not None:
             phase = prepared.rows[0].exact_burst_phase
             if phase is not None:
@@ -3703,6 +4427,15 @@ class Scheduler:
             if prepared.rows[0].exact_burst_phase is None:
                 self._exact_greedy_decode_burst_stats.record_lease_local_delta_journal_one_phase_rollback()
         prepared.state = "rolled_back"
+        if (
+            prepared.phase_stitch_lease is not None
+            and self._phase_stitch_pending_lease
+            == prepared.phase_stitch_lease
+        ):
+            self._fail_active_phase_stitch(
+                prepared.phase_stitch_lease,
+                "prepared_postprocess_rolled_back",
+            )
 
     @staticmethod
     def _require_active_prepared_postprocess(

@@ -380,3 +380,330 @@ def test_phase_stitch_admission_matrix(overrides, reason):
 
     assert decision.optimized is False
     assert decision.fallback_reason == reason
+
+
+def _scheduler_phase_stitch_fixture():
+    canonical_name = "tinyvllm.engine.phase_stitched_exact_graph"
+    if canonical_name not in sys.modules:
+        canonical_spec = importlib.util.spec_from_file_location(
+            canonical_name,
+            MODULE_PATH,
+        )
+        canonical = importlib.util.module_from_spec(canonical_spec)
+        sys.modules[canonical_name] = canonical
+        canonical_spec.loader.exec_module(canonical)
+    from tools import test_scheduler_prepared_postprocess as fixture
+
+    canonical = sys.modules[canonical_name]
+    return fixture, canonical
+
+
+def _prepare_scheduler_phase_stitch(scheduler, sequence):
+    return scheduler.prepare_phase_stitch(
+        (sequence,),
+        schedule_generation=1,
+        enabled=True,
+        prefill_graph_available=True,
+        decode_graph_available=True,
+        prefill_graph_identity_sha256="a" * 64,
+        prefill_graph_generation=5,
+        decode_graph_identity_sha256="b" * 64,
+        decode_graph_generation=13,
+        prompt_token_allowlist=(16,),
+        is_prefill=True,
+        do_sample=True,
+        batch_kind=None,
+        completion_only=True,
+        tensor_parallel_size=1,
+        rank=0,
+        incompatible_modes=(),
+        source_identity_sha256="c" * 64,
+    )
+
+
+def test_scheduler_phase_stitch_preauthorizes_one_parent_lease():
+    fixture, _ = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=8,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    original_completion = tuple(sequence.completion_token_ids)
+    original_block_count = len(sequence.block_table)
+
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+
+    assert lease is not None
+    assert lease.sequence_generation == 0
+    assert lease.decode_first_write_position == 16
+    assert lease.decode_last_write_position == 22
+    assert (
+        lease.decode_last_physical_slot
+        - lease.decode_first_physical_slot
+        + 1
+        == 7
+    )
+    assert len(sequence.block_table) == original_block_count + 1
+    assert lease.block_table_identity == (
+        scheduler.block_manager.block_identities(
+            tuple(sequence.block_table)
+        )
+    )
+    assert tuple(sequence.completion_token_ids) == original_completion
+    assert scheduler._phase_stitch_pending_lease == lease
+
+    assert _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    ) is None
+    summary = scheduler.phase_stitch_summary()
+    assert summary["attempts"] == 2
+    assert summary["acceptances"] == 1
+    assert summary["reserved_decode_write_positions"] == 7
+    assert summary["fallback_counts"] == {"lease_pending": 1}
+
+
+def test_scheduler_phase_stitch_commits_prefix_then_suffix():
+    fixture, canonical = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=8,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+    scheduler.mark_phase_stitch_replay_started(lease)
+
+    prefix = canonical.PhaseStitchPrefixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        token=101,
+        token_ordinal=0,
+        replay_count=0,
+        d2h_calls=1,
+        d2h_bytes=8,
+    )
+    prepared_prefix = scheduler.prepare_phase_stitch_prefix_commit(
+        (sequence,),
+        lease,
+        prefix,
+    )
+    scheduler.commit_prepared_postprocess(prepared_prefix)
+
+    assert sequence.completion_token_ids == [101]
+    assert sequence.num_computed_tokens == 16
+    assert scheduler._phase_stitch_pending_lease == lease
+    assert scheduler._phase_stitch_transaction.state == (
+        "prefix_committed"
+    )
+
+    suffix = canonical.PhaseStitchSuffixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        tokens=(102, 103, 104, 105, 106, 107, 108),
+        first_token_ordinal=1,
+        replay_count=7,
+        d2h_calls=1,
+        d2h_bytes=56,
+    )
+    prepared_suffix = scheduler.prepare_phase_stitch_suffix_commit(
+        (sequence,),
+        lease,
+        suffix,
+    )
+    scheduler.commit_prepared_postprocess(prepared_suffix)
+
+    assert sequence.completion_token_ids == [
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+    ]
+    assert scheduler._phase_stitch_pending_lease is None
+    assert scheduler._phase_stitch_transaction is None
+    summary = scheduler.phase_stitch_summary()
+    assert summary["prefix_commits"] == 1
+    assert summary["suffix_commits"] == 1
+    assert summary["closed_transactions"] == 1
+    assert summary["last_authoritative_phase"] == "suffix_committed"
+    assert summary["last_completed_decode_replays"] == 7
+    assert summary["sequence_generations"] == {
+        str(sequence.seq_id): 1,
+    }
+
+
+def test_scheduler_phase_stitch_failure_quarantines_parent_identity():
+    fixture, canonical = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=8,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+    scheduler.mark_phase_stitch_replay_started(lease)
+    bad_prefix = canonical.PhaseStitchPrefixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        token=101,
+        token_ordinal=1,
+        replay_count=0,
+        d2h_calls=1,
+        d2h_bytes=8,
+    )
+
+    with pytest.raises(ValueError, match="prefix token ordinal"):
+        scheduler.prepare_phase_stitch_prefix_commit(
+            (sequence,),
+            lease,
+            bad_prefix,
+        )
+
+    assert sequence.num_completion_tokens == 0
+    assert scheduler._phase_stitch_pending_lease is None
+    summary = scheduler.phase_stitch_summary()
+    assert summary["failures_before_prefix"] == 1
+    assert summary["quarantined_parent_identities"] == [
+        lease.identity_sha256,
+    ]
+    assert summary["last_authoritative_phase"] == (
+        "failed_before_prefix"
+    )
+
+
+def test_scheduler_phase_stitch_cancel_releases_only_reserved_blocks():
+    fixture, _ = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=8,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    original_block_table = tuple(sequence.block_table)
+    original_free_count = len(scheduler.block_manager.free_block_ids)
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+
+    scheduler.cancel_phase_stitch(lease, "engine_fallback")
+
+    assert tuple(sequence.block_table) == original_block_table
+    assert len(scheduler.block_manager.free_block_ids) == (
+        original_free_count
+    )
+    assert scheduler._phase_stitch_pending_lease is None
+    summary = scheduler.phase_stitch_summary()
+    assert summary["cancellations"] == 1
+    assert summary["last_authoritative_phase"] == "cancelled"
+    assert summary["sequence_generations"] == {
+        str(sequence.seq_id): 1,
+    }
+
+
+def test_scheduler_phase_stitch_failure_after_prefix_keeps_visibility():
+    fixture, canonical = _scheduler_phase_stitch_fixture()
+    fixture.Sequence.block_size = 16
+    scheduler = fixture.Scheduler(
+        fixture._config(
+            kvcache_block_size=16,
+            phase_stitched_exact_graph_runtime=True,
+        )
+    )
+    sequence = fixture._scheduled_prefill_sequence(
+        scheduler,
+        tuple(range(16)),
+        chunk_end=16,
+        final=True,
+        do_sample=True,
+        max_tokens=8,
+    )
+    sequence.ignore_eos = True
+    scheduler.schedule_generation = 1
+    lease = _prepare_scheduler_phase_stitch(
+        scheduler,
+        sequence,
+    )
+    scheduler.mark_phase_stitch_replay_started(lease)
+    prefix = canonical.PhaseStitchPrefixResult(
+        parent_lease_identity_sha256=lease.identity_sha256,
+        token=101,
+        token_ordinal=0,
+        replay_count=0,
+        d2h_calls=1,
+        d2h_bytes=8,
+    )
+    prepared = scheduler.prepare_phase_stitch_prefix_commit(
+        (sequence,),
+        lease,
+        prefix,
+    )
+    scheduler.commit_prepared_postprocess(prepared)
+    block_table_after_prefix = tuple(sequence.block_table)
+
+    scheduler.fail_phase_stitch(lease, "suffix_copy_failed")
+
+    assert sequence.completion_token_ids == [101]
+    assert tuple(sequence.block_table) == block_table_after_prefix
+    assert scheduler._phase_stitch_pending_lease is None
+    summary = scheduler.phase_stitch_summary()
+    assert summary["failures_after_prefix"] == 1
+    assert summary["last_authoritative_phase"] == (
+        "failed_after_prefix"
+    )
+    assert summary["last_failure_reason"] == "suffix_copy_failed"
