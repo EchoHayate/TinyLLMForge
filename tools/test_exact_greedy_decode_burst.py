@@ -75,6 +75,11 @@ ExactGreedyDecodeBurstFallback = (
     module.ExactGreedyDecodeBurstFallback
 )
 ExactGreedyDecodeBurstGraph = module.ExactGreedyDecodeBurstGraph
+ExactGreedyDecodeBurstFoldedGraph = getattr(
+    module,
+    "ExactGreedyDecodeBurstFoldedGraph",
+    None,
+)
 ExactGreedyDecodeBurstLease = module.ExactGreedyDecodeBurstLease
 ElasticBurstWidthHealth = getattr(
     module,
@@ -432,6 +437,9 @@ def _graph_fixture(
     history_capacity=8,
     sampled_logit_ordinals=None,
     flash_attn_num_splits=0,
+    graph_class=ExactGreedyDecodeBurstGraph,
+    steps_per_launch=None,
+    block_size=256,
 ):
     events = []
     tensors = {
@@ -482,7 +490,12 @@ def _graph_fixture(
         )
     graphs = []
     phase = {"value": "outside"}
-    next_tokens = iter((1, 2))
+    complete_step_count = (
+        1 if steps_per_launch is None else steps_per_launch
+    )
+    next_tokens = iter(
+        range(1, 2 * complete_step_count + 1)
+    )
 
     def model(input_token, position):
         events.append(
@@ -505,7 +518,7 @@ def _graph_fixture(
         del hidden
         token = next(next_tokens)
         events.append((phase["value"], "compute_logits"))
-        row = [0.0] * 5
+        row = [0.0] * max(5, 2 * complete_step_count + 1)
         row[token] = 9.0
         return _BurstTensor(
             [row],
@@ -558,7 +571,7 @@ def _graph_fixture(
     clock_samples = iter((1_000, 1_900))
     stats = ExactGreedyDecodeBurstStats()
 
-    graph = ExactGreedyDecodeBurstGraph.capture(
+    capture_kwargs = dict(
         tensors=tensors,
         model=model,
         compute_logits=compute_logits,
@@ -567,7 +580,7 @@ def _graph_fixture(
         rank=0,
         tensor_parallel_size=1,
         scratch_block_id=9,
-        block_size=256,
+        block_size=block_size,
         graph_pool="pool-17",
         graph_factory=graph_factory,
         capture_context_factory=capture_context_factory,
@@ -592,6 +605,9 @@ def _graph_fixture(
         flash_attn_num_splits=flash_attn_num_splits,
         stats=stats,
     )
+    if steps_per_launch is not None:
+        capture_kwargs["steps_per_launch"] = steps_per_launch
+    graph = graph_class.capture(**capture_kwargs)
     return graph, tensors, graphs[0], events, context_slots
 
 
@@ -2618,6 +2634,149 @@ def test_complete_step_capture_orders_body_and_uses_private_scratch() -> None:
     assert summary["capture_receipts"][0][
         "scratch_block_count"
     ] == 1
+
+
+def test_folded_capture_runs_eight_warmup_and_eight_captured_steps(
+) -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedGraph)
+    graph, _tensors, _fake_graph, events, context_slots = (
+        _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+        )
+    )
+
+    model_events = [
+        event for event in events if event[1] == "model"
+    ]
+    assert len(model_events) == 16
+    assert [event[0] for event in model_events] == (
+        ["outside"] * 8 + ["capture"] * 8
+    )
+    assert [event[2] for event in model_events[:8]] == [
+        (0,),
+        (1,),
+        (2,),
+        (3,),
+        (4,),
+        (5,),
+        (6,),
+        (7,),
+    ]
+    assert [event[2] for event in model_events[8:]] == [
+        (0,),
+        (9,),
+        (10,),
+        (11,),
+        (12,),
+        (13,),
+        (14,),
+        (15,),
+    ]
+    assert [event[3] for event in model_events] == (
+        [(ordinal,) for ordinal in range(8)] * 2
+    )
+    assert context_slots == [(9 * 256,), (9 * 256,)]
+    assert graph.receipt.steps_per_launch == 8
+    assert graph.receipt.retained_output_tensor_count == 32
+    assert len(graph.retained_outputs) == 32
+
+
+def test_folded_capture_advances_all_static_state_in_order() -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedGraph)
+    _graph, _tensors, _fake_graph, events, _context_slots = (
+        _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+        )
+    )
+
+    capture_enter = events.index(("capture", "enter"))
+    capture_exit = events.index(("capture", "exit"))
+    warmup_events = events[:capture_enter]
+    capture_events = events[capture_enter + 1:capture_exit]
+    for phase_events, expected_tokens in (
+        (warmup_events, list(range(1, 9))),
+        (capture_events, list(range(9, 17))),
+    ):
+        history_writes = [
+            event
+            for event in phase_events
+            if event[0] == "token_history"
+            and event[1] == "index_copy_"
+        ]
+        assert [event[3] for event in history_writes] == [
+            [ordinal] for ordinal in range(8)
+        ]
+        assert [event[4] for event in history_writes] == [
+            [token] for token in expected_tokens
+        ]
+        for tensor_name in (
+            "position",
+            "context_length",
+            "slot_mapping",
+            "history_index",
+        ):
+            increments = [
+                event
+                for event in phase_events
+                if event[0] == tensor_name
+                and event[1] == "add_"
+            ]
+            assert len(increments) == 8
+            assert all(event[2] == 1 for event in increments)
+
+
+def test_folded_capture_identity_includes_steps_per_launch() -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedGraph)
+    original_next_ptr = _BurstTensor._next_ptr
+    try:
+        _BurstTensor._next_ptr = 50_000
+        octet, *_ = _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+        )
+        _BurstTensor._next_ptr = 50_000
+        quartet, *_ = _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=4,
+        )
+    finally:
+        _BurstTensor._next_ptr = original_next_ptr
+
+    assert octet.receipt.steps_per_launch == 8
+    assert quartet.receipt.steps_per_launch == 4
+    assert (
+        octet.receipt.graph_identity_sha256
+        != quartet.receipt.graph_identity_sha256
+    )
+
+
+def test_folded_capture_requires_scratch_and_history_capacity() -> None:
+    assert callable(ExactGreedyDecodeBurstFoldedGraph)
+    _assert_raises(
+        ValueError,
+        "block_size must cover every folded logical step",
+        lambda: _graph_fixture(
+            history_capacity=16,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+            block_size=7,
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        "history capacity must cover every folded logical step",
+        lambda: _graph_fixture(
+            history_capacity=7,
+            graph_class=ExactGreedyDecodeBurstFoldedGraph,
+            steps_per_launch=8,
+        ),
+    )
 
 
 def test_capture_binds_flash_attention_split_to_identity_and_receipt() -> None:

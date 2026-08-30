@@ -1272,6 +1272,8 @@ class ExactGreedyDecodeBurstCaptureReceipt:
     scratch_block_count: int
     correctness_trace: bool
     flash_attn_num_splits: int
+    steps_per_launch: int = 1
+    retained_output_tensor_count: int = 4
 
     def __post_init__(self) -> None:
         _require_digest(
@@ -1297,6 +1299,14 @@ class ExactGreedyDecodeBurstCaptureReceipt:
         _require_non_negative_int(
             self.flash_attn_num_splits,
             "flash_attn_num_splits",
+        )
+        _require_positive_int(
+            self.steps_per_launch,
+            "steps_per_launch",
+        )
+        _require_positive_int(
+            self.retained_output_tensor_count,
+            "retained_output_tensor_count",
         )
 
 
@@ -2287,6 +2297,7 @@ class ExactGreedyDecodeBurstGraph:
         sampled_logit_ordinals: tuple[int, ...] = (),
         flash_attn_num_splits: int = 0,
         stats: Optional[ExactGreedyDecodeBurstStats] = None,
+        steps_per_launch: int = 1,
     ) -> "ExactGreedyDecodeBurstGraph":
         if not isinstance(tensors, dict):
             raise ValueError("tensors must be a dict")
@@ -2318,6 +2329,14 @@ class ExactGreedyDecodeBurstGraph:
             flash_attn_num_splits,
             "flash_attn_num_splits",
         )
+        _require_positive_int(
+            steps_per_launch,
+            "steps_per_launch",
+        )
+        if block_size < steps_per_launch:
+            raise ValueError(
+                "block_size must cover every folded logical step"
+            )
         sampled_logit_ordinals = _validate_integer_tuple(
             sampled_logit_ordinals,
             "sampled_logit_ordinals",
@@ -2339,6 +2358,11 @@ class ExactGreedyDecodeBurstGraph:
             history_capacity,
             "history capacity",
         )
+        if history_capacity < steps_per_launch:
+            raise ValueError(
+                "history capacity must cover every "
+                "folded logical step"
+            )
         if any(
             value >= history_capacity
             for value in sampled_logit_ordinals
@@ -2393,6 +2417,7 @@ class ExactGreedyDecodeBurstGraph:
             "scratch_block_id": scratch_block_id,
             "correctness_trace": correctness_trace,
             "flash_attn_num_splits": flash_attn_num_splits,
+            "steps_per_launch": steps_per_launch,
             "sampled_logit_ordinals": list(
                 sampled_logit_ordinals
             ),
@@ -2433,13 +2458,14 @@ class ExactGreedyDecodeBurstGraph:
 
         try:
             prepare_capture_state()
-            cls._run_complete_step(
-                tensors=tensors,
-                model=model,
-                compute_logits=compute_logits,
-                float32_dtype=float32_dtype,
-                correctness_trace=correctness_trace,
-            )
+            for _ in range(steps_per_launch):
+                cls._run_complete_step(
+                    tensors=tensors,
+                    model=model,
+                    compute_logits=compute_logits,
+                    float32_dtype=float32_dtype,
+                    correctness_trace=correctness_trace,
+                )
             synchronize()
             reset_context()
 
@@ -2451,12 +2477,20 @@ class ExactGreedyDecodeBurstGraph:
                 "capture start time",
             )
             with capture_context_factory(graph, graph_pool):
-                retained_outputs = cls._run_complete_step(
-                    tensors=tensors,
-                    model=model,
-                    compute_logits=compute_logits,
-                    float32_dtype=float32_dtype,
-                    correctness_trace=correctness_trace,
+                retained_groups = tuple(
+                    cls._run_complete_step(
+                        tensors=tensors,
+                        model=model,
+                        compute_logits=compute_logits,
+                        float32_dtype=float32_dtype,
+                        correctness_trace=correctness_trace,
+                    )
+                    for _ in range(steps_per_launch)
+                )
+                retained_outputs = tuple(
+                    tensor
+                    for group in retained_groups
+                    for tensor in group
                 )
             synchronize()
             end_ns = clock_ns()
@@ -2512,6 +2546,8 @@ class ExactGreedyDecodeBurstGraph:
             scratch_block_count=1,
             correctness_trace=correctness_trace,
             flash_attn_num_splits=flash_attn_num_splits,
+            steps_per_launch=steps_per_launch,
+            retained_output_tensor_count=len(retained_outputs),
         )
         stats.record_capture(receipt)
         return cls(
@@ -3144,3 +3180,21 @@ class ExactGreedyDecodeBurstGraph:
 
     def summary(self) -> dict[str, object]:
         return self.stats.summary()
+
+
+class ExactGreedyDecodeBurstFoldedGraph(
+    ExactGreedyDecodeBurstGraph
+):
+    """Own one graph containing several ordered complete-token steps."""
+
+    @classmethod
+    def capture(
+        cls,
+        *,
+        steps_per_launch: int = 8,
+        **kwargs,
+    ) -> "ExactGreedyDecodeBurstFoldedGraph":
+        return super().capture(
+            steps_per_launch=steps_per_launch,
+            **kwargs,
+        )
