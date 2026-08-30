@@ -44,6 +44,14 @@ REQUIRED_TABLES = {
         "demangledName",
         "shortName",
     },
+    "CUPTI_ACTIVITY_KIND_GRAPH_TRACE": {
+        "start",
+        "end",
+        "streamId",
+        "globalPid",
+        "graphId",
+        "graphExecId",
+    },
 }
 KERNEL_ROLES = (
     "MATMUL",
@@ -324,6 +332,40 @@ def _read_kernels(
     return kernels
 
 
+def _read_graph_executions(
+    connection: sqlite3.Connection,
+) -> list[dict]:
+    executions = []
+    query = (
+        "SELECT start, end, streamId, globalPid, graphId, graphExecId "
+        "FROM CUPTI_ACTIVITY_KIND_GRAPH_TRACE"
+    )
+    for row in connection.execute(query):
+        executions.append({
+            "start_ns": int(row["start"]),
+            "end_ns": int(row["end"]),
+            "stream_id": int(row["streamId"]),
+            "global_pid": (
+                None
+                if row["globalPid"] is None
+                else int(row["globalPid"])
+            ),
+            "name": "cuda_graph_execution",
+            "graph_id": int(row["graphId"]),
+            "graph_exec_id": int(row["graphExecId"]),
+        })
+    executions.sort(
+        key=lambda item: (
+            item["start_ns"],
+            item["end_ns"],
+            item["stream_id"],
+            item["graph_id"],
+            item["graph_exec_id"],
+        )
+    )
+    return executions
+
+
 def assign_kernels_to_ranges(
     ranges: list[dict],
     kernels: list[dict],
@@ -377,6 +419,10 @@ def assign_kernels_to_ranges(
             "stream_id": stream_id,
             "global_pid": kernel.get("global_pid"),
             "name": name,
+        } | {
+            field: kernel[field]
+            for field in ("graph_id", "graph_exec_id")
+            if field in kernel
         })
     return assigned
 
@@ -396,10 +442,23 @@ def read_decode_trace(path: Path) -> dict:
         }
         ranges = _read_ranges(connection, strings)
         kernels = _read_kernels(connection, strings)
+        graph_executions = _read_graph_executions(connection)
+    execution_rows = sorted(
+        kernels + graph_executions,
+        key=lambda item: (
+            item["start_ns"],
+            item["end_ns"],
+            item["stream_id"],
+            item["name"],
+        ),
+    )
     return {
         "classification": "COMPLETE",
         "ranges": ranges,
-        "kernel_rows": assign_kernels_to_ranges(ranges, kernels),
+        "kernel_rows": assign_kernels_to_ranges(
+            ranges,
+            execution_rows,
+        ),
     }
 
 

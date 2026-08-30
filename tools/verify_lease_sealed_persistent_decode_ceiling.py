@@ -588,6 +588,25 @@ def _validate_kernel_rows(rows: list[dict]) -> tuple[list[dict], dict]:
         if current["role"] != "UNKNOWN" and current["role"] != inferred:
             raise ValueError("kernel role mismatch")
         normalized.append(current)
+    identity_fields = (
+        "attempt",
+        "workload",
+        "repetition",
+        "context",
+        "burst",
+        "logical_tokens",
+    )
+    transactions = {
+        tuple(row.get(field) for field in identity_fields)
+        for row in normalized
+    }
+    graph_transactions = {
+        tuple(row.get(field) for field in identity_fields)
+        for row in normalized
+        if row["role"] == "RUNTIME_OR_GRAPH"
+    }
+    if transactions - graph_transactions:
+        raise ValueError("graph execution inventory is incomplete")
     total_duration = sum(row["duration_ns"] for row in normalized)
     classified = [row for row in normalized if row["role"] != "UNKNOWN"]
     coverage = {

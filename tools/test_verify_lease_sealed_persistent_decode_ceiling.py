@@ -188,6 +188,18 @@ def _trace_rows(context: int) -> tuple[list[dict], list[dict]]:
             "duration_ns": 16_000_000,
             "stream_id": 7,
             "global_pid": 1,
+            "name": "cuda_graph_execution",
+            "role": "RUNTIME_OR_GRAPH",
+            "graph_id": 13,
+            "graph_exec_id": 14,
+        },
+        {
+            **identity,
+            "start_ns": 32_000_100,
+            "end_ns": 48_000_100,
+            "duration_ns": 16_000_000,
+            "stream_id": 7,
+            "global_pid": 1,
             "name": "ampere_bf16_gemm",
             "role": "MATMUL",
         },
@@ -263,7 +275,7 @@ def make_complete_artifact(root: Path) -> Path:
             "eligible_zero_cost_ns_per_token":
                 16_000_000 / 127,
             "candidate_cuda_duration_ns": 16_000_000,
-            "total_kernel_duration_ns": 32_000_000,
+            "total_kernel_duration_ns": 48_000_000,
             "classified_launch_ratio": 1.0,
             "classified_duration_ratio": 1.0,
             "segment_signatures": [_segment_signature()],
@@ -283,7 +295,7 @@ def make_complete_artifact(root: Path) -> Path:
             "byte_length": 1024 + context,
             "sha256": _sha256_bytes(str(context).encode("utf-8")),
             "transaction_count": 1,
-            "kernel_count": 2,
+            "kernel_count": 3,
         })
     trace_summary = {
         "schema_version": ceiling.TRACE_SUMMARY_SCHEMA_VERSION,
@@ -381,6 +393,21 @@ def test_verifier_reconstructs_ceiling_without_trusting_ceiling_json(
 
     with pytest.raises(ValueError, match="ceiling mismatch"):
         verifier.verify_artifact_directory(run_dir)
+
+
+def test_verifier_requires_graph_execution_per_transaction() -> None:
+    kernels, _segments = _trace_rows(256)
+    kernels = [
+        row
+        for row in kernels
+        if row["role"] != "RUNTIME_OR_GRAPH"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="graph execution inventory is incomplete",
+    ):
+        verifier._validate_kernel_rows(kernels)
 
 
 @pytest.mark.parametrize(
@@ -544,7 +571,7 @@ def test_verifier_accepts_complete_bundle(tmp_path: Path) -> None:
         "classification": "GO_PERSISTENT_DECODE_CEILING",
         "timing_row_count": 15,
         "structural_context_count": 3,
-        "kernel_row_count": 6,
+        "kernel_row_count": 9,
         "segment_row_count": 3,
     }
 

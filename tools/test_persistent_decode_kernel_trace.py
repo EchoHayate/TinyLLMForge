@@ -43,6 +43,7 @@ def _create_trace(
     *,
     ranges=None,
     kernels=None,
+    graph_traces=None,
     omit_table=None,
 ):
     ranges = ranges or [(_label(), 100, 300, 0x1000007)]
@@ -50,6 +51,7 @@ def _create_trace(
         (120, 160, 7, 0x1000000, "void rms_norm_kernel"),
         (170, 260, 7, 0x1000000, "ampere_sgemm_128x64"),
     ]
+    graph_traces = graph_traces or []
     connection = sqlite3.connect(path)
     if omit_table != "StringIds":
         connection.execute(
@@ -71,6 +73,15 @@ def _create_trace(
             "streamId INTEGER NOT NULL, correlationId INTEGER, "
             "globalPid INTEGER, demangledName INTEGER, "
             "shortName INTEGER)"
+        )
+    if omit_table != "CUPTI_ACTIVITY_KIND_GRAPH_TRACE":
+        connection.execute(
+            "CREATE TABLE CUPTI_ACTIVITY_KIND_GRAPH_TRACE ("
+            "start INTEGER NOT NULL, end INTEGER NOT NULL, "
+            "deviceId INTEGER NOT NULL, contextId INTEGER NOT NULL, "
+            "greenContextId INTEGER, streamId INTEGER NOT NULL, "
+            "correlationId INTEGER, globalPid INTEGER, "
+            "graphId INTEGER NOT NULL, graphExecId INTEGER NOT NULL)"
         )
     if omit_table is None:
         names = sorted({row[4] for row in kernels})
@@ -110,6 +121,32 @@ def _create_trace(
                     global_pid,
                     name,
                 ) in enumerate(kernels, start=1)
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO CUPTI_ACTIVITY_KIND_GRAPH_TRACE "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    start,
+                    end,
+                    0,
+                    1,
+                    None,
+                    stream_id,
+                    index,
+                    global_pid,
+                    graph_id,
+                    graph_exec_id,
+                )
+                for index, (
+                    start,
+                    end,
+                    stream_id,
+                    global_pid,
+                    graph_id,
+                    graph_exec_id,
+                ) in enumerate(graph_traces, start=1)
             ],
         )
     connection.commit()
@@ -187,6 +224,47 @@ def test_read_decode_trace_maps_kernels_to_non_overlapping_ranges(tmp_path):
     }]
 
 
+def test_graph_execution_is_a_barrier_between_candidate_segments(tmp_path):
+    trace = _create_trace(
+        tmp_path / "graph-barrier.sqlite",
+        kernels=[
+            (120, 130, 7, 0x1000000, "void rms_norm_kernel"),
+            (170, 180, 7, 0x1000000, "void silu_and_mul_kernel"),
+        ],
+        graph_traces=[
+            (140, 160, 7, 0x1000000, 13, 14),
+        ],
+    )
+
+    parsed = read_decode_trace(trace)
+    classified = classify_kernel_rows(parsed["kernel_rows"])
+    segments = build_candidate_segments(classified)
+
+    assert [
+        (row["name"], row["role"])
+        for row in classified
+    ] == [
+        ("void rms_norm_kernel", "NORMALIZATION"),
+        ("cuda_graph_execution", "RUNTIME_OR_GRAPH"),
+        ("void silu_and_mul_kernel", "ELEMENTWISE"),
+    ]
+    assert [row["kernel_count"] for row in segments] == [1, 1]
+    assert [row["wall_union_ns"] for row in segments] == [10, 10]
+    assert summarize_trace_coverage(classified) == {
+        "kernel_launch_count": 3,
+        "classified_kernel_launch_count": 3,
+        "classified_launch_ratio": 1.0,
+        "kernel_duration_ns": 40,
+        "classified_kernel_duration_ns": 40,
+        "classified_duration_ratio": 1.0,
+        "role_histogram": {
+            "ELEMENTWISE": 1,
+            "NORMALIZATION": 1,
+            "RUNTIME_OR_GRAPH": 1,
+        },
+    }
+
+
 def test_trace_rejects_overlapping_transaction_ranges(tmp_path):
     trace = _create_trace(
         tmp_path / "overlap.sqlite",
@@ -255,6 +333,7 @@ def test_trace_ignores_unrelated_nvtx_and_loader_kernels(tmp_path):
         "StringIds",
         "NVTX_EVENTS",
         "CUPTI_ACTIVITY_KIND_KERNEL",
+        "CUPTI_ACTIVITY_KIND_GRAPH_TRACE",
     ],
 )
 def test_trace_requires_supported_nsys_schema(tmp_path, table):
