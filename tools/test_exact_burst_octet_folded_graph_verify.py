@@ -243,3 +243,38 @@ def test_verifier_rejects_frozen_workload_and_unconsumed_metric_drift(
     )
     with pytest.raises(ValueError, match="non-finite"):
         verifier.verify_artifact_directory(run_dir)
+
+
+def test_verifier_independently_enforces_tpot_p99_protection(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_fixture_bundle(tmp_path)
+    path = run_dir / "performance_rows.jsonl"
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    for row in rows:
+        if (
+            row["context_length"] == 8192
+            and row["policy"] == "octet_folded_graph"
+        ):
+            row["tpot_p99_ns"] = 1_020_001.0
+    _write_jsonl(path, rows)
+    correctness = [
+        json.loads(line)
+        for line in (run_dir / "correctness_rows.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    _write_json(
+        run_dir / "ceiling.json",
+        ceiling.summarize_evidence(rows, correctness),
+    )
+
+    result = verifier.verify_artifact_directory(
+        run_dir,
+        source_root=ROOT,
+    )
+
+    assert result["classification"] == "NO_GO_CEILING"

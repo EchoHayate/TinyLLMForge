@@ -30,8 +30,12 @@ def _valid_metrics() -> dict:
         "runtime_inventory_exact": True,
         "physical_launch_reduction_exact": True,
         "no_runtime_anomalies": True,
+        "minimum_foldable_launch_reduction_pct": 85.0,
         "aggregate_median_tpot_improvement_pct": 1.0,
         "aggregate_p95_tpot_improvement_pct": 0.5,
+        "maximum_context_median_tpot_regression_pct": 2.0,
+        "maximum_context_p95_tpot_regression_pct": 2.0,
+        "maximum_tpot_p99_regression_pct": 2.0,
         "maximum_ttft_regression_pct": 2.0,
         "maximum_e2e_regression_pct": 2.0,
         "minimum_throughput_improvement_pct": -2.0,
@@ -45,6 +49,7 @@ def _valid_metrics() -> dict:
 def test_ceiling_thresholds_are_frozen() -> None:
     assert ceiling.MINIMUM_MEDIAN_TPOT_IMPROVEMENT_PCT == 1.0
     assert ceiling.MINIMUM_P95_TPOT_IMPROVEMENT_PCT == 0.5
+    assert ceiling.MINIMUM_FOLDABLE_LAUNCH_REDUCTION_PCT == 85.0
     assert ceiling.MAXIMUM_PROTECTED_REGRESSION_PCT == 2.0
     assert ceiling.MAXIMUM_CAPTURE_MEMORY_RATIO == 0.01
     assert ceiling.MAXIMUM_RETAINED_STATIC_DELTA_BYTES == (
@@ -69,8 +74,18 @@ def test_ceiling_thresholds_are_frozen() -> None:
         ("runtime_inventory_exact", False),
         ("physical_launch_reduction_exact", False),
         ("no_runtime_anomalies", False),
+        ("minimum_foldable_launch_reduction_pct", 84.999999),
         ("aggregate_median_tpot_improvement_pct", 0.999999),
         ("aggregate_p95_tpot_improvement_pct", 0.499999),
+        (
+            "maximum_context_median_tpot_regression_pct",
+            2.000001,
+        ),
+        (
+            "maximum_context_p95_tpot_regression_pct",
+            2.000001,
+        ),
+        ("maximum_tpot_p99_regression_pct", 2.000001),
         ("maximum_ttft_regression_pct", 2.000001),
         ("maximum_e2e_regression_pct", 2.000001),
         ("minimum_throughput_improvement_pct", -2.000001),
@@ -221,4 +236,42 @@ def test_swapped_pair_execution_order_is_no_go(
         _correctness_rows(tmp_path),
     )
     assert result["execution_order_exact"] is False
+    assert result["classification"] == ceiling.NO_GO_CEILING
+
+
+def test_summary_enforces_launch_and_tpot_protection_metrics(
+    tmp_path: Path,
+) -> None:
+    performance = _performance_rows()
+    result = ceiling.summarize_evidence(
+        performance,
+        _correctness_rows(tmp_path),
+    )
+    assert result["minimum_foldable_launch_reduction_pct"] == (
+        pytest.approx(87.5)
+    )
+    assert result[
+        "maximum_context_median_tpot_regression_pct"
+    ] == pytest.approx(-1.0)
+    assert result[
+        "maximum_context_p95_tpot_regression_pct"
+    ] == pytest.approx(-0.5)
+    assert result["maximum_tpot_p99_regression_pct"] == (
+        pytest.approx(0.0)
+    )
+
+    for row in performance:
+        if (
+            row["context_length"] == 8192
+            and row["policy"] == "octet_folded_graph"
+        ):
+            row["tpot_p99_ns"] = 1_020_001.0
+    result = ceiling.summarize_evidence(
+        performance,
+        _correctness_rows(tmp_path / "p99"),
+    )
+    assert result["maximum_tpot_p99_regression_pct"] > 2.0
+    assert "maximum_tpot_p99_regression_pct" in (
+        result["classification_reasons"]
+    )
     assert result["classification"] == ceiling.NO_GO_CEILING

@@ -15,6 +15,7 @@ NO_GO_CEILING = "NO_GO_CEILING"
 
 MINIMUM_MEDIAN_TPOT_IMPROVEMENT_PCT = 1.0
 MINIMUM_P95_TPOT_IMPROVEMENT_PCT = 0.5
+MINIMUM_FOLDABLE_LAUNCH_REDUCTION_PCT = 85.0
 MAXIMUM_PROTECTED_REGRESSION_PCT = 2.0
 MAXIMUM_CAPTURE_MEMORY_RATIO = 0.01
 MAXIMUM_RETAINED_STATIC_DELTA_BYTES = 128 * 1024 * 1024
@@ -107,6 +108,11 @@ def classification_reasons(metrics: dict) -> tuple[str, ...]:
             reasons.append(field)
     thresholds = (
         (
+            "minimum_foldable_launch_reduction_pct",
+            MINIMUM_FOLDABLE_LAUNCH_REDUCTION_PCT,
+            "minimum",
+        ),
+        (
             "aggregate_median_tpot_improvement_pct",
             MINIMUM_MEDIAN_TPOT_IMPROVEMENT_PCT,
             "minimum",
@@ -115,6 +121,21 @@ def classification_reasons(metrics: dict) -> tuple[str, ...]:
             "aggregate_p95_tpot_improvement_pct",
             MINIMUM_P95_TPOT_IMPROVEMENT_PCT,
             "minimum",
+        ),
+        (
+            "maximum_context_median_tpot_regression_pct",
+            MAXIMUM_PROTECTED_REGRESSION_PCT,
+            "maximum",
+        ),
+        (
+            "maximum_context_p95_tpot_regression_pct",
+            MAXIMUM_PROTECTED_REGRESSION_PCT,
+            "maximum",
+        ),
+        (
+            "maximum_tpot_p99_regression_pct",
+            MAXIMUM_PROTECTED_REGRESSION_PCT,
+            "maximum",
         ),
         (
             "maximum_ttft_regression_pct",
@@ -265,6 +286,38 @@ def summarize_evidence(
         )
         for control, candidate in zip(controls, candidates)
     ]
+    p99_improvements = [
+        _improvement_pct(
+            control["tpot_p99_ns"],
+            candidate["tpot_p99_ns"],
+        )
+        for control, candidate in zip(controls, candidates)
+    ]
+    context_median_improvements = []
+    context_p95_improvements = []
+    for context_length in profile.CONTEXT_LENGTHS:
+        context_pairs = [
+            pair
+            for (
+                repetition,
+                observed_context_length,
+            ), pair in pairs.items()
+            if observed_context_length == context_length
+        ]
+        context_median_improvements.append(statistics.median(
+            _improvement_pct(
+                pair["one_token_graph"]["tpot_median_ns"],
+                pair["octet_folded_graph"]["tpot_median_ns"],
+            )
+            for pair in context_pairs
+        ))
+        context_p95_improvements.append(statistics.median(
+            _improvement_pct(
+                pair["one_token_graph"]["tpot_p95_ns"],
+                pair["octet_folded_graph"]["tpot_p95_ns"],
+            )
+            for pair in context_pairs
+        ))
     ttft_regressions = [
         -_improvement_pct(
             control["ttft_ns"],
@@ -304,6 +357,14 @@ def summarize_evidence(
         == GENERATED_LOGICAL_REPLAYS % 8
         for control, candidate in zip(controls, candidates)
     )
+    foldable_launch_reductions = [
+        _improvement_pct(
+            control["one_token_cuda_graph_launches"]
+            - candidate["one_token_cuda_graph_launches"],
+            candidate["folded_cuda_graph_launches"],
+        )
+        for control, candidate in zip(controls, candidates)
+    ]
     no_runtime_anomalies = all(
         row["fallback_count"] == 0
         and row["rollback_count"] == 0
@@ -362,10 +423,22 @@ def summarize_evidence(
         "physical_launch_reduction_exact":
             physical_launch_reduction_exact,
         "no_runtime_anomalies": no_runtime_anomalies,
+        "minimum_foldable_launch_reduction_pct": min(
+            foldable_launch_reductions
+        ),
         "aggregate_median_tpot_improvement_pct":
             statistics.median(median_improvements),
         "aggregate_p95_tpot_improvement_pct":
             statistics.median(p95_improvements),
+        "maximum_context_median_tpot_regression_pct": max(
+            -value for value in context_median_improvements
+        ),
+        "maximum_context_p95_tpot_regression_pct": max(
+            -value for value in context_p95_improvements
+        ),
+        "maximum_tpot_p99_regression_pct": max(
+            -value for value in p99_improvements
+        ),
         "maximum_ttft_regression_pct": max(ttft_regressions),
         "maximum_e2e_regression_pct": max(e2e_regressions),
         "minimum_throughput_improvement_pct": min(
@@ -433,8 +506,12 @@ def _empty_metrics() -> dict:
         "runtime_inventory_exact": False,
         "physical_launch_reduction_exact": False,
         "no_runtime_anomalies": False,
+        "minimum_foldable_launch_reduction_pct": float("-inf"),
         "aggregate_median_tpot_improvement_pct": float("-inf"),
         "aggregate_p95_tpot_improvement_pct": float("-inf"),
+        "maximum_context_median_tpot_regression_pct": float("inf"),
+        "maximum_context_p95_tpot_regression_pct": float("inf"),
+        "maximum_tpot_p99_regression_pct": float("inf"),
         "maximum_ttft_regression_pct": float("inf"),
         "maximum_e2e_regression_pct": float("inf"),
         "minimum_throughput_improvement_pct": float("-inf"),

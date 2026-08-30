@@ -42,6 +42,7 @@ REPETITIONS = 5
 WARMUP_REPETITIONS = 2
 MINIMUM_MEDIAN_TPOT_IMPROVEMENT_PCT = 1.0
 MINIMUM_P95_TPOT_IMPROVEMENT_PCT = 0.5
+MINIMUM_FOLDABLE_LAUNCH_REDUCTION_PCT = 85.0
 MAXIMUM_PROTECTED_REGRESSION_PCT = 2.0
 MAXIMUM_CAPTURE_MEMORY_RATIO = 0.01
 MAXIMUM_RETAINED_STATIC_DELTA_BYTES = 128 * 1024 * 1024
@@ -574,8 +575,28 @@ def _classification_reasons(metrics: dict) -> list[str]:
         if metrics[field] is not True:
             reasons.append(field)
     thresholds = (
+        (
+            "minimum_foldable_launch_reduction_pct",
+            MINIMUM_FOLDABLE_LAUNCH_REDUCTION_PCT,
+            "min",
+        ),
         ("aggregate_median_tpot_improvement_pct", 1.0, "min"),
         ("aggregate_p95_tpot_improvement_pct", 0.5, "min"),
+        (
+            "maximum_context_median_tpot_regression_pct",
+            MAXIMUM_PROTECTED_REGRESSION_PCT,
+            "max",
+        ),
+        (
+            "maximum_context_p95_tpot_regression_pct",
+            MAXIMUM_PROTECTED_REGRESSION_PCT,
+            "max",
+        ),
+        (
+            "maximum_tpot_p99_regression_pct",
+            MAXIMUM_PROTECTED_REGRESSION_PCT,
+            "max",
+        ),
         ("maximum_ttft_regression_pct", 2.0, "max"),
         ("maximum_e2e_regression_pct", 2.0, "max"),
         ("minimum_throughput_improvement_pct", -2.0, "min"),
@@ -633,6 +654,46 @@ def _reconstruct_ceiling(
         )
         for control, candidate in zip(controls, candidates)
     ]
+    p99_improvements = [
+        _improvement_pct(
+            control["tpot_p99_ns"],
+            candidate["tpot_p99_ns"],
+        )
+        for control, candidate in zip(controls, candidates)
+    ]
+    context_median_improvements = []
+    context_p95_improvements = []
+    for context_length in CONTEXT_LENGTHS:
+        context_pairs = [
+            pair
+            for (
+                repetition,
+                observed_context_length,
+            ), pair in pairs.items()
+            if observed_context_length == context_length
+        ]
+        context_median_improvements.append(statistics.median(
+            _improvement_pct(
+                pair["one_token_graph"]["tpot_median_ns"],
+                pair["octet_folded_graph"]["tpot_median_ns"],
+            )
+            for pair in context_pairs
+        ))
+        context_p95_improvements.append(statistics.median(
+            _improvement_pct(
+                pair["one_token_graph"]["tpot_p95_ns"],
+                pair["octet_folded_graph"]["tpot_p95_ns"],
+            )
+            for pair in context_pairs
+        ))
+    foldable_launch_reductions = [
+        _improvement_pct(
+            control["one_token_cuda_graph_launches"]
+            - candidate["one_token_cuda_graph_launches"],
+            candidate["folded_cuda_graph_launches"],
+        )
+        for control, candidate in zip(controls, candidates)
+    ]
     ttft_regressions = [
         -_improvement_pct(control["ttft_ns"], candidate["ttft_ns"])
         for control, candidate in zip(controls, candidates)
@@ -665,10 +726,22 @@ def _reconstruct_ceiling(
         "runtime_inventory_exact": True,
         "physical_launch_reduction_exact": True,
         "no_runtime_anomalies": True,
+        "minimum_foldable_launch_reduction_pct": min(
+            foldable_launch_reductions
+        ),
         "aggregate_median_tpot_improvement_pct":
             statistics.median(median_improvements),
         "aggregate_p95_tpot_improvement_pct":
             statistics.median(p95_improvements),
+        "maximum_context_median_tpot_regression_pct": max(
+            -value for value in context_median_improvements
+        ),
+        "maximum_context_p95_tpot_regression_pct": max(
+            -value for value in context_p95_improvements
+        ),
+        "maximum_tpot_p99_regression_pct": max(
+            -value for value in p99_improvements
+        ),
         "maximum_ttft_regression_pct": max(ttft_regressions),
         "maximum_e2e_regression_pct": max(e2e_regressions),
         "minimum_throughput_improvement_pct": min(
