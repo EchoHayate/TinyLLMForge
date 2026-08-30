@@ -866,14 +866,14 @@ def run_controller(args) -> dict:
     )
     paths = remote_paths(args.run_tag)
     require_remote_destinations_absent(paths)
-    gpu_rows, selected = wait_for_clean_a100(
-        timeout_seconds=args.gpu_timeout_seconds,
-        poll_interval_seconds=args.poll_interval_seconds,
-    )
     archive = committed_source_archive(REPO_ROOT, source_commit)
     source = upload_source_archive(
         staging=paths["staging"],
         archive=archive,
+    )
+    gpu_rows, selected = wait_for_clean_a100(
+        timeout_seconds=args.gpu_timeout_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
     )
     validate_kerberos(
         minimum_lifetime_seconds=MINIMUM_KERBEROS_LIFETIME_SECONDS
