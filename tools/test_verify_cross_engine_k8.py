@@ -115,6 +115,44 @@ def _write_valid_bundle(root: Path, *, classification="GO_CROSS_ENGINE_ADVANTAGE
     return root
 
 
+def test_verifier_accepts_unavailable_protected_metric_as_incomplete(tmp_path):
+    bundle = _write_valid_bundle(
+        tmp_path / "bundle",
+        classification="INCOMPLETE",
+    )
+    rows = [
+        json.loads(line)
+        for line in (bundle / "case_rows.jsonl").read_text().splitlines()
+        if line
+    ]
+    for row in rows:
+        if row["arm"] == "vllm_default_greedy":
+            row["peak_gpu_memory_bytes"] = "NOT_EXPOSED"
+    _write_jsonl(bundle / "case_rows.jsonl", rows)
+    hashed = (
+        "controller_manifest.json",
+        "environment_manifest.json",
+        "workload_manifest.json",
+        "case_rows.jsonl",
+        "correctness_rows.jsonl",
+        "comparison.json",
+        "summary.json",
+        "gate.json",
+    )
+    (bundle / "manifest.sha256").write_text(
+        "".join(f"{_sha256(bundle / name)}  {name}\n" for name in hashed),
+        encoding="utf-8",
+    )
+
+    result = verify_bundle(bundle, expected_source=SOURCE)
+
+    assert result["valid"] is True
+    assert result["recomputed_classification"] == "INCOMPLETE"
+    assert "metric_unavailable:peak_gpu_memory_ratio" in result[
+        "gate_reasons"
+    ]
+
+
 def test_verifier_recomputes_go_without_trusting_gate(tmp_path):
     bundle = _write_valid_bundle(
         tmp_path / "bundle",

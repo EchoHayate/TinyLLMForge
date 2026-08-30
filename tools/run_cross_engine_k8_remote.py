@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 from html.parser import HTMLParser
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -2020,11 +2021,20 @@ class RemoteController:
         tiny = aggregates["tinyllmforge_exact_k8"]
         vllm = aggregates[vllm_arm]
 
-        def ratio(metric: str) -> float:
-            return (
-                float(tiny["aggregate"][metric])
-                / float(vllm["aggregate"][metric])
-            )
+        def ratio(metric: str):
+            numerator = tiny["aggregate"][metric]
+            denominator = vllm["aggregate"][metric]
+            if (
+                isinstance(numerator, bool)
+                or isinstance(denominator, bool)
+                or not isinstance(numerator, (int, float))
+                or not isinstance(denominator, (int, float))
+                or not math.isfinite(float(numerator))
+                or not math.isfinite(float(denominator))
+                or denominator <= 0
+            ):
+                return "NOT_EXPOSED"
+            return float(numerator) / float(denominator)
 
         return {
             "aggregate": {

@@ -405,6 +405,7 @@ def run_worker(
                 "run_tag": plan["run_tag"],
                 "source_revision": plan["source_revision"],
                 "arm": arm,
+                "repetition": plan["repetition"],
                 "context": case["context"],
                 "output_tokens": len(result.token_ids),
                 "token_ids": list(result.token_ids),

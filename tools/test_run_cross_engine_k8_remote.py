@@ -119,6 +119,41 @@ def _config():
     )
 
 
+def test_comparison_preserves_unavailable_public_metric():
+    aggregates = {
+        arm: {
+            "aggregate": {
+                "median_tpot_ns": 10.0,
+                "output_tokens_per_second": 100.0,
+                "ttft_ns": 20.0,
+                "e2e_ns": 30.0,
+                "p95_tpot_ns": 11.0,
+                "p99_tpot_ns": 12.0,
+                "peak_gpu_memory_bytes": (
+                    "NOT_EXPOSED"
+                    if arm == "vllm_default_greedy"
+                    else 1_000.0
+                ),
+                "peak_rss_bytes": 2_000.0,
+            },
+            "contexts": {
+                context: {"median_tpot_ns": 10.0}
+                for context in ("short", "medium", "long")
+            },
+        }
+        for arm in ("tinyllmforge_exact_k8", "vllm_default_greedy")
+    }
+
+    comparison = RemoteController._build_comparison(
+        aggregates,
+        "vllm_default_greedy",
+    )
+
+    assert comparison["aggregate"]["peak_gpu_memory_ratio"] == (
+        "NOT_EXPOSED"
+    )
+
+
 def test_controller_injects_file_cache_into_every_ssh_command():
     runner = RecordingRunner(stdout="n232-195-203\n")
     controller = RemoteController(

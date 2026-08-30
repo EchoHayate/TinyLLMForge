@@ -224,6 +224,31 @@ def test_aggregation_takes_median_per_bucket_then_across_buckets():
     ] == 23.0
 
 
+def test_aggregation_preserves_unavailable_metric_without_imputing_zero():
+    rows = [
+        {
+            **_case_row(
+                "vllm_default_greedy",
+                "short",
+                repetition,
+                tpot=10.0,
+                throughput=100.0,
+            ),
+            "peak_gpu_memory_bytes": "NOT_EXPOSED",
+        }
+        for repetition in range(7)
+    ]
+
+    result = aggregate_case_rows(rows)
+
+    assert result["vllm_default_greedy"]["contexts"]["short"][
+        "peak_gpu_memory_bytes"
+    ] == "NOT_EXPOSED"
+    assert result["vllm_default_greedy"]["aggregate"][
+        "peak_gpu_memory_bytes"
+    ] == "NOT_EXPOSED"
+
+
 def _comparison_fixture():
     return {
         "complete": True,
@@ -266,6 +291,16 @@ def test_gate_requires_both_five_percent_gains_and_protected_metrics():
     assert classify_comparison(regressed)["classification"] == (
         "NO_CROSS_ENGINE_ADVANTAGE"
     )
+
+
+def test_gate_is_incomplete_when_protected_metric_is_not_exposed():
+    comparison = _comparison_fixture()
+    comparison["aggregate"]["peak_gpu_memory_ratio"] = "NOT_EXPOSED"
+
+    result = classify_comparison(comparison)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "metric_unavailable:peak_gpu_memory_ratio" in result["reasons"]
 
 
 def test_gate_classifies_parity_at_inclusive_five_percent_boundary():

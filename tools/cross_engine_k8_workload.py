@@ -7,6 +7,7 @@ from typing import Mapping, Sequence
 
 
 WORKLOAD_SCHEMA_VERSION = "cross-engine-k8.workload.v1"
+NOT_EXPOSED = "NOT_EXPOSED"
 REQUIRED_ARMS = (
     "tinyllmforge_host_greedy",
     "tinyllmforge_exact_k8",
@@ -272,10 +273,22 @@ def reconcile_correctness(
     }
 
 
-def _median(values: Sequence[float]) -> float:
+def _median(values: Sequence[float]):
     if not values:
         raise ValueError("metric rows cannot be empty")
-    return float(statistics.median(float(value) for value in values))
+    if any(value == NOT_EXPOSED for value in values):
+        return NOT_EXPOSED
+    numeric = []
+    for value in values:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or value < 0
+        ):
+            raise ValueError("metric value is invalid")
+        numeric.append(float(value))
+    return float(statistics.median(numeric))
 
 
 def aggregate_case_rows(rows: Sequence[Mapping]) -> dict:
@@ -336,6 +349,39 @@ def classify_comparison(comparison: Mapping) -> dict:
         }
     aggregate = comparison["aggregate"]
     contexts = comparison["contexts"]
+    unavailable = [
+        field
+        for field in (
+            "median_tpot_ratio",
+            "throughput_ratio",
+            *_PROTECTED_RATIO_FIELDS,
+        )
+        if (
+            isinstance(aggregate.get(field), bool)
+            or not isinstance(aggregate.get(field), (int, float))
+            or not math.isfinite(float(aggregate[field]))
+        )
+    ]
+    unavailable.extend(
+        f"{context}.median_tpot_ratio"
+        for context, values in contexts.items()
+        if (
+            isinstance(values.get("median_tpot_ratio"), bool)
+            or not isinstance(
+                values.get("median_tpot_ratio"),
+                (int, float),
+            )
+            or not math.isfinite(float(values["median_tpot_ratio"]))
+        )
+    )
+    if unavailable:
+        return {
+            "classification": "INCOMPLETE",
+            "reasons": [
+                f"metric_unavailable:{field}"
+                for field in unavailable
+            ],
+        }
     protected = all(
         float(aggregate[field]) <= 1.02
         for field in _PROTECTED_RATIO_FIELDS

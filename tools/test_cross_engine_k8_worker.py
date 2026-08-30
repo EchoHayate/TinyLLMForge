@@ -98,6 +98,9 @@ def test_worker_emits_one_terminal_receipt_per_arm(arm):
     assert result["arm"] == arm
     assert result["measured_rows"] == 3
     assert result["correctness_valid"] is True
+    assert {
+        row["repetition"] for row in result["correctness_rows"]
+    } == {0}
     assert result["performance_eligible"] is True
     assert adapter.calls[-1] == ("close", "close")
 

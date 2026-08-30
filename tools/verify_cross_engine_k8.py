@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
@@ -75,12 +76,18 @@ def _read_manifest(path: Path) -> dict[str, str]:
     return entries
 
 
-def _ratio(numerator, denominator) -> float:
-    numerator = float(numerator)
-    denominator = float(denominator)
-    if denominator <= 0:
-        raise ValueError("comparison denominator must be positive")
-    return numerator / denominator
+def _ratio(numerator, denominator):
+    if (
+        isinstance(numerator, bool)
+        or isinstance(denominator, bool)
+        or not isinstance(numerator, (int, float))
+        or not isinstance(denominator, (int, float))
+        or not math.isfinite(float(numerator))
+        or not math.isfinite(float(denominator))
+        or denominator <= 0
+    ):
+        return "NOT_EXPOSED"
+    return float(numerator) / float(denominator)
 
 
 def _comparison_from_aggregates(
