@@ -635,7 +635,7 @@ def classify(
         ),
     )
     capture_amortization_tokens = (
-        math.inf
+        None
         if saved_ms_per_token <= 0.0
         else (capture_duration_ns / 1_000_000.0)
         / saved_ms_per_token

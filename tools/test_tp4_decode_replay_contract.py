@@ -317,6 +317,16 @@ def test_low_replay_coverage_has_distinct_classification():
     assert "replay_coverage" in result["failed_gates"]
 
 
+def test_no_tpot_savings_has_null_capture_amortization():
+    evidence = _evidence()
+    for row in evidence["performance_rows"]:
+        if row["arm"] == "graph":
+            row["median_tpot_ms"] = 110.0
+    result = contract.classify(**evidence)
+    assert result["classification"] == "NO_GO_PERFORMANCE"
+    assert result["capture_amortization_tokens"] is None
+
+
 def test_warmup_and_measured_steps_have_distinct_rank_groups():
     evidence = _evidence()
     warmup_rows = []
@@ -405,6 +415,7 @@ def main() -> None:
         test_cross_rank_dispatch_disagreement_is_correctness_failure,
         test_collective_order_disagreement_is_correctness_failure,
         test_low_replay_coverage_has_distinct_classification,
+        test_no_tpot_savings_has_null_capture_amortization,
         test_warmup_and_measured_steps_have_distinct_rank_groups,
         test_capture_identity_disagreement_is_correctness_failure,
         test_each_performance_and_cost_threshold_can_fail,
