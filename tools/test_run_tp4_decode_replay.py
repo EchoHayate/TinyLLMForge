@@ -545,6 +545,26 @@ def test_failed_kerberos_preflight_is_persisted_as_incomplete():
     assert persisted == receipt
 
 
+def test_prelaunch_cleanup_is_clean_when_no_owned_process_exists():
+    with tempfile.TemporaryDirectory() as directory:
+        adapter = ProductionAdapter(
+            run_tag=RUN_TAG,
+            local_attempt_root=Path(directory) / "attempt",
+        )
+        adapter._scan_exact_tag = lambda plan: []
+        receipt = adapter.validate_cleanup(_plan(), None)
+        persisted = json.loads(
+            (
+                adapter.local_controller_root / "cleanup.json"
+            ).read_text(encoding="utf-8")
+        )
+
+    assert receipt["classification"] == "CLEAN"
+    assert receipt["owned_children_remaining"] == []
+    assert receipt["exact_tag_scans"] == [[], [], []]
+    assert persisted == receipt
+
+
 def test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean():
     planned = [_gpu(index) for index in range(4, 8)]
     plan = _plan(selected_gpus=planned)
@@ -595,6 +615,7 @@ def main_tests() -> None:
         test_remote_driver_never_reuses_a_dynamic_port_across_arms,
         test_kerberos_guard_covers_the_full_remote_command_window,
         test_failed_kerberos_preflight_is_persisted_as_incomplete,
+        test_prelaunch_cleanup_is_clean_when_no_owned_process_exists,
         test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean,
     )
     for test in tests:

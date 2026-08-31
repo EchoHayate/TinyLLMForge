@@ -1507,10 +1507,17 @@ class ProductionAdapter:
         scans = [self._scan_exact_tag(plan) for _ in range(3)]
         if self._cleanup is None:
             self._cleanup = {
-                "classification": "DIRTY",
+                "schema_version": (
+                    "tinyllmforge.tp4-decode-replay-cleanup.v1"
+                ),
+                "run_tag": plan["run_tag"],
+                "classification": (
+                    "CLEAN" if scans == [[], [], []] else "DIRTY"
+                ),
                 "owned_children_remaining": [
                     row for scan in scans for row in scan
                 ],
+                "exact_tag_scans": scans,
             }
         elif scans != [[], [], []]:
             self._cleanup["classification"] = "DIRTY"
