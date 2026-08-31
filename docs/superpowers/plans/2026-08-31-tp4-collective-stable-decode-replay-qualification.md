@@ -23,6 +23,23 @@ reconstruct the terminal classification from hash-bound evidence.
 TP4, JSON/JSONL, SHA-256, `unittest`/dependency-light script tests, SSH
 ControlMaster, Qwen3.8-27B BF16, four A100 80 GB PCIe GPUs.
 
+## Execution Status
+
+- Tasks 1–4 are implemented and pushed through
+  `c66f2dbfe12ba31ed010c6d733b569ae83fc7aa1`.
+- The five new gate suites pass with counts `12 + 7 + 6 + 6 + 16`.
+- Task 5 is not fully green: the local environment lacks `torch` for
+  `test_multi_sequence_cuda_graph_gate.py`, and the existing
+  `test_model_runner_spec_verify.py` test list references the undefined
+  `test_model_runner_invalidates_both_burst_graphs`.
+- Attempt `20260831-qwen38-tp4-decode-replay-r1` stopped before SSH or GPU
+  admission with an evidence-backed `INCOMPLETE` credential preflight.
+- The r1 audit is
+  `docs/superpowers/audits/2026-08-31-tp4-collective-stable-decode-replay-audit.md`.
+- No performance classification exists. Stage 1 remains prohibited.
+- After credentials are restored externally, a real retry must use a fresh
+  run tag; r1 must not be reused.
+
 ## Global Constraints
 
 - Work only in `/Users/bytedance/dev/TinyLLMForge`; Desktop is a symlink.
@@ -857,7 +874,7 @@ for the final audit.
 - Produces: a complete immutable terminal bundle or an evidence-backed
   `INCOMPLETE` result.
 
-- [ ] **Step 1: Confirm source and credential preconditions**
+- [x] **Step 1: Confirm source and credential preconditions**
 
 ```bash
 git status --short -- \
@@ -873,7 +890,7 @@ klist
 Do not renew credentials. If SSH fails, preserve controller evidence and stop
 the attempt as `INCOMPLETE`; do not create a second run with the same tag.
 
-- [ ] **Step 2: Launch the local monitor/controller**
+- [x] **Step 2: Launch the local monitor/controller**
 
 ```bash
 python tools/run_tp4_decode_replay.py monitor-and-run \
@@ -928,7 +945,7 @@ classification. Any disagreement is `INCOMPLETE`.
   remote/local SHA evidence.
 - Produces: one exact terminal statement and a prompt-to-artifact audit.
 
-- [ ] **Step 1: Write the benefit/cost result table**
+- [x] **Step 1: Write the benefit/cost result table**
 
 For Q0/Q1/Q2 and aggregate, report:
 
@@ -942,7 +959,7 @@ For Q0/Q1/Q2 and aggregate, report:
 - amortization tokens;
 - per-rank allocated and reserved deltas.
 
-- [ ] **Step 2: State the exact evidence boundary**
+- [x] **Step 2: State the exact evidence boundary**
 
 If `GO_STAGE1_JUSTIFIED`, state only that Stage 1 is justified. Do not claim
 production readiness.
@@ -952,7 +969,7 @@ If any `NO_GO`, stop the direction and name the failed thresholds and costs.
 If `INCOMPLETE`, name each missing artifact or unverifiable field and make no
 performance claim.
 
-- [ ] **Step 3: Build the prompt-to-artifact checklist**
+- [x] **Step 3: Build the prompt-to-artifact checklist**
 
 Map every requirement in the design to:
 
@@ -967,7 +984,7 @@ Q0/Q1/Q2 matrix, exact output parity, all-rank dispatch, collective order,
 replay coverage, benefit, cost, cleanup, manifest, dual verifier, tests,
 commit, push, and remote SHA.
 
-- [ ] **Step 4: Reconcile spec and plan**
+- [x] **Step 4: Reconcile spec and plan**
 
 Add terminal classification, immutable bundle path, verifier result paths,
 measured summary, and Stage-1 authorization/prohibition. Mark completed plan

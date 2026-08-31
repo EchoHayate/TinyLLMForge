@@ -565,6 +565,32 @@ Those claims require separate evidence.
 | No external process cleanup | Admission inventory and controller action receipt |
 | Commit and push discipline | Exact-path staging, one co-author trailer, remote SHA confirmation |
 
+## Execution Reconciliation
+
+Attempt `20260831-qwen38-tp4-decode-replay-r1` is terminally
+`INCOMPLETE` at the credential preflight boundary.
+
+The frozen local evidence is:
+
+- `artifacts/tp4_decode_replay/20260831-qwen38-tp4-decode-replay-r1/controller/source_identity.json`;
+- `artifacts/tp4_decode_replay/20260831-qwen38-tp4-decode-replay-r1/controller/ssh_storage_preflight.json`; and
+- `docs/superpowers/audits/2026-08-31-tp4-collective-stable-decode-replay-audit.md`.
+
+The receipt records an expired Kerberos TGT, a required lifetime of 22,500
+seconds, and `attempt_exists=false`. No SSH mutation, GPU admission, worker,
+measurement row, bundle, producer classification, or independent verifier
+result exists for r1.
+
+Consequently:
+
+- the benefit/cost table is unavailable rather than zero;
+- no Q0/Q1/Q2 performance or correctness claim is supported;
+- Stage 1 remains prohibited; and
+- a real retry must use a fresh tag after credentials are restored externally.
+
+This reconciliation does not change the frozen gate. It records why the first
+attempt cannot classify the optimization.
+
 ## Completion Criteria
 
 This design stage is complete when:
