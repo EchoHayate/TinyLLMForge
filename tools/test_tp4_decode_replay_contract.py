@@ -177,11 +177,17 @@ def _memory_rows():
 
 def _capture_cost_rows():
     rows = []
-    for workload in contract.WORKLOADS:
+    for case in contract.build_case_matrix():
+        if case["arm"] != "graph":
+            continue
         for rank in contract.RANKS:
             rows.append({
-                "row_id": f"{workload}:capture:rank-{rank}",
-                "workload": workload,
+                "row_id": f"{case['case_id']}:capture:rank-{rank}",
+                "case_id": case["case_id"],
+                "pair_id": case["pair_id"],
+                "workload": case["workload"],
+                "repetition": case["repetition"],
+                "arm": case["arm"],
                 "rank": rank,
                 "graph_identity_sha256": "d" * 64,
                 "capture_duration_ns": 50_000_000,
@@ -311,6 +317,27 @@ def test_low_replay_coverage_has_distinct_classification():
     assert "replay_coverage" in result["failed_gates"]
 
 
+def test_warmup_and_measured_steps_have_distinct_rank_groups():
+    evidence = _evidence()
+    warmup_rows = []
+    for row in evidence["rank_dispatch_rows"]:
+        warmup = copy.deepcopy(row)
+        warmup["row_id"] = warmup["row_id"].replace(
+            ":step-0:",
+            ":warmup:step-0:",
+        )
+        warmup["phase"] = "warmup"
+        warmup["graph_eligible"] = False
+        warmup["dispatch"] = "eager"
+        warmup["cache_state"] = "observing"
+        warmup["fallback_reason"] = "cold_identity"
+        warmup["graph_replay_count"] = 0
+        warmup_rows.append(warmup)
+    evidence["rank_dispatch_rows"].extend(warmup_rows)
+    result = contract.classify(**evidence)
+    assert result["classification"] == "GO_STAGE1_JUSTIFIED"
+
+
 def test_capture_identity_disagreement_is_correctness_failure():
     evidence = _evidence()
     evidence["capture_cost_rows"][3][
@@ -378,6 +405,7 @@ def main() -> None:
         test_cross_rank_dispatch_disagreement_is_correctness_failure,
         test_collective_order_disagreement_is_correctness_failure,
         test_low_replay_coverage_has_distinct_classification,
+        test_warmup_and_measured_steps_have_distinct_rank_groups,
         test_capture_identity_disagreement_is_correctness_failure,
         test_each_performance_and_cost_threshold_can_fail,
         test_nonfinite_and_duplicate_rows_are_incomplete,

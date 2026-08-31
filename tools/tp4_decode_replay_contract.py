@@ -171,11 +171,11 @@ def validate_rank_dispatch_rows(rows: list[dict]) -> dict:
     failures = []
     expected_cases = set(_expected_cases())
     observed_cases = set()
-    groups = _group_by(rows, ("case_id", "step_index"))
+    groups = _group_by(rows, ("case_id", "phase", "step_index"))
     eligible = 0
     replayed = 0
-    for (case_id, step_index), group in groups.items():
-        del step_index
+    for (case_id, phase, step_index), group in groups.items():
+        del phase, step_index
         if case_id not in expected_cases:
             failures.append("rank_dispatch_unknown_case")
             continue
@@ -394,19 +394,27 @@ def _validate_memory_rows(rows: list[dict]) -> list[str]:
 
 def _validate_capture_cost_rows(rows: list[dict]) -> list[str]:
     failures = []
-    groups = _group_by(rows, ("workload",))
-    if set(key[0] for key in groups) != set(WORKLOADS):
-        failures.append("capture_cost_workload_matrix_incomplete")
-    for (workload,), group in groups.items():
-        if workload not in WORKLOADS:
-            failures.append("capture_cost_unknown_workload")
+    expected_cases = {
+        row["case_id"]
+        for row in build_case_matrix()
+        if row["arm"] == "graph"
+    }
+    observed_cases = set()
+    groups = _group_by(rows, ("case_id",))
+    for (case_id,), group in groups.items():
+        expected = _expected_cases().get(case_id)
+        if expected is None or expected["arm"] != "graph":
+            failures.append("capture_cost_unknown_case")
             continue
+        observed_cases.add(case_id)
         ordered = sorted(group, key=lambda row: row.get("rank", -1))
         if (
             len(ordered) != len(RANKS)
             or tuple(row.get("rank") for row in ordered) != RANKS
             or any(
-                not _valid_sha256(
+                not _validate_case_fields(row)
+                or row.get("arm") != "graph"
+                or not _valid_sha256(
                     row.get("graph_identity_sha256")
                 )
                 or row.get("complete") is not True
@@ -425,6 +433,8 @@ def _validate_capture_cost_rows(rows: list[dict]) -> list[str]:
             for row in ordered[1:]
         ):
             failures.append("capture_identity_disagreement")
+    if observed_cases != expected_cases:
+        failures.append("capture_cost_case_matrix_incomplete")
     return failures
 
 
@@ -543,8 +553,8 @@ def classify(
         "memory_unknown_case",
         "memory_rank_inventory_incomplete",
         "memory_case_matrix_incomplete",
-        "capture_cost_unknown_workload",
-        "capture_cost_workload_matrix_incomplete",
+        "capture_cost_unknown_case",
+        "capture_cost_case_matrix_incomplete",
         "capture_cost_rank_inventory_incomplete",
         "correctness_unknown_pair",
         "correctness_identity_invalid",
