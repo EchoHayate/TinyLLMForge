@@ -5635,18 +5635,23 @@ class ModelRunner:
                 "invalid exact graph block-table width"
             ) from exc
         hf_config = self.config.hf_config
+        model_config = getattr(
+            hf_config,
+            "text_config",
+            hf_config,
+        )
         properties = torch.cuda.get_device_properties(
             self.kv_cache.device
         )
         inputs = FlashAttentionSplitInputs(
             batch_size=active_batch_size,
             num_query_heads=int(
-                hf_config.num_attention_heads // self.world_size
+                model_config.num_attention_heads // self.world_size
             ),
             num_kv_heads=int(
-                hf_config.num_key_value_heads // self.world_size
+                model_config.num_key_value_heads // self.world_size
             ),
-            head_dim=int(hf_config.head_dim),
+            head_dim=int(model_config.head_dim),
             page_block_size=int(self.block_size),
             page_table_width=page_table_width,
             max_seqlen_q=1,
@@ -6531,11 +6536,16 @@ class ModelRunner:
                 "batch size and page-table width must be positive"
             )
         hf_config = self.config.hf_config
+        model_config = getattr(
+            hf_config,
+            "text_config",
+            hf_config,
+        )
         scalar_bytes = batch_size * (8 + 8 + 4 + 4)
         block_table_bytes = batch_size * page_table_width * 4
         output_bytes = (
             batch_size
-            * int(hf_config.hidden_size)
+            * int(model_config.hidden_size)
             * int(hf_config.torch_dtype.itemsize)
         )
         return scalar_bytes + block_table_bytes + output_bytes
@@ -7335,6 +7345,11 @@ class ModelRunner:
             )
         device = self.kv_cache.device
         hf_config = self.config.hf_config
+        model_config = getattr(
+            hf_config,
+            "text_config",
+            hf_config,
+        )
         tensors = {
             "input_ids": torch.zeros(
                 batch_size,
@@ -7364,7 +7379,7 @@ class ModelRunner:
             ),
             "outputs": torch.zeros(
                 batch_size,
-                hf_config.hidden_size,
+                model_config.hidden_size,
                 dtype=hf_config.torch_dtype,
                 device=device,
             ),

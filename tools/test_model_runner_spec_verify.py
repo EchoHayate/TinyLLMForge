@@ -6252,6 +6252,37 @@ def test_exact_graph_identity_and_static_byte_estimate_are_exact():
         model_runner.flash_attn.__version__ = "2.6.3"
 
 
+def test_exact_graph_runtime_uses_nested_text_config():
+    runner = make_runner()
+    runner.world_size = 4
+    runner.config.hf_config = SimpleNamespace(
+        text_config=SimpleNamespace(
+            num_attention_heads=24,
+            num_key_value_heads=4,
+            head_dim=256,
+            hidden_size=5120,
+        ),
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    runner.kv_cache = FakeTensor([], device="cuda:0")
+    graph_context = SimpleNamespace(
+        block_tables=FakeTensor([[0, 1]] * 4),
+    )
+
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        graph_context,
+    )
+
+    assert identity.num_query_heads == 6
+    assert identity.num_kv_heads == 1
+    assert identity.head_dim == 256
+    assert runner._estimate_exact_graph_static_bytes(
+        batch_size=4,
+        page_table_width=2,
+    ) == 41_088
+
+
 def _make_exact_dispatch_runner():
     cache_module = sys.modules[
         "tinyvllm.engine.exact_cuda_graph_cache"
@@ -7778,7 +7809,15 @@ def test_capture_restores_all_scratch_slots_and_context_in_finally():
         )
     )
     runner.graph_pool = None
-    runner.config.hf_config.torch_dtype = SimpleNamespace(itemsize=2)
+    runner.config.hf_config = SimpleNamespace(
+        text_config=SimpleNamespace(
+            num_attention_heads=16,
+            num_key_value_heads=8,
+            head_dim=128,
+            hidden_size=16,
+        ),
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
     scratch_slots = [2048, 2304, 2560, 2816]
     runner._exact_graph_scratch_slots = (
         lambda *, batch_size: tuple(scratch_slots[:batch_size])
@@ -8034,6 +8073,7 @@ def main():
         test_feature_enabled_startup_captures_only_batch_one,
         test_feature_disabled_startup_inventory_is_unchanged,
         test_exact_graph_identity_and_static_byte_estimate_are_exact,
+        test_exact_graph_runtime_uses_nested_text_config,
         test_three_successful_eager_steps_capture_post_step_and_fourth_replays,
         test_exact_ready_entry_never_rounds_batch_or_page_table_width,
         test_multi_sequence_graph_guards_report_exact_fallback_reasons,
