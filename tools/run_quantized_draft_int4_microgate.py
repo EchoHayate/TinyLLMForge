@@ -394,9 +394,14 @@ def _download_bundle(plan: dict[str, object], local_root: Path) -> None:
     with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
-            if path.is_absolute() or ".." in path.parts:
+            if (
+                path.is_absolute()
+                or ".." in path.parts
+                or not (member.isdir() or member.isfile())
+            ):
                 raise ValueError("unsafe download path")
-        archive.extractall(local_root, filter="data")
+        for member in archive.getmembers():
+            archive.extract(member, local_root)
 
 
 def run_controller(args: argparse.Namespace) -> int:

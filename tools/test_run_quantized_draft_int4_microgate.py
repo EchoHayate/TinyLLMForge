@@ -213,3 +213,35 @@ def test_source_archive_includes_tracked_runtime_tree_only(
         names = set(archive.getnames())
     assert str(tracked.relative_to(repo)) in names
     assert str(untracked.relative_to(repo)) not in names
+
+
+def test_download_bundle_extracts_checked_regular_files_on_python311(
+    tmp_path,
+    monkeypatch,
+):
+    stream = io.BytesIO()
+    payload = b'{"classification":"NO_GO_PERFORMANCE"}\n'
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        info = tarfile.TarInfo("final_bundle/gate.json")
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+    monkeypatch.setattr(
+        controller.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=stream.getvalue(),
+            stderr=b"",
+        ),
+    )
+    destination = tmp_path / "download"
+
+    controller._download_bundle(
+        {"remote_run": "/approved/run"},
+        destination,
+    )
+
+    assert (
+        destination / "final_bundle" / "gate.json"
+    ).read_bytes() == payload
