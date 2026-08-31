@@ -78,6 +78,7 @@ def test_plan_freezes_paths_model_and_four_clean_gpus():
     assert plan["selected_gpu_indices"] == [0, 1, 2, 3]
     assert plan["world_size"] == 4
     assert plan["model_revision"] == MODEL_REVISION
+    assert plan["process_environment"]["PYTHONNOUSERSITE"] == "1"
     assert all(
         PurePosixPath(value).is_relative_to(approved)
         for key, value in plan["paths"].items()

@@ -174,6 +174,9 @@ def build_plan(
         ),
         "CUDA_CACHE_PATH": f"{runtime_root}/cache/cuda",
     }
+    process_environment = {
+        "PYTHONNOUSERSITE": "1",
+    }
     if (
         not all(_below(value, REMOTE_ROOT) for value in paths.values())
         or not all(
@@ -202,6 +205,7 @@ def build_plan(
         ],
         "paths": paths,
         "environment": environment,
+        "process_environment": process_environment,
     }
 
 
@@ -247,6 +251,8 @@ def _validate_plan(plan: object) -> dict:
             _below(value, attempt_root)
             for value in plan.get("environment", {}).values()
         )
+        or plan.get("process_environment")
+        != {"PYTHONNOUSERSITE": "1"}
     ):
         raise ValueError("plan remote path is invalid")
     return dict(plan)
@@ -1168,6 +1174,7 @@ class ProductionAdapter:
             admission_payload.encode("utf-8") + b"\n",
         )
         environment = dict(plan["environment"])
+        environment.update(plan["process_environment"])
         environment["CUDA_VISIBLE_DEVICES"] = ",".join(
             str(index) for index in plan["selected_gpu_indices"]
         )
