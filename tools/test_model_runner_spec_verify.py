@@ -8025,7 +8025,7 @@ def main():
         test_model_runner_split_phase_delegates_to_k8_mailbox_backend,
         test_model_runner_split_phase_releases_or_aborts_owned_generation,
         test_model_runner_exact_burst_materializes_only_in_lazy_factory,
-        test_model_runner_invalidates_both_burst_graphs,
+        test_model_runner_invalidates_all_distinct_burst_graphs,
         test_model_runner_exact_burst_replay_enters_inference_mode,
         test_model_runner_exact_burst_correctness_capture_enters_inference_mode,
         test_model_runner_exact_burst_rejects_wrong_sequence_before_graph,

@@ -111,20 +111,20 @@ Fresh local verification on 2026-08-31 produced:
 | `python3 tools/test_assemble_tp4_decode_replay.py` | `6 passed` | Synthetic bundle completeness and tamper handling |
 | `python3 tools/test_verify_tp4_decode_replay.py` | `6 passed` | Synthetic independent reconstruction and mutations |
 | `python3 tools/test_run_tp4_decode_replay.py` | `16 passed` | Controller ordering, paths, GPU readmission, ports, frozen verifier, TTL, and failure receipt |
+| `python3 tools/test_model_runner_spec_verify.py` | passed | Existing model-runner source/spec checks after correcting one stale test-list reference |
 | Three adjacent TP4 controller tests with `PYTHONPATH=.` | exit zero | Existing controller/supervisor compatibility |
 | Gate-file `py_compile` | exit zero | Python syntax/import compilation only |
 | Gate-file `git diff --check` | exit zero | Whitespace integrity only |
 
-Two planned adjacent regressions are not green locally:
+One planned adjacent regression is not green locally:
 
 | Command | Actual blocker | Interpretation |
 |---|---|---|
 | `python3 tools/test_multi_sequence_cuda_graph_gate.py` | `ModuleNotFoundError: No module named 'torch'` | Local environment lacks PyTorch; no runtime verdict |
-| `python3 tools/test_model_runner_spec_verify.py` | `NameError: test_model_runner_invalidates_both_burst_graphs` | Pre-existing test-list defect outside the new gate files; no runtime verdict |
 
 Passing dependency-injected tests do not replace the missing real TP4 run.
-The two adjacent failures also prevent claiming the complete Task-5 suite is
-green.
+The remaining environment failure prevents claiming the complete Task-5
+suite is green.
 
 ## 5. Source and push evidence
 

@@ -28,10 +28,11 @@ ControlMaster, Qwen3.8-27B BF16, four A100 80 GB PCIe GPUs.
 - Tasks 1–4 are implemented and pushed through
   `c66f2dbfe12ba31ed010c6d733b569ae83fc7aa1`.
 - The five new gate suites pass with counts `12 + 7 + 6 + 6 + 16`.
-- Task 5 is not fully green: the local environment lacks `torch` for
-  `test_multi_sequence_cuda_graph_gate.py`, and the existing
-  `test_model_runner_spec_verify.py` test list references the undefined
-  `test_model_runner_invalidates_both_burst_graphs`.
+- `test_model_runner_spec_verify.py` passes after correcting its stale
+  reference to the renamed
+  `test_model_runner_invalidates_all_distinct_burst_graphs`.
+- Task 5 is not fully green because the local environment lacks `torch` for
+  `test_multi_sequence_cuda_graph_gate.py`.
 - Attempt `20260831-qwen38-tp4-decode-replay-r1` stopped before SSH or GPU
   admission with an evidence-backed `INCOMPLETE` credential preflight.
 - The r1 audit is
