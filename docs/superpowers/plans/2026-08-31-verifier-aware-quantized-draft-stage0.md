@@ -21,6 +21,10 @@ classification authority.
 remote environment, NVIDIA A100 80GB, pytest, CUDA events, SSH, SHA-256
 manifests.
 
+**Execution status:** Completed on August 31, 2026. Terminal attempt
+`20260831-quantized-draft-int4-stage0-r5` produced
+`NO_GO_PERFORMANCE`; the Stage-1 stop rule applies.
+
 ## Global Constraints
 
 - Work only in `/Users/bytedance/dev/TinyLLMForge` on
@@ -1231,8 +1235,10 @@ Expected: terminal controller result with one of the frozen classifications.
 RUN_TAG=20260831-quantized-draft-int4-stage0-r1
 python3 tools/verify_quantized_draft_int4_microgate.py \
   "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle"
-shasum -a 256 -c \
-  "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle/manifest.sha256"
+(
+  cd "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle"
+  shasum -a 256 -c manifest.sha256
+)
 ```
 
 Expected:
@@ -1295,8 +1301,10 @@ test -f \
   docs/superpowers/audits/2026-08-31-quantized-draft-int4-stage0-audit.md
 python3 tools/verify_quantized_draft_int4_microgate.py \
   "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle"
-shasum -a 256 -c \
-  "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle/manifest.sha256"
+(
+  cd "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle"
+  shasum -a 256 -c manifest.sha256
+)
 git diff --check -- \
   docs/superpowers/audits/2026-08-31-quantized-draft-int4-stage0-audit.md \
   "artifacts/quantized_draft_int4/${RUN_TAG}/controller" \

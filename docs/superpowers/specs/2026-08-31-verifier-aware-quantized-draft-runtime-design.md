@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-31
 
-**Status:** Approved direction; implementation plan pending
+**Status:** Stage 0 complete — `NO_GO_PERFORMANCE`; Stage 1 prohibited by the
+frozen stop rule
 
 **Scope:** Model-agnostic learned speculative decoding on NVIDIA A100
 
@@ -606,7 +607,7 @@ performance result until the required gates execute.
 | Do not bind the method to Qwen3.8 | source-neutral interfaces and Stage-1 model selection rule | `DESIGNED` |
 | Use recent distillation/compression ideas | references and motivation section | `DESIGNED` |
 | Preserve exact target output | target-authoritative verifier and transaction invariants | `DESIGNED` |
-| Produce real A100 speed rather than checkpoint-only compression | Stage-0 fused-kernel gate | `UNVERIFIED` |
+| Produce real A100 speed rather than checkpoint-only compression | Stage-0 fused-kernel gate | `NO_GO_PERFORMANCE` |
 | Report benefit and cost | Stage-1/2 latency, acceptance, memory, and training-cost metrics | `DESIGNED` |
 | Support horizontal comparison | ordinary/BF16-draft/low-bit-draft three-policy matrix | `DESIGNED` |
 | Preserve remote storage boundary | approved `/data00/home/sitian/...` root only | `DESIGNED` |
