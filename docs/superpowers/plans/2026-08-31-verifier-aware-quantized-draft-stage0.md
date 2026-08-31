@@ -271,7 +271,7 @@ def test_classifier_fails_closed(mutation, classification):
 Run:
 
 ```bash
-python -m pytest -q tools/test_quantized_draft_int4_microgate.py
+python3 -m pytest -q tools/test_quantized_draft_int4_microgate.py
 ```
 
 Expected: collection or import failure because
@@ -315,7 +315,7 @@ an unsupported or regressing low-frequency shape.
 Run:
 
 ```bash
-python -m pytest -q tools/test_quantized_draft_int4_microgate.py
+python3 -m pytest -q tools/test_quantized_draft_int4_microgate.py
 ```
 
 Expected: all tests pass.
@@ -451,7 +451,7 @@ def test_launch_passes_packed_weight_without_full_dequantization(monkeypatch):
 Run:
 
 ```bash
-python -m pytest -q tools/test_fused_int4_linear.py
+python3 -m pytest -q tools/test_fused_int4_linear.py
 ```
 
 Expected: import failure because `tinyvllm.layers.fused_int4_linear` does not
@@ -516,7 +516,7 @@ Required implementation properties:
 Run:
 
 ```bash
-python -m pytest -q tools/test_fused_int4_linear.py
+python3 -m pytest -q tools/test_fused_int4_linear.py
 ```
 
 Expected: all dependency-light tests pass without requiring CUDA.
@@ -526,7 +526,7 @@ Expected: all dependency-light tests pass without requiring CUDA.
 Run:
 
 ```bash
-python -m py_compile \
+python3 -m py_compile \
   tinyvllm/layers/fused_int4_linear.py \
   tools/test_fused_int4_linear.py
 ```
@@ -661,7 +661,7 @@ def test_worker_writes_cleanup_on_candidate_failure(
 Run:
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_quantized_draft_int4_microgate_worker.py
 ```
 
@@ -740,9 +740,9 @@ In `finally`:
 Run:
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_quantized_draft_int4_microgate_worker.py
-python -m py_compile \
+python3 -m py_compile \
   tools/quantized_draft_int4_microgate_worker.py
 ```
 
@@ -838,7 +838,7 @@ Test that `verify_bundle()` independently:
 Run:
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_assemble_quantized_draft_int4_microgate.py \
   tools/test_verify_quantized_draft_int4_microgate.py
 ```
@@ -875,7 +875,7 @@ Reject any path whose resolved parent escapes the supplied bundle directory.
 Run:
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_assemble_quantized_draft_int4_microgate.py \
   tools/test_verify_quantized_draft_int4_microgate.py
 ```
@@ -1008,7 +1008,7 @@ def test_download_inventory_contains_only_compact_artifacts():
 Run:
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_run_quantized_draft_int4_microgate.py
 ```
 
@@ -1092,7 +1092,7 @@ The controller must:
 Run:
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_run_quantized_draft_int4_microgate.py
 ```
 
@@ -1120,7 +1120,7 @@ git -c core.hooksPath=/dev/null commit \
 - [ ] **Step 1: Run the complete Stage-0 suite**
 
 ```bash
-python -m pytest -q \
+python3 -m pytest -q \
   tools/test_fused_int4_linear.py \
   tools/test_quantized_draft_int4_microgate.py \
   tools/test_quantized_draft_int4_microgate_worker.py \
@@ -1141,7 +1141,7 @@ TEST_FILES="$(git ls-files \
   'tools/test_*linear*.py' |
   tr '\n' ' ')"
 test -n "${TEST_FILES}"
-python -m pytest -q ${TEST_FILES}
+python3 -m pytest -q ${TEST_FILES}
 ```
 
 Expected: all collected tests pass. Record the exact file and test counts.
@@ -1149,7 +1149,7 @@ Expected: all collected tests pass. Record the exact file and test counts.
 - [ ] **Step 3: Run import and diff checks**
 
 ```bash
-python -m py_compile \
+python3 -m py_compile \
   tinyvllm/layers/fused_int4_linear.py \
   tools/quantized_draft_int4_microgate.py \
   tools/quantized_draft_int4_microgate_worker.py \
@@ -1199,7 +1199,7 @@ increment only the `rN` suffix. Never resume or overwrite a partial tag.
 
 ```bash
 RUN_TAG=20260831-quantized-draft-int4-stage0-r1
-python tools/run_quantized_draft_int4_microgate.py \
+python3 tools/run_quantized_draft_int4_microgate.py \
   --run-tag "${RUN_TAG}" \
   --dry-run
 ```
@@ -1218,7 +1218,7 @@ watch terminal output.
 
 ```bash
 RUN_TAG=20260831-quantized-draft-int4-stage0-r1
-python tools/run_quantized_draft_int4_microgate.py \
+python3 tools/run_quantized_draft_int4_microgate.py \
   --run-tag "${RUN_TAG}" \
   --execute
 ```
@@ -1229,7 +1229,7 @@ Expected: terminal controller result with one of the frozen classifications.
 
 ```bash
 RUN_TAG=20260831-quantized-draft-int4-stage0-r1
-python tools/verify_quantized_draft_int4_microgate.py \
+python3 tools/verify_quantized_draft_int4_microgate.py \
   "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle"
 shasum -a 256 -c \
   "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle/manifest.sha256"
@@ -1293,7 +1293,7 @@ Run:
 RUN_TAG=20260831-quantized-draft-int4-stage0-r1
 test -f \
   docs/superpowers/audits/2026-08-31-quantized-draft-int4-stage0-audit.md
-python tools/verify_quantized_draft_int4_microgate.py \
+python3 tools/verify_quantized_draft_int4_microgate.py \
   "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle"
 shasum -a 256 -c \
   "artifacts/quantized_draft_int4/${RUN_TAG}/final_bundle/manifest.sha256"

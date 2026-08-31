@@ -8,6 +8,7 @@ from types import ModuleType
 
 import pytest
 
+_ORIGINAL_TORCH = sys.modules.get("torch")
 try:
     import torch
 except ModuleNotFoundError:
@@ -33,6 +34,10 @@ assert SPEC is not None and SPEC.loader is not None
 module = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
+if _ORIGINAL_TORCH is None:
+    sys.modules.pop("torch", None)
+else:
+    sys.modules["torch"] = _ORIGINAL_TORCH
 
 FusedInt4Support = module.FusedInt4Support
 fused_int4_linear = module.fused_int4_linear
