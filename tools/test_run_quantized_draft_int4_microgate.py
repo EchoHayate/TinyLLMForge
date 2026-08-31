@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import io
+import subprocess
+import tarfile
 
 import pytest
 
@@ -161,3 +164,52 @@ def test_download_inventory_contains_only_compact_artifacts():
         "controller",
         "final_bundle",
     )
+
+
+def test_source_archive_includes_tracked_runtime_tree_only(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    tracked = (
+        repo
+        / "tinyvllm"
+        / "engine"
+        / "autoregressive_draft_registration.py"
+    )
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("TRACKED = True\n", encoding="utf-8")
+    untracked = repo / "tinyvllm" / "engine" / "local-cache.bin"
+    untracked.write_bytes(b"must not be uploaded")
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "add", "--", str(tracked.relative_to(repo))],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    monkeypatch.setattr(controller, "SOURCE_PATHS", ("tinyvllm",))
+
+    payload = controller._source_archive(repo)
+
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
+        names = set(archive.getnames())
+    assert str(tracked.relative_to(repo)) in names
+    assert str(untracked.relative_to(repo)) not in names

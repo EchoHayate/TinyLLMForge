@@ -40,9 +40,7 @@ MINIMUM_KERBEROS_LIFETIME_SECONDS = 5400
 MAXIMUM_IDLE_MEMORY_MIB = 1024
 MAXIMUM_IDLE_UTILIZATION_PERCENT = 5
 SOURCE_PATHS = (
-    "tinyvllm/layers/fused_int4_linear.py",
-    "tinyvllm/layers/quantization.py",
-    "tinyvllm/layers/linear.py",
+    "tinyvllm",
     "tools/quantized_draft_int4_microgate.py",
     "tools/quantized_draft_int4_microgate_worker.py",
     "tools/assemble_quantized_draft_int4_microgate.py",
@@ -317,14 +315,25 @@ def _remote_preflight(plan: dict[str, object]) -> dict[str, object]:
 
 
 def _source_archive(repo_root: Path) -> bytes:
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w") as archive:
-        for relative in SOURCE_PATHS:
-            path = repo_root / relative
-            if not path.is_file() or path.is_symlink():
-                raise ValueError(f"invalid source path: {relative}")
-            archive.add(path, arcname=relative, recursive=False)
-    return stream.getvalue()
+    completed = subprocess.run(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            "HEAD",
+            "--",
+            *SOURCE_PATHS,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ValueError(
+            "source archive failed: "
+            + completed.stderr.decode("utf-8", errors="replace").strip()
+        )
+    return completed.stdout
 
 
 def _upload_source(
