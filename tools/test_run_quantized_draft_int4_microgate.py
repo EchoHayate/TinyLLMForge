@@ -146,6 +146,16 @@ def test_controller_does_not_emit_kinit_krenew_or_remote_tmp():
     assert "CUDA_VISIBLE_DEVICES=3" in encoded
 
 
+def test_ssh_commands_reuse_the_existing_control_master():
+    command = controller._ssh(["hostname"])
+
+    assert command[:3] == [
+        "ssh",
+        "-S",
+        "/tmp/ssh-sitian-10.232.195.203",
+    ]
+
+
 def test_download_inventory_contains_only_compact_artifacts():
     assert download_inventory("fixture-r1") == (
         "controller",

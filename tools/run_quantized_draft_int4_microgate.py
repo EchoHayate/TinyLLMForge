@@ -31,6 +31,7 @@ APPROVED_REMOTE_ROOT = (
 )
 REMOTE_TARGET = "sitian@10.232.195.203"
 REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
+SSH_CONTROL_PATH = "/tmp/ssh-sitian-10.232.195.203"
 REMOTE_PACKAGE_ROOT = (
     "/data00/home/sitian/tllm/env/lib/python3.11/site-packages"
 )
@@ -164,6 +165,8 @@ def classify_preflight(payload: object) -> dict[str, object]:
 def _ssh(arguments: list[str]) -> list[str]:
     return [
         "ssh",
+        "-S",
+        SSH_CONTROL_PATH,
         "-o",
         "BatchMode=yes",
         "-o",
