@@ -268,6 +268,65 @@ def test_engine_config_differs_only_by_graph_policy():
     assert graph["max_num_batched_tokens"] == 2048
 
 
+def test_engine_creation_retries_only_rendezvous_port_collisions():
+    ports = iter((41001, 41002))
+    attempts = []
+    cleanup_calls = []
+    sleeps = []
+    environment = {}
+    expected_engine = object()
+
+    def engine_factory(model_root, **config):
+        attempts.append(
+            (
+                model_root,
+                dict(config),
+                environment["TINYVLLM_DIST_PORT"],
+            )
+        )
+        if len(attempts) == 1:
+            raise RuntimeError(
+                "TCPStore failed: EADDRINUSE address already in use"
+            )
+        return expected_engine
+
+    engine, port = worker.create_engine_with_rendezvous_retry(
+        Path("/model"),
+        engine_config={"tensor_parallel_size": 4},
+        port_factory=lambda: next(ports),
+        engine_factory=engine_factory,
+        environment=environment,
+        cleanup_failed_attempt=lambda: cleanup_calls.append(True),
+        sleep=lambda seconds: sleeps.append(seconds),
+        maximum_attempts=3,
+        retry_delay_s=0.25,
+    )
+
+    assert engine is expected_engine
+    assert port == 41002
+    assert [attempt[2] for attempt in attempts] == ["41001", "41002"]
+    assert cleanup_calls == [True]
+    assert sleeps == [0.25]
+
+    try:
+        worker.create_engine_with_rendezvous_retry(
+            Path("/model"),
+            engine_config={"tensor_parallel_size": 4},
+            port_factory=lambda: 42001,
+            engine_factory=lambda *_args, **_kwargs: (
+                (_ for _ in ()).throw(RuntimeError("different failure"))
+            ),
+            environment={},
+            cleanup_failed_attempt=lambda: cleanup_calls.append(False),
+            sleep=lambda _seconds: None,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "different failure"
+    else:
+        raise AssertionError("non-rendezvous failure was retried")
+    assert cleanup_calls == [True]
+
+
 def test_collect_rank_graph_observations_preserves_all_ranks():
     engine = _ObservationEngine(
         [_event(arm="graph", rank=rank) for rank in range(4)]
@@ -462,6 +521,7 @@ def test_capture_cost_rows_keep_case_identity():
 def main() -> None:
     tests = (
         test_engine_config_differs_only_by_graph_policy,
+        test_engine_creation_retries_only_rendezvous_port_collisions,
         test_collect_rank_graph_observations_preserves_all_ranks,
         test_collect_rank_graph_observations_rejects_rank_disagreement,
         test_run_arm_emits_complete_measured_evidence_and_cleanup,

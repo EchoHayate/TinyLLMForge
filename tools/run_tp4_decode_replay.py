@@ -583,10 +583,13 @@ for pair_id in pair_ids:
     )
     ports = []
     def engine_factory(model_root, **kwargs):
-        port = free_port()
+        engine, port = worker.create_engine_with_rendezvous_retry(
+            model_root,
+            engine_config=kwargs,
+            port_factory=free_port,
+        )
         ports.append(port)
-        os.environ["TINYVLLM_DIST_PORT"] = str(port)
-        return worker._default_engine_factory(model_root, **kwargs)
+        return engine
     started_ns = time.monotonic_ns()
     pair = worker.run_pair(
         model_root=Path(model_root),

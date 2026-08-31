@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import __future__
 import ast
+from contextlib import redirect_stderr
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -7800,6 +7802,41 @@ def test_capture_failures_are_terminal_and_reason_specific():
     assert decision.fallback_reason == "identity_drift"
 
 
+def test_capture_failure_logs_the_original_exception_chain():
+    runner = _make_exact_dispatch_runner()
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        SimpleNamespace(
+            block_tables=FakeTensor([[0, 1]] * 4),
+        ),
+    )
+    runner._capture_exact_multi_sequence_graph = (
+        lambda **_kwargs: (
+            _ for _ in ()
+        ).throw(RuntimeError("synthetic capture root cause"))
+    )
+    stderr = io.StringIO()
+
+    with redirect_stderr(stderr):
+        result = runner._attempt_post_step_capture(
+            identity=identity,
+            input_ids=FakeTensor([10, 20, 30, 40]),
+            positions=FakeTensor([1, 1, 1, 1]),
+            context=SimpleNamespace(
+                block_tables=FakeTensor([[0, 1]] * 4),
+            ),
+        )
+
+    assert result is None
+    assert "RuntimeError: synthetic capture root cause" in stderr.getvalue()
+    assert (
+        runner.exact_cuda_graph_cache.summary()["rejected"][
+            identity.sha256
+        ]
+        == "capture_failed"
+    )
+
+
 def test_capture_restores_all_scratch_slots_and_context_in_finally():
     runner = _make_exact_dispatch_runner()
     runner._capture_exact_multi_sequence_graph = (
@@ -8096,6 +8133,7 @@ def main():
         test_run_clears_recorded_logits_when_sampling_is_disabled,
         test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,
+        test_capture_failure_logs_the_original_exception_chain,
         test_capture_restores_all_scratch_slots_and_context_in_finally,
         test_replay_resets_context_on_success_and_exception,
         test_replay_failure_publishes_terminal_event_before_reraising,

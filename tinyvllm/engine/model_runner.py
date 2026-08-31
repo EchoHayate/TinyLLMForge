@@ -9,6 +9,7 @@ import flash_attn
 import hashlib
 import json
 from itertools import count
+import traceback
 from types import SimpleNamespace
 
 import torch.distributed as dist
@@ -7185,6 +7186,11 @@ class ModelRunner:
                 context=context,
             )
         except _ExactGraphCaptureError as exc:
+            traceback.print_exception(
+                type(exc),
+                exc,
+                exc.__traceback__,
+            )
             self.exact_cuda_graph_cache.reject(
                 identity,
                 exc.reason,
@@ -7193,7 +7199,12 @@ class ModelRunner:
                 ),
             )
             return None
-        except Exception:
+        except Exception as exc:
+            traceback.print_exception(
+                type(exc),
+                exc,
+                exc.__traceback__,
+            )
             self.exact_cuda_graph_cache.reject(
                 identity,
                 "capture_failed",

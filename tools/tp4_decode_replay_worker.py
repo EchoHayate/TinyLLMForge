@@ -51,6 +51,78 @@ def _default_engine_factory(model_root, **kwargs):
     return LLMEngine(str(model_root), **kwargs)
 
 
+def _rendezvous_address_in_use(error: BaseException) -> bool:
+    current = error
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current)
+        if (
+            "EADDRINUSE" in message
+            or "address already in use" in message.lower()
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _cleanup_failed_engine_children() -> None:
+    import multiprocessing
+
+    children = tuple(multiprocessing.active_children())
+    for child in children:
+        if child.is_alive():
+            child.terminate()
+    for child in children:
+        child.join(timeout=10.0)
+    lingering = tuple(child for child in children if child.is_alive())
+    for child in lingering:
+        child.kill()
+    for child in lingering:
+        child.join(timeout=10.0)
+    if any(child.is_alive() for child in lingering):
+        raise RuntimeError(
+            "failed engine children remained after rendezvous retry cleanup"
+        )
+
+
+def create_engine_with_rendezvous_retry(
+    model_root,
+    *,
+    engine_config,
+    port_factory,
+    engine_factory=_default_engine_factory,
+    environment=os.environ,
+    cleanup_failed_attempt=_cleanup_failed_engine_children,
+    sleep=time.sleep,
+    maximum_attempts=3,
+    retry_delay_s=0.25,
+):
+    if maximum_attempts <= 0:
+        raise ValueError("maximum_attempts must be positive")
+    for attempt in range(maximum_attempts):
+        port = int(port_factory())
+        environment["TINYVLLM_DIST_PORT"] = str(port)
+        try:
+            return (
+                engine_factory(
+                    Path(model_root),
+                    **dict(engine_config),
+                ),
+                port,
+            )
+        except RuntimeError as exc:
+            if not _rendezvous_address_in_use(exc):
+                raise
+            cleanup_failed_attempt()
+            if attempt + 1 == maximum_attempts:
+                raise RuntimeError(
+                    "rendezvous port retries exhausted"
+                ) from exc
+            sleep(float(retry_delay_s))
+    raise RuntimeError("rendezvous retry loop exhausted unexpectedly")
+
+
 def _default_sampling_params_factory(**kwargs):
     from tinyvllm.sampling_params import SamplingParams
 

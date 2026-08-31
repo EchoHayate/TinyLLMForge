@@ -430,6 +430,9 @@ def test_remote_driver_never_reuses_a_dynamic_port_across_arms():
     assert "used_ports = set()" in source
     assert "if port not in used_ports:" in source
     assert "used_ports.add(port)" in source
+    assert "worker.create_engine_with_rendezvous_retry(" in source
+    assert "engine_config=kwargs" in source
+    assert "port_factory=free_port" in source
     assert source.count("engine_factory=engine_factory") == 1
 
 
