@@ -474,6 +474,32 @@ def test_kerberos_guard_covers_the_full_remote_command_window():
     assert requested_lifetimes == [22_500]
 
 
+def test_failed_kerberos_preflight_is_persisted_as_incomplete():
+    with tempfile.TemporaryDirectory() as directory:
+        adapter = ProductionAdapter(
+            run_tag=RUN_TAG,
+            local_attempt_root=Path(directory) / "attempt",
+            kerberos_query=lambda **kwargs: {
+                "classification": "BLOCKED_KERBEROS_TTL",
+                "reason": "ticket expired",
+            },
+        )
+        receipt = adapter.ssh_storage_preflight(
+            _plan(),
+            _source(),
+        )
+        persisted = json.loads(
+            (
+                adapter.local_controller_root
+                / "ssh_storage_preflight.json"
+            ).read_text(encoding="utf-8")
+        )
+
+    assert receipt["classification"] == "INCOMPLETE"
+    assert receipt["reason"] == "Kerberos TTL preflight failed"
+    assert persisted == receipt
+
+
 def test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean():
     planned = [_gpu(index) for index in range(4, 8)]
     plan = _plan(selected_gpus=planned)
@@ -522,6 +548,7 @@ def main_tests() -> None:
         test_local_verifier_executes_from_the_frozen_source_revision,
         test_remote_driver_never_reuses_a_dynamic_port_across_arms,
         test_kerberos_guard_covers_the_full_remote_command_window,
+        test_failed_kerberos_preflight_is_persisted_as_incomplete,
         test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean,
     )
     for test in tests:

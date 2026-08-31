@@ -705,12 +705,15 @@ class ProductionAdapter:
         self._process = None
         self._plan = None
 
-    def _require_kerberos_window(self) -> dict:
-        kerberos = self.kerberos_query(
+    def _query_kerberos_window(self) -> dict:
+        return self.kerberos_query(
             minimum_lifetime_seconds=(
                 self.command_timeout_s + KERBEROS_GUARD_MARGIN_S
             ),
         )
+
+    def _require_kerberos_window(self) -> dict:
+        kerberos = self._query_kerberos_window()
         if kerberos.get("classification") not in {"READY", "PASS"}:
             raise RuntimeError("Kerberos TTL preflight failed")
         return kerberos
@@ -950,7 +953,23 @@ class ProductionAdapter:
         source: dict,
     ) -> dict:
         del source
-        kerberos = self._require_kerberos_window()
+        kerberos = self._query_kerberos_window()
+        if kerberos.get("classification") not in {"READY", "PASS"}:
+            receipt = {
+                "classification": "INCOMPLETE",
+                "reason": "Kerberos TTL preflight failed",
+                "attempt_exists": False,
+                "remote_root": REMOTE_ROOT,
+                "kerberos": kerberos,
+                "model_root": MODEL_ROOT,
+                "model_revision": MODEL_REVISION,
+            }
+            _atomic_write_json(
+                self.local_controller_root
+                / "ssh_storage_preflight.json",
+                receipt,
+            )
+            return receipt
         attempt_root = (
             plan.get("paths", {}).get("attempt_root")
             or f"{REMOTE_ROOT}/{self.run_tag}"
