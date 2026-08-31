@@ -758,22 +758,32 @@ class ProductionAdapter:
             "  os.fsync(handle.fileno())",
             "os.replace(temp,path)",
         ])
-        result = subprocess.run(
-            build_ssh_argv(
-                ssh_target=self.ssh_target,
-                remote_argv=[
-                    "python3",
-                    "-c",
-                    script,
-                    remote_path,
-                ],
-                control_path=self.control_path,
-            ),
-            input=payload,
-            capture_output=True,
-            check=False,
-            timeout=self.command_timeout_s,
+        argv = build_ssh_argv(
+            ssh_target=self.ssh_target,
+            remote_argv=[
+                "python3",
+                "-c",
+                script,
+                remote_path,
+            ],
+            control_path=self.control_path,
         )
+        result = None
+        for attempt in range(self.retry_count):
+            result = self.local_command_runner(
+                argv,
+                input=payload,
+                capture_output=True,
+                check=False,
+                timeout=self.command_timeout_s,
+            )
+            if (
+                result.returncode != 255
+                or attempt + 1 == self.retry_count
+            ):
+                break
+            time.sleep(1.0)
+        assert result is not None
         if result.returncode != 0:
             raise RuntimeError(
                 result.stderr.decode(errors="replace")

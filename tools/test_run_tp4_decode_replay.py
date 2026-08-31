@@ -367,6 +367,47 @@ def test_controller_supports_direct_script_execution():
     assert result.returncode == 0, result.stderr
 
 
+def test_remote_upload_retries_transient_ssh_disconnect():
+    calls = []
+    sleeps = []
+    results = iter((
+        SimpleNamespace(
+            returncode=255,
+            stdout=b"",
+            stderr=b"Connection closed by UNKNOWN port 65535",
+        ),
+        SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+    ))
+
+    def command_runner(arguments, **kwargs):
+        calls.append((list(arguments), dict(kwargs)))
+        return next(results)
+
+    original_run = controller.subprocess.run
+    original_sleep = controller.time.sleep
+    controller.subprocess.run = command_runner
+    controller.time.sleep = sleeps.append
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = ProductionAdapter(
+                run_tag=RUN_TAG,
+                local_attempt_root=Path(directory) / "attempt",
+                local_command_runner=command_runner,
+                retry_count=3,
+            )
+            adapter._upload_bytes(
+                f"{REMOTE_ROOT}/{RUN_TAG}/raw/source.patch",
+                b"payload",
+            )
+    finally:
+        controller.subprocess.run = original_run
+        controller.time.sleep = original_sleep
+
+    assert len(calls) == 2
+    assert all(call[1]["input"] == b"payload" for call in calls)
+    assert sleeps == [1.0]
+
+
 def test_local_verifier_executes_from_the_frozen_source_revision():
     calls = []
 
@@ -549,6 +590,7 @@ def main_tests() -> None:
         test_monitor_and_run_launches_immediately_after_local_admission,
         test_plan_only_performs_no_gpu_query_or_remote_operation,
         test_controller_supports_direct_script_execution,
+        test_remote_upload_retries_transient_ssh_disconnect,
         test_local_verifier_executes_from_the_frozen_source_revision,
         test_remote_driver_never_reuses_a_dynamic_port_across_arms,
         test_kerberos_guard_covers_the_full_remote_command_window,
