@@ -73,7 +73,8 @@ def _launch_admission() -> dict:
                 "rank": rank,
                 "index": rank,
                 "uuid": f"GPU-{rank:04d}",
-                "memory_used_mib": 0,
+                "memory_used_mib": 128,
+                "utilization_percent": 1,
                 "compute_process_count": 0,
             }
             for rank in contract.RANKS
@@ -181,8 +182,11 @@ def _write_raw_attempt(root: Path) -> dict:
                 "case_id": case["case_id"],
                 "exit_code": 0,
                 "timed_out": False,
+                "dist_port": 20_000 + index,
+                "started_ns": 1_000_000 + index * 10,
+                "finished_ns": 1_000_005 + index * 10,
             }
-            for case in contract.build_case_matrix()
+            for index, case in enumerate(contract.build_case_matrix())
         ],
     })
     _write_jsonl(root / "rank_environment.jsonl", [
@@ -329,6 +333,26 @@ def test_no_tpot_benefit_still_assembles_serializable_no_go():
         assert summary["capture_amortization_tokens"] is None
 
 
+def test_process_receipts_require_one_fresh_dynamic_port_per_arm():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        raw.mkdir()
+        _write_raw_attempt(raw)
+        receipts_path = raw / "process_receipts.json"
+        receipts = json.loads(
+            receipts_path.read_text(encoding="utf-8")
+        )
+        receipts["case_rows"][1]["dist_port"] = (
+            receipts["case_rows"][0]["dist_port"]
+        )
+        _write_json(receipts_path, receipts)
+        _expect_value_error(
+            lambda: _assemble(raw, root / "bundle"),
+            "process receipts",
+        )
+
+
 def main() -> None:
     tests = (
         test_assembler_writes_complete_manifested_go_bundle,
@@ -336,6 +360,7 @@ def main() -> None:
         test_each_required_input_is_fail_closed_when_truncated,
         test_jsonl_requires_terminal_newline,
         test_no_tpot_benefit_still_assembles_serializable_no_go,
+        test_process_receipts_require_one_fresh_dynamic_port_per_arm,
     )
     for test in tests:
         test()

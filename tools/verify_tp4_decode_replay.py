@@ -14,6 +14,8 @@ import tp4_decode_replay_contract as contract
 
 MODEL_REPOSITORY = "Qwen/Qwen3.8-27B"
 MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+MAX_GPU_MEMORY_USED_MIB = 1024
+MAX_GPU_UTILIZATION_PERCENT = 5
 MANIFEST_SCHEMA = "tinyllmforge.tp4-decode-replay-manifest.v1"
 SUMMARY_SCHEMA = "tinyllmforge.tp4-decode-replay-summary.v1"
 CLASSIFICATION_SCHEMA = (
@@ -224,7 +226,16 @@ def _validate_admission(admission: object, source: dict) -> None:
             row.get("uuid") for row in admission["selected_gpus"]
         }) != 4
         or any(
-            row.get("memory_used_mib") != 0
+            not isinstance(row.get("memory_used_mib"), int)
+            or isinstance(row.get("memory_used_mib"), bool)
+            or not 0
+            <= row["memory_used_mib"]
+            <= MAX_GPU_MEMORY_USED_MIB
+            or not isinstance(row.get("utilization_percent"), int)
+            or isinstance(row.get("utilization_percent"), bool)
+            or not 0
+            <= row["utilization_percent"]
+            <= MAX_GPU_UTILIZATION_PERCENT
             or row.get("compute_process_count") != 0
             for row in admission["selected_gpus"]
         )
@@ -259,21 +270,54 @@ def _validate_process_receipts(receipts: object, source: dict) -> None:
     expected_cases = {
         row["case_id"] for row in contract.build_case_matrix()
     }
+    case_rows = (
+        receipts.get("case_rows")
+        if isinstance(receipts, dict)
+        else None
+    )
     if (
         not isinstance(receipts, dict)
         or receipts.get("schema_version")
         != "tinyllmforge.tp4-decode-replay-processes.v1"
         or receipts.get("run_tag") != source["run_tag"]
-        or not isinstance(receipts.get("case_rows"), list)
+        or not isinstance(case_rows, list)
         or {
-            row.get("case_id") for row in receipts["case_rows"]
+            row.get("case_id")
+            for row in case_rows
+            if isinstance(row, dict)
         }
         != expected_cases
-        or len(receipts["case_rows"]) != len(expected_cases)
+        or len(case_rows) != len(expected_cases)
+        or len({
+            row.get("dist_port")
+            for row in case_rows
+            if isinstance(row, dict)
+        })
+        != len(expected_cases)
         or any(
+            not isinstance(row, dict)
+            or set(row)
+            != {
+                "case_id",
+                "exit_code",
+                "timed_out",
+                "dist_port",
+                "started_ns",
+                "finished_ns",
+            }
+            or
             row.get("exit_code") != 0
             or row.get("timed_out") is not False
-            for row in receipts["case_rows"]
+            or not isinstance(row.get("dist_port"), int)
+            or isinstance(row.get("dist_port"), bool)
+            or not 1024 <= row["dist_port"] <= 65_535
+            or not isinstance(row.get("started_ns"), int)
+            or isinstance(row.get("started_ns"), bool)
+            or row["started_ns"] < 0
+            or not isinstance(row.get("finished_ns"), int)
+            or isinstance(row.get("finished_ns"), bool)
+            or row["finished_ns"] < row["started_ns"]
+            for row in case_rows
         )
     ):
         raise ValueError("process receipt mismatch")

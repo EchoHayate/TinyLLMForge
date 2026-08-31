@@ -258,6 +258,17 @@ def _verify_mutation(mutation: str) -> dict:
                     "NO_GO_PERFORMANCE",
                 ),
             )
+        elif mutation == "process_port":
+            def mutate(rows):
+                rows["case_rows"][1]["dist_port"] = (
+                    rows["case_rows"][0]["dist_port"]
+                )
+
+            _mutate_json(
+                bundle,
+                "process_receipts.json",
+                mutate,
+            )
         else:
             raise AssertionError(f"unknown mutation: {mutation}")
         return verify_bundle(bundle)
@@ -285,6 +296,7 @@ def test_integrity_and_frozen_identity_mutations_are_incomplete():
         "model_revision",
         "workload",
         "producer",
+        "process_port",
     ):
         result = _verify_mutation(mutation)
         assert result["classification"] == "INCOMPLETE", (
