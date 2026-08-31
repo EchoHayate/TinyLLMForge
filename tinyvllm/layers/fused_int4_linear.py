@@ -105,8 +105,8 @@ def _triton_modules():
 
 @lru_cache(maxsize=1)
 def _compiled_kernel():
-    triton_module, tl_module = _triton_modules()
-    tl = tl_module
+    global tl
+    triton_module, tl = _triton_modules()
 
     @triton_module.jit
     def kernel(

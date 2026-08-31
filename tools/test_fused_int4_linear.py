@@ -93,6 +93,28 @@ def test_module_import_does_not_eagerly_import_triton():
     assert "triton.language" not in module.__dict__
 
 
+def test_compiled_kernel_exposes_lazy_triton_language_as_a_global(
+    monkeypatch,
+):
+    fake_triton = ModuleType("triton")
+    fake_triton.jit = lambda function: function
+    fake_tl = ModuleType("triton.language")
+    fake_tl.constexpr = object()
+    monkeypatch.setattr(
+        module,
+        "_triton_modules",
+        lambda: (fake_triton, fake_tl),
+    )
+    module._compiled_kernel.cache_clear()
+
+    try:
+        _, kernel = module._compiled_kernel()
+        assert kernel.__globals__["tl"] is fake_tl
+    finally:
+        module._compiled_kernel.cache_clear()
+        module.__dict__.pop("tl", None)
+
+
 def test_support_accepts_aligned_cuda_contract():
     x, packed, scales = _valid_fake_tensors()
 
