@@ -9,9 +9,11 @@ from types import ModuleType
 import pytest
 
 _ORIGINAL_TORCH = sys.modules.get("torch")
+_USING_FAKE_TORCH = False
 try:
     import torch
 except ModuleNotFoundError:
+    _USING_FAKE_TORCH = True
     torch = ModuleType("torch")
     torch.Tensor = object
     torch.float16 = object()
@@ -34,15 +36,23 @@ assert SPEC is not None and SPEC.loader is not None
 module = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
-if _ORIGINAL_TORCH is None:
-    sys.modules.pop("torch", None)
-else:
-    sys.modules["torch"] = _ORIGINAL_TORCH
+if _USING_FAKE_TORCH:
+    if _ORIGINAL_TORCH is None:
+        sys.modules.pop("torch", None)
+    else:
+        sys.modules["torch"] = _ORIGINAL_TORCH
 
 FusedInt4Support = module.FusedInt4Support
 fused_int4_linear = module.fused_int4_linear
 fused_int4_support = module.fused_int4_support
 warmup_fused_int4_linear = module.warmup_fused_int4_linear
+
+
+def test_real_torch_import_remains_cached_for_following_test_modules():
+    if getattr(torch, "__file__", None) is None:
+        pytest.skip("real torch is unavailable")
+
+    assert sys.modules.get("torch") is torch
 
 
 @dataclass
