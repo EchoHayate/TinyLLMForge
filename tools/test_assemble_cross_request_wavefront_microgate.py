@@ -164,6 +164,7 @@ def test_assembler_classifies_each_failure_closed(
         inputs["rows"].pop()
     elif mutation == "correctness":
         inputs["rows"][0]["baseline_max_abs_error"] = 1.0
+        inputs["rows"][0]["baseline_max_rel_error"] = 1.0
     elif mutation == "memory":
         inputs["memory"][
             "maximum_allocated_delta_bytes"

@@ -62,6 +62,7 @@ def _mutated_inputs(mutation):
         rows[0]["cohort_digest"] = "c" * 64
     elif mutation == "correctness":
         rows[0]["baseline_max_abs_error"] = 0.021
+        rows[0]["baseline_max_rel_error"] = 0.003
     elif mutation == "memory":
         memory["maximum_allocated_delta_bytes"] = 128 * 1024 * 1024 + 1
     elif mutation == "tail":
@@ -224,3 +225,19 @@ def test_classifier_precedence_prefers_correctness_then_memory():
         memory,
         cleanup,
     )["classification"] == "NO_GO_MEMORY"
+
+
+def test_classifier_accepts_absolute_tolerance_near_zero():
+    rows = _passing_rows()
+    for row in rows:
+        if row["active_tokens"] == 8:
+            row["baseline_max_abs_error"] = 0.00390625
+            row["baseline_max_rel_error"] = 0.03448275849223137
+
+    result = classify_wavefront_microgate(
+        rows,
+        _passing_memory(),
+        _passing_cleanup(),
+    )
+
+    assert result["classification"] == "GO_WAVEFRONT_MICROGATE"

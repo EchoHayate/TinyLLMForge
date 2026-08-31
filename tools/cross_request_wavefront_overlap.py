@@ -234,10 +234,14 @@ def classify_wavefront_microgate(rows, memory, cleanup):
         collective_order_digests.add(collective_hash)
 
         if (
-            row["cross_rank_max_abs_error"] > CROSS_RANK_ATOL
-            or row["cross_rank_max_rel_error"] > CROSS_RANK_RTOL
-            or row["baseline_max_abs_error"] > BASELINE_ATOL
-            or row["baseline_max_rel_error"] > BASELINE_RTOL
+            (
+                row["cross_rank_max_abs_error"] > CROSS_RANK_ATOL
+                and row["cross_rank_max_rel_error"] > CROSS_RANK_RTOL
+            )
+            or (
+                row["baseline_max_abs_error"] > BASELINE_ATOL
+                and row["baseline_max_rel_error"] > BASELINE_RTOL
+            )
             or row["nan_count"] != 0
             or row["inf_count"] != 0
         ):
