@@ -12,16 +12,28 @@ import os
 from pathlib import Path
 import time
 
-from tools.cross_request_wavefront_overlap import (
-    ACTIVE_TOKEN_GROUPS,
-    MEASURED_PAIR_COUNT,
-    WARMUP_PAIR_COUNT,
-    WORLD_SIZE,
-    build_balanced_cohorts,
-    cohort_digest,
-    interval_overlap_ns,
-    interval_union_ns,
-)
+if __package__:
+    from tools.cross_request_wavefront_overlap import (
+        ACTIVE_TOKEN_GROUPS,
+        MEASURED_PAIR_COUNT,
+        WARMUP_PAIR_COUNT,
+        WORLD_SIZE,
+        build_balanced_cohorts,
+        cohort_digest,
+        interval_overlap_ns,
+        interval_union_ns,
+    )
+else:
+    from cross_request_wavefront_overlap import (
+        ACTIVE_TOKEN_GROUPS,
+        MEASURED_PAIR_COUNT,
+        WARMUP_PAIR_COUNT,
+        WORLD_SIZE,
+        build_balanced_cohorts,
+        cohort_digest,
+        interval_overlap_ns,
+        interval_union_ns,
+    )
 
 
 LOCAL_INPUT_SIZE = 1536
