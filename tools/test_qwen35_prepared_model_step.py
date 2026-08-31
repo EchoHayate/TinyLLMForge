@@ -356,6 +356,66 @@ def test_run_step_matches_prepare_then_commit():
         torch.testing.assert_close(run_state, prepared_state)
 
 
+def test_exact_cuda_graph_state_hooks_are_complete_and_lease_sealed():
+    pool, leases, _, _, model = _fixture()
+    before = _snapshot(pool)
+
+    assert (
+        model.exact_cuda_graph_state_schema_sha256()
+        == pool.layout.fingerprint
+    )
+    first = model.exact_cuda_graph_lease_seal((leases[0], leases[1]))
+    assert first == model.exact_cuda_graph_lease_seal(
+        (leases[0], leases[1])
+    )
+    assert first != model.exact_cuda_graph_lease_seal(
+        (leases[1], leases[0])
+    )
+
+    snapshot = model.snapshot_exact_cuda_graph_state((leases[0],))
+    for tensor in pool._tensors.values():
+        tensor[leases[0].slot_id].add_(1000)
+    model.restore_exact_cuda_graph_state((leases[0],), snapshot)
+    _assert_snapshot(pool, before)
+
+    pool.release(leases[0])
+    changed_generation = HybridStateLease(
+        leases[0].slot_id,
+        leases[0].generation + 1,
+        leases[0].request_id,
+    )
+    pool.activate(changed_generation)
+    assert first != model.exact_cuda_graph_lease_seal(
+        (changed_generation, leases[1])
+    )
+
+
+def test_exact_cuda_graph_step_matches_run_step_output_and_state():
+    graph_pool, graph_leases, _, _, graph_model = _fixture()
+    eager_pool, eager_leases, _, _, eager_model = _fixture()
+    token_counts, input_ids, position_ids = _inputs()
+
+    graph_logits = graph_model.run_exact_cuda_graph_step(
+        (graph_leases[0],),
+        token_counts,
+        input_ids,
+        position_ids,
+    )
+    _, eager_logits = eager_model.run_step(
+        (eager_leases[0],),
+        token_counts,
+        input_ids,
+        position_ids,
+    )
+
+    torch.testing.assert_close(graph_logits, eager_logits)
+    for graph_state, eager_state in zip(
+        graph_pool._tensors.values(),
+        eager_pool._tensors.values(),
+    ):
+        torch.testing.assert_close(graph_state, eager_state)
+
+
 @pytest.mark.parametrize("failure", ("norm", "head"))
 def test_prepare_step_failure_leaves_live_state_unchanged(failure):
     pool, leases, final_norm, head, model = _fixture()

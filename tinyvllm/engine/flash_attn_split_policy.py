@@ -75,6 +75,9 @@ class FlashAttentionGraphIdentity:
     head_dim: int
     page_block_size: int
     max_seqlen_q: int
+    execution_protocol: str = "forward_v1"
+    state_schema_sha256: str = ""
+    lease_seal: str = ""
 
     @property
     def sha256(self) -> str:
@@ -144,6 +147,9 @@ def build_flash_attn_263_graph_identity(
     inputs: FlashAttentionSplitInputs,
     flash_attn_version: str,
     require_exact_batch: bool = False,
+    execution_protocol: str = "forward_v1",
+    state_schema_sha256: str = "",
+    lease_seal: str = "",
 ) -> FlashAttentionGraphIdentity:
     if flash_attn_version != FLASH_ATTN_VERSION:
         raise ValueError(
@@ -169,4 +175,7 @@ def build_flash_attn_263_graph_identity(
         head_dim=int(inputs.head_dim),
         page_block_size=int(inputs.page_block_size),
         max_seqlen_q=int(inputs.max_seqlen_q),
+        execution_protocol=execution_protocol,
+        state_schema_sha256=state_schema_sha256,
+        lease_seal=lease_seal,
     )

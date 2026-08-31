@@ -80,6 +80,7 @@ class ExactCudaGraphEntry:
     capture_duration_ns: int
     allocated_delta_bytes: int
     reserved_delta_bytes: int
+    output_kind: str = "hidden"
     replay_count: int = 0
     last_replay_step: int | None = None
     state: str = "ready"

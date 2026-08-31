@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 
 import torch
 from torch import nn
@@ -295,3 +297,68 @@ class Qwen35PackedForCausalLM(nn.Module):
         )
         self.commit_prepared_step(leases, prepared)
         return prepared.normalized, prepared.logits
+
+    def exact_cuda_graph_state_schema_sha256(self) -> str:
+        return self.layer_stack.state_transaction.pool.layout.fingerprint
+
+    def exact_cuda_graph_lease_seal(
+        self,
+        leases: tuple[HybridStateLease, ...],
+    ) -> str:
+        if not isinstance(leases, tuple) or not leases:
+            raise ValueError("exact CUDA Graph leases must be non-empty")
+        pool = self.layer_stack.state_transaction.pool
+        rows = []
+        slot_ids = set()
+        for lease in leases:
+            if type(lease) is not HybridStateLease:
+                raise ValueError(
+                    "exact CUDA Graph leases must contain "
+                    "HybridStateLease values"
+                )
+            pool.validate(lease)
+            if lease.slot_id in slot_ids:
+                raise ValueError(
+                    "exact CUDA Graph leases must use distinct slots"
+                )
+            slot_ids.add(lease.slot_id)
+            rows.append({
+                "slot_id": lease.slot_id,
+                "generation": lease.generation,
+                "request_id": lease.request_id,
+            })
+        payload = json.dumps(
+            rows,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def snapshot_exact_cuda_graph_state(
+        self,
+        leases: tuple[HybridStateLease, ...],
+    ):
+        return self.layer_stack.state_transaction.gather(leases)
+
+    def restore_exact_cuda_graph_state(
+        self,
+        leases: tuple[HybridStateLease, ...],
+        snapshot,
+    ) -> None:
+        self.layer_stack.state_transaction.commit(leases, snapshot)
+
+    def run_exact_cuda_graph_step(
+        self,
+        leases: tuple[HybridStateLease, ...],
+        token_counts: tuple[int, ...],
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor | None:
+        _, logits = self.run_step(
+            leases,
+            token_counts,
+            input_ids,
+            position_ids,
+        )
+        return logits

@@ -1116,10 +1116,12 @@ class _ExactGraphCaptureError(RuntimeError):
         message: str,
         *,
         retained_reserved_bytes: int = 0,
+        failures: tuple[BaseException, ...] = (),
     ):
         super().__init__(message)
         self.reason = reason
         self.retained_reserved_bytes = retained_reserved_bytes
+        self.failures = tuple(failures)
 
 
 def _resolve_kv_cache_blocks(
@@ -5660,6 +5662,11 @@ class ModelRunner:
                 properties.multi_processor_count
             ),
         )
+        (
+            execution_protocol,
+            state_schema_sha256,
+            lease_seal,
+        ) = self._exact_graph_execution_identity()
         return build_flash_attn_263_graph_identity(
             graph_batch_size=active_batch_size,
             inputs=inputs,
@@ -5667,6 +5674,67 @@ class ModelRunner:
                 getattr(flash_attn, "__version__", "unknown")
             ),
             require_exact_batch=True,
+            execution_protocol=execution_protocol,
+            state_schema_sha256=state_schema_sha256,
+            lease_seal=lease_seal,
+        )
+
+    def _exact_graph_execution_identity(
+        self,
+    ) -> tuple[str, str, str]:
+        hook_names = (
+            "exact_cuda_graph_state_schema_sha256",
+            "exact_cuda_graph_lease_seal",
+            "snapshot_exact_cuda_graph_state",
+            "restore_exact_cuda_graph_state",
+            "run_exact_cuda_graph_step",
+        )
+        model = getattr(self, "model", None)
+        hooks = tuple(
+            callable(getattr(model, name, None))
+            for name in hook_names
+        )
+        if not any(hooks):
+            return "forward_v1", "", ""
+        if not all(hooks):
+            raise RuntimeError(
+                "transactional exact CUDA Graph hooks are incomplete"
+            )
+        leases = tuple(
+            getattr(self, "_last_hybrid_state_leases", ())
+        )
+        token_counts = tuple(
+            getattr(self, "_last_hybrid_state_token_counts", ())
+        )
+        if not leases or len(leases) != len(token_counts):
+            raise RuntimeError(
+                "transactional exact CUDA Graph requires aligned "
+                "leases and token counts"
+            )
+        state_schema_sha256 = (
+            model.exact_cuda_graph_state_schema_sha256()
+        )
+        lease_seal = model.exact_cuda_graph_lease_seal(leases)
+        for name, value in (
+            ("state schema", state_schema_sha256),
+            ("lease seal", lease_seal),
+        ):
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in value
+                )
+            ):
+                raise RuntimeError(
+                    f"transactional exact CUDA Graph {name} "
+                    "must be a lowercase SHA-256"
+                )
+        return (
+            "lease_transaction_v1",
+            state_schema_sha256,
+            lease_seal,
         )
 
     def _spec_verify_graph_incompatible_reason(
@@ -7251,7 +7319,14 @@ class ModelRunner:
                 ),
             )
             entry.graph.replay()
-            logits = self.model.compute_logits(tensors["outputs"])
+            if entry.output_kind == "hidden":
+                logits = self.model.compute_logits(tensors["outputs"])
+            elif entry.output_kind == "logits":
+                logits = tensors["outputs"]
+            else:
+                raise RuntimeError(
+                    "exact CUDA Graph entry has invalid output kind"
+                )
         except Exception:
             self.exact_cuda_graph_cache.disable_entry(
                 entry.identity_sha256,
@@ -7361,6 +7436,14 @@ class ModelRunner:
             "text_config",
             hf_config,
         )
+        execution_protocol = identity.execution_protocol
+        if execution_protocol not in (
+            "forward_v1",
+            "lease_transaction_v1",
+        ):
+            raise ValueError(
+                "exact capture has unsupported execution protocol"
+            )
         tensors = {
             "input_ids": torch.zeros(
                 batch_size,
@@ -7388,13 +7471,14 @@ class ModelRunner:
                 dtype=torch.int32,
                 device=device,
             ),
-            "outputs": torch.zeros(
+        }
+        if execution_protocol == "forward_v1":
+            tensors["outputs"] = torch.zeros(
                 batch_size,
                 model_config.hidden_size,
                 dtype=hf_config.torch_dtype,
                 device=device,
-            ),
-        }
+            )
         tensors["input_ids"].copy_(input_ids)
         tensors["positions"].copy_(positions)
         tensors["context_lens"].copy_(context.context_lens)
@@ -7410,15 +7494,28 @@ class ModelRunner:
             )
         )
         snapshot = self.snapshot_kv_slots(scratch_slots)
-        graph = torch.cuda.CUDAGraph()
-        static_bytes = sum(
-            int(tensor.numel() * tensor.element_size())
-            for tensor in tensors.values()
+        leases = tuple(
+            getattr(self, "_last_hybrid_state_leases", ())
         )
+        token_counts = tuple(
+            getattr(self, "_last_hybrid_state_token_counts", ())
+        )
+        state_snapshot = None
+        if execution_protocol == "lease_transaction_v1":
+            if not leases or len(leases) != len(token_counts):
+                raise ValueError(
+                    "transactional exact capture requires aligned "
+                    "leases and token counts"
+                )
+            state_snapshot = (
+                self.model.snapshot_exact_cuda_graph_state(leases)
+            )
+        graph = torch.cuda.CUDAGraph()
         allocated_before = int(torch.cuda.memory_allocated())
         reserved_before = int(torch.cuda.memory_reserved())
         capture_started_ns = time.perf_counter_ns()
         restore_error = None
+        state_restore_error = None
         capture_error = None
         try:
             set_context(
@@ -7428,25 +7525,51 @@ class ModelRunner:
                 block_tables=tensors["block_tables"],
                 flash_attn_num_splits=identity.effective_num_splits,
             )
-            tensors["outputs"].copy_(
-                self.model(
-                    tensors["input_ids"],
-                    tensors["positions"],
-                )
-            )
-            torch.cuda.synchronize()
-            with torch.cuda.graph(graph, self.graph_pool):
+            if execution_protocol == "forward_v1":
                 tensors["outputs"].copy_(
                     self.model(
                         tensors["input_ids"],
                         tensors["positions"],
                     )
                 )
+            else:
+                self.model.run_exact_cuda_graph_step(
+                    leases,
+                    token_counts,
+                    tensors["input_ids"],
+                    tensors["positions"],
+                )
+            torch.cuda.synchronize()
+            with torch.cuda.graph(graph, self.graph_pool):
+                if execution_protocol == "forward_v1":
+                    tensors["outputs"].copy_(
+                        self.model(
+                            tensors["input_ids"],
+                            tensors["positions"],
+                        )
+                    )
+                else:
+                    tensors["outputs"] = (
+                        self.model.run_exact_cuda_graph_step(
+                            leases,
+                            token_counts,
+                            tensors["input_ids"],
+                            tensors["positions"],
+                        )
+                    )
             torch.cuda.synchronize()
         except Exception as exc:
             capture_error = exc
         finally:
             reset_context()
+            if execution_protocol == "lease_transaction_v1":
+                try:
+                    self.model.restore_exact_cuda_graph_state(
+                        leases,
+                        state_snapshot,
+                    )
+                except Exception as exc:
+                    state_restore_error = exc
             try:
                 self.restore_kv_slots(scratch_slots, snapshot)
             except Exception as exc:
@@ -7460,18 +7583,48 @@ class ModelRunner:
             0,
             reserved_after - reserved_before,
         )
-        if restore_error is not None:
+        failures = tuple(
+            error
+            for error in (
+                capture_error,
+                state_restore_error,
+                restore_error,
+            )
+            if error is not None
+        )
+        if state_restore_error is not None or restore_error is not None:
+            if (
+                state_restore_error is not None
+                and restore_error is not None
+            ):
+                message = (
+                    "exact CUDA Graph transactional state and "
+                    "scratch restore failed"
+                )
+            elif state_restore_error is not None:
+                message = (
+                    "exact CUDA Graph transactional state restore failed"
+                )
+            else:
+                message = "exact CUDA Graph scratch restore failed"
             raise _ExactGraphCaptureError(
                 "scratch_unavailable",
-                "exact CUDA Graph scratch restore failed",
+                message,
                 retained_reserved_bytes=retained_reserved_bytes,
-            ) from restore_error
+                failures=failures,
+            ) from failures[0]
         if capture_error is not None:
             raise _ExactGraphCaptureError(
                 "capture_failed",
                 "exact CUDA Graph capture failed",
                 retained_reserved_bytes=retained_reserved_bytes,
+                failures=failures,
             ) from capture_error
+        static_bytes = sum(
+            int(tensor.numel() * tensor.element_size())
+            for tensor in tensors.values()
+            if tensor is not None
+        )
         rebuilt = self._build_multi_sequence_graph_identity(
             tensors["input_ids"],
             SimpleNamespace(
@@ -7500,6 +7653,11 @@ class ModelRunner:
             reserved_delta_bytes=max(
                 0,
                 retained_reserved_bytes,
+            ),
+            output_kind=(
+                "logits"
+                if execution_protocol == "lease_transaction_v1"
+                else "hidden"
             ),
         )
 

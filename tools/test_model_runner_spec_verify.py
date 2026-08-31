@@ -6203,6 +6203,9 @@ def test_exact_graph_identity_and_static_byte_estimate_are_exact():
     assert identity.page_table_width == 2
     assert identity.flash_attn_version == "2.6.3"
     assert identity.multi_processor_count == 108
+    assert identity.execution_protocol == "forward_v1"
+    assert identity.state_schema_sha256 == ""
+    assert identity.lease_seal == ""
     assert runner._estimate_exact_graph_static_bytes(
         batch_size=4,
         page_table_width=2,
@@ -6252,6 +6255,108 @@ def test_exact_graph_identity_and_static_byte_estimate_are_exact():
         raise AssertionError("unsupported FlashAttention version accepted")
     finally:
         model_runner.flash_attn.__version__ = "2.6.3"
+
+
+def test_transactional_exact_graph_identity_seals_schema_and_leases():
+    runner = make_runner()
+    runner.config.hf_config = SimpleNamespace(
+        num_attention_heads=16,
+        num_key_value_heads=8,
+        head_dim=128,
+        hidden_size=1024,
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    runner.kv_cache = FakeTensor([], device="cuda:0")
+    runner._last_hybrid_state_leases = (
+        model_runner.HybridStateLease(2, 7, 101),
+        model_runner.HybridStateLease(5, 3, 202),
+    )
+    runner._last_hybrid_state_token_counts = (1, 1)
+
+    class TransactionalModel:
+        def __init__(self):
+            self.schema = b"schema-a"
+
+        def exact_cuda_graph_state_schema_sha256(self):
+            return hashlib.sha256(self.schema).hexdigest()
+
+        def exact_cuda_graph_lease_seal(self, leases):
+            payload = "|".join(
+                f"{lease.slot_id}:{lease.generation}:{lease.request_id}"
+                for lease in leases
+            ).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
+
+        def snapshot_exact_cuda_graph_state(self, leases):
+            del leases
+            return object()
+
+        def restore_exact_cuda_graph_state(self, leases, snapshot):
+            del leases, snapshot
+
+        def run_exact_cuda_graph_step(
+            self,
+            leases,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            del leases, token_counts, input_ids, positions
+            return None
+
+    runner.model = TransactionalModel()
+    graph_context = SimpleNamespace(
+        block_tables=FakeTensor([[0, 1], [2, 3]]),
+    )
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        graph_context,
+    )
+
+    assert identity.execution_protocol == "lease_transaction_v1"
+    assert identity.state_schema_sha256 == hashlib.sha256(
+        b"schema-a"
+    ).hexdigest()
+    assert identity.lease_seal == hashlib.sha256(
+        b"2:7:101|5:3:202"
+    ).hexdigest()
+
+    original_leases = runner._last_hybrid_state_leases
+    runner._last_hybrid_state_leases = tuple(reversed(original_leases))
+    reordered = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        graph_context,
+    )
+    assert reordered.sha256 != identity.sha256
+
+    for changed_leases in (
+        (
+            model_runner.HybridStateLease(3, 7, 101),
+            original_leases[1],
+        ),
+        (
+            model_runner.HybridStateLease(2, 8, 101),
+            original_leases[1],
+        ),
+        (
+            model_runner.HybridStateLease(2, 7, 102),
+            original_leases[1],
+        ),
+    ):
+        runner._last_hybrid_state_leases = changed_leases
+        changed = runner._build_multi_sequence_graph_identity(
+            FakeTensor([10, 20]),
+            graph_context,
+        )
+        assert changed.sha256 != identity.sha256
+
+    runner._last_hybrid_state_leases = original_leases
+    runner.model.schema = b"schema-b"
+    changed_schema = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        graph_context,
+    )
+    assert changed_schema.sha256 != identity.sha256
 
 
 def test_exact_graph_runtime_uses_nested_text_config():
@@ -7966,6 +8071,251 @@ def test_capture_restores_all_scratch_slots_and_context_in_finally():
     assert current.slot_mapping is None
 
 
+def test_transactional_capture_rolls_back_and_replay_advances_once():
+    runner = _make_exact_dispatch_runner()
+    runner._capture_exact_multi_sequence_graph = (
+        ModelRunner._capture_exact_multi_sequence_graph.__get__(
+            runner,
+            ModelRunner,
+        )
+    )
+    runner.graph_pool = None
+    runner.config.hf_config = SimpleNamespace(
+        text_config=SimpleNamespace(
+            num_attention_heads=16,
+            num_key_value_heads=8,
+            head_dim=128,
+            hidden_size=16,
+        ),
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    leases = tuple(
+        model_runner.HybridStateLease(index, 1, 100 + index)
+        for index in range(4)
+    )
+    runner._last_hybrid_state_leases = leases
+    runner._last_hybrid_state_token_counts = (1, 1, 1, 1)
+    scratch_slots = (2048, 2304, 2560, 2816)
+    runner._exact_graph_scratch_slots = (
+        lambda *, batch_size: scratch_slots[:batch_size]
+    )
+    scratch_state = {
+        slot: [slot, slot + 1]
+        for slot in scratch_slots
+    }
+    scratch_before = copy.deepcopy(scratch_state)
+    fail_kv_restore = [False]
+
+    def snapshot_kv(slots):
+        return {
+            slot: list(scratch_state[slot])
+            for slot in slots
+        }
+
+    def restore_kv(slots, snapshot):
+        if fail_kv_restore[0]:
+            raise RuntimeError("kv-restore-failed")
+        for slot in slots:
+            scratch_state[slot] = list(snapshot[slot])
+
+    runner.snapshot_kv_slots = snapshot_kv
+    runner.restore_kv_slots = restore_kv
+
+    class TransactionalModel:
+        def __init__(self):
+            self.state = 11
+            self.restore_count = 0
+            self.fail_step = False
+            self.fail_restore = False
+
+        def exact_cuda_graph_state_schema_sha256(self):
+            return hashlib.sha256(b"schema").hexdigest()
+
+        def exact_cuda_graph_lease_seal(self, active_leases):
+            payload = tuple(
+                (
+                    lease.slot_id,
+                    lease.generation,
+                    lease.request_id,
+                )
+                for lease in active_leases
+            )
+            return hashlib.sha256(repr(payload).encode()).hexdigest()
+
+        def snapshot_exact_cuda_graph_state(self, active_leases):
+            assert active_leases == leases
+            return self.state
+
+        def restore_exact_cuda_graph_state(
+            self,
+            active_leases,
+            snapshot,
+        ):
+            assert active_leases == leases
+            self.restore_count += 1
+            if self.fail_restore:
+                raise RuntimeError("state-restore-failed")
+            self.state = snapshot
+
+        def run_exact_cuda_graph_step(
+            self,
+            active_leases,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            del positions
+            assert active_leases == leases
+            assert token_counts == (1, 1, 1, 1)
+            if self.fail_step:
+                raise RuntimeError("capture-step-failed")
+            self.state += 1
+            for slot in scratch_slots:
+                scratch_state[slot][0] += 1000
+            return FakeCaptureTensor(
+                (input_ids.size(0), 32),
+                element_size=2,
+            )
+
+        def compute_logits(self, _hidden):
+            raise AssertionError(
+                "transactional replay must return captured logits"
+            )
+
+    runner.model = TransactionalModel()
+
+    class FakeGraph:
+        def __init__(self):
+            self.replay_count = 0
+
+        def pool(self):
+            return "pool"
+
+        def replay(self):
+            self.replay_count += 1
+            runner.model.state += 1
+
+    class FakeGraphContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    original_zeros = getattr(model_runner.torch, "zeros", None)
+    original_cuda = model_runner.torch.cuda
+    model_runner.torch.zeros = (
+        lambda *shape, dtype=None, device=None: FakeCaptureTensor(
+            shape[0] if len(shape) == 1 else shape,
+            element_size=(
+                2
+                if dtype == runner.config.hf_config.torch_dtype
+                else 4
+            ),
+        )
+    )
+    model_runner.torch.cuda = SimpleNamespace(
+        get_device_properties=original_cuda.get_device_properties,
+        CUDAGraph=FakeGraph,
+        graph=lambda graph, pool=None: FakeGraphContext(),
+        synchronize=lambda: None,
+        memory_allocated=lambda: 100,
+        memory_reserved=lambda: 200,
+    )
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([0, 256, 512, 768]),
+        context_lens=FakeTensor([1, 1, 1, 1]),
+        block_tables=FakeTensor([[0, 1]] * 4),
+    )
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        context.get_context(),
+    )
+    try:
+        entry = runner._capture_exact_multi_sequence_graph(
+            identity=identity,
+            input_ids=FakeTensor([10, 20, 30, 40]),
+            positions=FakeTensor([1, 1, 1, 1]),
+            context=context.get_context(),
+        )
+        assert runner.model.state == 11
+        assert runner.model.restore_count == 1
+        assert scratch_state == scratch_before
+        assert entry.output_kind == "logits"
+
+        context.set_context(
+            False,
+            slot_mapping=FakeTensor([4, 260, 516, 772]),
+            context_lens=FakeTensor([2, 2, 2, 2]),
+            block_tables=FakeTensor([[0, 1]] * 4),
+        )
+        logits = runner._replay_exact_multi_sequence_graph(
+            entry,
+            input_ids=FakeTensor([11, 21, 31, 41]),
+            positions=FakeTensor([2, 2, 2, 2]),
+            context=context.get_context(),
+        )
+        assert entry.graph.replay_count == 1
+
+        runner._last_hybrid_state_leases = (
+            model_runner.HybridStateLease(0, 2, 100),
+            *leases[1:],
+        )
+        context.set_context(
+            False,
+            slot_mapping=FakeTensor([8, 264, 520, 776]),
+            context_lens=FakeTensor([3, 3, 3, 3]),
+            block_tables=FakeTensor([[0, 1]] * 4),
+        )
+        try:
+            runner._replay_exact_multi_sequence_graph(
+                entry,
+                input_ids=FakeTensor([12, 22, 32, 42]),
+                positions=FakeTensor([3, 3, 3, 3]),
+                context=context.get_context(),
+            )
+        except RuntimeError as exc:
+            assert "identity drift" in str(exc)
+        else:
+            raise AssertionError(
+                "lease drift must fail before graph replay"
+            )
+        assert entry.graph.replay_count == 1
+
+        runner._last_hybrid_state_leases = leases
+        runner.model.fail_step = True
+        runner.model.fail_restore = True
+        fail_kv_restore[0] = True
+        try:
+            runner._capture_exact_multi_sequence_graph(
+                identity=identity,
+                input_ids=FakeTensor([10, 20, 30, 40]),
+                positions=FakeTensor([1, 1, 1, 1]),
+                context=context.get_context(),
+            )
+        except model_runner._ExactGraphCaptureError as exc:
+            assert exc.reason == "scratch_unavailable"
+            assert tuple(str(error) for error in exc.failures) == (
+                "capture-step-failed",
+                "state-restore-failed",
+                "kv-restore-failed",
+            )
+        else:
+            raise AssertionError(
+                "capture and restore failures must be terminal"
+            )
+    finally:
+        if original_zeros is None:
+            delattr(model_runner.torch, "zeros")
+        else:
+            model_runner.torch.zeros = original_zeros
+        model_runner.torch.cuda = original_cuda
+
+    assert logits is entry.tensors["outputs"]
+    assert runner.model.state == 12
+
+
 def test_replay_resets_context_on_success_and_exception():
     cache_module = sys.modules[
         "tinyvllm.engine.exact_cuda_graph_cache"
@@ -8110,6 +8460,7 @@ def main():
         test_feature_enabled_startup_captures_only_batch_one,
         test_feature_disabled_startup_inventory_is_unchanged,
         test_exact_graph_identity_and_static_byte_estimate_are_exact,
+        test_transactional_exact_graph_identity_seals_schema_and_leases,
         test_exact_graph_runtime_uses_nested_text_config,
         test_three_successful_eager_steps_capture_post_step_and_fourth_replays,
         test_exact_ready_entry_never_rounds_batch_or_page_table_width,
@@ -8135,6 +8486,7 @@ def main():
         test_capture_failures_are_terminal_and_reason_specific,
         test_capture_failure_logs_the_original_exception_chain,
         test_capture_restores_all_scratch_slots_and_context_in_finally,
+        test_transactional_capture_rolls_back_and_replay_advances_once,
         test_replay_resets_context_on_success_and_exception,
         test_replay_failure_publishes_terminal_event_before_reraising,
     )
