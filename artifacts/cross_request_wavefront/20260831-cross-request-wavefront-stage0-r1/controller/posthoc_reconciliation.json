@@ -1,0 +1,60 @@
+{
+  "analyzer_revision": "65b9b1d9ec8166350cd6c00e81bf6ab22da4a214",
+  "attempt": "20260831-cross-request-wavefront-stage0-r1",
+  "correction": {
+    "baseline_tolerance": {
+      "atol": 0.02,
+      "observed_max_abs_error": 0.00390625,
+      "observed_max_rel_error": 0.03448275849223137,
+      "rtol": 0.002
+    },
+    "reason": "The original classifier incorrectly required absolute and relative maxima to pass independently. The observed absolute error alone proves the frozen absolute tolerance.",
+    "regression_test": "test_classifier_accepts_absolute_tolerance_near_zero"
+  },
+  "input_hashes": {
+    "cleanup.json": "817bbe59170d70e8d745aba962e74135908cf820c337b6e3e39c0d11af994585",
+    "manifest.sha256": "298e35ba3b7503ace3b15493d2a95efc0139c4b0f9f929c203650bef0a626cd3",
+    "memory_summary.json": "0e12fb8e8fa7f24e9c68669d125ebeacf0c61b95cfcf8c96070815ac802da16c",
+    "microgate_rows.jsonl": "859e769a419066625fdaed6de9eba6ccc0cc363d0c1dea9428e6a81600e2002a"
+  },
+  "measurement_source_revision": "716f0e0acacc487d29b6da223080922833f5fbdf",
+  "original_producer_classification": "NO_GO_CORRECTNESS",
+  "reconciled_classification": "NO_GO_INSUFFICIENT_OVERLAP",
+  "runtime_integration_authorized": false,
+  "schema_version": "cross-request-wavefront-posthoc-reconciliation.v1",
+  "shape_summaries": [
+    {
+      "active_tokens": 4,
+      "baseline_median_cuda_ns": 210639.5,
+      "baseline_median_host_submission_ns": 132318.5,
+      "baseline_p99_cuda_ns": 696319,
+      "candidate_communication_union_ns": 272365805,
+      "candidate_median_cuda_ns": 441135.5,
+      "candidate_median_host_submission_ns": 437564.0,
+      "candidate_p99_cuda_ns": 1145696,
+      "candidate_realized_overlap_ns": 29799388,
+      "host_submission_regression_ratio": 2.3068996398840675,
+      "median_speedup_ratio": -1.0942676943308354,
+      "p99_regression_ratio": 0.6453608188201096,
+      "pair_count": 300,
+      "realized_overlap_ratio": 0.10940943192189637
+    },
+    {
+      "active_tokens": 8,
+      "baseline_median_cuda_ns": 227583.0,
+      "baseline_median_host_submission_ns": 146611.5,
+      "baseline_p99_cuda_ns": 310431,
+      "candidate_communication_union_ns": 363234594,
+      "candidate_median_cuda_ns": 482687.0,
+      "candidate_median_host_submission_ns": 439132.5,
+      "candidate_p99_cuda_ns": 989856,
+      "candidate_realized_overlap_ns": 63226821,
+      "host_submission_regression_ratio": 1.9952118353608004,
+      "median_speedup_ratio": -1.1209273100363384,
+      "p99_regression_ratio": 2.188650618011732,
+      "pair_count": 300,
+      "realized_overlap_ratio": 0.17406607752784692
+    }
+  ],
+  "stop_direction": true
+}

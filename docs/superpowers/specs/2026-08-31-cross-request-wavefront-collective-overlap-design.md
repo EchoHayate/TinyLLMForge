@@ -2,13 +2,39 @@
 
 **Date:** 2026-08-31
 
-**Status:** Approved direction; written-spec review pending
+**Status:** Terminal Stage-0 `NO_GO_INSUFFICIENT_OVERLAP`
+
+**Stage-1 authorization:** prohibited
 
 **Stage-0 topology:** single host, four CUDA GPUs, tensor parallel size four
 
 **Stage-1 first adopter:** `Qwen/Qwen3.8-27B`
 
 **Model revision:** `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`
+
+## Terminal execution result
+
+The immutable four-A100 attempt
+`20260831-cross-request-wavefront-stage0-r1` was measured from source
+revision `716f0e0acacc487d29b6da223080922833f5fbdf`.
+
+After correcting the classifier's absolute-or-relative tolerance handling in
+revision `65b9b1d9ec8166350cd6c00e81bf6ab22da4a214`, the hash-bound evidence
+classifies as:
+
+```text
+NO_GO_INSUFFICIENT_OVERLAP
+```
+
+The candidate realized only `10.9409%` overlap for four active tokens and
+`17.4066%` for eight active tokens, below the frozen `20%` gate. Candidate
+median transaction latency regressed by `109.43%` and `112.09%`,
+respectively. Both medians are below the frozen positive `3%` stop threshold,
+so this complete direction stops at Stage 0. No production runtime,
+scheduler, model, or collective-path integration is authorized.
+
+The terminal evidence and claim boundary are recorded in
+`docs/superpowers/audits/2026-08-31-cross-request-wavefront-stage0-audit.md`.
 
 ## 1. Objective
 

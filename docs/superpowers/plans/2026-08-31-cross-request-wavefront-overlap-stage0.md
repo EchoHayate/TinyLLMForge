@@ -1,5 +1,42 @@
 # Cross-Request Wavefront Overlap Stage-0 Implementation Plan
 
+## Terminal execution status
+
+**Result:** `NO_GO_INSUFFICIENT_OVERLAP`
+
+**Attempt:** `20260831-cross-request-wavefront-stage0-r1`
+
+**Measurement source revision:**
+`716f0e0acacc487d29b6da223080922833f5fbdf`
+
+**Tolerance-fix analyzer revision:**
+`65b9b1d9ec8166350cd6c00e81bf6ab22da4a214`
+
+**Stage-1 integration:** prohibited
+
+Execution completion:
+
+- [x] Task 1: model-neutral cohort and classifier contract
+- [x] Task 2: real four-rank stream/event worker
+- [x] Task 3: compact assembly and independent verification
+- [x] Task 4: fail-closed remote controller
+- [x] Task 5: complete committed-source verification
+- [x] Task 6: one immutable real four-A100 Stage-0 attempt
+- [x] Task 7: terminal audit, status reconciliation, final verification,
+  compact-evidence commit, push, and remote-SHA confirmation
+
+The immutable producer and both original verifiers classified the attempt as
+`NO_GO_CORRECTNESS`. A RED/GREEN tolerance regression fix showed that the
+tokens-eight absolute error (`0.00390625`) passed the frozen `atol=0.02`;
+reconstruction from the original hash-bound rows therefore yields
+`NO_GO_INSUFFICIENT_OVERLAP`. The original bundle remains unchanged.
+
+The candidate regressed median latency by `109.43%` and `112.09%`, while
+realized overlap reached only `10.9409%` and `17.4066%`. The frozen stop rule
+therefore terminates this direction before production integration. See
+`docs/superpowers/audits/2026-08-31-cross-request-wavefront-stage0-audit.md`
+for the complete prompt-to-artifact audit.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -1050,7 +1087,7 @@ requires a new written implementation plan before integration.
 - Produces the final prompt-to-artifact reconciliation.
 - Produces a pushed evidence commit whose local and remote SHAs agree.
 
-- [ ] **Step 1: Write the audit from raw terminal evidence**
+- [x] **Step 1: Write the audit from raw terminal evidence**
 
 The audit must include:
 
@@ -1068,13 +1105,13 @@ The audit must include:
 - terminal classification; and
 - the exact claim boundary.
 
-- [ ] **Step 2: Update spec and plan status**
+- [x] **Step 2: Update spec and plan status**
 
 Mark Stage 0 terminal. If non-GO, explicitly prohibit Stage-1 integration.
 If GO, authorize only writing the Stage-1 plan, not implementation by
 implication.
 
-- [ ] **Step 3: Run final verification**
+- [x] **Step 3: Run final verification**
 
 Run the complete Stage-0 and adjacent suites from Task 5, rerun the local
 independent verifier from the downloaded bundle, run:
@@ -1087,7 +1124,7 @@ git diff --check -- \
   artifacts/cross_request_wavefront/20260831-cross-request-wavefront-stage0-r1
 ```
 
-- [ ] **Step 4: Commit exact evidence paths**
+- [x] **Step 4: Commit exact evidence paths**
 
 Stage only:
 
@@ -1108,6 +1145,6 @@ git -c core.hooksPath=/dev/null commit \
 git push origin feat/kv-sparse-attention
 ```
 
-- [ ] **Step 5: Verify pushed identity**
+- [x] **Step 5: Verify pushed identity**
 
 Require local HEAD, tracking HEAD, and GitHub branch SHA to match exactly.
