@@ -54,9 +54,9 @@ The repository already contains the generic mechanism:
 - `tinyvllm/engine/model_runner.py`
   - `_build_multi_sequence_graph_identity()` binds active batch, exact page
     table width, FlashAttention split, device properties, and attention shape;
-  - `_capture_exact_multi_sequence_graph()` captures
-    `self.model(input_ids, positions)` and therefore captures the TP model
-    collectives reached by that forward;
+  - `_capture_exact_multi_sequence_graph()` currently assumes a conventional
+    `forward(input_ids, positions)` model and captures the TP collectives
+    reached by that forward;
   - `_replay_exact_multi_sequence_graph()` copies exact-shaped runtime inputs,
     replays once, and raises on replay failure instead of rerunning eager after
     possible KV mutation;
@@ -84,6 +84,28 @@ The older gate is not authority for this stage:
 - it predates the Qwen3.8-27B workloads and memory pressure;
 - no retained artifact was found that establishes Qwen3.8-27B TP4 graph
   performance.
+
+Attempt `20260831-qwen38-tp4-decode-replay-r5` disproved the assumption that
+the existing capture call is sufficient for every canonical model runner.
+Qwen3.8 uses `Qwen35PackedForCausalLM`, whose public execution contract is
+transactional:
+
+```text
+prepare_step(leases, token_counts, inputs, initial_candidates?)
+  -> normalized, logits, final_candidates
+commit_prepared_step(leases, prepared)
+```
+
+It intentionally has no ordinary `forward()`. The captured failure was:
+
+```text
+NotImplementedError: Module [Qwen35PackedForCausalLM] is missing the
+required "forward" function
+```
+
+Calling `run_step()` instead is not a valid one-line fix. Both the warmup call
+and capture call would commit recurrent state, and the resulting graph would
+write the physical state slots associated with the capture-time leases.
 
 ## NCCL Constraint
 
@@ -169,17 +191,93 @@ If Stage 0 is positive, a separate Stage-1 design decides whether to:
 
 If Stage 0 is negative or incomplete, do not implement Stage 1.
 
+## r5 Transactional-State Amendment
+
+The r5 RED authorizes the bounded core correction allowed by Stage 0. Three
+state-integration variants were evaluated.
+
+### A1. Lease-Independent Static State Input and Output Banks
+
+Gather live recurrent state before each replay, copy it into graph-stable input
+tensors, run a read-only prepared step, then commit graph-stable candidate
+outputs to the current leases.
+
+This has the cleanest reuse semantics, but it violates the frozen resource
+envelope for Q1 before capture begins. The real checkpoint has 48
+linear-attention layers. At TP4, one request owns 38,731,776 bytes of hybrid
+state. Separate input and output banks require:
+
+- batch 4: 309,854,208 bytes before logits and graph workspace;
+- batch 8: 619,708,416 bytes before logits and graph workspace.
+
+Q1 therefore exceeds the 512 MiB added-memory gate from state banks alone,
+and both Q0/Q2 exceed the existing 64 MiB static-tensor admission limit.
+This variant is rejected rather than silently raising either frozen limit.
+
+### A2. Lease-Sealed Transactional Full-Step Replay
+
+Capture the canonical `run_step()` including its state commit, while binding
+the graph identity to the exact ordered lease tuple and the model-provided
+state-schema fingerprint. Before warmup/capture, snapshot both:
+
+- the scratch KV slots used during capture; and
+- the recurrent state owned by the capture-time leases.
+
+Always restore both snapshots after capture, including on failure. A ready
+entry is replayable only while the current ordered leases and schema still
+match its sealed identity. This avoids duplicate external state banks and
+preserves exactly one state transition per successful replay.
+
+Costs:
+
+- entries cannot be reused after lease rotation;
+- a new request cohort must re-observe and recapture;
+- capture snapshot/restore cost and graph-cache fragmentation must be
+  reported;
+- replay failure remains terminal because KV or recurrent state may have been
+  partially mutated.
+
+### A3. Dynamic Pool-Index Graph Protocol
+
+Pass graph-stable slot indices, gather from the full state pool inside the
+graph, and commit through dynamic indexed writes.
+
+This could eventually recover cross-lease reuse, but requires new atomicity,
+generation-validation, dynamic-index, and failure semantics. It is a Stage-1
+candidate, not a bounded repair for this qualification.
+
+### Amended Decision
+
+Use A2 for Stage 0.
+
+The core contract is role-based:
+
+- a model without transactional graph hooks keeps the existing
+  `forward`/hidden-output protocol;
+- a model with transactional graph hooks supplies a schema fingerprint,
+  snapshot, restore, full-step execution, and lease seal;
+- `ModelRunner` owns graph admission, identity validation, KV scratch
+  restoration, replay ordering, quarantine, and evidence;
+- the model adapter owns recurrent-state representation and snapshot/restore
+  mechanics.
+
+No Qwen name, layer type, state role, or checkpoint field enters the generic
+graph cache or dispatch policy.
+
 ## Capability Restatement Without Model Nouns
 
-A tensor-parallel runtime observes a repeated exact decode shape. After a
-bounded number of successful eager observations, each rank captures the same
-ordered compute-and-collective step into a rank-local graph. Later steps copy
-new values into stable input buffers and all ranks replay the same graph
-generation once.
+A tensor-parallel runtime observes a repeated exact decode shape and execution
+state identity. After a bounded number of successful eager observations, each
+rank captures the same ordered compute-and-collective step into a rank-local
+graph. Later steps copy new token/KV metadata into stable input buffers and
+all ranks replay the same graph generation once. A transactional model may
+seal the graph to an ordered resource lease and execute its state commit
+inside the graph.
 
-The mechanism consumes runtime shape, topology, device, and lifecycle
-identity. It does not consume model names, prompt categories, or checkpoint
-business semantics.
+The mechanism consumes runtime shape, topology, device, execution protocol,
+state-schema fingerprint, and optional resource-lease identity. It does not
+consume model names, prompt categories, layer names, state-role names, or
+checkpoint business semantics.
 
 ## Two-Axis Verdict
 
@@ -195,8 +293,9 @@ classified as a generically qualified distributed optimization.
 ### Mechanism
 
 - exact graph identity;
+- execution protocol, state-schema, and optional lease-seal identity;
 - bounded observation and capture admission;
-- scratch-KV isolation;
+- scratch-KV and transactional-state capture rollback;
 - capture, replay, quarantine, and no-retry-after-replay semantics;
 - rank-local dispatch events.
 
@@ -208,9 +307,21 @@ Owned by:
 
 ### Adapter
 
-No model-specific adapter is required. The canonical `LLMEngine` and
-`ModelRunner` paths already translate scheduler state into tensors and graph
-identity.
+Conventional models require no adapter. Transactional models optionally expose
+the generic exact-graph hooks:
+
+```text
+exact_cuda_graph_state_schema_sha256() -> str
+exact_cuda_graph_lease_seal(leases) -> str
+snapshot_exact_cuda_graph_state(leases) -> object
+restore_exact_cuda_graph_state(leases, snapshot) -> None
+run_exact_cuda_graph_step(leases, token_counts, input_ids, positions)
+  -> graph-stable logits or None
+```
+
+Qwen3.8 is the first adopter and translates its cross-layer state transaction
+through those hooks. Core code does not inspect `layer_stack`,
+`state_transaction`, convolution state, or recurrent state.
 
 ### Policy and Configuration
 
@@ -241,6 +352,8 @@ The new gate must preserve that split:
 - remote storage paths belong only in the controller;
 - core graph identity must not include workload names, prompt length labels,
   or checkpoint names;
+- core graph code may consume an opaque state-schema fingerprint and lease
+  seal, but must not construct them from model-specific fields;
 - the worker must enter through `LLMEngine`, not call model internals as a
   parallel benchmark path.
 
@@ -264,6 +377,8 @@ frozen workload profile
 
 Add only:
 
+- the bounded generic transactional graph protocol from the r5 amendment;
+- Qwen3.8 first-adopter hooks for that protocol;
 - a frozen qualification contract/profile;
 - a TP4 worker with one evidence stream per rank;
 - a local controller and remote storage discipline;
@@ -272,9 +387,10 @@ Add only:
 - a local frozen-source verifier;
 - a terminal audit and compact immutable bundle.
 
-Do not modify core runtime unless Stage-0 RED tests expose a defect that makes
-the existing qualification impossible. Any such change requires a revised
-design before implementation.
+The r5 RED exposed exactly such a defect. Stage 0 may add the generic
+lease-sealed transactional graph hooks, identity fields, capture rollback, and
+tests described by this amendment. It must not add dynamic pool indexing,
+distributed admission consensus, or default enablement.
 
 ### Stage 1: Conditional Core RFC
 
@@ -324,12 +440,16 @@ For every candidate process group and measured graph replay:
 - world size is exactly four;
 - all ranks report the same ordered measured step IDs;
 - each step has one common graph identity SHA;
+- each rank reports the expected execution protocol and a non-empty
+  state-schema/lease seal for transactional replay;
 - each step has one common dispatch kind;
 - capture attempt, terminal cache state, and rejection reason agree;
 - graph replay count advances by one on every rank;
 - collective inventory and order digest agree across ranks;
 - no rank records eager while another records graph for the same step;
 - no replay exception, hang, timeout, or rank-local process failure occurs;
+- each successful graph replay advances recurrent state exactly once;
+- capture warmup/capture leave live recurrent state unchanged after rollback;
 - all ranks publish teardown completion.
 
 Any violation is terminal `NO_GO_CORRECTNESS_OR_LIFECYCLE`, not a performance
@@ -351,6 +471,8 @@ For every paired workload and repetition:
 - graph replay is observed for candidate measured decode;
 - baseline records no graph replay;
 - no eager retry occurs after an authoritative replay begins;
+- lease drift rejects the entry before replay rather than writing stale slots;
+- capture restores both scratch KV and transactional recurrent state;
 - process and communicator exits are clean.
 
 Logit tolerance is not a substitute for exact greedy token equality. If logits
@@ -416,6 +538,8 @@ compute processes, and host load. It must not terminate external processes.
 - added peak allocated memory per rank;
 - added peak reserved memory per rank;
 - static graph tensor bytes;
+- transactional state snapshot/restore duration and bytes;
+- graph recapture count caused by lease rotation;
 - initialization time;
 - cache misses and rejected identities;
 - teardown duration;
@@ -543,6 +667,7 @@ It would not prove:
 - multi-node behavior;
 - H100/NVLink behavior;
 - production default readiness.
+- cross-lease graph reuse for transactional models.
 
 Those claims require separate evidence.
 
@@ -558,6 +683,8 @@ Those claims require separate evidence.
 | Model-neutral core | Two-axis verdict, layer map, leakage evidence, contribution split |
 | Exact correctness | Token/length/stop rows plus all-rank lifecycle evidence |
 | No silent replay retry | Runtime source assertion and replay-failure test |
+| Transactional state advances exactly once | Capture rollback test, lease-seal drift test, eager-vs-replay state/output test |
+| Model-neutral transactional core | Opaque hook contract in core plus Qwen first-adopter adapter; no model nouns in cache/identity policy |
 | Real hardware gate | Four-rank A100 process receipts and GPU inventory |
 | Dual verifier | Remote independent and local frozen-source verification |
 | Immutable evidence | Post-verification manifest with hashes |
@@ -587,6 +714,14 @@ Consequently:
 - no Q0/Q1/Q2 performance or correctness claim is supported;
 - Stage 1 remains prohibited; and
 - a real retry must use a fresh tag after credentials are restored externally.
+
+Attempt `20260831-qwen38-tp4-decode-replay-r5` subsequently reached the real
+TP4 candidate capture path on strict-clean GPUs and is terminally diagnostic,
+not a performance result. It produced one completed eager case and then
+failed uniformly on all four ranks because the conventional graph capture
+called a model with no `forward()`. No candidate replay or complete paired
+matrix exists. The next attempt must use a fresh tag and the amended
+lease-sealed transactional protocol.
 
 This reconciliation does not change the frozen gate. It records why the first
 attempt cannot classify the optimization.

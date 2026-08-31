@@ -11,13 +11,14 @@ correctness, all-rank collective stability, steady-state benefit, and capture,
 memory, startup, and teardown cost.
 
 **Architecture:** Reuse the existing default-off exact multi-sequence CUDA
-Graph mechanism without changing production core. A new contract owns the
-frozen workload, schemas, and classifier; a worker drives canonical
-`LLMEngine`, gathers graph observations and collective profiles from all four
-ranks through acknowledged ModelRunner commands, and emits paired raw rows. A
-controller reuses the established strict-clean GPU monitor and source-freezing
-patterns, while a producer assembler and two independent verifier executions
-reconstruct the terminal classification from hash-bound evidence.
+Graph mechanism and add one bounded generic transactional-model protocol
+required by the r5 hardware RED. Conventional models retain the existing
+forward/hidden-output path; transactional models provide opaque schema,
+lease-seal, snapshot/restore, and full-step hooks so capture can roll back
+state and replay can commit exactly once to the sealed leases. The existing
+contract, worker, controller, assembler, and two independent verifier
+executions then reconstruct the terminal classification from hash-bound
+evidence.
 
 **Tech Stack:** Python 3, PyTorch, TinyLLMForge `LLMEngine`, CUDA Graphs, NCCL
 TP4, JSON/JSONL, SHA-256, `unittest`/dependency-light script tests, SSH
@@ -37,9 +38,16 @@ ControlMaster, Qwen3.8-27B BF16, four A100 80 GB PCIe GPUs.
   admission with an evidence-backed `INCOMPLETE` credential preflight.
 - The r1 audit is
   `docs/superpowers/audits/2026-08-31-tp4-collective-stable-decode-replay-audit.md`.
+- Attempts r2-r5 are also consumed. r5 reached strict-clean real hardware and
+  exposed a uniform all-rank capture failure:
+  `Qwen35PackedForCausalLM` has no ordinary `forward()`.
+- The design now selects lease-sealed transactional full-step replay. The
+  lease-independent two-bank alternative is rejected because the real TP4
+  state layout requires about 297.4 MiB at batch 4 and 594.8 MiB at batch 8
+  before graph workspace; Q1 exceeds the frozen 512 MiB cost gate.
 - No performance classification exists. Stage 1 remains prohibited.
-- After credentials are restored externally, a real retry must use a fresh
-  run tag; r1 must not be reused.
+- The next real retry must use fresh tag
+  `20260831-qwen38-tp4-decode-replay-r6`.
 
 ## Global Constraints
 
@@ -49,8 +57,9 @@ ControlMaster, Qwen3.8-27B BF16, four A100 80 GB PCIe GPUs.
 - Push only to `origin/feat/kv-sparse-attention`.
 - Use strict RED -> minimal implementation -> GREEN for every code task.
 - Keep `multi_sequence_cuda_graphs=False` by default.
-- Do not modify `tinyvllm/` in Stage 0 unless a RED test proves the existing
-  qualification is impossible; revise the design before any such change.
+- The r5 RED proves a bounded `tinyvllm/` correction is required. Limit it to
+  generic transactional graph hooks, identity sealing, capture rollback, and
+  first-adopter wiring described in the amended design.
 - Baseline is `enforce_eager=True`.
 - Candidate is `enforce_eager=False`,
   `multi_sequence_cuda_graphs=True`, with batch allowlist `(2, 4, 8)`.
@@ -121,6 +130,23 @@ ControlMaster, Qwen3.8-27B BF16, four A100 80 GB PCIe GPUs.
   - terminal classification and evidence links only after the gate.
 - Modify this plan
   - task status and terminal reconciliation only after evidence exists.
+- Modify `tinyvllm/engine/flash_attn_split_policy.py`
+  - bind exact graph identity to execution protocol, state schema, and opaque
+    lease seal.
+- Modify `tinyvllm/engine/model_runner.py`
+  - dispatch conventional versus transactional capture/replay, restore
+    capture-time state, and reject lease drift before replay.
+- Modify `tinyvllm/models/qwen35_packed.py`
+  - provide the first-adopter implementation of the generic transactional
+    graph hooks.
+- Modify `tinyvllm/engine/exact_cuda_graph_cache.py`
+  - retain transactional output protocol metadata without model-specific
+    fields.
+- Modify `tools/test_model_runner_spec_verify.py`
+  - cover capture rollback, exact-once replay state advancement, lease drift,
+    output semantics, and conventional-path compatibility.
+- Modify `tools/test_qwen35_prepared_model_step.py`
+  - cover the Qwen first-adopter hook contract independently.
 
 ## Shared Interfaces
 
@@ -860,6 +886,124 @@ for the final audit.
 
 ---
 
+### Task 5A: Add Lease-Sealed Transactional Decode Replay
+
+**Files:**
+
+- Modify: `tinyvllm/engine/flash_attn_split_policy.py`
+- Modify: `tinyvllm/engine/exact_cuda_graph_cache.py`
+- Modify: `tinyvllm/engine/model_runner.py`
+- Modify: `tinyvllm/models/qwen35_packed.py`
+- Modify: `tools/test_model_runner_spec_verify.py`
+- Modify: `tools/test_qwen35_prepared_model_step.py`
+
+**Interfaces:**
+
+- Consumes: current ordered `_last_hybrid_state_leases`,
+  `_last_hybrid_state_token_counts`, and the existing exact graph identity.
+- Produces: a conventional `forward_v1` protocol or opaque
+  `lease_transaction_v1` protocol, with capture rollback and exact-once
+  replay state transition.
+
+- [ ] **Step 1: RED — identity and first-adopter hook contract**
+
+Add tests proving:
+
+- conventional models retain `execution_protocol == "forward_v1"` with empty
+  state schema and lease seal;
+- transactional models produce `execution_protocol ==
+  "lease_transaction_v1"`;
+- changing slot, generation, request, order, or state schema changes the graph
+  identity SHA;
+- Qwen hook snapshot/restore round-trips the complete active state;
+- Qwen full-step hook matches `run_step()` output and state.
+
+Run:
+
+```bash
+PYTHONPATH=. python3 tools/test_qwen35_prepared_model_step.py
+PYTHONPATH=. python3 tools/test_model_runner_spec_verify.py
+```
+
+Expected: fail because the hooks and identity fields do not exist.
+
+- [ ] **Step 2: GREEN — minimal opaque model hooks and identity**
+
+Add exact hook names:
+
+```text
+exact_cuda_graph_state_schema_sha256() -> str
+exact_cuda_graph_lease_seal(leases) -> str
+snapshot_exact_cuda_graph_state(leases) -> object
+restore_exact_cuda_graph_state(leases, snapshot) -> None
+run_exact_cuda_graph_step(leases, token_counts, input_ids, positions)
+  -> logits or None
+```
+
+`ModelRunner` may call these hooks only through capability detection. It must
+not inspect Qwen classes, layer stacks, component roles, or checkpoint fields.
+
+- [ ] **Step 3: RED — capture rollback and replay lifecycle**
+
+Add tests proving:
+
+- warmup plus capture may mutate scratch KV and lease state internally, but
+  both are restored before capture returns;
+- successful replay invokes the captured state transition exactly once and
+  returns captured logits directly;
+- lease/schema drift disables the entry before `graph.replay()`;
+- replay or state-restore failure is terminal and never retries eager;
+- the existing conventional model capture/replay path remains unchanged.
+
+Run:
+
+```bash
+PYTHONPATH=. python3 tools/test_model_runner_spec_verify.py
+```
+
+Expected: fail on missing transactional capture/replay behavior.
+
+- [ ] **Step 4: GREEN — minimal transactional capture/replay**
+
+Capture `run_exact_cuda_graph_step(...)` with the exact sealed leases and token
+counts. Snapshot active transactional state and scratch KV before warmup,
+restore both in `finally`, and preserve both errors if either capture or
+restore fails. Retain captured logits and protocol metadata in
+`ExactCudaGraphEntry`.
+
+Before replay, rebuild the complete identity from current runtime state. Only
+after exact equality may `graph.replay()` begin. Once replay begins, any
+failure raises terminally and no eager fallback is allowed.
+
+- [ ] **Step 5: GREEN — focused and compatibility regressions**
+
+Run:
+
+```bash
+PYTHONPATH=. python3 tools/test_qwen35_prepared_model_step.py
+PYTHONPATH=. python3 tools/test_model_runner_spec_verify.py
+PYTHONPATH=. python3 tools/test_multi_sequence_cuda_graph_gate.py
+PYTHONPATH=. python3 tools/test_tp4_decode_replay_worker.py
+PYTHONPATH=. python3 tools/test_run_tp4_decode_replay.py
+python3 -m py_compile \
+  tinyvllm/engine/flash_attn_split_policy.py \
+  tinyvllm/engine/exact_cuda_graph_cache.py \
+  tinyvllm/engine/model_runner.py \
+  tinyvllm/models/qwen35_packed.py
+git diff --check
+```
+
+Expected: all exit zero.
+
+- [ ] **Step 6: Exact commit and push**
+
+Stage only the six files above plus the amended spec and plan. Commit with
+exactly one required co-author trailer, push only
+`origin/feat/kv-sparse-attention`, and verify local/tracking/remote SHA
+equality before r6.
+
+---
+
 ### Task 6: Execute the Real Qwen3.8-27B TP4 Gate
 
 **Files:**
@@ -895,7 +1039,7 @@ the attempt as `INCOMPLETE`; do not create a second run with the same tag.
 
 ```bash
 python tools/run_tp4_decode_replay.py monitor-and-run \
-  --run-tag 20260831-qwen38-tp4-decode-replay-r1
+  --run-tag 20260831-qwen38-tp4-decode-replay-r6
 ```
 
 The controller waits locally, launches immediately after four strict-clean
@@ -918,9 +1062,9 @@ Require:
 ```bash
 python tools/verify_tp4_decode_replay.py \
   --bundle artifacts/tp4_decode_replay/\
-20260831-qwen38-tp4-decode-replay-r1/final_bundle \
+20260831-qwen38-tp4-decode-replay-r6/final_bundle \
   --write-result artifacts/tp4_decode_replay/\
-20260831-qwen38-tp4-decode-replay-r1/controller/\
+20260831-qwen38-tp4-decode-replay-r6/controller/\
 local_frozen_source_verification.json
 ```
 
@@ -1059,8 +1203,9 @@ Expected: local HEAD, tracking SHA, and remote SHA are identical.
 
 - Spec coverage: every objective, gate, artifact, safety rule, and evidence
   boundary maps to Tasks 1–8.
-- Scope: one Stage-0 qualification; no distributed admission implementation
-  or production-default change.
+- Scope: one Stage-0 qualification plus the r5-authorized generic
+  lease-sealed transactional repair; no distributed admission implementation,
+  dynamic pool-index protocol, or production-default change.
 - Type consistency: shared function names and constants are defined once in
   this plan and reused unchanged.
 - TDD: each code-producing task has explicit RED, minimal implementation,
