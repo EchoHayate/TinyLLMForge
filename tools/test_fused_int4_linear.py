@@ -115,6 +115,17 @@ def test_compiled_kernel_exposes_lazy_triton_language_as_a_global(
         module.__dict__.pop("tl", None)
 
 
+@pytest.mark.parametrize("m", (1, 2, 4, 8))
+def test_launch_configuration_uses_tensor_core_compatible_m_tile(m):
+    config = module._launch_configuration(
+        m=m,
+        n=2048,
+        k=1024,
+    )
+
+    assert config["BLOCK_M"] >= 16
+
+
 def test_support_accepts_aligned_cuda_contract():
     x, packed, scales = _valid_fake_tensors()
 

@@ -216,17 +216,9 @@ def _launch_configuration(
     n: int,
     k: int,
 ) -> dict[str, int]:
-    del k
-    if m <= 2:
-        return {
-            "BLOCK_M": 2,
-            "BLOCK_N": 64 if n % 64 == 0 else 32,
-            "BLOCK_K": 64,
-            "num_warps": 4,
-            "num_stages": 3,
-        }
+    del m, k
     return {
-        "BLOCK_M": 8,
+        "BLOCK_M": 16,
         "BLOCK_N": 64 if n % 64 == 0 else 32,
         "BLOCK_K": 64,
         "num_warps": 4,
