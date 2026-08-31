@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import __future__
 import ast
-from contextlib import redirect_stderr
+from contextlib import contextmanager, redirect_stderr
 import copy
 import hashlib
 import importlib.util
@@ -133,6 +133,18 @@ _SPEC_VERIFY_EXACT_CACHE_PATH = os.path.join(
     "engine",
     "spec_verify_exact_cuda_graph_cache.py",
 )
+_decode_internal_profile_suspensions = []
+
+
+@contextmanager
+def _suspend_decode_internal_profiler():
+    _decode_internal_profile_suspensions.append("enter")
+    try:
+        yield
+    finally:
+        _decode_internal_profile_suspensions.append("exit")
+
+
 _COMMAND_ACK_PATH = os.path.join(
     _REPO_ROOT,
     "tinyvllm",
@@ -402,6 +414,9 @@ def _load_model_runner_module():
         ),
         run_profiled_step=(
             lambda _profiler, **kwargs: kwargs["call"]()
+        ),
+        suspend_decode_internal_profiler=(
+            _suspend_decode_internal_profiler
         ),
     )
     _install_module(
@@ -8072,6 +8087,7 @@ def test_capture_restores_all_scratch_slots_and_context_in_finally():
 
 
 def test_transactional_capture_rolls_back_and_replay_advances_once():
+    _decode_internal_profile_suspensions.clear()
     runner = _make_exact_dispatch_runner()
     runner._capture_exact_multi_sequence_graph = (
         ModelRunner._capture_exact_multi_sequence_graph.__get__(
@@ -8243,6 +8259,10 @@ def test_transactional_capture_rolls_back_and_replay_advances_once():
         assert runner.model.restore_count == 1
         assert scratch_state == scratch_before
         assert entry.output_kind == "logits"
+        assert _decode_internal_profile_suspensions == [
+            "enter",
+            "exit",
+        ]
 
         context.set_context(
             False,

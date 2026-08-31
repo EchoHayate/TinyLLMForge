@@ -66,6 +66,7 @@ from tinyvllm.engine.tensor_parallel_greedy import (
 from tinyvllm.engine.decode_internal_profiler import (
     DecodeInternalProfiler,
     run_profiled_step,
+    suspend_decode_internal_profiler,
 )
 from tinyvllm.engine.synchronous_collective_census import (
     CollectiveCensusPolicy,
@@ -7518,29 +7519,14 @@ class ModelRunner:
         state_restore_error = None
         capture_error = None
         try:
-            set_context(
-                False,
-                slot_mapping=tensors["slot_mapping"],
-                context_lens=tensors["context_lens"],
-                block_tables=tensors["block_tables"],
-                flash_attn_num_splits=identity.effective_num_splits,
-            )
-            if execution_protocol == "forward_v1":
-                tensors["outputs"].copy_(
-                    self.model(
-                        tensors["input_ids"],
-                        tensors["positions"],
-                    )
+            with suspend_decode_internal_profiler():
+                set_context(
+                    False,
+                    slot_mapping=tensors["slot_mapping"],
+                    context_lens=tensors["context_lens"],
+                    block_tables=tensors["block_tables"],
+                    flash_attn_num_splits=identity.effective_num_splits,
                 )
-            else:
-                self.model.run_exact_cuda_graph_step(
-                    leases,
-                    token_counts,
-                    tensors["input_ids"],
-                    tensors["positions"],
-                )
-            torch.cuda.synchronize()
-            with torch.cuda.graph(graph, self.graph_pool):
                 if execution_protocol == "forward_v1":
                     tensors["outputs"].copy_(
                         self.model(
@@ -7549,15 +7535,31 @@ class ModelRunner:
                         )
                     )
                 else:
-                    tensors["outputs"] = (
-                        self.model.run_exact_cuda_graph_step(
-                            leases,
-                            token_counts,
-                            tensors["input_ids"],
-                            tensors["positions"],
-                        )
+                    self.model.run_exact_cuda_graph_step(
+                        leases,
+                        token_counts,
+                        tensors["input_ids"],
+                        tensors["positions"],
                     )
-            torch.cuda.synchronize()
+                torch.cuda.synchronize()
+                with torch.cuda.graph(graph, self.graph_pool):
+                    if execution_protocol == "forward_v1":
+                        tensors["outputs"].copy_(
+                            self.model(
+                                tensors["input_ids"],
+                                tensors["positions"],
+                            )
+                        )
+                    else:
+                        tensors["outputs"] = (
+                            self.model.run_exact_cuda_graph_step(
+                                leases,
+                                token_counts,
+                                tensors["input_ids"],
+                                tensors["positions"],
+                            )
+                        )
+                torch.cuda.synchronize()
         except Exception as exc:
             capture_error = exc
         finally:

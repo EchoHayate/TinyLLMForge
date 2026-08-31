@@ -109,6 +109,7 @@ class _FakeEngine:
         self.last_step_observation = None
         self.exit_calls = 0
         self.reset_profile_calls = 0
+        self.clear_prefix_calls = 0
         self._requests = []
         self._step_index = 0
         self._finished = True
@@ -192,6 +193,12 @@ class _FakeEngine:
             }
             for rank in range(4)
         )
+
+    def clear_reusable_prefix_cache(self):
+        assert self._finished is True
+        assert self.reset_profile_calls == 0
+        self.clear_prefix_calls += 1
+        return 4
 
     def finalize_decode_internal_profile(self, *, timeout_s):
         assert timeout_s > 0
@@ -414,6 +421,7 @@ def test_run_arm_emits_complete_measured_evidence_and_cleanup():
     assert len(measured_dispatch) == 4
     assert all(row["dispatch"] == "graph" for row in measured_dispatch)
     assert result["cleanup"]["rank_exit_codes"] == [0, 0, 0, 0]
+    assert engines[0].clear_prefix_calls == 1
     assert engines[0].reset_profile_calls == 1
     assert engines[0].exit_calls == 1
 

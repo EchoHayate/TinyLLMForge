@@ -404,6 +404,36 @@ def test_duplicate_layer_identity_in_one_step_fails_closed():
         profiler.layer(1, "full_attention").__enter__()
 
 
+def test_suspension_excludes_internal_capture_and_restores_outer_step():
+    profiler, _, _ = _profiler()
+    _begin_decode(profiler)
+    with profiler.layer(1, "full_attention"):
+        pass
+
+    suspend = getattr(
+        profiler_module,
+        "suspend_decode_internal_profiler",
+    )
+    with suspend():
+        with profiler_module.profile_layer(1, "full_attention"):
+            pass
+        with profiler_module.profile_layer(1, "full_attention"):
+            pass
+
+    with profiler.layer(2, "mlp"):
+        pass
+    profiler.end_step()
+
+    rows = profiler.finalize()["layers"]
+    assert [
+        (row["layer_index"], row["layer_role"])
+        for row in rows
+    ] == [
+        (1, "full_attention"),
+        (2, "mlp"),
+    ]
+
+
 def test_collective_rejects_async_execution_in_observation_only_phase():
     profiler, _, _ = _profiler()
     _begin_decode(profiler)

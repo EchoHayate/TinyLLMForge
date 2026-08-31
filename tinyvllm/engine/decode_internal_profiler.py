@@ -36,6 +36,15 @@ def active_decode_internal_profiler():
     return _ACTIVE_PROFILER.get()
 
 
+@contextmanager
+def suspend_decode_internal_profiler():
+    token = _ACTIVE_PROFILER.set(None)
+    try:
+        yield
+    finally:
+        _ACTIVE_PROFILER.reset(token)
+
+
 def _synchronous_collective_census_module():
     return (
         sys.modules.get(
