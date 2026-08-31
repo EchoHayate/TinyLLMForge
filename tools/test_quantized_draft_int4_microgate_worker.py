@@ -315,3 +315,11 @@ def test_worker_script_help_runs_outside_repository(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert "--approved-remote-root" in completed.stdout
+
+
+def test_worker_loads_candidate_modules_from_staged_source_snapshot():
+    source = WORKER_PATH.read_text(encoding="utf-8")
+
+    assert "from tinyvllm.layers.fused_int4_linear import" not in source
+    assert "from tinyvllm.layers.quantization import" not in source
+    assert "_load_staged_module(" in source

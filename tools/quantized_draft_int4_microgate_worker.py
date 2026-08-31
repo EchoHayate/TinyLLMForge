@@ -7,6 +7,7 @@ import argparse
 from collections import defaultdict
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -113,6 +114,17 @@ def _checkpoint_identity(model_path: Path) -> dict[str, object]:
             _canonical_json(rows).encode("utf-8")
         ).hexdigest(),
     }
+
+
+def _load_staged_module(name: str, relative_path: str):
+    module_path = _REPOSITORY_ROOT / relative_path
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load staged module: {relative_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _load_tinyvllm_model(
@@ -380,14 +392,18 @@ def _run_arm(
 def run_measured_candidate(args: argparse.Namespace) -> dict[str, object]:
     import torch
 
-    from tinyvllm.layers.fused_int4_linear import (
-        fused_int4_linear,
-        warmup_fused_int4_linear,
+    fused_module = _load_staged_module(
+        "tinyllmforge_stage0_fused_int4_linear",
+        "tinyvllm/layers/fused_int4_linear.py",
     )
-    from tinyvllm.layers.quantization import (
-        dequantize_int4,
-        quantize_int4,
+    quantization_module = _load_staged_module(
+        "tinyllmforge_stage0_quantization",
+        "tinyvllm/layers/quantization.py",
     )
+    fused_int4_linear = fused_module.fused_int4_linear
+    warmup_fused_int4_linear = fused_module.warmup_fused_int4_linear
+    dequantize_int4 = quantization_module.dequantize_int4
+    quantize_int4 = quantization_module.quantize_int4
 
     output_dir = Path(args.output_dir).resolve()
     torch.cuda.set_device(0)
