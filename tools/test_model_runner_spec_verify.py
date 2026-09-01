@@ -7957,6 +7957,41 @@ def test_capture_failure_logs_the_original_exception_chain():
     )
 
 
+def test_capture_phase_receipt_preserves_completed_prefix_after_failure():
+    receipt_type = model_runner.ExactCudaGraphCaptureReceipt
+    environment = "TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"
+    previous_root = os.environ.get(environment)
+    with tempfile.TemporaryDirectory() as receipt_root:
+        os.environ[environment] = receipt_root
+        try:
+            receipt = receipt_type.from_environment(
+                rank=2,
+                world_size=4,
+                identity_sha256="a" * 64,
+            )
+            receipt.record("entered_capture")
+            receipt.record("scratch_restore_completed")
+            payload = json.loads(
+                open(
+                    os.path.join(receipt_root, "rank-2.json"),
+                    encoding="utf-8",
+                ).read()
+            )
+        finally:
+            if previous_root is None:
+                os.environ.pop(environment, None)
+            else:
+                os.environ[environment] = previous_root
+
+    assert [
+        row["phase"]
+        for row in payload["completed_phases"]
+    ] == [
+        "entered_capture",
+        "scratch_restore_completed",
+    ]
+
+
 def test_capture_without_legacy_pool_restores_scratch_and_context():
     runner = _make_exact_dispatch_runner()
     runner._capture_exact_multi_sequence_graph = (
@@ -8066,21 +8101,53 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
         FakeTensor([10, 20, 30, 40]),
         context.get_context(),
     )
-    try:
-        entry = runner._capture_exact_multi_sequence_graph(
-            identity=identity,
-            input_ids=FakeTensor([10, 20, 30, 40]),
-            positions=FakeTensor([1, 1, 1, 1]),
-            context=context.get_context(),
-        )
-    finally:
-        if original_zeros is None:
-            delattr(model_runner.torch, "zeros")
-        else:
-            model_runner.torch.zeros = original_zeros
-        model_runner.torch.cuda = original_cuda
+    receipt_environment = (
+        "TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"
+    )
+    previous_receipt_root = os.environ.get(receipt_environment)
+    with tempfile.TemporaryDirectory() as receipt_root:
+        os.environ[receipt_environment] = receipt_root
+        try:
+            entry = runner._capture_exact_multi_sequence_graph(
+                identity=identity,
+                input_ids=FakeTensor([10, 20, 30, 40]),
+                positions=FakeTensor([1, 1, 1, 1]),
+                context=context.get_context(),
+            )
+            receipt = json.loads(
+                open(
+                    os.path.join(receipt_root, "rank-0.json"),
+                    encoding="utf-8",
+                ).read()
+            )
+        finally:
+            if previous_receipt_root is None:
+                os.environ.pop(receipt_environment, None)
+            else:
+                os.environ[receipt_environment] = previous_receipt_root
+            if original_zeros is None:
+                delattr(model_runner.torch, "zeros")
+            else:
+                model_runner.torch.zeros = original_zeros
+            model_runner.torch.cuda = original_cuda
 
     assert entry.identity_sha256 == identity.sha256
+    assert receipt["schema_version"] == 1
+    assert receipt["rank"] == 0
+    assert receipt["world_size"] == 1
+    assert receipt["identity_sha256"] == identity.sha256
+    assert [
+        row["phase"]
+        for row in receipt["completed_phases"]
+    ] == [
+        "entered_capture",
+        "warmup_forward_completed",
+        "warmup_synchronize_completed",
+        "capture_begin",
+        "capture_body_completed",
+        "capture_end_synchronize_completed",
+        "scratch_restore_completed",
+    ]
     assert observed["snapshot_slots"] == tuple(scratch_slots)
     assert observed["restore_slots"] == tuple(scratch_slots)
     assert observed["restore_count"] == 1
@@ -8510,6 +8577,7 @@ def main():
         test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,
         test_capture_failure_logs_the_original_exception_chain,
+        test_capture_phase_receipt_preserves_completed_prefix_after_failure,
         test_capture_without_legacy_pool_restores_scratch_and_context,
         test_transactional_capture_rolls_back_and_replay_advances_once,
         test_replay_resets_context_on_success_and_exception,

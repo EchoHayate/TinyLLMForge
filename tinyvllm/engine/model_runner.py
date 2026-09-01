@@ -19,6 +19,9 @@ from tinyvllm.engine.exact_cuda_graph_cache import (
     ExactCudaGraphCacheConfig,
     ExactCudaGraphEntry,
 )
+from tinyvllm.engine.exact_cuda_graph_capture_receipt import (
+    ExactCudaGraphCaptureReceipt,
+)
 from tinyvllm.engine.exact_prefill_cuda_graph import (
     ExactPrefillCudaGraphCache,
     ExactPrefillCudaGraphCacheConfig,
@@ -7446,6 +7449,14 @@ class ModelRunner:
             raise ValueError(
                 "exact capture has unsupported execution protocol"
             )
+        capture_receipt = (
+            ExactCudaGraphCaptureReceipt.from_environment(
+                rank=int(self.rank),
+                world_size=int(self.world_size),
+                identity_sha256=identity.sha256,
+            )
+        )
+        capture_receipt.record("entered_capture")
         tensors = {
             "input_ids": torch.zeros(
                 batch_size,
@@ -7543,7 +7554,10 @@ class ModelRunner:
                         tensors["input_ids"],
                         tensors["positions"],
                     )
+                capture_receipt.record("warmup_forward_completed")
                 torch.cuda.synchronize()
+                capture_receipt.record("warmup_synchronize_completed")
+                capture_receipt.record("capture_begin")
                 with torch.cuda.graph(
                     graph,
                     getattr(self, "graph_pool", None),
@@ -7564,7 +7578,11 @@ class ModelRunner:
                                 tensors["positions"],
                             )
                         )
+                    capture_receipt.record("capture_body_completed")
                 torch.cuda.synchronize()
+                capture_receipt.record(
+                    "capture_end_synchronize_completed"
+                )
         except Exception as exc:
             capture_error = exc
         finally:
@@ -7579,6 +7597,7 @@ class ModelRunner:
                     state_restore_error = exc
             try:
                 self.restore_kv_slots(scratch_slots, snapshot)
+                capture_receipt.record("scratch_restore_completed")
             except Exception as exc:
                 restore_error = exc
         capture_duration_ns = (
