@@ -619,7 +619,7 @@ def test_prelaunch_cleanup_is_clean_when_no_owned_process_exists():
     assert persisted == receipt
 
 
-def test_exact_tag_scan_checks_environment_after_cmdline_rewrite():
+def test_exact_tag_scan_uses_attempt_root_for_cmdline_ownership():
     captured = []
 
     with tempfile.TemporaryDirectory() as directory:
@@ -638,7 +638,16 @@ def test_exact_tag_scan_checks_environment_after_cmdline_rewrite():
     script = captured[0][2]
     assert "'/environ'" in script
     assert "tag.encode()" in script
-    assert "tag in command or tag_bytes in environment" in script
+    assert "attempt_root=sys.argv[2]" in script
+    assert (
+        "attempt_root in command or tag_bytes in environment"
+        in script
+    )
+    assert "tag in command or tag_bytes in environment" not in script
+    assert captured[0][-2:] == [
+        RUN_TAG,
+        _plan()["paths"]["attempt_root"],
+    ]
 
 
 def test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean():
@@ -693,7 +702,7 @@ def main_tests() -> None:
         test_kerberos_guard_covers_the_full_remote_command_window,
         test_failed_kerberos_preflight_is_persisted_as_incomplete,
         test_prelaunch_cleanup_is_clean_when_no_owned_process_exists,
-        test_exact_tag_scan_checks_environment_after_cmdline_rewrite,
+        test_exact_tag_scan_uses_attempt_root_for_cmdline_ownership,
         test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean,
     )
     for test in tests:

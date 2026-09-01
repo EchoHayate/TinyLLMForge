@@ -738,3 +738,38 @@ This design stage is complete when:
 
 The optimization itself remains unclassified until the real TP4 terminal
 bundle passes both independent verifiers.
+
+## 2026-09-01 r25 reconciliation
+
+Attempt `20260901-qwen38-tp4-decode-replay-r25-full` froze pushed source
+`1e18c30e5cf134943b39f984100583b2b1a3f55d`, admitted strict-clean GPUs
+`0,3,4,6`, and produced 13 of the required 30 case files before the local GPU
+guard detected external compute PID `3877390` on a selected GPU. The guard
+terminated only exact-tag-owned r25 processes and left the external process
+untouched.
+
+The attempt is terminally `INCOMPLETE`: only 6 of 15 pairs are complete, and
+there is no final bundle, manifest, producer classification, remote verifier,
+or local frozen-source verifier. Stage 1 remains prohibited.
+
+The partial evidence is diagnostic only:
+
+- four of five Q0 pairs replayed 496 of 508 eligible all-rank steps and
+  reproduced the same request-1 token divergence at output index 37;
+- Q0 repetition 3 and Q1 repetition 0 were exact but had zero replay after
+  measured captures exceeded the frozen two-second ceiling; and
+- all 13 atomically written arms completed four-rank process-group teardown.
+
+Two evidence-path defects discovered during reconciliation are corrected for
+the next attempt:
+
+1. exact-tag cmdline ownership now requires the full attempt root, preventing
+   concurrent cleanup scanners that merely mention the tag from being
+   reported as surviving workers; and
+2. `capture_cost_rows` now derive from measured dispatch rows rather than
+   warmup rows, so lease-rotation recapture cost and budget rejection are not
+   concealed.
+
+The next attempt must use a fresh tag, the committed corrected source, the
+default six-hour worker timeout, and a query-only Kerberos preflight with at
+least 22,500 seconds remaining.

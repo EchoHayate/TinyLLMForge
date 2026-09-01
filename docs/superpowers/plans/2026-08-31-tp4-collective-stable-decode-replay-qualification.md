@@ -1199,6 +1199,50 @@ git ls-remote origin refs/heads/feat/kv-sparse-attention
 
 Expected: local HEAD, tracking SHA, and remote SHA are identical.
 
+---
+
+## r25 Terminal Reconciliation and r26 Checkpoint
+
+Attempt `20260901-qwen38-tp4-decode-replay-r25-full` is consumed as
+`INCOMPLETE_EXTERNAL_PREEMPTION`.
+
+- [x] Frozen source `1e18c30e5cf134943b39f984100583b2b1a3f55d`
+- [x] Strict-clean admission on GPUs `0,3,4,6`
+- [x] Local continuous ownership guard
+- [x] Safe response to external PID `3877390`
+- [x] Exact-tag-owned process cleanup with final environment match set `[]`
+- [x] Thirteen atomic case files and six complete pairs preserved remotely
+- [ ] Complete 30-case / 15-pair matrix
+- [ ] Immutable final bundle and manifest
+- [ ] Remote independent verifier
+- [ ] Local frozen-source verifier
+- [ ] Terminal producer/verifier classification
+
+TDD corrections before r26:
+
+- [x] cmdline ownership requires the full attempt root rather than any mention
+  of the short run tag;
+- [x] measured dispatch rows, not warmup rows, source
+  `capture_cost_rows`;
+- [x] focused RED failures observed for both defects;
+- [x] focused GREEN and complete worker/controller script suites pass.
+
+The next executable run is:
+
+```text
+tag:
+  20260901-qwen38-tp4-decode-replay-r26-full
+command timeout:
+  default 21,600 seconds
+minimum Kerberos lifetime:
+  22,500 seconds
+```
+
+Do not launch until the external ticket satisfies the full window. Do not run
+`kinit` or `krenew`. Once the prerequisite is available, execute the complete
+unchanged 30-case matrix from the newly committed source and continue with
+Tasks 6–8.
+
 ## Plan Self-Review
 
 - Spec coverage: every objective, gate, artifact, safety rule, and evidence

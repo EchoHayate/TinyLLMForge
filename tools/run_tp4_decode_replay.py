@@ -987,6 +987,7 @@ class ProductionAdapter:
         script = "\n".join([
             "import json,os,sys",
             "tag=sys.argv[1]",
+            "attempt_root=sys.argv[2]",
             "tag_bytes=tag.encode()",
             "excluded={os.getpid(),os.getppid()}",
             "rows=[]",
@@ -1003,11 +1004,14 @@ class ProductionAdapter:
             "  except OSError:",
             "    environment=b''",
             "  command=data.replace(b'\\0',b' ').decode(errors='replace')",
-            "  if tag in command or tag_bytes in environment:",
+            (
+                "  if attempt_root in command "
+                "or tag_bytes in environment:"
+            ),
             "    rows.append({",
             "      'pid':pid,",
             "      'command':command,",
-            "      'matched_cmdline':tag in command,",
+            "      'matched_cmdline':attempt_root in command,",
             "      'matched_environment':tag_bytes in environment,",
             "    })",
             "print(json.dumps(sorted(rows,key=lambda row:row['pid'])))",
@@ -1017,6 +1021,7 @@ class ProductionAdapter:
             "-c",
             script,
             plan["run_tag"],
+            plan["paths"]["attempt_root"],
         ])
         rows = json.loads(result.stdout)
         if not isinstance(rows, list):

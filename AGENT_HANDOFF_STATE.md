@@ -51961,3 +51961,72 @@ NEXT_RUN_TAG=20260901-qwen38-tp4-decode-replay-r15
 NEXT_PREREQUISITE=external Kerberos restoration with >=22500 seconds remaining
 NEXT_COMMAND=run the r15 monitor-and-run controller after the prerequisite passes
 ```
+
+## 2026-09-01 TP4 decode replay r25 external-preemption checkpoint
+
+Attempt `20260901-qwen38-tp4-decode-replay-r25-full` used pushed source
+`1e18c30e5cf134943b39f984100583b2b1a3f55d` on admitted GPUs `0,3,4,6`.
+It atomically completed 13/30 cases and 6/15 pairs:
+
+```text
+Q0:
+  all ten cases
+Q1:
+  r0 eager, r0 graph, r1 graph
+Q2:
+  none
+```
+
+At `2026-09-01T22:13:05.133965+08:00`, the local GPU guard observed external
+compute PID `3877390` on a selected GPU. It terminated only exact-r25-tagged
+processes and did not signal the external PID. The worker wrapper returned
+`-15`; the controller recorded `241`. The guard's cleanup returned zero with
+an empty final owned environment set at
+`2026-09-01T22:13:11.808382+08:00`.
+
+The controller's original `cleanup.json=DIRTY` is a scanner false-positive:
+its remaining PIDs were the concurrent cleanup scanner shell/Python commands,
+not worker ranks. `_scan_exact_tag()` is now corrected so cmdline ownership
+requires the full attempt root while environment ownership still requires the
+exact tag. A post-fix live scan returned `[]`.
+
+r25 remains `INCOMPLETE`, irrespective of cleanup correction:
+
+```text
+R25_CASES=13/30
+R25_PAIRS=6/15
+R25_FINAL_BUNDLE=false
+R25_REMOTE_VERIFIER=false
+R25_LOCAL_VERIFIER=false
+R25_STAGE1_AUTHORIZED=false
+```
+
+Partial diagnostics:
+
+- Q0 r0/r1/r2/r4 each diverged for request 1 at output index 37,
+  eager token `198` versus graph token `317`;
+- those four pairs had graph/eager output-throughput ratios from
+  `3.7165901203` to `3.9194675320`, but correctness failure makes them
+  non-publishable;
+- Q0 r3 and Q1 r0 were exact with zero replay because measured capture took
+  more than the frozen two-second ceiling;
+- all 13 written arms have four zero rank exits and four
+  `process_group_destroyed=true` receipts.
+
+r25 exposed a second evidence bug: `capture_cost_rows` came from warmup rows
+and could conceal the slower measured lease-identity capture. The worker now
+uses measured dispatch rows. Both fixes followed RED then GREEN; the complete
+controller suite reports `20 passed` and the complete worker suite reports
+`8 passed`.
+
+The next run must use fresh tag
+`20260901-qwen38-tp4-decode-replay-r26-full`, the committed corrected source,
+the default `21,600` second command timeout, and a query-only Kerberos
+preflight with at least `22,500` seconds remaining. Do not run `kinit` or
+`krenew`.
+
+```text
+NEXT_RUN_TAG=20260901-qwen38-tp4-decode-replay-r26-full
+NEXT_PREREQUISITE=external Kerberos ticket with >=22500 seconds remaining
+NEXT_COMMAND=after the prerequisite passes, launch one default-timeout r26 monitor-and-run controller and one local exact-tag GPU guard
+```

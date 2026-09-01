@@ -375,10 +375,42 @@ def test_run_arm_emits_complete_measured_evidence_and_cleanup():
     clock = _Clock()
     engines = []
 
+    class CaptureCostEngine(_FakeEngine):
+        def call_model_runner_acknowledged(
+            self,
+            method_name,
+            *,
+            timeout_s,
+        ):
+            local, acknowledgements = super().call_model_runner_acknowledged(
+                method_name,
+                timeout_s=timeout_s,
+            )
+            rows = [local] + [ack.result for ack in acknowledgements]
+            if rows[0]["mode"] == "decode":
+                duration_ns = (
+                    20_000_000
+                    if self.reset_profile_calls
+                    else 10_000_000
+                )
+                for row in rows:
+                    row.update({
+                        "capture_attempted": True,
+                        "capture_duration_ns": duration_ns,
+                        "capture_static_bytes": 1_000_000,
+                        "capture_allocated_delta_bytes": 2_000_000,
+                        "capture_reserved_delta_bytes": 3_000_000,
+                    })
+            return local, acknowledgements
+
     def engine_factory(model_root, **config):
         del model_root
         arm = "eager" if config["enforce_eager"] else "graph"
-        engine = _FakeEngine(arm, output_tokens=128, clock=clock)
+        engine = CaptureCostEngine(
+            arm,
+            output_tokens=128,
+            clock=clock,
+        )
         engines.append(engine)
         return engine
 
@@ -422,6 +454,10 @@ def test_run_arm_emits_complete_measured_evidence_and_cleanup():
     assert len(measured_dispatch) == 4
     assert all(row["dispatch"] == "graph" for row in measured_dispatch)
     assert result["cleanup"]["rank_exit_codes"] == [0, 0, 0, 0]
+    assert {
+        row["capture_duration_ns"]
+        for row in result["capture_cost_rows"]
+    } == {20_000_000}
     assert engines[0].clear_prefix_calls == 1
     assert engines[0].reset_profile_calls == 1
     assert engines[0].exit_calls == 1

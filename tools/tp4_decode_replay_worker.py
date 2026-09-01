@@ -704,7 +704,7 @@ def run_arm(
         "rank_lifecycle_rows": lifecycle_rows,
         "memory_rows": memory_rows,
         "capture_cost_rows": _capture_cost_rows(
-            warmup["rank_dispatch_rows"],
+            measured["rank_dispatch_rows"],
             case,
         ),
         "cleanup": cleanup,
