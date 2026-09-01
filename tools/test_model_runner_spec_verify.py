@@ -8476,6 +8476,84 @@ def test_replay_resets_context_on_success_and_exception():
             )
 
 
+def test_replay_phase_receipt_covers_graph_and_logits_boundaries():
+    cache_module = sys.modules[
+        "tinyvllm.engine.exact_cuda_graph_cache"
+    ]
+    runner = _make_exact_dispatch_runner()
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([0, 256, 512, 768]),
+        context_lens=FakeTensor([1, 1, 1, 1]),
+        block_tables=FakeTensor([[0, 1]] * 4),
+    )
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        context.get_context(),
+    )
+
+    class Graph:
+        def replay(self):
+            pass
+
+    entry = cache_module.ExactCudaGraphEntry(
+        identity=identity,
+        identity_sha256=identity.sha256,
+        graph=Graph(),
+        tensors={
+            "input_ids": FakeGraphBuffer(),
+            "positions": FakeGraphBuffer(),
+            "slot_mapping": FakeGraphBuffer(),
+            "context_lens": FakeGraphBuffer(),
+            "block_tables": FakeGraphBuffer(),
+            "outputs": FakeTensor([[1], [2], [3], [4]]),
+        },
+        static_bytes=4096,
+        capture_duration_ns=100,
+        allocated_delta_bytes=0,
+        reserved_delta_bytes=1024,
+    )
+    environment = "TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"
+    previous_root = os.environ.get(environment)
+    with tempfile.TemporaryDirectory() as receipt_root:
+        os.environ[environment] = receipt_root
+        try:
+            runner._replay_exact_multi_sequence_graph(
+                entry,
+                input_ids=FakeTensor([10, 20, 30, 40]),
+                positions=FakeTensor([1, 1, 1, 1]),
+                context=context.get_context(),
+            )
+            payload = json.loads(
+                open(
+                    os.path.join(
+                        receipt_root,
+                        "rank-0-replay.json",
+                    ),
+                    encoding="utf-8",
+                ).read()
+            )
+        finally:
+            if previous_root is None:
+                os.environ.pop(environment, None)
+            else:
+                os.environ[environment] = previous_root
+
+    assert payload["identity_sha256"] == identity.sha256
+    assert payload["replay_ordinal"] == 1
+    assert [
+        row["phase"]
+        for row in payload["completed_phases"]
+    ] == [
+        "entered_replay",
+        "static_inputs_copied",
+        "context_set",
+        "graph_replay_returned",
+        "logits_compute_returned",
+        "context_reset_completed",
+    ]
+
+
 def test_replay_failure_publishes_terminal_event_before_reraising():
     runner = _make_exact_dispatch_runner()
     for _ in range(3):
@@ -8581,6 +8659,7 @@ def main():
         test_capture_without_legacy_pool_restores_scratch_and_context,
         test_transactional_capture_rolls_back_and_replay_advances_once,
         test_replay_resets_context_on_success_and_exception,
+        test_replay_phase_receipt_covers_graph_and_logits_boundaries,
         test_replay_failure_publishes_terminal_event_before_reraising,
     )
     for test in tests:

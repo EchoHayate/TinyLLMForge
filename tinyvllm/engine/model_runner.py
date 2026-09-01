@@ -21,6 +21,7 @@ from tinyvllm.engine.exact_cuda_graph_cache import (
 )
 from tinyvllm.engine.exact_cuda_graph_capture_receipt import (
     ExactCudaGraphCaptureReceipt,
+    ExactCudaGraphReplayReceipt,
 )
 from tinyvllm.engine.exact_prefill_cuda_graph import (
     ExactPrefillCudaGraphCache,
@@ -7306,6 +7307,13 @@ class ModelRunner:
                 "identity_drift",
             )
             raise RuntimeError("exact CUDA Graph identity drift")
+        replay_receipt = ExactCudaGraphReplayReceipt.from_environment(
+            rank=int(self.rank),
+            world_size=int(self.world_size),
+            identity_sha256=entry.identity_sha256,
+            replay_ordinal=int(entry.replay_count) + 1,
+        )
+        replay_receipt.record("entered_replay")
         tensors = entry.tensors
         try:
             tensors["input_ids"].copy_(input_ids)
@@ -7313,6 +7321,7 @@ class ModelRunner:
             tensors["slot_mapping"].copy_(context.slot_mapping)
             tensors["context_lens"].copy_(context.context_lens)
             tensors["block_tables"].copy_(context.block_tables)
+            replay_receipt.record("static_inputs_copied")
             set_context(
                 False,
                 slot_mapping=tensors["slot_mapping"],
@@ -7323,7 +7332,9 @@ class ModelRunner:
                 ),
                 force_attention_backend=True,
             )
+            replay_receipt.record("context_set")
             entry.graph.replay()
+            replay_receipt.record("graph_replay_returned")
             if entry.output_kind == "hidden":
                 logits = self.model.compute_logits(tensors["outputs"])
             elif entry.output_kind == "logits":
@@ -7332,6 +7343,7 @@ class ModelRunner:
                 raise RuntimeError(
                     "exact CUDA Graph entry has invalid output kind"
                 )
+            replay_receipt.record("logits_compute_returned")
         except Exception:
             self.exact_cuda_graph_cache.disable_entry(
                 entry.identity_sha256,
@@ -7340,6 +7352,7 @@ class ModelRunner:
             raise
         finally:
             reset_context()
+            replay_receipt.record("context_reset_completed")
         entry.replay_count += 1
         entry.last_replay_step = getattr(
             self,
