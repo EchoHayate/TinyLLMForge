@@ -7318,6 +7318,7 @@ class ModelRunner:
                 flash_attn_num_splits=(
                     identity.effective_num_splits
                 ),
+                force_attention_backend=True,
             )
             entry.graph.replay()
             if entry.output_kind == "hidden":
@@ -7526,6 +7527,7 @@ class ModelRunner:
                     context_lens=tensors["context_lens"],
                     block_tables=tensors["block_tables"],
                     flash_attn_num_splits=identity.effective_num_splits,
+                    force_attention_backend=True,
                 )
                 if execution_protocol == "forward_v1":
                     tensors["outputs"].copy_(

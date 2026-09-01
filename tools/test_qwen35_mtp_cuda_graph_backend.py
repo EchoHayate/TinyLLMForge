@@ -640,7 +640,7 @@ def test_qwen_attention_has_capture_safe_backend_bypass_contract():
         in attention_source
     )
     assert "qwen35_cached_decode_graph_attention" in attention_source
-    assert ".k_cache.shape[1] == 1" in attention_source
+    assert ".k_cache.shape[1] == 1" not in attention_source
     graph_helper = attention_source.split(
         "def qwen35_cached_decode_graph_attention",
         1,
@@ -650,6 +650,7 @@ def test_qwen_attention_has_capture_safe_backend_bypass_contract():
     )[0]
     assert ".item(" not in graph_helper
     assert ".tolist(" not in graph_helper
+    assert ".flatten(1, 2)" in graph_helper
 
 
 class _ReplayGraph:

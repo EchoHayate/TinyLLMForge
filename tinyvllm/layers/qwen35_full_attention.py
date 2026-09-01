@@ -436,16 +436,15 @@ def qwen35_cached_decode_graph_attention(
     head_dim: int,
     scale: float,
 ) -> torch.Tensor:
-    if key_cache.shape[1] != 1 or value_cache.shape[1] != 1:
-        raise ValueError(
-            "graph decode requires block-size-one K/V cache"
-        )
+    block_size = key_cache.shape[1]
     slots = context.slot_mapping.to(torch.long)
-    key_cache[slots, 0] = current_key
-    value_cache[slots, 0] = current_value
+    blocks = torch.div(slots, block_size, rounding_mode="floor")
+    offsets = slots.remainder(block_size)
+    key_cache[blocks, offsets] = current_key
+    value_cache[blocks, offsets] = current_value
     block_ids = context.block_tables.to(torch.long)
-    key = key_cache[block_ids, 0]
-    value = value_cache[block_ids, 0]
+    key = key_cache[block_ids].flatten(1, 2)
+    value = value_cache[block_ids].flatten(1, 2)
     repeats = num_heads // key.shape[2]
     key = key.repeat_interleave(repeats, dim=2)
     value = value.repeat_interleave(repeats, dim=2)
@@ -457,7 +456,7 @@ def qwen35_cached_decode_graph_attention(
         key.transpose(2, 3),
     ) * scale
     positions = torch.arange(
-        block_ids.shape[1],
+        key.shape[2],
         device=query.device,
     )
     valid = positions.unsqueeze(0) < context.context_lens.unsqueeze(1)
@@ -795,8 +794,6 @@ class Qwen35FullAttentionShell(nn.Module):
             )
             and self.attention_backend.k_cache.numel() > 0
             and self.attention_backend.v_cache.numel() > 0
-            and self.attention_backend.k_cache.shape[1] == 1
-            and self.attention_backend.v_cache.shape[1] == 1
             and getattr(self.attention_backend, "kv_quant_bits", 0) == 0
             and getattr(context, "quest_top_k_blocks", -1) <= 0
             and getattr(context, "am_compact_blocks", 0) <= 0

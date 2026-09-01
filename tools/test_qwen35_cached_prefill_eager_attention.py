@@ -630,6 +630,256 @@ def test_cached_decode_eager_matches_official_bfloat16_bit_exact() -> None:
     torch.testing.assert_close(value_cache[3, 1], dense_value[4], atol=0, rtol=0)
 
 
+def test_cached_decode_graph_matches_eager_for_paged_tp4_batch() -> None:
+    block_size = 256
+    query_heads = 2
+    kv_heads = 1
+    head_dim = 2
+    query = torch.tensor(
+        [
+            [[1, 2], [2, 1]],
+            [[2, 3], [3, 2]],
+        ],
+        dtype=torch.bfloat16,
+    )
+    current_key = torch.tensor(
+        [
+            [[3, 1]],
+            [[4, 2]],
+        ],
+        dtype=torch.bfloat16,
+    )
+    current_value = torch.tensor(
+        [
+            [[5, 2]],
+            [[6, 3]],
+        ],
+        dtype=torch.bfloat16,
+    )
+    key_cache = torch.zeros(
+        4,
+        block_size,
+        kv_heads,
+        head_dim,
+        dtype=torch.bfloat16,
+    )
+    value_cache = torch.zeros_like(key_cache)
+    key_cache[2, :2] = torch.tensor(
+        [[[1, 0]], [[0, 1]]],
+        dtype=torch.bfloat16,
+    )
+    value_cache[2, :2] = torch.tensor(
+        [[[1, 2]], [[3, 4]]],
+        dtype=torch.bfloat16,
+    )
+    long_key = (
+        torch.arange(
+            257 * kv_heads * head_dim,
+            dtype=torch.float32,
+        ).reshape(257, kv_heads, head_dim)
+        .remainder(17)
+        .to(torch.bfloat16)
+    )
+    long_value = (
+        torch.arange(
+            257 * kv_heads * head_dim,
+            dtype=torch.float32,
+        ).reshape(257, kv_heads, head_dim)
+        .remainder(23)
+        .to(torch.bfloat16)
+    )
+    key_cache[3] = long_key[:block_size]
+    value_cache[3] = long_value[:block_size]
+    key_cache[1, 0] = long_key[block_size]
+    value_cache[1, 0] = long_value[block_size]
+    context = SimpleNamespace(
+        block_tables=torch.tensor(
+            [
+                [2, 0],
+                [3, 1],
+            ],
+            dtype=torch.int32,
+        ),
+        context_lens=torch.tensor([3, 258], dtype=torch.int32),
+        slot_mapping=torch.tensor(
+            [
+                2 * block_size + 2,
+                1 * block_size + 1,
+            ],
+            dtype=torch.int32,
+        ),
+    )
+    eager_key_cache = key_cache.clone()
+    eager_value_cache = value_cache.clone()
+    graph_key_cache = key_cache.clone()
+    graph_value_cache = value_cache.clone()
+
+    distributed = full_attention.torch.distributed
+    with patch.object(
+        distributed,
+        "is_initialized",
+        return_value=True,
+    ), patch.object(
+        distributed,
+        "get_world_size",
+        return_value=4,
+    ), patch.object(
+        distributed,
+        "get_rank",
+        return_value=2,
+    ):
+        expected = full_attention.qwen35_cached_decode_eager_attention(
+            query,
+            current_key,
+            current_value,
+            eager_key_cache,
+            eager_value_cache,
+            context,
+            num_heads=query_heads,
+            head_dim=head_dim,
+            scale=head_dim ** -0.5,
+        )
+        actual = full_attention.qwen35_cached_decode_graph_attention(
+            query,
+            current_key,
+            current_value,
+            graph_key_cache,
+            graph_value_cache,
+            context,
+            num_heads=query_heads,
+            head_dim=head_dim,
+            scale=head_dim ** -0.5,
+        )
+
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    torch.testing.assert_close(
+        graph_key_cache,
+        eager_key_cache,
+        atol=0,
+        rtol=0,
+    )
+    torch.testing.assert_close(
+        graph_value_cache,
+        eager_value_cache,
+        atol=0,
+        rtol=0,
+    )
+
+
+def test_cached_decode_graph_captures_paged_cache_on_cuda() -> None:
+    if not torch.cuda.is_available():
+        return
+
+    device = torch.device("cuda")
+    block_size = 256
+    torch.manual_seed(31)
+    query = torch.randn(
+        2,
+        2,
+        4,
+        dtype=torch.bfloat16,
+        device=device,
+    )
+    current_key = torch.randn(
+        2,
+        1,
+        4,
+        dtype=torch.bfloat16,
+        device=device,
+    )
+    current_value = torch.randn_like(current_key)
+    key_cache = torch.randn(
+        4,
+        block_size,
+        1,
+        4,
+        dtype=torch.bfloat16,
+        device=device,
+    )
+    value_cache = torch.randn_like(key_cache)
+    context = SimpleNamespace(
+        block_tables=torch.tensor(
+            [
+                [2, 0],
+                [3, 1],
+            ],
+            dtype=torch.int32,
+            device=device,
+        ),
+        context_lens=torch.tensor(
+            [3, 258],
+            dtype=torch.int32,
+            device=device,
+        ),
+        slot_mapping=torch.tensor(
+            [
+                2 * block_size + 2,
+                1 * block_size + 1,
+            ],
+            dtype=torch.int32,
+            device=device,
+        ),
+    )
+    warm_stream = torch.cuda.Stream()
+    warm_stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(warm_stream):
+        full_attention.qwen35_cached_decode_graph_attention(
+            query,
+            current_key,
+            current_value,
+            key_cache.clone(),
+            value_cache.clone(),
+            context,
+            num_heads=2,
+            head_dim=4,
+            scale=4 ** -0.5,
+        )
+    torch.cuda.current_stream().wait_stream(warm_stream)
+    graph_key_cache = key_cache.clone()
+    graph_value_cache = value_cache.clone()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        actual = full_attention.qwen35_cached_decode_graph_attention(
+            query,
+            current_key,
+            current_value,
+            graph_key_cache,
+            graph_value_cache,
+            context,
+            num_heads=2,
+            head_dim=4,
+            scale=4 ** -0.5,
+        )
+    next_query = torch.randn_like(query)
+    next_key = torch.randn_like(current_key)
+    next_value = torch.randn_like(current_value)
+    context.context_lens.add_(1)
+    context.slot_mapping.add_(1)
+    expected = full_attention.qwen35_cached_decode_eager_attention(
+        next_query,
+        next_key,
+        next_value,
+        graph_key_cache.clone(),
+        graph_value_cache.clone(),
+        context,
+        num_heads=2,
+        head_dim=4,
+        scale=4 ** -0.5,
+    )
+    query.copy_(next_query)
+    current_key.copy_(next_key)
+    current_value.copy_(next_value)
+    graph.replay()
+    torch.cuda.synchronize()
+
+    torch.testing.assert_close(
+        actual,
+        expected,
+        atol=2e-2,
+        rtol=2e-2,
+    )
+
+
 def test_cached_decode_eager_matches_official_expand_gqa_cuda_reduction() -> None:
     if not torch.cuda.is_available():
         return
