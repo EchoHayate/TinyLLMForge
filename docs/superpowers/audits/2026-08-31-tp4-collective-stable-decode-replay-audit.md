@@ -235,3 +235,146 @@ Until those steps succeed, the only defensible terminal statement is:
 > Attempt r1 is prelaunch `INCOMPLETE` because the credential lifetime was
 > insufficient. It contains no performance evidence, and Stage 1 is not
 > authorized.
+
+## 9. 2026-09-01 r14 prelaunch resource-window reconciliation
+
+Attempt `20260901-qwen38-tp4-decode-replay-r14` froze the corrected paged
+Qwen decode-attention source at:
+
+```text
+source revision:
+  1f866e3cd736b64377c533ea643f7d0db60c39be
+source tree SHA-256:
+  32132598b557850fb52415e68967af558d2c25f9b0f3bc112a3d53d60e2135b8
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+```
+
+The local controller completed SSH/storage preflight with:
+
+```text
+classification:
+  PASS
+remote attempt existed:
+  false
+Kerberos expiration:
+  2026-09-01T19:11:44+08:00
+required remaining lifetime:
+  22,500 seconds
+observed remaining lifetime at preflight:
+  29,376 seconds
+```
+
+The controller then remained in the local strict-clean GPU monitor. It never
+created the remote attempt and never launched a worker. Read-only snapshots
+showed fewer than four qualifying GPUs throughout the usable credential
+window. Representative observations were:
+
+| Time, Asia/Shanghai | Strict-clean GPUs | Relevant occupied GPUs |
+|---|---|---|
+| `2026-09-01 11:43:18` | `4, 7` | GPU 6: 6,878 MiB |
+| `2026-09-01 11:55:06` | `7` | GPU 4: 3,837 MiB; GPU 6: 8,522 MiB |
+| `2026-09-01 12:22:17` | none | all eight GPUs above the 1,024 MiB limit |
+| `2026-09-01 12:52:27` | `7` | all other GPUs above the limit |
+| `2026-09-01 12:57:28` | `7` | all other GPUs above the limit |
+
+With a ticket expiration of `19:11:44` and a frozen six-hour command timeout
+plus 15-minute guard margin, the latest valid admission time was
+`12:56:44`. The local r14 monitor was interrupted after that deadline because
+no future admission under the existing ticket could satisfy the frozen
+22,500-second lifetime requirement.
+
+A direct read-only SSH check after interruption confirmed that the planned
+remote r14 path was absent:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  tp4-collective-stable-decode-replay/
+  20260901-qwen38-tp4-decode-replay-r14
+```
+
+Therefore r14 is prelaunch `INCOMPLETE`. It contains only:
+
+```text
+controller/source_identity.json
+controller/ssh_storage_preflight.json
+```
+
+It contains no launch admission, remote attempt, worker output, measured
+case, pair, rank, correctness, replay, collective, latency, throughput,
+memory, capture-cost, cleanup, bundle, manifest, or independent-verifier
+evidence. No performance or Stage-1 claim is permitted, and the r14 tag must
+not be reused.
+
+### 9.1 Monitor TTL fail-fast correction
+
+The r14 observation exposed an orchestration inefficiency: initial preflight
+and final admission both checked the Kerberos window, but the local GPU
+monitor did not recheck it on every poll. It could therefore continue waiting
+after a valid launch had become impossible.
+
+Commit `71dd7767a66f184ceb174f99609218bee7c79f69` corrects this by reusing the
+same production adapter and invoking its existing full-command-window
+Kerberos guard before every remote GPU inventory query.
+
+TDD evidence:
+
+```text
+RED:
+  tools/test_run_tp4_decode_replay.py failed because
+  adapter.kerberos_checks was 0 instead of 2
+GREEN:
+  tools/test_run_tp4_decode_replay.py: 19 passed
+```
+
+Fresh adjacent verification after the correction:
+
+| Command | Result |
+|---|---|
+| `PYTHONPATH=. python3 tools/test_model_runner_spec_verify.py` | passed |
+| `PYTHONPATH=. python3 tools/test_tp4_decode_replay_worker.py` | `8 passed` |
+| `python3 tools/test_run_tp4_decode_replay.py` | `19 passed` |
+| `PYTHONPATH=. python3 tools/test_tp4_decode_replay_contract.py` | `12 passed` |
+| `PYTHONPATH=. python3 tools/test_assemble_tp4_decode_replay.py` | `6 passed` |
+| `PYTHONPATH=. python3 tools/test_verify_tp4_decode_replay.py` | `6 passed` |
+| `PYTHONPATH=. python3 -m pytest -q tools/test_qwen35_mtp_cuda_graph_backend.py` | `21 passed` |
+| `python3 -m py_compile tools/run_tp4_decode_replay.py tools/test_run_tp4_decode_replay.py` | passed |
+| `git diff --check -- tools/run_tp4_decode_replay.py tools/test_run_tp4_decode_replay.py` | passed |
+
+Local `HEAD`, the local tracking ref, and the GitHub branch ref were all
+verified at:
+
+```text
+71dd7767a66f184ceb174f99609218bee7c79f69
+```
+
+### 9.2 Updated prompt-to-artifact checklist
+
+| Requirement | r14 evidence | Result | Remaining action |
+|---|---|---|---|
+| Correct source frozen | `controller/source_identity.json` | complete | Future run must freeze `71dd776...` or a later committed source |
+| Approved remote storage | `controller/ssh_storage_preflight.json` | complete | None |
+| Sufficient ticket at initial preflight | same receipt: 29,376 s remaining | complete | Ticket no longer covers a new six-hour run |
+| Four strict-clean GPUs | repeated local monitor snapshots | missing | Wait for four GPUs at or below 1,024 MiB, at or below 5%, with no compute process |
+| Remote attempt creation | direct SSH path check: absent | not performed | Use a fresh tag after credential restoration |
+| 30 cases / 15 pairs | no raw rows | missing | Run full frozen matrix |
+| Four-rank agreement | no rank rows | missing | Run full frozen matrix |
+| Exact output parity | no correctness rows | missing | Run full frozen matrix |
+| Replay coverage | no dispatch rows | missing | Run full frozen matrix |
+| Throughput and latency benefit | no performance rows | missing | Run full frozen matrix |
+| Memory and capture cost | no memory/capture rows | missing | Run full frozen matrix |
+| Clean teardown | no worker existed; no terminal cleanup receipt | unverified by terminal receipt | Future run must produce `cleanup.json` |
+| Immutable manifest | no bundle | missing | Assemble only after a complete worker run |
+| Remote verifier | no bundle | missing | Run from future frozen source |
+| Local frozen-source verifier | no bundle | missing | Run from future frozen source |
+| Monitor does not outlive usable ticket | commit `71dd776...`; 19 controller tests | complete in code | Exercise in next production monitor |
+
+The next executable checkpoint is:
+
+1. restore a Kerberos ticket externally; do not run `kinit` or `krenew` from
+   the agent;
+2. require at least 22,500 seconds of remaining lifetime;
+3. start a new controller with a fresh tag, beginning with r15;
+4. let the TTL-aware local monitor wait for four strict-clean GPUs and launch
+   immediately; and
+5. complete the unchanged 30-case gate and both independent verifiers.

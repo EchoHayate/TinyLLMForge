@@ -51890,3 +51890,74 @@ PERSISTENT_DECODE_PRODUCTION_PROMOTION=false
 R5_RESULT=SUPERSEDED_INVALID_TRACE_MODEL
 NEXT_COMMAND=select a different optimization target with measurable runtime headroom
 ```
+
+## 2026-09-01 TP4 decode replay r14 prelaunch reconciliation
+
+The active Qwen3.8-27B BF16 TP4 Collective-Stable Decode Replay Stage-0
+controller used:
+
+```text
+run tag:
+  20260901-qwen38-tp4-decode-replay-r14
+source revision:
+  1f866e3cd736b64377c533ea643f7d0db60c39be
+source tree SHA-256:
+  32132598b557850fb52415e68967af558d2c25f9b0f3bc112a3d53d60e2135b8
+```
+
+SSH/storage preflight passed and recorded 29,376 seconds of Kerberos
+lifetime, expiring at `2026-09-01T19:11:44+08:00`. The frozen controller
+requires a six-hour remote command window plus a 15-minute margin, so the
+latest valid launch time was `2026-09-01T12:56:44+08:00`.
+
+Four strict-clean GPUs never became available before that deadline. At
+`12:57:28`, only GPU 7 was strict-clean; every other GPU exceeded the
+1,024 MiB memory limit. The local monitor was then interrupted. A direct
+read-only SSH check confirmed that the r14 remote attempt path did not exist.
+No worker, model load, remote task data, or external-process cleanup occurred.
+
+Therefore:
+
+```text
+TP4_DECODE_REPLAY_R14=INCOMPLETE_PRELAUNCH
+TP4_DECODE_REPLAY_R14_REMOTE_ATTEMPT=false
+TP4_DECODE_REPLAY_R14_MEASURED_CASES=0
+TP4_DECODE_REPLAY_R14_PERFORMANCE_VERDICT=UNAVAILABLE
+TP4_DECODE_REPLAY_R14_STAGE1_AUTHORIZED=false
+TP4_DECODE_REPLAY_R14_REUSE_PROHIBITED=true
+```
+
+The wait exposed a controller inefficiency: the ticket was checked at initial
+preflight and final admission, but not during each GPU poll. This is fixed and
+pushed:
+
+```text
+commit:
+  71dd7767a66f184ceb174f99609218bee7c79f69
+change:
+  recheck the full Kerberos command window before every GPU inventory poll
+TDD:
+  RED kerberos_checks=0; GREEN 19 controller tests
+full focused regression:
+  model-runner spec passed
+  worker 8 passed
+  controller 19 passed
+  contract 12 passed
+  assembler 6 passed
+  verifier 6 passed
+  Qwen graph backend 21 passed
+local/tracking/GitHub SHA:
+  71dd7767a66f184ceb174f99609218bee7c79f69
+```
+
+Do not reuse r14. Do not start r15 until an externally restored Kerberos
+ticket has at least 22,500 seconds remaining. Then start one TTL-aware local
+controller with a fresh r15 tag. It must still require four strict-clean GPUs,
+run the unchanged 30-case / 15-pair matrix, complete both independent
+verifiers and the post-verification manifest, and report benefit plus cost.
+
+```text
+NEXT_RUN_TAG=20260901-qwen38-tp4-decode-replay-r15
+NEXT_PREREQUISITE=external Kerberos restoration with >=22500 seconds remaining
+NEXT_COMMAND=run the r15 monitor-and-run controller after the prerequisite passes
+```
