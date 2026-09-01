@@ -7542,7 +7542,10 @@ class ModelRunner:
                         tensors["positions"],
                     )
                 torch.cuda.synchronize()
-                with torch.cuda.graph(graph, self.graph_pool):
+                with torch.cuda.graph(
+                    graph,
+                    getattr(self, "graph_pool", None),
+                ):
                     if execution_protocol == "forward_v1":
                         tensors["outputs"].copy_(
                             self.model(
@@ -7639,7 +7642,7 @@ class ModelRunner:
                 "exact CUDA Graph identity drift",
                 retained_reserved_bytes=retained_reserved_bytes,
             )
-        if self.graph_pool is None:
+        if getattr(self, "graph_pool", None) is None:
             self.graph_pool = graph.pool()
         return ExactCudaGraphEntry(
             identity=identity,

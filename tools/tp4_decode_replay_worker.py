@@ -144,6 +144,10 @@ def build_engine_config(*, arm: str, workload: str) -> dict:
     concurrency = int(profile["concurrency"])
     return {
         "tensor_parallel_size": 4,
+        # Q2 rank 0 materializes a 3.79 GiB full-vocabulary BF16
+        # projection before selecting the final token rows. Keep enough
+        # allocator headroom for that projection and the bounded graph pool.
+        "gpu_memory_utilization": 0.84,
         "enforce_eager": arm == "eager",
         "multi_sequence_cuda_graphs": arm == "graph",
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),

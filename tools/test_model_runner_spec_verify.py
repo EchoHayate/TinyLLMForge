@@ -7957,7 +7957,7 @@ def test_capture_failure_logs_the_original_exception_chain():
     )
 
 
-def test_capture_restores_all_scratch_slots_and_context_in_finally():
+def test_capture_without_legacy_pool_restores_scratch_and_context():
     runner = _make_exact_dispatch_runner()
     runner._capture_exact_multi_sequence_graph = (
         ModelRunner._capture_exact_multi_sequence_graph.__get__(
@@ -7965,7 +7965,7 @@ def test_capture_restores_all_scratch_slots_and_context_in_finally():
             ModelRunner,
         )
     )
-    runner.graph_pool = None
+    assert not hasattr(runner, "graph_pool")
     runner.config.hf_config = SimpleNamespace(
         text_config=SimpleNamespace(
             num_attention_heads=16,
@@ -8505,7 +8505,7 @@ def main():
         test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,
         test_capture_failure_logs_the_original_exception_chain,
-        test_capture_restores_all_scratch_slots_and_context_in_finally,
+        test_capture_without_legacy_pool_restores_scratch_and_context,
         test_transactional_capture_rolls_back_and_replay_advances_once,
         test_replay_resets_context_on_success_and_exception,
         test_replay_failure_publishes_terminal_event_before_reraising,

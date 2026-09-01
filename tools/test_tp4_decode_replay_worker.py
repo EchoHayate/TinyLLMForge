@@ -268,6 +268,7 @@ def test_engine_config_differs_only_by_graph_policy():
         "multi_sequence_cuda_graphs": True,
     } == graph
     assert eager["tensor_parallel_size"] == 4
+    assert eager["gpu_memory_utilization"] == 0.84
     assert eager["enforce_eager"] is True
     assert graph["multi_sequence_cuda_graph_batch_allowlist"] == (2, 4, 8)
     assert graph["max_num_seqs"] == 8
