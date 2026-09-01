@@ -5950,6 +5950,9 @@ def _make_capture_runner(*, feature_enabled):
             return hidden
 
     class FakeGraph:
+        def pool(self):
+            return "exact-pool"
+
         def replay(self):
             pass
 
@@ -6449,6 +6452,9 @@ def _make_exact_dispatch_runner():
     runner.model = FakeModel()
 
     class FakeGraph:
+        def pool(self):
+            return "exact-pool"
+
         def replay(self):
             pass
 
@@ -7957,6 +7963,94 @@ def test_capture_failure_logs_the_original_exception_chain():
     )
 
 
+def test_exact_graph_pool_requires_a_live_exact_graph_owner():
+    cache_module = sys.modules[
+        "tinyvllm.engine.exact_cuda_graph_cache"
+    ]
+    runner = _make_exact_dispatch_runner()
+    runner.graph_pool = "legacy-pool"
+    runner._exact_cuda_graph_pool = "stale-exact-pool"
+
+    assert runner._exact_multi_sequence_capture_pool() is None
+
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        SimpleNamespace(
+            block_tables=FakeTensor([[0, 1]] * 4),
+        ),
+    )
+    for _ in range(3):
+        decision = runner.exact_cuda_graph_cache.observe_success(
+            identity,
+            estimated_static_bytes=4096,
+        )
+    assert decision.should_capture is True
+
+    class AcceptedGraph:
+        def pool(self):
+            return "accepted-exact-pool"
+
+    entry = cache_module.ExactCudaGraphEntry(
+        identity=identity,
+        identity_sha256=identity.sha256,
+        graph=AcceptedGraph(),
+        tensors={},
+        static_bytes=4096,
+        capture_duration_ns=100,
+        allocated_delta_bytes=0,
+        reserved_delta_bytes=1024,
+    )
+    runner._commit_exact_multi_sequence_graph(entry)
+
+    assert (
+        runner._exact_multi_sequence_capture_pool()
+        == "accepted-exact-pool"
+    )
+    assert runner.graph_pool == "legacy-pool"
+
+    rejected = _make_exact_dispatch_runner()
+    rejected.graph_pool = "legacy-pool"
+    rejected_identity = rejected._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        SimpleNamespace(
+            block_tables=FakeTensor([[0, 1]] * 4),
+        ),
+    )
+    for _ in range(3):
+        decision = (
+            rejected.exact_cuda_graph_cache.observe_success(
+                rejected_identity,
+                estimated_static_bytes=4096,
+            )
+        )
+    assert decision.should_capture is True
+
+    class RejectedGraph:
+        def pool(self):
+            return "rejected-exact-pool"
+
+    rejected_entry = cache_module.ExactCudaGraphEntry(
+        identity=rejected_identity,
+        identity_sha256=rejected_identity.sha256,
+        graph=RejectedGraph(),
+        tensors={},
+        static_bytes=4096,
+        capture_duration_ns=2_000_000_001,
+        allocated_delta_bytes=0,
+        reserved_delta_bytes=1024,
+    )
+    rejected._commit_exact_multi_sequence_graph(rejected_entry)
+
+    assert (
+        rejected.exact_cuda_graph_cache.summary()["rejected"][
+            rejected_identity.sha256
+        ]
+        == "single_capture_budget"
+    )
+    assert rejected._exact_multi_sequence_capture_pool() is None
+    assert rejected.graph_pool == "legacy-pool"
+
+
 def test_capture_phase_receipt_preserves_completed_prefix_after_failure():
     receipt_type = model_runner.ExactCudaGraphCaptureReceipt
     environment = "TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"
@@ -8725,6 +8819,7 @@ def main():
         test_run_clears_recorded_logits_on_nonzero_rank,
         test_capture_failures_are_terminal_and_reason_specific,
         test_capture_failure_logs_the_original_exception_chain,
+        test_exact_graph_pool_requires_a_live_exact_graph_owner,
         test_capture_phase_receipt_preserves_completed_prefix_after_failure,
         test_capture_without_legacy_pool_restores_scratch_and_context,
         test_transactional_capture_rolls_back_and_replay_advances_once,

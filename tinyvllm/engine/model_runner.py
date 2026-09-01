@@ -2615,6 +2615,7 @@ class ModelRunner:
                 ),
             )
         )
+        self._exact_cuda_graph_pool = None
         self.spec_verify_exact_cuda_graph_cache = (
             SpecVerifyExactCudaGraphCache(
                 SpecVerifyExactCudaGraphCacheConfig(
@@ -3867,6 +3868,7 @@ class ModelRunner:
             exact_graph_cache.release_ready_graphs(
                 synchronize=torch.cuda.synchronize,
             )
+            self._exact_cuda_graph_pool = None
         if self.world_size > 1:
             self.shm.close()                   # 关闭所有rank和共享内存的连接
             dist.barrier()
@@ -7292,8 +7294,28 @@ class ModelRunner:
                 "capture_failed",
             )
             return None
-        self.exact_cuda_graph_cache.commit_capture(entry)
+        self._commit_exact_multi_sequence_graph(entry)
         return entry
+
+    def _exact_multi_sequence_capture_pool(self):
+        if not self.exact_cuda_graph_cache.ready_entries:
+            return None
+        return getattr(self, "_exact_cuda_graph_pool", None)
+
+    def _commit_exact_multi_sequence_graph(self, entry) -> None:
+        had_live_pool_owner = bool(
+            self.exact_cuda_graph_cache.ready_entries
+        )
+        self.exact_cuda_graph_cache.commit_capture(entry)
+        if (
+            entry.identity_sha256
+            in self.exact_cuda_graph_cache.ready_entries
+            and (
+                not had_live_pool_owner
+                or getattr(self, "_exact_cuda_graph_pool", None) is None
+            )
+        ):
+            self._exact_cuda_graph_pool = entry.graph.pool()
 
     def _replay_exact_multi_sequence_graph(
         self,
@@ -7582,7 +7604,7 @@ class ModelRunner:
                 capture_receipt.record("capture_begin")
                 with torch.cuda.graph(
                     graph,
-                    getattr(self, "graph_pool", None),
+                    pool=self._exact_multi_sequence_capture_pool(),
                 ):
                     if execution_protocol == "forward_v1":
                         tensors["outputs"].copy_(
@@ -7685,8 +7707,6 @@ class ModelRunner:
                 "exact CUDA Graph identity drift",
                 retained_reserved_bytes=retained_reserved_bytes,
             )
-        if getattr(self, "graph_pool", None) is None:
-            self.graph_pool = graph.pool()
         return ExactCudaGraphEntry(
             identity=identity,
             identity_sha256=identity.sha256,

@@ -79,6 +79,10 @@ def test_plan_freezes_paths_model_and_four_clean_gpus():
     assert plan["world_size"] == 4
     assert plan["model_revision"] == MODEL_REVISION
     assert plan["process_environment"]["PYTHONNOUSERSITE"] == "1"
+    assert plan["process_environment"]["PYTHONPATH"] == (
+        f"{plan['paths']['source_root']}:"
+        f"{plan['paths']['source_root']}/tools"
+    )
     assert all(
         PurePosixPath(value).is_relative_to(approved)
         for key, value in plan["paths"].items()
@@ -515,10 +519,16 @@ def test_remote_driver_never_reuses_a_dynamic_port_across_arms():
     assert "used_ports = set()" in source
     assert "if port not in used_ports:" in source
     assert "used_ports.add(port)" in source
-    assert "worker.create_engine_with_rendezvous_retry(" in source
-    assert "engine_config=kwargs" in source
-    assert "port_factory=free_port" in source
-    assert source.count("engine_factory=engine_factory") == 1
+    assert 'environment["TINYVLLM_DIST_PORT"] = str(port)' in source
+
+
+def test_remote_driver_isolates_every_arm_in_a_fresh_python_process():
+    source = _remote_driver_source()
+    compile(source, "<tp4-decode-replay-remote-driver>", "exec")
+    assert "worker.run_pair(" not in source
+    assert "subprocess.run(" in source
+    assert "tp4_decode_replay_worker.py" in source
+    assert 'case_results[case["arm"]] = result' in source
 
 
 def test_kerberos_guard_covers_the_full_remote_command_window():
@@ -609,6 +619,28 @@ def test_prelaunch_cleanup_is_clean_when_no_owned_process_exists():
     assert persisted == receipt
 
 
+def test_exact_tag_scan_checks_environment_after_cmdline_rewrite():
+    captured = []
+
+    with tempfile.TemporaryDirectory() as directory:
+        adapter = ProductionAdapter(
+            run_tag=RUN_TAG,
+            local_attempt_root=Path(directory) / "attempt",
+        )
+
+        def remote(arguments):
+            captured.append(arguments)
+            return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+        adapter._remote = remote
+        assert adapter._scan_exact_tag(_plan()) == []
+
+    script = captured[0][2]
+    assert "'/environ'" in script
+    assert "tag.encode()" in script
+    assert "tag in command or tag_bytes in environment" in script
+
+
 def test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean():
     planned = [_gpu(index) for index in range(4, 8)]
     plan = _plan(selected_gpus=planned)
@@ -661,6 +693,7 @@ def main_tests() -> None:
         test_kerberos_guard_covers_the_full_remote_command_window,
         test_failed_kerberos_preflight_is_persisted_as_incomplete,
         test_prelaunch_cleanup_is_clean_when_no_owned_process_exists,
+        test_exact_tag_scan_checks_environment_after_cmdline_rewrite,
         test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean,
     )
     for test in tests:

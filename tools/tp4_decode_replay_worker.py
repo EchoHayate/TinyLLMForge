@@ -727,14 +727,7 @@ def run_pair(
     clock_ns=time.monotonic_ns,
     reset_sequence_ids=_reset_sequence_ids,
 ) -> dict:
-    if len(pair_cases) != 2:
-        raise ValueError("pair_cases must contain exactly two arms")
-    ordered = sorted(pair_cases, key=lambda row: row["order_index"])
-    if (
-        {row["arm"] for row in ordered} != set(contract.ARMS)
-        or ordered[0]["pair_id"] != ordered[1]["pair_id"]
-    ):
-        raise ValueError("pair_cases do not form one eager/graph pair")
+    ordered = _ordered_pair_cases(pair_cases)
     results = [
         run_arm(
             model_root=model_root,
@@ -748,7 +741,46 @@ def run_pair(
         )
         for case in ordered
     ]
-    by_arm = {result["arm"]: result for result in results}
+    return assemble_pair_result(
+        pair_cases=ordered,
+        arm_results=results,
+    )
+
+
+def _ordered_pair_cases(
+    pair_cases: tuple[dict, dict],
+) -> tuple[dict, dict]:
+    if len(pair_cases) != 2:
+        raise ValueError("pair_cases must contain exactly two arms")
+    ordered = tuple(
+        sorted(pair_cases, key=lambda row: row["order_index"])
+    )
+    if (
+        {row["arm"] for row in ordered} != set(contract.ARMS)
+        or ordered[0]["pair_id"] != ordered[1]["pair_id"]
+    ):
+        raise ValueError("pair_cases do not form one eager/graph pair")
+    return ordered
+
+
+def assemble_pair_result(
+    *,
+    pair_cases: tuple[dict, dict],
+    arm_results: list[dict],
+) -> dict:
+    ordered = _ordered_pair_cases(pair_cases)
+    if (
+        len(arm_results) != 2
+        or {result.get("arm") for result in arm_results}
+        != set(contract.ARMS)
+    ):
+        raise ValueError("arm_results do not form one eager/graph pair")
+    by_arm = {result["arm"]: result for result in arm_results}
+    if any(
+        result.get("pair_id") != ordered[0]["pair_id"]
+        for result in arm_results
+    ):
+        raise ValueError("arm_results pair identity mismatch")
     eager_requests = {
         row["request_id"].split(":request-", 1)[1]: row
         for row in by_arm["eager"]["request_rows"]
@@ -809,7 +841,7 @@ def run_pair(
     }
     return {
         "pair_id": ordered[0]["pair_id"],
-        "arm_results": results,
+        "arm_results": [by_arm[case["arm"]] for case in ordered],
         "correctness_row": correctness,
     }
 

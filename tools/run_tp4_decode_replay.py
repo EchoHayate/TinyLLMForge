@@ -176,6 +176,9 @@ def build_plan(
     }
     process_environment = {
         "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": (
+            f"{paths['source_root']}:{paths['source_root']}/tools"
+        ),
     }
     if (
         not all(_below(value, REMOTE_ROOT) for value in paths.values())
@@ -252,7 +255,13 @@ def _validate_plan(plan: object) -> dict:
             for value in plan.get("environment", {}).values()
         )
         or plan.get("process_environment")
-        != {"PYTHONNOUSERSITE": "1"}
+        != {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": (
+                f"{plan['paths']['source_root']}:"
+                f"{plan['paths']['source_root']}/tools"
+            ),
+        }
     ):
         raise ValueError("plan remote path is invalid")
     return dict(plan)
@@ -516,6 +525,7 @@ import os
 from pathlib import Path
 import platform
 import socket
+import subprocess
 import sys
 import time
 
@@ -581,35 +591,85 @@ for pair_id in pair_ids:
     pair_cases = tuple(
         case for case in matrix if case["pair_id"] == pair_id
     )
-    ports = []
-    def engine_factory(model_root, **kwargs):
-        engine, port = worker.create_engine_with_rendezvous_retry(
-            model_root,
-            engine_config=kwargs,
-            port_factory=free_port,
+    case_results = {}
+    for case in sorted(
+        pair_cases,
+        key=lambda row: row["order_index"],
+    ):
+        port = free_port()
+        case_id = case["case_id"]
+        environment = os.environ.copy()
+        environment["TINYVLLM_DIST_PORT"] = str(port)
+        process_logs = raw / "process-logs"
+        process_logs.mkdir(parents=True, exist_ok=True)
+        started_ns = time.monotonic_ns()
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(source_root) / "tools"
+                    / "tp4_decode_replay_worker.py"),
+                "--model-root",
+                model_root,
+                "--case-json",
+                json.dumps(
+                    case,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "--output-dir",
+                str(cases_root),
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        ports.append(port)
-        return engine
-    started_ns = time.monotonic_ns()
-    pair = worker.run_pair(
-        model_root=Path(model_root),
-        pair_cases=pair_cases,
-        output_dir=cases_root,
-        engine_factory=engine_factory,
-    )
-    finished_ns = time.monotonic_ns()
-    aggregated["correctness_rows.jsonl"].append(
-        pair["correctness_row"]
-    )
-    for arm, port in zip(pair["arm_results"], ports, strict=True):
+        finished_ns = time.monotonic_ns()
+        (process_logs / f"{case_id}.stdout").write_text(
+            completed.stdout,
+            encoding="utf-8",
+        )
+        (process_logs / f"{case_id}.stderr").write_text(
+            completed.stderr,
+            encoding="utf-8",
+        )
         process_rows.append({
-            "case_id": arm["case_id"],
-            "exit_code": 0,
+            "case_id": case_id,
+            "exit_code": completed.returncode,
             "timed_out": False,
             "dist_port": port,
             "started_ns": started_ns,
             "finished_ns": finished_ns,
         })
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "isolated arm failed: "
+                + case_id
+                + ": "
+                + completed.stderr[-12000:]
+            )
+        result_path = cases_root / f"{case_id}.json"
+        if not result_path.is_file():
+            raise RuntimeError(
+                "isolated arm did not write its case result: "
+                + case_id
+            )
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        case_results[case["arm"]] = result
+    pair = worker.assemble_pair_result(
+        pair_cases=pair_cases,
+        arm_results=[
+            case_results[case["arm"]]
+            for case in sorted(
+                pair_cases,
+                key=lambda row: row["order_index"],
+            )
+        ],
+    )
+    aggregated["correctness_rows.jsonl"].append(
+        pair["correctness_row"]
+    )
+    for arm in pair["arm_results"]:
         aggregated["rank_dispatch_events.jsonl"].extend(
             arm["rank_dispatch_rows"]
         )
@@ -927,6 +987,7 @@ class ProductionAdapter:
         script = "\n".join([
             "import json,os,sys",
             "tag=sys.argv[1]",
+            "tag_bytes=tag.encode()",
             "excluded={os.getpid(),os.getppid()}",
             "rows=[]",
             "for name in os.listdir('/proc'):",
@@ -936,10 +997,19 @@ class ProductionAdapter:
             "  try:",
             "    data=open('/proc/'+name+'/cmdline','rb').read()",
             "  except OSError:",
-            "    continue",
+            "    data=b''",
+            "  try:",
+            "    environment=open('/proc/'+name+'/environ','rb').read()",
+            "  except OSError:",
+            "    environment=b''",
             "  command=data.replace(b'\\0',b' ').decode(errors='replace')",
-            "  if tag in command:",
-            "    rows.append({'pid':pid,'command':command})",
+            "  if tag in command or tag_bytes in environment:",
+            "    rows.append({",
+            "      'pid':pid,",
+            "      'command':command,",
+            "      'matched_cmdline':tag in command,",
+            "      'matched_environment':tag_bytes in environment,",
+            "    })",
             "print(json.dumps(sorted(rows,key=lambda row:row['pid'])))",
         ])
         result = self._remote([
