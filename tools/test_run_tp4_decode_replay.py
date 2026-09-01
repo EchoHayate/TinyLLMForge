@@ -329,6 +329,50 @@ def test_monitor_and_run_launches_immediately_after_local_admission():
     assert "launch" in adapter.events
 
 
+def test_production_monitor_rechecks_kerberos_before_every_gpu_poll():
+    class GuardedAdapter(_Adapter):
+        def __init__(self):
+            super().__init__()
+            self.kerberos_checks = 0
+
+        def _require_kerberos_window(self):
+            self.kerberos_checks += 1
+            return {"classification": "READY"}
+
+    adapter = GuardedAdapter()
+    gpu_queries = []
+    original_monitor = controller.wait_for_strict_clean_gpus
+    original_query = controller.query_remote_gpu_inventory
+    controller.wait_for_strict_clean_gpus = lambda **kwargs: (
+        kwargs["query_inventory"]()
+        and kwargs["query_inventory"]()
+        and {
+            "classification": "READY",
+            "selected_gpus": [_gpu(index) for index in range(4)],
+        }
+    )
+    controller.query_remote_gpu_inventory = lambda **kwargs: (
+        gpu_queries.append(kwargs) or [_gpu(index) for index in range(4)]
+    )
+    try:
+        result = main(
+            [
+                "monitor-and-run",
+                "--run-tag",
+                RUN_TAG,
+            ],
+            adapter_factory=lambda: adapter,
+        )
+    finally:
+        controller.wait_for_strict_clean_gpus = original_monitor
+        controller.query_remote_gpu_inventory = original_query
+
+    assert result == 0
+    assert adapter.kerberos_checks == 2
+    assert len(gpu_queries) == 2
+    assert "launch" in adapter.events
+
+
 def test_plan_only_performs_no_gpu_query_or_remote_operation():
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "plan.json"
@@ -608,6 +652,7 @@ def main_tests() -> None:
         test_preflight_rejects_existing_tag_before_launch,
         test_run_attempt_rejects_a_verdict_without_verifier_evidence,
         test_monitor_and_run_launches_immediately_after_local_admission,
+        test_production_monitor_rechecks_kerberos_before_every_gpu_poll,
         test_plan_only_performs_no_gpu_query_or_remote_operation,
         test_controller_supports_direct_script_execution,
         test_remote_upload_retries_transient_ssh_disconnect,

@@ -1619,8 +1619,10 @@ def main(
             command_timeout_s=args.command_timeout_s,
             retry_count=args.retry_count,
         )
+    adapter = adapter_factory()
     if gpu_monitor is None:
         def query_inventory():
+            adapter._require_kerberos_window()
             return query_remote_gpu_inventory(
                 ssh_target=args.ssh_target,
                 control_path=args.control_path,
@@ -1638,7 +1640,7 @@ def main(
     result = monitor_and_run(
         run_tag=args.run_tag,
         gpu_monitor=gpu_monitor,
-        adapter=adapter_factory(),
+        adapter=adapter,
     )
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0
