@@ -7988,6 +7988,7 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
         "snapshot_slots": None,
         "restore_slots": None,
         "restore_count": 0,
+        "force_attention_backend": [],
     }
 
     def snapshot(slots):
@@ -8013,6 +8014,9 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
     class MutatingModel:
         def __call__(self, input_ids, positions, input_embeds=None):
             del positions, input_embeds
+            observed["force_attention_backend"].append(
+                context.get_context().force_attention_backend
+            )
             for slot in scratch_slots:
                 scratch_state[slot][0] += 1000
             return FakeCaptureTensor(
@@ -8080,6 +8084,7 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
     assert observed["snapshot_slots"] == tuple(scratch_slots)
     assert observed["restore_slots"] == tuple(scratch_slots)
     assert observed["restore_count"] == 1
+    assert observed["force_attention_backend"] == [True, True]
     assert scratch_state == before
     current = context.get_context()
     assert current.is_prefill is False
