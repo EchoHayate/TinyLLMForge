@@ -273,6 +273,28 @@ class ExactCudaGraphCache:
         self.capturing.discard(identity_sha256)
         self.counters[f"fallback_{reason}"] += 1
 
+    def release_ready_graphs(self, *, synchronize) -> int:
+        if not callable(synchronize):
+            raise ValueError("synchronize must be callable")
+        entries = tuple(self.ready_entries.values())
+        for entry in entries:
+            graph = entry.graph
+            if graph is None:
+                continue
+            reset = getattr(graph, "reset", None)
+            if not callable(reset):
+                raise ValueError(
+                    "captured graph must expose callable reset"
+                )
+            reset()
+            entry.graph = None
+        self.ready_entries.clear()
+        self.static_bytes = 0
+        self.reserved_delta_bytes = 0
+        if entries:
+            synchronize()
+        return len(entries)
+
     def summary(self) -> dict:
         counters = {
             key: self.counters[key]

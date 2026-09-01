@@ -8554,6 +8554,76 @@ def test_replay_phase_receipt_covers_graph_and_logits_boundaries():
     ]
 
 
+def test_exact_graph_cache_release_resets_graphs_before_synchronize():
+    runner = _make_exact_dispatch_runner()
+    calls = []
+
+    class Graph:
+        def __init__(self, name):
+            self.name = name
+
+        def reset(self):
+            calls.append(("reset", self.name))
+
+    entries = {
+        "a": SimpleNamespace(graph=Graph("a")),
+        "b": SimpleNamespace(graph=Graph("b")),
+    }
+    runner.exact_cuda_graph_cache.ready_entries.update(entries)
+    runner.exact_cuda_graph_cache.static_bytes = 8192
+    runner.exact_cuda_graph_cache.reserved_delta_bytes = 16384
+
+    released = runner.exact_cuda_graph_cache.release_ready_graphs(
+        synchronize=lambda: calls.append(("synchronize", None)),
+    )
+
+    assert released == 2
+    assert calls == [
+        ("reset", "a"),
+        ("reset", "b"),
+        ("synchronize", None),
+    ]
+    assert entries["a"].graph is None
+    assert entries["b"].graph is None
+    assert runner.exact_cuda_graph_cache.ready_entries == {}
+    assert runner.exact_cuda_graph_cache.static_bytes == 0
+    assert runner.exact_cuda_graph_cache.reserved_delta_bytes == 0
+
+
+def test_model_runner_exit_releases_exact_graphs_before_process_group_shutdown():
+    tree = ast.parse(open(_MODEL_RUNNER_PATH, encoding="utf-8").read())
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    exit_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "exit"
+    )
+    release_lines = [
+        node.lineno
+        for node in ast.walk(exit_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "release_ready_graphs"
+    ]
+    destroy_lines = [
+        node.lineno
+        for node in ast.walk(exit_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "destroy_process_group"
+    ]
+
+    assert len(release_lines) == 1
+    assert len(destroy_lines) == 1
+    assert release_lines[0] < destroy_lines[0]
+
+
 def test_replay_failure_publishes_terminal_event_before_reraising():
     runner = _make_exact_dispatch_runner()
     for _ in range(3):
@@ -8660,6 +8730,8 @@ def main():
         test_transactional_capture_rolls_back_and_replay_advances_once,
         test_replay_resets_context_on_success_and_exception,
         test_replay_phase_receipt_covers_graph_and_logits_boundaries,
+        test_exact_graph_cache_release_resets_graphs_before_synchronize,
+        test_model_runner_exit_releases_exact_graphs_before_process_group_shutdown,
         test_replay_failure_publishes_terminal_event_before_reraising,
     )
     for test in tests:

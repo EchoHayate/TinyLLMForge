@@ -3858,6 +3858,15 @@ class ModelRunner:
         )
         if draft_executor is not None:
             draft_executor.close()
+        exact_graph_cache = getattr(
+            self,
+            "exact_cuda_graph_cache",
+            None,
+        )
+        if exact_graph_cache is not None:
+            exact_graph_cache.release_ready_graphs(
+                synchronize=torch.cuda.synchronize,
+            )
         if self.world_size > 1:
             self.shm.close()                   # 关闭所有rank和共享内存的连接
             dist.barrier()
