@@ -1,0 +1,24 @@
+{
+  "classification": "INCOMPLETE",
+  "completed_case_count": 0,
+  "completed_pair_count": 0,
+  "foreign_compute_pids": [
+    4161055
+  ],
+  "guard_cleanup_completed_at": "2026-09-01T23:35:38.895230+08:00",
+  "guard_cleanup_final_owned_environment_matches": [],
+  "guard_cleanup_returncode": 0,
+  "observed_at": "2026-09-01T23:35:32.253270+08:00",
+  "owned_compute_pids_at_detection": [
+    4152346,
+    4152628,
+    4152629,
+    4152630
+  ],
+  "post_fix_exact_tag_scan": [],
+  "reason": "external_compute_pid_on_selected_gpu",
+  "remote_worker_returncode": -15,
+  "run_tag": "20260901-qwen38-tp4-decode-replay-r28-full",
+  "schema_version": "tinyllmforge.tp4-decode-replay-external-preemption.v1",
+  "worker_wait_returncode": 241
+}

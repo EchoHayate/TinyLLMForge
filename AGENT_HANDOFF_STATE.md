@@ -52030,3 +52030,53 @@ NEXT_RUN_TAG=20260901-qwen38-tp4-decode-replay-r26-full
 NEXT_PREREQUISITE=external Kerberos ticket with >=22500 seconds remaining
 NEXT_COMMAND=after the prerequisite passes, launch one default-timeout r26 monitor-and-run controller and one local exact-tag GPU guard
 ```
+
+## 2026-09-02 TP4 decode replay r26-r29 continuation checkpoint
+
+The authoritative checkout remains `/Users/bytedance/dev/TinyLLMForge` on
+`feat/kv-sparse-attention`. Commit
+`80b2c008de118bb4645d720197edf0e3f4c2546a` is present both locally and on
+`origin/feat/kv-sparse-attention`; its frozen source-tree SHA-256 is
+`7bcc22a482869a0423f8e2fd9686ce4d50d3b7a7f275d0a76618f1b508ba325f`.
+
+r26, r27, and r28 each admitted strict-clean GPUs `0,3,4,6`, then stopped
+without touching the external process when the local guard observed,
+respectively, foreign PIDs `4051684`, `4146190`, and `4161055`. Their terminal
+classifications are all `INCOMPLETE_EXTERNAL_PREEMPTION`.
+
+```text
+r26: 0/30 cases, 0/15 pairs, no final bundle
+r27: 4/30 cases, 2/15 pairs, no final bundle
+r28: 0/30 cases, 0/15 pairs, no final bundle
+```
+
+The guard cleanup returned zero and an empty final exact-tag environment set
+for all three attempts. A fresh read-only remote scan on 2026-09-02 also found
+no exact-tag-owned PID. Compact controller evidence, including newly
+materialized `external_preemption.json` receipts, is local under each attempt
+root. r27's four approximately 0.9 MiB raw case files remain remote rather
+than being duplicated onto the Mac.
+
+r29 was never consumed as an experiment tag: no local or remote attempt root
+exists. Its 20-minute prelaunch monitor repeatedly approached but did not
+reach 80 consecutive stable samples. One SSH/nvidia-smi timeout then escaped
+the polling loop and stopped the supervisor. The local-only supervisor now
+logs `prelaunch_gpu_query_error`, resets the stable identity/count, sleeps,
+and retries. The new regression test first reproduced the escaping
+`TimeoutExpired`; all four supervisor tests and `py_compile` now pass.
+
+The supervisor has been restarted locally. At restart, the Kerberos ticket
+expired at `2026-09-02T17:57:14+08:00` and had `18,719` seconds remaining,
+below the required `22,500`, so no gate launch occurred. It will wait for an
+external ticket refresh, then require the same four GPUs to remain
+strict-clean for 80 samples at 15-second intervals before launching. It must
+not run `kinit` or `krenew`.
+
+```text
+ACTIVE_SUPERVISOR_SESSION=73206
+ACTIVE_SUPERVISOR_PID=31353
+UNCONSUMED_RUN_TAG=20260901-qwen38-tp4-decode-replay-r29-full
+NEXT_PREREQUISITE=external Kerberos ticket with >=22500 seconds remaining
+NEXT_GATE=unchanged 30-case / 15-pair Stage-0 matrix
+NEXT_TERMINAL_WORK=producer, remote verifier, local frozen-source verifier, manifest, cleanup, audit, exact commit and push
+```

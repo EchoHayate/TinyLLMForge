@@ -1029,3 +1029,96 @@ corrections, then use fresh tag
 window. Before launch, the query-only Kerberos preflight must observe at least
 `22,500` seconds of remaining ticket lifetime. The agent must not run
 `kinit` or `krenew`.
+
+## 16. r26-r29 shared-host interruption reconciliation
+
+The corrected source was committed and pushed as
+`80b2c008de118bb4645d720197edf0e3f4c2546a`, with frozen source-tree SHA-256
+`7bcc22a482869a0423f8e2fd9686ce4d50d3b7a7f275d0a76618f1b508ba325f`.
+Three fresh attempts then passed storage, source-identity, Kerberos, and
+strict-clean TP4 admission on GPUs `0,3,4,6`, but each was preempted by a new
+external compute process on an admitted GPU:
+
+| Attempt | External PID | Completed cases | Completed pairs | Final bundle | Terminal classification |
+|---|---:|---:|---:|---|---|
+| r26 | `4051684` | 0/30 | 0/15 | absent | `INCOMPLETE_EXTERNAL_PREEMPTION` |
+| r27 | `4146190` | 4/30 | 2/15 | absent | `INCOMPLETE_EXTERNAL_PREEMPTION` |
+| r28 | `4161055` | 0/30 | 0/15 | absent | `INCOMPLETE_EXTERNAL_PREEMPTION` |
+
+r27 wrote exactly `Q0__r0__eager`, `Q0__r0__graph`,
+`Q0__r1__eager`, and `Q0__r1__graph` before interruption. The large raw case
+files remain on the approved remote `/data00/home/sitian/...` volume; only
+compact controller receipts are retained locally.
+
+For every attempt, the local guard excluded the foreign PID from cleanup and
+terminated only processes carrying the exact task tag. The guard reported
+`returncode=0`, `remote_worker_returncode=-15`, controller worker-wait
+`returncode=241`, and an empty final owned-environment set. A fresh read-only
+scan on 2026-09-02 found no exact-tag-owned PID for r26, r27, or r28. r28's
+controller cleanup receipt briefly observed its own tagged Python resource
+tracker on the first scan; the next two scans and the later live scan were
+empty.
+
+The compact evidence is:
+
+```text
+artifacts/tp4_decode_replay/<r26|r27|r28>/controller/
+  source_identity.json
+  ssh_storage_preflight.json
+  strict_clean_admission.json
+  worker_wait.json
+  cleanup.json
+  external_preemption.json
+```
+
+### 16.1 r29 stable-window monitor
+
+r29 did not create a local or remote experiment attempt. Its local supervisor
+required 80 consecutive 15-second samples, or 20 minutes, with the same four
+strict-clean GPUs before launch. Candidate sets repeatedly reached 40/80 and
+twice reached 70/80 before shared-host activity reset the counter.
+
+The monitor then exited because one `ssh ... nvidia-smi` sample exceeded its
+30-second timeout. This was an orchestration robustness defect, not an
+experiment result. The local supervisor now treats a telemetry exception as a
+recoverable failed sample: it emits `prelaunch_gpu_query_error`, clears the
+stable GPU identity and count, sleeps for one poll interval, and continues.
+TDD evidence:
+
+```text
+RED:
+  TimeoutExpired escaped wait_for_stable_gpu_window
+GREEN:
+  4 supervisor tests passed
+  r29_supervisor.py and test_r29_supervisor.py py_compile passed
+```
+
+At the latest 2026-09-02 check, r29 remained absent locally and remotely.
+The local supervisor was restarted, but the ticket had only `18,719` seconds
+remaining versus the frozen `22,500`-second requirement, so it correctly
+remained in `BLOCKED_KERBEROS_TTL` without creating an attempt.
+
+### 16.2 Current prompt-to-artifact checklist
+
+| Requirement | Current evidence | Result | Remaining action |
+|---|---|---|---|
+| Frozen pushed source | r26-r28 `source_identity.json`; commit `80b2c008...` | complete | Fresh attempt must use the same clean source |
+| Approved remote storage | r26-r28 `ssh_storage_preflight.json` | complete | Recheck for fresh attempt |
+| Four strict-clean GPUs at admission | r26-r28 `strict_clean_admission.json` | complete at admission only | Require 20-minute stable prelaunch window |
+| Continuous local GPU ownership guard | r26-r28 `external_preemption.json` | complete and exercised | Keep enabled |
+| Do not terminate external work | all three foreign PIDs excluded from owned cleanup | complete | Keep invariant |
+| Complete 30-case / 15-pair matrix | best corrected-source attempt r27: 4 cases / 2 pairs | missing | Fresh full run |
+| Exact-token correctness | no complete corrected-source matrix | missing | Fresh full run |
+| Replay coverage | no complete corrected-source matrix | missing | Fresh full run |
+| Benefit plus cost | no complete corrected-source matrix | missing | Fresh full run |
+| Four-rank lifecycle | interrupted in r26-r28 | incomplete | Fresh full run |
+| Final bundle and manifest | absent in r26-r28 | missing | Fresh full run |
+| Remote verifier | absent in r26-r28 | missing | Fresh full run |
+| Local frozen-source verifier | absent in r26-r28 | missing | Fresh full run |
+| No owned process remains | guard final sets and fresh live scans are empty | complete | Recheck after fresh attempt |
+| Stage-1 authorization | no terminal verified Stage-0 result | prohibited | Only verified `GO_STAGE1_JUSTIFIED` may authorize |
+
+The next valid launch requires an externally refreshed Kerberos ticket with at
+least `22,500` seconds remaining and one uninterrupted 20-minute strict-clean
+four-GPU window. The supervisor must continue waiting locally and must not run
+`kinit`, `krenew`, or terminate external GPU work.
