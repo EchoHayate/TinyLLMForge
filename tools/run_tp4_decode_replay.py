@@ -70,12 +70,19 @@ DEFAULT_REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
 DEFAULT_COMMAND_TIMEOUT_S = 21_600
 DEFAULT_GPU_WAIT_TIMEOUT_S = 21_600
 DEFAULT_GPU_POLL_INTERVAL_S = 15
+SHARED_CAPACITY_STABLE_SAMPLES = 4
 DEFAULT_RETRY_COUNT = 3
 KERBEROS_GUARD_MARGIN_S = 900
 PLAN_SCHEMA = "tinyllmforge.tp4-decode-replay-plan.v1"
 RUN_TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA1_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+STRICT_CLEAN = "strict_clean"
+SHARED_CAPACITY = "shared_capacity"
+ADMISSION_MODES = frozenset({STRICT_CLEAN, SHARED_CAPACITY})
+SHARED_CAPACITY_MAX_GPU_MEMORY_USED_MIB = 20_480
+SHARED_CAPACITY_MAX_GPU_UTILIZATION_PERCENT = 5
+DIAGNOSTIC_ONLY = "DIAGNOSTIC_ONLY"
 
 
 def _below(path: str, root: str) -> bool:
@@ -117,7 +124,153 @@ def _validate_source_identity(
     return dict(source_identity)
 
 
-def _normalize_selected_gpus(selected_gpus: object) -> list[dict]:
+def _validate_admission_mode(admission_mode: object) -> str:
+    if admission_mode not in ADMISSION_MODES:
+        raise ValueError("admission mode is invalid")
+    return str(admission_mode)
+
+
+def _validate_shared_capacity_rows(
+    selected_gpus: object,
+) -> list[dict]:
+    required = {
+        "gpu_index",
+        "gpu_uuid",
+        "memory_used_mib",
+        "utilization_percent",
+        "compute_processes",
+    }
+    if not isinstance(selected_gpus, list):
+        raise ValueError("GPU telemetry must be a list")
+    rows = []
+    for value in selected_gpus:
+        if not isinstance(value, dict) or set(value) != required:
+            raise ValueError("GPU telemetry schema mismatch")
+        row = dict(value)
+        if (
+            type(row["gpu_index"]) is not int
+            or row["gpu_index"] < 0
+            or not isinstance(row["gpu_uuid"], str)
+            or not row["gpu_uuid"].startswith("GPU-")
+            or type(row["memory_used_mib"]) is not int
+            or row["memory_used_mib"] < 0
+            or type(row["utilization_percent"]) is not int
+            or row["utilization_percent"] < 0
+            or not isinstance(row["compute_processes"], list)
+        ):
+            raise ValueError("GPU telemetry schema mismatch")
+        for process in row["compute_processes"]:
+            if (
+                not isinstance(process, dict)
+                or set(process)
+                != {"pid", "process_name", "used_memory_mib"}
+                or type(process["pid"]) is not int
+                or process["pid"] <= 0
+                or not isinstance(process["process_name"], str)
+                or not process["process_name"]
+                or type(process["used_memory_mib"]) is not int
+                or process["used_memory_mib"] < 0
+            ):
+                raise ValueError("GPU process telemetry schema mismatch")
+        rows.append(row)
+    if len({row["gpu_uuid"] for row in rows}) != len(rows):
+        raise ValueError("duplicate GPU UUID in inventory")
+    if len({row["gpu_index"] for row in rows}) != len(rows):
+        raise ValueError("GPU telemetry contains duplicate index")
+    return rows
+
+
+def _normalize_shared_capacity_gpus(
+    selected_gpus: object,
+) -> list[dict]:
+    rows = _validate_shared_capacity_rows(selected_gpus)
+    eligible = sorted(
+        (
+            row
+            for row in rows
+            if row["memory_used_mib"]
+            <= SHARED_CAPACITY_MAX_GPU_MEMORY_USED_MIB
+            and row["utilization_percent"]
+            <= SHARED_CAPACITY_MAX_GPU_UTILIZATION_PERCENT
+        ),
+        key=lambda row: row["gpu_index"],
+    )
+    if len(eligible) < 4:
+        raise ValueError("four shared-capacity GPUs are required")
+    return eligible[:4]
+
+
+def _normalize_baseline_compute_processes(
+    baseline: object,
+    *,
+    selected_gpus: list[dict],
+    admission_mode: str,
+) -> list[dict]:
+    if baseline is None:
+        baseline = []
+    if not isinstance(baseline, list):
+        raise ValueError("baseline process inventory is invalid")
+    if admission_mode == STRICT_CLEAN:
+        if baseline:
+            raise ValueError(
+                "strict-clean plan cannot retain baseline processes"
+            )
+        return []
+    expected = {
+        (
+            row["gpu_uuid"],
+            process["pid"],
+            process["process_name"],
+            process["used_memory_mib"],
+        )
+        for row in selected_gpus
+        for process in row["compute_processes"]
+    }
+    normalized = []
+    observed = set()
+    for value in baseline:
+        required = {
+            "gpu_uuid",
+            "pid",
+            "process_name",
+            "start_time_ticks",
+            "used_memory_mib",
+        }
+        if (
+            not isinstance(value, dict)
+            or set(value) != required
+            or type(value["pid"]) is not int
+            or value["pid"] <= 0
+            or type(value["start_time_ticks"]) is not int
+            or value["start_time_ticks"] <= 0
+        ):
+            raise ValueError("baseline process inventory is invalid")
+        key = (
+            value["gpu_uuid"],
+            value["pid"],
+            value["process_name"],
+            value["used_memory_mib"],
+        )
+        observed.add(key)
+        normalized.append(dict(value))
+    if observed != expected or len(observed) != len(normalized):
+        raise ValueError(
+            "baseline process inventory does not match selected GPUs"
+        )
+    return sorted(
+        normalized,
+        key=lambda row: (row["gpu_uuid"], row["pid"]),
+    )
+
+
+def _normalize_selected_gpus(
+    selected_gpus: object,
+    *,
+    admission_mode: str = STRICT_CLEAN,
+) -> list[dict]:
+    admission_mode = _validate_admission_mode(admission_mode)
+    if admission_mode == SHARED_CAPACITY:
+        return _normalize_shared_capacity_gpus(selected_gpus)
     try:
         selected = select_strict_clean_gpus(list(selected_gpus))
     except (TypeError, ValueError) as error:
@@ -127,18 +280,153 @@ def _normalize_selected_gpus(selected_gpus: object) -> list[dict]:
     return [dict(row) for row in selected]
 
 
+def wait_for_shared_capacity_gpus(
+    *,
+    query_inventory,
+    query_process_start_times,
+    timeout_s: int,
+    poll_interval_s: int,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> dict:
+    if (
+        not callable(query_inventory)
+        or not callable(query_process_start_times)
+        or not callable(sleep)
+        or not callable(monotonic)
+        or type(timeout_s) is not int
+        or timeout_s <= 0
+        or type(poll_interval_s) is not int
+        or poll_interval_s <= 0
+    ):
+        raise ValueError("shared-capacity monitor policy is invalid")
+    deadline = monotonic() + timeout_s
+    stable_key = None
+    stable_count = 0
+    selected = None
+    samples = []
+    while monotonic() < deadline:
+        try:
+            candidate = _normalize_shared_capacity_gpus(
+                query_inventory()
+            )
+            pids = sorted({
+                process["pid"]
+                for row in candidate
+                for process in row["compute_processes"]
+            })
+            start_times = query_process_start_times(pids)
+            baseline = _normalize_baseline_compute_processes(
+                [
+                    {
+                        "gpu_uuid": row["gpu_uuid"],
+                        "pid": process["pid"],
+                        "process_name": process["process_name"],
+                        "start_time_ticks": start_times[process["pid"]],
+                        "used_memory_mib": process["used_memory_mib"],
+                    }
+                    for row in candidate
+                    for process in row["compute_processes"]
+                ],
+                selected_gpus=candidate,
+                admission_mode=SHARED_CAPACITY,
+            )
+        except Exception as error:
+            candidate = None
+            baseline = None
+            samples.append({
+                "classification": "BLOCKED_RESOURCES",
+                "reason": f"{type(error).__name__}: {error}",
+            })
+        candidate_key = (
+            tuple(
+                (
+                    row["gpu_index"],
+                    row["gpu_uuid"],
+                    tuple(
+                        (
+                            process["pid"],
+                            next(
+                                value["start_time_ticks"]
+                                for value in baseline
+                                if value["gpu_uuid"] == row["gpu_uuid"]
+                                and value["pid"] == process["pid"]
+                            ),
+                        )
+                        for process in row["compute_processes"]
+                    ),
+                )
+                for row in candidate
+            )
+            if candidate is not None
+            else None
+        )
+        if candidate_key is None:
+            stable_key = None
+            stable_count = 0
+            selected = None
+        elif candidate_key == stable_key:
+            stable_count += 1
+            selected = candidate
+        else:
+            stable_key = candidate_key
+            stable_count = 1
+            selected = candidate
+        if stable_count >= SHARED_CAPACITY_STABLE_SAMPLES:
+            assert selected is not None
+            return {
+                "classification": "READY",
+                "admission_mode": SHARED_CAPACITY,
+                "stable_samples": stable_count,
+                "selected_gpus": selected,
+                "baseline_compute_processes": baseline,
+                "samples": samples,
+            }
+        samples.append({
+            "classification": (
+                "READY_SAMPLE"
+                if candidate is not None
+                else "BLOCKED_RESOURCES"
+            ),
+            "stable_samples": stable_count,
+        })
+        if monotonic() + poll_interval_s > deadline:
+            break
+        sleep(poll_interval_s)
+    return {
+        "classification": "BLOCKED_RESOURCES",
+        "admission_mode": SHARED_CAPACITY,
+        "stable_samples": stable_count,
+        "selected_gpus": [],
+        "baseline_compute_processes": [],
+        "samples": samples,
+        "reason": "shared-capacity GPU monitor timed out",
+    }
+
+
 def build_plan(
     *,
     run_tag: str,
     source_identity: dict,
     selected_gpus: list[dict],
+    admission_mode: str = STRICT_CLEAN,
+    baseline_compute_processes: list[dict] | None = None,
 ) -> dict:
     run_tag = _validate_run_tag(run_tag)
+    admission_mode = _validate_admission_mode(admission_mode)
     source = _validate_source_identity(
         source_identity,
         run_tag=run_tag,
     )
-    selected = _normalize_selected_gpus(selected_gpus)
+    selected = _normalize_selected_gpus(
+        selected_gpus,
+        admission_mode=admission_mode,
+    )
+    baseline = _normalize_baseline_compute_processes(
+        baseline_compute_processes,
+        selected_gpus=selected,
+        admission_mode=admission_mode,
+    )
     attempt_root = f"{REMOTE_ROOT}/{run_tag}"
     runtime_root = f"{attempt_root}/runtime"
     paths = {
@@ -179,6 +467,7 @@ def build_plan(
         "PYTHONPATH": (
             f"{paths['source_root']}:{paths['source_root']}/tools"
         ),
+        "TINYLLMFORGE_TP4_ADMISSION_MODE": admission_mode,
     }
     if (
         not all(_below(value, REMOTE_ROOT) for value in paths.values())
@@ -199,7 +488,14 @@ def build_plan(
         "source_identity": source,
         "source_revision": source["source_revision"],
         "source_tree_sha256": source["source_tree_sha256"],
+        "admission_mode": admission_mode,
+        "claim_boundary": (
+            DIAGNOSTIC_ONLY
+            if admission_mode == SHARED_CAPACITY
+            else "FORMAL_STRICT_CLEAN"
+        ),
         "selected_gpus": selected,
+        "baseline_compute_processes": baseline,
         "selected_gpu_indices": [
             row["gpu_index"] for row in selected
         ],
@@ -228,13 +524,33 @@ def _validate_plan(plan: object) -> dict:
         plan.get("source_identity"),
         run_tag=run_tag,
     )
+    admission_mode = _validate_admission_mode(
+        plan.get("admission_mode")
+    )
+    expected_claim_boundary = (
+        DIAGNOSTIC_ONLY
+        if admission_mode == SHARED_CAPACITY
+        else "FORMAL_STRICT_CLEAN"
+    )
+    if plan.get("claim_boundary") != expected_claim_boundary:
+        raise ValueError("plan claim boundary is invalid")
     if (
         plan.get("source_revision") != source["source_revision"]
         or plan.get("source_tree_sha256")
         != source["source_tree_sha256"]
     ):
         raise ValueError("plan source identity drift")
-    selected = _normalize_selected_gpus(plan.get("selected_gpus", []))
+    selected = _normalize_selected_gpus(
+        plan.get("selected_gpus", []),
+        admission_mode=admission_mode,
+    )
+    baseline = _normalize_baseline_compute_processes(
+        plan.get("baseline_compute_processes"),
+        selected_gpus=selected,
+        admission_mode=admission_mode,
+    )
+    if plan.get("baseline_compute_processes") != baseline:
+        raise ValueError("plan baseline process identity drift")
     if (
         plan.get("selected_gpu_indices")
         != [row["gpu_index"] for row in selected]
@@ -261,6 +577,7 @@ def _validate_plan(plan: object) -> dict:
                 f"{plan['paths']['source_root']}:"
                 f"{plan['paths']['source_root']}/tools"
             ),
+            "TINYLLMFORGE_TP4_ADMISSION_MODE": admission_mode,
         }
     ):
         raise ValueError("plan remote path is invalid")
@@ -281,17 +598,42 @@ def _validate_admission(admission: object, plan: dict) -> None:
     if (
         not isinstance(admission, dict)
         or admission.get("classification") != "READY"
+        or admission.get("admission_mode") != plan["admission_mode"]
+        or admission.get("claim_boundary") != plan["claim_boundary"]
         or not isinstance(admission.get("selected_gpus"), list)
     ):
-        raise ValueError("strict-clean admission rejected the run")
-    selected = _normalize_selected_gpus(admission["selected_gpus"])
+        raise ValueError("GPU admission rejected the run")
+    selected = _normalize_selected_gpus(
+        admission["selected_gpus"],
+        admission_mode=plan["admission_mode"],
+    )
     if (
         [row["gpu_index"] for row in selected]
         != plan["selected_gpu_indices"]
         or [row["gpu_uuid"] for row in selected]
         != plan["selected_gpu_uuids"]
     ):
-        raise ValueError("strict-clean GPU identity drift")
+        raise ValueError("GPU admission identity drift")
+    try:
+        baseline = _normalize_baseline_compute_processes(
+            admission.get("baseline_compute_processes"),
+            selected_gpus=selected,
+            admission_mode=plan["admission_mode"],
+        )
+    except ValueError as error:
+        raise ValueError(
+            "baseline process identity drift"
+        ) from error
+    expected_identity = {
+        (row["gpu_uuid"], row["pid"], row["start_time_ticks"])
+        for row in plan["baseline_compute_processes"]
+    }
+    observed_identity = {
+        (row["gpu_uuid"], row["pid"], row["start_time_ticks"])
+        for row in baseline
+    }
+    if observed_identity != expected_identity:
+        raise ValueError("baseline process identity drift")
 
 
 def _validate_verification_receipt(receipt: object) -> dict:
@@ -347,7 +689,7 @@ def _execute_attempt(
         if preflight is None:
             preflight = adapter.ssh_storage_preflight(plan, source)
         _validate_preflight(preflight, plan)
-        admission = adapter.strict_clean_admission(plan, preflight)
+        admission = adapter.gpu_admission(plan, preflight)
         _validate_admission(admission, plan)
         launch = adapter.launch(plan, admission)
         waited = adapter.wait(plan, launch)
@@ -394,7 +736,7 @@ def _execute_attempt(
         raise cleanup_error
     if operation_error is not None:
         raise operation_error
-    return {
+    result = {
         "classification": assembled["classification"],
         "plan": plan,
         "source_identity": source,
@@ -405,6 +747,17 @@ def _execute_attempt(
         "local_verification": local_verification,
         "cleanup": cleanup,
     }
+    if plan["admission_mode"] == SHARED_CAPACITY:
+        result.update({
+            "classification": DIAGNOSTIC_ONLY,
+            "diagnostic_gate_classification": (
+                assembled["classification"]
+            ),
+            "claim_boundary": (
+                "shared_capacity_not_formal_performance_evidence"
+            ),
+        })
+    return result
 
 
 def run_attempt(*, plan: dict, adapter: object) -> dict:
@@ -414,6 +767,7 @@ def run_attempt(*, plan: dict, adapter: object) -> dict:
 def monitor_and_run(
     *,
     run_tag: str,
+    admission_mode: str = STRICT_CLEAN,
     gpu_monitor: object,
     adapter: object,
 ) -> dict:
@@ -441,6 +795,11 @@ def monitor_and_run(
         run_tag=run_tag,
         source_identity=source,
         selected_gpus=monitor["selected_gpus"],
+        admission_mode=admission_mode,
+        baseline_compute_processes=monitor.get(
+            "baseline_compute_processes",
+            [],
+        ),
     )
     return _execute_attempt(
         plan=plan,
@@ -1028,6 +1387,47 @@ class ProductionAdapter:
             raise ValueError("remote exact-tag scan is invalid")
         return rows
 
+    def _query_process_start_times(
+        self,
+        pids: list[int],
+    ) -> dict[int, int]:
+        if any(type(pid) is not int or pid <= 0 for pid in pids):
+            raise ValueError("baseline PID list is invalid")
+        if not pids:
+            return {}
+        script = "\n".join([
+            "import json,sys",
+            "rows={}",
+            "for raw in sys.argv[1:]:",
+            "  pid=int(raw)",
+            "  try:",
+            "    stat=open(f'/proc/{pid}/stat',encoding='utf-8').read()",
+            "    fields=stat.rpartition(') ')[2].split()",
+            "    rows[str(pid)]=int(fields[19])",
+            "  except (OSError,IndexError,ValueError):",
+            "    rows[str(pid)]=None",
+            "print(json.dumps(rows,sort_keys=True))",
+        ])
+        result = self._remote([
+            "python3",
+            "-c",
+            script,
+            *map(str, sorted(set(pids))),
+        ])
+        payload = json.loads(result.stdout)
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {str(pid) for pid in set(pids)}
+            or any(type(value) is not int for value in payload.values())
+        ):
+            raise RuntimeError(
+                "baseline process identity could not be frozen"
+            )
+        return {
+            int(pid): start_time
+            for pid, start_time in payload.items()
+        }
+
     def freeze_source(self, plan: dict) -> dict:
         run_tag = _validate_run_tag(plan["run_tag"])
         source = _capture_source_identity(run_tag)
@@ -1135,7 +1535,7 @@ class ProductionAdapter:
         )
         return receipt
 
-    def strict_clean_admission(
+    def gpu_admission(
         self,
         plan: dict,
         preflight: dict,
@@ -1148,20 +1548,100 @@ class ProductionAdapter:
             timeout_s=self.command_timeout_s,
             retry_count=self.retry_count,
         )
-        selected = validate_selected_gpu_processes(
-            selected=tuple(plan["selected_gpus"]),
-            observed=list(observed),
-            owned_pids=frozenset(),
-        )
-        if any(
-            row["memory_used_mib"] > MAX_GPU_MEMORY_USED_MIB
-            or row["utilization_percent"]
-            > MAX_GPU_UTILIZATION_PERCENT
-            for row in selected
-        ):
-            raise RuntimeError(
-                "planned GPU inventory is not strict-clean"
+        mode = plan["admission_mode"]
+        if mode == STRICT_CLEAN:
+            selected = validate_selected_gpu_processes(
+                selected=tuple(plan["selected_gpus"]),
+                observed=list(observed),
+                owned_pids=frozenset(),
             )
+            if any(
+                row["memory_used_mib"] > MAX_GPU_MEMORY_USED_MIB
+                or row["utilization_percent"]
+                > MAX_GPU_UTILIZATION_PERCENT
+                for row in selected
+            ):
+                raise RuntimeError(
+                    "planned GPU inventory is not strict-clean"
+                )
+            baseline_processes = []
+        else:
+            observed_rows = _validate_shared_capacity_rows(
+                list(observed)
+            )
+            by_uuid = {
+                row["gpu_uuid"]: row
+                for row in observed_rows
+            }
+            selected_rows = []
+            for frozen in plan["selected_gpus"]:
+                current = by_uuid.get(frozen["gpu_uuid"])
+                if (
+                    current is None
+                    or current["gpu_index"] != frozen["gpu_index"]
+                    or current["memory_used_mib"]
+                    > SHARED_CAPACITY_MAX_GPU_MEMORY_USED_MIB
+                    or current["utilization_percent"]
+                    > SHARED_CAPACITY_MAX_GPU_UTILIZATION_PERCENT
+                ):
+                    raise RuntimeError(
+                        "shared-capacity GPU identity drift"
+                    )
+                frozen_pids = {
+                    process["pid"]
+                    for process in frozen["compute_processes"]
+                }
+                current_pids = {
+                    process["pid"]
+                    for process in current["compute_processes"]
+                }
+                if current_pids != frozen_pids:
+                    raise RuntimeError(
+                        "shared-capacity baseline process set changed"
+                    )
+                selected_rows.append(current)
+            selected = tuple(selected_rows)
+            pids = sorted({
+                process["pid"]
+                for row in selected
+                for process in row["compute_processes"]
+            })
+            start_times = self._query_process_start_times(pids)
+            baseline_processes = _normalize_baseline_compute_processes(
+                [
+                    {
+                        "gpu_uuid": row["gpu_uuid"],
+                        "pid": process["pid"],
+                        "process_name": process["process_name"],
+                        "start_time_ticks": start_times[process["pid"]],
+                        "used_memory_mib": process["used_memory_mib"],
+                    }
+                    for row in selected
+                    for process in row["compute_processes"]
+                ],
+                selected_gpus=list(selected),
+                admission_mode=SHARED_CAPACITY,
+            )
+            expected_identity = {
+                (
+                    row["gpu_uuid"],
+                    row["pid"],
+                    row["start_time_ticks"],
+                )
+                for row in plan["baseline_compute_processes"]
+            }
+            observed_identity = {
+                (
+                    row["gpu_uuid"],
+                    row["pid"],
+                    row["start_time_ticks"],
+                )
+                for row in baseline_processes
+            }
+            if observed_identity != expected_identity:
+                raise RuntimeError(
+                    "shared-capacity baseline process identity changed"
+                )
         rows = [
             {
                 "rank": rank,
@@ -1180,17 +1660,27 @@ class ProductionAdapter:
                 "tinyllmforge.tp4-decode-replay-admission.v1"
             ),
             "run_tag": plan["run_tag"],
-            "strict_clean": True,
+            "admission_mode": mode,
+            "claim_boundary": plan["claim_boundary"],
+            "strict_clean": mode == STRICT_CLEAN,
             "world_size": 4,
             "selected_gpus": rows,
+            "baseline_compute_processes": baseline_processes,
         }
         receipt = {
             "classification": "READY",
+            "admission_mode": mode,
+            "claim_boundary": plan["claim_boundary"],
             "selected_gpus": [dict(row) for row in selected],
+            "baseline_compute_processes": baseline_processes,
         }
         _atomic_write_json(
             self.local_controller_root
-            / "strict_clean_admission.json",
+            / (
+                "strict_clean_admission.json"
+                if mode == STRICT_CLEAN
+                else "shared_capacity_admission.json"
+            ),
             self._admission,
         )
         return receipt
@@ -1625,9 +2115,19 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     plan_only = subparsers.add_parser("plan-only")
     plan_only.add_argument("--run-tag", required=True)
+    plan_only.add_argument(
+        "--admission-mode",
+        choices=sorted(ADMISSION_MODES),
+        default=STRICT_CLEAN,
+    )
     plan_only.add_argument("--output", type=Path)
     monitor = subparsers.add_parser("monitor-and-run")
     monitor.add_argument("--run-tag", required=True)
+    monitor.add_argument(
+        "--admission-mode",
+        choices=sorted(ADMISSION_MODES),
+        default=STRICT_CLEAN,
+    )
     monitor.add_argument("--ssh-target", default=DEFAULT_SSH_TARGET)
     monitor.add_argument(
         "--remote-python",
@@ -1668,6 +2168,7 @@ def main(
             run_tag=args.run_tag,
             source_identity=source,
             selected_gpus=_placeholder_gpus(),
+            admission_mode=args.admission_mode,
         )
         payload = {"mode": "plan-only", **plan}
         if args.output is not None:
@@ -1705,15 +2206,26 @@ def main(
                 retry_count=args.retry_count,
             )
 
-        gpu_monitor = lambda: wait_for_strict_clean_gpus(
-            query_inventory=query_inventory,
-            timeout_s=args.gpu_wait_timeout_s,
-            poll_interval_s=args.gpu_poll_interval_s,
-        )
+        if args.admission_mode == STRICT_CLEAN:
+            gpu_monitor = lambda: wait_for_strict_clean_gpus(
+                query_inventory=query_inventory,
+                timeout_s=args.gpu_wait_timeout_s,
+                poll_interval_s=args.gpu_poll_interval_s,
+            )
+        else:
+            gpu_monitor = lambda: wait_for_shared_capacity_gpus(
+                query_inventory=query_inventory,
+                query_process_start_times=(
+                    adapter._query_process_start_times
+                ),
+                timeout_s=args.gpu_wait_timeout_s,
+                poll_interval_s=args.gpu_poll_interval_s,
+            )
     if not callable(gpu_monitor) or not callable(adapter_factory):
         raise RuntimeError("production monitor adapter is unavailable")
     result = monitor_and_run(
         run_tag=args.run_tag,
+        admission_mode=args.admission_mode,
         gpu_monitor=gpu_monitor,
         adapter=adapter,
     )

@@ -18,6 +18,8 @@ import tp4_decode_replay_contract as contract
 
 
 WORKER_SCHEMA = "tinyllmforge.tp4-decode-replay-worker.v1"
+STRICT_CLEAN = "strict_clean"
+SHARED_CAPACITY = "shared_capacity"
 
 
 def _atomic_write_json(path: Path, payload: object) -> None:
@@ -142,12 +144,20 @@ def build_engine_config(*, arm: str, workload: str) -> dict:
         raise ValueError("workload is invalid")
     profile = contract.WORKLOADS[workload]
     concurrency = int(profile["concurrency"])
+    admission_mode = os.environ.get(
+        "TINYLLMFORGE_TP4_ADMISSION_MODE",
+        STRICT_CLEAN,
+    )
+    if admission_mode not in {STRICT_CLEAN, SHARED_CAPACITY}:
+        raise ValueError("admission mode is invalid")
     return {
         "tensor_parallel_size": 4,
         # Q2 rank 0 materializes a 3.79 GiB full-vocabulary BF16
         # projection before selecting the final token rows. Keep enough
         # allocator headroom for that projection and the bounded graph pool.
-        "gpu_memory_utilization": 0.84,
+        "gpu_memory_utilization": (
+            0.65 if admission_mode == SHARED_CAPACITY else 0.84
+        ),
         "enforce_eager": arm == "eager",
         "multi_sequence_cuda_graphs": arm == "graph",
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),

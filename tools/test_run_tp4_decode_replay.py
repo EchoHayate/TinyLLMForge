@@ -54,6 +54,7 @@ def _plan(**overrides):
         "run_tag": RUN_TAG,
         "source_identity": _source(),
         "selected_gpus": [_gpu(index) for index in range(4)],
+        "admission_mode": "strict_clean",
     }
     arguments.update(overrides)
     return build_plan(**arguments)
@@ -119,6 +120,87 @@ def test_plan_rejects_unclean_or_duplicate_gpu_identity():
     )
 
 
+def test_plan_accepts_bounded_shared_capacity_as_diagnostic_only():
+    baseline = [
+        {
+            "gpu_uuid": "GPU-0001",
+            "pid": 101,
+            "process_name": "foreign-a",
+            "start_time_ticks": 9001,
+            "used_memory_mib": 14_000,
+        },
+        {
+            "gpu_uuid": "GPU-0005",
+            "pid": 202,
+            "process_name": "foreign-b",
+            "start_time_ticks": 9002,
+            "used_memory_mib": 18_500,
+        },
+    ]
+    plan = _plan(
+        admission_mode="shared_capacity",
+        baseline_compute_processes=baseline,
+        selected_gpus=[
+            _gpu(0),
+            _gpu(
+                1,
+                memory=14_382,
+                processes=[{
+                    "pid": 101,
+                    "process_name": "foreign-a",
+                    "used_memory_mib": 14_000,
+                }],
+            ),
+            _gpu(
+                5,
+                memory=18_854,
+                processes=[{
+                    "pid": 202,
+                    "process_name": "foreign-b",
+                    "used_memory_mib": 18_500,
+                }],
+            ),
+            _gpu(7),
+        ],
+    )
+
+    assert plan["admission_mode"] == "shared_capacity"
+    assert plan["claim_boundary"] == "DIAGNOSTIC_ONLY"
+    assert plan["selected_gpu_indices"] == [0, 1, 5, 7]
+    assert plan["baseline_compute_processes"] == baseline
+
+
+def test_plan_rejects_shared_capacity_threshold_or_unknown_mode():
+    _expect_error(
+        lambda: _plan(
+            admission_mode="shared_capacity",
+            selected_gpus=[
+                _gpu(0),
+                _gpu(1, memory=20_481),
+                _gpu(5),
+                _gpu(7),
+            ],
+        ),
+        "four shared-capacity GPUs",
+    )
+    _expect_error(
+        lambda: _plan(
+            admission_mode="shared_capacity",
+            selected_gpus=[
+                _gpu(0),
+                _gpu(1, utilization=6),
+                _gpu(5),
+                _gpu(7),
+            ],
+        ),
+        "four shared-capacity GPUs",
+    )
+    _expect_error(
+        lambda: _plan(admission_mode="best_effort"),
+        "admission mode",
+    )
+
+
 def test_plan_rejects_source_drift_and_unsafe_run_tag():
     _expect_error(
         lambda: _plan(
@@ -165,13 +247,18 @@ class _Adapter:
             },
         )
 
-    def strict_clean_admission(self, plan, preflight):
+    def gpu_admission(self, plan, preflight):
         assert preflight["classification"] == "PASS"
         return self._event(
-            "strict_clean_admission",
+            "gpu_admission",
             {
                 "classification": "READY",
+                "admission_mode": plan["admission_mode"],
+                "claim_boundary": plan["claim_boundary"],
                 "selected_gpus": plan["selected_gpus"],
+                "baseline_compute_processes": plan[
+                    "baseline_compute_processes"
+                ],
             },
         )
 
@@ -250,7 +337,7 @@ def test_run_attempt_enforces_the_frozen_operation_order():
     assert adapter.events == [
         "source_freeze",
         "ssh_storage_preflight",
-        "strict_clean_admission",
+        "gpu_admission",
         "launch",
         "wait",
         "download",
@@ -317,6 +404,7 @@ def test_monitor_and_run_launches_immediately_after_local_admission():
 
     result = monitor_and_run(
         run_tag=RUN_TAG,
+        admission_mode="strict_clean",
         gpu_monitor=lambda: (
             monitor_calls.append("poll")
             or {
@@ -331,6 +419,244 @@ def test_monitor_and_run_launches_immediately_after_local_admission():
     assert monitor_calls == ["poll"]
     assert adapter.events[0] == "source_freeze"
     assert "launch" in adapter.events
+
+
+def test_shared_attempt_is_always_reported_as_diagnostic_only():
+    adapter = _Adapter()
+    result = run_attempt(
+        plan=_plan(admission_mode="shared_capacity"),
+        adapter=adapter,
+    )
+
+    assert result["classification"] == "DIAGNOSTIC_ONLY"
+    assert (
+        result["diagnostic_gate_classification"]
+        == "GO_STAGE1_JUSTIFIED"
+    )
+    assert (
+        result["claim_boundary"]
+        == "shared_capacity_not_formal_performance_evidence"
+    )
+
+
+def test_shared_admission_receipt_must_match_frozen_baseline_identity():
+    plan = _plan(admission_mode="shared_capacity")
+    _expect_error(
+        lambda: controller._validate_admission(
+            {
+                "classification": "READY",
+                "admission_mode": "shared_capacity",
+                "claim_boundary": "DIAGNOSTIC_ONLY",
+                "selected_gpus": plan["selected_gpus"],
+                "baseline_compute_processes": [{
+                    "gpu_uuid": "GPU-0000",
+                    "pid": 999,
+                    "process_name": "late-arrival",
+                    "start_time_ticks": 9999,
+                    "used_memory_mib": 1,
+                }],
+            },
+            plan,
+        ),
+        "baseline process identity drift",
+    )
+
+
+def test_shared_admission_records_baseline_process_identity():
+    selected = [
+        _gpu(0),
+        _gpu(
+            1,
+            memory=14_382,
+            processes=[{
+                "pid": 101,
+                "process_name": "foreign-a",
+                "used_memory_mib": 14_000,
+            }],
+        ),
+        _gpu(5),
+        _gpu(7),
+    ]
+    plan = _plan(
+        admission_mode="shared_capacity",
+        baseline_compute_processes=[{
+            "gpu_uuid": "GPU-0001",
+            "pid": 101,
+            "process_name": "foreign-a",
+            "start_time_ticks": 9001,
+            "used_memory_mib": 14_000,
+        }],
+        selected_gpus=selected,
+    )
+    original = controller.query_remote_gpu_inventory
+    controller.query_remote_gpu_inventory = lambda **kwargs: selected
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = ProductionAdapter(
+                run_tag=RUN_TAG,
+                local_attempt_root=Path(directory) / "attempt",
+                kerberos_query=lambda **kwargs: {
+                    "classification": "READY",
+                },
+            )
+            adapter._query_process_start_times = lambda pids: {
+                101: 9001,
+            }
+            receipt = adapter.gpu_admission(
+                plan,
+                {"classification": "PASS"},
+            )
+            persisted = json.loads(
+                (
+                    adapter.local_controller_root
+                    / "shared_capacity_admission.json"
+                ).read_text(encoding="utf-8")
+            )
+    finally:
+        controller.query_remote_gpu_inventory = original
+
+    assert receipt["admission_mode"] == "shared_capacity"
+    assert receipt["claim_boundary"] == "DIAGNOSTIC_ONLY"
+    assert persisted["baseline_compute_processes"] == [{
+        "gpu_uuid": "GPU-0001",
+        "pid": 101,
+        "process_name": "foreign-a",
+        "start_time_ticks": 9001,
+        "used_memory_mib": 14_000,
+    }]
+
+
+def test_shared_admission_rejects_baseline_pid_reuse():
+    selected = [
+        _gpu(0),
+        _gpu(
+            1,
+            memory=14_382,
+            processes=[{
+                "pid": 101,
+                "process_name": "foreign-a",
+                "used_memory_mib": 14_000,
+            }],
+        ),
+        _gpu(5),
+        _gpu(7),
+    ]
+    plan = _plan(
+        admission_mode="shared_capacity",
+        selected_gpus=selected,
+        baseline_compute_processes=[{
+            "gpu_uuid": "GPU-0001",
+            "pid": 101,
+            "process_name": "foreign-a",
+            "start_time_ticks": 9001,
+            "used_memory_mib": 14_000,
+        }],
+    )
+    original = controller.query_remote_gpu_inventory
+    controller.query_remote_gpu_inventory = lambda **kwargs: selected
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = ProductionAdapter(
+                run_tag=RUN_TAG,
+                local_attempt_root=Path(directory) / "attempt",
+                kerberos_query=lambda **kwargs: {
+                    "classification": "READY",
+                },
+            )
+            adapter._query_process_start_times = lambda pids: {
+                101: 9999,
+            }
+            _expect_error(
+                lambda: adapter.gpu_admission(
+                    plan,
+                    {"classification": "PASS"},
+                ),
+                "baseline process identity changed",
+            )
+    finally:
+        controller.query_remote_gpu_inventory = original
+
+
+def test_shared_admission_rejects_new_process_since_monitor_selection():
+    frozen = [_gpu(index) for index in (0, 1, 5, 7)]
+    observed = [
+        _gpu(0),
+        _gpu(
+            1,
+            memory=512,
+            processes=[{
+                "pid": 101,
+                "process_name": "late-arrival",
+                "used_memory_mib": 500,
+            }],
+        ),
+        _gpu(5),
+        _gpu(7),
+    ]
+    original = controller.query_remote_gpu_inventory
+    controller.query_remote_gpu_inventory = lambda **kwargs: observed
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = ProductionAdapter(
+                run_tag=RUN_TAG,
+                local_attempt_root=Path(directory) / "attempt",
+                kerberos_query=lambda **kwargs: {
+                    "classification": "READY",
+                },
+            )
+            _expect_error(
+                lambda: adapter.gpu_admission(
+                    _plan(
+                        admission_mode="shared_capacity",
+                        selected_gpus=frozen,
+                    ),
+                    {"classification": "PASS"},
+                ),
+                "baseline process set changed",
+            )
+    finally:
+        controller.query_remote_gpu_inventory = original
+
+
+def test_shared_monitor_requires_four_samples_of_the_same_pid_identity():
+    selected = [
+        _gpu(0),
+        _gpu(
+            1,
+            memory=14_382,
+            processes=[{
+                "pid": 101,
+                "process_name": "foreign-a",
+                "used_memory_mib": 14_000,
+            }],
+        ),
+        _gpu(5),
+        _gpu(7),
+    ]
+    identities = iter((
+        {101: 9001},
+        {101: 9002},
+        {101: 9002},
+        {101: 9002},
+        {101: 9002},
+    ))
+    sleeps = []
+
+    receipt = controller.wait_for_shared_capacity_gpus(
+        query_inventory=lambda: selected,
+        query_process_start_times=lambda pids: next(identities),
+        timeout_s=120,
+        poll_interval_s=15,
+        sleep=sleeps.append,
+        monotonic=lambda: 0.0,
+    )
+
+    assert receipt["classification"] == "READY"
+    assert receipt["stable_samples"] == 4
+    assert len(sleeps) == 4
+    assert receipt["baseline_compute_processes"][0][
+        "start_time_ticks"
+    ] == 9002
 
 
 def test_production_monitor_rechecks_kerberos_before_every_gpu_poll():
@@ -364,6 +690,8 @@ def test_production_monitor_rechecks_kerberos_before_every_gpu_poll():
                 "monitor-and-run",
                 "--run-tag",
                 RUN_TAG,
+                "--admission-mode",
+                "strict_clean",
             ],
             adapter_factory=lambda: adapter,
         )
@@ -669,7 +997,7 @@ def test_readmission_rechecks_the_frozen_gpus_not_the_first_four_clean():
                     or {"classification": "READY"}
                 ),
             )
-            receipt = adapter.strict_clean_admission(
+            receipt = adapter.gpu_admission(
                 plan,
                 {"classification": "PASS"},
             )
@@ -686,6 +1014,8 @@ def main_tests() -> None:
     tests = (
         test_plan_freezes_paths_model_and_four_clean_gpus,
         test_plan_rejects_unclean_or_duplicate_gpu_identity,
+        test_plan_accepts_bounded_shared_capacity_as_diagnostic_only,
+        test_plan_rejects_shared_capacity_threshold_or_unknown_mode,
         test_plan_rejects_source_drift_and_unsafe_run_tag,
         test_run_attempt_enforces_the_frozen_operation_order,
         test_cleanup_always_runs_and_preserves_original_failure,
@@ -693,6 +1023,12 @@ def main_tests() -> None:
         test_preflight_rejects_existing_tag_before_launch,
         test_run_attempt_rejects_a_verdict_without_verifier_evidence,
         test_monitor_and_run_launches_immediately_after_local_admission,
+        test_shared_attempt_is_always_reported_as_diagnostic_only,
+        test_shared_admission_receipt_must_match_frozen_baseline_identity,
+        test_shared_admission_records_baseline_process_identity,
+        test_shared_admission_rejects_baseline_pid_reuse,
+        test_shared_admission_rejects_new_process_since_monitor_selection,
+        test_shared_monitor_requires_four_samples_of_the_same_pid_identity,
         test_production_monitor_rechecks_kerberos_before_every_gpu_poll,
         test_plan_only_performs_no_gpu_query_or_remote_operation,
         test_controller_supports_direct_script_execution,

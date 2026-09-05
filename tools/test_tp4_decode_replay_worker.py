@@ -6,10 +6,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib.util
 from itertools import count
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 import tempfile
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -274,6 +276,32 @@ def test_engine_config_differs_only_by_graph_policy():
     assert graph["max_num_seqs"] == 8
     assert graph["max_model_len"] == 384
     assert graph["max_num_batched_tokens"] == 2048
+
+
+def test_shared_capacity_engine_config_uses_bounded_memory_budget():
+    with mock.patch.dict(
+        os.environ,
+        {"TINYLLMFORGE_TP4_ADMISSION_MODE": "shared_capacity"},
+    ):
+        config = worker.build_engine_config(
+            arm="eager",
+            workload="Q1",
+        )
+
+    assert config["gpu_memory_utilization"] == 0.65
+
+
+def test_engine_config_rejects_unknown_admission_mode():
+    with mock.patch.dict(
+        os.environ,
+        {"TINYLLMFORGE_TP4_ADMISSION_MODE": "best_effort"},
+    ):
+        try:
+            worker.build_engine_config(arm="eager", workload="Q1")
+        except ValueError as exc:
+            assert "admission mode" in str(exc)
+        else:
+            raise AssertionError("unknown admission mode was accepted")
 
 
 def test_engine_creation_retries_only_rendezvous_port_collisions():
@@ -566,6 +594,8 @@ def test_capture_cost_rows_keep_case_identity():
 def main() -> None:
     tests = (
         test_engine_config_differs_only_by_graph_policy,
+        test_shared_capacity_engine_config_uses_bounded_memory_budget,
+        test_engine_config_rejects_unknown_admission_mode,
         test_engine_creation_retries_only_rendezvous_port_collisions,
         test_collect_rank_graph_observations_preserves_all_ranks,
         test_collect_rank_graph_observations_rejects_rank_disagreement,
