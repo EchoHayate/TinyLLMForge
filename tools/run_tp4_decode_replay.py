@@ -961,37 +961,39 @@ for pair_id in pair_ids:
         environment["TINYVLLM_DIST_PORT"] = str(port)
         process_logs = raw / "process-logs"
         process_logs.mkdir(parents=True, exist_ok=True)
+        stdout_path = process_logs / f"{case_id}.stdout"
+        stderr_path = process_logs / f"{case_id}.stderr"
         started_ns = time.monotonic_ns()
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(Path(source_root) / "tools"
-                    / "tp4_decode_replay_worker.py"),
-                "--model-root",
-                model_root,
-                "--case-json",
-                json.dumps(
-                    case,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                "--output-dir",
-                str(cases_root),
-            ],
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with stdout_path.open(
+            "w",
+            encoding="utf-8",
+        ) as stdout_handle, stderr_path.open(
+            "w",
+            encoding="utf-8",
+        ) as stderr_handle:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(source_root) / "tools"
+                        / "tp4_decode_replay_worker.py"),
+                    "--model-root",
+                    model_root,
+                    "--case-json",
+                    json.dumps(
+                        case,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    "--output-dir",
+                    str(cases_root),
+                ],
+                env=environment,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                text=True,
+                check=False,
+            )
         finished_ns = time.monotonic_ns()
-        (process_logs / f"{case_id}.stdout").write_text(
-            completed.stdout,
-            encoding="utf-8",
-        )
-        (process_logs / f"{case_id}.stderr").write_text(
-            completed.stderr,
-            encoding="utf-8",
-        )
         process_rows.append({
             "case_id": case_id,
             "exit_code": completed.returncode,
@@ -1005,7 +1007,10 @@ for pair_id in pair_ids:
                 "isolated arm failed: "
                 + case_id
                 + ": "
-                + completed.stderr[-12000:]
+                + stderr_path.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                )[-12000:]
             )
         result_path = cases_root / f"{case_id}.json"
         if not result_path.is_file():

@@ -859,6 +859,14 @@ def test_remote_driver_isolates_every_arm_in_a_fresh_python_process():
     assert 'case_results[case["arm"]] = result' in source
 
 
+def test_remote_driver_streams_isolated_arm_logs_while_it_runs():
+    source = _remote_driver_source()
+    compile(source, "<tp4-decode-replay-remote-driver>", "exec")
+    assert "stdout=stdout_handle" in source
+    assert "stderr=stderr_handle" in source
+    assert "capture_output=True" not in source
+
+
 def test_kerberos_guard_covers_the_full_remote_command_window():
     requested_lifetimes = []
 
