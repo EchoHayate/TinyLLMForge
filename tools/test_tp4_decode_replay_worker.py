@@ -278,7 +278,7 @@ def test_engine_config_differs_only_by_graph_policy():
     assert graph["max_num_batched_tokens"] == 2048
 
 
-def test_shared_capacity_engine_config_uses_bounded_memory_budget():
+def test_shared_capacity_engine_config_retains_global_memory_ceiling():
     with mock.patch.dict(
         os.environ,
         {"TINYLLMFORGE_TP4_ADMISSION_MODE": "shared_capacity"},
@@ -288,7 +288,7 @@ def test_shared_capacity_engine_config_uses_bounded_memory_budget():
             workload="Q1",
         )
 
-    assert config["gpu_memory_utilization"] == 0.65
+    assert config["gpu_memory_utilization"] == 0.84
 
 
 def test_engine_config_rejects_unknown_admission_mode():

@@ -155,9 +155,11 @@ def build_engine_config(*, arm: str, workload: str) -> dict:
         # Q2 rank 0 materializes a 3.79 GiB full-vocabulary BF16
         # projection before selecting the final token rows. Keep enough
         # allocator headroom for that projection and the bounded graph pool.
-        "gpu_memory_utilization": (
-            0.65 if admission_mode == SHARED_CAPACITY else 0.84
-        ),
+        # ModelRunner computes this ceiling from total device memory and
+        # subtracts globally used memory, including shared-host occupants.
+        # Lowering it for shared admission can leave no positive KV budget
+        # after model warmup even when the admission cap is satisfied.
+        "gpu_memory_utilization": 0.84,
         "enforce_eager": arm == "eager",
         "multi_sequence_cuda_graphs": arm == "graph",
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
