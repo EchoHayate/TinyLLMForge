@@ -1122,3 +1122,118 @@ The next valid launch requires an externally refreshed Kerberos ticket with at
 least `22,500` seconds remaining and one uninterrupted 20-minute strict-clean
 four-GPU window. The supervisor must continue waiting locally and must not run
 `kinit`, `krenew`, or terminate external GPU work.
+
+## 17. Shared-capacity diagnostic amendment
+
+On 2026-09-05, the user explicitly authorized a diagnostic path that can use
+four lightly occupied GPUs instead of waiting indefinitely for four empty
+GPUs. This path does not weaken or replace the strict-clean formal gate.
+
+The implementation is committed as
+`4c036897dbfefe4507a04eea0cbb7812c512b965` and adds an explicit
+`shared_capacity` admission mode with these frozen constraints:
+
+```text
+world size:                         4
+maximum pre-existing memory/GPU:    20,480 MiB
+maximum prelaunch utilization:      5%
+stable samples:                     4
+poll interval:                      15 seconds
+worker gpu_memory_utilization:      0.65
+result classification:              DIAGNOSTIC_ONLY
+formal performance claim allowed:   false
+```
+
+The existing `strict_clean` mode remains the default and retains its
+1,024 MiB, 5%, and zero-compute-process requirements and formal
+classification semantics.
+
+For shared-capacity admission, the controller freezes every pre-existing
+compute process as:
+
+```text
+(gpu_uuid, pid, /proc start_time_ticks, process_name, used_memory_mib)
+```
+
+Immediately before launch it re-queries the selected GPU UUID/index mapping,
+the exact PID set, and each PID start time. A new PID, missing/changed process
+identity, threshold violation, or GPU identity drift rejects launch.
+
+The local supervisor continues checking the admitted GPUs during execution.
+It accepts only:
+
+- a frozen baseline process with the same GPU UUID, PID, and start time;
+- a process carrying the exact current run tag;
+- a previously observed owned process with the same PID/start-time identity
+  while it exits.
+
+It treats a new foreign PID, baseline PID reuse, selected-GPU identity drift,
+or aggregate baseline-process memory above 20,480 MiB on a selected GPU as an
+unsafe shared-host change. On such a change it signals only exact-tag-owned
+processes; external processes are never signalled or adopted.
+
+The result wrapper preserves the measured producer/verifier gate
+classification as `diagnostic_gate_classification`, but its top-level
+classification is always `DIAGNOSTIC_ONLY` in shared mode. Therefore even a
+measured `GO_STAGE1_JUSTIFIED` is not a formal TinyLLMForge performance claim
+until repeated under strict-clean isolation.
+
+TDD and regression evidence:
+
+```text
+controller:
+  RED: build_plan rejected admission_mode
+  RED: admission receipt baseline drift was accepted
+  GREEN: 29 passed
+worker:
+  RED: shared mode retained gpu_memory_utilization=0.84
+  GREEN: 10 passed
+supervisor:
+  RED: shared selector/guard and shared controller command were absent
+  GREEN: 15 passed
+adjacent:
+  contract 12 passed
+  assembler 6 passed
+  verifier 6 passed
+syntax:
+  py_compile passed with PYTHONPYCACHEPREFIX under /private/tmp
+format:
+  git diff --check passed
+```
+
+A read-only remote snapshot on 2026-09-05 showed GPUs `0,1,5,7` within the
+shared-capacity thresholds:
+
+```text
+GPU 0:      0 MiB, 0%
+GPU 1: 14,382 MiB, 0%
+GPU 5: 18,854 MiB, 0%
+GPU 7:      0 MiB, 0%
+```
+
+The current Kerberos ticket was issued at `2026-09-05 12:10:05 +08:00` and
+expires at `2026-09-05 22:10:05 +08:00`. No shared-capacity attempt had been
+launched at the time of this amendment.
+
+### 17.1 Prompt-to-artifact checklist
+
+| Requirement | Evidence | Status |
+|---|---|---|
+| Preserve strict-clean formal gate | default `strict_clean`; existing thresholds unchanged | complete |
+| Explicit shared-capacity mode | controller CLI and plan `admission_mode` | complete |
+| Four GPUs at no more than 20,480 MiB and 5% | mode-aware selector and admission recheck | complete |
+| One-minute local stability policy | supervisor 4 samples × 15 seconds | complete by frozen policy |
+| Preserve baseline PID identity | plan/admission baseline records include `/proc` start time | complete |
+| Reject new foreign PID or PID reuse | supervisor violations and regression tests | complete |
+| Reject unsafe baseline-memory growth | 20,480 MiB per-GPU baseline cap in guard | complete |
+| Never terminate external work | cleanup scans only exact run-tag ownership | complete |
+| Reduce worker allocation target | shared mode `gpu_memory_utilization=0.65` | complete |
+| Preserve frozen 30-case/15-pair gate | contract, assembler, verifier unchanged and passing | complete |
+| Prevent formal performance claim | top-level `DIAGNOSTIC_ONLY`; raw gate kept separately | complete |
+| Use approved remote volume | all plan paths remain below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | complete |
+| Fresh full run and dual verifier evidence | no new attempt yet | pending |
+
+The next executable checkpoint is to commit and push this audit/handoff
+update, bind the local supervisor to that exact HEAD, and launch a fresh
+shared-capacity tag. The run remains diagnostic even if all 30 cases and both
+verifiers pass.

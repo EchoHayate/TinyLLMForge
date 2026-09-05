@@ -52080,3 +52080,75 @@ NEXT_PREREQUISITE=external Kerberos ticket with >=22500 seconds remaining
 NEXT_GATE=unchanged 30-case / 15-pair Stage-0 matrix
 NEXT_TERMINAL_WORK=producer, remote verifier, local frozen-source verifier, manifest, cleanup, audit, exact commit and push
 ```
+
+## 2026-09-05 TP4 shared-capacity diagnostic checkpoint
+
+The user approved replacing the blocked four-empty-GPU wait with an explicit
+shared-capacity diagnostic. The formal strict-clean gate remains unchanged and
+is still required for any publishable performance claim.
+
+Implementation commit:
+
+```text
+4c036897dbfefe4507a04eea0cbb7812c512b965
+```
+
+Implemented behavior:
+
+```text
+admission mode:                     shared_capacity
+required GPUs:                      4
+maximum existing memory/GPU:        20,480 MiB
+maximum prelaunch utilization:      5%
+stable window policy:               4 samples x 15 seconds
+worker gpu_memory_utilization:      0.65
+baseline identity:                  GPU UUID + PID + start_time_ticks
+new foreign PID:                    stop exact-tag owned work only
+baseline PID reuse:                 stop exact-tag owned work only
+baseline memory above cap:          stop exact-tag owned work only
+selected GPU identity drift:        stop exact-tag owned work only
+top-level result:                   DIAGNOSTIC_ONLY
+formal Stage-1 authorization:       prohibited from this mode
+```
+
+The frozen Qwen3.8-27B BF16 TP4 greedy matrix remains Q0/Q1/Q2 with five
+repetitions, 30 cases, and 15 eager/graph pairs. Producer and both independent
+verifier classifications must still agree; shared mode exposes that measured
+classification only as `diagnostic_gate_classification`.
+
+Fresh local verification:
+
+```text
+controller suite: 29 passed
+worker suite:     10 passed
+contract suite:   12 passed
+assembler suite:   6 passed
+verifier suite:    6 passed
+supervisor suite: 15 passed
+py_compile:       passed with pycache redirected to /private/tmp
+git diff --check: passed
+```
+
+The old r38 supervisor is no longer running. It created no controller PID,
+local attempt root, or remote attempt. A read-only remote snapshot on
+2026-09-05 identified the current candidate set:
+
+```text
+GPU 0:      0 MiB, 0%
+GPU 1: 14,382 MiB, 0%
+GPU 5: 18,854 MiB, 0%
+GPU 7:      0 MiB, 0%
+```
+
+The external workloads on GPUs 1 and 5 are baseline occupants and must never
+be terminated. The local supervisor is untracked under `.agent_runtime/`; it
+has regression coverage for shared selection, PID/start-time stability,
+baseline-memory growth, selected-GPU identity drift, and exact-tag-only
+cleanup.
+
+```text
+NEXT_RUN_TAG=20260905-qwen38-tp4-decode-replay-r39-full
+NEXT_MODE=shared_capacity
+NEXT_CLAIM_BOUNDARY=DIAGNOSTIC_ONLY
+NEXT_COMMAND=bind supervisor EXPECTED_HEAD to final pushed HEAD and launch r39
+```
