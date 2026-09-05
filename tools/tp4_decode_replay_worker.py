@@ -150,28 +150,37 @@ def build_engine_config(*, arm: str, workload: str) -> dict:
     )
     if admission_mode not in {STRICT_CLEAN, SHARED_CAPACITY}:
         raise ValueError("admission mode is invalid")
-    return {
+    max_model_len = (
+        int(profile["prompt_tokens"])
+        + int(profile["output_tokens"])
+    )
+    engine_config = {
         "tensor_parallel_size": 4,
         # Q2 rank 0 materializes a 3.79 GiB full-vocabulary BF16
         # projection before selecting the final token rows. Keep enough
         # allocator headroom for that projection and the bounded graph pool.
-        # ModelRunner computes this ceiling from total device memory and
-        # subtracts globally used memory, including shared-host occupants.
-        # Lowering it for shared admission can leave no positive KV budget
-        # after model warmup even when the admission cap is satisfied.
-        "gpu_memory_utilization": 0.84,
+        # ModelRunner treats this as a whole-device ceiling and subtracts
+        # global usage, including shared-host occupants. Shared admission
+        # therefore needs enough ceiling for model initialization, while an
+        # explicit workload-sized KV cache below prevents opportunistic
+        # allocation of all remaining capacity.
+        "gpu_memory_utilization": (
+            0.95 if admission_mode == SHARED_CAPACITY else 0.84
+        ),
         "enforce_eager": arm == "eager",
         "multi_sequence_cuda_graphs": arm == "graph",
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "max_num_seqs": max(8, concurrency),
-        "max_model_len": (
-            int(profile["prompt_tokens"])
-            + int(profile["output_tokens"])
-        ),
+        "max_model_len": max_model_len,
         "max_num_batched_tokens": (
             int(profile["prompt_tokens"]) * concurrency
         ),
     }
+    if admission_mode == SHARED_CAPACITY:
+        engine_config["num_kvcache_blocks"] = (
+            concurrency * math.ceil(max_model_len / 256)
+        )
+    return engine_config
 
 
 def _expected_case(case: dict) -> dict:

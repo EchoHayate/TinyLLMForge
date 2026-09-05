@@ -278,17 +278,21 @@ def test_engine_config_differs_only_by_graph_policy():
     assert graph["max_num_batched_tokens"] == 2048
 
 
-def test_shared_capacity_engine_config_retains_global_memory_ceiling():
+def test_shared_capacity_engine_config_uses_workload_bounded_kv_capacity():
     with mock.patch.dict(
         os.environ,
         {"TINYLLMFORGE_TP4_ADMISSION_MODE": "shared_capacity"},
     ):
-        config = worker.build_engine_config(
-            arm="eager",
-            workload="Q1",
-        )
+        q0 = worker.build_engine_config(arm="eager", workload="Q0")
+        q1 = worker.build_engine_config(arm="graph", workload="Q1")
+        q2 = worker.build_engine_config(arm="eager", workload="Q2")
 
-    assert config["gpu_memory_utilization"] == 0.84
+    assert q0["gpu_memory_utilization"] == 0.95
+    assert q1["gpu_memory_utilization"] == 0.95
+    assert q2["gpu_memory_utilization"] == 0.95
+    assert q0["num_kvcache_blocks"] == 8
+    assert q1["num_kvcache_blocks"] == 16
+    assert q2["num_kvcache_blocks"] == 36
 
 
 def test_engine_config_rejects_unknown_admission_mode():
