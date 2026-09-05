@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import socket
 import statistics
 import tempfile
 import time
@@ -51,6 +52,12 @@ def _default_engine_factory(model_root, **kwargs):
     from tinyvllm.engine.llm_engine import LLMEngine
 
     return LLMEngine(str(model_root), **kwargs)
+
+
+def _free_rendezvous_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+        handle.bind(("127.0.0.1", 0))
+        return int(handle.getsockname()[1])
 
 
 def _rendezvous_address_in_use(error: BaseException) -> bool:
@@ -621,12 +628,14 @@ def run_arm(
     cleanup = None
     initialization_started_ns = int(clock_ns())
     try:
-        engine = engine_factory(
+        engine, _rendezvous_port = create_engine_with_rendezvous_retry(
             Path(model_root),
-            **build_engine_config(
+            engine_config=build_engine_config(
                 arm=case["arm"],
                 workload=case["workload"],
             ),
+            port_factory=_free_rendezvous_port,
+            engine_factory=engine_factory,
         )
         initialization_finished_ns = int(clock_ns())
         if (

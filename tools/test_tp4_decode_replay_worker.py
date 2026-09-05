@@ -367,6 +367,54 @@ def test_engine_creation_retries_only_rendezvous_port_collisions():
     assert cleanup_calls == [True]
 
 
+def test_run_arm_routes_engine_creation_through_rendezvous_retry():
+    clock = _Clock()
+    engine = _FakeEngine("eager", output_tokens=128, clock=clock)
+    retry_calls = []
+    original_retry = worker.create_engine_with_rendezvous_retry
+
+    def retry(model_root, *, engine_config, port_factory, engine_factory):
+        retry_calls.append({
+            "model_root": model_root,
+            "engine_config": dict(engine_config),
+            "port": int(port_factory()),
+        })
+        return engine_factory(model_root, **engine_config), 41001
+
+    case = {
+        "case_id": "Q0__r0__eager",
+        "pair_id": "Q0__r0",
+        "workload": "Q0",
+        "repetition": 0,
+        "arm": "eager",
+        "order_index": 0,
+        "profile": {
+            "prompt_tokens": 256,
+            "output_tokens": 128,
+            "concurrency": 4,
+        },
+    }
+    worker.create_engine_with_rendezvous_retry = retry
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            worker.run_arm(
+                model_root=Path("/model"),
+                case=case,
+                output_dir=Path(directory),
+                timeout_s=5.0,
+                engine_factory=lambda *_args, **_kwargs: engine,
+                sampling_params_factory=lambda **kwargs: dict(kwargs),
+                clock_ns=clock,
+                reset_sequence_ids=lambda: None,
+            )
+    finally:
+        worker.create_engine_with_rendezvous_retry = original_retry
+
+    assert len(retry_calls) == 1
+    assert retry_calls[0]["model_root"] == Path("/model")
+    assert retry_calls[0]["engine_config"]["tensor_parallel_size"] == 4
+
+
 def test_collect_rank_graph_observations_preserves_all_ranks():
     engine = _ObservationEngine(
         [_event(arm="graph", rank=rank) for rank in range(4)]
@@ -598,9 +646,10 @@ def test_capture_cost_rows_keep_case_identity():
 def main() -> None:
     tests = (
         test_engine_config_differs_only_by_graph_policy,
-        test_shared_capacity_engine_config_uses_bounded_memory_budget,
+        test_shared_capacity_engine_config_uses_workload_bounded_kv_capacity,
         test_engine_config_rejects_unknown_admission_mode,
         test_engine_creation_retries_only_rendezvous_port_collisions,
+        test_run_arm_routes_engine_creation_through_rendezvous_retry,
         test_collect_rank_graph_observations_preserves_all_ranks,
         test_collect_rank_graph_observations_rejects_rank_disagreement,
         test_run_arm_emits_complete_measured_evidence_and_cleanup,
