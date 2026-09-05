@@ -4,7 +4,7 @@
 
 **Goal:** Run the frozen Qwen3.8-27B BF16 TP4 decode-replay matrix on four lightly occupied GPUs without weakening the existing strict-clean production gate or misrepresenting shared-host measurements as formal performance evidence.
 
-**Architecture:** Add an explicit admission mode to the controller plan. `strict_clean` retains all existing behavior; `shared_capacity` admits four stable GPUs with at most 20,480 MiB existing allocation and at most 5% utilization, records the baseline process identities, lowers the worker allocator target to 0.65, and forces the final claim boundary to `DIAGNOSTIC_ONLY`. The local supervisor chooses and guards the same four GPUs for one minute, tolerates only the frozen baseline PIDs plus exact-tag owned PIDs, and stops only exact-tag owned work if a new foreign process, PID reuse, or unsafe baseline-memory growth appears.
+**Architecture:** Add an explicit admission mode to the controller plan. `strict_clean` retains all existing behavior; `shared_capacity` admits four stable GPUs with at most 20,480 MiB existing allocation and at most 5% utilization, records the baseline process identities, uses a 0.95 whole-device allocator ceiling together with workload-bounded KV capacity, and forces the final claim boundary to `DIAGNOSTIC_ONLY`. The local supervisor chooses and guards the same four GPUs for one minute, tolerates only the frozen baseline PIDs plus exact-tag owned PIDs, and stops only exact-tag owned work if a new foreign process, PID reuse, or unsafe baseline-memory growth appears.
 
 **Tech Stack:** Python 3, dependency-light `unittest`/assert tests, SSH, `nvidia-smi`, vLLM-compatible engine configuration, Git.
 
@@ -15,7 +15,9 @@
 - Keep the frozen TP4/BF16/greedy Q0-Q2, five-repetition, 30-case/15-pair matrix unchanged.
 - Keep strict-clean admission as the default and retain its formal classification semantics.
 - `shared_capacity` requires exactly four GPUs, each at `memory_used_mib <= 20_480` and `utilization_percent <= 5` for four samples at 15-second intervals.
-- `shared_capacity` uses `gpu_memory_utilization=0.65`.
+- `shared_capacity` uses `gpu_memory_utilization=0.95` as the whole-device
+  initialization ceiling and explicitly limits `num_kvcache_blocks` to
+  `Q0=8`, `Q1=16`, and `Q2=36`.
 - Freeze baseline compute-process identity as `(pid, start_time_ticks)` before launch.
 - Abort only this run when a new foreign PID, a reused baseline PID, or unsafe baseline-memory growth is observed; never terminate external workloads.
 - Every shared-capacity result is `DIAGNOSTIC_ONLY`, regardless of measured performance. A formal GO still requires a strict-clean rerun.
@@ -141,7 +143,8 @@ Expected: all controller tests pass.
 
 **Interfaces:**
 - Consumes: `TINYLLMFORGE_TP4_ADMISSION_MODE`
-- Produces: `gpu_memory_utilization=0.84` for strict-clean and `0.65` for shared-capacity
+- Produces: `gpu_memory_utilization=0.84` for strict-clean; shared-capacity
+  uses a `0.95` whole-device ceiling plus workload-bounded KV blocks
 
 - [ ] **Step 1: Write the failing worker test**
 
@@ -153,7 +156,8 @@ with mock.patch.dict(
     {"TINYLLMFORGE_TP4_ADMISSION_MODE": "shared_capacity"},
 ):
     config = worker.build_engine_config(arm="eager", workload="Q1")
-assert config["gpu_memory_utilization"] == 0.65
+assert config["gpu_memory_utilization"] == 0.95
+assert config["num_kvcache_blocks"] == 16
 ```
 
 Prove the default remains 0.84 and unknown values fail closed.
@@ -166,11 +170,18 @@ Run:
 python3 tools/test_tp4_decode_replay_worker.py
 ```
 
-Expected: failure because the worker ignores the admission mode.
+Expected: failure because the worker ignores the admission mode and does not
+bound shared-capacity KV allocation by workload.
 
 - [ ] **Step 3: Implement the mode-specific budget**
 
-Read the frozen environment variable in `build_engine_config`, select exactly 0.84 or 0.65, and export the plan admission mode into the remote worker environment.
+Read the frozen environment variable in `build_engine_config`, retain `0.84`
+for strict-clean, and use `0.95` for shared-capacity so the whole-device
+ceiling can accommodate model initialization despite pre-existing global
+usage. In shared mode, explicitly set workload-sized KV capacity to `Q0=8`,
+`Q1=16`, and `Q2=36` blocks so the engine cannot opportunistically consume
+all remaining device memory. Export the plan admission mode into the remote
+worker environment.
 
 - [ ] **Step 4: Run both focused suites and verify GREEN**
 
@@ -306,7 +317,9 @@ Verify every global constraint and task requirement against actual source, tests
 
 - [ ] **Step 3: Update audit and handoff**
 
-Record the mode thresholds, one-minute window, baseline process identity, 0.65 worker budget, safety stop semantics, and the `DIAGNOSTIC_ONLY` claim boundary.
+Record the mode thresholds, one-minute window, baseline process identity,
+0.95 whole-device ceiling with workload-bounded KV blocks, safety stop
+semantics, and the `DIAGNOSTIC_ONLY` claim boundary.
 
 - [ ] **Step 4: Commit exact tracked paths**
 

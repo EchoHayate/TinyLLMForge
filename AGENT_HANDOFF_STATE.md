@@ -52101,7 +52101,8 @@ required GPUs:                      4
 maximum existing memory/GPU:        20,480 MiB
 maximum prelaunch utilization:      5%
 stable window policy:               4 samples x 15 seconds
-worker gpu_memory_utilization:      0.65
+worker gpu_memory_utilization:      0.95 whole-device ceiling
+explicit shared KV blocks:          Q0=8, Q1=16, Q2=36
 baseline identity:                  GPU UUID + PID + start_time_ticks
 new foreign PID:                    stop exact-tag owned work only
 baseline PID reuse:                 stop exact-tag owned work only
@@ -52152,3 +52153,80 @@ NEXT_MODE=shared_capacity
 NEXT_CLAIM_BOUNDARY=DIAGNOSTIC_ONLY
 NEXT_COMMAND=bind supervisor EXPECTED_HEAD to final pushed HEAD and launch r39
 ```
+
+## 2026-09-05 TP4 shared-capacity r39-r43 continuation
+
+r39-r42 were terminal incomplete attempts:
+
+```text
+r39 source: be58c10ae64b17a0bf934da6e2af9ff241535c58
+r39 stop:   new foreign PID on GPU 7; exact-tag-owned work only was stopped
+
+r40 source: be58c10ae64b17a0bf934da6e2af9ff241535c58
+r40 stop:   ranks exited before case 1; stderr was still buffered
+
+r41 source: 8c12cc4d8ce4ad53f05e829e4f6405550c7ecdb8
+r41 stop:   live stderr showed `assert auto_num_blocks > 0`
+
+r42 source: 127aa2237df20a1484591325127a042da6f57495
+r42 stop:   one occupied-card rank still had no automatic KV capacity at 0.84
+```
+
+For each attempt, controller cleanup reports rank exit `241` after deliberate
+supervisor termination, but three exact-tag scans are empty and
+`owned_children_remaining=[]`. No external process was signalled.
+
+The shared worker policy is now:
+
+```text
+gpu_memory_utilization: 0.95 whole-device initialization ceiling
+Q0 num_kvcache_blocks:  8
+Q1 num_kvcache_blocks:  16
+Q2 num_kvcache_blocks:  36
+```
+
+The ceiling must be high enough because model-runner capacity calculation
+subtracts global usage, including baseline occupants. The explicit per-workload
+block count prevents the run from consuming all remaining KV capacity.
+
+r43 was the first attempt using this corrected policy:
+
+```text
+run tag:         20260905-qwen38-tp4-decode-replay-r43-full
+source revision: b25924c7a9a450fd2f5a212c6a07fddfea9dc709
+selected GPUs:   0,1,5,7
+claim boundary:  DIAGNOSTIC_ONLY
+```
+
+All four ranks initialized successfully and the attempt completed all ten Q0
+arms plus `Q1__r0__eager` before `Q1__r0__graph` failed:
+
+```text
+completed cases:              11/30
+completed pairs:              5/15
+failure:                      TCPStore EADDRINUSE
+supervisor safety violation:  none
+exact-tag PID scan after exit: empty
+owned_children_remaining:     empty
+```
+
+All five Q0 pairs exercised 248 graph replays on rank 0 and showed
+approximately 3.59x-3.78x diagnostic throughput ratios. They also reproduced
+the same request-1 token-37 divergence (`eager=198`, `graph=317`), so they are
+not correctness-clean and cannot support a GO claim.
+
+Root cause: `create_engine_with_rendezvous_retry()` existed and had a helper
+unit test, but `run_arm()` still invoked `engine_factory()` directly. A new
+integration regression failed before the fix because the helper was not
+called. `run_arm()` is now wired through the retry helper and uses a fresh
+loopback port factory. Verification after the fix:
+
+```text
+direct worker suite: 11 passed
+combined TP4 suite:  80 passed
+py_compile:          passed
+git diff --check:    passed
+```
+
+The next attempt must use a fresh tag and the pushed revision containing this
+integration fix. Do not resume or duplicate r43.

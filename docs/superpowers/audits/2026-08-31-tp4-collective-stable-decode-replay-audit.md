@@ -1139,7 +1139,8 @@ maximum pre-existing memory/GPU:    20,480 MiB
 maximum prelaunch utilization:      5%
 stable samples:                     4
 poll interval:                      15 seconds
-worker gpu_memory_utilization:      0.65
+worker gpu_memory_utilization:      0.95 whole-device ceiling
+explicit shared KV blocks:          Q0=8, Q1=16, Q2=36
 result classification:              DIAGNOSTIC_ONLY
 formal performance claim allowed:   false
 ```
@@ -1187,7 +1188,8 @@ controller:
   GREEN: 29 passed
 worker:
   RED: shared mode retained gpu_memory_utilization=0.84
-  GREEN: 10 passed
+  RED: reduced 0.65/0.84 ceilings left one or more ranks with no KV capacity
+  GREEN: 0.95 initialization ceiling plus Q0=8/Q1=16/Q2=36 KV blocks
 supervisor:
   RED: shared selector/guard and shared controller command were absent
   GREEN: 15 passed
@@ -1227,7 +1229,7 @@ launched at the time of this amendment.
 | Reject new foreign PID or PID reuse | supervisor violations and regression tests | complete |
 | Reject unsafe baseline-memory growth | 20,480 MiB per-GPU baseline cap in guard | complete |
 | Never terminate external work | cleanup scans only exact run-tag ownership | complete |
-| Reduce worker allocation target | shared mode `gpu_memory_utilization=0.65` | complete |
+| Bound shared worker allocation | `gpu_memory_utilization=0.95` initialization ceiling plus Q0=8/Q1=16/Q2=36 KV blocks | complete |
 | Preserve frozen 30-case/15-pair gate | contract, assembler, verifier unchanged and passing | complete |
 | Prevent formal performance claim | top-level `DIAGNOSTIC_ONLY`; raw gate kept separately | complete |
 | Use approved remote volume | all plan paths remain below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | complete |
@@ -1237,3 +1239,68 @@ The next executable checkpoint is to commit and push this audit/handoff
 update, bind the local supervisor to that exact HEAD, and launch a fresh
 shared-capacity tag. The run remains diagnostic even if all 30 cases and both
 verifiers pass.
+
+### 17.2 Shared-capacity launch reconciliation
+
+The first four shared-capacity launches did not produce a complete matrix:
+
+| Run | Source revision | Terminal observation | Claim status |
+|---|---|---|---|
+| r39 | `be58c10ae64b17a0bf934da6e2af9ff241535c58` | a new foreign process appeared on GPU 7; the supervisor stopped only exact-tag-owned work | incomplete external preemption |
+| r40 | `be58c10ae64b17a0bf934da6e2af9ff241535c58` | two ranks exited before the first case was written; buffered stderr prevented immediate diagnosis | incomplete |
+| r41 | `8c12cc4d8ce4ad53f05e829e4f6405550c7ecdb8` | live stderr identified `assert auto_num_blocks > 0` on shared ranks | incomplete allocator-capacity failure |
+| r42 | `127aa2237df20a1484591325127a042da6f57495` | restoring the strict `0.84` ceiling still left one occupied-card rank with no automatic KV capacity | incomplete allocator-capacity failure |
+| r43 | `b25924c7a9a450fd2f5a212c6a07fddfea9dc709` | completed 11/30 cases, then `Q1__r0__graph` hit a rendezvous `EADDRINUSE`; the existing retry helper was not wired into `run_arm()` | incomplete startup-port collision |
+
+All four controller cleanup receipts are marked `DIRTY` because the
+supervisor deliberately interrupted their four ranks, which then returned
+`241`. Their exact-tag scans are empty and `owned_children_remaining` is
+empty; this is termination accounting, not evidence that owned processes
+remain. No external process was signalled.
+
+These launches established that `gpu_memory_utilization` is a whole-device
+ceiling: model-runner capacity calculation subtracts current global usage,
+including baseline occupants. Lowering the shared value to `0.65` therefore
+reduced, rather than reserved, the capacity available to TinyLLMForge. The
+corrected design uses:
+
+```text
+whole-device initialization ceiling: 0.95
+Q0 KV blocks:                         8
+Q1 KV blocks:                         16
+Q2 KV blocks:                         36
+```
+
+The explicit block counts are derived from each frozen workload's concurrency
+and maximum sequence length. They bound actual KV allocation while leaving
+enough whole-device ceiling for model initialization and the temporary Q2
+full-vocabulary BF16 projection.
+
+r43 proved that the bounded-KV configuration can initialize and execute all
+four TP ranks on the admitted shared GPUs. It completed all ten Q0 arms and
+`Q1__r0__eager`. The five Q0 pairs all exercised 248 graph replays on rank 0
+and showed approximately 3.59x-3.78x output-throughput ratios, but each pair
+reproduced the same correctness divergence at request index 1, output token
+index 37 (`eager=198`, `graph=317`). These are diagnostic observations only;
+the incomplete run and correctness mismatch prohibit a GO classification.
+
+The r43 controller returned 1 after `Q1__r0__graph` failed to bind its
+TCPStore port. The failure was not caused by a supervisor safety violation.
+Post-run evidence is:
+
+```text
+completed cases:                    11/30
+completed pairs:                    5/15
+supervisor safety violation:        none
+worker failure:                     EADDRINUSE
+exact-tag process scan:             empty
+owned_children_remaining:           empty
+cleanup classification:             DIRTY (rank exit 1)
+```
+
+Root-cause tracing found that `create_engine_with_rendezvous_retry()` and its
+unit test existed, but `run_arm()` still called `engine_factory()` directly.
+A new integration regression first failed because the retry helper was never
+called. `run_arm()` now routes engine creation through that helper with a
+fresh loopback port factory. The complete focused/adjacent suite passes
+`80 passed`.
