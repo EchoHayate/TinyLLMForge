@@ -82,6 +82,39 @@ def _launch_admission() -> dict:
     }
 
 
+def _shared_launch_admission() -> dict:
+    selected_gpus = [
+        {
+            "rank": rank,
+            "index": rank,
+            "uuid": f"GPU-{rank:04d}",
+            "memory_used_mib": 14_382 if rank == 1 else 0,
+            "utilization_percent": 0,
+            "compute_process_count": 3 if rank == 1 else 0,
+        }
+        for rank in contract.RANKS
+    ]
+    return {
+        "schema_version": "tinyllmforge.tp4-decode-replay-admission.v1",
+        "run_tag": RUN_TAG,
+        "admission_mode": "shared_capacity",
+        "claim_boundary": "DIAGNOSTIC_ONLY",
+        "strict_clean": False,
+        "world_size": 4,
+        "selected_gpus": selected_gpus,
+        "baseline_compute_processes": [
+            {
+                "gpu_uuid": "GPU-0001",
+                "pid": 10_001 + offset,
+                "process_name": "python3",
+                "start_time_ticks": 20_001 + offset,
+                "used_memory_mib": memory,
+            }
+            for offset, memory in enumerate((1536, 6426, 6380))
+        ],
+    }
+
+
 def _cleanup() -> dict:
     return {
         "schema_version": "tinyllmforge.tp4-decode-replay-cleanup.v1",
@@ -138,7 +171,11 @@ def _request_rows(correctness_rows: list[dict]) -> list[dict]:
     return rows
 
 
-def _write_raw_attempt(root: Path) -> dict:
+def _write_raw_attempt(
+    root: Path,
+    *,
+    launch_admission: dict | None = None,
+) -> dict:
     evidence = contract_fixture._evidence()
     for correctness in evidence["correctness_rows"]:
         output_tokens = contract.WORKLOADS[
@@ -161,7 +198,12 @@ def _write_raw_attempt(root: Path) -> dict:
         "torch": "2.6.0",
         "cuda": "12.4",
     })
-    _write_json(root / "gpu_inventory.json", _launch_admission())
+    _write_json(
+        root / "gpu_inventory.json",
+        _launch_admission()
+        if launch_admission is None
+        else launch_admission,
+    )
     _write_json(root / "workload_profile.json", {
         "schema_version": "tinyllmforge.tp4-decode-replay-workload.v1",
         "run_tag": RUN_TAG,
@@ -222,12 +264,21 @@ def _write_raw_attempt(root: Path) -> dict:
     return evidence
 
 
-def _assemble(raw_root: Path, output_root: Path) -> dict:
+def _assemble(
+    raw_root: Path,
+    output_root: Path,
+    *,
+    launch_admission: dict | None = None,
+) -> dict:
     return assemble_bundle(
         raw_root=raw_root,
         output_root=output_root,
         source_identity=_source_identity(),
-        launch_admission=_launch_admission(),
+        launch_admission=(
+            _launch_admission()
+            if launch_admission is None
+            else launch_admission
+        ),
         cleanup=_cleanup(),
     )
 
@@ -263,6 +314,66 @@ def test_assembler_writes_complete_manifested_go_bundle():
             assert hashlib.sha256(
                 (bundle / name).read_bytes()
             ).hexdigest() == expected
+
+
+def test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        bundle = root / "final_bundle"
+        admission = _shared_launch_admission()
+        raw.mkdir()
+        _write_raw_attempt(raw, launch_admission=admission)
+        result = _assemble(
+            raw,
+            bundle,
+            launch_admission=admission,
+        )
+        assert result["classification"] == "GO_STAGE1_JUSTIFIED"
+        assert json.loads(
+            (bundle / "launch_admission.json").read_text(
+                encoding="utf-8"
+            )
+        ) == admission
+
+
+def test_assembler_rejects_shared_baseline_count_on_the_wrong_gpu():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        admission = _shared_launch_admission()
+        admission["baseline_compute_processes"][0]["gpu_uuid"] = (
+            "GPU-0002"
+        )
+        raw.mkdir()
+        _write_raw_attempt(raw, launch_admission=admission)
+        _expect_value_error(
+            lambda: _assemble(
+                raw,
+                root / "bundle",
+                launch_admission=admission,
+            ),
+            "baseline inventory",
+        )
+
+
+def test_assembler_rejects_strict_admission_with_diagnostic_claim():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        admission = _launch_admission()
+        admission["admission_mode"] = "strict_clean"
+        admission["claim_boundary"] = "DIAGNOSTIC_ONLY"
+        raw.mkdir()
+        _write_raw_attempt(raw, launch_admission=admission)
+        _expect_value_error(
+            lambda: _assemble(
+                raw,
+                root / "bundle",
+                launch_admission=admission,
+            ),
+            "launch admission",
+        )
 
 
 def test_each_required_input_is_fail_closed_when_missing():
@@ -356,6 +467,9 @@ def test_process_receipts_require_one_fresh_dynamic_port_per_arm():
 def main() -> None:
     tests = (
         test_assembler_writes_complete_manifested_go_bundle,
+        test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence,
+        test_assembler_rejects_shared_baseline_count_on_the_wrong_gpu,
+        test_assembler_rejects_strict_admission_with_diagnostic_claim,
         test_each_required_input_is_fail_closed_when_missing,
         test_each_required_input_is_fail_closed_when_truncated,
         test_jsonl_requires_terminal_newline,

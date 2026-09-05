@@ -52230,3 +52230,73 @@ git diff --check:    passed
 
 The next attempt must use a fresh tag and the pushed revision containing this
 integration fix. Do not resume or duplicate r43.
+
+## 2026-09-05 TP4 shared-capacity r44-r45 terminal checkpoint
+
+r44 used source revision
+`8f55fb2d05c1271bda05691f100cf660f185e08b` and completed 10/30 cases before
+the local supervisor observed new foreign PID `4089733`. It stopped only
+exact-tag-owned work. The external process was not signalled and later exited
+independently. Post-stop exact-tag and owned-child scans were empty.
+
+r45 used the same revision and selected GPUs `0,1,5,7`. It completed the
+entire remote matrix:
+
+```text
+run tag:                         20260905-qwen38-tp4-decode-replay-r45-full
+cases:                           30/30
+pairs:                           15/15
+exact pairs:                      5/15
+mismatching pairs:               10/15
+replay coverage:                 0.6509186351706037
+producer diagnostic gate:       NO_GO_CORRECTNESS_OR_LIFECYCLE
+failed gate:                     exact_output_mismatch
+rank exits:                       4 x 0
+cleanup:                          CLEAN
+supervisor safety violations:    none
+```
+
+The controller returned 1 after worker success because compact-evidence
+download hit `Connection closed by UNKNOWN port 65535`. The archive transfer
+paths were missing the retry already used by ordinary commands and byte
+uploads. New regressions reproduced both one-shot failures;
+`_download_archive()` and `_upload_bundle()` now retry SSH return code 255.
+
+After direct no-ControlMaster recovery downloaded the complete raw evidence,
+the live assembler produced the expected correctness NO_GO. Both frozen
+source verifiers still returned `INCOMPLETE` with
+`launch admission mismatch`: revision `8f55fb2d...` predated
+shared-capacity support in the assembler and independent verifier.
+
+The corrected assembler and verifier now preserve the strict-clean contract
+and additionally validate shared-capacity evidence with:
+
+```text
+admission_mode:                  shared_capacity
+claim_boundary:                 DIAGNOSTIC_ONLY
+strict_clean:                   false
+maximum memory/GPU:             20,480 MiB
+maximum utilization/GPU:        5%
+baseline process evidence:      GPU UUID + PID + start_time_ticks + memory
+```
+
+TDD and current focused verification:
+
+```text
+shared assembler RED:           launch admission is invalid
+assembler suite:                9 passed
+verifier suite:                 9 passed
+archive retry RED:              first SSH 255 escaped
+archive retry focused GREEN:    download and upload tests passed
+controller suite:               30 passed
+contract suite:                 12 passed
+worker suite:                   11 passed
+supervisor suite:               15 passed
+live verifier on r45 bundle:    NO_GO_CORRECTNESS_OR_LIFECYCLE
+live verifier integrity:        hashes/producer/summary all true
+```
+
+r45 is terminal diagnostic evidence and must not be relabelled as a valid
+dual-verifier run. The next step is to commit and push the protocol/retry fix,
+bind the supervisor to that exact HEAD, and launch a fresh shared-capacity tag
+for the full 30-case/15-pair producer plus dual-verifier chain.

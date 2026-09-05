@@ -1304,3 +1304,84 @@ A new integration regression first failed because the retry helper was never
 called. `run_arm()` now routes engine creation through that helper with a
 fresh loopback port factory. The complete focused/adjacent suite passes
 `80 passed`.
+
+### 17.3 r44-r45 completion and evidence-protocol reconciliation
+
+r44 used source revision
+`8f55fb2d05c1271bda05691f100cf660f185e08b`, completed 10/30 cases, and was
+stopped when the supervisor observed new foreign PID `4089733`. Only
+exact-tag-owned work was signalled. The external PID was not terminated and
+later disappeared independently. Final exact-tag and owned-child scans were
+empty.
+
+r45 used the same source revision and selected GPUs `0,1,5,7`. Its one-minute
+shared-capacity admission passed, all 30 cases completed, all four ranks
+returned zero, and cleanup was `CLEAN`:
+
+```text
+run tag:                         20260905-qwen38-tp4-decode-replay-r45-full
+raw cases:                       30/30
+eager/graph pairs:               15/15
+correct pairs:                   5/15
+mismatching pairs:              10/15
+replay coverage:                 0.6509186351706037
+producer diagnostic gate:       NO_GO_CORRECTNESS_OR_LIFECYCLE
+failed producer gate:            exact_output_mismatch
+rank exits:                       4 x 0
+cleanup:                          CLEAN
+supervisor safety violations:    none
+claim boundary:                  DIAGNOSTIC_ONLY
+```
+
+The controller itself returned 1 only after the worker had completed. The
+compact-evidence archive download encountered the intermittent SSH failure:
+
+```text
+Connection closed by UNKNOWN port 65535
+```
+
+The archive paths had no retry even though ordinary remote commands and byte
+uploads already retried SSH return code 255. Regressions reproduced the
+one-shot failures; `_download_archive()` and `_upload_bundle()` now retry
+their complete sender/receiver pipelines up to the adapter retry count.
+
+Recovery of the already-complete raw evidence then exposed a separate frozen
+protocol mismatch. The r45 producer was assembled by the corrected live
+assembler as `NO_GO_CORRECTNESS_OR_LIFECYCLE`, but both verifiers from the
+frozen `8f55fb2d...` source rejected the shared-capacity launch admission:
+
+```text
+remote frozen-source verifier:   INCOMPLETE
+local frozen-source verifier:    INCOMPLETE
+failed verifier gate:            launch admission mismatch
+```
+
+The old assembler and verifier required `strict_clean=true`, no baseline
+processes, and at most 1,024 MiB per selected GPU. They had not been extended
+with the controller's already-frozen `shared_capacity` schema. The corrected
+validators now accept either:
+
+- the unchanged strict-clean admission contract; or
+- `admission_mode=shared_capacity`,
+  `claim_boundary=DIAGNOSTIC_ONLY`, at most 20,480 MiB and 5% per GPU, with
+  validated baseline PID/start-time records.
+
+TDD evidence for this reconciliation:
+
+```text
+shared assembler RED:            launch admission is invalid
+shared assembler GREEN:          assembler suite 9 passed
+shared verifier GREEN:           verifier suite 9 passed
+archive retry RED:               first SSH 255 escaped immediately
+archive retry GREEN:             download and upload retry tests passed
+controller suite:                30 passed
+contract suite:                  12 passed
+worker suite:                    11 passed
+supervisor suite:                15 passed
+```
+
+r45 remains a terminal diagnostic with a trustworthy 30-case raw matrix and a
+live-code producer verdict, but it cannot satisfy the frozen-source dual
+verifier contract because its source revision predates this protocol fix.
+It must not be relabelled. A fresh tag from the committed corrected source is
+required for the complete producer/remote-verifier/local-verifier chain.

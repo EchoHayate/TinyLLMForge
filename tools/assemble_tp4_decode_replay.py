@@ -17,6 +17,7 @@ import tp4_decode_replay_contract as contract
 MODEL_REPOSITORY = "Qwen/Qwen3.8-27B"
 MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 MAX_GPU_MEMORY_USED_MIB = 1024
+SHARED_CAPACITY_MAX_GPU_MEMORY_USED_MIB = 20_480
 MAX_GPU_UTILIZATION_PERCENT = 5
 MANIFEST_SCHEMA = "tinyllmforge.tp4-decode-replay-manifest.v1"
 SUMMARY_SCHEMA = "tinyllmforge.tp4-decode-replay-summary.v1"
@@ -241,18 +242,44 @@ def _validate_source(source: object) -> dict:
 
 
 def _validate_admission(admission: object, source: dict) -> dict:
+    mode = (
+        admission.get("admission_mode", "strict_clean")
+        if isinstance(admission, dict)
+        else None
+    )
+    strict_clean = (
+        isinstance(admission, dict)
+        and admission.get("strict_clean") is True
+        and mode == "strict_clean"
+        and admission.get(
+            "claim_boundary",
+            "FORMAL_STRICT_CLEAN",
+        )
+        == "FORMAL_STRICT_CLEAN"
+    )
+    shared_capacity = (
+        isinstance(admission, dict)
+        and admission.get("strict_clean") is False
+        and mode == "shared_capacity"
+        and admission.get("claim_boundary") == "DIAGNOSTIC_ONLY"
+    )
     if (
         not isinstance(admission, dict)
         or admission.get("schema_version")
         != "tinyllmforge.tp4-decode-replay-admission.v1"
         or admission.get("run_tag") != source["run_tag"]
-        or admission.get("strict_clean") is not True
+        or not (strict_clean or shared_capacity)
         or admission.get("world_size") != 4
         or not isinstance(admission.get("selected_gpus"), list)
         or len(admission["selected_gpus"]) != 4
     ):
         raise ValueError("launch admission is invalid")
     rows = admission["selected_gpus"]
+    memory_limit = (
+        MAX_GPU_MEMORY_USED_MIB
+        if strict_clean
+        else SHARED_CAPACITY_MAX_GPU_MEMORY_USED_MIB
+    )
     if (
         sorted(row.get("rank") for row in rows) != list(contract.RANKS)
         or len({row.get("index") for row in rows}) != 4
@@ -262,17 +289,80 @@ def _validate_admission(admission: object, source: dict) -> dict:
             or isinstance(row.get("memory_used_mib"), bool)
             or not 0
             <= row["memory_used_mib"]
-            <= MAX_GPU_MEMORY_USED_MIB
+            <= memory_limit
             or not isinstance(row.get("utilization_percent"), int)
             or isinstance(row.get("utilization_percent"), bool)
             or not 0
             <= row["utilization_percent"]
             <= MAX_GPU_UTILIZATION_PERCENT
-            or row.get("compute_process_count") != 0
+            or not isinstance(row.get("compute_process_count"), int)
+            or isinstance(row.get("compute_process_count"), bool)
+            or row["compute_process_count"] < 0
+            or (
+                strict_clean
+                and row["compute_process_count"] != 0
+            )
             for row in rows
         )
     ):
         raise ValueError("launch admission GPU inventory is invalid")
+    baseline = admission.get("baseline_compute_processes", [])
+    selected_uuids = {row["uuid"] for row in rows}
+    if (
+        not isinstance(baseline, list)
+        or (
+            strict_clean
+            and baseline
+        )
+        or (
+            shared_capacity
+            and (
+                len(baseline)
+                != sum(row["compute_process_count"] for row in rows)
+                or any(
+                    not isinstance(process, dict)
+                    or process.get("gpu_uuid") not in selected_uuids
+                    or not isinstance(process.get("pid"), int)
+                    or isinstance(process.get("pid"), bool)
+                    or process["pid"] <= 0
+                    or not isinstance(process.get("process_name"), str)
+                    or not process["process_name"]
+                    or not isinstance(
+                        process.get("start_time_ticks"),
+                        int,
+                    )
+                    or isinstance(
+                        process.get("start_time_ticks"),
+                        bool,
+                    )
+                    or process["start_time_ticks"] <= 0
+                    or not isinstance(
+                        process.get("used_memory_mib"),
+                        int,
+                    )
+                    or isinstance(
+                        process.get("used_memory_mib"),
+                        bool,
+                    )
+                    or process["used_memory_mib"] < 0
+                    for process in baseline
+                )
+            )
+        )
+    ):
+        raise ValueError("launch admission baseline inventory is invalid")
+    if shared_capacity:
+        baseline_counts = {uuid: 0 for uuid in selected_uuids}
+        for process in baseline:
+            baseline_counts[process["gpu_uuid"]] += 1
+        expected_counts = {
+            row["uuid"]: row["compute_process_count"]
+            for row in rows
+        }
+        if baseline_counts != expected_counts:
+            raise ValueError(
+                "launch admission baseline inventory is invalid"
+            )
     return dict(admission)
 
 

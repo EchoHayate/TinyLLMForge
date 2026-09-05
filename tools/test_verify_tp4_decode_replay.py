@@ -72,6 +72,64 @@ def _bundle(root: Path) -> Path:
     return bundle
 
 
+def _shared_bundle(root: Path) -> Path:
+    raw = root / "raw"
+    bundle = root / "final_bundle"
+    admission = fixture._shared_launch_admission()
+    raw.mkdir()
+    fixture._write_raw_attempt(raw, launch_admission=admission)
+    fixture._assemble(
+        raw,
+        bundle,
+        launch_admission=admission,
+    )
+    return bundle
+
+
+def test_verifier_accepts_bounded_shared_capacity_diagnostic_bundle():
+    with tempfile.TemporaryDirectory() as directory:
+        receipt = verify_bundle(_shared_bundle(Path(directory)))
+        assert receipt["classification"] == "GO_STAGE1_JUSTIFIED"
+        assert receipt["verified_hashes"] is True
+
+
+def test_verifier_rejects_shared_baseline_count_on_the_wrong_gpu():
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = _shared_bundle(Path(directory))
+        admission = json.loads(
+            (bundle / "launch_admission.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        admission["baseline_compute_processes"][0]["gpu_uuid"] = (
+            "GPU-0002"
+        )
+        _write_json(bundle / "launch_admission.json", admission)
+        _rewrite_manifest(bundle)
+        receipt = verify_bundle(bundle)
+        assert receipt["classification"] == "INCOMPLETE"
+        assert receipt["failed_gates"] == [
+            "launch admission baseline mismatch"
+        ]
+
+
+def test_verifier_rejects_strict_admission_with_diagnostic_claim():
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = _bundle(Path(directory))
+        admission = json.loads(
+            (bundle / "launch_admission.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        admission["admission_mode"] = "strict_clean"
+        admission["claim_boundary"] = "DIAGNOSTIC_ONLY"
+        _write_json(bundle / "launch_admission.json", admission)
+        _rewrite_manifest(bundle)
+        receipt = verify_bundle(bundle)
+        assert receipt["classification"] == "INCOMPLETE"
+        assert receipt["failed_gates"] == ["launch admission mismatch"]
+
+
 def _mutate_json(root: Path, name: str, mutate) -> None:
     path = root / name
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -343,6 +401,9 @@ def test_every_performance_and_cost_gate_is_reconstructed():
 
 def main() -> None:
     tests = (
+        test_verifier_accepts_bounded_shared_capacity_diagnostic_bundle,
+        test_verifier_rejects_shared_baseline_count_on_the_wrong_gpu,
+        test_verifier_rejects_strict_admission_with_diagnostic_claim,
         test_verifier_reconstructs_go_from_hash_bound_raw_rows,
         test_verifier_does_not_import_the_producer_assembler,
         test_integrity_and_frozen_identity_mutations_are_incomplete,

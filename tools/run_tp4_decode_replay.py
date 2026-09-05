@@ -1268,35 +1268,49 @@ class ProductionAdapter:
         local_root: Path,
     ) -> None:
         local_root.mkdir(parents=True, exist_ok=True)
-        sender = subprocess.Popen(
-            build_ssh_argv(
-                ssh_target=self.ssh_target,
-                remote_argv=[
-                    "tar",
-                    "-cf",
-                    "-",
-                    "-C",
-                    remote_root,
-                    *names,
-                ],
-                control_path=self.control_path,
-            ),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        assert sender.stdout is not None
-        receiver = subprocess.run(
-            ["tar", "-xf", "-", "-C", str(local_root)],
-            stdin=sender.stdout,
-            capture_output=True,
-            check=False,
-            timeout=self.command_timeout_s,
-        )
-        sender.stdout.close()
-        sender_stderr = (
-            sender.stderr.read() if sender.stderr is not None else b""
-        )
-        sender_returncode = sender.wait()
+        sender_returncode = None
+        sender_stderr = b""
+        receiver = None
+        for attempt in range(self.retry_count):
+            sender = subprocess.Popen(
+                build_ssh_argv(
+                    ssh_target=self.ssh_target,
+                    remote_argv=[
+                        "tar",
+                        "-cf",
+                        "-",
+                        "-C",
+                        remote_root,
+                        *names,
+                    ],
+                    control_path=self.control_path,
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert sender.stdout is not None
+            receiver = subprocess.run(
+                ["tar", "-xf", "-", "-C", str(local_root)],
+                stdin=sender.stdout,
+                capture_output=True,
+                check=False,
+                timeout=self.command_timeout_s,
+            )
+            sender.stdout.close()
+            sender_stderr = (
+                sender.stderr.read()
+                if sender.stderr is not None
+                else b""
+            )
+            sender_returncode = sender.wait()
+            if (
+                sender_returncode != 255
+                or attempt + 1 == self.retry_count
+            ):
+                break
+            time.sleep(1.0)
+        assert sender_returncode is not None
+        assert receiver is not None
         if sender_returncode != 0 or receiver.returncode != 0:
             raise RuntimeError(
                 sender_stderr.decode(errors="replace")
@@ -1305,41 +1319,55 @@ class ProductionAdapter:
             )
 
     def _upload_bundle(self, plan: dict) -> None:
-        archive = subprocess.Popen(
-            [
-                "tar",
-                "-cf",
-                "-",
-                "-C",
-                str(self.local_attempt_root),
-                "final_bundle",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        assert archive.stdout is not None
-        receiver = subprocess.run(
-            build_ssh_argv(
-                ssh_target=self.ssh_target,
-                remote_argv=[
+        archive_returncode = None
+        archive_stderr = b""
+        receiver = None
+        for attempt in range(self.retry_count):
+            archive = subprocess.Popen(
+                [
                     "tar",
-                    "-xf",
+                    "-cf",
                     "-",
                     "-C",
-                    plan["paths"]["attempt_root"],
+                    str(self.local_attempt_root),
+                    "final_bundle",
                 ],
-                control_path=self.control_path,
-            ),
-            stdin=archive.stdout,
-            capture_output=True,
-            check=False,
-            timeout=self.command_timeout_s,
-        )
-        archive.stdout.close()
-        archive_stderr = (
-            archive.stderr.read() if archive.stderr is not None else b""
-        )
-        archive_returncode = archive.wait()
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert archive.stdout is not None
+            receiver = subprocess.run(
+                build_ssh_argv(
+                    ssh_target=self.ssh_target,
+                    remote_argv=[
+                        "tar",
+                        "-xf",
+                        "-",
+                        "-C",
+                        plan["paths"]["attempt_root"],
+                    ],
+                    control_path=self.control_path,
+                ),
+                stdin=archive.stdout,
+                capture_output=True,
+                check=False,
+                timeout=self.command_timeout_s,
+            )
+            archive.stdout.close()
+            archive_stderr = (
+                archive.stderr.read()
+                if archive.stderr is not None
+                else b""
+            )
+            archive_returncode = archive.wait()
+            if (
+                receiver.returncode != 255
+                or attempt + 1 == self.retry_count
+            ):
+                break
+            time.sleep(1.0)
+        assert archive_returncode is not None
+        assert receiver is not None
         if archive_returncode != 0 or receiver.returncode != 0:
             raise RuntimeError(
                 archive_stderr.decode(errors="replace")
