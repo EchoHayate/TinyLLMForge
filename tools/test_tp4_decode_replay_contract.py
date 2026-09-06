@@ -211,6 +211,43 @@ def _evidence():
     }
 
 
+def _smoke_case_matrix():
+    return tuple(
+        row
+        for row in contract.build_case_matrix()
+        if row["pair_id"] == "Q1__r0"
+    )
+
+
+def _smoke_evidence():
+    selected_case_ids = {
+        row["case_id"] for row in _smoke_case_matrix()
+    }
+    selected_pair_ids = {
+        row["pair_id"] for row in _smoke_case_matrix()
+    }
+    evidence = _evidence()
+    for name in (
+        "performance_rows",
+        "rank_dispatch_rows",
+        "rank_collective_rows",
+        "rank_lifecycle_rows",
+        "memory_rows",
+        "capture_cost_rows",
+    ):
+        evidence[name] = [
+            row
+            for row in evidence[name]
+            if row["case_id"] in selected_case_ids
+        ]
+    evidence["correctness_rows"] = [
+        row
+        for row in evidence["correctness_rows"]
+        if row["pair_id"] in selected_pair_ids
+    ]
+    return evidence
+
+
 def test_case_matrix_is_paired_and_frozen():
     rows = contract.build_case_matrix()
     assert len(rows) == 3 * 5 * 2
@@ -235,6 +272,84 @@ def test_case_matrix_is_paired_and_frozen():
                 else ["graph", "eager"]
             )
             assert [row["arm"] for row in ordered] == expected_order
+
+
+def test_select_case_matrix_requires_complete_pairs_and_canonical_order():
+    selected = contract.select_case_matrix((
+        "Q1__r0__graph",
+        "Q1__r0__eager",
+    ))
+    assert [row["case_id"] for row in selected] == [
+        "Q1__r0__eager",
+        "Q1__r0__graph",
+    ]
+
+    for invalid in (
+        ("Q1__r0__eager",),
+        ("Q1__r0__eager", "Q1__r0__eager"),
+        ("unknown",),
+    ):
+        try:
+            contract.select_case_matrix(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid case selection was accepted")
+
+
+def test_q1_smoke_is_mechanism_only_and_never_authorizes_stage1():
+    result = contract.classify_smoke(
+        case_matrix=_smoke_case_matrix(),
+        **_smoke_evidence(),
+    )
+    assert result["classification"] == "SMOKE_PASS"
+    assert result["failed_gates"] == []
+    assert result["execution_scope"] == "SMOKE_ONLY"
+
+
+def test_q1_smoke_still_enforces_memory_limits():
+    evidence = _smoke_evidence()
+    for row in evidence["memory_rows"]:
+        if row["arm"] == "graph" and row["rank"] == 0:
+            row["peak_reserved_bytes"] += 600 * 1024 * 1024
+    result = contract.classify_smoke(
+        case_matrix=_smoke_case_matrix(),
+        **evidence,
+    )
+    assert result["classification"] == "NO_GO_PERFORMANCE"
+    assert "peak_reserved_memory" in result["failed_gates"]
+
+
+def test_capture_duration_limits_fail_closed():
+    evidence = _evidence()
+    evidence["capture_cost_rows"][0]["capture_duration_ns"] = (
+        2_000_000_001
+    )
+    result = contract.classify(**evidence)
+    assert result["classification"] == (
+        "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+    )
+    assert "single_capture_duration" in result["failed_gates"]
+
+    evidence = _evidence()
+    for row in evidence["capture_cost_rows"]:
+        if row["rank"] == 0:
+            row["capture_duration_ns"] = 400_000_000
+    result = contract.classify(**evidence)
+    assert result["classification"] == (
+        "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+    )
+    assert "total_capture_duration_per_rank" in result["failed_gates"]
+
+
+def test_capture_duration_requires_integer_nanoseconds():
+    evidence = _evidence()
+    evidence["capture_cost_rows"][0]["capture_duration_ns"] = 1.5
+    result = contract.classify(**evidence)
+    assert result["classification"] == "INCOMPLETE"
+    assert "capture_cost_rank_inventory_incomplete" in (
+        result["failed_gates"]
+    )
 
 
 def test_passing_evidence_justifies_stage1():

@@ -100,6 +100,27 @@ def test_plan_freezes_paths_model_and_four_clean_gpus():
         )
         for value in plan["environment"].values()
     )
+    assert plan["execution_scope"] == "FULL"
+    assert plan["case_ids"] == [
+        row["case_id"] for row in controller.contract.build_case_matrix()
+    ]
+
+
+def test_plan_accepts_only_complete_explicit_smoke_pairs():
+    plan = _plan(case_ids=(
+        "Q1__r0__graph",
+        "Q1__r0__eager",
+    ))
+    assert plan["execution_scope"] == "SMOKE_ONLY"
+    assert plan["case_ids"] == [
+        "Q1__r0__eager",
+        "Q1__r0__graph",
+    ]
+
+    _expect_error(
+        lambda: _plan(case_ids=("Q1__r0__eager",)),
+        "complete eager/graph pairs",
+    )
 
 
 def test_plan_rejects_unclean_or_duplicate_gpu_identity():
@@ -979,6 +1000,12 @@ def test_remote_driver_never_reuses_a_dynamic_port_across_arms():
     assert (
         'environment["TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"]'
         " = str(Path(capture_receipt_root) / case_id)"
+        in source
+    )
+    assert "case_ids_json" in source
+    assert "selected_case_ids = json.loads(case_ids_json)" in source
+    assert (
+        'if case["case_id"] in selected_case_ids'
         in source
     )
 

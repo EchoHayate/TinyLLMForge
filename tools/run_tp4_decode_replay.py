@@ -130,6 +130,16 @@ def _validate_admission_mode(admission_mode: object) -> str:
     return str(admission_mode)
 
 
+def _normalize_case_ids(case_ids: object | None) -> tuple[str, ...]:
+    if case_ids is None:
+        return tuple(
+            row["case_id"] for row in contract.build_case_matrix()
+        )
+    return tuple(
+        row["case_id"] for row in contract.select_case_matrix(case_ids)
+    )
+
+
 def _validate_shared_capacity_rows(
     selected_gpus: object,
 ) -> list[dict]:
@@ -411,6 +421,7 @@ def build_plan(
     selected_gpus: list[dict],
     admission_mode: str = STRICT_CLEAN,
     baseline_compute_processes: list[dict] | None = None,
+    case_ids: object | None = None,
 ) -> dict:
     run_tag = _validate_run_tag(run_tag)
     admission_mode = _validate_admission_mode(admission_mode)
@@ -426,6 +437,10 @@ def build_plan(
         baseline_compute_processes,
         selected_gpus=selected,
         admission_mode=admission_mode,
+    )
+    normalized_case_ids = _normalize_case_ids(case_ids)
+    full_case_ids = tuple(
+        row["case_id"] for row in contract.build_case_matrix()
     )
     attempt_root = f"{REMOTE_ROOT}/{run_tag}"
     runtime_root = f"{attempt_root}/runtime"
@@ -509,6 +524,12 @@ def build_plan(
         "selected_gpu_uuids": [
             row["gpu_uuid"] for row in selected
         ],
+        "execution_scope": (
+            "FULL"
+            if normalized_case_ids == full_case_ids
+            else "SMOKE_ONLY"
+        ),
+        "case_ids": list(normalized_case_ids),
         "paths": paths,
         "environment": environment,
         "process_environment": process_environment,
@@ -547,6 +568,20 @@ def _validate_plan(plan: object) -> dict:
         != source["source_tree_sha256"]
     ):
         raise ValueError("plan source identity drift")
+    normalized_case_ids = _normalize_case_ids(plan.get("case_ids"))
+    full_case_ids = tuple(
+        row["case_id"] for row in contract.build_case_matrix()
+    )
+    expected_execution_scope = (
+        "FULL"
+        if normalized_case_ids == full_case_ids
+        else "SMOKE_ONLY"
+    )
+    if (
+        plan.get("case_ids") != list(normalized_case_ids)
+        or plan.get("execution_scope") != expected_execution_scope
+    ):
+        raise ValueError("plan execution scope is invalid")
     selected = _normalize_selected_gpus(
         plan.get("selected_gpus", []),
         admission_mode=admission_mode,
@@ -781,6 +816,7 @@ def monitor_and_run(
     admission_mode: str = STRICT_CLEAN,
     gpu_monitor: object,
     adapter: object,
+    case_ids: object | None = None,
 ) -> dict:
     if not callable(gpu_monitor):
         raise ValueError("GPU monitor is invalid")
@@ -807,6 +843,7 @@ def monitor_and_run(
         source_identity=source,
         selected_gpus=monitor["selected_gpus"],
         admission_mode=admission_mode,
+        case_ids=case_ids,
         baseline_compute_processes=monitor.get(
             "baseline_compute_processes",
             [],
@@ -906,6 +943,7 @@ import time
     capture_receipt_root,
     run_tag,
     admission_json,
+    case_ids_json,
 ) = sys.argv[1:]
 sys.path[:0] = [source_root, str(Path(source_root) / "tools")]
 import torch
@@ -959,7 +997,14 @@ aggregated = {
     "capture_cost_rows.jsonl": [],
 }
 process_rows = []
-matrix = list(contract.build_case_matrix())
+selected_case_ids = json.loads(case_ids_json)
+matrix = [
+    case
+    for case in contract.build_case_matrix()
+    if case["case_id"] in selected_case_ids
+]
+if [case["case_id"] for case in matrix] != selected_case_ids:
+    raise RuntimeError("remote case selection is invalid")
 pair_ids = []
 for case in matrix:
     if case["pair_id"] not in pair_ids:
@@ -1086,8 +1131,19 @@ write_json(raw / "workload_profile.json", {
     "dtype": "bfloat16",
     "tensor_parallel_size": 4,
     "temperature": 0.0,
-    "measured_repetitions": contract.MEASURED_REPETITIONS,
-    "workloads": contract.WORKLOADS,
+    "execution_scope": (
+        "FULL"
+        if len(matrix) == len(contract.build_case_matrix())
+        else "SMOKE_ONLY"
+    ),
+    "measured_repetitions": len({
+        case["repetition"]
+        for case in matrix
+    }),
+    "workloads": {
+        case["workload"]: contract.WORKLOADS[case["workload"]]
+        for case in matrix
+    },
     "cases": matrix,
 })
 write_json(raw / "process_receipts.json", {
@@ -1836,6 +1892,7 @@ class ProductionAdapter:
             plan["paths"]["capture_receipt_root"],
             plan["run_tag"],
             admission_payload,
+            json.dumps(plan["case_ids"], separators=(",", ":")),
         ]
         self._process = subprocess.Popen(
             build_ssh_argv(
@@ -2174,6 +2231,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=STRICT_CLEAN,
     )
     plan_only.add_argument("--output", type=Path)
+    plan_only.add_argument("--case-id", action="append", dest="case_ids")
     monitor = subparsers.add_parser("monitor-and-run")
     monitor.add_argument("--run-tag", required=True)
     monitor.add_argument(
@@ -2204,6 +2262,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     monitor.add_argument("--retry-count", type=int, default=DEFAULT_RETRY_COUNT)
     monitor.add_argument("--local-attempt-root", type=Path)
+    monitor.add_argument("--case-id", action="append", dest="case_ids")
     return parser
 
 
@@ -2222,6 +2281,7 @@ def main(
             source_identity=source,
             selected_gpus=_placeholder_gpus(),
             admission_mode=args.admission_mode,
+            case_ids=args.case_ids,
         )
         payload = {"mode": "plan-only", **plan}
         if args.output is not None:
@@ -2281,6 +2341,7 @@ def main(
         admission_mode=args.admission_mode,
         gpu_monitor=gpu_monitor,
         adapter=adapter,
+        case_ids=args.case_ids,
     )
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0

@@ -343,8 +343,21 @@ def _reconstruct_dynamic_pool_index_mechanism(
     }
 
 
-def _classify_evidence(**evidence: list[dict]) -> dict:
-    classification = contract.classify(**evidence)
+def _classify_evidence(
+    *,
+    case_matrix: object | None = None,
+    execution_scope: str = "FULL",
+    **evidence: list[dict],
+) -> dict:
+    classifier = (
+        contract.classify_smoke
+        if execution_scope == "SMOKE_ONLY"
+        else contract.classify
+    )
+    classification = classifier(
+        case_matrix=case_matrix,
+        **evidence,
+    )
     if classification["classification"] == "INCOMPLETE":
         return classification | {
             "unique_program_key_count": 0,
@@ -423,7 +436,30 @@ def _validate_source(source: object) -> dict:
     return dict(source)
 
 
-def _validate_workload(profile: object, source: dict) -> None:
+def _validate_workload(
+    profile: object,
+    source: dict,
+) -> tuple[tuple[dict, ...], str]:
+    if not isinstance(profile, dict):
+        raise ValueError("workload profile mismatch")
+    try:
+        raw_cases = profile.get("cases")
+        if not isinstance(raw_cases, list):
+            raise ValueError("case matrix is invalid")
+        case_matrix = contract.select_case_matrix(tuple(
+            row.get("case_id") if isinstance(row, dict) else None
+            for row in raw_cases
+        ))
+    except ValueError as error:
+        raise ValueError("workload profile mismatch") from error
+    execution_scope = (
+        "FULL"
+        if case_matrix == contract.build_case_matrix()
+        else "SMOKE_ONLY"
+    )
+    selected_workloads = tuple(dict.fromkeys(
+        row["workload"] for row in case_matrix
+    ))
     expected = {
         "schema_version": (
             "tinyllmforge.tp4-decode-replay-workload.v1"
@@ -434,12 +470,19 @@ def _validate_workload(profile: object, source: dict) -> None:
         "dtype": "bfloat16",
         "tensor_parallel_size": 4,
         "temperature": 0.0,
-        "measured_repetitions": contract.MEASURED_REPETITIONS,
-        "workloads": contract.WORKLOADS,
-        "cases": list(contract.build_case_matrix()),
+        "execution_scope": execution_scope,
+        "measured_repetitions": len({
+            row["repetition"] for row in case_matrix
+        }),
+        "workloads": {
+            workload: contract.WORKLOADS[workload]
+            for workload in selected_workloads
+        },
+        "cases": list(case_matrix),
     }
     if profile != expected:
         raise ValueError("workload profile mismatch")
+    return case_matrix, execution_scope
 
 
 def _validate_admission(admission: object, source: dict) -> None:
@@ -595,9 +638,14 @@ def _validate_cleanup(cleanup: object, source: dict) -> None:
         raise ValueError("cleanup evidence mismatch")
 
 
-def _validate_process_receipts(receipts: object, source: dict) -> None:
+def _validate_process_receipts(
+    receipts: object,
+    source: dict,
+    case_matrix: object | None = None,
+) -> None:
     expected_cases = {
-        row["case_id"] for row in contract.build_case_matrix()
+        row["case_id"]
+        for row in contract.normalize_case_matrix(case_matrix)
     }
     case_rows = (
         receipts.get("case_rows")
@@ -672,9 +720,11 @@ def _validate_rank_environment(
 def _validate_request_rows(
     rows: list[dict],
     correctness_rows: list[dict],
+    case_matrix: object | None = None,
 ) -> None:
     expected_cases = {
-        row["case_id"]: row for row in contract.build_case_matrix()
+        row["case_id"]: row
+        for row in contract.normalize_case_matrix(case_matrix)
     }
     expected_outputs = {}
     for correctness in correctness_rows:
@@ -777,6 +827,7 @@ def _render_report(
     admission: dict,
     cleanup: dict,
     classification: dict,
+    execution_scope: str = "FULL",
 ) -> str:
     admission_mode = admission.get(
         "admission_mode",
@@ -789,6 +840,7 @@ def _render_report(
     stage1_authorized = (
         classification["classification"] == "GO_STAGE1_JUSTIFIED"
         and claim_boundary == "FORMAL_STRICT_CLEAN"
+        and execution_scope == "FULL"
     )
     failed_gates = classification["failed_gates"]
     lines = [
@@ -807,6 +859,8 @@ def _render_report(
         f"Admission mode: `{admission_mode}`",
         "",
         f"Claim boundary: `{claim_boundary}`",
+        "",
+        f"Execution scope: `{execution_scope}`",
         "",
         f"Cleanup: `{cleanup['classification']}`",
         "",
@@ -957,13 +1011,14 @@ def verify_bundle(root: Path) -> dict:
         _validate_admission(admission, source)
         if _load_json(root / "gpu_inventory.json") != admission:
             raise ValueError("GPU inventory mismatch")
-        _validate_workload(
+        case_matrix, execution_scope = _validate_workload(
             _load_json(root / "workload_profile.json"),
             source,
         )
         _validate_process_receipts(
             _load_json(root / "process_receipts.json"),
             source,
+            case_matrix,
         )
         _validate_cleanup(
             _load_json(root / "cleanup.json"),
@@ -984,8 +1039,13 @@ def verify_bundle(root: Path) -> dict:
         _validate_request_rows(
             loaded_rows["request_rows.jsonl"],
             evidence["correctness_rows"],
+            case_matrix,
         )
-        reconstructed = _classify_evidence(**evidence)
+        reconstructed = _classify_evidence(
+            case_matrix=case_matrix,
+            execution_scope=execution_scope,
+            **evidence,
+        )
         producer = _load_json(
             root / "producer_classification.json"
         )
@@ -1001,6 +1061,7 @@ def verify_bundle(root: Path) -> dict:
                     "FORMAL_STRICT_CLEAN",
                 )
                 == "FORMAL_STRICT_CLEAN"
+                and execution_scope == "FULL"
             ),
         }
         producer_matches = producer == expected_producer
@@ -1011,6 +1072,10 @@ def verify_bundle(root: Path) -> dict:
             "source_tree_sha256": source["source_tree_sha256"],
             "model_repository": source["model_repository"],
             "model_revision": source["model_revision"],
+            "execution_scope": execution_scope,
+            "selected_case_ids": [
+                row["case_id"] for row in case_matrix
+            ],
             **reconstructed,
         }
         summary_matches = (
@@ -1021,6 +1086,7 @@ def verify_bundle(root: Path) -> dict:
             admission=admission,
             cleanup=_load_json(root / "cleanup.json"),
             classification=reconstructed,
+            execution_scope=execution_scope,
         )
         if (root / "report.md").read_bytes() != expected_report.encode(
             "utf-8"
@@ -1030,7 +1096,7 @@ def verify_bundle(root: Path) -> dict:
             )
         if (
             reconstructed["classification"]
-            == "GO_STAGE1_JUSTIFIED"
+            in {"GO_STAGE1_JUSTIFIED", "SMOKE_PASS"}
             and (not producer_matches or not summary_matches)
         ):
             return _incomplete("producer_evidence_mismatch")

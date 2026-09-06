@@ -267,6 +267,7 @@ def _write_raw_attempt(
         "dtype": "bfloat16",
         "tensor_parallel_size": 4,
         "temperature": 0.0,
+        "execution_scope": "FULL",
         "measured_repetitions": contract.MEASURED_REPETITIONS,
         "workloads": contract.WORKLOADS,
         "cases": list(contract.build_case_matrix()),
@@ -316,6 +317,72 @@ def _write_raw_attempt(
     }
     for name, rows in file_rows.items():
         _write_jsonl(root / name, rows)
+    return evidence
+
+
+def _write_smoke_raw_attempt(root: Path) -> dict:
+    evidence = _write_raw_attempt(root)
+    selected = tuple(
+        row
+        for row in contract.build_case_matrix()
+        if row["pair_id"] == "Q1__r0"
+    )
+    selected_case_ids = {row["case_id"] for row in selected}
+    selected_pair_ids = {row["pair_id"] for row in selected}
+    profile = json.loads(
+        (root / "workload_profile.json").read_text(encoding="utf-8")
+    )
+    profile.update({
+        "execution_scope": "SMOKE_ONLY",
+        "measured_repetitions": 1,
+        "workloads": {"Q1": contract.WORKLOADS["Q1"]},
+        "cases": list(selected),
+    })
+    _write_json(root / "workload_profile.json", profile)
+    receipts = json.loads(
+        (root / "process_receipts.json").read_text(encoding="utf-8")
+    )
+    receipts["case_rows"] = [
+        row
+        for row in receipts["case_rows"]
+        if row["case_id"] in selected_case_ids
+    ]
+    _write_json(root / "process_receipts.json", receipts)
+    for name in (
+        "rank_dispatch_events.jsonl",
+        "rank_collective_events.jsonl",
+        "rank_lifecycle_rows.jsonl",
+        "request_rows.jsonl",
+        "performance_rows.jsonl",
+        "memory_rows.jsonl",
+        "capture_cost_rows.jsonl",
+    ):
+        path = root / name
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        _write_jsonl(
+            path,
+            [
+                row
+                for row in rows
+                if row["case_id"] in selected_case_ids
+            ],
+        )
+    path = root / "correctness_rows.jsonl"
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    _write_jsonl(
+        path,
+        [
+            row
+            for row in rows
+            if row["pair_id"] in selected_pair_ids
+        ],
+    )
     return evidence
 
 
@@ -388,6 +455,32 @@ def test_assembler_writes_complete_manifested_go_bundle():
             )
         )
         assert producer["stage1_authorized"] is True
+
+
+def test_assembler_writes_smoke_bundle_without_stage1_authorization():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        bundle = root / "final_bundle"
+        raw.mkdir()
+        _write_smoke_raw_attempt(raw)
+        result = _assemble(raw, bundle)
+        summary = json.loads(
+            (bundle / "summary.json").read_text(encoding="utf-8")
+        )
+        producer = json.loads(
+            (bundle / "producer_classification.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    assert result["classification"] == "SMOKE_PASS"
+    assert summary["execution_scope"] == "SMOKE_ONLY"
+    assert summary["selected_case_ids"] == [
+        "Q1__r0__eager",
+        "Q1__r0__graph",
+    ]
+    assert producer["stage1_authorized"] is False
 
 
 def test_assembler_reconstructs_cross_lease_mechanism_and_capture_cost():

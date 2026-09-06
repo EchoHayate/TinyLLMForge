@@ -31,6 +31,7 @@ ARMS = ("eager", "graph")
 MEASURED_REPETITIONS = 5
 CLASSIFICATIONS = (
     "GO_STAGE1_JUSTIFIED",
+    "SMOKE_PASS",
     "NO_GO_PERFORMANCE",
     "NO_GO_CORRECTNESS_OR_LIFECYCLE",
     "NO_GO_MECHANISM_NOT_EXERCISED",
@@ -46,6 +47,8 @@ THRESHOLDS = {
     "minimum_replay_coverage": 0.80,
     "maximum_added_peak_allocated_bytes_per_rank": 512 * 1024 * 1024,
     "maximum_added_peak_reserved_bytes_per_rank": 512 * 1024 * 1024,
+    "maximum_single_capture_duration_ns": 2_000_000_000,
+    "maximum_total_capture_duration_ns_per_rank": 5_000_000_000,
 }
 
 PERFORMANCE_FIELDS = (
@@ -107,15 +110,62 @@ def build_case_matrix() -> tuple[dict, ...]:
     return tuple(rows)
 
 
-def _expected_cases() -> dict[str, dict]:
-    return {row["case_id"]: row for row in build_case_matrix()}
+def select_case_matrix(case_ids: object) -> tuple[dict, ...]:
+    if (
+        not isinstance(case_ids, (list, tuple))
+        or not case_ids
+        or any(not isinstance(value, str) or not value for value in case_ids)
+        or len(set(case_ids)) != len(case_ids)
+    ):
+        raise ValueError("case selection is invalid")
+    selected_ids = set(case_ids)
+    full = build_case_matrix()
+    known_ids = {row["case_id"] for row in full}
+    if not selected_ids.issubset(known_ids):
+        raise ValueError("case selection contains an unknown case")
+    selected = tuple(
+        row for row in full if row["case_id"] in selected_ids
+    )
+    grouped = _group_by(list(selected), ("pair_id",))
+    if any(
+        len(rows) != len(ARMS)
+        or {row["arm"] for row in rows} != set(ARMS)
+        for rows in grouped.values()
+    ):
+        raise ValueError(
+            "case selection must contain complete eager/graph pairs"
+        )
+    return selected
 
 
-def _expected_pairs() -> set[str]:
+def normalize_case_matrix(
+    case_matrix: object | None,
+) -> tuple[dict, ...]:
+    if case_matrix is None:
+        return build_case_matrix()
+    if not isinstance(case_matrix, (list, tuple)):
+        raise ValueError("case matrix is invalid")
+    selected = select_case_matrix(tuple(
+        row.get("case_id") if isinstance(row, dict) else None
+        for row in case_matrix
+    ))
+    if tuple(case_matrix) != selected:
+        raise ValueError("case matrix is not canonical")
+    return selected
+
+
+def _expected_cases(
+    case_matrix: object | None = None,
+) -> dict[str, dict]:
     return {
-        f"{workload}__r{repetition}"
-        for workload in WORKLOADS
-        for repetition in range(MEASURED_REPETITIONS)
+        row["case_id"]: row
+        for row in normalize_case_matrix(case_matrix)
+    }
+
+
+def _expected_pairs(case_matrix: object | None = None) -> set[str]:
+    return {
+        row["pair_id"] for row in normalize_case_matrix(case_matrix)
     }
 
 
@@ -149,8 +199,11 @@ def _check_row_ids(row_groups: tuple[list[dict], ...]) -> list[str]:
     return []
 
 
-def _validate_case_fields(row: dict) -> bool:
-    expected = _expected_cases().get(row.get("case_id"))
+def _validate_case_fields(
+    row: dict,
+    case_matrix: object | None = None,
+) -> bool:
+    expected = _expected_cases(case_matrix).get(row.get("case_id"))
     return bool(
         expected is not None
         and row.get("pair_id") == expected["pair_id"]
@@ -167,9 +220,13 @@ def _group_by(rows: list[dict], fields: tuple[str, ...]):
     return grouped
 
 
-def validate_rank_dispatch_rows(rows: list[dict]) -> dict:
+def validate_rank_dispatch_rows(
+    rows: list[dict],
+    *,
+    case_matrix: object | None = None,
+) -> dict:
     failures = []
-    expected_cases = set(_expected_cases())
+    expected_cases = set(_expected_cases(case_matrix))
     observed_cases = set()
     groups = _group_by(rows, ("case_id", "phase", "step_index"))
     eligible = 0
@@ -185,7 +242,10 @@ def validate_rank_dispatch_rows(rows: list[dict]) -> dict:
             len(ordered) != len(RANKS)
             or tuple(row.get("rank") for row in ordered) != RANKS
             or any(row.get("world_size") != len(RANKS) for row in ordered)
-            or any(not _validate_case_fields(row) for row in ordered)
+            or any(
+                not _validate_case_fields(row, case_matrix)
+                for row in ordered
+            )
         ):
             failures.append("rank_dispatch_inventory_incomplete")
             continue
@@ -244,9 +304,13 @@ def validate_rank_dispatch_rows(rows: list[dict]) -> dict:
     }
 
 
-def validate_correctness_rows(rows: list[dict]) -> dict:
+def validate_correctness_rows(
+    rows: list[dict],
+    *,
+    case_matrix: object | None = None,
+) -> dict:
     failures = []
-    expected_pairs = _expected_pairs()
+    expected_pairs = _expected_pairs(case_matrix)
     observed_pairs = set()
     for row in rows:
         pair_id = row.get("pair_id")
@@ -270,12 +334,15 @@ def validate_correctness_rows(rows: list[dict]) -> dict:
     return {"failures": sorted(set(failures))}
 
 
-def _validate_performance_rows(rows: list[dict]) -> list[str]:
+def _validate_performance_rows(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> list[str]:
     failures = []
-    expected_cases = set(_expected_cases())
+    expected_cases = set(_expected_cases(case_matrix))
     observed_cases = set()
     for row in rows:
-        if not _validate_case_fields(row):
+        if not _validate_case_fields(row, case_matrix):
             failures.append("performance_identity_invalid")
             continue
         observed_cases.add(row["case_id"])
@@ -289,9 +356,12 @@ def _validate_performance_rows(rows: list[dict]) -> list[str]:
     return failures
 
 
-def _validate_collective_rows(rows: list[dict]) -> list[str]:
+def _validate_collective_rows(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> list[str]:
     failures = []
-    expected_cases = set(_expected_cases())
+    expected_cases = set(_expected_cases(case_matrix))
     observed_cases = set()
     groups = _group_by(rows, ("case_id",))
     for (case_id,), group in groups.items():
@@ -304,7 +374,10 @@ def _validate_collective_rows(rows: list[dict]) -> list[str]:
             len(ordered) != len(RANKS)
             or tuple(row.get("rank") for row in ordered) != RANKS
             or any(row.get("world_size") != 4 for row in ordered)
-            or any(not _validate_case_fields(row) for row in ordered)
+            or any(
+                not _validate_case_fields(row, case_matrix)
+                for row in ordered
+            )
             or any(row.get("complete") is not True for row in ordered)
         ):
             failures.append("collective_rank_inventory_incomplete")
@@ -333,9 +406,12 @@ def _validate_collective_rows(rows: list[dict]) -> list[str]:
     return failures
 
 
-def _validate_lifecycle_rows(rows: list[dict]) -> list[str]:
+def _validate_lifecycle_rows(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> list[str]:
     failures = []
-    expected_cases = set(_expected_cases())
+    expected_cases = set(_expected_cases(case_matrix))
     observed_cases = set()
     groups = _group_by(rows, ("case_id",))
     for (case_id,), group in groups.items():
@@ -348,7 +424,10 @@ def _validate_lifecycle_rows(rows: list[dict]) -> list[str]:
             len(ordered) != len(RANKS)
             or tuple(row.get("rank") for row in ordered) != RANKS
             or any(row.get("world_size") != 4 for row in ordered)
-            or any(not _validate_case_fields(row) for row in ordered)
+            or any(
+                not _validate_case_fields(row, case_matrix)
+                for row in ordered
+            )
         ):
             failures.append("lifecycle_rank_inventory_incomplete")
             continue
@@ -365,9 +444,12 @@ def _validate_lifecycle_rows(rows: list[dict]) -> list[str]:
     return failures
 
 
-def _validate_memory_rows(rows: list[dict]) -> list[str]:
+def _validate_memory_rows(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> list[str]:
     failures = []
-    expected_cases = set(_expected_cases())
+    expected_cases = set(_expected_cases(case_matrix))
     observed_cases = set()
     groups = _group_by(rows, ("case_id",))
     for (case_id,), group in groups.items():
@@ -379,7 +461,10 @@ def _validate_memory_rows(rows: list[dict]) -> list[str]:
         if (
             len(ordered) != len(RANKS)
             or tuple(row.get("rank") for row in ordered) != RANKS
-            or any(not _validate_case_fields(row) for row in ordered)
+            or any(
+                not _validate_case_fields(row, case_matrix)
+                for row in ordered
+            )
             or any(
                 not _finite_nonnegative(row.get(field))
                 for row in ordered
@@ -392,17 +477,21 @@ def _validate_memory_rows(rows: list[dict]) -> list[str]:
     return failures
 
 
-def _validate_capture_cost_rows(rows: list[dict]) -> list[str]:
+def _validate_capture_cost_rows(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> list[str]:
     failures = []
     expected_cases = {
         row["case_id"]
-        for row in build_case_matrix()
+        for row in normalize_case_matrix(case_matrix)
         if row["arm"] == "graph"
     }
+    total_by_rank = {rank: 0 for rank in RANKS}
     observed_cases = set()
     groups = _group_by(rows, ("case_id",))
     for (case_id,), group in groups.items():
-        expected = _expected_cases().get(case_id)
+        expected = _expected_cases(case_matrix).get(case_id)
         if expected is None or expected["arm"] != "graph":
             failures.append("capture_cost_unknown_case")
             continue
@@ -412,12 +501,13 @@ def _validate_capture_cost_rows(rows: list[dict]) -> list[str]:
             len(ordered) != len(RANKS)
             or tuple(row.get("rank") for row in ordered) != RANKS
             or any(
-                not _validate_case_fields(row)
+                not _validate_case_fields(row, case_matrix)
                 or row.get("arm") != "graph"
                 or not _valid_sha256(
                     row.get("graph_identity_sha256")
                 )
                 or row.get("complete") is not True
+                or type(row.get("capture_duration_ns")) is not int
                 or any(
                     not _finite_nonnegative(row.get(field))
                     for field in CAPTURE_COST_FIELDS
@@ -433,8 +523,22 @@ def _validate_capture_cost_rows(rows: list[dict]) -> list[str]:
             for row in ordered[1:]
         ):
             failures.append("capture_identity_disagreement")
+        for row in ordered:
+            duration_ns = int(row["capture_duration_ns"])
+            if (
+                duration_ns
+                > THRESHOLDS["maximum_single_capture_duration_ns"]
+            ):
+                failures.append("single_capture_duration")
+            total_by_rank[row["rank"]] += duration_ns
     if observed_cases != expected_cases:
         failures.append("capture_cost_case_matrix_incomplete")
+    if any(
+        duration
+        > THRESHOLDS["maximum_total_capture_duration_ns_per_rank"]
+        for duration in total_by_rank.values()
+    ):
+        failures.append("total_capture_duration_per_rank")
     return failures
 
 
@@ -442,10 +546,17 @@ def _median(values):
     return float(statistics.median(float(value) for value in values))
 
 
-def _performance_summary(rows: list[dict]) -> tuple[dict, dict]:
+def _performance_summary(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> tuple[dict, dict]:
     by_workload_arm = _group_by(rows, ("workload", "arm"))
     workloads = {}
-    for workload in WORKLOADS:
+    selected_workloads = tuple(dict.fromkeys(
+        row["workload"]
+        for row in normalize_case_matrix(case_matrix)
+    ))
+    for workload in selected_workloads:
         eager = by_workload_arm[(workload, "eager")]
         graph = by_workload_arm[(workload, "graph")]
         workloads[workload] = {
@@ -508,7 +619,7 @@ def _memory_summary(rows: list[dict]) -> tuple[int, int]:
     return max(allocated), max(reserved)
 
 
-def classify(
+def _classify(
     *,
     performance_rows: list[dict],
     correctness_rows: list[dict],
@@ -517,7 +628,11 @@ def classify(
     rank_lifecycle_rows: list[dict],
     memory_rows: list[dict],
     capture_cost_rows: list[dict],
+    case_matrix: object | None,
+    apply_performance_gates: bool,
+    success_classification: str,
 ) -> dict:
+    case_matrix = normalize_case_matrix(case_matrix)
     row_groups = (
         performance_rows,
         correctness_rows,
@@ -529,19 +644,29 @@ def classify(
     )
     incomplete_failures = _check_row_ids(row_groups)
     incomplete_failures.extend(
-        _validate_performance_rows(performance_rows)
+        _validate_performance_rows(performance_rows, case_matrix)
     )
-    incomplete_failures.extend(_validate_memory_rows(memory_rows))
     incomplete_failures.extend(
-        _validate_capture_cost_rows(capture_cost_rows)
+        _validate_memory_rows(memory_rows, case_matrix)
     )
-    correctness = validate_correctness_rows(correctness_rows)
-    dispatch = validate_rank_dispatch_rows(rank_dispatch_rows)
+    incomplete_failures.extend(
+        _validate_capture_cost_rows(capture_cost_rows, case_matrix)
+    )
+    correctness = validate_correctness_rows(
+        correctness_rows,
+        case_matrix=case_matrix,
+    )
+    dispatch = validate_rank_dispatch_rows(
+        rank_dispatch_rows,
+        case_matrix=case_matrix,
+    )
     collective_failures = _validate_collective_rows(
-        rank_collective_rows
+        rank_collective_rows,
+        case_matrix,
     )
     lifecycle_failures = _validate_lifecycle_rows(
-        rank_lifecycle_rows
+        rank_lifecycle_rows,
+        case_matrix,
     )
 
     incomplete_names = {
@@ -609,7 +734,10 @@ def classify(
         }
 
     try:
-        workloads, aggregate = _performance_summary(performance_rows)
+        workloads, aggregate = _performance_summary(
+            performance_rows,
+            case_matrix,
+        )
         maximum_allocated, maximum_reserved = _memory_summary(
             memory_rows
         )
@@ -660,6 +788,31 @@ def classify(
 
     performance_failures = []
     if (
+        maximum_allocated
+        > THRESHOLDS[
+            "maximum_added_peak_allocated_bytes_per_rank"
+        ]
+    ):
+        performance_failures.append("peak_allocated_memory")
+    if (
+        maximum_reserved
+        > THRESHOLDS[
+            "maximum_added_peak_reserved_bytes_per_rank"
+        ]
+    ):
+        performance_failures.append("peak_reserved_memory")
+    if performance_failures or not apply_performance_gates:
+        if performance_failures:
+            return result | {
+                "classification": "NO_GO_PERFORMANCE",
+                "failed_gates": sorted(set(performance_failures)),
+            }
+        return result | {
+            "classification": success_classification,
+            "failed_gates": [],
+        }
+
+    if (
         aggregate["output_throughput_ratio"]
         < THRESHOLDS["aggregate_output_throughput_ratio"]
     ):
@@ -696,26 +849,65 @@ def classify(
             > THRESHOLDS["maximum_workload_ttft_ratio"]
         ):
             performance_failures.append(f"{workload}_ttft")
-    if (
-        maximum_allocated
-        > THRESHOLDS[
-            "maximum_added_peak_allocated_bytes_per_rank"
-        ]
-    ):
-        performance_failures.append("peak_allocated_memory")
-    if (
-        maximum_reserved
-        > THRESHOLDS[
-            "maximum_added_peak_reserved_bytes_per_rank"
-        ]
-    ):
-        performance_failures.append("peak_reserved_memory")
     if performance_failures:
         return result | {
             "classification": "NO_GO_PERFORMANCE",
             "failed_gates": sorted(set(performance_failures)),
         }
     return result | {
-        "classification": "GO_STAGE1_JUSTIFIED",
+        "classification": success_classification,
         "failed_gates": [],
     }
+
+
+def classify(
+    *,
+    performance_rows: list[dict],
+    correctness_rows: list[dict],
+    rank_dispatch_rows: list[dict],
+    rank_collective_rows: list[dict],
+    rank_lifecycle_rows: list[dict],
+    memory_rows: list[dict],
+    capture_cost_rows: list[dict],
+    case_matrix: object | None = None,
+) -> dict:
+    return _classify(
+        performance_rows=performance_rows,
+        correctness_rows=correctness_rows,
+        rank_dispatch_rows=rank_dispatch_rows,
+        rank_collective_rows=rank_collective_rows,
+        rank_lifecycle_rows=rank_lifecycle_rows,
+        memory_rows=memory_rows,
+        capture_cost_rows=capture_cost_rows,
+        case_matrix=case_matrix,
+        apply_performance_gates=True,
+        success_classification="GO_STAGE1_JUSTIFIED",
+    )
+
+
+def classify_smoke(
+    *,
+    performance_rows: list[dict],
+    correctness_rows: list[dict],
+    rank_dispatch_rows: list[dict],
+    rank_collective_rows: list[dict],
+    rank_lifecycle_rows: list[dict],
+    memory_rows: list[dict],
+    capture_cost_rows: list[dict],
+    case_matrix: object,
+) -> dict:
+    selected = normalize_case_matrix(case_matrix)
+    if selected == build_case_matrix():
+        raise ValueError("smoke classification requires a case subset")
+    return _classify(
+        performance_rows=performance_rows,
+        correctness_rows=correctness_rows,
+        rank_dispatch_rows=rank_dispatch_rows,
+        rank_collective_rows=rank_collective_rows,
+        rank_lifecycle_rows=rank_lifecycle_rows,
+        memory_rows=memory_rows,
+        capture_cost_rows=capture_cost_rows,
+        case_matrix=selected,
+        apply_performance_gates=False,
+        success_classification="SMOKE_PASS",
+    ) | {"execution_scope": "SMOKE_ONLY"}

@@ -119,6 +119,44 @@ def _shared_bundle(root: Path) -> Path:
     return bundle
 
 
+def _smoke_bundle(root: Path) -> Path:
+    raw = root / "raw"
+    bundle = root / "final_bundle"
+    raw.mkdir()
+    fixture._write_smoke_raw_attempt(raw)
+    fixture._assemble(raw, bundle)
+    return bundle
+
+
+def test_verifier_accepts_smoke_without_stage1_authorization():
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = _smoke_bundle(Path(directory))
+        receipt = verify_bundle(bundle)
+        producer = json.loads(
+            (bundle / "producer_classification.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    assert receipt["classification"] == "SMOKE_PASS"
+    assert receipt["verified_hashes"] is True
+    assert producer["stage1_authorized"] is False
+
+
+def test_verifier_rejects_smoke_stage1_authorization():
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = _smoke_bundle(Path(directory))
+        _mutate_json(
+            bundle,
+            "producer_classification.json",
+            lambda row: row.__setitem__("stage1_authorized", True),
+        )
+        receipt = verify_bundle(bundle)
+
+    assert receipt["classification"] == "INCOMPLETE"
+    assert receipt["failed_gates"] == ["producer_evidence_mismatch"]
+
+
 def test_verifier_accepts_bounded_shared_capacity_diagnostic_bundle():
     with tempfile.TemporaryDirectory() as directory:
         bundle = _shared_bundle(Path(directory))

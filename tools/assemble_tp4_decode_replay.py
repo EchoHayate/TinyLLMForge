@@ -420,8 +420,21 @@ def _reconstruct_dynamic_pool_index_mechanism(
     }
 
 
-def _classify_evidence(**evidence: list[dict]) -> dict:
-    classification = contract.classify(**evidence)
+def _classify_evidence(
+    *,
+    case_matrix: object | None = None,
+    execution_scope: str = "FULL",
+    **evidence: list[dict],
+) -> dict:
+    classifier = (
+        contract.classify_smoke
+        if execution_scope == "SMOKE_ONLY"
+        else contract.classify
+    )
+    classification = classifier(
+        case_matrix=case_matrix,
+        **evidence,
+    )
     if classification["classification"] == "INCOMPLETE":
         return classification | {
             "unique_program_key_count": 0,
@@ -626,7 +639,30 @@ def _validate_cleanup(cleanup: object, source: dict) -> dict:
     return dict(cleanup)
 
 
-def _validate_workload_profile(profile: object, source: dict) -> None:
+def _validate_workload_profile(
+    profile: object,
+    source: dict,
+) -> tuple[tuple[dict, ...], str]:
+    if not isinstance(profile, dict):
+        raise ValueError("workload profile is invalid")
+    try:
+        raw_cases = profile.get("cases")
+        if not isinstance(raw_cases, list):
+            raise ValueError("case matrix is invalid")
+        case_matrix = contract.select_case_matrix(tuple(
+            row.get("case_id") if isinstance(row, dict) else None
+            for row in raw_cases
+        ))
+    except ValueError as error:
+        raise ValueError("workload profile is invalid") from error
+    execution_scope = (
+        "FULL"
+        if case_matrix == contract.build_case_matrix()
+        else "SMOKE_ONLY"
+    )
+    selected_workloads = tuple(dict.fromkeys(
+        row["workload"] for row in case_matrix
+    ))
     expected = {
         "schema_version": (
             "tinyllmforge.tp4-decode-replay-workload.v1"
@@ -637,17 +673,29 @@ def _validate_workload_profile(profile: object, source: dict) -> None:
         "dtype": "bfloat16",
         "tensor_parallel_size": 4,
         "temperature": 0.0,
-        "measured_repetitions": contract.MEASURED_REPETITIONS,
-        "workloads": contract.WORKLOADS,
-        "cases": list(contract.build_case_matrix()),
+        "execution_scope": execution_scope,
+        "measured_repetitions": len({
+            row["repetition"] for row in case_matrix
+        }),
+        "workloads": {
+            workload: contract.WORKLOADS[workload]
+            for workload in selected_workloads
+        },
+        "cases": list(case_matrix),
     }
     if profile != expected:
         raise ValueError("workload profile is invalid")
+    return case_matrix, execution_scope
 
 
-def _validate_process_receipts(receipts: object, source: dict) -> None:
+def _validate_process_receipts(
+    receipts: object,
+    source: dict,
+    case_matrix: object | None = None,
+) -> None:
     expected_cases = {
-        row["case_id"] for row in contract.build_case_matrix()
+        row["case_id"]
+        for row in contract.normalize_case_matrix(case_matrix)
     }
     case_rows = (
         receipts.get("case_rows")
@@ -716,9 +764,13 @@ def _validate_rank_environment(rows: list[dict], source: dict) -> None:
         raise ValueError("rank environment is invalid")
 
 
-def _validate_request_rows(rows: list[dict]) -> None:
+def _validate_request_rows(
+    rows: list[dict],
+    case_matrix: object | None = None,
+) -> None:
     expected_cases = {
-        row["case_id"]: row for row in contract.build_case_matrix()
+        row["case_id"]: row
+        for row in contract.normalize_case_matrix(case_matrix)
     }
     grouped = {}
     seen = set()
@@ -806,6 +858,7 @@ def _render_report(
     admission: dict,
     cleanup: dict,
     classification: dict,
+    execution_scope: str = "FULL",
 ) -> str:
     admission_mode = admission.get(
         "admission_mode",
@@ -818,6 +871,7 @@ def _render_report(
     stage1_authorized = (
         classification["classification"] == "GO_STAGE1_JUSTIFIED"
         and claim_boundary == "FORMAL_STRICT_CLEAN"
+        and execution_scope == "FULL"
     )
     failed_gates = classification["failed_gates"]
     lines = [
@@ -836,6 +890,8 @@ def _render_report(
         f"Admission mode: `{admission_mode}`",
         "",
         f"Claim boundary: `{claim_boundary}`",
+        "",
+        f"Execution scope: `{execution_scope}`",
         "",
         f"Cleanup: `{cleanup['classification']}`",
         "",
@@ -969,24 +1025,32 @@ def assemble_bundle(
     if loaded["gpu_inventory.json"] != admission:
         raise ValueError("GPU inventory identity mismatch")
     cleanup = _validate_cleanup(cleanup, source)
-    _validate_workload_profile(
+    case_matrix, execution_scope = _validate_workload_profile(
         loaded["workload_profile.json"],
         source,
     )
     _validate_process_receipts(
         loaded["process_receipts.json"],
         source,
+        case_matrix,
     )
     _validate_rank_environment(
         loaded["rank_environment.jsonl"],
         source,
     )
-    _validate_request_rows(loaded["request_rows.jsonl"])
+    _validate_request_rows(
+        loaded["request_rows.jsonl"],
+        case_matrix,
+    )
     evidence = {
         argument: loaded[name]
         for argument, name in EVIDENCE_FILES.items()
     }
-    classification = _classify_evidence(**evidence)
+    classification = _classify_evidence(
+        case_matrix=case_matrix,
+        execution_scope=execution_scope,
+        **evidence,
+    )
 
     root = Path(output_root)
     root.mkdir(parents=True, exist_ok=True)
@@ -1010,6 +1074,10 @@ def assemble_bundle(
         "source_tree_sha256": source["source_tree_sha256"],
         "model_repository": source["model_repository"],
         "model_revision": source["model_revision"],
+        "execution_scope": execution_scope,
+        "selected_case_ids": [
+            row["case_id"] for row in case_matrix
+        ],
         **classification,
     }
     producer = {
@@ -1023,6 +1091,7 @@ def assemble_bundle(
                 "FORMAL_STRICT_CLEAN",
             )
             == "FORMAL_STRICT_CLEAN"
+            and execution_scope == "FULL"
         ),
     }
     _atomic_write_json(root / "summary.json", summary)
@@ -1037,6 +1106,7 @@ def assemble_bundle(
             admission=admission,
             cleanup=cleanup,
             classification=classification,
+            execution_scope=execution_scope,
         ).encode("utf-8"),
     )
     _write_manifest(root)
