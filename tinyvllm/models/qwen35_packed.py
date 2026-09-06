@@ -15,6 +15,8 @@ from tinyvllm.engine.hybrid_state import HybridStateLease
 from tinyvllm.engine.decode_internal_profiler import profile_layer
 from tinyvllm.layers.qwen35_packed_layer_stack import (
     Qwen35PackedHeterogeneousLayerStack,
+    Qwen35PreparedLayerRange,
+    Qwen35SegmentCandidates,
 )
 
 
@@ -385,6 +387,98 @@ class Qwen35PackedForCausalLM(nn.Module):
             position_ids,
         )
         return logits
+
+    def embed_exact_graph_inputs(
+        self,
+        input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        if (
+            not isinstance(input_ids, torch.Tensor)
+            or input_ids.ndim != 1
+            or input_ids.dtype not in (torch.int32, torch.int64)
+        ):
+            raise ValueError(
+                "input_ids must be a rank-one integer tensor"
+            )
+        with profile_layer(
+            len(self.layer_stack.layers),
+            "embedding",
+        ):
+            hidden_states = self.embed_tokens(input_ids)
+        self._validate_hidden_output(
+            hidden_states,
+            token_count=input_ids.shape[0],
+            name="embed_tokens",
+        )
+        return hidden_states
+
+    def run_exact_cuda_graph_layer_range(
+        self,
+        *,
+        state_slot_ids: torch.Tensor,
+        token_counts: tuple[int, ...],
+        position_ids: torch.Tensor,
+        hidden_states: torch.Tensor,
+        start_layer: int,
+        end_layer: int,
+    ) -> Qwen35PreparedLayerRange:
+        return self.layer_stack.prepare_pool_index_range(
+            state_slot_ids=state_slot_ids,
+            token_counts=token_counts,
+            position_ids=position_ids,
+            hidden_states=hidden_states,
+            start_layer=start_layer,
+            end_layer=end_layer,
+        )
+
+    def finalize_exact_cuda_graph_hidden(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor | None:
+        normalized = self.final_norm(hidden_states)
+        self._validate_hidden_output(
+            normalized,
+            token_count=hidden_states.shape[0],
+            name="final_norm",
+            reference=hidden_states,
+        )
+        logits = self.lm_head(normalized)
+        self._validate_logits(logits, normalized)
+        return logits
+
+    def commit_exact_cuda_graph_candidates(
+        self,
+        state_slot_ids: torch.Tensor,
+        candidates: tuple[Qwen35SegmentCandidates, ...],
+    ) -> None:
+        adapter_by_layer = {
+            adapter.layer_index: adapter
+            for adapter in self.layer_stack.state_transaction.adapters
+        }
+        flattened = {}
+        for segment in candidates:
+            if type(segment) is not Qwen35SegmentCandidates:
+                raise ValueError(
+                    "state candidates must contain "
+                    "Qwen35SegmentCandidates values"
+                )
+            for layer_index, value in zip(
+                segment.layer_indices,
+                segment.values,
+                strict=True,
+            ):
+                if layer_index in flattened:
+                    raise ValueError("duplicate state candidate layer")
+                flattened[layer_index] = value
+        if tuple(sorted(flattened)) != self.layer_stack.linear_indices:
+            raise ValueError("state candidate layer inventory mismatch")
+        for layer_index in self.layer_stack.linear_indices:
+            convolution, recurrent = flattened[layer_index]
+            adapter_by_layer[layer_index].commit_batch_by_slot_tensor(
+                state_slot_ids,
+                convolution,
+                recurrent,
+            )
 
     def prepare_step_by_pool_index(
         self,

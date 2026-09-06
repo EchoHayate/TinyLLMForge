@@ -35,6 +35,21 @@ class Qwen35PreparedLayerStack:
     ] | None
 
 
+@dataclass(frozen=True)
+class Qwen35SegmentCandidates:
+    layer_indices: tuple[int, ...]
+    values: tuple[
+        tuple[torch.Tensor, torch.Tensor],
+        ...,
+    ]
+
+
+@dataclass(frozen=True)
+class Qwen35PreparedLayerRange:
+    hidden_states: torch.Tensor
+    candidates: Qwen35SegmentCandidates
+
+
 class Qwen35PackedHeterogeneousLayerStack(nn.Module):
 
     def __init__(
@@ -519,6 +534,111 @@ class Qwen35PackedHeterogeneousLayerStack(nn.Module):
             hidden_states,
             gathered,
             capture_prefix_states=False,
+        )
+
+    def prepare_pool_index_range(
+        self,
+        *,
+        state_slot_ids: torch.Tensor,
+        token_counts: tuple[int, ...],
+        position_ids: torch.Tensor,
+        hidden_states: torch.Tensor,
+        start_layer: int,
+        end_layer: int,
+    ) -> Qwen35PreparedLayerRange:
+        self.state_transaction.adapters[0]._validate_slot_tensor(
+            state_slot_ids
+        )
+        if (
+            isinstance(start_layer, bool)
+            or isinstance(end_layer, bool)
+            or start_layer < 0
+            or end_layer <= start_layer
+            or end_layer > len(self.layers)
+        ):
+            raise ValueError("layer range is invalid")
+        if not isinstance(token_counts, tuple) or not token_counts:
+            raise ValueError("token_counts must be a non-empty tuple")
+        if len(token_counts) != state_slot_ids.shape[0]:
+            raise ValueError(
+                "slot_ids and token_counts batch size must match"
+            )
+        if any(
+            isinstance(token_count, bool)
+            or not isinstance(token_count, int)
+            or token_count <= 0
+            for token_count in token_counts
+        ):
+            raise ValueError(
+                "token_counts must contain positive integers"
+            )
+        if not isinstance(hidden_states, torch.Tensor):
+            raise ValueError("hidden_states must be a tensor")
+        if hidden_states.ndim != 2:
+            raise ValueError("hidden_states must be rank two")
+        if not hidden_states.is_floating_point():
+            raise ValueError(
+                "hidden_states must use a floating point dtype"
+            )
+        if sum(token_counts) != hidden_states.shape[0]:
+            raise ValueError(
+                "token_counts sum must match hidden_states token count"
+            )
+        if not isinstance(position_ids, torch.Tensor):
+            raise ValueError("position_ids must be a tensor")
+        if position_ids.ndim not in (1, 2):
+            raise ValueError("position_ids must be rank one or two")
+        if position_ids.ndim == 2 and position_ids.shape[0] not in (1, 3):
+            raise ValueError("position_ids must have one or three rows")
+        if position_ids.shape[-1] != hidden_states.shape[0]:
+            raise ValueError(
+                "position_ids token count must match hidden_states"
+            )
+        if position_ids.dtype not in (torch.int32, torch.int64):
+            raise ValueError("position_ids must use an integer dtype")
+        if position_ids.device != hidden_states.device:
+            raise ValueError(
+                "position_ids device must match hidden_states"
+            )
+
+        adapter_by_layer = {
+            adapter.layer_index: adapter
+            for adapter in self.state_transaction.adapters
+        }
+        candidate_indices = []
+        candidate_values = []
+        for layer_index in range(start_layer, end_layer):
+            layer = self.layers[layer_index]
+            with profile_layer(layer_index, layer.block_type):
+                if layer.block_type == "full_attention":
+                    hidden_states = self._run_full_layer(
+                        layer,
+                        token_counts,
+                        position_ids,
+                        hidden_states,
+                    )
+                    continue
+                adapter = adapter_by_layer[layer_index]
+                convolution_states, recurrent_states = (
+                    adapter.gather_batch_by_slot_tensor(state_slot_ids)
+                )
+                hidden_states, candidate, _ = self._run_linear_layer(
+                    layer,
+                    adapter,
+                    token_counts,
+                    hidden_states,
+                    convolution_states,
+                    recurrent_states,
+                    capture_prefix_states=False,
+                )
+                candidate_indices.append(layer_index)
+                candidate_values.append(candidate)
+        return Qwen35PreparedLayerRange(
+            hidden_states=hidden_states,
+            candidates=Qwen35SegmentCandidates(
+                layer_indices=tuple(candidate_indices),
+                values=tuple(candidate_values),
+            ),
         )
 
     def _prepare_transactional_from_gathered(

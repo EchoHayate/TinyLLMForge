@@ -79,6 +79,11 @@ Qwen35DecoderLayerShell = decoder_module.Qwen35DecoderLayerShell
 Qwen35PackedHeterogeneousLayerStack = (
     stack_module.Qwen35PackedHeterogeneousLayerStack
 )
+Qwen35SegmentCandidates = getattr(
+    stack_module,
+    "Qwen35SegmentCandidates",
+    None,
+)
 Qwen35PackedForCausalLM = root_module.Qwen35PackedForCausalLM
 
 
@@ -157,6 +162,12 @@ class _LinearMixer(nn.Module):
         )
 
 
+class _FullMixer(nn.Module):
+    def forward(self, position_ids, hidden):
+        del position_ids
+        return hidden * 0.25
+
+
 def _fixture():
     layout = HybridStateLayout((
         HybridStateComponentSpec(
@@ -213,6 +224,88 @@ def _fixture():
         head,
     )
     return pool, leases, final_norm, head, model
+
+
+def _multi_layer_fixture():
+    stateful_layers = (0, 2)
+    layout = HybridStateLayout(tuple(
+        component
+        for layer_index in stateful_layers
+        for component in (
+            HybridStateComponentSpec(
+                layer_index,
+                "linear_convolution",
+                (2, 2),
+                torch.float32,
+            ),
+            HybridStateComponentSpec(
+                layer_index,
+                "linear_recurrent",
+                (2, 2, 2),
+                torch.float32,
+            ),
+        )
+    ))
+    pool = HybridStateTensorPool(layout, 3, "cpu")
+    leases = (
+        HybridStateLease(0, 1, 101),
+        HybridStateLease(1, 1, 102),
+    )
+    for lease in leases:
+        pool.activate(lease)
+    for component_index, tensor in enumerate(pool._tensors.values()):
+        tensor.copy_(
+            torch.arange(
+                tensor.numel(),
+                dtype=torch.float32,
+            ).reshape(tensor.shape)
+            + component_index * 100
+        )
+    adapters = tuple(
+        Qwen35LayerStateAdapter(pool, layer_index)
+        for layer_index in stateful_layers
+    )
+    transaction = Qwen35CrossLayerStateTransaction(adapters)
+    layers = (
+        Qwen35DecoderLayerShell(
+            block_type="linear_attention",
+            input_layernorm=_Identity(),
+            post_attention_layernorm=_Identity(),
+            mlp=_Zero(),
+            linear_attention=_LinearMixer(),
+        ),
+        Qwen35DecoderLayerShell(
+            block_type="full_attention",
+            input_layernorm=_Identity(),
+            post_attention_layernorm=_Identity(),
+            mlp=_Zero(),
+            full_attention=_FullMixer(),
+        ),
+        Qwen35DecoderLayerShell(
+            block_type="linear_attention",
+            input_layernorm=_Identity(),
+            post_attention_layernorm=_Identity(),
+            mlp=_Zero(),
+            linear_attention=_LinearMixer(),
+        ),
+        Qwen35DecoderLayerShell(
+            block_type="full_attention",
+            input_layernorm=_Identity(),
+            post_attention_layernorm=_Identity(),
+            mlp=_Zero(),
+            full_attention=_FullMixer(),
+        ),
+    )
+    model = Qwen35PackedForCausalLM(
+        _Embedding(),
+        Qwen35PackedHeterogeneousLayerStack(
+            layers,
+            transaction,
+        ),
+        _Identity(),
+        _Head(),
+    )
+    return pool, leases, model
 
 
 def _snapshot(pool):
@@ -479,6 +572,119 @@ def test_pool_index_graph_step_matches_lease_step_output_and_state():
         eager_pool._tensors.values(),
     ):
         torch.testing.assert_close(graph_state, eager_state)
+
+
+def test_pool_index_ranges_equal_full_stack_and_preserve_state():
+    graph_pool, graph_leases, graph_model = _multi_layer_fixture()
+    eager_pool, eager_leases, eager_model = _multi_layer_fixture()
+    token_counts, input_ids, position_ids = _inputs()
+    state_slot_ids = torch.tensor(
+        [graph_leases[0].slot_id],
+        dtype=torch.int64,
+    )
+    unselected_before = tuple(
+        tensor[2].clone()
+        for tensor in graph_pool._tensors.values()
+    )
+
+    hidden = graph_model.embed_exact_graph_inputs(input_ids)
+    first = graph_model.run_exact_cuda_graph_layer_range(
+        state_slot_ids=state_slot_ids,
+        token_counts=token_counts,
+        position_ids=position_ids,
+        hidden_states=hidden,
+        start_layer=0,
+        end_layer=2,
+    )
+    second = graph_model.run_exact_cuda_graph_layer_range(
+        state_slot_ids=state_slot_ids,
+        token_counts=token_counts,
+        position_ids=position_ids,
+        hidden_states=first.hidden_states,
+        start_layer=2,
+        end_layer=4,
+    )
+    graph_logits = graph_model.finalize_exact_cuda_graph_hidden(
+        second.hidden_states
+    )
+    graph_model.commit_exact_cuda_graph_candidates(
+        state_slot_ids,
+        (second.candidates, first.candidates),
+    )
+    _, eager_logits = eager_model.run_step(
+        (eager_leases[0],),
+        token_counts,
+        input_ids,
+        position_ids,
+    )
+
+    assert first.candidates.layer_indices == (0,)
+    assert second.candidates.layer_indices == (2,)
+    torch.testing.assert_close(graph_logits, eager_logits)
+    for graph_state, eager_state in zip(
+        graph_pool._tensors.values(),
+        eager_pool._tensors.values(),
+    ):
+        torch.testing.assert_close(graph_state, eager_state)
+    for tensor, expected in zip(
+        graph_pool._tensors.values(),
+        unselected_before,
+    ):
+        torch.testing.assert_close(tensor[2], expected)
+
+
+@pytest.mark.parametrize(
+    ("start_layer", "end_layer"),
+    ((0, 0), (-1, 1), (1, 5), (3, 2)),
+)
+def test_pool_index_range_rejects_invalid_bounds(
+    start_layer,
+    end_layer,
+):
+    _, leases, model = _multi_layer_fixture()
+    token_counts, input_ids, position_ids = _inputs()
+
+    with pytest.raises(ValueError, match="layer range"):
+        model.run_exact_cuda_graph_layer_range(
+            state_slot_ids=torch.tensor(
+                [leases[0].slot_id],
+                dtype=torch.int64,
+            ),
+            token_counts=token_counts,
+            position_ids=position_ids,
+            hidden_states=model.embed_exact_graph_inputs(input_ids),
+            start_layer=start_layer,
+            end_layer=end_layer,
+        )
+
+
+def test_segment_candidate_commit_rejects_duplicate_or_missing_layers():
+    _, leases, model = _multi_layer_fixture()
+    token_counts, input_ids, position_ids = _inputs()
+    slot_ids = torch.tensor(
+        [leases[0].slot_id],
+        dtype=torch.int64,
+    )
+    hidden = model.embed_exact_graph_inputs(input_ids)
+    first = model.run_exact_cuda_graph_layer_range(
+        state_slot_ids=slot_ids,
+        token_counts=token_counts,
+        position_ids=position_ids,
+        hidden_states=hidden,
+        start_layer=0,
+        end_layer=2,
+    )
+
+    with pytest.raises(ValueError, match="inventory"):
+        model.commit_exact_cuda_graph_candidates(
+            slot_ids,
+            (first.candidates,),
+        )
+    with pytest.raises(ValueError, match="duplicate"):
+        model.commit_exact_cuda_graph_candidates(
+            slot_ids,
+            (first.candidates, first.candidates),
+        )
 
 
 @pytest.mark.parametrize("failure", ("norm", "head"))
