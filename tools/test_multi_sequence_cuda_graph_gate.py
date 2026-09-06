@@ -621,6 +621,75 @@ def test_every_exact_cache_budget_blocks_admission_independently():
     )
 
 
+def test_exact_cache_phase_reset_releases_graphs_and_clears_accounting():
+    cache_module = load_exact_cache()
+    cache = cache_module.ExactCudaGraphCache(make_cache_config())
+    identity = make_identity(batch=4, width=2, splits=2)
+    rejected = make_identity(batch=2, width=1, splits=2)
+    calls = []
+
+    class Graph:
+        def reset(self):
+            calls.append("reset")
+
+    for _ in range(3):
+        cache.observe_success(identity, estimated_static_bytes=4096)
+    entry = make_entry(identity)
+    entry.graph = Graph()
+    cache.commit_capture(entry)
+    cache.reject(
+        rejected,
+        "capture_failed",
+        retained_reserved_bytes=2048,
+    )
+    cache.counters["hits"] = 7
+
+    receipt = cache.reset_phase(
+        synchronize=lambda: calls.append("synchronize"),
+    )
+
+    assert calls == ["reset", "synchronize"]
+    assert receipt["released_ready_entries"] == 1
+    assert receipt["cleared_observations"] == 1
+    assert receipt["cleared_rejections"] == 1
+    assert receipt["summary"] == {
+        "ready_entries": [],
+        "rejected": {},
+        "capturing": [],
+        "observation_counts": {},
+        "static_bytes": 0,
+        "reserved_delta_bytes": 0,
+        "total_capture_ns": 0,
+        "hits": 0,
+        "misses": 0,
+        "capture_attempts": 0,
+        "capture_successes": 0,
+        "capture_failures": 0,
+    }
+
+
+def test_exact_cache_phase_reset_rejects_active_capture_without_mutation():
+    cache_module = load_exact_cache()
+    cache = cache_module.ExactCudaGraphCache(make_cache_config())
+    identity = make_identity(batch=4, width=2, splits=2)
+    for _ in range(3):
+        decision = cache.observe_success(
+            identity,
+            estimated_static_bytes=4096,
+        )
+    assert decision.should_capture is True
+    before = cache.summary()
+
+    try:
+        cache.reset_phase(synchronize=lambda: None)
+    except RuntimeError as exc:
+        assert "capture is active" in str(exc)
+    else:
+        raise AssertionError("active capture reset was accepted")
+
+    assert cache.summary() == before
+
+
 def test_rejected_identity_is_terminal_and_exact_lookup_only():
     cache_module = load_exact_cache()
     cache = cache_module.ExactCudaGraphCache(make_cache_config())
@@ -6631,6 +6700,8 @@ if __name__ == "__main__":
         test_production_identity_requires_graph_batch_equal_active_batch,
         test_exact_cache_observes_three_eager_steps_before_capture,
         test_every_exact_cache_budget_blocks_admission_independently,
+        test_exact_cache_phase_reset_releases_graphs_and_clears_accounting,
+        test_exact_cache_phase_reset_rejects_active_capture_without_mutation,
         test_rejected_identity_is_terminal_and_exact_lookup_only,
         test_entries_do_not_share_static_tensor_objects,
         test_fallback_reason_contract_is_closed_and_complete,

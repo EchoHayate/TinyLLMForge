@@ -295,6 +295,31 @@ class ExactCudaGraphCache:
             synchronize()
         return len(entries)
 
+    def reset_phase(self, *, synchronize) -> dict:
+        if self.capturing:
+            raise RuntimeError(
+                "exact CUDA Graph cache reset rejected while "
+                "capture is active"
+            )
+        cleared_observations = len(self.observation_counts)
+        cleared_rejections = len(self.rejected)
+        released_ready_entries = self.release_ready_graphs(
+            synchronize=synchronize,
+        )
+        self.observation_counts.clear()
+        self.rejected.clear()
+        self.capturing.clear()
+        self.static_bytes = 0
+        self.reserved_delta_bytes = 0
+        self.total_capture_ns = 0
+        self.counters.clear()
+        return {
+            "released_ready_entries": released_ready_entries,
+            "cleared_observations": cleared_observations,
+            "cleared_rejections": cleared_rejections,
+            "summary": self.summary(),
+        }
+
     def summary(self) -> dict:
         counters = {
             key: self.counters[key]
