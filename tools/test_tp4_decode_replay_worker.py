@@ -768,6 +768,35 @@ def test_capture_cost_rows_preserve_duplicate_capture_evidence():
     ] == [50_000_000, 60_000_000]
 
 
+def test_capture_cost_row_ids_do_not_collide_with_dispatch_rows():
+    case = next(
+        row
+        for row in worker.contract.build_case_matrix()
+        if row["case_id"] == "Q0__r0__graph"
+    )
+    dispatch_rows = []
+    for rank in range(4):
+        row = _event(arm="graph", rank=rank)
+        row.update({
+            "row_id": (
+                f"{case['case_id']}:capture:step-2:rank-{rank}"
+            ),
+            "rank": rank,
+            "step_index": 2,
+            "capture_duration_ns": 50_000_000,
+            "capture_static_bytes": 1_000_000,
+            "capture_allocated_delta_bytes": 2_000_000,
+            "capture_reserved_delta_bytes": 3_000_000,
+        })
+        dispatch_rows.append(row)
+
+    rows = worker._capture_cost_rows(dispatch_rows, case)
+
+    assert {row["row_id"] for row in rows}.isdisjoint(
+        row["row_id"] for row in dispatch_rows
+    )
+
+
 def main() -> None:
     tests = (
         test_engine_config_differs_only_by_graph_policy,
@@ -783,6 +812,7 @@ def main() -> None:
         test_run_pair_retains_mismatch_as_correctness_evidence,
         test_capture_cost_rows_keep_case_identity,
         test_capture_cost_rows_preserve_duplicate_capture_evidence,
+        test_capture_cost_row_ids_do_not_collide_with_dispatch_rows,
     )
     for test in tests:
         test()

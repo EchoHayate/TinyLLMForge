@@ -610,7 +610,7 @@ def _capture_cost_rows(
             continue
         captures.append({
             "row_id": (
-                f"{case['case_id']}:capture:"
+                f"{case['case_id']}:capture-cost:"
                 f"step-{row['step_index']}:rank-{row['rank']}"
             ),
             "case_id": case["case_id"],
