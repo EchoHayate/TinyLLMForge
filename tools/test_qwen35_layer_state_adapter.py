@@ -95,6 +95,31 @@ def _batch_fixture():
     return pool, leases, adapter
 
 
+def _dynamic_fixture():
+    layout = HybridStateLayout((
+        HybridStateComponentSpec(
+            3,
+            "linear_convolution",
+            (4, 3),
+            torch.float32,
+        ),
+        HybridStateComponentSpec(
+            3,
+            "linear_recurrent",
+            (2, 3, 2),
+            torch.float32,
+        ),
+    ))
+    pool = HybridStateTensorPool(layout, capacity=4, device="cpu")
+    adapter = Qwen35LayerStateAdapter(pool, layer_index=3)
+    convolution = pool.component_tensor(3, "linear_convolution")
+    recurrent = pool.component_tensor(3, "linear_recurrent")
+    for slot_id in range(4):
+        convolution[slot_id].fill_(slot_id + 1)
+        recurrent[slot_id].fill_((slot_id + 1) * 10)
+    return pool, adapter
+
+
 def test_gather_returns_clones_and_commit_updates_both_components() -> None:
     pool, lease, adapter = _fixture()
     convolution = pool.component_tensor(3, "linear_convolution")
@@ -249,6 +274,115 @@ def test_batch_commit_updates_selected_rows_only() -> None:
     torch.testing.assert_close(recurrent[0], candidate_recurrent[1])
     torch.testing.assert_close(convolution[1], untouched_conv)
     torch.testing.assert_close(recurrent[1], untouched_recurrent)
+
+
+def test_dynamic_slot_tensor_redirects_gather_and_commit() -> None:
+    pool, adapter = _dynamic_fixture()
+    convolution = pool.component_tensor(3, "linear_convolution")
+    recurrent = pool.component_tensor(3, "linear_recurrent")
+    slot_ids = torch.tensor([0, 2], dtype=torch.int64)
+    pointer = slot_ids.data_ptr()
+
+    gathered_first = adapter.gather_batch_by_slot_tensor(slot_ids)
+    torch.testing.assert_close(gathered_first[0][0], convolution[0])
+    torch.testing.assert_close(gathered_first[0][1], convolution[2])
+
+    slot_ids.copy_(torch.tensor([1, 3], dtype=torch.int64))
+    assert slot_ids.data_ptr() == pointer
+    gathered_second = adapter.gather_batch_by_slot_tensor(slot_ids)
+    torch.testing.assert_close(gathered_second[0][0], convolution[1])
+    torch.testing.assert_close(gathered_second[0][1], convolution[3])
+    assert not torch.equal(gathered_first[0], gathered_second[0])
+
+    original_unselected_convolution = convolution[[0, 2]].clone()
+    original_unselected_recurrent = recurrent[[0, 2]].clone()
+    candidate_convolution = torch.full_like(gathered_second[0], 17)
+    candidate_recurrent = torch.full_like(gathered_second[1], 23)
+    adapter.commit_batch_by_slot_tensor(
+        slot_ids,
+        candidate_convolution,
+        candidate_recurrent,
+    )
+    torch.testing.assert_close(convolution[[0, 2]], original_unselected_convolution)
+    torch.testing.assert_close(recurrent[[0, 2]], original_unselected_recurrent)
+    torch.testing.assert_close(convolution[[1, 3]], candidate_convolution)
+    torch.testing.assert_close(recurrent[[1, 3]], candidate_recurrent)
+
+
+def test_dynamic_slot_tensor_validation_rejects_invalid_metadata() -> None:
+    _, adapter = _dynamic_fixture()
+    invalid_slot_ids = (
+        "not a tensor",
+        torch.tensor(0, dtype=torch.int64),
+        torch.empty(0, dtype=torch.int64),
+        torch.tensor([[0]], dtype=torch.int64),
+        torch.tensor([0], dtype=torch.int32),
+        torch.empty(1, dtype=torch.int64, device="meta"),
+    )
+    for slot_ids in invalid_slot_ids:
+        _expect_batch_error(
+            lambda slot_ids=slot_ids: (
+                adapter.gather_batch_by_slot_tensor(slot_ids)
+            ),
+            ValueError,
+            "slot_ids",
+        )
+
+    _expect_batch_error(
+        lambda: adapter.gather_batch_by_slot_tensor(
+            torch.tensor([4], dtype=torch.int64)
+        ),
+        IndexError,
+        "out of range",
+    )
+
+
+def test_dynamic_slot_tensor_rejects_invalid_candidates_before_write() -> None:
+    pool, adapter = _dynamic_fixture()
+    convolution = pool.component_tensor(3, "linear_convolution")
+    recurrent = pool.component_tensor(3, "linear_recurrent")
+    original_convolution = convolution.clone()
+    original_recurrent = recurrent.clone()
+    slot_ids = torch.tensor([1, 3], dtype=torch.int64)
+    valid_convolution, valid_recurrent = (
+        adapter.gather_batch_by_slot_tensor(slot_ids)
+    )
+    cases = (
+        (
+            valid_convolution[:1],
+            valid_recurrent,
+            "convolution_states shape",
+        ),
+        (
+            valid_convolution,
+            valid_recurrent.to(torch.float64),
+            "recurrent_states dtype",
+        ),
+        (
+            valid_convolution,
+            torch.empty(
+                valid_recurrent.shape,
+                dtype=valid_recurrent.dtype,
+                device="meta",
+            ),
+            "recurrent_states device",
+        ),
+    )
+    for candidate_convolution, candidate_recurrent, message in cases:
+        _expect_batch_error(
+            lambda candidate_convolution=candidate_convolution,
+            candidate_recurrent=candidate_recurrent: (
+                adapter.commit_batch_by_slot_tensor(
+                    slot_ids,
+                    candidate_convolution,
+                    candidate_recurrent,
+                )
+            ),
+            ValueError,
+            message,
+        )
+    torch.testing.assert_close(convolution, original_convolution)
+    torch.testing.assert_close(recurrent, original_recurrent)
 
 
 def _expect_batch_error(function, error_type, message: str) -> None:

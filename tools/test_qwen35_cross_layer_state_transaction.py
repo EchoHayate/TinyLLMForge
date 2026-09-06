@@ -170,6 +170,69 @@ def test_commit_updates_all_selected_layers_and_preserves_unselected_rows():
         torch.testing.assert_close(current[layer_index][1][1], original[layer_index][1][1])
 
 
+def test_pool_index_transaction_redirects_every_layer() -> None:
+    pool, _, _, transaction = _fixture()
+    original = _snapshots(pool)
+    slot_ids = torch.tensor([0, 2], dtype=torch.int64)
+    pointer = slot_ids.data_ptr()
+
+    first = transaction.gather_by_slot_tensor(slot_ids)
+    slot_ids.copy_(torch.tensor([1, 2], dtype=torch.int64))
+    assert slot_ids.data_ptr() == pointer
+    second = transaction.gather_by_slot_tensor(slot_ids)
+    for first_pair, second_pair in zip(first, second):
+        assert not torch.equal(first_pair[0], second_pair[0])
+        assert not torch.equal(first_pair[1], second_pair[1])
+
+    candidates = tuple(
+        (
+            torch.full_like(convolution, 31 + layer_index),
+            torch.full_like(recurrent, 41 + layer_index),
+        )
+        for layer_index, (convolution, recurrent) in enumerate(second)
+    )
+    transaction.commit_by_slot_tensor(slot_ids, candidates)
+    current = _snapshots(pool)
+    for layer_index, candidate_pair in enumerate(candidates):
+        torch.testing.assert_close(
+            current[layer_index][0][1],
+            candidate_pair[0][0],
+        )
+        torch.testing.assert_close(
+            current[layer_index][0][2],
+            candidate_pair[0][1],
+        )
+        torch.testing.assert_close(
+            current[layer_index][0][0],
+            original[layer_index][0][0],
+        )
+        torch.testing.assert_close(
+            current[layer_index][1][0],
+            original[layer_index][1][0],
+        )
+
+
+def test_pool_index_transaction_rejects_candidate_shape_before_write():
+    pool, _, _, transaction = _fixture()
+    original = _snapshots(pool)
+    slot_ids = torch.tensor([0, 2], dtype=torch.int64)
+    candidates = transaction.gather_by_slot_tensor(slot_ids)
+    invalid = (
+        candidates[0],
+        (candidates[1][0][:1], candidates[1][1]),
+    )
+
+    _expect_error(
+        lambda: transaction.commit_by_slot_tensor(slot_ids, invalid),
+        ValueError,
+        "shape",
+    )
+    current = _snapshots(pool)
+    for current_pair, original_pair in zip(current, original):
+        torch.testing.assert_close(current_pair[0], original_pair[0])
+        torch.testing.assert_close(current_pair[1], original_pair[1])
+
+
 def _expect_error(function, error_type, message):
     try:
         function()

@@ -71,6 +71,33 @@ class Qwen35LayerStateAdapter:
             ]),
         )
 
+    def _validate_slot_tensor(
+        self,
+        slot_ids: torch.Tensor,
+    ) -> None:
+        if not isinstance(slot_ids, torch.Tensor):
+            raise ValueError("slot_ids must be a tensor")
+        if slot_ids.ndim != 1 or slot_ids.numel() == 0:
+            raise ValueError(
+                "slot_ids must be a non-empty rank-one tensor"
+            )
+        if slot_ids.dtype != torch.int64:
+            raise ValueError("slot_ids must use torch.int64")
+        if slot_ids.device != self.convolution.device:
+            raise ValueError(
+                "slot_ids must share the state-pool device"
+            )
+
+    def gather_batch_by_slot_tensor(
+        self,
+        slot_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._validate_slot_tensor(slot_ids)
+        return (
+            torch.index_select(self.convolution, 0, slot_ids),
+            torch.index_select(self.recurrent, 0, slot_ids),
+        )
+
     @staticmethod
     def _validate_candidate(
         candidate: torch.Tensor,
@@ -196,3 +223,34 @@ class Qwen35LayerStateAdapter:
                     original_recurrent[batch_index]
                 )
             raise
+
+    def commit_batch_by_slot_tensor(
+        self,
+        slot_ids: torch.Tensor,
+        convolution_states: torch.Tensor,
+        recurrent_states: torch.Tensor,
+    ) -> None:
+        self._validate_slot_tensor(slot_ids)
+        batch_size = slot_ids.shape[0]
+        self._validate_batch_candidate(
+            convolution_states,
+            batch_size=batch_size,
+            reference=self.convolution[0],
+            name="convolution_states",
+        )
+        self._validate_batch_candidate(
+            recurrent_states,
+            batch_size=batch_size,
+            reference=self.recurrent[0],
+            name="recurrent_states",
+        )
+        self.convolution.index_copy_(
+            0,
+            slot_ids,
+            convolution_states,
+        )
+        self.recurrent.index_copy_(
+            0,
+            slot_ids,
+            recurrent_states,
+        )

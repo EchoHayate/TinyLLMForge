@@ -449,6 +449,38 @@ def test_exact_cuda_graph_step_matches_run_step_output_and_state():
         torch.testing.assert_close(graph_state, eager_state)
 
 
+def test_pool_index_graph_step_matches_lease_step_output_and_state():
+    graph_pool, graph_leases, _, _, graph_model = _fixture()
+    eager_pool, eager_leases, _, _, eager_model = _fixture()
+    token_counts, input_ids, position_ids = _inputs()
+    state_slot_ids = torch.tensor(
+        [graph_leases[0].slot_id],
+        dtype=torch.int64,
+    )
+
+    graph_logits = (
+        graph_model.run_exact_cuda_graph_step_by_pool_index(
+            state_slot_ids,
+            token_counts,
+            input_ids,
+            position_ids,
+        )
+    )
+    _, eager_logits = eager_model.run_step(
+        (eager_leases[0],),
+        token_counts,
+        input_ids,
+        position_ids,
+    )
+
+    torch.testing.assert_close(graph_logits, eager_logits)
+    for graph_state, eager_state in zip(
+        graph_pool._tensors.values(),
+        eager_pool._tensors.values(),
+    ):
+        torch.testing.assert_close(graph_state, eager_state)
+
+
 @pytest.mark.parametrize("failure", ("norm", "head"))
 def test_prepare_step_failure_leaves_live_state_unchanged(failure):
     pool, leases, final_norm, head, model = _fixture()

@@ -385,3 +385,95 @@ class Qwen35PackedForCausalLM(nn.Module):
             position_ids,
         )
         return logits
+
+    def prepare_step_by_pool_index(
+        self,
+        state_slot_ids: torch.Tensor,
+        token_counts: tuple[int, ...],
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> Qwen35PreparedModelStep:
+        self.layer_stack.state_transaction.adapters[
+            0
+        ]._validate_slot_tensor(state_slot_ids)
+        if not isinstance(token_counts, tuple) or not token_counts:
+            raise ValueError("token_counts must be a non-empty tuple")
+        if len(token_counts) != state_slot_ids.shape[0]:
+            raise ValueError(
+                "slot_ids and token_counts batch size must match"
+            )
+        if any(
+            isinstance(token_count, bool)
+            or not isinstance(token_count, int)
+            or token_count <= 0
+            for token_count in token_counts
+        ):
+            raise ValueError(
+                "token_counts must contain positive integers"
+            )
+        if not isinstance(input_ids, torch.Tensor):
+            raise ValueError("input_ids must be a tensor")
+        if input_ids.ndim != 1:
+            raise ValueError("input_ids must be rank one")
+        if input_ids.dtype not in (torch.int32, torch.int64):
+            raise ValueError("input_ids must use an integer dtype")
+        if sum(token_counts) != input_ids.shape[0]:
+            raise ValueError(
+                "token_counts sum must match input_ids token count"
+            )
+
+        with profile_layer(
+            len(self.layer_stack.layers),
+            "embedding",
+        ):
+            hidden_states = self.embed_tokens(input_ids)
+        self._validate_hidden_output(
+            hidden_states,
+            token_count=input_ids.shape[0],
+            name="embed_tokens",
+        )
+        prepared_stack = (
+            self.layer_stack.prepare_transactional_by_pool_index(
+                state_slot_ids,
+                token_counts,
+                position_ids,
+                hidden_states,
+            )
+        )
+        hidden_states = prepared_stack.hidden_states
+        normalized = self.final_norm(hidden_states)
+        self._validate_hidden_output(
+            normalized,
+            token_count=input_ids.shape[0],
+            name="final_norm",
+            reference=hidden_states,
+        )
+        logits = self.lm_head(normalized)
+        self._validate_logits(logits, normalized)
+        return Qwen35PreparedModelStep(
+            leases=(),
+            token_counts=token_counts,
+            normalized=normalized,
+            logits=logits,
+            final_candidates=prepared_stack.final_candidates,
+        )
+
+    def run_exact_cuda_graph_step_by_pool_index(
+        self,
+        state_slot_ids: torch.Tensor,
+        token_counts: tuple[int, ...],
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor | None:
+        prepared = self.prepare_step_by_pool_index(
+            state_slot_ids,
+            token_counts,
+            input_ids,
+            position_ids,
+        )
+        self.layer_stack.state_transaction.commit_by_slot_tensor(
+            state_slot_ids,
+            prepared.final_candidates,
+        )
+        prepared.state = "committed"
+        return prepared.logits

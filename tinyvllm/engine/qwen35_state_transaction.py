@@ -37,10 +37,19 @@ class Qwen35CrossLayerStateTransaction:
             for adapter in self.adapters
         )
 
+    def gather_by_slot_tensor(
+        self,
+        slot_ids: torch.Tensor,
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
+        return tuple(
+            adapter.gather_batch_by_slot_tensor(slot_ids)
+            for adapter in self.adapters
+        )
+
     @staticmethod
-    def _validate_candidates(
+    def _validate_candidates_by_batch_size(
         adapters: tuple[Qwen35LayerStateAdapter, ...],
-        slot_ids: tuple[int, ...],
+        batch_size: int,
         candidates: tuple[
             tuple[torch.Tensor, torch.Tensor],
             ...,
@@ -52,7 +61,6 @@ class Qwen35CrossLayerStateTransaction:
             raise ValueError(
                 "candidate count must match adapter count"
             )
-        batch_size = len(slot_ids)
         for adapter, candidate_pair in zip(adapters, candidates):
             if (
                 not isinstance(candidate_pair, tuple)
@@ -65,15 +73,30 @@ class Qwen35CrossLayerStateTransaction:
             adapter._validate_batch_candidate(
                 convolution_states,
                 batch_size=batch_size,
-                reference=adapter.convolution[slot_ids[0]],
+                reference=adapter.convolution[0],
                 name="convolution_states",
             )
             adapter._validate_batch_candidate(
                 recurrent_states,
                 batch_size=batch_size,
-                reference=adapter.recurrent[slot_ids[0]],
+                reference=adapter.recurrent[0],
                 name="recurrent_states",
             )
+
+    @staticmethod
+    def _validate_candidates(
+        adapters: tuple[Qwen35LayerStateAdapter, ...],
+        slot_ids: tuple[int, ...],
+        candidates: tuple[
+            tuple[torch.Tensor, torch.Tensor],
+            ...,
+        ],
+    ) -> None:
+        Qwen35CrossLayerStateTransaction._validate_candidates_by_batch_size(
+            adapters,
+            len(slot_ids),
+            candidates,
+        )
 
     def commit(
         self,
@@ -137,3 +160,28 @@ class Qwen35CrossLayerStateTransaction:
                         original_recurrent[batch_index]
                     )
             raise
+
+    def commit_by_slot_tensor(
+        self,
+        slot_ids: torch.Tensor,
+        candidates: tuple[
+            tuple[torch.Tensor, torch.Tensor],
+            ...,
+        ],
+    ) -> None:
+        for adapter in self.adapters:
+            adapter._validate_slot_tensor(slot_ids)
+        self._validate_candidates_by_batch_size(
+            self.adapters,
+            slot_ids.shape[0],
+            candidates,
+        )
+        for adapter, candidate_pair in zip(
+            self.adapters,
+            candidates,
+        ):
+            adapter.commit_batch_by_slot_tensor(
+                slot_ids,
+                candidate_pair[0],
+                candidate_pair[1],
+            )
