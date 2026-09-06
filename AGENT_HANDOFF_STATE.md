@@ -52318,7 +52318,7 @@ capture duration before every rank commits the captured entry. The change was
 TDD-verified and pushed to `origin/feat/kv-sparse-attention`; local and remote
 branch SHA matched before r48 launched.
 
-r48 completed the full matrix and the complete evidence pipeline:
+r48 completed the full matrix and the producer/dual-verifier/cleanup pipeline:
 
 ```text
 run tag:                         20260906-qwen38-tp4-decode-replay-r48-full
@@ -52368,8 +52368,16 @@ Current terminal claim:
 ```text
 r48 is complete operational evidence and complete dual-verifier evidence.
 r48 is incomplete mandatory capture-cost evidence.
+r48 is also missing the frozen-spec report.md artifact.
 r48 does not authorize Stage 1 and proves no performance benefit.
 ```
+
+The final prompt-to-artifact audit found that the qualification spec lists
+`report.md` as required terminal evidence, but neither the assembler nor the
+verifier currently generates or requires it. No `report.md` exists in the
+downloaded r48 attempt. This is a verifier/protocol blind spot. Do not mutate
+r48 or rebuild its manifest after verification to hide the omission; fix the
+producer and verifier under TDD for a future fresh tag.
 
 The next optimization question is no longer cross-rank state consistency.
 It is whether capture latency and lease-rotation identity churn can be reduced

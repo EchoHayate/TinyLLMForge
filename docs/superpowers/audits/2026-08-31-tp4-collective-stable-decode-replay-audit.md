@@ -1528,10 +1528,15 @@ lease-rotation recapture or budget rejection. Therefore r48 must remain
 | Remote verifier | `INCOMPLETE`; hashes/producer/summary matched | complete |
 | Local frozen-source verifier | `INCOMPLETE`; hashes/producer/summary matched | complete |
 | Post-verification manifest | both recorded hashes independently matched | complete |
+| Human-readable terminal report | frozen spec requires `report.md`; no such file exists in the downloaded attempt | missing; verifier blind spot |
 | Cleanup | `CLEAN`; four zero exits; no owned child or exact-tag residue | complete |
 | Stage-1 authorization | producer and both verifiers prohibit authorization | prohibited |
 
 Final classification: r48 is a complete operational run with a complete
 producer/verifier/cleanup chain, but an incomplete mandatory capture-cost
-matrix. It is valid negative diagnostic evidence only. It does not establish
-correctness, replay coverage, performance benefit, or Stage-1 authorization.
+matrix and no frozen-spec `report.md`. The current assembler and verifier do
+not generate or require that report, which is a protocol-completeness blind
+spot discovered by the final prompt-to-artifact audit. r48 is valid negative
+diagnostic evidence only. It does not establish correctness, replay coverage,
+performance benefit, or Stage-1 authorization, and it must not be mutated
+after verification to manufacture the missing report.
