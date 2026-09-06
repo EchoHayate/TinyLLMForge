@@ -52300,3 +52300,79 @@ r45 is terminal diagnostic evidence and must not be relabelled as a valid
 dual-verifier run. The next step is to commit and push the protocol/retry fix,
 bind the supervisor to that exact HEAD, and launch a fresh shared-capacity tag
 for the full 30-case/15-pair producer plus dual-verifier chain.
+
+## 2026-09-06 TP4 shared-capacity r46-r48 terminal checkpoint
+
+r46 and r47 both failed closed in `Q0__r0__graph` after shared-capacity
+admission on GPUs `1,2,3,4`. r46 exposed a generic cross-rank graph-observation
+disagreement. r47 added exact disagreement evidence:
+
+```text
+rank 0/1: cache_state=rejected, fallback_reason=single_capture_budget
+rank 2/3: cache_state=observing, fallback_reason=cold_identity
+```
+
+The cause was rank-local capture-duration budget evaluation. Revision
+`88b521d07eb1a7cf78882c3cfcfbd5beecc0f379` now takes a TP-wide maximum
+capture duration before every rank commits the captured entry. The change was
+TDD-verified and pushed to `origin/feat/kv-sparse-attention`; local and remote
+branch SHA matched before r48 launched.
+
+r48 completed the full matrix and the complete evidence pipeline:
+
+```text
+run tag:                         20260906-qwen38-tp4-decode-replay-r48-full
+source revision:                 88b521d07eb1a7cf78882c3cfcfbd5beecc0f379
+source tree SHA256:              e9a79cda1d59ca7a412500c3702f307bb3d9fd7cb7a37466d274748fbd411d18
+model revision:                  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+admission:                       shared_capacity / DIAGNOSTIC_ONLY
+selected GPUs:                   1,2,3,4
+cases:                           30/30
+pairs:                           15/15
+exact pairs:                     11/15
+mismatching pairs:                4/15, all Q0 r0-r3
+replay coverage:                 0.26036745406824147
+producer:                        INCOMPLETE
+remote verifier:                 INCOMPLETE
+local frozen-source verifier:    INCOMPLETE
+failed gate:                     capture_cost_case_matrix_incomplete
+manifest hashes:                 all matched
+cleanup:                         CLEAN
+rank exits:                      4 x 0
+process groups destroyed:        4/4
+exact-tag scans:                 empty
+owned children remaining:        0
+controller return code:          0
+```
+
+The collective-duration fix is confirmed: `Q0__r0__graph` gave all ranks the
+same `1,979,208,443 ns` budget observation, all ranks entered `ready`, and
+graph replay occurred without later cross-rank disagreement.
+
+r48 remains `INCOMPLETE` for a separate, correctly fail-closed reason. Its
+capture-cost file has 44 rows for 11/15 graph cases. The missing cases are
+`Q1__r1__graph` through `Q1__r4__graph`. Their warmup captures took about
+7.30-8.77 seconds, exceeded the frozen two-second single-capture budget, and
+consumed the five-second total budget. The measured phase then rejected
+capture before attempting it, so no measured capture-cost row existed.
+
+Do not repair r48 by copying warmup rows into the measured capture-cost
+matrix. The measured-only rule intentionally prevents warmup evidence from
+concealing lease-rotation recapture cost or measured budget rejection.
+Do not claim the large Q0 timing ratios as a performance win: four of five Q0
+pairs are token-incorrect, while Q1 and Q2 are exact only because their graph
+arms executed entirely eager after budget rejection.
+
+Current terminal claim:
+
+```text
+r48 is complete operational evidence and complete dual-verifier evidence.
+r48 is incomplete mandatory capture-cost evidence.
+r48 does not authorize Stage 1 and proves no performance benefit.
+```
+
+The next optimization question is no longer cross-rank state consistency.
+It is whether capture latency and lease-rotation identity churn can be reduced
+enough to keep measured captures inside the frozen budget without weakening
+the two-second/five-second gates. Any runtime change requires a new TDD cycle,
+a new source revision, and a fresh run tag; r48 must remain immutable.

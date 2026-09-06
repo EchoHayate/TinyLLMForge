@@ -1385,3 +1385,153 @@ live-code producer verdict, but it cannot satisfy the frozen-source dual
 verifier contract because its source revision predates this protocol fix.
 It must not be relabelled. A fresh tag from the committed corrected source is
 required for the complete producer/remote-verifier/local-verifier chain.
+
+## 18. 2026-09-06 r46-r48 collective-budget reconciliation
+
+r46 and r47 both admitted the same shared-capacity GPU set `1,2,3,4` with the
+required `DIAGNOSTIC_ONLY` claim boundary. Both stopped in the first
+`Q0__r0__graph` arm and cleaned all exact-tag-owned processes:
+
+| Run | Source revision | Terminal observation | Cleanup |
+|---|---|---|---|
+| r46 | `c324575ad3a1e5313eeb81fcee7c28fd61c0c246` | generic `graph observations disagree across ranks` | no surviving exact-tag process; rank lifecycle not proven |
+| r47 | `1c72e4d06eba10599a304b08b9c9cfe1f1d28395` | rank 0/1 reported `rejected/single_capture_budget` while rank 2/3 still reported `observing/cold_identity` | no surviving exact-tag process; rank lifecycle not proven |
+
+r47's expanded disagreement payload established the root cause. Every TP rank
+measured CUDA Graph capture duration locally and independently applied the
+two-second single-capture ceiling. Small timing variation therefore allowed
+different ranks to commit different cache states for the same graph identity.
+The worker correctly failed closed instead of continuing with divergent
+collective control flow.
+
+Revision `88b521d07eb1a7cf78882c3cfcfbd5beecc0f379` added one TP-wide
+`MAX all_reduce` after all ranks had successfully captured and before cache
+commit. Every rank now commits the slowest rank's capture duration. The
+single-rank path remains unchanged, and local capture exceptions remain
+fail-closed rather than being hidden by the collective.
+
+TDD and pre-run verification for the correction:
+
+```text
+new regression RED:              local 1.9 s duration committed without TP consensus
+focused model-runner GREEN:      4 passed
+complete model-runner suite:     207 passed, 1 skipped
+TP4 contract/worker/controller/
+assembler/verifier suite:        73 passed
+supervisor suite:                15 passed
+combined regression:             295 passed, 1 skipped
+py_compile:                      passed
+git diff --check:                passed
+code review:                     no P0-P2 finding
+```
+
+### 18.1 r48 terminal evidence
+
+r48 froze the pushed revision above and completed the entire isolated-arm
+matrix:
+
+```text
+run tag:                         20260906-qwen38-tp4-decode-replay-r48-full
+model revision:                  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+source revision:                 88b521d07eb1a7cf78882c3cfcfbd5beecc0f379
+source tree SHA256:              e9a79cda1d59ca7a412500c3702f307bb3d9fd7cb7a37466d274748fbd411d18
+selected GPUs:                   1,2,3,4
+admission mode:                  shared_capacity
+claim boundary:                  DIAGNOSTIC_ONLY
+cases:                           30/30
+pairs:                           15/15
+rank exits:                      4 x 0
+process groups destroyed:        4/4
+cleanup:                         CLEAN
+exact-tag scans:                 3 x empty
+owned children remaining:        0
+controller return code:          0
+```
+
+The collective-duration correction worked. In the first graph case, all four
+ranks used the same `1,979,208,443 ns` cache-budget observation, entered
+`ready`, and replayed the graph. No later rank-state disagreement occurred.
+
+The complete correctness matrix contains 11 exact pairs and four mismatches:
+
+```text
+Q0: 1/5 exact; r0-r3 mismatch, r4 exact
+Q1: 5/5 exact
+Q2: 5/5 exact
+```
+
+Replay was concentrated in the first four Q0 graph cases:
+
+```text
+Q0 r0-r3:                       496/508 eligible steps replayed per case
+Q0 r4:                          0/508; single_capture_budget
+Q1:                             0/2540; single/total capture budget
+Q2:                             0/2540; single_capture_budget
+aggregate replay coverage:      0.26036745406824147
+```
+
+The Q0 graph-arm medians were diagnostically faster, but four of five Q0 pairs
+were token-incorrect. Q1 and Q2 were exact because their graph arms fell back
+entirely to eager execution. These observations cannot support a performance
+claim.
+
+### 18.2 Why the verified result is INCOMPLETE
+
+All three authorities agree:
+
+```text
+producer:                        INCOMPLETE
+remote independent verifier:     INCOMPLETE
+local frozen-source verifier:    INCOMPLETE
+failed gate:                     capture_cost_case_matrix_incomplete
+verified input hashes:           true
+producer classification match:   true
+summary match:                   true
+```
+
+The final bundle contains 44 capture-cost rows covering 11 of 15 graph cases.
+The missing cases are:
+
+```text
+Q1__r1__graph
+Q1__r2__graph
+Q1__r3__graph
+Q1__r4__graph
+```
+
+For each missing case, the warmup capture took approximately 7.30-8.77 seconds
+after TP-wide max synchronization. That exceeded the frozen single-capture
+ceiling and also consumed the five-second total-capture budget. The measured
+phase consequently reported `total_capture_budget` without attempting another
+capture, so it could not produce the required measured capture-cost row.
+
+This is not a missing workload, process crash, transport failure, or hash
+failure. It is a fail-closed interaction between the frozen measured-only
+capture-cost contract and the runtime's cumulative capture budget. The
+measured-only rule was introduced specifically so warmup cost could not hide
+lease-rotation recapture or budget rejection. Therefore r48 must remain
+`INCOMPLETE`; warmup rows must not be substituted after the fact.
+
+### 18.3 Prompt-to-artifact completion checklist
+
+| Requirement | r48 evidence | Result |
+|---|---|---|
+| Frozen pushed source | `source_identity.json`; revision `88b521d...` | complete |
+| Approved remote storage | all remote paths below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | complete |
+| Shared-capacity admission | GPUs `1,2,3,4`; baseline PID identity retained | complete, diagnostic only |
+| Complete matrix | `process_receipts.json`: 30 zero-exit cases; 15 correctness rows | complete |
+| Cross-rank graph state | no disagreement after TP-wide max-duration commit | complete |
+| Exact-token correctness | 11/15 exact; four Q0 mismatches | failed |
+| Replay mechanism | aggregate coverage `0.26036745406824147` | below 0.80 gate |
+| Capture-cost inventory | 11/15 graph cases; four Q1 measured rows absent | incomplete |
+| Manifest integrity | all 20 final-bundle hashes independently matched | complete |
+| Remote verifier | `INCOMPLETE`; hashes/producer/summary matched | complete |
+| Local frozen-source verifier | `INCOMPLETE`; hashes/producer/summary matched | complete |
+| Post-verification manifest | both recorded hashes independently matched | complete |
+| Cleanup | `CLEAN`; four zero exits; no owned child or exact-tag residue | complete |
+| Stage-1 authorization | producer and both verifiers prohibit authorization | prohibited |
+
+Final classification: r48 is a complete operational run with a complete
+producer/verifier/cleanup chain, but an incomplete mandatory capture-cost
+matrix. It is valid negative diagnostic evidence only. It does not establish
+correctness, replay coverage, performance benefit, or Stage-1 authorization.
