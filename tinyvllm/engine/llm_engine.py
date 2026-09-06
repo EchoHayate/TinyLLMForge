@@ -1207,6 +1207,83 @@ class LLMEngine:
             )
         return tuple(rows[rank] for rank in expected)
 
+    def reset_exact_cuda_graph_cache(self, *, timeout_s):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "reset_exact_cuda_graph_cache",
+                timeout_s=timeout_s,
+            )
+        )
+        ranked = [(0, local_result)]
+        ranked.extend(
+            (ack.rank, ack.result)
+            for ack in worker_acks
+        )
+        rows = {}
+        reference = None
+        expected_summary = {
+            "ready_entries": [],
+            "rejected": {},
+            "capturing": [],
+            "observation_counts": {},
+            "static_bytes": 0,
+            "reserved_delta_bytes": 0,
+            "total_capture_ns": 0,
+            "hits": 0,
+            "misses": 0,
+            "capture_attempts": 0,
+            "capture_successes": 0,
+            "capture_failures": 0,
+        }
+        for outer_rank, row in ranked:
+            if (
+                not isinstance(row, dict)
+                or row.get("rank") != outer_rank
+                or outer_rank in rows
+            ):
+                raise RuntimeError(
+                    "exact CUDA Graph cache reset "
+                    "acknowledgement is invalid"
+                )
+            for field in (
+                "released_ready_entries",
+                "cleared_observations",
+                "cleared_rejections",
+            ):
+                value = row.get(field)
+                if (
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < 0
+                ):
+                    raise RuntimeError(
+                        "exact CUDA Graph cache reset "
+                        "acknowledgement is invalid"
+                    )
+            if row.get("summary") != expected_summary:
+                raise RuntimeError(
+                    "exact CUDA Graph cache reset post-reset "
+                    "summary is not empty"
+                )
+            non_rank = {
+                key: value
+                for key, value in row.items()
+                if key != "rank"
+            }
+            if reference is None:
+                reference = non_rank
+            elif non_rank != reference:
+                raise RuntimeError(
+                    "exact CUDA Graph cache reset ranks disagree"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise RuntimeError(
+                "exact CUDA Graph cache reset ranks are incomplete"
+            )
+        return tuple(rows[rank] for rank in expected)
+
     def finalize_decode_internal_profile(
         self,
         *,

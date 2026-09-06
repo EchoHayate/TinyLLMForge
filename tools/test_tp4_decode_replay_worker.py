@@ -112,6 +112,7 @@ class _FakeEngine:
         self.exit_calls = 0
         self.reset_profile_calls = 0
         self.clear_prefix_calls = 0
+        self.phase_boundary_calls = []
         self._requests = []
         self._step_index = 0
         self._finished = True
@@ -186,6 +187,7 @@ class _FakeEngine:
     def reset_decode_internal_profile(self, *, timeout_s):
         assert timeout_s > 0
         assert self._finished is True
+        self.phase_boundary_calls.append("reset_profile")
         self.reset_profile_calls += 1
         return tuple(
             {
@@ -199,8 +201,38 @@ class _FakeEngine:
     def clear_reusable_prefix_cache(self):
         assert self._finished is True
         assert self.reset_profile_calls == 0
+        self.phase_boundary_calls.append("clear_prefix")
         self.clear_prefix_calls += 1
         return 4
+
+    def reset_exact_cuda_graph_cache(self, *, timeout_s):
+        assert timeout_s > 0
+        assert self._finished is True
+        self.phase_boundary_calls.append("reset_graph_cache")
+        summary = {
+            "ready_entries": [],
+            "rejected": {},
+            "capturing": [],
+            "observation_counts": {},
+            "static_bytes": 0,
+            "reserved_delta_bytes": 0,
+            "total_capture_ns": 0,
+            "hits": 0,
+            "misses": 0,
+            "capture_attempts": 0,
+            "capture_successes": 0,
+            "capture_failures": 0,
+        }
+        return tuple(
+            {
+                "rank": rank,
+                "released_ready_entries": 0,
+                "cleared_observations": 0,
+                "cleared_rejections": 0,
+                "summary": dict(summary),
+            }
+            for rank in range(4)
+        )
 
     def finalize_decode_internal_profile(self, *, timeout_s):
         assert timeout_s > 0
@@ -231,6 +263,7 @@ class _FakeEngine:
 
     def reset_peak_memory_stats(self, *, timeout_s):
         assert timeout_s > 0
+        self.phase_boundary_calls.append("reset_peak")
         return tuple({"rank": rank} for rank in range(4))
 
     def memory_snapshots(self, *, timeout_s):
@@ -545,6 +578,12 @@ def test_run_arm_emits_complete_measured_evidence_and_cleanup():
     } == {20_000_000}
     assert engines[0].clear_prefix_calls == 1
     assert engines[0].reset_profile_calls == 1
+    assert engines[0].phase_boundary_calls == [
+        "clear_prefix",
+        "reset_graph_cache",
+        "reset_profile",
+        "reset_peak",
+    ]
     assert engines[0].exit_calls == 1
 
 

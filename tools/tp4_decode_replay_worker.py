@@ -692,6 +692,9 @@ def run_arm(
             reset_sequence_ids=reset_sequence_ids,
         )
         engine.clear_reusable_prefix_cache()
+        engine.reset_exact_cuda_graph_cache(
+            timeout_s=float(timeout_s),
+        )
         engine.reset_decode_internal_profile(timeout_s=float(timeout_s))
         engine.reset_peak_memory_stats(timeout_s=float(timeout_s))
         measured = _run_request_batch(
