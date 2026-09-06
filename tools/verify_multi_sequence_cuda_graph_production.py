@@ -193,9 +193,18 @@ def _identity_from_fields(fields: dict):
         "head_dim",
         "page_block_size",
         "max_seqlen_q",
+        "execution_protocol",
+        "state_schema_sha256",
+        "lease_seal",
     }
     if not isinstance(fields, dict) or set(fields) != required:
         raise ValueError("identity fields are incomplete")
+    if (
+        fields["execution_protocol"] != "forward_v1"
+        or fields["state_schema_sha256"] != ""
+        or fields["lease_seal"] != ""
+    ):
+        raise ValueError("production identity protocol is invalid")
     inputs = split_policy.FlashAttentionSplitInputs(
         batch_size=int(fields["active_batch_size"]),
         num_query_heads=int(fields["num_query_heads"]),
@@ -211,6 +220,9 @@ def _identity_from_fields(fields: dict):
         inputs=inputs,
         flash_attn_version=str(fields["flash_attn_version"]),
         require_exact_batch=True,
+        execution_protocol=str(fields["execution_protocol"]),
+        state_schema_sha256=str(fields["state_schema_sha256"]),
+        lease_seal=str(fields["lease_seal"]),
     )
     if identity.effective_num_splits != int(
         fields["effective_num_splits"]

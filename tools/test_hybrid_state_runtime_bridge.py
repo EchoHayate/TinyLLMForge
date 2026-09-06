@@ -93,10 +93,34 @@ HybridStateLease = hybrid_state.HybridStateLease
 HybridStateRuntimeBridge = hybrid_state.HybridStateRuntimeBridge
 HybridStateTensorPool = hybrid_state.HybridStateTensorPool
 
+
+def build_engine_speculative_partition(
+    record,
+    seqs,
+    *,
+    expected_schedule_generation,
+):
+    del record
+    return SimpleNamespace(
+        schedule_generation=expected_schedule_generation,
+        selected_sequence_ids=(),
+        suppressed_sequence_ids=tuple(
+            sequence.seq_id for sequence in seqs
+        ),
+        selected_sequences=(),
+        suppressed_sequences=seqs,
+    )
+
+
 step = load_class_method(
     "tinyvllm/engine/llm_engine.py",
     "LLMEngine",
     "step",
+    {
+        "build_engine_speculative_partition": (
+            build_engine_speculative_partition
+        ),
+    },
 )
 exit_engine = load_class_method(
     "tinyvllm/engine/llm_engine.py",
@@ -157,6 +181,8 @@ def make_sequence():
 
 class FakeScheduler:
     last_policy_branch = "legacy_prefill"
+    last_speculative_selection = None
+    schedule_generation = 1
 
     def __init__(self, sequence, released):
         self.sequence = sequence
@@ -231,6 +257,12 @@ def make_engine(sequence, released, runner):
     )
 
 
+def test_llm_engine_step_fixture_provides_speculative_partition_builder():
+    assert callable(
+        step.__globals__["build_engine_speculative_partition"]
+    )
+
+
 def test_llm_engine_forwards_release_events_with_run():
     sequence = make_sequence()
     released = (HybridStateLease(0, 1, 16),)
@@ -241,7 +273,7 @@ def test_llm_engine_forwards_release_events_with_run():
     assert num_tokens == 2
     assert runner.calls == [(
         "run",
-        ([sequence], True, True, None, released),
+        ([sequence], True, True, None, released, ()),
     )]
     assert engine.scheduler.restored == []
 
