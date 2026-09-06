@@ -435,6 +435,9 @@ def build_plan(
         "raw_root": f"{attempt_root}/raw",
         "bundle_root": f"{attempt_root}/final_bundle",
         "controller_root": f"{attempt_root}/controller",
+        "capture_receipt_root": (
+            f"{runtime_root}/capture-receipts"
+        ),
         "worker_stdout_path": (
             f"{attempt_root}/controller/worker.stdout"
         ),
@@ -471,6 +474,10 @@ def build_plan(
     }
     if (
         not all(_below(value, REMOTE_ROOT) for value in paths.values())
+        or not all(
+            _below(value, attempt_root)
+            for value in paths.values()
+        )
         or not all(
             _below(value, attempt_root)
             for value in environment.values()
@@ -564,6 +571,10 @@ def _validate_plan(plan: object) -> dict:
         or attempt_root != f"{REMOTE_ROOT}/{run_tag}"
         or not all(
             _below(value, REMOTE_ROOT)
+            for value in plan.get("paths", {}).values()
+        )
+        or not all(
+            _below(value, attempt_root)
             for value in plan.get("paths", {}).values()
         )
         or not all(
@@ -888,7 +899,14 @@ import subprocess
 import sys
 import time
 
-source_root, model_root, raw_root, run_tag, admission_json = sys.argv[1:]
+(
+    source_root,
+    model_root,
+    raw_root,
+    capture_receipt_root,
+    run_tag,
+    admission_json,
+) = sys.argv[1:]
 sys.path[:0] = [source_root, str(Path(source_root) / "tools")]
 import torch
 import tp4_decode_replay_contract as contract
@@ -959,6 +977,7 @@ for pair_id in pair_ids:
         case_id = case["case_id"]
         environment = os.environ.copy()
         environment["TINYVLLM_DIST_PORT"] = str(port)
+        environment["TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"] = str(Path(capture_receipt_root) / case_id)
         process_logs = raw / "process-logs"
         process_logs.mkdir(parents=True, exist_ok=True)
         stdout_path = process_logs / f"{case_id}.stdout"
@@ -1814,6 +1833,7 @@ class ProductionAdapter:
             plan["paths"]["source_root"],
             MODEL_ROOT,
             plan["paths"]["raw_root"],
+            plan["paths"]["capture_receipt_root"],
             plan["run_tag"],
             admission_payload,
         ]

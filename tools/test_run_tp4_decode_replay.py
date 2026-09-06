@@ -85,6 +85,10 @@ def test_plan_freezes_paths_model_and_four_clean_gpus():
         f"{plan['paths']['source_root']}:"
         f"{plan['paths']['source_root']}/tools"
     )
+    assert plan["paths"]["capture_receipt_root"] == (
+        f"{plan['paths']['attempt_root']}/runtime/"
+        "capture-receipts"
+    )
     assert all(
         PurePosixPath(value).is_relative_to(approved)
         for key, value in plan["paths"].items()
@@ -212,6 +216,18 @@ def test_plan_rejects_source_drift_and_unsafe_run_tag():
     _expect_error(
         lambda: _plan(run_tag="../escape"),
         "run tag",
+    )
+
+
+def test_plan_rejects_capture_receipt_root_outside_attempt():
+    plan = _plan()
+    plan["paths"]["capture_receipt_root"] = (
+        f"{REMOTE_ROOT}/other-attempt/runtime/capture-receipts"
+    )
+
+    _expect_error(
+        lambda: controller._validate_plan(plan),
+        "plan remote path",
     )
 
 
@@ -960,6 +976,11 @@ def test_remote_driver_never_reuses_a_dynamic_port_across_arms():
     assert "if port not in used_ports:" in source
     assert "used_ports.add(port)" in source
     assert 'environment["TINYVLLM_DIST_PORT"] = str(port)' in source
+    assert (
+        'environment["TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"]'
+        " = str(Path(capture_receipt_root) / case_id)"
+        in source
+    )
 
 
 def test_remote_driver_isolates_every_arm_in_a_fresh_python_process():
@@ -1137,6 +1158,7 @@ def main_tests() -> None:
         test_plan_accepts_bounded_shared_capacity_as_diagnostic_only,
         test_plan_rejects_shared_capacity_threshold_or_unknown_mode,
         test_plan_rejects_source_drift_and_unsafe_run_tag,
+        test_plan_rejects_capture_receipt_root_outside_attempt,
         test_run_attempt_enforces_the_frozen_operation_order,
         test_cleanup_always_runs_and_preserves_original_failure,
         test_cleanup_failure_overrides_an_otherwise_successful_run,
