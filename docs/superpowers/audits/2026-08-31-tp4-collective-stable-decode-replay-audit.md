@@ -1702,3 +1702,235 @@ Final r49 claim:
 > the Q1 smoke, but capture remains over budget and the graph arm is slower.
 > r49 is a terminal negative smoke, the full gate is correctly skipped, and
 > Stage 1 remains unauthorized.
+
+## 20. 2026-09-06 dynamic pool-index r50-r54 terminal reconciliation
+
+The Stage-1 dynamic pool-index implementation and evidence pipeline were
+completed under the written Task 1-7 plan. The implementation preserves the
+full ordered lease identity for admission while using a stable structural
+program key for `lease_pool_index_v1`. The protocol remains default-disabled,
+and the legacy lease-transaction path remains unchanged.
+
+The final source correction is:
+
+```text
+source revision:
+  a9fa95b75dd68a161cef4022576df578bd6ccd50
+source tree SHA256:
+  e0bae4080560ccefef15815257eef85458729e57a71458e54dd5e7be398a77a2
+commit:
+  fix(tp4): isolate capture cost row identities
+branch:
+  feat/kv-sparse-attention
+local/tracking/remote SHA:
+  equal before r54 launch
+```
+
+The correction changed only the capture-cost evidence namespace from
+`capture:` to `capture-cost:` and added a regression proving that capture-cost
+rows cannot collide with dispatch rows. It did not change any runtime,
+correctness, capture, replay, memory, throughput, or latency threshold.
+
+Fresh verification at that revision:
+
+```text
+py_compile:                       passed
+git diff --check:                 passed
+worker suite:                     14 passed
+Python 3.12 / Torch Task-6 suite: 458 passed, 1 skipped
+contract suite:                   17 passed
+effective passing total:          475 passed, 1 skipped
+system-Python adjacent suite:     384 passed, 1 skipped, 33 environment errors
+environment error:                ModuleNotFoundError: No module named 'torch'
+bits-code-guard:                  no P0-P2 findings
+```
+
+The 33 system-Python errors are setup failures in an interpreter without
+Torch. They are neither passing evidence nor source regressions.
+
+### 20.1 r50 immutable evidence and row-ID defect
+
+r50 used source revision
+`1aecc174902f7ffa8e49ff4a9fb29f0133ce78af` and completed the strict-clean
+Q1 eager/graph pair. Exact outputs matched, all rank processes exited zero,
+all process groups were destroyed, and cleanup was `CLEAN`.
+
+The producer and both independent verifiers nevertheless classified r50 as
+`INCOMPLETE` because four capture-cost rows reused dispatch-row IDs:
+
+```text
+Q1__r0__graph:capture:step-3:rank-0
+Q1__r0__graph:capture:step-3:rank-1
+Q1__r0__graph:capture:step-3:rank-2
+Q1__r0__graph:capture:step-3:rank-3
+```
+
+The immutable raw capture duration was `4,177,627,983 ns` per rank, already
+above the frozen two-second single-capture ceiling. That observation cannot
+replace r50's formal terminal classification because the duplicate IDs caused
+the evidence-chain completeness check to fail first. r50 remains immutable
+`INCOMPLETE` and must not be reassembled with corrected source.
+
+### 20.2 r52 infrastructure-aborted attempt
+
+r52 used corrected source revision `a9fa95b75dd68a161cef4022576df578bd6ccd50`.
+Kerberos, mounted storage, model revision, and strict-clean admission all
+passed. GPUs `3,4,6,7` were admitted at 0 MiB, 0% utilization, and zero
+compute processes.
+
+The SSH worker channel then exited with return code 255:
+
+```text
+Connection closed by UNKNOWN port 65535
+```
+
+No worker result, final bundle, producer result, or verifier result was
+created. Three exact-tag scans were empty and no exact-tag process survived,
+but rank exit and process-group destruction could not be proven through the
+lost channel. The cleanup receipt therefore correctly remains `DIRTY`. r52 is
+terminal infrastructure-aborted evidence and was not reused.
+
+### 20.3 r54 strict-clean smoke
+
+r54 was the fresh retry from the same pushed corrected source:
+
+```text
+run tag:
+  20260906-qwen38-tp4-decode-replay-r54-pool-index-q1-smoke
+source revision:
+  a9fa95b75dd68a161cef4022576df578bd6ccd50
+source tree SHA256:
+  e0bae4080560ccefef15815257eef85458729e57a71458e54dd5e7be398a77a2
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+admission:
+  strict_clean / FORMAL_STRICT_CLEAN
+selected GPUs:
+  3,4,6,7
+selected cases:
+  Q1__r0__eager, Q1__r0__graph
+worker return code:
+  0
+rank exits:
+  4 x 0
+process groups destroyed:
+  4/4
+cleanup:
+  CLEAN
+exact-tag scans:
+  3 x empty
+owned children remaining:
+  0
+```
+
+The row-ID repair is confirmed by four distinct measured capture-cost IDs:
+
+```text
+Q1__r0__graph:capture-cost:step-3:rank-0
+Q1__r0__graph:capture-cost:step-3:rank-1
+Q1__r0__graph:capture-cost:step-3:rank-2
+Q1__r0__graph:capture-cost:step-3:rank-3
+```
+
+No duplicate-row failure remained. The eager and graph-arm output records
+contain eight requests each and have exact token equality.
+
+The graph mechanism did not reach a ready entry:
+
+```text
+warmup TP-wide capture duration:      5,590,907,925 ns
+fresh capture-phase duration:         4,019,119,030 ns
+single-capture ceiling:               2,000,000,000 ns
+capture cache state:                  rejected
+capture fallback reason:              single_capture_budget
+measured graph-eligible rank-steps:   508
+measured graph dispatches:            0
+measured eager fallbacks:             512
+cross-lease replay rank-steps:        0
+replay coverage:                      0.0
+manifest validations during replay:  0
+```
+
+The causal chain is therefore explicit: capture completed, the TP-wide
+duration exceeded the unchanged single-capture budget, the cache rejected the
+entry before it became replayable, and every measured eligible step fell back
+to eager. This is a capture-cost failure before replay admission, not evidence
+that a replay-time lease validation failed.
+
+Because no measured graph dispatch occurred, the graph-arm timing below is
+the cost of an all-eager fallback run after failed capture, not CUDA Graph
+performance:
+
+| Metric | Eager arm | Graph-configured fallback arm | Ratio |
+|---|---:|---:|---:|
+| Output tokens/s | 3.827434 | 2.842488 | 0.742661 |
+| Median TPOT | 2062.223 ms | 2768.724 ms | 1.342592 |
+| P99 E2E | 267542.163 ms | 360247.794 ms | 1.346508 |
+| TTFT | 5639.773 ms | 8619.802 ms | 1.528395 |
+
+These numbers show cost with no graph benefit. They must not be presented as
+a graph-versus-eager implementation comparison because the graph never
+replayed.
+
+All three authorities agree:
+
+```text
+producer:                       NO_GO_MECHANISM_NOT_EXERCISED
+remote independent verifier:   NO_GO_MECHANISM_NOT_EXERCISED
+local frozen-source verifier:  NO_GO_MECHANISM_NOT_EXERCISED
+failed gate:                    cross_lease_replay
+verified input hashes:          true
+producer classification match: true
+summary match:                  true
+stage-1 authorization:          false
+```
+
+The immutable bundle contains 21 manifest-tracked artifacts, including the
+previously missing `report.md`. The post-verification manifest records:
+
+```text
+final_bundle/manifest.json:
+  534ce106272197c9523d86821a8b11b53b81632bcc82b194d3b5023e9c812a56
+remote_independent_verification.json:
+  d62cfc8bf248c59ea3d45f68630e9349e6f8ad64e0136096617b7ae23d11038b
+```
+
+### 20.4 Conditional full gate decision
+
+The frozen Task-7 rule authorizes the full gate only when the smoke
+classification is exactly `SMOKE_PASS`. r54 is
+`NO_GO_MECHANISM_NOT_EXERCISED`, so the proposed r55 full tag was not created
+or launched. This is the required fail-closed outcome.
+
+### 20.5 Prompt-to-artifact completion checklist
+
+| Requirement | Concrete evidence | Result |
+|---|---|---|
+| Default-off protocol | `tinyvllm/config.py`; config regression in `tools/test_multi_sequence_cuda_graph_gate.py` | complete |
+| Legacy behavior preserved | legacy identity/cache tests and focused Task-6 suite | complete locally |
+| Stable structural cache key | `FlashAttentionGraphIdentity.cache_key_sha256`; cache tests | complete locally |
+| Full lease identity retained | invocation hash plus ordered lease-manifest source/tests | complete locally |
+| Replay-time ownership validation | stale generation, request order, duplicate-slot, and manifest tests | complete locally |
+| Dynamic physical slot selection | tensor-index gather/commit and model-runner tests | complete locally |
+| Cross-lease graph reuse | requires a ready capture plus replay under a changed manifest | not exercised on hardware |
+| No unselected state mutation | focused tensor/state tests | complete locally; no hardware replay evidence |
+| Warmup/measured isolation | reset tests; distinct warmup, capture, and measured identities/rows | complete |
+| TP4 agreement | all ranks agreed on program key and TP-wide capture duration | complete through capture |
+| Capture limits | four capture-cost rows at `4,019,119,030 ns` versus `2,000,000,000 ns` | failed |
+| Replay coverage | `0/508` measured eligible rank-steps replayed | failed |
+| Correctness | Q1 eager/graph-configured fallback outputs exact for all eight requests | complete, but eager-only |
+| Benefit and cost | fallback arm throughput/TTFT/TPOT/P99 recorded; no graph dispatch | negative, no graph claim |
+| Lifecycle | four zero exits, four destroyed process groups, three empty scans, zero owned children | complete |
+| Immutable evidence | 21-artifact manifest, remote/local verifier agreement, post-verification hashes | complete |
+| Full 30-case/15-pair gate | prohibited because r54 was not `SMOKE_PASS` | intentionally not run |
+| Git delivery | runtime fix at pushed `a9fa95b...`; audit/handoff restricted to the terminal documentation commit | verify local/tracking/remote SHA equality after push |
+
+Final classification:
+
+> The dynamic pool-index protocol is implemented and locally verified, and
+> r54 provides complete strict-clean negative smoke evidence with exact output
+> parity and clean lifecycle. On Qwen3.8-27B BF16 TP4, capture still takes
+> about 4.02 seconds, exceeds the frozen two-second limit, prevents the graph
+> from becoming ready, and therefore exercises no cross-lease replay. r55 is
+> correctly skipped, Stage 1 remains unauthorized, and no performance benefit
+> may be claimed.

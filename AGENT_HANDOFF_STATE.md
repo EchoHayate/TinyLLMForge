@@ -52479,3 +52479,152 @@ The design must reuse stable graph-owned storage across lease rotations while
 retaining replay-time ordered `slot_id + generation + request_id` validation.
 Start with brainstorming/design, then a written implementation plan and strict
 RED -> minimal implementation -> GREEN before another fresh hardware tag.
+
+## 2026-09-06 TP4 dynamic pool-index r50-r54 terminal checkpoint
+
+The Stage-1 dynamic pool-index protocol is implemented, tested, committed,
+and pushed on `feat/kv-sparse-attention`. The final source revision used by
+the fresh smoke is:
+
+```text
+HEAD/source revision:
+  a9fa95b75dd68a161cef4022576df578bd6ccd50
+source tree SHA256:
+  e0bae4080560ccefef15815257eef85458729e57a71458e54dd5e7be398a77a2
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+```
+
+The final source change isolates capture-cost row IDs under
+`capture-cost:`. Verification at this revision passed `py_compile`,
+`git diff --check`, 14 worker tests, 17 contract tests, and the 458-passed /
+1-skipped Python 3.12 Torch suite. `bits-code-guard` found no P0-P2 issue.
+The system Python run had 33 setup errors because Torch was absent; do not
+count those as passing tests or source failures.
+
+r50 is immutable `INCOMPLETE` evidence:
+
+```text
+run tag:
+  20260906-qwen38-tp4-decode-replay-r50-pool-index-q1-smoke
+source:
+  1aecc174902f7ffa8e49ff4a9fb29f0133ce78af
+failed gate:
+  duplicate_row_id
+duplicate rows:
+  Q1__r0__graph:capture:step-3:rank-{0,1,2,3}
+exact output:
+  true
+raw capture duration:
+  4,177,627,983 ns
+producer/remote/local:
+  INCOMPLETE / INCOMPLETE / INCOMPLETE
+cleanup:
+  CLEAN
+```
+
+r52 is a terminal infrastructure-aborted attempt:
+
+```text
+run tag:
+  20260906-qwen38-tp4-decode-replay-r52-pool-index-q1-smoke
+source:
+  a9fa95b75dd68a161cef4022576df578bd6ccd50
+preflight/admission:
+  passed; strict-clean GPUs 3,4,6,7
+worker SSH return code:
+  255
+error:
+  Connection closed by UNKNOWN port 65535
+worker/final/verifier artifacts:
+  absent
+exact-tag scans:
+  3 x empty
+cleanup:
+  DIRTY because rank exits and process-group destruction were not provable
+```
+
+r54 is the complete fresh strict-clean smoke:
+
+```text
+run tag:
+  20260906-qwen38-tp4-decode-replay-r54-pool-index-q1-smoke
+source:
+  a9fa95b75dd68a161cef4022576df578bd6ccd50
+admission:
+  strict_clean / FORMAL_STRICT_CLEAN
+GPUs:
+  3,4,6,7 at 0 MiB, 0%, no compute processes
+cases:
+  Q1__r0__eager and Q1__r0__graph
+worker/rank exits:
+  controller 0; four ranks x 0
+exact output:
+  true for all eight requests
+capture-cost row IDs:
+  unique `capture-cost:` namespace on ranks 0-3
+fresh capture duration:
+  4,019,119,030 ns
+single-capture limit:
+  2,000,000,000 ns
+measured eligible rank-steps:
+  508
+graph replays:
+  0
+replay coverage:
+  0.0
+producer:
+  NO_GO_MECHANISM_NOT_EXERCISED
+remote verifier:
+  NO_GO_MECHANISM_NOT_EXERCISED
+local frozen-source verifier:
+  NO_GO_MECHANISM_NOT_EXERCISED
+failed gate:
+  cross_lease_replay
+manifest:
+  21 tracked artifacts, including report.md
+cleanup:
+  CLEAN; 4/4 process groups destroyed; 3 empty scans; no owned children
+```
+
+Root cause is established from immutable dispatch rows. The capture completed,
+but its TP-wide duration exceeded the unchanged two-second budget. The cache
+entered `rejected/single_capture_budget`, never created a ready graph entry,
+and every measured step used eager fallback. No replay-time lease validation
+failure occurred because replay admission was never reached.
+
+The graph-configured arm was all eager fallback and was slower:
+
+```text
+throughput ratio:    0.742661
+median TPOT ratio:   1.342592
+P99 E2E ratio:       1.346508
+TTFT ratio:          1.528395
+```
+
+These ratios are capture/fallback cost, not CUDA Graph performance. They do
+not support a benefit claim.
+
+The conditional full tag
+`20260906-qwen38-tp4-decode-replay-r55-pool-index-full` was not created or
+launched because r54 was not exactly `SMOKE_PASS`. Do not launch r55 from
+this source revision, do not lower the capture/replay gates, and do not mutate
+r50, r52, or r54.
+
+Terminal claim:
+
+```text
+implementation:                 complete and locally verified
+hardware correctness:           exact for Q1 eager versus fallback arm
+hardware cross-lease replay:    not exercised
+single-capture gate:            failed, 4.019119030 s > 2 s
+full gate:                      correctly skipped
+Stage-1 authorization:          false
+performance benefit:            not established
+owned-process cleanup:          complete for r54
+```
+
+Next work, if separately requested, is a new design task to reduce actual
+capture cost below two seconds without weakening admission or qualification
+gates. It requires a new written plan, RED/GREEN cycle, source revision, and
+fresh immutable run tag.
