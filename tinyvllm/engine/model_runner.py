@@ -7294,8 +7294,23 @@ class ModelRunner:
                 "capture_failed",
             )
             return None
+        entry = self._synchronize_exact_graph_capture_duration(entry)
         self._commit_exact_multi_sequence_graph(entry)
         return entry
+
+    def _synchronize_exact_graph_capture_duration(self, entry):
+        if int(self.world_size) <= 1:
+            return entry
+        duration = torch.tensor(
+            [int(entry.capture_duration_ns)],
+            dtype=torch.int64,
+            device=self.kv_cache.device,
+        )
+        dist.all_reduce(duration, op=dist.ReduceOp.MAX)
+        return replace(
+            entry,
+            capture_duration_ns=int(duration.item()),
+        )
 
     def _exact_multi_sequence_capture_pool(self):
         if not self.exact_cuda_graph_cache.ready_entries:

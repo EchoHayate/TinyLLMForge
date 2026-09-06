@@ -7963,6 +7963,94 @@ def test_capture_failure_logs_the_original_exception_chain():
     )
 
 
+def test_post_capture_uses_tp_max_duration_before_budget_commit(
+    monkeypatch,
+):
+    runner = _make_exact_dispatch_runner()
+    runner.world_size = 4
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        SimpleNamespace(
+            block_tables=FakeTensor([[0, 1]] * 4),
+        ),
+    )
+    for _ in range(3):
+        decision = runner.exact_cuda_graph_cache.observe_success(
+            identity,
+            estimated_static_bytes=4096,
+        )
+    assert decision.should_capture is True
+
+    local_capture = runner._capture_exact_multi_sequence_graph
+
+    def capture(**kwargs):
+        entry = local_capture(**kwargs)
+        entry.capture_duration_ns = 1_900_000_000
+        return entry
+
+    runner._capture_exact_multi_sequence_graph = capture
+    observed = {}
+
+    class DurationTensor:
+        def __init__(self, value):
+            self.value = int(value)
+
+        def item(self):
+            return self.value
+
+    def make_tensor(values, *, dtype, device):
+        observed["tensor"] = {
+            "values": tuple(values),
+            "dtype": dtype,
+            "device": device,
+        }
+        return DurationTensor(values[0])
+
+    def all_reduce(duration, *, op):
+        observed["op"] = op
+        duration.value = 2_100_000_000
+
+    reduce_op = SimpleNamespace(MAX="max")
+    monkeypatch.setattr(model_runner.torch, "tensor", make_tensor)
+    monkeypatch.setattr(
+        model_runner.dist,
+        "ReduceOp",
+        reduce_op,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        model_runner.dist,
+        "all_reduce",
+        all_reduce,
+        raising=False,
+    )
+
+    entry = runner._attempt_post_step_capture(
+        identity=identity,
+        input_ids=FakeTensor([10, 20, 30, 40]),
+        positions=FakeTensor([1, 1, 1, 1]),
+        context=SimpleNamespace(
+            block_tables=FakeTensor([[0, 1]] * 4),
+        ),
+    )
+
+    assert observed == {
+        "tensor": {
+            "values": (1_900_000_000,),
+            "dtype": model_runner.torch.int64,
+            "device": "cuda:0",
+        },
+        "op": "max",
+    }
+    assert entry.capture_duration_ns == 2_100_000_000
+    assert (
+        runner.exact_cuda_graph_cache.summary()["rejected"][
+            identity.sha256
+        ]
+        == "single_capture_budget"
+    )
+
+
 def test_exact_graph_pool_requires_a_live_exact_graph_owner():
     cache_module = sys.modules[
         "tinyvllm.engine.exact_cuda_graph_cache"
