@@ -85,6 +85,16 @@ class FlashAttentionGraphIdentity:
             _canonical_json_bytes(asdict(self))
         ).hexdigest()
 
+    @property
+    def cache_key_sha256(self) -> str:
+        if self.execution_protocol != "lease_pool_index_v1":
+            return self.sha256
+        payload = asdict(self)
+        payload["lease_seal"] = ""
+        return hashlib.sha256(
+            _canonical_json_bytes(payload)
+        ).hexdigest()
+
 
 def flash_attn_263_decode_num_splits(
     inputs: FlashAttentionSplitInputs,

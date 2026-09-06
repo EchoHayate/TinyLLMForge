@@ -52,6 +52,7 @@ class Config:
     phase_stitch_profile: bool = False
     phase_stitched_exact_graph_runtime: bool = False
     multi_sequence_cuda_graphs: bool = False
+    multi_sequence_cuda_graph_dynamic_pool_indices: bool = False
     multi_sequence_cuda_graph_batch_allowlist: tuple = (2, 4, 8)
     multi_sequence_cuda_graph_min_observations: int = 3
     multi_sequence_cuda_graph_max_entries: int = 8
@@ -388,6 +389,26 @@ class Config:
         ):
             raise ValueError(
                 "phase_stitched_exact_graph_runtime must be a bool"
+            )
+        if not isinstance(self.multi_sequence_cuda_graphs, bool):
+            raise ValueError(
+                "multi_sequence_cuda_graphs must be a bool"
+            )
+        if not isinstance(
+            self.multi_sequence_cuda_graph_dynamic_pool_indices,
+            bool,
+        ):
+            raise ValueError(
+                "multi_sequence_cuda_graph_dynamic_pool_indices "
+                "must be a bool"
+            )
+        if (
+            self.multi_sequence_cuda_graph_dynamic_pool_indices
+            and not self.multi_sequence_cuda_graphs
+        ):
+            raise ValueError(
+                "multi_sequence_cuda_graph_dynamic_pool_indices "
+                "requires multi_sequence_cuda_graphs"
             )
         self.prefill_cuda_graph_token_allowlist = (
             _normalize_positive_int_tuple(

@@ -14,7 +14,7 @@ import sys
 import tempfile
 import types
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 
@@ -145,7 +145,15 @@ def load_exact_cache():
     return module
 
 
-def make_identity(*, batch=4, width=2, splits=2):
+def make_identity(
+    *,
+    batch=4,
+    width=2,
+    splits=2,
+    execution_protocol="forward_v1",
+    state_schema_sha256="",
+    lease_seal="",
+):
     split_policy = load_split_policy()
     return split_policy.FlashAttentionGraphIdentity(
         graph_batch_size=batch,
@@ -159,6 +167,9 @@ def make_identity(*, batch=4, width=2, splits=2):
         head_dim=128,
         page_block_size=256,
         max_seqlen_q=1,
+        execution_protocol=execution_protocol,
+        state_schema_sha256=state_schema_sha256,
+        lease_seal=lease_seal,
     )
 
 
@@ -417,6 +428,10 @@ def test_multi_sequence_cuda_graph_config_defaults_and_allowlist():
     with tempfile.TemporaryDirectory() as model:
         config = Config(model=model)
         assert config.multi_sequence_cuda_graphs is False
+        assert (
+            config.multi_sequence_cuda_graph_dynamic_pool_indices
+            is False
+        )
         assert config.multi_sequence_cuda_graph_batch_allowlist == (2, 4, 8)
         assert config.multi_sequence_cuda_graph_min_observations == 3
         assert config.multi_sequence_cuda_graph_max_entries == 8
@@ -446,6 +461,69 @@ def test_multi_sequence_cuda_graph_config_defaults_and_allowlist():
             4,
             8,
         )
+
+
+def test_dynamic_pool_index_config_is_strict_and_requires_graphs():
+    Config = load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        for value in (None, 0, 1, "true"):
+            try:
+                Config(
+                    model=model,
+                    multi_sequence_cuda_graphs=True,
+                    multi_sequence_cuda_graph_dynamic_pool_indices=value,
+                )
+            except ValueError as exc:
+                assert "must be a bool" in str(exc)
+            else:
+                raise AssertionError(
+                    "non-boolean dynamic pool-index flag accepted"
+                )
+
+        try:
+            Config(
+                model=model,
+                multi_sequence_cuda_graphs=False,
+                multi_sequence_cuda_graph_dynamic_pool_indices=True,
+            )
+        except ValueError as exc:
+            assert "requires multi_sequence_cuda_graphs" in str(exc)
+        else:
+            raise AssertionError(
+                "dynamic pool-index protocol enabled without graphs"
+            )
+
+        enabled = Config(
+            model=model,
+            multi_sequence_cuda_graphs=True,
+            multi_sequence_cuda_graph_dynamic_pool_indices=True,
+        )
+        assert enabled.multi_sequence_cuda_graph_dynamic_pool_indices is True
+
+
+def test_pool_index_protocol_separates_invocation_and_program_identity():
+    first = make_identity(
+        execution_protocol="lease_pool_index_v1",
+        state_schema_sha256="a" * 64,
+        lease_seal="1" * 64,
+    )
+    second = replace(first, lease_seal="2" * 64)
+
+    assert first.sha256 != second.sha256
+    assert first.cache_key_sha256 == second.cache_key_sha256
+
+
+def test_legacy_protocol_cache_key_remains_full_identity():
+    first = make_identity(
+        execution_protocol="lease_transaction_v1",
+        state_schema_sha256="a" * 64,
+        lease_seal="1" * 64,
+    )
+    second = replace(first, lease_seal="2" * 64)
+
+    assert first.cache_key_sha256 == first.sha256
+    assert second.cache_key_sha256 == second.sha256
+    assert first.cache_key_sha256 != second.cache_key_sha256
 
 
 def test_multi_sequence_cuda_graph_config_rejects_invalid_controls():
@@ -528,6 +606,28 @@ def test_exact_cache_observes_three_eager_steps_before_capture():
     entry = make_entry(identity, static_bytes=4096)
     cache.commit_capture(entry)
     assert cache.ready_entry(identity) is entry
+
+
+def test_exact_cache_reuses_pool_index_program_across_lease_seals():
+    cache_module = load_exact_cache()
+    first = make_identity(
+        execution_protocol="lease_pool_index_v1",
+        state_schema_sha256="a" * 64,
+        lease_seal="1" * 64,
+    )
+    second = replace(first, lease_seal="2" * 64)
+    cache = cache_module.ExactCudaGraphCache(make_cache_config())
+
+    decisions = [
+        cache.observe_success(first, estimated_static_bytes=4096)
+        for _ in range(3)
+    ]
+    assert decisions[-1].should_capture is True
+    entry = make_entry(first, static_bytes=4096)
+    cache.commit_capture(entry)
+
+    assert cache.ready_entry(second) is entry
+    assert len(cache.ready_entries) == 1
 
 
 def test_every_exact_cache_budget_blocks_admission_independently():

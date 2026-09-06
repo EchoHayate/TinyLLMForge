@@ -85,6 +85,11 @@ class ExactCudaGraphEntry:
     last_replay_step: int | None = None
     state: str = "ready"
     rejection_reason: str | None = None
+    cache_key_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.cache_key_sha256:
+            self.cache_key_sha256 = self.identity.cache_key_sha256
 
 
 @dataclass(frozen=True)
@@ -113,9 +118,9 @@ class ExactCudaGraphCache:
         *,
         estimated_static_bytes: int,
     ) -> AdmissionDecision:
-        identity_sha256 = identity.sha256
+        cache_key_sha256 = identity.cache_key_sha256
         observation_count = self.observation_counts.get(
-            identity_sha256,
+            cache_key_sha256,
             0,
         )
         if not self.config.enabled:
@@ -125,21 +130,21 @@ class ExactCudaGraphCache:
                 "feature_disabled",
                 observation_count,
             )
-        if identity_sha256 in self.rejected:
+        if cache_key_sha256 in self.rejected:
             return AdmissionDecision(
                 False,
                 "rejected",
-                self.rejected[identity_sha256],
+                self.rejected[cache_key_sha256],
                 observation_count,
             )
-        if identity_sha256 in self.ready_entries:
+        if cache_key_sha256 in self.ready_entries:
             return AdmissionDecision(
                 False,
                 "ready",
                 "replay_disabled",
                 observation_count,
             )
-        if identity_sha256 in self.capturing:
+        if cache_key_sha256 in self.capturing:
             return AdmissionDecision(
                 False,
                 "observing",
@@ -148,7 +153,7 @@ class ExactCudaGraphCache:
             )
 
         observation_count += 1
-        self.observation_counts[identity_sha256] = observation_count
+        self.observation_counts[cache_key_sha256] = observation_count
         if observation_count < self.config.min_observations:
             return AdmissionDecision(
                 False,
@@ -170,7 +175,7 @@ class ExactCudaGraphCache:
                 observation_count,
             )
 
-        self.capturing.add(identity_sha256)
+        self.capturing.add(cache_key_sha256)
         self.counters["capture_attempts"] += 1
         return AdmissionDecision(
             True,
@@ -183,17 +188,16 @@ class ExactCudaGraphCache:
         self,
         identity: FlashAttentionGraphIdentity,
     ) -> ExactCudaGraphEntry | None:
-        identity_sha256 = identity.sha256
-        entry = self.ready_entries.get(identity_sha256)
+        cache_key_sha256 = identity.cache_key_sha256
+        entry = self.ready_entries.get(cache_key_sha256)
         if entry is None:
             self.counters["misses"] += 1
             return None
         if (
-            entry.identity_sha256 != identity_sha256
-            or entry.identity != identity
+            entry.cache_key_sha256 != cache_key_sha256
             or entry.state != "ready"
         ):
-            self.disable_entry(identity_sha256, "identity_drift")
+            self.disable_entry(cache_key_sha256, "identity_drift")
             self.counters["misses"] += 1
             return None
         self.counters["hits"] += 1
@@ -201,16 +205,21 @@ class ExactCudaGraphCache:
 
     def commit_capture(self, entry: ExactCudaGraphEntry) -> None:
         identity_sha256 = entry.identity.sha256
+        cache_key_sha256 = entry.identity.cache_key_sha256
         if entry.identity_sha256 != identity_sha256:
             raise ValueError("entry identity SHA does not match identity")
-        if identity_sha256 not in self.capturing:
+        if entry.cache_key_sha256 != cache_key_sha256:
+            raise ValueError(
+                "entry cache-key SHA does not match identity"
+            )
+        if cache_key_sha256 not in self.capturing:
             raise ValueError("identity is not awaiting capture commit")
         if (
-            identity_sha256 in self.ready_entries
-            or identity_sha256 in self.rejected
+            cache_key_sha256 in self.ready_entries
+            or cache_key_sha256 in self.rejected
         ):
             raise ValueError("identity is already terminal")
-        self.capturing.remove(identity_sha256)
+        self.capturing.remove(cache_key_sha256)
 
         self.total_capture_ns += max(0, int(entry.capture_duration_ns))
         retained_reserved_bytes = max(
@@ -221,13 +230,13 @@ class ExactCudaGraphCache:
         if reason is not None:
             entry.state = "rejected"
             entry.rejection_reason = reason
-            self.rejected[identity_sha256] = reason
+            self.rejected[cache_key_sha256] = reason
             self.reserved_delta_bytes += retained_reserved_bytes
             self.counters["capture_failures"] += 1
             self.counters[f"fallback_{reason}"] += 1
             return
 
-        self.ready_entries[identity_sha256] = entry
+        self.ready_entries[cache_key_sha256] = entry
         self.static_bytes += int(entry.static_bytes)
         self.reserved_delta_bytes += retained_reserved_bytes
         self.counters["capture_successes"] += 1
@@ -240,15 +249,15 @@ class ExactCudaGraphCache:
         retained_reserved_bytes: int = 0,
     ) -> None:
         self._validate_fallback_reason(reason)
-        identity_sha256 = identity.sha256
-        if identity_sha256 in self.ready_entries:
+        cache_key_sha256 = identity.cache_key_sha256
+        if cache_key_sha256 in self.ready_entries:
             raise ValueError("ready identity cannot be rejected")
-        existing = self.rejected.get(identity_sha256)
+        existing = self.rejected.get(cache_key_sha256)
         if existing is not None and existing != reason:
             raise ValueError("rejected identity reason cannot change")
-        self.capturing.discard(identity_sha256)
+        self.capturing.discard(cache_key_sha256)
         if existing is None:
-            self.rejected[identity_sha256] = reason
+            self.rejected[cache_key_sha256] = reason
             self.reserved_delta_bytes += max(
                 0,
                 int(retained_reserved_bytes),
@@ -257,20 +266,20 @@ class ExactCudaGraphCache:
 
     def disable_entry(
         self,
-        identity_sha256: str,
+        cache_key_sha256: str,
         reason: str,
     ) -> None:
         self._validate_fallback_reason(reason)
-        entry = self.ready_entries.pop(identity_sha256, None)
+        entry = self.ready_entries.pop(cache_key_sha256, None)
         if entry is None:
-            existing = self.rejected.get(identity_sha256)
+            existing = self.rejected.get(cache_key_sha256)
             if existing is not None and existing != reason:
                 raise ValueError("rejected identity reason cannot change")
         else:
             entry.state = "rejected"
             entry.rejection_reason = reason
-        self.rejected[identity_sha256] = reason
-        self.capturing.discard(identity_sha256)
+        self.rejected[cache_key_sha256] = reason
+        self.capturing.discard(cache_key_sha256)
         self.counters[f"fallback_{reason}"] += 1
 
     def release_ready_graphs(self, *, synchronize) -> int:
