@@ -9,7 +9,10 @@ import json
 from pathlib import Path
 import tempfile
 
-from assemble_tp4_decode_replay import MANIFEST_SCHEMA
+from assemble_tp4_decode_replay import (
+    MANIFEST_SCHEMA,
+    _render_report as _render_producer_report,
+)
 import test_assemble_tp4_decode_replay as fixture
 import verify_tp4_decode_replay as verifier_module
 from verify_tp4_decode_replay import verify_bundle
@@ -63,6 +66,35 @@ def _rewrite_manifest(root: Path) -> None:
     })
 
 
+def _rewrite_report_from_raw_evidence(root: Path) -> None:
+    evidence = {
+        argument: _read_jsonl(root / name)
+        for argument, name in {
+            "performance_rows": "performance_rows.jsonl",
+            "correctness_rows": "correctness_rows.jsonl",
+            "rank_dispatch_rows": "rank_dispatch_events.jsonl",
+            "rank_collective_rows": "rank_collective_events.jsonl",
+            "rank_lifecycle_rows": "rank_lifecycle_rows.jsonl",
+            "memory_rows": "memory_rows.jsonl",
+            "capture_cost_rows": "capture_cost_rows.jsonl",
+        }.items()
+    }
+    report = _render_producer_report(
+        source=json.loads(
+            (root / "source_identity.json").read_text(encoding="utf-8")
+        ),
+        admission=json.loads(
+            (root / "launch_admission.json").read_text(encoding="utf-8")
+        ),
+        cleanup=json.loads(
+            (root / "cleanup.json").read_text(encoding="utf-8")
+        ),
+        classification=fixture.contract.classify(**evidence),
+    )
+    (root / "report.md").write_text(report, encoding="utf-8")
+    _rewrite_manifest(root)
+
+
 def _bundle(root: Path) -> Path:
     raw = root / "raw"
     bundle = root / "final_bundle"
@@ -88,9 +120,31 @@ def _shared_bundle(root: Path) -> Path:
 
 def test_verifier_accepts_bounded_shared_capacity_diagnostic_bundle():
     with tempfile.TemporaryDirectory() as directory:
-        receipt = verify_bundle(_shared_bundle(Path(directory)))
+        bundle = _shared_bundle(Path(directory))
+        receipt = verify_bundle(bundle)
         assert receipt["classification"] == "GO_STAGE1_JUSTIFIED"
         assert receipt["verified_hashes"] is True
+        producer = json.loads(
+            (bundle / "producer_classification.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert producer["stage1_authorized"] is False
+
+
+def test_verifier_rejects_shared_capacity_stage1_authorization():
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = _shared_bundle(Path(directory))
+        _mutate_json(
+            bundle,
+            "producer_classification.json",
+            lambda row: row.__setitem__("stage1_authorized", True),
+        )
+        receipt = verify_bundle(bundle)
+        assert receipt["classification"] == "INCOMPLETE"
+        assert receipt["failed_gates"] == [
+            "producer_evidence_mismatch"
+        ]
 
 
 def test_verifier_rejects_shared_baseline_count_on_the_wrong_gpu():
@@ -155,6 +209,21 @@ def _verify_mutation(mutation: str) -> dict:
             )
             manifest["artifacts"]["performance_rows.jsonl"] = "0" * 64
             _write_json(bundle / "manifest.json", manifest)
+        elif mutation == "report_hash":
+            (bundle / "report.md").write_text(
+                "# tampered report\n",
+                encoding="utf-8",
+            )
+        elif mutation == "report_semantic":
+            report_path = bundle / "report.md"
+            report_path.write_text(
+                report_path.read_text(encoding="utf-8").replace(
+                    "Classification: `GO_STAGE1_JUSTIFIED`",
+                    "Classification: `NO_GO_PERFORMANCE`",
+                ),
+                encoding="utf-8",
+            )
+            _rewrite_manifest(bundle)
         elif mutation == "source_tree":
             _mutate_json(
                 bundle,
@@ -329,6 +398,21 @@ def _verify_mutation(mutation: str) -> dict:
             )
         else:
             raise AssertionError(f"unknown mutation: {mutation}")
+        if mutation in {
+            "output_token",
+            "dispatch",
+            "graph_identity",
+            "collective",
+            "cleanup",
+            "coverage",
+            "throughput",
+            "tpot",
+            "ttft",
+            "p99_e2e",
+            "allocated",
+            "reserved",
+        }:
+            _rewrite_report_from_raw_evidence(bundle)
         return verify_bundle(bundle)
 
 
@@ -341,10 +425,39 @@ def test_verifier_reconstructs_go_from_hash_bound_raw_rows():
     assert result["metrics"]["replay_coverage"] == 1.0
 
 
+def test_verifier_rejects_missing_report():
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = _bundle(Path(directory))
+        (bundle / "report.md").unlink()
+        _rewrite_manifest(bundle)
+        result = verify_bundle(bundle)
+    assert result["classification"] == "INCOMPLETE"
+    assert result["failed_gates"] == [
+        "manifest artifact inventory mismatch"
+    ]
+
+
+def test_verifier_rejects_report_hash_drift():
+    result = _verify_mutation("report_hash")
+    assert result["classification"] == "INCOMPLETE"
+    assert result["failed_gates"] == [
+        "manifest artifact hash mismatch: report.md"
+    ]
+
+
+def test_verifier_rejects_rehashed_report_semantic_drift():
+    result = _verify_mutation("report_semantic")
+    assert result["classification"] == "INCOMPLETE"
+    assert result["failed_gates"] == [
+        "report does not match reconstructed evidence"
+    ]
+
+
 def test_verifier_does_not_import_the_producer_assembler():
     source = inspect.getsource(verifier_module)
     assert "import assemble_tp4_decode_replay" not in source
     assert "from assemble_tp4_decode_replay" not in source
+    assert "_render_report" in source
 
 
 def test_integrity_and_frozen_identity_mutations_are_incomplete():
@@ -402,9 +515,13 @@ def test_every_performance_and_cost_gate_is_reconstructed():
 def main() -> None:
     tests = (
         test_verifier_accepts_bounded_shared_capacity_diagnostic_bundle,
+        test_verifier_rejects_shared_capacity_stage1_authorization,
         test_verifier_rejects_shared_baseline_count_on_the_wrong_gpu,
         test_verifier_rejects_strict_admission_with_diagnostic_claim,
         test_verifier_reconstructs_go_from_hash_bound_raw_rows,
+        test_verifier_rejects_missing_report,
+        test_verifier_rejects_report_hash_drift,
+        test_verifier_rejects_rehashed_report_semantic_drift,
         test_verifier_does_not_import_the_producer_assembler,
         test_integrity_and_frozen_identity_mutations_are_incomplete,
         test_correctness_and_lifecycle_mutations_fail_closed,

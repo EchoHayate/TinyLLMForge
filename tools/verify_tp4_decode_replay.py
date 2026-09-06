@@ -43,6 +43,7 @@ PRODUCER_FILES = frozenset({
     "cleanup.json",
     "summary.json",
     "producer_classification.json",
+    "report.md",
 })
 JSONL_FILES = frozenset(
     name for name in PRODUCER_FILES if name.endswith(".jsonl")
@@ -525,6 +526,146 @@ def _safe_metrics(reconstructed: dict) -> dict:
     }
 
 
+def _report_value(value: object) -> str:
+    if value is None:
+        return "N/A"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return json.dumps(value, allow_nan=False)
+    raise ValueError("report metric has an unsupported value")
+
+
+def _render_report(
+    *,
+    source: dict,
+    admission: dict,
+    cleanup: dict,
+    classification: dict,
+) -> str:
+    admission_mode = admission.get(
+        "admission_mode",
+        "strict_clean",
+    )
+    claim_boundary = admission.get(
+        "claim_boundary",
+        "FORMAL_STRICT_CLEAN",
+    )
+    stage1_authorized = (
+        classification["classification"] == "GO_STAGE1_JUSTIFIED"
+        and claim_boundary == "FORMAL_STRICT_CLEAN"
+    )
+    failed_gates = classification["failed_gates"]
+    lines = [
+        "# Qwen3.8 TP4 Collective-Stable Decode Replay Qualification",
+        "",
+        f"Run tag: `{source['run_tag']}`",
+        "",
+        f"Source revision: `{source['source_revision']}`",
+        "",
+        f"Source tree SHA256: `{source['source_tree_sha256']}`",
+        "",
+        f"Model repository: `{source['model_repository']}`",
+        "",
+        f"Model revision: `{source['model_revision']}`",
+        "",
+        f"Admission mode: `{admission_mode}`",
+        "",
+        f"Claim boundary: `{claim_boundary}`",
+        "",
+        f"Cleanup: `{cleanup['classification']}`",
+        "",
+        (
+            "Classification: "
+            f"`{classification['classification']}`"
+        ),
+        "",
+        (
+            "Stage-1 authorization: "
+            f"`{_report_value(stage1_authorized)}`"
+        ),
+        "",
+        "Failed gates:",
+        "",
+    ]
+    if failed_gates:
+        lines.extend(f"- `{gate}`" for gate in failed_gates)
+    else:
+        lines.append("- none")
+    aggregate = classification.get("aggregate", {})
+    workloads = classification.get("workloads", {})
+    added_allocated = _report_value(
+        classification.get("maximum_added_peak_allocated_bytes")
+    )
+    added_reserved = _report_value(
+        classification.get("maximum_added_peak_reserved_bytes")
+    )
+    capture_duration = _report_value(
+        classification.get("capture_duration_ns")
+    )
+    capture_amortization = _report_value(
+        classification.get("capture_amortization_tokens")
+    )
+    lines.extend((
+        "",
+        "## Benefit and cost",
+        "",
+        "| Scope | Throughput ratio | Median TPOT ratio | "
+        "P99 E2E ratio | TTFT ratio |",
+        "| --- | ---: | ---: | ---: | ---: |",
+        (
+            "| aggregate | "
+            f"{_report_value(aggregate.get('output_throughput_ratio'))} | "
+            f"{_report_value(aggregate.get('median_tpot_ratio'))} | "
+            "N/A | N/A |"
+        ),
+    ))
+    for workload in contract.WORKLOADS:
+        payload = workloads.get(workload, {})
+        lines.append(
+            f"| {workload} | "
+            f"{_report_value(payload.get('output_throughput_ratio'))} | "
+            f"{_report_value(payload.get('median_tpot_ratio'))} | "
+            f"{_report_value(payload.get('p99_e2e_ratio'))} | "
+            f"{_report_value(payload.get('ttft_ratio'))} |"
+        )
+    lines.extend((
+        "",
+        (
+            "Replay coverage: "
+            f"`{_report_value(classification.get('replay_coverage'))}`"
+        ),
+        "",
+        (
+            "Added peak allocated bytes: "
+            f"`{added_allocated}`"
+        ),
+        "",
+        (
+            "Added peak reserved bytes: "
+            f"`{added_reserved}`"
+        ),
+        "",
+        (
+            "Capture duration ns: "
+            f"`{capture_duration}`"
+        ),
+        "",
+        (
+            "Capture amortization tokens: "
+            f"`{capture_amortization}`"
+        ),
+        "",
+        (
+            "Only `GO_STAGE1_JUSTIFIED` evidence collected under "
+            "`FORMAL_STRICT_CLEAN` may authorize Stage 1. "
+            "`DIAGNOSTIC_ONLY` evidence never authorizes Stage 1."
+        ),
+        "",
+    ))
+    return "\n".join(lines)
+
+
 def _incomplete(reason: str) -> dict:
     return {
         "classification": "INCOMPLETE",
@@ -600,6 +741,11 @@ def verify_bundle(root: Path) -> dict:
             "stage1_authorized": (
                 reconstructed["classification"]
                 == "GO_STAGE1_JUSTIFIED"
+                and admission.get(
+                    "claim_boundary",
+                    "FORMAL_STRICT_CLEAN",
+                )
+                == "FORMAL_STRICT_CLEAN"
             ),
         }
         producer_matches = producer == expected_producer
@@ -615,6 +761,18 @@ def verify_bundle(root: Path) -> dict:
         summary_matches = (
             _load_json(root / "summary.json") == expected_summary
         )
+        expected_report = _render_report(
+            source=source,
+            admission=admission,
+            cleanup=_load_json(root / "cleanup.json"),
+            classification=reconstructed,
+        )
+        if (root / "report.md").read_bytes() != expected_report.encode(
+            "utf-8"
+        ):
+            raise ValueError(
+                "report does not match reconstructed evidence"
+            )
         if (
             reconstructed["classification"]
             == "GO_STAGE1_JUSTIFIED"

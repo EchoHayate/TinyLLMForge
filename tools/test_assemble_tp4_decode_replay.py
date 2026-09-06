@@ -314,6 +314,25 @@ def test_assembler_writes_complete_manifested_go_bundle():
             assert hashlib.sha256(
                 (bundle / name).read_bytes()
             ).hexdigest() == expected
+        report = (bundle / "report.md").read_text(encoding="utf-8")
+        assert report.endswith("\n")
+        assert (
+            "Classification: `GO_STAGE1_JUSTIFIED`"
+            in report
+        )
+        assert "Admission mode: `strict_clean`" in report
+        assert "Claim boundary: `FORMAL_STRICT_CLEAN`" in report
+        assert "Stage-1 authorization: `true`" in report
+        assert "Cleanup: `CLEAN`" in report
+        assert "Replay coverage: `1.0`" in report
+        assert "Capture amortization tokens: `500.0`" in report
+        assert "Failed gates:\n\n- none\n" in report
+        producer = json.loads(
+            (bundle / "producer_classification.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert producer["stage1_authorized"] is True
 
 
 def test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence():
@@ -335,6 +354,31 @@ def test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence():
                 encoding="utf-8"
             )
         ) == admission
+        report = (bundle / "report.md").read_text(encoding="utf-8")
+        assert "Admission mode: `shared_capacity`" in report
+        assert "Claim boundary: `DIAGNOSTIC_ONLY`" in report
+        assert "Stage-1 authorization: `false`" in report
+        producer = json.loads(
+            (bundle / "producer_classification.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert producer["stage1_authorized"] is False
+
+
+def test_report_is_deterministic_for_identical_evidence():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        raw.mkdir()
+        _write_raw_attempt(raw)
+        first = root / "first"
+        second = root / "second"
+        _assemble(raw, first)
+        _assemble(raw, second)
+        assert (first / "report.md").read_bytes() == (
+            second / "report.md"
+        ).read_bytes()
 
 
 def test_assembler_rejects_shared_baseline_count_on_the_wrong_gpu():
@@ -468,6 +512,7 @@ def main() -> None:
     tests = (
         test_assembler_writes_complete_manifested_go_bundle,
         test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence,
+        test_report_is_deterministic_for_identical_evidence,
         test_assembler_rejects_shared_baseline_count_on_the_wrong_gpu,
         test_assembler_rejects_strict_admission_with_diagnostic_claim,
         test_each_required_input_is_fail_closed_when_missing,
