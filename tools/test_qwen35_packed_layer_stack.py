@@ -27,6 +27,10 @@ hybrid = _load_module("tinyvllm.engine.hybrid_state", "tinyvllm/engine/hybrid_st
 adapter_module = _load_module("tinyvllm.engine.qwen35_layer_state", "tinyvllm/engine/qwen35_layer_state.py")
 transaction_module = _load_module("tinyvllm.engine.qwen35_state_transaction", "tinyvllm/engine/qwen35_state_transaction.py")
 decoder_module = _load_module("tinyvllm.layers.qwen35_decoder_layer", "tinyvllm/layers/qwen35_decoder_layer.py")
+_load_module(
+    "tinyvllm.layers.qwen35_packed_stateful_decoder_layer",
+    "tinyvllm/layers/qwen35_packed_stateful_decoder_layer.py",
+)
 stack_module = _load_module("tinyvllm.layers.qwen35_packed_layer_stack", "tinyvllm/layers/qwen35_packed_layer_stack.py")
 from tinyvllm.utils.context import get_context, reset_context, set_context
 
