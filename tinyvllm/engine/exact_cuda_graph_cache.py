@@ -111,6 +111,15 @@ class ExactCudaGraphCache:
         self.reserved_delta_bytes = 0
         self.total_capture_ns = 0
         self.counters = collections.Counter()
+        self.invocation_identity_sha256s: set[str] = set()
+        self.program_key_sha256s: set[str] = set()
+
+    def _record_identity(
+        self,
+        identity: FlashAttentionGraphIdentity,
+    ) -> None:
+        self.invocation_identity_sha256s.add(identity.sha256)
+        self.program_key_sha256s.add(identity.cache_key_sha256)
 
     def observe_success(
         self,
@@ -118,6 +127,7 @@ class ExactCudaGraphCache:
         *,
         estimated_static_bytes: int,
     ) -> AdmissionDecision:
+        self._record_identity(identity)
         cache_key_sha256 = identity.cache_key_sha256
         observation_count = self.observation_counts.get(
             cache_key_sha256,
@@ -188,6 +198,7 @@ class ExactCudaGraphCache:
         self,
         identity: FlashAttentionGraphIdentity,
     ) -> ExactCudaGraphEntry | None:
+        self._record_identity(identity)
         cache_key_sha256 = identity.cache_key_sha256
         entry = self.ready_entries.get(cache_key_sha256)
         if entry is None:
@@ -202,6 +213,26 @@ class ExactCudaGraphCache:
             return None
         self.counters["hits"] += 1
         return entry
+
+    def record_replay(
+        self,
+        identity: FlashAttentionGraphIdentity,
+        *,
+        cross_lease: bool,
+    ) -> None:
+        if not isinstance(cross_lease, bool):
+            raise ValueError("cross_lease must be a bool")
+        self._record_identity(identity)
+        self.counters["replays"] += 1
+        if cross_lease:
+            self.counters["cross_lease_replays"] += 1
+
+    def record_lease_manifest_rejection(
+        self,
+        identity: FlashAttentionGraphIdentity,
+    ) -> None:
+        self._record_identity(identity)
+        self.counters["lease_manifest_rejections"] += 1
 
     def commit_capture(self, entry: ExactCudaGraphEntry) -> None:
         identity_sha256 = entry.identity.sha256
@@ -322,6 +353,8 @@ class ExactCudaGraphCache:
         self.reserved_delta_bytes = 0
         self.total_capture_ns = 0
         self.counters.clear()
+        self.invocation_identity_sha256s.clear()
+        self.program_key_sha256s.clear()
         return {
             "released_ready_entries": released_ready_entries,
             "cleared_observations": cleared_observations,
@@ -361,6 +394,18 @@ class ExactCudaGraphCache:
             "static_bytes": self.static_bytes,
             "reserved_delta_bytes": self.reserved_delta_bytes,
             "total_capture_ns": self.total_capture_ns,
+            "cross_lease_replays": self.counters[
+                "cross_lease_replays"
+            ],
+            "lease_manifest_rejections": self.counters[
+                "lease_manifest_rejections"
+            ],
+            "unique_invocation_identities": len(
+                self.invocation_identity_sha256s
+            ),
+            "unique_program_keys": len(
+                self.program_key_sha256s
+            ),
             **counters,
         }
 

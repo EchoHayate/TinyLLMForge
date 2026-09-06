@@ -758,6 +758,7 @@ def make_runner(**overrides):
         "prefill_cuda_graphs": False,
         "prefill_cuda_graph_token_allowlist": (256, 2048),
         "multi_sequence_cuda_graphs": False,
+        "multi_sequence_cuda_graph_dynamic_pool_indices": False,
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "spec_verify_cuda_graphs": False,
     }
@@ -6377,6 +6378,96 @@ def test_transactional_exact_graph_identity_seals_schema_and_leases():
     assert changed_schema.sha256 != identity.sha256
 
 
+def test_pool_index_identity_reuses_program_across_lease_rotations():
+    runner = make_runner(
+        multi_sequence_cuda_graphs=True,
+        multi_sequence_cuda_graph_dynamic_pool_indices=True,
+    )
+    runner.config.hf_config = SimpleNamespace(
+        num_attention_heads=16,
+        num_key_value_heads=8,
+        head_dim=128,
+        hidden_size=1024,
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    runner.kv_cache = FakeTensor([], device="cuda:0")
+    runner._last_hybrid_state_token_counts = (1, 1)
+
+    class PoolIndexModel:
+        def exact_cuda_graph_state_schema_sha256(self):
+            return "a" * 64
+
+        def exact_cuda_graph_lease_seal(self, leases):
+            payload = "|".join(
+                f"{lease.slot_id}:{lease.generation}:{lease.request_id}"
+                for lease in leases
+            ).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
+
+        def exact_cuda_graph_lease_manifest(
+            self,
+            leases,
+            expected_request_ids,
+        ):
+            del leases, expected_request_ids
+            return None
+
+        def snapshot_exact_cuda_graph_state(self, leases):
+            del leases
+            return object()
+
+        def restore_exact_cuda_graph_state(self, leases, snapshot):
+            del leases, snapshot
+
+        def run_exact_cuda_graph_step(
+            self,
+            leases,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            del leases, token_counts, input_ids, positions
+            return None
+
+        def run_exact_cuda_graph_step_by_pool_index(
+            self,
+            state_slot_ids,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            del state_slot_ids, token_counts, input_ids, positions
+            return None
+
+    runner.model = PoolIndexModel()
+    graph_context = SimpleNamespace(
+        block_tables=FakeTensor([[0, 1], [2, 3]]),
+    )
+    runner._last_hybrid_state_leases = (
+        model_runner.HybridStateLease(0, 1, 100),
+        model_runner.HybridStateLease(1, 1, 101),
+    )
+    capture_identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        graph_context,
+    )
+    runner._last_hybrid_state_leases = (
+        model_runner.HybridStateLease(3, 4, 200),
+        model_runner.HybridStateLease(2, 6, 201),
+    )
+    replay_identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        graph_context,
+    )
+
+    assert capture_identity.execution_protocol == "lease_pool_index_v1"
+    assert capture_identity.sha256 != replay_identity.sha256
+    assert (
+        capture_identity.cache_key_sha256
+        == replay_identity.cache_key_sha256
+    )
+
+
 def test_exact_graph_runtime_uses_nested_text_config():
     runner = make_runner()
     runner.world_size = 4
@@ -6524,6 +6615,337 @@ def test_three_successful_eager_steps_capture_post_step_and_fourth_replays():
     assert events[2]["fallback_reason"] == "cold_identity"
     assert events[3]["cache_state"] == "ready"
     assert events[3]["graph_identity_sha256"]
+
+
+def test_pool_index_graph_replays_once_across_lease_rotation():
+    cache_module = sys.modules[
+        "tinyvllm.engine.exact_cuda_graph_cache"
+    ]
+    runner = _make_exact_dispatch_runner()
+    runner.config.multi_sequence_cuda_graph_dynamic_pool_indices = True
+    graph = SimpleNamespace(
+        capture_count=0,
+        replay_count=0,
+        pool=lambda: "pool-index-pool",
+    )
+    graph.replay = lambda: setattr(
+        graph,
+        "replay_count",
+        graph.replay_count + 1,
+    )
+
+    class PoolIndexModel:
+        def __call__(self, input_ids, positions, input_embeds=None):
+            del positions, input_embeds
+            return FakeTensor(
+                [[value] for value in input_ids.values]
+            )
+
+        def compute_logits(self, hidden):
+            return hidden
+
+        def exact_cuda_graph_state_schema_sha256(self):
+            return "a" * 64
+
+        def exact_cuda_graph_lease_seal(self, leases):
+            payload = "|".join(
+                f"{lease.slot_id}:{lease.generation}:{lease.request_id}"
+                for lease in leases
+            ).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
+
+        def exact_cuda_graph_lease_manifest(
+            self,
+            leases,
+            expected_request_ids,
+        ):
+            if tuple(
+                lease.request_id for lease in leases
+            ) != tuple(expected_request_ids):
+                raise RuntimeError("lease manifest order mismatch")
+            payload = "|".join(
+                f"{lease.slot_id}:{lease.generation}:{lease.request_id}"
+                for lease in leases
+            ).encode("utf-8")
+            return SimpleNamespace(
+                slot_ids=tuple(lease.slot_id for lease in leases),
+                sha256=hashlib.sha256(payload).hexdigest(),
+            )
+
+        def snapshot_exact_cuda_graph_state(self, leases):
+            del leases
+            return object()
+
+        def restore_exact_cuda_graph_state(self, leases, snapshot):
+            del leases, snapshot
+
+        def run_exact_cuda_graph_step(
+            self,
+            leases,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            del leases, token_counts, input_ids, positions
+            return None
+
+        def run_exact_cuda_graph_step_by_pool_index(
+            self,
+            state_slot_ids,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            del state_slot_ids, token_counts, input_ids, positions
+            return None
+
+    runner.model = PoolIndexModel()
+    capture_leases = (
+        model_runner.HybridStateLease(0, 1, 100),
+        model_runner.HybridStateLease(1, 1, 101),
+    )
+    replay_leases = (
+        model_runner.HybridStateLease(3, 4, 200),
+        model_runner.HybridStateLease(2, 6, 201),
+    )
+    runner._last_hybrid_state_leases = capture_leases
+    runner._last_hybrid_state_request_ids = (100, 101)
+    runner._last_hybrid_state_token_counts = (1, 1)
+    captured = {}
+
+    def capture(*, identity, input_ids, positions, context):
+        del input_ids, positions, context
+        graph.capture_count += 1
+        manifest = runner._exact_graph_lease_manifest()
+        entry = cache_module.ExactCudaGraphEntry(
+            identity=identity,
+            identity_sha256=identity.sha256,
+            graph=graph,
+            tensors={
+                "input_ids": FakeGraphBuffer(),
+                "positions": FakeGraphBuffer(),
+                "slot_mapping": FakeGraphBuffer(),
+                "context_lens": FakeGraphBuffer(),
+                "block_tables": FakeGraphBuffer(),
+                "state_slot_ids": FakeGraphBuffer(
+                    list(manifest.slot_ids)
+                ),
+                "outputs": FakeTensor([[101], [102]]),
+            },
+            static_bytes=4096,
+            capture_duration_ns=100,
+            allocated_delta_bytes=0,
+            reserved_delta_bytes=1024,
+        )
+        captured["entry"] = entry
+        return entry
+
+    runner._capture_exact_multi_sequence_graph = capture
+
+    def run_decode():
+        context.set_context(
+            False,
+            slot_mapping=FakeTensor([0, 256]),
+            context_lens=FakeTensor([1, 1]),
+            block_tables=FakeTensor([[0, 1]] * 2),
+        )
+        return runner.run_model(
+            FakeTensor([10, 20]),
+            FakeTensor([1, 1]),
+            is_prefill=False,
+        )
+
+    for _ in range(3):
+        run_decode()
+    capture_identity_sha256 = captured["entry"].identity_sha256
+
+    runner._last_hybrid_state_leases = replay_leases
+    runner._last_hybrid_state_request_ids = (200, 201)
+    run_decode()
+    event = runner.cuda_graph_dispatch_observation()
+
+    assert graph.capture_count == 1
+    assert graph.replay_count == 1
+    assert captured["entry"].tensors["state_slot_ids"].values[
+        "values"
+    ] == [3, 2]
+    assert event["graph_program_key_sha256"] == (
+        captured["entry"].cache_key_sha256
+    )
+    assert event["graph_invocation_identity_sha256"] != (
+        capture_identity_sha256
+    )
+    assert event["lease_manifest_sha256"]
+    assert event["cross_lease_replay"] is True
+
+
+@pytest.mark.parametrize(
+    "leases,request_ids,message",
+    (
+        (
+            (
+                model_runner.HybridStateLease(3, 5, 200),
+                model_runner.HybridStateLease(2, 6, 201),
+            ),
+            (200, 201),
+            "stale generation",
+        ),
+        (
+            (
+                model_runner.HybridStateLease(3, 4, 999),
+                model_runner.HybridStateLease(2, 6, 201),
+            ),
+            (999, 201),
+            "wrong request",
+        ),
+        (
+            (
+                model_runner.HybridStateLease(3, 4, 200),
+                model_runner.HybridStateLease(3, 6, 201),
+            ),
+            (200, 201),
+            "duplicate slot",
+        ),
+        (
+            (
+                model_runner.HybridStateLease(3, 4, 200),
+                model_runner.HybridStateLease(2, 6, 201),
+            ),
+            (201, 200),
+            "manifest order mismatch",
+        ),
+    ),
+)
+def test_pool_index_manifest_rejects_before_slot_copy_and_replay(
+    leases,
+    request_ids,
+    message,
+):
+    cache_module = sys.modules[
+        "tinyvllm.engine.exact_cuda_graph_cache"
+    ]
+    runner = _make_exact_dispatch_runner()
+    runner.config.multi_sequence_cuda_graph_dynamic_pool_indices = True
+    valid = {(3, 200): 4, (2, 201): 6}
+
+    class PoolIndexModel:
+        def exact_cuda_graph_state_schema_sha256(self):
+            return "a" * 64
+
+        def exact_cuda_graph_lease_seal(self, current_leases):
+            payload = repr(current_leases).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
+
+        def exact_cuda_graph_lease_manifest(
+            self,
+            current_leases,
+            expected_request_ids,
+        ):
+            seen = set()
+            for index, lease in enumerate(current_leases):
+                if lease.slot_id in seen:
+                    raise RuntimeError("duplicate slot")
+                seen.add(lease.slot_id)
+                if lease.request_id != expected_request_ids[index]:
+                    raise RuntimeError("manifest order mismatch")
+                expected_generation = valid.get(
+                    (lease.slot_id, lease.request_id)
+                )
+                if expected_generation is None:
+                    raise RuntimeError("wrong request")
+                if lease.generation != expected_generation:
+                    raise RuntimeError("stale generation")
+            return SimpleNamespace(
+                slot_ids=tuple(
+                    lease.slot_id for lease in current_leases
+                ),
+                sha256="b" * 64,
+            )
+
+        def snapshot_exact_cuda_graph_state(self, current_leases):
+            del current_leases
+            return object()
+
+        def restore_exact_cuda_graph_state(self, current_leases, snapshot):
+            del current_leases, snapshot
+
+        def run_exact_cuda_graph_step(
+            self,
+            *args,
+        ):
+            del args
+
+        def run_exact_cuda_graph_step_by_pool_index(self, *args):
+            del args
+
+        def compute_logits(self, hidden):
+            return hidden
+
+    runner.model = PoolIndexModel()
+    runner._last_hybrid_state_token_counts = (1, 1)
+    runner._last_hybrid_state_leases = (
+        model_runner.HybridStateLease(0, 1, 100),
+        model_runner.HybridStateLease(1, 1, 101),
+    )
+    capture_identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        SimpleNamespace(block_tables=FakeTensor([[0, 1]] * 2)),
+    )
+
+    class CountingBuffer(FakeGraphBuffer):
+        def __init__(self, values=None):
+            super().__init__(values)
+            self.copy_count = 0
+
+        def copy_(self, value):
+            self.copy_count += 1
+            return super().copy_(value)
+
+    graph = SimpleNamespace(replay_count=0)
+    graph.replay = lambda: setattr(
+        graph,
+        "replay_count",
+        graph.replay_count + 1,
+    )
+    state_slot_ids = CountingBuffer([0, 1])
+    entry = cache_module.ExactCudaGraphEntry(
+        identity=capture_identity,
+        identity_sha256=capture_identity.sha256,
+        graph=graph,
+        tensors={
+            "input_ids": FakeGraphBuffer(),
+            "positions": FakeGraphBuffer(),
+            "slot_mapping": FakeGraphBuffer(),
+            "context_lens": FakeGraphBuffer(),
+            "block_tables": FakeGraphBuffer(),
+            "state_slot_ids": state_slot_ids,
+            "outputs": FakeTensor([[1], [2]]),
+        },
+        static_bytes=4096,
+        capture_duration_ns=100,
+        allocated_delta_bytes=0,
+        reserved_delta_bytes=1024,
+    )
+    runner._last_hybrid_state_leases = leases
+    runner._last_hybrid_state_request_ids = request_ids
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([0, 256]),
+        context_lens=FakeTensor([1, 1]),
+        block_tables=FakeTensor([[0, 1]] * 2),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        runner._replay_exact_multi_sequence_graph(
+            entry,
+            input_ids=FakeTensor([10, 20]),
+            positions=FakeTensor([1, 1]),
+            context=context.get_context(),
+        )
+
+    assert state_slot_ids.copy_count == 0
+    assert graph.replay_count == 0
+    assert context.get_context().slot_mapping is None
 
 
 def test_exact_ready_entry_never_rounds_batch_or_page_table_width():
@@ -6860,6 +7282,7 @@ def test_run_hashes_canonical_sorted_sequence_ids_before_dispatch():
         ).encode("utf-8")
     ).hexdigest()
     assert observed["request_ids_hash"] == expected
+    assert runner._last_hybrid_state_request_ids == (9, 2, 5)
 
 
 def _make_step_logits_run_runner(*, rank=0):
@@ -8342,6 +8765,178 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
     assert current.slot_mapping is None
 
 
+def test_pool_index_capture_uses_graph_owned_slots_and_rolls_back_state():
+    runner = _make_exact_dispatch_runner()
+    runner._capture_exact_multi_sequence_graph = (
+        ModelRunner._capture_exact_multi_sequence_graph.__get__(
+            runner,
+            ModelRunner,
+        )
+    )
+    runner.config.multi_sequence_cuda_graph_dynamic_pool_indices = True
+    runner.config.hf_config = SimpleNamespace(
+        text_config=SimpleNamespace(
+            num_attention_heads=16,
+            num_key_value_heads=8,
+            head_dim=128,
+            hidden_size=16,
+        ),
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    leases = (
+        model_runner.HybridStateLease(0, 1, 100),
+        model_runner.HybridStateLease(1, 1, 101),
+    )
+    runner._last_hybrid_state_leases = leases
+    runner._last_hybrid_state_request_ids = (100, 101)
+    runner._last_hybrid_state_token_counts = (1, 1)
+    runner._exact_graph_scratch_slots = (
+        lambda *, batch_size: (2048, 2304)[:batch_size]
+    )
+    runner.snapshot_kv_slots = lambda slots: tuple(slots)
+    runner.restore_kv_slots = lambda slots, snapshot: None
+    call_order = []
+
+    class PoolIndexModel:
+        def __init__(self):
+            self.state = 7
+            self.pool_index_calls = 0
+            self.legacy_calls = 0
+
+        def exact_cuda_graph_state_schema_sha256(self):
+            return "a" * 64
+
+        def exact_cuda_graph_lease_seal(self, active_leases):
+            return hashlib.sha256(
+                repr(active_leases).encode("utf-8")
+            ).hexdigest()
+
+        def exact_cuda_graph_lease_manifest(
+            self,
+            active_leases,
+            expected_request_ids,
+        ):
+            call_order.append("manifest")
+            assert active_leases == leases
+            assert expected_request_ids == (100, 101)
+            return SimpleNamespace(
+                slot_ids=(0, 1),
+                sha256="b" * 64,
+            )
+
+        def snapshot_exact_cuda_graph_state(self, active_leases):
+            call_order.append("snapshot")
+            assert active_leases == leases
+            return self.state
+
+        def restore_exact_cuda_graph_state(
+            self,
+            active_leases,
+            snapshot,
+        ):
+            assert active_leases == leases
+            self.state = snapshot
+
+        def run_exact_cuda_graph_step(self, *args):
+            del args
+            self.legacy_calls += 1
+            raise AssertionError("legacy lease path must not be captured")
+
+        def run_exact_cuda_graph_step_by_pool_index(
+            self,
+            state_slot_ids,
+            token_counts,
+            input_ids,
+            positions,
+        ):
+            call_order.append("capture")
+            del positions
+            assert isinstance(state_slot_ids, FakeCaptureTensor)
+            assert token_counts == (1, 1)
+            self.pool_index_calls += 1
+            self.state += 1
+            return FakeCaptureTensor(
+                (input_ids.size(0), 16),
+                element_size=2,
+            )
+
+    runner.model = PoolIndexModel()
+
+    class FakeGraph:
+        def pool(self):
+            return "pool"
+
+    class FakeGraphContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    original_zeros = getattr(model_runner.torch, "zeros", None)
+    original_empty = getattr(model_runner.torch, "empty", None)
+    original_cuda = model_runner.torch.cuda
+    model_runner.torch.zeros = (
+        lambda *shape, dtype=None, device=None: FakeCaptureTensor(
+            shape[0] if len(shape) == 1 else shape,
+            element_size=(
+                2
+                if dtype == runner.config.hf_config.torch_dtype
+                else 4
+            ),
+        )
+    )
+    model_runner.torch.empty = (
+        lambda *shape, dtype=None, device=None: FakeCaptureTensor(
+            shape[0] if len(shape) == 1 else shape,
+            element_size=8,
+        )
+    )
+    model_runner.torch.cuda = SimpleNamespace(
+        get_device_properties=original_cuda.get_device_properties,
+        CUDAGraph=FakeGraph,
+        graph=lambda graph, pool=None: FakeGraphContext(),
+        synchronize=lambda: None,
+        memory_allocated=lambda: 100,
+        memory_reserved=lambda: 200,
+    )
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([0, 256]),
+        context_lens=FakeTensor([1, 1]),
+        block_tables=FakeTensor([[0, 1]] * 2),
+    )
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        context.get_context(),
+    )
+    try:
+        entry = runner._capture_exact_multi_sequence_graph(
+            identity=identity,
+            input_ids=FakeTensor([10, 20]),
+            positions=FakeTensor([1, 1]),
+            context=context.get_context(),
+        )
+    finally:
+        if original_zeros is None:
+            delattr(model_runner.torch, "zeros")
+        else:
+            model_runner.torch.zeros = original_zeros
+        if original_empty is None:
+            delattr(model_runner.torch, "empty")
+        else:
+            model_runner.torch.empty = original_empty
+        model_runner.torch.cuda = original_cuda
+
+    assert identity.execution_protocol == "lease_pool_index_v1"
+    assert entry.tensors["state_slot_ids"].values["values"] == [0, 1]
+    assert runner.model.pool_index_calls == 1
+    assert runner.model.legacy_calls == 0
+    assert runner.model.state == 7
+    assert runner._last_exact_graph_lease_manifest_sha256 == "b" * 64
+    assert call_order == ["manifest", "snapshot", "capture"]
+
+
 def test_transactional_capture_rolls_back_and_replay_advances_once():
     _decode_internal_profile_suspensions.clear()
     runner = _make_exact_dispatch_runner()
@@ -8566,6 +9161,12 @@ def test_transactional_capture_rolls_back_and_replay_advances_once():
         runner.model.fail_step = True
         runner.model.fail_restore = True
         fail_kv_restore[0] = True
+        context.set_context(
+            False,
+            slot_mapping=FakeTensor([0, 256, 512, 768]),
+            context_lens=FakeTensor([1, 1, 1, 1]),
+            block_tables=FakeTensor([[0, 1]] * 4),
+        )
         try:
             runner._capture_exact_multi_sequence_graph(
                 identity=identity,
@@ -8783,6 +9384,10 @@ def test_model_runner_reset_exact_graph_cache_clears_pool_and_state():
     ]
     runner = _make_exact_dispatch_runner()
     runner._exact_cuda_graph_pool = "stale-pool"
+    runner._last_exact_graph_program_key_sha256 = "a" * 64
+    runner._last_exact_graph_invocation_identity_sha256 = "b" * 64
+    runner._last_exact_graph_lease_manifest_sha256 = "c" * 64
+    runner._last_exact_graph_cross_lease_replay = True
     identity = runner._build_multi_sequence_graph_identity(
         FakeTensor([10, 20, 30, 40]),
         SimpleNamespace(
@@ -8834,6 +9439,10 @@ def test_model_runner_reset_exact_graph_cache_clears_pool_and_state():
     assert receipt["summary"]["observation_counts"] == {}
     assert receipt["summary"]["total_capture_ns"] == 0
     assert runner._exact_cuda_graph_pool is None
+    assert runner._last_exact_graph_program_key_sha256 is None
+    assert runner._last_exact_graph_invocation_identity_sha256 is None
+    assert runner._last_exact_graph_lease_manifest_sha256 is None
+    assert runner._last_exact_graph_cross_lease_replay is False
 
 
 def test_model_runner_exit_releases_exact_graphs_before_process_group_shutdown():

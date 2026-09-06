@@ -54,6 +54,10 @@ EXPECTED_DISPATCH_EVENT_FIELDS = (
     "page_table_width",
     "effective_num_splits",
     "graph_identity_sha256",
+    "graph_program_key_sha256",
+    "graph_invocation_identity_sha256",
+    "lease_manifest_sha256",
+    "cross_lease_replay",
     "feature_enabled",
     "dispatch",
     "cache_state",
@@ -630,6 +634,44 @@ def test_exact_cache_reuses_pool_index_program_across_lease_seals():
     assert len(cache.ready_entries) == 1
 
 
+def test_pool_index_cache_tracks_invocations_and_resets_cross_lease_state():
+    cache_module = load_exact_cache()
+    first = make_identity(
+        execution_protocol="lease_pool_index_v1",
+        state_schema_sha256="a" * 64,
+        lease_seal="1" * 64,
+    )
+    second = replace(first, lease_seal="2" * 64)
+    cache = cache_module.ExactCudaGraphCache(make_cache_config())
+
+    for _ in range(3):
+        cache.observe_success(first, estimated_static_bytes=4096)
+    entry = make_entry(first)
+    entry.graph = types.SimpleNamespace(reset=lambda: None)
+    cache.commit_capture(entry)
+    assert cache.ready_entry(second) is not None
+    cache.record_replay(
+        second,
+        cross_lease=first.sha256 != second.sha256,
+    )
+
+    summary = cache.summary()
+    assert summary["cross_lease_replays"] == 1
+    assert summary["lease_manifest_rejections"] == 0
+    assert summary["unique_invocation_identities"] == 2
+    assert summary["unique_program_keys"] == 1
+
+    cache.record_lease_manifest_rejection(second)
+    assert cache.summary()["lease_manifest_rejections"] == 1
+
+    cache.reset_phase(synchronize=lambda: None)
+    summary = cache.summary()
+    assert summary["cross_lease_replays"] == 0
+    assert summary["lease_manifest_rejections"] == 0
+    assert summary["unique_invocation_identities"] == 0
+    assert summary["unique_program_keys"] == 0
+
+
 def test_every_exact_cache_budget_blocks_admission_independently():
     cache_module = load_exact_cache()
 
@@ -760,6 +802,10 @@ def test_exact_cache_phase_reset_releases_graphs_and_clears_accounting():
         "static_bytes": 0,
         "reserved_delta_bytes": 0,
         "total_capture_ns": 0,
+        "cross_lease_replays": 0,
+        "lease_manifest_rejections": 0,
+        "unique_invocation_identities": 0,
+        "unique_program_keys": 0,
         "hits": 0,
         "misses": 0,
         "capture_attempts": 0,

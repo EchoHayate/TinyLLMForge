@@ -254,6 +254,10 @@ DISPATCH_EVENT_FIELDS = (
     "page_table_width",
     "effective_num_splits",
     "graph_identity_sha256",
+    "graph_program_key_sha256",
+    "graph_invocation_identity_sha256",
+    "lease_manifest_sha256",
+    "cross_lease_replay",
     "feature_enabled",
     "dispatch",
     "cache_state",
@@ -2538,6 +2542,13 @@ class ModelRunner:
         }
         self.hybrid_state_runtime_bridge = None
         self._last_hybrid_state_slot_ids = None
+        self._last_hybrid_state_leases = ()
+        self._last_hybrid_state_request_ids = ()
+        self._last_hybrid_state_token_counts = ()
+        self._last_exact_graph_program_key_sha256 = None
+        self._last_exact_graph_invocation_identity_sha256 = None
+        self._last_exact_graph_lease_manifest_sha256 = None
+        self._last_exact_graph_cross_lease_replay = False
         self.qwen35_hybrid_model_owner = None
         self.qwen35_speculative_state_owner = None
         self._speculative_side_state_handle = None
@@ -5698,7 +5709,7 @@ class ModelRunner:
     def _exact_graph_execution_identity(
         self,
     ) -> tuple[str, str, str]:
-        hook_names = (
+        transactional_hook_names = (
             "exact_cuda_graph_state_schema_sha256",
             "exact_cuda_graph_lease_seal",
             "snapshot_exact_cuda_graph_state",
@@ -5708,7 +5719,7 @@ class ModelRunner:
         model = getattr(self, "model", None)
         hooks = tuple(
             callable(getattr(model, name, None))
-            for name in hook_names
+            for name in transactional_hook_names
         )
         if not any(hooks):
             return "forward_v1", "", ""
@@ -5716,6 +5727,25 @@ class ModelRunner:
             raise RuntimeError(
                 "transactional exact CUDA Graph hooks are incomplete"
             )
+        dynamic_pool_indices = bool(
+            getattr(
+                self.config,
+                "multi_sequence_cuda_graph_dynamic_pool_indices",
+                False,
+            )
+        )
+        if dynamic_pool_indices:
+            pool_index_hook_names = (
+                "exact_cuda_graph_lease_manifest",
+                "run_exact_cuda_graph_step_by_pool_index",
+            )
+            if not all(
+                callable(getattr(model, name, None))
+                for name in pool_index_hook_names
+            ):
+                raise RuntimeError(
+                    "pool-index exact CUDA Graph hooks are incomplete"
+                )
         leases = tuple(
             getattr(self, "_last_hybrid_state_leases", ())
         )
@@ -5748,10 +5778,35 @@ class ModelRunner:
                     "must be a lowercase SHA-256"
                 )
         return (
-            "lease_transaction_v1",
+            (
+                "lease_pool_index_v1"
+                if dynamic_pool_indices
+                else "lease_transaction_v1"
+            ),
             state_schema_sha256,
             lease_seal,
         )
+
+    def _exact_graph_lease_manifest(self, *, identity=None):
+        leases = tuple(
+            getattr(self, "_last_hybrid_state_leases", ())
+        )
+        request_ids = tuple(
+            getattr(self, "_last_hybrid_state_request_ids", ())
+        )
+        try:
+            manifest = self.model.exact_cuda_graph_lease_manifest(
+                leases,
+                request_ids,
+            )
+        except Exception:
+            if identity is not None:
+                self.exact_cuda_graph_cache.record_lease_manifest_rejection(
+                    identity
+                )
+            raise
+        self._last_exact_graph_lease_manifest_sha256 = manifest.sha256
+        return manifest
 
     def _spec_verify_graph_incompatible_reason(
         self,
@@ -7199,6 +7254,28 @@ class ModelRunner:
             "page_table_width": page_table_width,
             "effective_num_splits": effective_num_splits,
             "graph_identity_sha256": graph_identity_sha256,
+            "graph_program_key_sha256": getattr(
+                self,
+                "_last_exact_graph_program_key_sha256",
+                None,
+            ),
+            "graph_invocation_identity_sha256": getattr(
+                self,
+                "_last_exact_graph_invocation_identity_sha256",
+                None,
+            ),
+            "lease_manifest_sha256": getattr(
+                self,
+                "_last_exact_graph_lease_manifest_sha256",
+                None,
+            ),
+            "cross_lease_replay": bool(
+                getattr(
+                    self,
+                    "_last_exact_graph_cross_lease_replay",
+                    False,
+                )
+            ),
             "feature_enabled": bool(
                 getattr(
                     self.config,
@@ -7323,7 +7400,7 @@ class ModelRunner:
         )
         self.exact_cuda_graph_cache.commit_capture(entry)
         if (
-            entry.identity_sha256
+            entry.cache_key_sha256
             in self.exact_cuda_graph_cache.ready_entries
             and (
                 not had_live_pool_owner
@@ -7337,6 +7414,10 @@ class ModelRunner:
             synchronize=torch.cuda.synchronize,
         )
         self._exact_cuda_graph_pool = None
+        self._last_exact_graph_program_key_sha256 = None
+        self._last_exact_graph_invocation_identity_sha256 = None
+        self._last_exact_graph_lease_manifest_sha256 = None
+        self._last_exact_graph_cross_lease_replay = False
         return {
             "rank": self.rank,
             **receipt,
@@ -7354,24 +7435,42 @@ class ModelRunner:
             input_ids,
             context,
         )
-        if (
-            entry.identity != identity
-            or entry.identity_sha256 != identity.sha256
-        ):
-            self.exact_cuda_graph_cache.disable_entry(
-                entry.identity_sha256,
-                "identity_drift",
-            )
-            raise RuntimeError("exact CUDA Graph identity drift")
+        manifest = None
+        cross_lease_replay = False
+        try:
+            if entry.cache_key_sha256 != identity.cache_key_sha256:
+                self.exact_cuda_graph_cache.disable_entry(
+                    entry.cache_key_sha256,
+                    "identity_drift",
+                )
+                raise RuntimeError("exact CUDA Graph identity drift")
+            if identity.execution_protocol == "lease_pool_index_v1":
+                manifest = self._exact_graph_lease_manifest(
+                    identity=identity,
+                )
+                cross_lease_replay = (
+                    entry.identity_sha256 != identity.sha256
+                )
+        except Exception:
+            reset_context()
+            raise
         replay_receipt = ExactCudaGraphReplayReceipt.from_environment(
             rank=int(self.rank),
             world_size=int(self.world_size),
-            identity_sha256=entry.identity_sha256,
+            identity_sha256=identity.sha256,
             replay_ordinal=int(entry.replay_count) + 1,
         )
         replay_receipt.record("entered_replay")
         tensors = entry.tensors
         try:
+            if manifest is not None:
+                tensors["state_slot_ids"].copy_(
+                    torch.tensor(
+                        manifest.slot_ids,
+                        dtype=torch.int64,
+                        device=self.kv_cache.device,
+                    )
+                )
             tensors["input_ids"].copy_(input_ids)
             tensors["positions"].copy_(positions)
             tensors["slot_mapping"].copy_(context.slot_mapping)
@@ -7402,7 +7501,7 @@ class ModelRunner:
             replay_receipt.record("logits_compute_returned")
         except Exception:
             self.exact_cuda_graph_cache.disable_entry(
-                entry.identity_sha256,
+                entry.cache_key_sha256,
                 "replay_disabled",
             )
             raise
@@ -7415,6 +7514,17 @@ class ModelRunner:
             "_cuda_graph_step_id",
             0,
         ) + 1
+        self.exact_cuda_graph_cache.record_replay(
+            identity,
+            cross_lease=cross_lease_replay,
+        )
+        self._last_exact_graph_program_key_sha256 = (
+            identity.cache_key_sha256
+        )
+        self._last_exact_graph_invocation_identity_sha256 = (
+            identity.sha256
+        )
+        self._last_exact_graph_cross_lease_replay = cross_lease_replay
         return logits
         # 假设 block_size=256（每个块存 256 个 token），其他参数不变：
 
@@ -7514,6 +7624,7 @@ class ModelRunner:
         if execution_protocol not in (
             "forward_v1",
             "lease_transaction_v1",
+            "lease_pool_index_v1",
         ):
             raise ValueError(
                 "exact capture has unsupported execution protocol"
@@ -7583,12 +7694,36 @@ class ModelRunner:
             getattr(self, "_last_hybrid_state_token_counts", ())
         )
         state_snapshot = None
-        if execution_protocol == "lease_transaction_v1":
+        manifest = None
+        if execution_protocol in (
+            "lease_transaction_v1",
+            "lease_pool_index_v1",
+        ):
             if not leases or len(leases) != len(token_counts):
                 raise ValueError(
                     "transactional exact capture requires aligned "
                     "leases and token counts"
                 )
+        if execution_protocol == "lease_pool_index_v1":
+            manifest = self._exact_graph_lease_manifest(
+                identity=identity,
+            )
+            tensors["state_slot_ids"] = torch.empty(
+                batch_size,
+                dtype=torch.int64,
+                device=device,
+            )
+            tensors["state_slot_ids"].copy_(
+                torch.tensor(
+                    manifest.slot_ids,
+                    dtype=torch.int64,
+                    device=device,
+                )
+            )
+        if execution_protocol in (
+            "lease_transaction_v1",
+            "lease_pool_index_v1",
+        ):
             state_snapshot = (
                 self.model.snapshot_exact_cuda_graph_state(leases)
             )
@@ -7624,10 +7759,20 @@ class ModelRunner:
                                 tensors["positions"],
                             )
                         )
-                    else:
+                    elif execution_protocol == "lease_transaction_v1":
                         tensors["outputs"] = (
                             self.model.run_exact_cuda_graph_step(
                                 leases,
+                                token_counts,
+                                tensors["input_ids"],
+                                tensors["positions"],
+                            )
+                        )
+                    else:
+                        tensors["outputs"] = (
+                            self.model
+                            .run_exact_cuda_graph_step_by_pool_index(
+                                tensors["state_slot_ids"],
                                 token_counts,
                                 tensors["input_ids"],
                                 tensors["positions"],
@@ -7642,7 +7787,10 @@ class ModelRunner:
             capture_error = exc
         finally:
             reset_context()
-            if execution_protocol == "lease_transaction_v1":
+            if execution_protocol in (
+                "lease_transaction_v1",
+                "lease_pool_index_v1",
+            ):
                 try:
                     self.model.restore_exact_cuda_graph_state(
                         leases,
@@ -11764,6 +11912,10 @@ class ModelRunner:
                 return self.model.compute_logits(prefill_outputs)
         if input_ids.size(0) > 1:
             context = get_context()
+            self._last_exact_graph_program_key_sha256 = None
+            self._last_exact_graph_invocation_identity_sha256 = None
+            self._last_exact_graph_lease_manifest_sha256 = None
+            self._last_exact_graph_cross_lease_replay = False
             reason = self._multi_sequence_graph_incompatible_reason(
                 mode=mode,
                 is_prefill=is_prefill,
@@ -11820,6 +11972,12 @@ class ModelRunner:
                     capture_attempted=False,
                 )
                 return logits
+            self._last_exact_graph_program_key_sha256 = (
+                identity.cache_key_sha256
+            )
+            self._last_exact_graph_invocation_identity_sha256 = (
+                identity.sha256
+            )
             if (
                 identity.active_batch_size
                 not in self.config.multi_sequence_cuda_graph_batch_allowlist
@@ -11849,7 +12007,7 @@ class ModelRunner:
             if entry is not None:
                 observation_count = (
                     self.exact_cuda_graph_cache.observation_counts.get(
-                        identity.sha256,
+                        identity.cache_key_sha256,
                         0,
                     )
                 )
@@ -11916,12 +12074,12 @@ class ModelRunner:
                 )
             summary = self.exact_cuda_graph_cache.summary()
             fallback_reason = summary["rejected"].get(
-                identity.sha256,
+                identity.cache_key_sha256,
                 decision.fallback_reason,
             )
             cache_state = (
                 "rejected"
-                if identity.sha256 in summary["rejected"]
+                if identity.cache_key_sha256 in summary["rejected"]
                 else decision.cache_state
             )
             self._publish_cuda_graph_dispatch_event(
@@ -12013,6 +12171,9 @@ class ModelRunner:
             )
             for seq in seqs
             if seq.hybrid_state_slot_id >= 0
+        )
+        self._last_hybrid_state_request_ids = tuple(
+            int(seq.seq_id) for seq in seqs
         )
         self._last_hybrid_state_token_counts = (
             _qwen35_step_token_counts(
