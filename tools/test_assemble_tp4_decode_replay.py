@@ -12,6 +12,7 @@ import tempfile
 from assemble_tp4_decode_replay import (
     PRODUCER_ARTIFACTS,
     REQUIRED_INPUTS,
+    _classify_evidence,
     assemble_bundle,
 )
 import test_tp4_decode_replay_contract as contract_fixture
@@ -20,6 +21,59 @@ import test_tp4_decode_replay_contract as contract_fixture
 contract = contract_fixture.contract
 MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 RUN_TAG = "20260831-qwen38-tp4-decode-replay-r1"
+
+
+def _dynamic_digest(label: str) -> str:
+    return hashlib.sha256(label.encode("utf-8")).hexdigest()
+
+
+def _add_dynamic_pool_index_evidence(evidence: dict) -> None:
+    dispatch_rows = []
+    program_by_case = {}
+    for row in evidence["rank_dispatch_rows"]:
+        row = dict(row)
+        if row["arm"] != "graph":
+            row.update({
+                "graph_program_key_sha256": None,
+                "graph_invocation_identity_sha256": None,
+                "lease_manifest_sha256": None,
+                "cross_lease_replay": False,
+            })
+            dispatch_rows.append(row)
+            continue
+        case_id = row["case_id"]
+        program_key = _dynamic_digest(f"{case_id}:program")
+        program_by_case[case_id] = program_key
+        row.update({
+            "graph_program_key_sha256": program_key,
+            "graph_invocation_identity_sha256": _dynamic_digest(
+                f"{case_id}:invocation:0"
+            ),
+            "lease_manifest_sha256": _dynamic_digest(
+                f"{case_id}:manifest:0"
+            ),
+            "cross_lease_replay": False,
+        })
+        dispatch_rows.append(row)
+        rotated = copy.deepcopy(row)
+        rotated["row_id"] = rotated["row_id"].replace(
+            ":step-0:",
+            ":step-1:",
+        )
+        rotated["step_index"] = 1
+        rotated["graph_invocation_identity_sha256"] = _dynamic_digest(
+            f"{case_id}:invocation:1"
+        )
+        rotated["lease_manifest_sha256"] = _dynamic_digest(
+            f"{case_id}:manifest:1"
+        )
+        rotated["cross_lease_replay"] = True
+        dispatch_rows.append(rotated)
+    evidence["rank_dispatch_rows"] = dispatch_rows
+    for row in evidence["capture_cost_rows"]:
+        row["graph_program_key_sha256"] = program_by_case[
+            row["case_id"]
+        ]
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -177,6 +231,7 @@ def _write_raw_attempt(
     launch_admission: dict | None = None,
 ) -> dict:
     evidence = contract_fixture._evidence()
+    _add_dynamic_pool_index_evidence(evidence)
     for correctness in evidence["correctness_rows"]:
         output_tokens = contract.WORKLOADS[
             correctness["workload"]
@@ -325,7 +380,7 @@ def test_assembler_writes_complete_manifested_go_bundle():
         assert "Stage-1 authorization: `true`" in report
         assert "Cleanup: `CLEAN`" in report
         assert "Replay coverage: `1.0`" in report
-        assert "Capture amortization tokens: `500.0`" in report
+        assert "Capture amortization tokens: `125.0`" in report
         assert "Failed gates:\n\n- none\n" in report
         producer = json.loads(
             (bundle / "producer_classification.json").read_text(
@@ -333,6 +388,172 @@ def test_assembler_writes_complete_manifested_go_bundle():
             )
         )
         assert producer["stage1_authorized"] is True
+
+
+def test_assembler_reconstructs_cross_lease_mechanism_and_capture_cost():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        bundle = root / "final_bundle"
+        raw.mkdir()
+        _write_raw_attempt(raw)
+        result = _assemble(raw, bundle)
+        summary = json.loads(
+            (bundle / "summary.json").read_text(encoding="utf-8")
+        )
+
+    assert result["classification"] == "GO_STAGE1_JUSTIFIED"
+    assert summary["unique_program_key_count"] == 1
+    assert summary["unique_invocation_identity_count"] >= 2
+    assert summary["cross_lease_replay_count"] > 0
+    assert summary["manifest_validation_count"] > 0
+    assert summary["capture_duration_ns"] == 750_000_000
+    assert summary["capture_amortization_tokens"] == 125.0
+
+
+def test_assembler_fails_closed_on_manifest_disagreement():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        raw.mkdir()
+        _write_raw_attempt(raw)
+        path = raw / "rank_dispatch_events.jsonl"
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        target = next(
+            row
+            for row in rows
+            if row["arm"] == "graph"
+            and row["step_index"] == 1
+            and row["rank"] == 3
+        )
+        target["lease_manifest_sha256"] = "f" * 64
+        _write_jsonl(path, rows)
+        result = _assemble(raw, root / "bundle")
+        summary = json.loads(
+            (root / "bundle" / "summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    assert result["classification"] == (
+        "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+    )
+    assert "lease_manifest_disagreement" in summary["failed_gates"]
+
+
+def test_assembler_requires_cross_lease_replay():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        raw.mkdir()
+        _write_raw_attempt(raw)
+        path = raw / "rank_dispatch_events.jsonl"
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        for row in rows:
+            row["cross_lease_replay"] = False
+        _write_jsonl(path, rows)
+        result = _assemble(raw, root / "bundle")
+
+    assert result["classification"] == "NO_GO_MECHANISM_NOT_EXERCISED"
+
+
+def test_assembler_fails_closed_when_dynamic_evidence_is_missing():
+    for field in (
+        "graph_program_key_sha256",
+        "graph_invocation_identity_sha256",
+        "lease_manifest_sha256",
+        "cross_lease_replay",
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root / "raw"
+            raw.mkdir()
+            _write_raw_attempt(raw)
+            path = raw / "rank_dispatch_events.jsonl"
+            rows = [
+                json.loads(line)
+                for line in path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            target = next(
+                row
+                for row in rows
+                if row["arm"] == "graph"
+                and row["step_index"] == 1
+                and row["rank"] == 3
+            )
+            target.pop(field)
+            _write_jsonl(path, rows)
+            result = _assemble(raw, root / "bundle")
+            summary = json.loads(
+                (root / "bundle" / "summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        assert result["classification"] == (
+            "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+        ), field
+        assert (
+            "dynamic_pool_index_evidence_invalid"
+            in summary["failed_gates"]
+        ), field
+
+
+def test_assembler_fails_closed_on_non_scalar_dynamic_digest():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        raw = root / "raw"
+        raw.mkdir()
+        _write_raw_attempt(raw)
+        path = raw / "rank_dispatch_events.jsonl"
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        target = next(
+            row
+            for row in rows
+            if row["arm"] == "graph"
+            and row["step_index"] == 1
+            and row["rank"] == 3
+        )
+        target["graph_program_key_sha256"] = ["not", "a", "digest"]
+        _write_jsonl(path, rows)
+        result = _assemble(raw, root / "bundle")
+        summary = json.loads(
+            (root / "bundle" / "summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    assert result["classification"] == (
+        "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+    )
+    assert "dynamic_pool_index_evidence_invalid" in (
+        summary["failed_gates"]
+    )
+
+
+def test_assembler_returns_incomplete_for_malformed_performance_value():
+    evidence = contract_fixture._evidence()
+    _add_dynamic_pool_index_evidence(evidence)
+    evidence["performance_rows"][0]["median_tpot_ms"] = [
+        "not",
+        "numeric",
+    ]
+
+    result = _classify_evidence(**evidence)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "nonfinite_or_invalid_evidence" in result["failed_gates"]
 
 
 def test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence():
@@ -511,6 +732,12 @@ def test_process_receipts_require_one_fresh_dynamic_port_per_arm():
 def main() -> None:
     tests = (
         test_assembler_writes_complete_manifested_go_bundle,
+        test_assembler_reconstructs_cross_lease_mechanism_and_capture_cost,
+        test_assembler_fails_closed_on_manifest_disagreement,
+        test_assembler_requires_cross_lease_replay,
+        test_assembler_fails_closed_when_dynamic_evidence_is_missing,
+        test_assembler_fails_closed_on_non_scalar_dynamic_digest,
+        test_assembler_returns_incomplete_for_malformed_performance_value,
         test_assembler_accepts_bounded_shared_capacity_as_diagnostic_evidence,
         test_report_is_deterministic_for_identical_evidence,
         test_assembler_rejects_shared_baseline_count_on_the_wrong_gpu,

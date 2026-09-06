@@ -11,6 +11,7 @@ import tempfile
 
 from assemble_tp4_decode_replay import (
     MANIFEST_SCHEMA,
+    _classify_evidence as _classify_producer_evidence,
     _render_report as _render_producer_report,
 )
 import test_assemble_tp4_decode_replay as fixture
@@ -89,7 +90,7 @@ def _rewrite_report_from_raw_evidence(root: Path) -> None:
         cleanup=json.loads(
             (root / "cleanup.json").read_text(encoding="utf-8")
         ),
-        classification=fixture.contract.classify(**evidence),
+        classification=_classify_producer_evidence(**evidence),
     )
     (root / "report.md").write_text(report, encoding="utf-8")
     _rewrite_manifest(root)
@@ -303,6 +304,32 @@ def _verify_mutation(mutation: str) -> dict:
                 "rank_dispatch_events.jsonl",
                 mutate,
             )
+        elif mutation == "lease_manifest":
+            def mutate(rows):
+                target = next(
+                    row
+                    for row in rows
+                    if row["arm"] == "graph"
+                    and row["step_index"] == 1
+                    and row["rank"] == 3
+                )
+                target["lease_manifest_sha256"] = "e" * 64
+
+            _mutate_jsonl(
+                bundle,
+                "rank_dispatch_events.jsonl",
+                mutate,
+            )
+        elif mutation == "cross_lease":
+            def mutate(rows):
+                for row in rows:
+                    row["cross_lease_replay"] = False
+
+            _mutate_jsonl(
+                bundle,
+                "rank_dispatch_events.jsonl",
+                mutate,
+            )
         elif mutation == "collective":
             def mutate(rows):
                 target = next(row for row in rows if row["rank"] == 3)
@@ -402,6 +429,8 @@ def _verify_mutation(mutation: str) -> dict:
             "output_token",
             "dispatch",
             "graph_identity",
+            "lease_manifest",
+            "cross_lease",
             "collective",
             "cleanup",
             "coverage",
@@ -496,6 +525,71 @@ def test_replay_coverage_mutation_has_distinct_no_go():
     assert result["classification"] == "NO_GO_MECHANISM_NOT_EXERCISED"
 
 
+def test_verifier_reconstructs_manifest_and_cross_lease_gates():
+    manifest = _verify_mutation("lease_manifest")
+    assert manifest["classification"] == (
+        "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+    )
+    assert "lease_manifest_disagreement" in manifest["failed_gates"]
+
+    cross_lease = _verify_mutation("cross_lease")
+    assert cross_lease["classification"] == (
+        "NO_GO_MECHANISM_NOT_EXERCISED"
+    )
+    assert cross_lease["failed_gates"] == ["cross_lease_replay"]
+
+
+def test_verifier_fails_closed_when_dynamic_evidence_is_missing():
+    for field in (
+        "graph_program_key_sha256",
+        "graph_invocation_identity_sha256",
+        "lease_manifest_sha256",
+        "cross_lease_replay",
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = _bundle(Path(directory))
+
+            def mutate(rows):
+                target = next(
+                    row
+                    for row in rows
+                    if row["arm"] == "graph"
+                    and row["step_index"] == 1
+                    and row["rank"] == 3
+                )
+                target.pop(field)
+
+            _mutate_jsonl(
+                bundle,
+                "rank_dispatch_events.jsonl",
+                mutate,
+            )
+            _rewrite_report_from_raw_evidence(bundle)
+            result = verify_bundle(bundle)
+
+        assert result["classification"] == (
+            "NO_GO_CORRECTNESS_OR_LIFECYCLE"
+        ), field
+        assert (
+            "dynamic_pool_index_evidence_invalid"
+            in result["failed_gates"]
+        ), field
+
+
+def test_verifier_returns_incomplete_for_malformed_performance_value():
+    evidence = fixture.contract_fixture._evidence()
+    fixture._add_dynamic_pool_index_evidence(evidence)
+    evidence["performance_rows"][0]["median_tpot_ms"] = [
+        "not",
+        "numeric",
+    ]
+
+    result = verifier_module._classify_evidence(**evidence)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "nonfinite_or_invalid_evidence" in result["failed_gates"]
+
+
 def test_every_performance_and_cost_gate_is_reconstructed():
     for mutation in (
         "throughput",
@@ -526,6 +620,9 @@ def main() -> None:
         test_integrity_and_frozen_identity_mutations_are_incomplete,
         test_correctness_and_lifecycle_mutations_fail_closed,
         test_replay_coverage_mutation_has_distinct_no_go,
+        test_verifier_reconstructs_manifest_and_cross_lease_gates,
+        test_verifier_fails_closed_when_dynamic_evidence_is_missing,
+        test_verifier_returns_incomplete_for_malformed_performance_value,
         test_every_performance_and_cost_gate_is_reconstructed,
     )
     for test in tests:

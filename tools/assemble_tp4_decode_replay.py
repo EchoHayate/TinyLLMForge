@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import statistics
 import tempfile
 
 import tp4_decode_replay_contract as contract
@@ -224,6 +225,240 @@ def _is_hex(value, length: int) -> bool:
         and len(value) == length
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _reconstruct_dynamic_pool_index_mechanism(
+    *,
+    rank_dispatch_rows: list[dict],
+    capture_cost_rows: list[dict],
+    performance_rows: list[dict],
+) -> dict:
+    failures = []
+    graph_rows = [
+        row
+        for row in rank_dispatch_rows
+        if row.get("arm") == "graph"
+        and row.get("phase") != "warmup"
+        and row.get("dispatch") == "graph"
+    ]
+    dispatch_groups = {}
+    programs_by_cohort = {}
+    invocations_by_cohort = {}
+    cross_lease_replay_count = 0
+    manifest_validation_count = 0
+    for row in graph_rows:
+        group_key = (
+            row.get("case_id"),
+            row.get("phase"),
+            row.get("step_index"),
+        )
+        dispatch_groups.setdefault(group_key, []).append(row)
+        cohort_key = (row.get("case_id"), row.get("rank"))
+        program_key = row.get("graph_program_key_sha256")
+        invocation_identity = row.get(
+            "graph_invocation_identity_sha256"
+        )
+        programs_by_cohort.setdefault(cohort_key, set())
+        invocations_by_cohort.setdefault(cohort_key, set())
+        if _is_hex(program_key, 64):
+            programs_by_cohort[cohort_key].add(program_key)
+        if _is_hex(invocation_identity, 64):
+            invocations_by_cohort[cohort_key].add(
+                invocation_identity
+            )
+    for group in dispatch_groups.values():
+        ordered = sorted(group, key=lambda row: row.get("rank", -1))
+        if (
+            len(ordered) != len(contract.RANKS)
+            or tuple(row.get("rank") for row in ordered)
+            != contract.RANKS
+        ):
+            failures.append("dynamic_pool_index_rank_inventory_incomplete")
+            continue
+        for row in ordered:
+            if (
+                not _is_hex(row.get("graph_program_key_sha256"), 64)
+                or not _is_hex(
+                    row.get("graph_invocation_identity_sha256"),
+                    64,
+                )
+                or not _is_hex(row.get("lease_manifest_sha256"), 64)
+                or not isinstance(row.get("cross_lease_replay"), bool)
+            ):
+                failures.append("dynamic_pool_index_evidence_invalid")
+                break
+        agreement_fields = (
+            "graph_program_key_sha256",
+            "graph_invocation_identity_sha256",
+            "lease_manifest_sha256",
+            "cross_lease_replay",
+        )
+        reference = tuple(
+            ordered[0].get(field) for field in agreement_fields
+        )
+        if any(
+            tuple(row.get(field) for field in agreement_fields)
+            != reference
+            for row in ordered[1:]
+        ):
+            for field, failure in (
+                (
+                    "graph_program_key_sha256",
+                    "graph_program_key_disagreement",
+                ),
+                (
+                    "graph_invocation_identity_sha256",
+                    "graph_invocation_identity_disagreement",
+                ),
+                (
+                    "lease_manifest_sha256",
+                    "lease_manifest_disagreement",
+                ),
+                ("cross_lease_replay", "cross_lease_disagreement"),
+            ):
+                values = [row.get(field) for row in ordered]
+                if any(value != values[0] for value in values[1:]):
+                    failures.append(failure)
+        else:
+            manifest_validation_count += len(ordered)
+            if reference[-1] is True:
+                cross_lease_replay_count += len(ordered)
+
+    program_counts = [
+        len(values) for values in programs_by_cohort.values()
+    ]
+    invocation_counts = [
+        len(values) for values in invocations_by_cohort.values()
+    ]
+    unique_program_key_count = max(program_counts, default=0)
+    unique_invocation_identity_count = min(
+        invocation_counts,
+        default=0,
+    )
+    if program_counts and unique_program_key_count != 1:
+        failures.append("graph_program_key_not_stable")
+
+    dispatch_programs = {
+        cohort: next(iter(values))
+        for cohort, values in programs_by_cohort.items()
+        if len(values) == 1
+    }
+    capture_groups = {}
+    capture_duration_by_rank = {
+        rank: 0 for rank in contract.RANKS
+    }
+    for row in capture_cost_rows:
+        program_key = row.get("graph_program_key_sha256")
+        cohort = (row.get("case_id"), row.get("rank"))
+        if graph_rows and (
+            not _is_hex(program_key, 64)
+            or dispatch_programs.get(cohort) != program_key
+        ):
+            failures.append("capture_program_key_mismatch")
+            continue
+        capture_key = (*cohort, program_key)
+        capture_groups.setdefault(capture_key, []).append(row)
+        rank = row.get("rank")
+        duration_ns = row.get("capture_duration_ns")
+        if (
+            rank not in contract.RANKS
+            or isinstance(duration_ns, bool)
+            or not isinstance(duration_ns, (int, float))
+            or not math.isfinite(float(duration_ns))
+            or duration_ns < 0
+        ):
+            failures.append("capture_cost_evidence_invalid")
+            continue
+        capture_duration_by_rank[rank] += int(duration_ns)
+    if graph_rows and any(
+        len(rows) != 1 for rows in capture_groups.values()
+    ):
+        failures.append("duplicate_program_capture_cost")
+    expected_capture_keys = set(dispatch_programs)
+    observed_capture_keys = {
+        (case_id, rank)
+        for case_id, rank, _program_key in capture_groups
+    }
+    if graph_rows and observed_capture_keys != expected_capture_keys:
+        failures.append("program_capture_cost_incomplete")
+
+    capture_duration_ns = max(capture_duration_by_rank.values())
+    eager_tpot = [
+        float(row["median_tpot_ms"])
+        for row in performance_rows
+        if row.get("arm") == "eager"
+    ]
+    graph_tpot = [
+        float(row["median_tpot_ms"])
+        for row in performance_rows
+        if row.get("arm") == "graph"
+    ]
+    saved_ms_per_token = (
+        max(
+            0.0,
+            statistics.median(eager_tpot)
+            - statistics.median(graph_tpot),
+        )
+        if eager_tpot and graph_tpot
+        else 0.0
+    )
+    return {
+        "failures": sorted(set(failures)),
+        "unique_program_key_count": unique_program_key_count,
+        "unique_invocation_identity_count": (
+            unique_invocation_identity_count
+        ),
+        "cross_lease_replay_count": cross_lease_replay_count,
+        "manifest_validation_count": manifest_validation_count,
+        "capture_duration_ns": capture_duration_ns,
+        "capture_amortization_tokens": (
+            None
+            if saved_ms_per_token <= 0.0
+            else (capture_duration_ns / 1_000_000.0)
+            / saved_ms_per_token
+        ),
+    }
+
+
+def _classify_evidence(**evidence: list[dict]) -> dict:
+    classification = contract.classify(**evidence)
+    if classification["classification"] == "INCOMPLETE":
+        return classification | {
+            "unique_program_key_count": 0,
+            "unique_invocation_identity_count": 0,
+            "cross_lease_replay_count": 0,
+            "manifest_validation_count": 0,
+        }
+    mechanism = _reconstruct_dynamic_pool_index_mechanism(
+        rank_dispatch_rows=evidence["rank_dispatch_rows"],
+        capture_cost_rows=evidence["capture_cost_rows"],
+        performance_rows=evidence["performance_rows"],
+    )
+    result = classification | {
+        field: mechanism[field]
+        for field in (
+            "unique_program_key_count",
+            "unique_invocation_identity_count",
+            "cross_lease_replay_count",
+            "manifest_validation_count",
+            "capture_duration_ns",
+            "capture_amortization_tokens",
+        )
+    }
+    if mechanism["failures"]:
+        return result | {
+            "classification": "NO_GO_CORRECTNESS_OR_LIFECYCLE",
+            "failed_gates": mechanism["failures"],
+        }
+    if (
+        mechanism["unique_invocation_identity_count"] < 2
+        or mechanism["cross_lease_replay_count"] == 0
+    ):
+        return result | {
+            "classification": "NO_GO_MECHANISM_NOT_EXERCISED",
+            "failed_gates": ["cross_lease_replay"],
+        }
+    return result
 
 
 def _validate_source(source: object) -> dict:
@@ -686,6 +921,26 @@ def _render_report(
         ),
         "",
         (
+            "Unique program keys per cohort: "
+            f"`{_report_value(classification.get('unique_program_key_count'))}`"
+        ),
+        "",
+        (
+            "Unique invocation identities per cohort: "
+            f"`{_report_value(classification.get('unique_invocation_identity_count'))}`"
+        ),
+        "",
+        (
+            "Cross-lease replay rank-steps: "
+            f"`{_report_value(classification.get('cross_lease_replay_count'))}`"
+        ),
+        "",
+        (
+            "Manifest validations: "
+            f"`{_report_value(classification.get('manifest_validation_count'))}`"
+        ),
+        "",
+        (
             "Only `GO_STAGE1_JUSTIFIED` evidence collected under "
             "`FORMAL_STRICT_CLEAN` may authorize Stage 1. "
             "`DIAGNOSTIC_ONLY` evidence never authorizes Stage 1."
@@ -731,7 +986,7 @@ def assemble_bundle(
         argument: loaded[name]
         for argument, name in EVIDENCE_FILES.items()
     }
-    classification = contract.classify(**evidence)
+    classification = _classify_evidence(**evidence)
 
     root = Path(output_root)
     root.mkdir(parents=True, exist_ok=True)

@@ -7457,10 +7457,20 @@ class ModelRunner:
         replay_receipt = ExactCudaGraphReplayReceipt.from_environment(
             rank=int(self.rank),
             world_size=int(self.world_size),
-            identity_sha256=identity.sha256,
+            execution_protocol=identity.execution_protocol,
+            program_key_sha256=identity.cache_key_sha256,
+            invocation_identity_sha256=identity.sha256,
+            lease_manifest_sha256=(
+                None if manifest is None else manifest.sha256
+            ),
+            ordered_slot_ids=(
+                () if manifest is None else manifest.slot_ids
+            ),
+            cross_lease_replay=cross_lease_replay,
             replay_ordinal=int(entry.replay_count) + 1,
         )
         replay_receipt.record("entered_replay")
+        replay_receipt.record("lease_manifest_validated")
         tensors = entry.tensors
         try:
             if manifest is not None:
@@ -7629,11 +7639,41 @@ class ModelRunner:
             raise ValueError(
                 "exact capture has unsupported execution protocol"
             )
+        leases = tuple(
+            getattr(self, "_last_hybrid_state_leases", ())
+        )
+        token_counts = tuple(
+            getattr(self, "_last_hybrid_state_token_counts", ())
+        )
+        state_snapshot = None
+        manifest = None
+        if execution_protocol in (
+            "lease_transaction_v1",
+            "lease_pool_index_v1",
+        ):
+            if not leases or len(leases) != len(token_counts):
+                raise ValueError(
+                    "transactional exact capture requires aligned "
+                    "leases and token counts"
+                )
+        if execution_protocol == "lease_pool_index_v1":
+            manifest = self._exact_graph_lease_manifest(
+                identity=identity,
+            )
         capture_receipt = (
             ExactCudaGraphCaptureReceipt.from_environment(
                 rank=int(self.rank),
                 world_size=int(self.world_size),
-                identity_sha256=identity.sha256,
+                execution_protocol=execution_protocol,
+                program_key_sha256=identity.cache_key_sha256,
+                invocation_identity_sha256=identity.sha256,
+                lease_manifest_sha256=(
+                    None if manifest is None else manifest.sha256
+                ),
+                ordered_slot_ids=(
+                    () if manifest is None else manifest.slot_ids
+                ),
+                cross_lease_replay=False,
             )
         )
         capture_receipt.record("entered_capture")
@@ -7687,27 +7727,7 @@ class ModelRunner:
             )
         )
         snapshot = self.snapshot_kv_slots(scratch_slots)
-        leases = tuple(
-            getattr(self, "_last_hybrid_state_leases", ())
-        )
-        token_counts = tuple(
-            getattr(self, "_last_hybrid_state_token_counts", ())
-        )
-        state_snapshot = None
-        manifest = None
-        if execution_protocol in (
-            "lease_transaction_v1",
-            "lease_pool_index_v1",
-        ):
-            if not leases or len(leases) != len(token_counts):
-                raise ValueError(
-                    "transactional exact capture requires aligned "
-                    "leases and token counts"
-                )
         if execution_protocol == "lease_pool_index_v1":
-            manifest = self._exact_graph_lease_manifest(
-                identity=identity,
-            )
             tensors["state_slot_ids"] = torch.empty(
                 batch_size,
                 dtype=torch.int64,
@@ -7883,7 +7903,10 @@ class ModelRunner:
             ),
             output_kind=(
                 "logits"
-                if execution_protocol == "lease_transaction_v1"
+                if execution_protocol in (
+                    "lease_transaction_v1",
+                    "lease_pool_index_v1",
+                )
                 else "hidden"
             ),
         )

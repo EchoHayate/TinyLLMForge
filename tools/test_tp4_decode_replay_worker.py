@@ -50,6 +50,12 @@ def _event(*, arm, rank, mode="decode", dispatch=None):
         "page_table_width": 2,
         "effective_num_splits": 1 if mode == "decode" else None,
         "graph_identity_sha256": "a" * 64 if graph else None,
+        "graph_program_key_sha256": "b" * 64 if graph else None,
+        "graph_invocation_identity_sha256": (
+            "c" * 64 if graph else None
+        ),
+        "lease_manifest_sha256": "d" * 64 if graph else None,
+        "cross_lease_replay": graph,
         "feature_enabled": arm == "graph",
         "dispatch": dispatch or ("graph" if graph else "eager"),
         "cache_state": "ready" if graph else "absent",
@@ -200,7 +206,7 @@ class _FakeEngine:
 
     def clear_reusable_prefix_cache(self):
         assert self._finished is True
-        assert self.reset_profile_calls == 0
+        assert self.reset_profile_calls in {0, 1}
         self.phase_boundary_calls.append("clear_prefix")
         self.clear_prefix_calls += 1
         return 4
@@ -301,11 +307,18 @@ def test_engine_config_differs_only_by_graph_policy():
     assert eager | {
         "enforce_eager": False,
         "multi_sequence_cuda_graphs": True,
+        "multi_sequence_cuda_graph_dynamic_pool_indices": True,
     } == graph
     assert eager["tensor_parallel_size"] == 4
     assert eager["gpu_memory_utilization"] == 0.84
     assert eager["enforce_eager"] is True
     assert graph["multi_sequence_cuda_graph_batch_allowlist"] == (2, 4, 8)
+    assert (
+        eager["multi_sequence_cuda_graph_dynamic_pool_indices"] is False
+    )
+    assert (
+        graph["multi_sequence_cuda_graph_dynamic_pool_indices"] is True
+    )
     assert graph["max_num_seqs"] == 8
     assert graph["max_model_len"] == 384
     assert graph["max_num_batched_tokens"] == 2048
@@ -489,9 +502,30 @@ def test_collect_rank_graph_observations_rejects_rank_disagreement():
         raise AssertionError("rank disagreement was accepted")
 
 
+def test_collect_rank_graph_observations_rejects_manifest_disagreement():
+    rows = [_event(arm="graph", rank=rank) for rank in range(4)]
+    rows[3]["lease_manifest_sha256"] = "e" * 64
+    engine = _ObservationEngine(rows)
+    try:
+        worker.collect_rank_graph_observations(
+            engine,
+            case_id="Q0__r0__graph",
+            phase="measured",
+            step_index=7,
+            timeout_s=5.0,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "disagree" in message
+        assert "lease_manifest_sha256" in message
+    else:
+        raise AssertionError("manifest disagreement was accepted")
+
+
 def test_run_arm_emits_complete_measured_evidence_and_cleanup():
     clock = _Clock()
     engines = []
+    sequence_reset_calls = []
 
     class CaptureCostEngine(_FakeEngine):
         def call_model_runner_acknowledged(
@@ -557,7 +591,7 @@ def test_run_arm_emits_complete_measured_evidence_and_cleanup():
             engine_factory=engine_factory,
             sampling_params_factory=sampling_factory,
             clock_ns=clock,
-            reset_sequence_ids=lambda: None,
+            reset_sequence_ids=lambda: sequence_reset_calls.append(True),
         )
     assert result["case_id"] == case["case_id"]
     assert len(result["request_rows"]) == 4
@@ -569,22 +603,30 @@ def test_run_arm_emits_complete_measured_evidence_and_cleanup():
         for row in result["rank_dispatch_rows"]
         if row["phase"] == "measured" and row["mode"] == "decode"
     ]
+    capture_dispatch = [
+        row
+        for row in result["rank_dispatch_rows"]
+        if row["phase"] == "capture" and row["mode"] == "decode"
+    ]
     assert len(measured_dispatch) == 4
+    assert len(capture_dispatch) == 4
     assert all(row["dispatch"] == "graph" for row in measured_dispatch)
     assert result["cleanup"]["rank_exit_codes"] == [0, 0, 0, 0]
     assert {
         row["capture_duration_ns"]
         for row in result["capture_cost_rows"]
     } == {20_000_000}
-    assert engines[0].clear_prefix_calls == 1
+    assert engines[0].clear_prefix_calls == 2
     assert engines[0].reset_profile_calls == 1
     assert engines[0].phase_boundary_calls == [
         "clear_prefix",
         "reset_graph_cache",
         "reset_profile",
         "reset_peak",
+        "clear_prefix",
     ]
     assert engines[0].exit_calls == 1
+    assert sequence_reset_calls == [True, True, True]
 
 
 def test_run_arm_cleans_up_after_execution_failure():
@@ -673,6 +715,7 @@ def test_capture_cost_rows_keep_case_identity():
         row = _event(arm="graph", rank=rank)
         row.update({
             "rank": rank,
+            "step_index": 2,
             "capture_duration_ns": 50_000_000,
             "capture_static_bytes": 1_000_000,
             "capture_allocated_delta_bytes": 2_000_000,
@@ -685,6 +728,44 @@ def test_capture_cost_rows_keep_case_identity():
     assert all(row["pair_id"] == case["pair_id"] for row in rows)
     assert all(row["repetition"] == 0 for row in rows)
     assert all(row["arm"] == "graph" for row in rows)
+    assert all(
+        row["graph_program_key_sha256"] == "b" * 64
+        for row in rows
+    )
+
+
+def test_capture_cost_rows_preserve_duplicate_capture_evidence():
+    case = next(
+        row
+        for row in worker.contract.build_case_matrix()
+        if row["case_id"] == "Q0__r0__graph"
+    )
+    dispatch_rows = []
+    for rank in range(4):
+        row = _event(arm="graph", rank=rank)
+        row.update({
+            "rank": rank,
+            "step_index": 2,
+            "capture_duration_ns": 50_000_000,
+            "capture_static_bytes": 1_000_000,
+            "capture_allocated_delta_bytes": 2_000_000,
+            "capture_reserved_delta_bytes": 3_000_000,
+        })
+        dispatch_rows.append(row)
+    duplicate = dict(dispatch_rows[0])
+    duplicate["step_index"] = 7
+    duplicate["capture_duration_ns"] = 60_000_000
+    dispatch_rows.append(duplicate)
+
+    rows = worker._capture_cost_rows(dispatch_rows, case)
+
+    assert len(rows) == 5
+    assert len({row["row_id"] for row in rows}) == 5
+    assert [
+        row["capture_duration_ns"]
+        for row in rows
+        if row["rank"] == 0
+    ] == [50_000_000, 60_000_000]
 
 
 def main() -> None:
@@ -696,10 +777,12 @@ def main() -> None:
         test_run_arm_routes_engine_creation_through_rendezvous_retry,
         test_collect_rank_graph_observations_preserves_all_ranks,
         test_collect_rank_graph_observations_rejects_rank_disagreement,
+        test_collect_rank_graph_observations_rejects_manifest_disagreement,
         test_run_arm_emits_complete_measured_evidence_and_cleanup,
         test_run_arm_cleans_up_after_execution_failure,
         test_run_pair_retains_mismatch_as_correctness_evidence,
         test_capture_cost_rows_keep_case_identity,
+        test_capture_cost_rows_preserve_duplicate_capture_evidence,
     )
     for test in tests:
         test()

@@ -6761,7 +6761,28 @@ def test_pool_index_graph_replays_once_across_lease_rotation():
 
     runner._last_hybrid_state_leases = replay_leases
     runner._last_hybrid_state_request_ids = (200, 201)
-    run_decode()
+    receipt_environment = (
+        "TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"
+    )
+    previous_receipt_root = os.environ.get(receipt_environment)
+    with tempfile.TemporaryDirectory() as receipt_root:
+        os.environ[receipt_environment] = receipt_root
+        try:
+            run_decode()
+            replay_receipt = json.loads(
+                open(
+                    os.path.join(
+                        receipt_root,
+                        "rank-0-replay.json",
+                    ),
+                    encoding="utf-8",
+                ).read()
+            )
+        finally:
+            if previous_receipt_root is None:
+                os.environ.pop(receipt_environment, None)
+            else:
+                os.environ[receipt_environment] = previous_receipt_root
     event = runner.cuda_graph_dispatch_observation()
 
     assert graph.capture_count == 1
@@ -6777,6 +6798,20 @@ def test_pool_index_graph_replays_once_across_lease_rotation():
     )
     assert event["lease_manifest_sha256"]
     assert event["cross_lease_replay"] is True
+    assert replay_receipt["schema_version"] == 2
+    assert replay_receipt["execution_protocol"] == "lease_pool_index_v1"
+    assert replay_receipt["program_key_sha256"] == (
+        event["graph_program_key_sha256"]
+    )
+    assert replay_receipt["invocation_identity_sha256"] == (
+        event["graph_invocation_identity_sha256"]
+    )
+    assert replay_receipt["lease_manifest_sha256"] == (
+        event["lease_manifest_sha256"]
+    )
+    assert replay_receipt["ordered_slot_ids"] == [3, 2]
+    assert replay_receipt["cross_lease_replay"] is True
+    assert replay_receipt["lease_manifest_validated"] is True
 
 
 @pytest.mark.parametrize(
@@ -8572,7 +8607,12 @@ def test_capture_phase_receipt_preserves_completed_prefix_after_failure():
             receipt = receipt_type.from_environment(
                 rank=2,
                 world_size=4,
-                identity_sha256="a" * 64,
+                execution_protocol="lease_pool_index_v1",
+                program_key_sha256="a" * 64,
+                invocation_identity_sha256="b" * 64,
+                lease_manifest_sha256="c" * 64,
+                ordered_slot_ids=(7, 3),
+                cross_lease_replay=False,
             )
             receipt.record("entered_capture")
             receipt.record("scratch_restore_completed")
@@ -8595,6 +8635,191 @@ def test_capture_phase_receipt_preserves_completed_prefix_after_failure():
         "entered_capture",
         "scratch_restore_completed",
     ]
+    assert payload["schema_version"] == 2
+    assert payload["execution_protocol"] == "lease_pool_index_v1"
+    assert payload["program_key_sha256"] == "a" * 64
+    assert payload["invocation_identity_sha256"] == "b" * 64
+    assert payload["lease_manifest_sha256"] == "c" * 64
+    assert payload["ordered_slot_ids"] == [7, 3]
+    assert payload["cross_lease_replay"] is False
+    assert payload["lease_manifest_validated"] is True
+
+
+def test_capture_and_replay_receipts_reject_malformed_identity_digests():
+    common = {
+        "root": None,
+        "rank": 0,
+        "world_size": 4,
+        "execution_protocol": "lease_pool_index_v1",
+        "program_key_sha256": "a" * 64,
+        "invocation_identity_sha256": "b" * 64,
+        "lease_manifest_sha256": "c" * 64,
+        "ordered_slot_ids": (0, 1),
+        "cross_lease_replay": False,
+    }
+    receipt_types = (
+        (model_runner.ExactCudaGraphCaptureReceipt, {}),
+        (
+            model_runner.ExactCudaGraphReplayReceipt,
+            {"replay_ordinal": 1},
+        ),
+    )
+    for field in (
+        "program_key_sha256",
+        "invocation_identity_sha256",
+        "lease_manifest_sha256",
+    ):
+        for receipt_type, extra in receipt_types:
+            malformed = dict(common)
+            malformed[field] = "not-a-valid-sha256"
+            try:
+                receipt_type(**malformed, **extra)
+            except ValueError as exc:
+                assert field in str(exc)
+            else:
+                raise AssertionError(
+                    f"{receipt_type.__name__} accepted malformed {field}"
+                )
+
+
+def test_pool_index_capture_records_entry_before_kv_snapshot_failure():
+    runner = _make_exact_dispatch_runner()
+    runner._capture_exact_multi_sequence_graph = (
+        ModelRunner._capture_exact_multi_sequence_graph.__get__(
+            runner,
+            ModelRunner,
+        )
+    )
+    runner.config.multi_sequence_cuda_graph_dynamic_pool_indices = True
+    runner.config.hf_config = SimpleNamespace(
+        text_config=SimpleNamespace(
+            num_attention_heads=16,
+            num_key_value_heads=8,
+            head_dim=128,
+            hidden_size=16,
+        ),
+        torch_dtype=SimpleNamespace(itemsize=2),
+    )
+    runner._last_hybrid_state_leases = (
+        model_runner.HybridStateLease(0, 1, 100),
+        model_runner.HybridStateLease(1, 1, 101),
+    )
+    runner._last_hybrid_state_request_ids = (100, 101)
+    runner._last_hybrid_state_token_counts = (1, 1)
+    runner._exact_graph_scratch_slots = (
+        lambda *, batch_size: (2048, 2304)[:batch_size]
+    )
+    runner.snapshot_kv_slots = lambda slots: (
+        (_ for _ in ()).throw(RuntimeError("snapshot-failed"))
+    )
+
+    class PoolIndexModel:
+        def exact_cuda_graph_state_schema_sha256(self):
+            return "a" * 64
+
+        def exact_cuda_graph_lease_seal(self, active_leases):
+            return hashlib.sha256(
+                repr(active_leases).encode("utf-8")
+            ).hexdigest()
+
+        def exact_cuda_graph_lease_manifest(
+            self,
+            active_leases,
+            expected_request_ids,
+        ):
+            assert active_leases == runner._last_hybrid_state_leases
+            assert expected_request_ids == (100, 101)
+            return SimpleNamespace(
+                slot_ids=(0, 1),
+                sha256="b" * 64,
+            )
+
+        def snapshot_exact_cuda_graph_state(self, active_leases):
+            raise AssertionError("snapshot must fail before state snapshot")
+
+        def restore_exact_cuda_graph_state(
+            self,
+            active_leases,
+            snapshot,
+        ):
+            raise AssertionError("state restore must not run")
+
+        def run_exact_cuda_graph_step(self, *args):
+            raise AssertionError("legacy capture must not run")
+
+        def run_exact_cuda_graph_step_by_pool_index(self, *args):
+            raise AssertionError("pool-index capture must not run")
+
+    runner.model = PoolIndexModel()
+    original_zeros = getattr(model_runner.torch, "zeros", None)
+    original_empty = getattr(model_runner.torch, "empty", None)
+    model_runner.torch.zeros = (
+        lambda *shape, dtype=None, device=None: FakeCaptureTensor(
+            shape[0] if len(shape) == 1 else shape,
+            element_size=(
+                2
+                if dtype == runner.config.hf_config.torch_dtype
+                else 4
+            ),
+        )
+    )
+    model_runner.torch.empty = (
+        lambda *shape, dtype=None, device=None: FakeCaptureTensor(
+            shape[0] if len(shape) == 1 else shape,
+            element_size=8,
+        )
+    )
+    context.set_context(
+        False,
+        slot_mapping=FakeTensor([0, 256]),
+        context_lens=FakeTensor([1, 1]),
+        block_tables=FakeTensor([[0, 1]] * 2),
+    )
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20]),
+        context.get_context(),
+    )
+    receipt_environment = (
+        "TINYVLLM_EXACT_GRAPH_CAPTURE_RECEIPT_ROOT"
+    )
+    previous_receipt_root = os.environ.get(receipt_environment)
+    with tempfile.TemporaryDirectory() as receipt_root:
+        os.environ[receipt_environment] = receipt_root
+        try:
+            with pytest.raises(RuntimeError, match="snapshot-failed"):
+                runner._capture_exact_multi_sequence_graph(
+                    identity=identity,
+                    input_ids=FakeTensor([10, 20]),
+                    positions=FakeTensor([1, 1]),
+                    context=context.get_context(),
+                )
+            receipt = json.loads(
+                open(
+                    os.path.join(receipt_root, "rank-0.json"),
+                    encoding="utf-8",
+                ).read()
+            )
+        finally:
+            if previous_receipt_root is None:
+                os.environ.pop(receipt_environment, None)
+            else:
+                os.environ[receipt_environment] = previous_receipt_root
+            if original_zeros is None:
+                delattr(model_runner.torch, "zeros")
+            else:
+                model_runner.torch.zeros = original_zeros
+            if original_empty is None:
+                delattr(model_runner.torch, "empty")
+            else:
+                model_runner.torch.empty = original_empty
+            context.reset_context()
+
+    assert receipt["execution_protocol"] == "lease_pool_index_v1"
+    assert receipt["program_key_sha256"] == identity.cache_key_sha256
+    assert receipt["invocation_identity_sha256"] == identity.sha256
+    assert receipt["lease_manifest_sha256"] == "b" * 64
+    assert receipt["ordered_slot_ids"] == [0, 1]
+    assert receipt["completed_phases"][0]["phase"] == "entered_capture"
 
 
 def test_capture_without_legacy_pool_restores_scratch_and_context():
@@ -8739,10 +8964,17 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
             model_runner.torch.cuda = original_cuda
 
     assert entry.identity_sha256 == identity.sha256
-    assert receipt["schema_version"] == 1
+    assert receipt["schema_version"] == 2
     assert receipt["rank"] == 0
     assert receipt["world_size"] == 1
     assert receipt["identity_sha256"] == identity.sha256
+    assert receipt["execution_protocol"] == "forward_v1"
+    assert receipt["program_key_sha256"] == identity.cache_key_sha256
+    assert receipt["invocation_identity_sha256"] == identity.sha256
+    assert receipt["lease_manifest_sha256"] is None
+    assert receipt["ordered_slot_ids"] == []
+    assert receipt["cross_lease_replay"] is False
+    assert receipt["lease_manifest_validated"] is True
     assert [
         row["phase"]
         for row in receipt["completed_phases"]
@@ -8930,6 +9162,7 @@ def test_pool_index_capture_uses_graph_owned_slots_and_rolls_back_state():
 
     assert identity.execution_protocol == "lease_pool_index_v1"
     assert entry.tensors["state_slot_ids"].values["values"] == [0, 1]
+    assert entry.output_kind == "logits"
     assert runner.model.pool_index_calls == 1
     assert runner.model.legacy_calls == 0
     assert runner.model.state == 7
@@ -9329,11 +9562,20 @@ def test_replay_phase_receipt_covers_graph_and_logits_boundaries():
 
     assert payload["identity_sha256"] == identity.sha256
     assert payload["replay_ordinal"] == 1
+    assert payload["schema_version"] == 2
+    assert payload["execution_protocol"] == "forward_v1"
+    assert payload["program_key_sha256"] == identity.cache_key_sha256
+    assert payload["invocation_identity_sha256"] == identity.sha256
+    assert payload["lease_manifest_sha256"] is None
+    assert payload["ordered_slot_ids"] == []
+    assert payload["cross_lease_replay"] is False
+    assert payload["lease_manifest_validated"] is True
     assert [
         row["phase"]
         for row in payload["completed_phases"]
     ] == [
         "entered_replay",
+        "lease_manifest_validated",
         "static_inputs_copied",
         "context_set",
         "graph_replay_returned",
@@ -9582,6 +9824,7 @@ def main():
         test_capture_failure_logs_the_original_exception_chain,
         test_exact_graph_pool_requires_a_live_exact_graph_owner,
         test_capture_phase_receipt_preserves_completed_prefix_after_failure,
+        test_capture_and_replay_receipts_reject_malformed_identity_digests,
         test_capture_without_legacy_pool_restores_scratch_and_context,
         test_transactional_capture_rolls_back_and_replay_advances_once,
         test_replay_resets_context_on_success_and_exception,

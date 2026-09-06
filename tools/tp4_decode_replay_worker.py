@@ -176,6 +176,7 @@ def build_engine_config(*, arm: str, workload: str) -> dict:
         ),
         "enforce_eager": arm == "eager",
         "multi_sequence_cuda_graphs": arm == "graph",
+        "multi_sequence_cuda_graph_dynamic_pool_indices": arm == "graph",
         "multi_sequence_cuda_graph_batch_allowlist": (2, 4, 8),
         "max_num_seqs": max(8, concurrency),
         "max_model_len": max_model_len,
@@ -241,7 +242,7 @@ def collect_rank_graph_observations(
     step_index: int,
     timeout_s: float,
 ) -> list[dict]:
-    if phase not in {"warmup", "measured"}:
+    if phase not in {"warmup", "capture", "measured"}:
         raise ValueError("phase is invalid")
     if (
         isinstance(step_index, bool)
@@ -296,6 +297,10 @@ def collect_rank_graph_observations(
         "page_table_width",
         "effective_num_splits",
         "graph_identity_sha256",
+        "graph_program_key_sha256",
+        "graph_invocation_identity_sha256",
+        "lease_manifest_sha256",
+        "cross_lease_replay",
         "feature_enabled",
         "dispatch",
         "cache_state",
@@ -599,13 +604,14 @@ def _capture_cost_rows(
     dispatch_rows: list[dict],
     case: dict,
 ) -> list[dict]:
-    by_rank = {}
+    captures = []
     for row in dispatch_rows:
         if int(row.get("capture_duration_ns", 0)) <= 0:
             continue
-        by_rank[row["rank"]] = {
+        captures.append({
             "row_id": (
-                f"{case['case_id']}:capture:rank-{row['rank']}"
+                f"{case['case_id']}:capture:"
+                f"step-{row['step_index']}:rank-{row['rank']}"
             ),
             "case_id": case["case_id"],
             "pair_id": case["pair_id"],
@@ -614,6 +620,9 @@ def _capture_cost_rows(
             "arm": case["arm"],
             "rank": row["rank"],
             "graph_identity_sha256": row["graph_identity_sha256"],
+            "graph_program_key_sha256": row[
+                "graph_program_key_sha256"
+            ],
             "capture_duration_ns": int(row["capture_duration_ns"]),
             "static_bytes": int(row["capture_static_bytes"]),
             "allocated_delta_bytes": int(
@@ -623,8 +632,14 @@ def _capture_cost_rows(
                 row["capture_reserved_delta_bytes"]
             ),
             "complete": True,
-        }
-    return [by_rank[rank] for rank in sorted(by_rank)]
+        })
+    return sorted(
+        captures,
+        key=lambda row: (
+            row["rank"],
+            row["row_id"],
+        ),
+    )
 
 
 def run_arm(
@@ -697,6 +712,21 @@ def run_arm(
         )
         engine.reset_decode_internal_profile(timeout_s=float(timeout_s))
         engine.reset_peak_memory_stats(timeout_s=float(timeout_s))
+        capture = {
+            "request_rows": [],
+            "rank_dispatch_rows": [],
+        }
+        if case["arm"] == "graph":
+            capture = _run_request_batch(
+                engine=engine,
+                case=case,
+                phase="capture",
+                timeout_s=timeout_s,
+                sampling_params_factory=sampling_params_factory,
+                clock_ns=clock_ns,
+                reset_sequence_ids=reset_sequence_ids,
+            )
+            engine.clear_reusable_prefix_cache()
         measured = _run_request_batch(
             engine=engine,
             case=case,
@@ -753,13 +783,14 @@ def run_arm(
         "performance_rows": [performance],
         "rank_dispatch_rows": (
             warmup["rank_dispatch_rows"]
+            + capture["rank_dispatch_rows"]
             + measured["rank_dispatch_rows"]
         ),
         "rank_collective_rows": _collective_rows(profile, case),
         "rank_lifecycle_rows": lifecycle_rows,
         "memory_rows": memory_rows,
         "capture_cost_rows": _capture_cost_rows(
-            measured["rank_dispatch_rows"],
+            capture["rank_dispatch_rows"],
             case,
         ),
         "cleanup": cleanup,
