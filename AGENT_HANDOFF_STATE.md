@@ -52384,3 +52384,98 @@ It is whether capture latency and lease-rotation identity churn can be reduced
 enough to keep measured captures inside the frozen budget without weakening
 the two-second/five-second gates. Any runtime change requires a new TDD cycle,
 a new source revision, and a fresh run tag; r48 must remain immutable.
+
+## 2026-09-06 TP4 r49 hot-path capture smoke checkpoint
+
+The hot-path capture and warmup/measured phase-isolation implementation is
+committed and pushed:
+
+```text
+branch:               feat/kv-sparse-attention
+local/remote HEAD:    0d5c6c9348d17541379c49a96541e2f35b259237
+source tree SHA256:   bd88873360ea20fe49b3c9aa370957c87260bf6fafbf9e2b59fadfd0f0797be8
+```
+
+The implementation removes the duplicate eager execution inside graph
+capture, preserves the successful hot-path eager execution as the
+prerequisite, resets graph/cache/profile/memory state between warmup and
+measurement, requires all-rank reset acknowledgement, and emits per-case
+capture receipts.
+
+Fresh strict-clean hardware smoke:
+
+```text
+run tag:              20260906-qwen38-tp4-decode-replay-r49-q1-smoke
+model revision:       1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+selected GPUs:        3,4,6,7
+pair:                 Q1__r0
+eager exit:           0
+graph exit:           0
+exact output match:   true
+eager cleanup:        complete
+graph cleanup:        complete
+receipt ranks:        0,1,2,3
+receipt phases:       complete new six-phase sequence
+```
+
+The smoke is terminal `FAIL` because capture latency remains above both
+frozen limits:
+
+```text
+TP-wide capture duration/rank:  4,110,665,805 ns
+single limit:                   2,000,000,000 ns
+per-rank measured total:        4,110,665,805 ns
+total limit:                    5,000,000,000 ns
+```
+
+The smoke summary's `total_capture_budget=false` is a diagnostic checker
+error: it summed the same TP-wide MAX duration repeated in four rank rows.
+The runtime's per-rank total is 4.1107 seconds and passes the five-second
+ceiling. The terminal decision remains `FAIL` because the independent
+two-second single-capture ceiling is exceeded. Do not rewrite the remote
+summary; preserve this reconciliation beside it.
+
+The single diagnostic pair also regressed:
+
+```text
+output throughput ratio:  0.9675339481
+median TPOT ratio:         1.0200344507
+P99 E2E ratio:             1.0335554653
+TTFT ratio:                1.6313438941
+```
+
+Remote evidence remains below the approved mounted root:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  tp4-collective-stable-decode-replay/
+  20260906-qwen38-tp4-decode-replay-r49-q1-smoke/
+```
+
+Key artifact hashes:
+
+```text
+controller/smoke_summary.json:
+  664c4a418f4e331d60b4833342cf6ff62fb314cbc4b5a5b6a3d36641f31c4f9c
+raw/cases/Q1__r0__eager.json:
+  1498876a4773ac94d78644fe5859d072e298a50427a7f8fac6305c95753d55a1
+raw/cases/Q1__r0__graph.json:
+  9668ffac16627d7ac3d14726d1f969457520177580a8b465a8ce8512711b85e2
+```
+
+No r49-tagged process remains and GPUs `3,4,6,7` returned to 0 MiB. The
+complete 30-case/15-pair gate, producer, dual verifier, and immutable manifest
+were intentionally not run after the smoke failed the frozen capture budgets.
+Do not lower those budgets, delete lease identity fields, mutate r48/r49, or
+claim performance benefit.
+
+Next technical target:
+
+```text
+Stage-1 dynamic pool-index graph protocol
+```
+
+The design must reuse stable graph-owned storage across lease rotations while
+retaining replay-time ordered `slot_id + generation + request_id` validation.
+Start with brainstorming/design, then a written implementation plan and strict
+RED -> minimal implementation -> GREEN before another fresh hardware tag.

@@ -1540,3 +1540,165 @@ spot discovered by the final prompt-to-artifact audit. r48 is valid negative
 diagnostic evidence only. It does not establish correctness, replay coverage,
 performance benefit, or Stage-1 authorization, and it must not be mutated
 after verification to manufacture the missing report.
+
+## 19. 2026-09-06 r49 hot-path capture and phase-isolation smoke
+
+The hot-path capture and phase-isolation implementation was frozen, committed,
+and pushed before the hardware smoke:
+
+```text
+run tag:
+  20260906-qwen38-tp4-decode-replay-r49-q1-smoke
+source revision:
+  0d5c6c9348d17541379c49a96541e2f35b259237
+source tree SHA256:
+  bd88873360ea20fe49b3c9aa370957c87260bf6fafbf9e2b59fadfd0f0797be8
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+admission:
+  strict_clean / FORMAL_STRICT_CLEAN
+selected GPUs:
+  3,4,6,7
+```
+
+The source revision contains:
+
+- complete warmup-to-measured exact-graph cache reset;
+- all-rank reset acknowledgement and fail-closed agreement checks;
+- removal of the duplicate eager model execution from the capture helper;
+- capture on the successful hot path;
+- measured-phase profile and peak-memory reset ordering; and
+- per-case, per-rank capture-phase receipts below the remote attempt root.
+
+The smoke used the frozen `Q1__r0` pair. Eager and graph arms ran in separate
+Python processes, exactly as in the full controller. Both arm processes exited
+zero and wrote atomic case results:
+
+```text
+Q1__r0__eager.json:
+  size:   883,566 bytes
+  sha256: 1498876a4773ac94d78644fe5859d072e298a50427a7f8fac6305c95753d55a1
+Q1__r0__graph.json:
+  size:   962,555 bytes
+  sha256: 9668ffac16627d7ac3d14726d1f969457520177580a8b465a8ce8512711b85e2
+smoke_summary.json:
+  size:   2,845 bytes
+  sha256: 664c4a418f4e331d60b4833342cf6ff62fb314cbc4b5a5b6a3d36641f31c4f9c
+```
+
+The correctness and lifecycle checks passed:
+
+```text
+exact output match:                 true
+eager cleanup complete:             true
+graph cleanup complete:             true
+capture-cost rank inventory:        0,1,2,3
+capture-receipt rank inventory:     0,1,2,3
+capture receipt world size:         4 on every rank
+capture receipt phase sequence:     complete and ordered on every rank
+post-run exact-tag processes:       none
+post-run selected-GPU memory:       0 MiB on GPUs 3,4,6,7
+```
+
+Every capture receipt contains the new sequence:
+
+```text
+entered_capture
+hot_path_eager_prerequisite
+capture_begin
+capture_body_completed
+capture_end_synchronize_completed
+scratch_restore_completed
+```
+
+All ranks agreed on the same capture identity and TP-wide duration:
+
+```text
+identity SHA256:
+  7f433e424c95e9d74e030b306f5d28bf44cf0dd1087d73407f1e000a91dc94d4
+capture duration per rank:
+  4,110,665,805 ns
+maximum single capture:
+  4,110,665,805 ns
+per-rank measured-phase total:
+  4,110,665,805 ns
+```
+
+The frozen single-capture budget therefore failed, while the per-rank total
+budget remained below its ceiling:
+
+```text
+single-capture ceiling: 2,000,000,000 ns
+single-capture result:  FAIL
+total-capture ceiling:  5,000,000,000 ns
+total-capture result:   PASS
+smoke classification:  FAIL
+```
+
+The one-off smoke summary's `total_capture_budget` check incorrectly summed
+the same TP-wide MAX duration replicated across four rank rows and therefore
+reported `false` with `total_capture_ns=16,442,663,220`. That diagnostic field
+must not be interpreted as the runtime cache's per-rank total. The summary is
+left immutable; the failed single-capture gate independently and correctly
+prohibits the full run.
+
+The single pair also showed no performance benefit:
+
+| Metric | Eager | Graph | Graph/eager |
+|---|---:|---:|---:|
+| Output tokens/s | 3.765636 | 3.643381 | 0.967534 |
+| Median TPOT | 2093.843 ms | 2135.792 ms | 1.020034 |
+| P99 E2E | 271932.798 ms | 281057.630 ms | 1.033555 |
+| TTFT | 6014.617 ms | 9811.909 ms | 1.631344 |
+
+These one-pair values are diagnostic only. They are not a complete
+30-case/15-pair performance comparison.
+
+### 19.1 Frozen decision
+
+The smoke proves that the new phase boundary, capture receipt chain, exact
+output parity, and TP4 cleanup work on real Qwen3.8-27B hardware. It also
+proves that removing the redundant pre-capture execution is not enough to
+meet the frozen capture-latency budget.
+
+Per the implementation plan, the complete 30-case/15-pair gate was not
+launched after this smoke failure. Consequently no producer classification,
+immutable full-gate manifest, remote independent verifier, or local
+frozen-source verifier exists for r49. This is the required fail-closed
+behavior, not missing post-processing.
+
+The next design target is the Stage-1 dynamic pool-index graph protocol:
+reuse stable graph-owned storage across lease rotations while preserving
+ordered `slot_id + generation + request_id` validation at replay admission.
+Deleting identity fields or increasing the two-second/five-second capture
+budgets remains prohibited.
+
+### 19.2 r49 prompt-to-artifact checklist
+
+| Requirement | Concrete evidence | Result |
+|---|---|---|
+| Frozen pushed source | local and `origin/feat/kv-sparse-attention` at `0d5c6c9348d17541379c49a96541e2f35b259237` | complete |
+| Fresh immutable tag | remote r49 attempt root; r48 untouched | complete |
+| Approved remote storage | entire attempt below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | complete |
+| Sufficient Kerberos window | controller preflight passed the 4,500-second smoke requirement | complete |
+| Four strict-clean GPUs | admission froze GPUs `3,4,6,7` at 0 MiB, 0%, no compute processes | complete |
+| Isolated eager/graph processes | two process receipts, both exit code zero | complete |
+| Exact output equality | `smoke_summary.json: checks.exact_output_match=true` | complete |
+| Warmup/measured graph-state isolation | measured four-rank capture-cost rows plus fresh measured capture receipts | complete |
+| New capture phase protocol | all four receipts contain the six ordered phases | complete |
+| Four-rank lifecycle cleanup | both arm cleanup receipts report four zero exits and destroyed process groups | complete |
+| Single capture at most 2 s | observed 4.110665805 s | failed |
+| Total capture at most 5 s | per-rank measured total 4.110665805 s | complete |
+| Smoke total-budget diagnostic | summary summed four replicated TP-wide MAX rows | incorrect diagnostic; no decision impact |
+| Complete 30-case/15-pair gate | prohibited after smoke budget failure | not run |
+| Producer and dual verifier | require a complete fresh full gate | not run |
+| Immutable full-gate manifest | require a complete fresh full gate | not created |
+| Performance benefit claim | graph throughput regressed 3.25% in the single diagnostic pair | prohibited |
+| Cleanup after terminal result | no exact-tag process; selected GPUs returned to 0 MiB | complete |
+
+Final r49 claim:
+
+> The hot-path capture and phase-isolation mechanism is hardware-correct for
+> the Q1 smoke, but capture remains over budget and the graph arm is slower.
+> r49 is a terminal negative smoke, the full gate is correctly skipped, and
+> Stage 1 remains unauthorized.
