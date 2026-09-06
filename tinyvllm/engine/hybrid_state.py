@@ -280,6 +280,16 @@ class HybridStateTensorPool:
             )
         return lease.slot_id
 
+    def validate_leases(
+        self,
+        leases: tuple[HybridStateLease, ...],
+    ) -> tuple[HybridStateLease, ...]:
+        if not isinstance(leases, tuple):
+            raise ValueError("hybrid state leases must be a tuple")
+        for lease in leases:
+            self.validate(lease)
+        return leases
+
     def release(self, lease: HybridStateLease) -> None:
         slot_id = self.validate(lease)
         self._zero_slot(slot_id)

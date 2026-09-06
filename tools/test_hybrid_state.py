@@ -231,6 +231,34 @@ def test_tensor_pool_zeroes_and_validates_leases():
     assert pool.physical_storage_bytes == layout.bytes_per_slot * 2
 
 
+def test_tensor_pool_validates_ordered_lease_tuple_without_rewriting():
+    layout = HybridStateLayout((
+        HybridStateComponentSpec(
+            0, "linear_recurrent", (1,), torch.float32
+        ),
+    ))
+    pool = HybridStateTensorPool(layout, capacity=2, device="cpu")
+    leases = (
+        HybridStateLease(0, 1, 81),
+        HybridStateLease(1, 1, 82),
+    )
+    for lease in leases:
+        pool.activate(lease)
+
+    assert pool.validate_leases(tuple(reversed(leases))) == tuple(
+        reversed(leases)
+    )
+
+    pool.release(leases[0])
+    stale = (leases[0], leases[1])
+    try:
+        pool.validate_leases(stale)
+    except RuntimeError as exc:
+        assert "lease mismatch" in str(exc)
+    else:
+        raise AssertionError("stale ordered lease tuple accepted")
+
+
 def test_tensor_pool_rejects_conflicting_activation():
     layout = HybridStateLayout((
         HybridStateComponentSpec(
@@ -330,6 +358,7 @@ if __name__ == "__main__":
     test_allocator_rejects_invalid_capacity_request_and_slot()
     test_allocator_rejects_wrong_stale_and_double_release()
     test_tensor_pool_zeroes_and_validates_leases()
+    test_tensor_pool_validates_ordered_lease_tuple_without_rewriting()
     test_tensor_pool_rejects_conflicting_activation()
     test_runtime_bridge_releases_before_reused_generation_activation()
     test_runtime_bridge_idempotence_order_and_isolation()

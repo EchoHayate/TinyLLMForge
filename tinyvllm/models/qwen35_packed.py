@@ -7,6 +7,10 @@ import json
 import torch
 from torch import nn
 
+from tinyvllm.engine.exact_cuda_graph_lease_manifest import (
+    ExactCudaGraphLeaseManifest,
+    build_exact_cuda_graph_lease_manifest,
+)
 from tinyvllm.engine.hybrid_state import HybridStateLease
 from tinyvllm.engine.decode_internal_profiler import profile_layer
 from tinyvllm.layers.qwen35_packed_layer_stack import (
@@ -334,6 +338,25 @@ class Qwen35PackedForCausalLM(nn.Module):
             allow_nan=False,
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
+
+    def exact_cuda_graph_lease_manifest(
+        self,
+        leases: tuple[HybridStateLease, ...],
+        expected_request_ids: tuple[int, ...],
+    ) -> ExactCudaGraphLeaseManifest:
+        pool = self.layer_stack.state_transaction.pool
+
+        def validate_lease(
+            lease: HybridStateLease,
+        ) -> HybridStateLease:
+            pool.validate(lease)
+            return lease
+
+        return build_exact_cuda_graph_lease_manifest(
+            leases=leases,
+            expected_request_ids=expected_request_ids,
+            validate_lease=validate_lease,
+        )
 
     def snapshot_exact_cuda_graph_state(
         self,

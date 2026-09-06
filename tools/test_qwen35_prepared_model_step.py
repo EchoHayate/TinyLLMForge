@@ -38,6 +38,10 @@ hybrid_module = _load_module(
     "tinyvllm.engine.hybrid_state",
     "tinyvllm/engine/hybrid_state.py",
 )
+_load_module(
+    "tinyvllm.engine.exact_cuda_graph_lease_manifest",
+    "tinyvllm/engine/exact_cuda_graph_lease_manifest.py",
+)
 adapter_module = _load_module(
     "tinyvllm.engine.qwen35_layer_state",
     "tinyvllm/engine/qwen35_layer_state.py",
@@ -388,6 +392,35 @@ def test_exact_cuda_graph_state_hooks_are_complete_and_lease_sealed():
     assert first != model.exact_cuda_graph_lease_seal(
         (changed_generation, leases[1])
     )
+
+
+def test_exact_cuda_graph_lease_manifest_validates_order_and_generation():
+    pool, leases, _, _, model = _fixture()
+
+    manifest = model.exact_cuda_graph_lease_manifest(
+        (leases[1], leases[0]),
+        (leases[1].request_id, leases[0].request_id),
+    )
+    assert manifest.slot_ids == (leases[1].slot_id, leases[0].slot_id)
+    assert tuple(row.request_id for row in manifest.rows) == (
+        leases[1].request_id,
+        leases[0].request_id,
+    )
+
+    with pytest.raises(RuntimeError, match="request order"):
+        model.exact_cuda_graph_lease_manifest(
+            leases,
+            tuple(reversed(tuple(
+                lease.request_id for lease in leases
+            ))),
+        )
+
+    pool.release(leases[0])
+    with pytest.raises(RuntimeError, match="lease mismatch"):
+        model.exact_cuda_graph_lease_manifest(
+            leases,
+            tuple(lease.request_id for lease in leases),
+        )
 
 
 def test_exact_cuda_graph_step_matches_run_step_output_and_state():
