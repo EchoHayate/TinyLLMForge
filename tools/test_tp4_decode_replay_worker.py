@@ -446,7 +446,12 @@ def test_collect_rank_graph_observations_rejects_rank_disagreement():
             timeout_s=5.0,
         )
     except RuntimeError as exc:
-        assert "disagree" in str(exc)
+        message = str(exc)
+        assert "disagree" in message
+        assert "graph_identity_sha256" in message
+        assert '"rank":0' in message
+        assert '"rank":3' in message
+        assert '"value":"' + ("c" * 64) + '"' in message
     else:
         raise AssertionError("rank disagreement was accepted")
 

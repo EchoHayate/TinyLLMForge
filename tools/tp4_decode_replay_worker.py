@@ -307,7 +307,29 @@ def collect_rank_graph_observations(
         tuple(row.get(field) for field in agreement_fields) != reference
         for row in rows[1:]
     ):
-        raise RuntimeError("graph observations disagree across ranks")
+        differing_fields = [
+            field
+            for field in agreement_fields
+            if len({row.get(field) for row in rows}) > 1
+        ]
+        disagreement = [
+            {
+                "field": field,
+                "rank": row["rank"],
+                "value": row.get(field),
+            }
+            for field in differing_fields
+            for row in rows
+        ]
+        raise RuntimeError(
+            "graph observations disagree across ranks: "
+            + json.dumps(
+                disagreement,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        )
     return rows
 
 
