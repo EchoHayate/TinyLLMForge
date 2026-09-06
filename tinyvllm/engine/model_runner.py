@@ -7332,6 +7332,16 @@ class ModelRunner:
         ):
             self._exact_cuda_graph_pool = entry.graph.pool()
 
+    def reset_exact_cuda_graph_cache(self):
+        receipt = self.exact_cuda_graph_cache.reset_phase(
+            synchronize=torch.cuda.synchronize,
+        )
+        self._exact_cuda_graph_pool = None
+        return {
+            "rank": self.rank,
+            **receipt,
+        }
+
     def _replay_exact_multi_sequence_graph(
         self,
         entry,
@@ -7599,23 +7609,9 @@ class ModelRunner:
                     flash_attn_num_splits=identity.effective_num_splits,
                     force_attention_backend=True,
                 )
-                if execution_protocol == "forward_v1":
-                    tensors["outputs"].copy_(
-                        self.model(
-                            tensors["input_ids"],
-                            tensors["positions"],
-                        )
-                    )
-                else:
-                    self.model.run_exact_cuda_graph_step(
-                        leases,
-                        token_counts,
-                        tensors["input_ids"],
-                        tensors["positions"],
-                    )
-                capture_receipt.record("warmup_forward_completed")
-                torch.cuda.synchronize()
-                capture_receipt.record("warmup_synchronize_completed")
+                capture_receipt.record(
+                    "hot_path_eager_prerequisite"
+                )
                 capture_receipt.record("capture_begin")
                 with torch.cuda.graph(
                     graph,

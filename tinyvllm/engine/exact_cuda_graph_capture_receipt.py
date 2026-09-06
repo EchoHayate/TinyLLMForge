@@ -12,8 +12,7 @@ RECEIPT_ROOT_ENVIRONMENT = (
 )
 CAPTURE_PHASES = (
     "entered_capture",
-    "warmup_forward_completed",
-    "warmup_synchronize_completed",
+    "hot_path_eager_prerequisite",
     "capture_begin",
     "capture_body_completed",
     "capture_end_synchronize_completed",

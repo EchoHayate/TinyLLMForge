@@ -8205,6 +8205,7 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
         "snapshot_slots": None,
         "restore_slots": None,
         "restore_count": 0,
+        "model_calls": 0,
         "force_attention_backend": [],
     }
 
@@ -8231,6 +8232,7 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
     class MutatingModel:
         def __call__(self, input_ids, positions, input_embeds=None):
             del positions, input_embeds
+            observed["model_calls"] += 1
             observed["force_attention_backend"].append(
                 context.get_context().force_attention_backend
             )
@@ -8323,8 +8325,7 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
         for row in receipt["completed_phases"]
     ] == [
         "entered_capture",
-        "warmup_forward_completed",
-        "warmup_synchronize_completed",
+        "hot_path_eager_prerequisite",
         "capture_begin",
         "capture_body_completed",
         "capture_end_synchronize_completed",
@@ -8333,7 +8334,8 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
     assert observed["snapshot_slots"] == tuple(scratch_slots)
     assert observed["restore_slots"] == tuple(scratch_slots)
     assert observed["restore_count"] == 1
-    assert observed["force_attention_backend"] == [True, True]
+    assert observed["model_calls"] == 1
+    assert observed["force_attention_backend"] == [True]
     assert scratch_state == before
     current = context.get_context()
     assert current.is_prefill is False
@@ -8395,6 +8397,7 @@ def test_transactional_capture_rolls_back_and_replay_advances_once():
         def __init__(self):
             self.state = 11
             self.restore_count = 0
+            self.capture_step_calls = 0
             self.fail_step = False
             self.fail_restore = False
 
@@ -8439,6 +8442,7 @@ def test_transactional_capture_rolls_back_and_replay_advances_once():
             assert token_counts == (1, 1, 1, 1)
             if self.fail_step:
                 raise RuntimeError("capture-step-failed")
+            self.capture_step_calls += 1
             self.state += 1
             for slot in scratch_slots:
                 scratch_state[slot][0] += 1000
@@ -8511,6 +8515,7 @@ def test_transactional_capture_rolls_back_and_replay_advances_once():
         )
         assert runner.model.state == 11
         assert runner.model.restore_count == 1
+        assert runner.model.capture_step_calls == 1
         assert scratch_state == scratch_before
         assert entry.output_kind == "logits"
         assert _decode_internal_profile_suspensions == [
@@ -8772,6 +8777,65 @@ def test_exact_graph_cache_release_resets_graphs_before_synchronize():
     assert runner.exact_cuda_graph_cache.reserved_delta_bytes == 0
 
 
+def test_model_runner_reset_exact_graph_cache_clears_pool_and_state():
+    cache_module = sys.modules[
+        "tinyvllm.engine.exact_cuda_graph_cache"
+    ]
+    runner = _make_exact_dispatch_runner()
+    runner._exact_cuda_graph_pool = "stale-pool"
+    identity = runner._build_multi_sequence_graph_identity(
+        FakeTensor([10, 20, 30, 40]),
+        SimpleNamespace(
+            block_tables=FakeTensor([[0, 1]] * 4),
+        ),
+    )
+    for _ in range(3):
+        decision = runner.exact_cuda_graph_cache.observe_success(
+            identity,
+            estimated_static_bytes=4096,
+        )
+    assert decision.should_capture is True
+
+    class Graph:
+        def reset(self):
+            pass
+
+    runner.exact_cuda_graph_cache.commit_capture(
+        cache_module.ExactCudaGraphEntry(
+            identity=identity,
+            identity_sha256=identity.sha256,
+            graph=Graph(),
+            tensors={},
+            static_bytes=4096,
+            capture_duration_ns=100,
+            allocated_delta_bytes=0,
+            reserved_delta_bytes=1024,
+        )
+    )
+
+    original_synchronize = getattr(
+        model_runner.torch.cuda,
+        "synchronize",
+        None,
+    )
+    model_runner.torch.cuda.synchronize = lambda: None
+    try:
+        receipt = runner.reset_exact_cuda_graph_cache()
+    finally:
+        if original_synchronize is None:
+            delattr(model_runner.torch.cuda, "synchronize")
+        else:
+            model_runner.torch.cuda.synchronize = original_synchronize
+
+    assert receipt["rank"] == runner.rank
+    assert receipt["released_ready_entries"] == 1
+    assert receipt["summary"]["ready_entries"] == []
+    assert receipt["summary"]["rejected"] == {}
+    assert receipt["summary"]["observation_counts"] == {}
+    assert receipt["summary"]["total_capture_ns"] == 0
+    assert runner._exact_cuda_graph_pool is None
+
+
 def test_model_runner_exit_releases_exact_graphs_before_process_group_shutdown():
     tree = ast.parse(open(_MODEL_RUNNER_PATH, encoding="utf-8").read())
     model_runner_class = next(
@@ -8914,6 +8978,7 @@ def main():
         test_replay_resets_context_on_success_and_exception,
         test_replay_phase_receipt_covers_graph_and_logits_boundaries,
         test_exact_graph_cache_release_resets_graphs_before_synchronize,
+        test_model_runner_reset_exact_graph_cache_clears_pool_and_state,
         test_model_runner_exit_releases_exact_graphs_before_process_group_shutdown,
         test_replay_failure_publishes_terminal_event_before_reraising,
     )
