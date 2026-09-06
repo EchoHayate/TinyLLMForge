@@ -1,3 +1,4 @@
+import json
 from pathlib import PurePosixPath
 from types import SimpleNamespace
 
@@ -380,6 +381,29 @@ def test_freeze_source_rejects_existing_local_attempt_root(
     assert (attempt_root / "immutable.txt").read_text(
         encoding="utf-8"
     ) == "preserve"
+
+
+def test_kerberos_preflight_failure_is_persisted(tmp_path):
+    adapter = object.__new__(controller.ProductionAdapter)
+    adapter.local_controller_root = tmp_path
+    adapter._query_kerberos_window = lambda: {
+        "classification": "BLOCKED_KERBEROS_TTL",
+        "remaining_lifetime_seconds": 22_123,
+        "minimum_required_lifetime_seconds": 22_500,
+    }
+
+    receipt = adapter.ssh_storage_preflight(
+        {"run_tag": "census-ttl"},
+        _source("census-ttl"),
+    )
+
+    assert receipt["classification"] == "INCOMPLETE"
+    assert receipt["reason"] == "Kerberos TTL preflight failed"
+    assert json.loads(
+        (tmp_path / "ssh_storage_preflight.json").read_text(
+            encoding="utf-8"
+        )
+    ) == receipt
 
 
 def test_wait_finalizes_cleanup_before_bundle_download(tmp_path):

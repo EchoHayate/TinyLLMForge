@@ -490,13 +490,21 @@ class ProductionAdapter(_DecodeReplayAdapter):
         del source
         kerberos = self._query_kerberos_window()
         if kerberos.get("classification") not in {"READY", "PASS"}:
-            return {
+            receipt = {
                 "classification": "INCOMPLETE",
                 "reason": "Kerberos TTL preflight failed",
                 "attempt_exists": False,
                 "remote_root": REMOTE_ROOT,
                 "kerberos": kerberos,
+                "model_root": MODEL_ROOT,
+                "model_revision": MODEL_REVISION,
             }
+            _atomic_write_json(
+                self.local_controller_root
+                / "ssh_storage_preflight.json",
+                receipt,
+            )
+            return receipt
         attempt_root = f"{REMOTE_ROOT}/{seed['run_tag']}"
         script = "\n".join([
             "import json,os,sys",
